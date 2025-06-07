@@ -1,0 +1,23 @@
+{
+  "name": "katulong",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "cp src/index.html dist/ && cp src/main.js dist/",
+    "build": "cp src/index.html dist/ && cp src/main.js dist/",
+    "tauri": "npx tauri",
+    "tauri:dev": "npx tauri dev",
+    "tauri:build": "npx tauri build",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.5.0"
+  },
+  "dependencies": {
+    "ws": "^8.18.2"
+  }
+}

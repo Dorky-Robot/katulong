@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Katulong MCP Host</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            background: #f8f9fa;
+            height: 100vh;
+            padding: 40px;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 40px;
+        }
+        
+        .header h1 {
+            font-size: 32px;
+            font-weight: 600;
+            color: #1d1d1f;
+        }
+        
+        .search-container {
+            position: relative;
+            margin-bottom: 30px;
+        }
+        
+        .search-select {
+            width: 100%;
+            max-width: 600px;
+            padding: 16px 50px 16px 20px;
+            border: 1px solid #e5e5e7;
+            border-radius: 12px;
+            font-size: 16px;
+            background: white;
+            cursor: pointer;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+        }
+        
+        .search-select:focus {
+            outline: none;
+            border-color: #007aff;
+        }
+        
+        .search-icon {
+            position: absolute;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #86868b;
+            font-size: 18px;
+            pointer-events: none;
+        }
+        
+        .services-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 24px;
+        }
+        
+        .service-tile {
+            background: white;
+            border: 1px solid #e5e5e7;
+            border-radius: 16px;
+            padding: 24px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            min-height: 180px;
+            position: relative;
+        }
+        
+        .service-tile:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.08);
+        }
+        
+        .service-tile.add-service {
+            border: 2px dashed #d1d5db;
+            background: #f9fafb;
+        }
+        
+        .service-tile.connected {
+            border-color: #10b981;
+            background: linear-gradient(135deg, #ffffff 0%, #f0fdf4 100%);
+        }
+        
+        .service-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            margin-bottom: 16px;
+            background: #f3f4f6;
+            color: #374151;
+        }
+        
+        .add-service .service-icon {
+            background: #e5e7eb;
+            color: #9ca3af;
+            font-size: 32px;
+        }
+        
+        .service-name {
+            font-size: 16px;
+            font-weight: 600;
+            color: #111827;
+            margin-bottom: 8px;
+        }
+        
+        .service-status {
+            font-size: 14px;
+            color: #6b7280;
+        }
+        
+        .service-status.connected {
+            color: #10b981;
+        }
+        
+        .status-dot {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #d1d5db;
+        }
+        
+        .status-dot.connected {
+            background: #10b981;
+        }
+        
+        .btn {
+            background: #007aff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn:hover {
+            background: #0056b3;
+            transform: translateY(-1px);
+        }
+        
+        .btn.secondary {
+            background: #f3f4f6;
+            color: #374151;
+        }
+        
+        .btn.secondary:hover {
+            background: #e5e7eb;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+        
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin: 10% auto;
+            max-width: 500px;
+            position: relative;
+        }
+        
+        .modal-header {
+            margin-bottom: 20px;
+        }
+        
+        .modal-header h3 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1d1d1f;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #1d1d1f;
+        }
+        
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #d2d2d7;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        .form-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        
+        .credentials-list {
+            display: grid;
+            gap: 15px;
+        }
+        
+        .credential-item {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #e5e5e7;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .credential-info h4 {
+            font-size: 16px;
+            font-weight: 500;
+            color: #1d1d1f;
+            margin-bottom: 4px;
+        }
+        
+        .credential-info p {
+            font-size: 14px;
+            color: #86868b;
+        }
+        
+        .credential-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .btn-icon {
+            background: none;
+            border: none;
+            padding: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            color: #86868b;
+        }
+        
+        .btn-icon:hover {
+            background: #f5f5f7;
+            color: #1d1d1f;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>MCP Services</h1>
+        <button class="btn secondary" onclick="showSettings()">⚙️</button>
+    </div>
+    
+    <div class="search-container">
+        <select class="search-select" id="serviceDropdown">
+            <option value="">Browse all services...</option>
+        </select>
+        <span class="search-icon">▼</span>
+    </div>
+    
+    <div class="services-grid" id="servicesGrid">
+        <!-- Services will be loaded here -->
+    </div>
+    
+    <!-- Add Service Modal -->
+    <div id="addServiceModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Configure MCP Service</h3>
+            </div>
+            <form id="addServiceForm">
+                <div class="form-group">
+                    <label>Service Type</label>
+                    <select id="serviceType" required onchange="updateServiceForm()">
+                        <option value="">Select a service...</option>
+                        <option value="github">GitHub</option>
+                        <option value="slack">Slack</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="filesystem">File System</option>
+                        <option value="git">Git Repository</option>
+                        <option value="postgres">PostgreSQL</option>
+                        <option value="fetch">Web Fetch</option>
+                        <option value="memory">Memory Store</option>
+                    </select>
+                </div>
+                <div id="serviceConfig">
+                    <!-- Dynamic config fields will be added here -->
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn secondary" onclick="closeModal('addServiceModal')">Cancel</button>
+                    <button type="submit" class="btn">Save Service</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <script src="main.js"></script>
+</body>
+</html>
