@@ -4,11 +4,13 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import pty from "node-pty";
 import { encode, decoder } from "./lib/ndjson.js";
+import { log } from "./lib/log.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
 const SHELL = process.env.SHELL || "/bin/zsh";
-const SHORTCUTS_PATH = join(__dirname, "shortcuts.json");
+const DATA_DIR = process.env.KATULONG_DATA_DIR || __dirname;
+const SHORTCUTS_PATH = join(DATA_DIR, "shortcuts.json");
 const MAX_BUFFER = 5000;
 
 // --- State (boundary) ---
@@ -57,13 +59,13 @@ function spawnSession(name) {
   });
 
   p.onExit(({ exitCode }) => {
-    console.log(`Session "${name}" exited (${exitCode})`);
+    log.info("Session exited", { session: name, exitCode });
     session.alive = false;
     broadcast({ type: "exit", session: name, code: exitCode });
   });
 
   sessions.set(name, session);
-  console.log(`Session "${name}" created (pid ${p.pid})`);
+  log.info("Session created", { session: name, pid: p.pid });
   return session;
 }
 
@@ -80,7 +82,7 @@ function removeSession(name) {
     if (info.session === name) clients.delete(cid);
   }
   broadcast({ type: "session-removed", session: name });
-  console.log(`Session "${name}" removed`);
+  log.info("Session removed", { session: name });
   return true;
 }
 
@@ -93,7 +95,7 @@ function renameSession(oldName, newName) {
     if (info.session === oldName) info.session = newName;
   }
   broadcast({ type: "session-renamed", session: oldName, newName });
-  console.log(`Session renamed: "${oldName}" -> "${newName}"`);
+  log.info("Session renamed", { from: oldName, to: newName });
   return true;
 }
 
@@ -178,30 +180,30 @@ function probeSocket() {
 
 async function start() {
   if (await probeSocket()) {
-    console.error("Another daemon is already running on", SOCKET_PATH);
+    log.error("Another daemon is already running", { socket: SOCKET_PATH });
     process.exit(1);
   }
   if (existsSync(SOCKET_PATH)) {
     unlinkSync(SOCKET_PATH);
-    console.log("Removed stale socket file");
+    log.info("Removed stale socket file");
   }
 
   const server = createServer((socket) => {
-    console.log("UI server connected");
+    log.info("UI server connected");
     uiSockets.add(socket);
     socket.on("data", decoder((msg) => handleMessage(msg, socket)));
     socket.on("close", () => {
-      console.log("UI server disconnected");
+      log.info("UI server disconnected");
       uiSockets.delete(socket);
       for (const [cid, info] of clients) {
         if (info.socket === socket) clients.delete(cid);
       }
     });
-    socket.on("error", (err) => console.error("Socket error:", err.message));
+    socket.on("error", (err) => log.error("Socket error", { error: err.message }));
   });
 
   function cleanup() {
-    console.log("\nShutting down daemon...");
+    log.info("Shutting down daemon");
     for (const [, session] of sessions) {
       if (session.alive) session.pty.kill();
     }
@@ -213,7 +215,7 @@ async function start() {
   process.on("SIGTERM", cleanup);
 
   server.listen(SOCKET_PATH, () => {
-    console.log(`Katulong daemon listening on ${SOCKET_PATH}`);
+    log.info("Katulong daemon listening", { socket: SOCKET_PATH });
   });
 }
 

@@ -7,9 +7,11 @@
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
     "daemon": "node daemon.js",
     "start": "node server.js",
-    "dev": "node daemon.js & node server.js"
+    "dev": "node daemon.js & node server.js",
+    "start:all": "node --env-file=.env.local entrypoint.js"
   },
   "dependencies": {
+    "@simplewebauthn/server": "^13.0.0",
     "node-pty": "^1.0.0",
     "ws": "^8.18.2"
   }

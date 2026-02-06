@@ -1,4 +1,4 @@
-const CACHE_NAME = "katulong-v1";
+const CACHE_NAME = "katulong-v2";
 const PRECACHE = [
   "/",
   "/icon-192.png",
@@ -26,11 +26,13 @@ self.addEventListener("fetch", (e) => {
   // Network-first for HTML and API calls, cache-first for static assets
   const url = new URL(e.request.url);
 
-  // Skip WebSocket and API requests
+  // Skip WebSocket, API, and auth requests
   if (
     e.request.url.startsWith("ws") ||
     url.pathname.startsWith("/sessions") ||
-    url.pathname.startsWith("/shortcuts")
+    url.pathname.startsWith("/shortcuts") ||
+    url.pathname === "/login" ||
+    url.pathname.startsWith("/auth/")
   ) {
     return;
   }
@@ -40,8 +42,11 @@ self.addEventListener("fetch", (e) => {
     e.respondWith(
       fetch(e.request)
         .then((res) => {
-          const clone = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));
+          // Only cache successful (non-redirect) responses
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));
+          }
           return res;
         })
         .catch(() => caches.match(e.request))
