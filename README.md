@@ -1,5 +1,7 @@
 # katulong
 
+> **Warning:** This project is highly experimental. Expect breaking changes, rough edges, and missing features.
+
 A minimal web terminal with tmux-style session management. Zero frameworks.
 
 ## Features
