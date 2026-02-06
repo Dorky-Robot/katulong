@@ -1,7 +1,9 @@
 import "dotenv/config";
 import { createServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { createConnection } from "node:net";
 import { readFileSync, realpathSync, existsSync, watch } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname, resolve } from "node:path";
 import { WebSocketServer } from "ws";
@@ -19,10 +21,18 @@ import {
   parseCookies, setSessionCookie, getOriginAndRpID,
   isPublicPath, sanitizeName, createChallengeStore,
 } from "./lib/http-util.js";
+import { ensureCerts, generateMobileConfig } from "./lib/tls.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3001", 10);
+const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || "3002", 10);
 const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
+const DATA_DIR = process.env.KATULONG_DATA_DIR || __dirname;
+
+// --- TLS certificates (auto-generated) ---
+
+const tlsPaths = ensureCerts(DATA_DIR, "Katulong");
+log.info("TLS certificates ready", { dir: join(DATA_DIR, "tls") });
 
 const SETUP_TOKEN = process.env.SETUP_TOKEN || randomBytes(16).toString("hex");
 const RP_NAME = "Katulong";
@@ -35,8 +45,30 @@ if (!process.env.SETUP_TOKEN) {
 
 const { store: storeChallenge, consume: consumeChallenge, _challenges: challenges } = createChallengeStore(5 * 60 * 1000);
 
+// --- Device pairing (in-memory, 5-min expiry) ---
+
+const pairingChallenges = new Map();
+const PAIR_TTL_MS = 30 * 1000;
+
+function getLanIP() {
+  const nets = networkInterfaces();
+  for (const ifaces of Object.values(nets)) {
+    for (const iface of ifaces) {
+      if (!iface.internal && iface.family === "IPv4") return iface.address;
+    }
+  }
+  return null;
+}
+
+function isLocalRequest(req) {
+  const addr = req.socket.remoteAddress || "";
+  // Only loopback — LAN is untrusted (public WiFi, etc.)
+  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+}
+
 function isAuthenticated(req) {
   if (process.env.KATULONG_NO_AUTH === "1") return true;
+  if (isLocalRequest(req)) return true;
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies.get("katulong_session");
   if (!token) return false;
@@ -260,6 +292,105 @@ const routes = [
     }
   }},
 
+  { method: "POST", path: "/auth/pair/start", handler: (req, res) => {
+    // Only authenticated users (e.g. localhost auto-auth) can start pairing
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+    const code = randomUUID();
+    const pin = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = Date.now() + PAIR_TTL_MS;
+    pairingChallenges.set(code, { pin, expiresAt });
+    // Sweep expired entries
+    for (const [c, v] of pairingChallenges) {
+      if (Date.now() >= v.expiresAt) pairingChallenges.delete(c);
+    }
+    const lanIP = getLanIP();
+    const url = lanIP ? `https://${lanIP}:${HTTPS_PORT}/pair?code=${code}` : null;
+    json(res, 200, { code, pin, url, expiresAt });
+  }},
+
+  { method: "POST", path: "/auth/pair/verify", handler: async (req, res) => {
+    const { code, pin } = await parseJSON(req);
+    const challenge = pairingChallenges.get(code);
+    if (!challenge) {
+      log.warn("Pair verify: code not found", { code, mapSize: pairingChallenges.size });
+      return json(res, 400, { error: "Invalid or expired pairing code" });
+    }
+    if (Date.now() >= challenge.expiresAt) {
+      pairingChallenges.delete(code);
+      return json(res, 400, { error: "Pairing code expired" });
+    }
+    // Normalize: strip anything that isn't a digit
+    const submittedPin = String(pin).replace(/\D/g, "");
+    if (challenge.pin !== submittedPin) {
+      log.warn("Pair verify: PIN mismatch", { expected: challenge.pin, got: submittedPin, rawPin: pin });
+      return json(res, 403, { error: "Invalid PIN" });
+    }
+    pairingChallenges.delete(code);
+    let state = loadState();
+    if (!state) {
+      state = { user: { id: "paired-user", name: "owner" }, credentials: [], sessions: {} };
+    }
+    state = pruneExpiredSessions(state);
+    const session = createSession();
+    state.sessions[session.token] = session.expiry;
+    saveState(state);
+    setSessionCookie(res, session.token, session.expiry);
+    // Notify all connected WS clients so the pairing modal auto-dismisses
+    for (const client of wss.clients) {
+      if (client.readyState === 1) {
+        client.send(JSON.stringify({ type: "pair-complete", code }));
+      }
+    }
+    json(res, 200, { ok: true });
+  }},
+
+  { method: "GET", path: "/pair", handler: (req, res) => {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(readFileSync(join(__dirname, "public", "pair.html"), "utf-8"));
+  }},
+
+  // --- Trust / certificate routes ---
+
+  { method: "GET", path: "/connect/trust", handler: (req, res) => {
+    const lanIP = getLanIP();
+    const httpsUrl = lanIP ? `https://${lanIP}:${HTTPS_PORT}` : `https://localhost:${HTTPS_PORT}`;
+    let html = readFileSync(join(__dirname, "public", "trust.html"), "utf-8");
+    // Inject the HTTPS URL via a data attribute on body
+    html = html.replace("<body>", `<body data-https-url="${httpsUrl}">`);
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(html);
+  }},
+
+  { method: "GET", path: "/connect/trust/ca.crt", handler: (req, res) => {
+    const cert = readFileSync(tlsPaths.caCert);
+    res.writeHead(200, {
+      "Content-Type": "application/x-x509-ca-cert",
+      "Content-Disposition": "attachment; filename=katulong-ca.crt",
+    });
+    res.end(cert);
+  }},
+
+  { method: "GET", path: "/connect/trust/ca.mobileconfig", handler: (req, res) => {
+    const caCertPem = readFileSync(tlsPaths.caCert, "utf-8");
+    const mobileconfig = generateMobileConfig(caCertPem, "Katulong");
+    res.writeHead(200, {
+      "Content-Type": "application/x-apple-aspen-config",
+      "Content-Disposition": "attachment; filename=katulong.mobileconfig",
+    });
+    res.end(mobileconfig);
+  }},
+
+  { method: "GET", path: "/connect", handler: (req, res) => {
+    const lanIP = getLanIP();
+    const trustUrl = lanIP ? `http://${lanIP}:${PORT}/connect/trust` : `/connect/trust`;
+    let html = readFileSync(join(__dirname, "public", "connect.html"), "utf-8");
+    html = html.replace("<body>", `<body data-trust-url="${trustUrl}" data-https-port="${HTTPS_PORT}">`);
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(html);
+  }},
+
   { method: "POST", path: "/auth/logout", handler: (req, res) => {
     const cookies = parseCookies(req.headers.cookie);
     const token = cookies.get("katulong_session");
@@ -325,7 +456,7 @@ function matchRoute(method, pathname) {
   return null;
 }
 
-const server = createServer(async (req, res) => {
+async function handleRequest(req, res) {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
 
   // Auth middleware: redirect unauthenticated requests to /login
@@ -368,14 +499,20 @@ const server = createServer(async (req, res) => {
     res.writeHead(404);
     res.end("Not found");
   }
-});
+}
+
+const server = createServer(handleRequest);
+const httpsServer = createHttpsServer({
+  cert: readFileSync(tlsPaths.serverCert),
+  key: readFileSync(tlsPaths.serverKey),
+}, handleRequest);
 
 // --- WebSocket ---
 
 const wss = new WebSocketServer({ noServer: true });
 const wsClients = new Map(); // clientId -> { ws, session, p2pPeer, p2pConnected }
 
-server.on("upgrade", (req, socket, head) => {
+function handleUpgrade(req, socket, head) {
   // Validate session cookie on WebSocket upgrade
   if (!isAuthenticated(req)) {
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
@@ -385,7 +522,10 @@ server.on("upgrade", (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit("connection", ws, req);
   });
-});
+}
+
+server.on("upgrade", handleUpgrade);
+httpsServer.on("upgrade", handleUpgrade);
 
 // Relay daemon broadcasts to matching browser clients
 function sendToSession(sessionName, payload, { preferP2P = false } = {}) {
@@ -532,5 +672,13 @@ process.on("unhandledRejection", (err) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  log.info("Katulong UI started", { port: PORT });
+  log.info("Katulong HTTP started", { port: PORT });
+});
+
+httpsServer.listen(HTTPS_PORT, "0.0.0.0", () => {
+  const lanIP = getLanIP();
+  log.info("Katulong HTTPS started", {
+    port: HTTPS_PORT,
+    trustUrl: lanIP ? `http://${lanIP}:${PORT}/connect/trust` : null,
+  });
 });

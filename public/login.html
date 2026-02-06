@@ -130,6 +130,22 @@
     }
 
     .hidden { display: none; }
+
+    .pair-hint {
+      color: var(--text-muted); font-size: 0.8125rem; line-height: 1.6;
+      margin-bottom: 1rem;
+    }
+    .pair-hint strong { color: var(--text); }
+    .pair-steps {
+      list-style: none; padding: 0; margin: 0;
+    }
+    .pair-steps li {
+      padding: 0.25rem 0;
+    }
+    .pair-steps li::before {
+      content: attr(data-step) ". ";
+      color: var(--text-dim);
+    }
   </style>
 </head>
 <body>
@@ -145,12 +161,26 @@
       <p class="error" id="setup-error"></p>
     </div>
 
-    <!-- Login flow -->
+    <!-- Login flow (HTTPS — passkey available) -->
     <div id="login-view" class="hidden">
       <h1>Katulong</h1>
       <p class="subtitle">Authenticate with your passkey to continue.</p>
       <button id="login-btn">Login with Passkey</button>
       <p class="error" id="login-error"></p>
+    </div>
+
+    <!-- Pair flow (HTTP — no passkey, use QR pairing) -->
+    <div id="pair-view" class="hidden">
+      <h1>Katulong</h1>
+      <p class="subtitle">Passkeys require HTTPS. Use QR pairing instead.</p>
+      <div class="pair-hint">
+        <ol class="pair-steps">
+          <li data-step="1">Open Katulong on your computer at <strong>localhost</strong></li>
+          <li data-step="2">Go to <strong>Settings</strong> > <strong>Pair Device</strong></li>
+          <li data-step="3">Scan the QR code with this device</li>
+          <li data-step="4">Enter the 6-digit PIN</li>
+        </ol>
+      </div>
     </div>
 
     <!-- Loading -->
@@ -167,16 +197,24 @@
 
     const setupView = document.getElementById("setup-view");
     const loginView = document.getElementById("login-view");
+    const pairView = document.getElementById("pair-view");
     const loadingView = document.getElementById("loading-view");
     const setupError = document.getElementById("setup-error");
     const loginError = document.getElementById("login-error");
+
+    const hasWebAuthn = window.isSecureContext && !!window.PublicKeyCredential;
 
     async function checkStatus() {
       const res = await fetch("/auth/status");
       const { setup } = await res.json();
       loadingView.classList.add("hidden");
       if (setup) {
-        loginView.classList.remove("hidden");
+        if (hasWebAuthn) {
+          loginView.classList.remove("hidden");
+        } else {
+          // No WebAuthn (HTTP) — show QR pairing instructions
+          pairView.classList.remove("hidden");
+        }
       } else {
         setupView.classList.remove("hidden");
       }

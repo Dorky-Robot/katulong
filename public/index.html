@@ -416,6 +416,15 @@
       margin-bottom: 0.5rem;
     }
     .settings-logout-btn:active { opacity: 0.8; }
+
+    .settings-pair-btn {
+      width: 100%; height: 2.75rem; border: none; border-radius: 0.5rem;
+      background: var(--accent); color: var(--text); font-size: 0.875rem; cursor: pointer;
+      margin-bottom: 0.5rem;
+      display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+    }
+    .settings-pair-btn:active { background: var(--accent-active); }
+
   </style>
 </head>
 <body>
@@ -525,6 +534,9 @@
         </div>
       </div>
       <div class="settings-footer">
+        <button class="settings-pair-btn" id="settings-pair">
+          <i class="ph ph-qr-code"></i> Pair Device
+        </button>
         <button class="settings-logout-btn" id="settings-logout">Log Out</button>
       </div>
     </div>
@@ -693,8 +705,8 @@
       }
     }
 
-    // Intercept Tab at the document level (capture phase) so it reaches
-    // the PTY before the browser can use it for focus navigation.
+    // Intercept Tab at document level (capture phase) to prevent browser
+    // focus navigation and send \t to the PTY.
     document.addEventListener("keydown", (ev) => {
       if (ev.key !== "Tab" || ev.ctrlKey || ev.altKey || ev.metaKey) return;
       const active = document.activeElement;
@@ -705,15 +717,15 @@
       if (!inTerminal) return;
       ev.preventDefault();
       ev.stopPropagation();
-      rawSend("\t");
-    }, true); // capture phase
+      rawSend(ev.shiftKey ? "\x1b[Z" : "\t");
+    }, true);
 
     term.attachCustomKeyEventHandler((ev) => {
       if (ev.metaKey && ev.key === "c" && term.hasSelection()) return false;
       if ((ev.metaKey || ev.ctrlKey) && ev.key === "v") return false;
       if (ev.ctrlKey && ev.key === "c" && !term.hasSelection()) return true;
 
-      // Tab already handled by document-level capture listener
+      // Tab handled by capture-phase listener above
       if (ev.key === "Tab") return false;
 
       // Shift+Enter: quoted-insert (\x16) + newline (\x0a) — inserts a literal
@@ -735,7 +747,13 @@
       return true;
     });
 
-    term.onData((data) => rawSend(data));
+    term.onData((data) => {
+      // Filter focus-reporting sequences (CSI I / CSI O) that xterm.js
+      // emits when the browser tab gains/loses focus. These leak into
+      // CLI apps like Claude Code as garbage input (issue #10375).
+      const filtered = data.replace(/\x1b\[I/g, "").replace(/\x1b\[O/g, "");
+      if (filtered) rawSend(filtered);
+    });
 
     function destroyP2P() {
       clearTimeout(p2pRetryTimer);
@@ -1379,6 +1397,13 @@
       location.href = "/login";
     });
     dismissModal(settingsOverlay);
+
+    // --- Pairing ---
+
+    document.getElementById("settings-pair").addEventListener("click", () => {
+      closeModal(settingsOverlay);
+      window.location.href = "/connect";
+    });
 
     // --- Dictation modal ---
 

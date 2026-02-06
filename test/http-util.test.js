@@ -101,6 +101,16 @@ describe("isPublicPath", () => {
     assert.ok(isPublicPath("/auth/register/verify"));
   });
 
+  it("allows /pair", () => {
+    assert.ok(isPublicPath("/pair"));
+  });
+
+  it("allows /connect/trust paths", () => {
+    assert.ok(isPublicPath("/connect/trust"));
+    assert.ok(isPublicPath("/connect/trust/ca.crt"));
+    assert.ok(isPublicPath("/connect/trust/ca.mobileconfig"));
+  });
+
   it("allows static extensions", () => {
     assert.ok(isPublicPath("/style.css"));
     assert.ok(isPublicPath("/app.js"));
