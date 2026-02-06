@@ -12,6 +12,7 @@ const SHELL = process.env.SHELL || "/bin/zsh";
 const DATA_DIR = process.env.KATULONG_DATA_DIR || __dirname;
 const SHORTCUTS_PATH = join(DATA_DIR, "shortcuts.json");
 const MAX_BUFFER = 5000;
+const MAX_BUFFER_BYTES = 5 * 1024 * 1024; // 5 MB
 
 // --- State (boundary) ---
 
@@ -50,11 +51,15 @@ function spawnSession(name, cols = 120, rows = 40) {
     env: { ...process.env, TERM: "xterm-256color" },
   });
 
-  const session = { pty: p, outputBuffer: [], alive: true };
+  const session = { pty: p, outputBuffer: [], bufferBytes: 0, alive: true };
 
   p.onData((data) => {
     session.outputBuffer.push(data);
-    while (session.outputBuffer.length > MAX_BUFFER) session.outputBuffer.shift();
+    session.bufferBytes += data.length;
+    while (session.outputBuffer.length > MAX_BUFFER || session.bufferBytes > MAX_BUFFER_BYTES) {
+      const removed = session.outputBuffer.shift();
+      if (removed) session.bufferBytes -= removed.length;
+    }
     broadcast({ type: "output", session: name, data });
   });
 
