@@ -35,10 +35,10 @@ test.describe("Toolbar layout", () => {
     await expect(setBtn).toBeVisible();
   });
 
-  test("Order: dot, session, spacer, Esc, keyboard, settings", async ({ page }) => {
+  test("Order: dot, session, spacer, Esc, Tab, keyboard, settings", async ({ page }) => {
     const children = page.locator("#shortcut-bar > *");
     const count = await children.count();
-    expect(count).toBeGreaterThanOrEqual(6);
+    expect(count).toBeGreaterThanOrEqual(7);
 
     // 0: p2p-indicator
     await expect(children.nth(0)).toHaveId("p2p-indicator");
@@ -49,11 +49,14 @@ test.describe("Toolbar layout", () => {
     // 3: Esc shortcut-btn
     await expect(children.nth(3)).toHaveClass(/shortcut-btn/);
     await expect(children.nth(3)).toHaveText("Esc");
-    // 4: keyboard bar-icon-btn
-    await expect(children.nth(4)).toHaveClass(/bar-icon-btn/);
-    await expect(children.nth(4)).toHaveAttribute("aria-label", "Open shortcuts");
-    // 5: settings bar-icon-btn
+    // 4: Tab shortcut-btn
+    await expect(children.nth(4)).toHaveClass(/shortcut-btn/);
+    await expect(children.nth(4)).toHaveText("Tab");
+    // 5: keyboard bar-icon-btn
     await expect(children.nth(5)).toHaveClass(/bar-icon-btn/);
-    await expect(children.nth(5)).toHaveAttribute("aria-label", "Settings");
+    await expect(children.nth(5)).toHaveAttribute("aria-label", "Open shortcuts");
+    // 6: settings bar-icon-btn
+    await expect(children.nth(6)).toHaveClass(/bar-icon-btn/);
+    await expect(children.nth(6)).toHaveAttribute("aria-label", "Settings");
   });
 });

@@ -2,7 +2,7 @@
 <html lang="en" data-theme="auto">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1e1e2e">
@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
   <script src="https://cdn.jsdelivr.net/npm/simple-peer@9/simplepeer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
   <style>
     /* --- Catppuccin Mocha (dark) / Latte (light) --- */
     :root {
@@ -96,7 +97,7 @@
 
     /* --- Scroll to bottom --- */
     #scroll-bottom {
-      position: fixed; bottom: 1rem; right: 1rem; z-index: 10;
+      position: fixed; bottom: 1rem; left: 1rem; z-index: 10;
       width: 2.5rem; height: 2.5rem; border-radius: 50%; border: none;
       background: var(--overlay-bg); color: var(--text); font-size: 1.25rem;
       cursor: pointer; display: none; align-items: center; justify-content: center;
@@ -104,14 +105,7 @@
     }
     #scroll-bottom:active { opacity: 0.7; }
 
-    /* --- Swipe gesture zone --- */
-    #swipe-zone {
-      position: absolute; top: 0; left: 0; bottom: 0; width: 44px;
-      z-index: 2; touch-action: none;
-    }
-    @media (hover: hover) and (pointer: fine) {
-      #swipe-zone { display: none; }
-    }
+    /* --- Swipe feedback --- */
     .swipe-feedback {
       position: fixed; width: 48px; height: 48px; border-radius: 50%;
       background: var(--accent-active); opacity: 0; z-index: 10;
@@ -169,27 +163,27 @@
 
     /* --- Shared modal --- */
     .modal-overlay {
-      display: none; position: fixed; inset: 0; z-index: 10000;
+      display: none; position: fixed; z-index: 10000;
+      left: 0; right: 0;
+      top: var(--viewport-top, 0px);
+      height: var(--viewport-h, 100dvh);
       background: var(--overlay-bg);
-      align-items: flex-end; justify-content: center;
+      place-items: center;
+      padding: max(1rem, env(safe-area-inset-top))
+               max(1rem, env(safe-area-inset-right))
+               max(1rem, env(safe-area-inset-bottom))
+               max(1rem, env(safe-area-inset-left));
     }
-    .modal-overlay.visible { display: flex; }
+    .modal-overlay.visible { display: grid; }
     .modal-panel {
       background: var(--bg-surface); overflow-y: auto;
-      padding: env(safe-area-inset-top, 0) 1rem env(safe-area-inset-bottom, 0);
-      width: 100%; max-height: 85vh; border-radius: 0.75rem 0.75rem 0 0;
-      border: 1px solid var(--border); border-bottom: none;
+      padding: 0 1.25rem;
+      width: min(400px, 100%); max-height: 100%;
+      border-radius: 0.75rem;
+      border: 1px solid var(--border);
     }
     .modal-panel h3 {
       color: var(--text); font-size: 1rem; margin-bottom: 0.875rem; padding-top: 1rem;
-    }
-    @media (min-width: 480px) {
-      .modal-overlay { align-items: center; }
-      .modal-panel {
-        width: min(400px, 90vw); max-height: 80vh;
-        border-radius: 0.75rem; border-bottom: 1px solid var(--border);
-        padding: 0 1.25rem;
-      }
     }
 
     /* --- Shortcuts popup --- */
@@ -279,6 +273,46 @@
       display: flex; align-items: center;
     }
     .key-tag-remove:active { color: var(--danger); }
+    .key-comma {
+      display: inline-flex; align-items: center; justify-content: center;
+      color: var(--text-muted); font-size: 0.875rem; font-family: var(--font-mono);
+      cursor: pointer; padding: 0 0.125rem;
+    }
+    /* --- Dictation modal --- */
+    .dictation-input {
+      width: 100%; min-height: 4rem; padding: 0.625rem;
+      margin-top: 1rem;
+      border: 1px solid var(--border); border-radius: 0.375rem;
+      background: var(--bg); color: var(--text); font-size: 0.9375rem;
+      font-family: var(--font-mono); resize: vertical;
+      box-sizing: border-box;
+    }
+    .dictation-input::placeholder { color: var(--text-muted); }
+    .dictation-footer { padding: 0.75rem 0; }
+    .dictation-send-btn {
+      width: 100%; height: 2.75rem; border: none; border-radius: 0.5rem;
+      background: var(--success); color: #1e1e2e; font-size: 0.875rem;
+      font-family: var(--font-mono); cursor: pointer;
+    }
+    .dictation-send-btn:active { opacity: 0.8; }
+
+    /* --- Joystick zone (touch devices only) --- */
+    #joystick {
+      display: none; position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 50;
+      width: 5rem; height: 5rem; border-radius: 50%;
+      border: 1.5px dashed var(--border);
+      background: transparent;
+      touch-action: none;
+      align-items: center; justify-content: center;
+    }
+    #joystick::before {
+      content: "+"; color: var(--text-dim); font-size: 1.25rem;
+      pointer-events: none; opacity: 0.5;
+    }
+    @media (pointer: coarse) {
+      #joystick { display: flex; }
+    }
+
     .key-composer-input {
       flex: 1; min-width: 3.75rem; height: 1.875rem; border: none; background: transparent;
       color: var(--text); font-size: 0.875rem; font-family: var(--font-mono);
@@ -295,8 +329,8 @@
       font-family: var(--font-mono);
     }
     .key-preview-label { color: var(--text-dim); }
-    #add-modal .modal-actions { display: flex; gap: 0.5rem; padding-bottom: 1rem; }
-    #add-modal .modal-actions button {
+    .modal-actions { display: flex; gap: 0.5rem; padding-bottom: 1rem; }
+    .modal-actions button {
       height: 2.75rem; padding: 0 1rem; border: none; border-radius: 0.5rem;
       font-size: 0.875rem; cursor: pointer; flex: 1;
     }
@@ -384,9 +418,7 @@
   </style>
 </head>
 <body>
-  <div id="terminal-container">
-    <div id="swipe-zone" aria-hidden="true"></div>
-  </div>
+  <div id="terminal-container"></div>
   <button id="scroll-bottom" aria-label="Scroll to bottom">
     <i class="ph ph-caret-down"></i>
   </button>
@@ -416,7 +448,7 @@
           autocomplete="off" spellcheck="false" aria-label="Key name input">
       </div>
       <div class="key-composer-hint" aria-hidden="true">
-        ctrl, cmd, alt, shift, a-z, 0-9, esc, tab, enter, space, backspace, up, down, left, right
+        ctrl, cmd, alt, shift, a-z, 0-9, esc, tab, enter, space, backspace, up, down, left, right — use , (comma) to chain sequences
       </div>
       <div class="key-preview" aria-live="polite">
         <span class="key-preview-label">Sends:</span>
@@ -457,6 +489,21 @@
       </div>
     </div>
   </div>
+
+  <!-- Dictation modal -->
+  <div id="dictation-overlay" class="modal-overlay" role="dialog" aria-label="Dictation">
+    <div class="modal-panel">
+      <textarea id="dictation-input" class="dictation-input"
+        rows="3" placeholder="speak or type..." autocorrect="off" autocapitalize="off"
+        autocomplete="off" spellcheck="false" aria-label="Dictation input"></textarea>
+      <div class="dictation-footer">
+        <button class="dictation-send-btn" id="dictation-send">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Joystick swipe zone -->
+  <div id="joystick" aria-label="Swipe joystick for arrow keys"></div>
 
   <!-- Settings -->
   <div id="settings-overlay" class="modal-overlay" role="dialog" aria-label="Settings">
@@ -647,7 +694,8 @@
       if (ev.ctrlKey && ev.key === "c" && !term.hasSelection()) return true;
 
       if (ev.metaKey && ev.type === "keydown") {
-        const seq = { Backspace: "\x15", ArrowLeft: "\x01", ArrowRight: "\x05", k: "\x0b" }[ev.key];
+        if (ev.key === "k") { term.clear(); return false; }
+        const seq = { Backspace: "\x15", ArrowLeft: "\x01", ArrowRight: "\x05" }[ev.key];
         if (seq) { rawSend(seq); return false; }
       }
       if (ev.altKey && ev.type === "keydown") {
@@ -773,53 +821,23 @@
     const termContainer = document.getElementById("terminal-container");
     const bar = document.getElementById("shortcut-bar");
 
-    // --- Swipe gesture system ---
-    const swipeZone = document.getElementById("swipe-zone");
-    let touchStartX = 0, touchStartY = 0, touchStartTime = 0, inSwipeZone = false;
+    // --- Joystick swipe zone (Hammer.js) ---
+    const joystick = document.getElementById("joystick");
+    const joyMc = new Hammer.Manager(joystick, { inputClass: Hammer.TouchInput });
+    joyMc.add(new Hammer.Swipe({ direction: Hammer.DIRECTION_ALL, threshold: 10, velocity: 0.3 }));
+    joyMc.on("swipeleft",  (e) => { rawSend("\x1b[D"); showSwipeFeedback(e.center.x, e.center.y); });
+    joyMc.on("swiperight", (e) => { rawSend("\x1b[C"); showSwipeFeedback(e.center.x, e.center.y); });
+    joyMc.on("swipeup",    (e) => { rawSend("\x1b[A"); showSwipeFeedback(e.center.x, e.center.y); });
+    joyMc.on("swipedown",  (e) => { rawSend("\x1b[B"); showSwipeFeedback(e.center.x, e.center.y); });
 
-    termContainer.addEventListener("touchstart", (e) => {
-      const t = e.touches[0];
-      touchStartX = t.clientX;
-      touchStartY = t.clientY;
-      touchStartTime = Date.now();
-      const rect = termContainer.getBoundingClientRect();
-      inSwipeZone = (t.clientX - rect.left) < 44;
-      term.focus();
-    }, { passive: true });
+    // Focus terminal on tap
+    termContainer.addEventListener("touchstart", () => term.focus(), { passive: true });
 
-    termContainer.addEventListener("touchend", (e) => {
-      const t = e.changedTouches[0];
-      const dx = t.clientX - touchStartX;
-      const dy = t.clientY - touchStartY;
-      const elapsed = Date.now() - touchStartTime;
-      const absDx = Math.abs(dx);
-      const absDy = Math.abs(dy);
-
-      if (elapsed > 300) return;
-      if (absDx < 30 && absDy < 30) return;
-
-      if (absDx > absDy * 1.5) {
-        // Horizontal swipe — works anywhere
-        rawSend(dx > 0 ? "\x1b[C" : "\x1b[D");
-        showSwipeFeedback(t.clientX, t.clientY);
-      } else if (absDy > absDx * 1.5 && inSwipeZone) {
-        // Vertical swipe — only in left edge zone
-        rawSend(dy > 0 ? "\x1b[B" : "\x1b[A");
-        showSwipeFeedback(t.clientX, t.clientY);
-      }
-    }, { passive: true });
-
-    termContainer.addEventListener("touchcancel", () => {
-      touchStartX = touchStartY = touchStartTime = 0;
-      inSwipeZone = false;
-    }, { passive: true });
-
-    swipeZone.addEventListener("touchmove", (e) => {
-      const t = e.touches[0];
-      const dy = Math.abs(t.clientY - touchStartY);
-      const dx = Math.abs(t.clientX - touchStartX);
-      if (dy > dx) e.preventDefault();
-    }, { passive: false });
+    // Long-press: native contextmenu event (fired by OS on long-press)
+    termContainer.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      openDictationModal();
+    });
 
     function showSwipeFeedback(x, y) {
       const el = document.createElement("div");
@@ -839,8 +857,12 @@
     function resizeToViewport() {
       const vv = window.visualViewport;
       const h = vv ? vv.height : window.innerHeight;
-      bar.style.top = (vv ? vv.offsetTop : 0) + "px";
+      const top = vv ? vv.offsetTop : 0;
+      bar.style.top = top + "px";
       termContainer.style.height = (h - 44) + "px";
+      const s = document.documentElement.style;
+      s.setProperty("--viewport-h", h + "px");
+      s.setProperty("--viewport-top", top + "px");
     }
     resizeToViewport();
     if (window.visualViewport) {
@@ -861,8 +883,8 @@
 
     // --- Pure: key sequence mapping ---
 
-    function keysToSequence(keys) {
-      const parts = keys.toLowerCase().trim().split("+");
+    function singleComboToSequence(combo) {
+      const parts = combo.toLowerCase().trim().split("+");
       const mods = new Set();
       let base = null;
 
@@ -890,7 +912,19 @@
       if (mods.has("shift") && base?.length === 1) return base.toUpperCase();
       if (named[base]) return named[base];
       if (base?.length === 1) return base;
-      return keys;
+      return combo;
+    }
+
+    function keysToSequence(keys) {
+      return keys.split(",").map(part => singleComboToSequence(part.trim()));
+    }
+
+    function sendSequence(parts) {
+      if (typeof parts === "string") { rawSend(parts); return; }
+      parts.forEach((p, i) => {
+        if (i === 0) rawSend(p);
+        else setTimeout(() => rawSend(p), i * 100);
+      });
     }
 
     // --- Pure: key display ---
@@ -903,8 +937,26 @@
     };
 
     function displayKey(k) { return KEY_DISPLAY[k] || k.toUpperCase(); }
-    function keysLabel(keys) { return keys.map(displayKey).join("+"); }
-    function keysString(keys) { return keys.join("+"); }
+    function keysLabel(keys) {
+      const groups = [];
+      let cur = [];
+      for (const k of keys) {
+        if (k === ",") { groups.push(cur.map(displayKey).join("+")); cur = []; }
+        else cur.push(k);
+      }
+      groups.push(cur.map(displayKey).join("+"));
+      return groups.join(", ");
+    }
+    function keysString(keys) {
+      const groups = [];
+      let cur = [];
+      for (const k of keys) {
+        if (k === ",") { groups.push(cur.join("+")); cur = []; }
+        else cur.push(k);
+      }
+      groups.push(cur.join("+"));
+      return groups.join(",");
+    }
 
     const VALID_KEYS = new Set([
       "ctrl", "cmd", "alt", "option", "shift",
@@ -913,6 +965,7 @@
       "esc", "escape", "tab", "enter", "return", "space", "backspace", "delete",
       "up", "down", "left", "right",
       "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+      ",",
     ]);
 
     function normalizeKey(val) {
@@ -924,6 +977,7 @@
 
     const pinnedKeys = [
       { label: "Esc", keys: "esc" },
+      { label: "Tab", keys: "tab" },
     ];
 
     function renderBar(name) {
@@ -951,7 +1005,7 @@
         btn.className = "shortcut-btn";
         btn.textContent = s.label;
         btn.setAttribute("aria-label", `Send ${s.label}`);
-        btn.addEventListener("click", () => { rawSend(keysToSequence(s.keys)); term.focus(); });
+        btn.addEventListener("click", () => { sendSequence(keysToSequence(s.keys)); term.focus(); });
         bar.appendChild(btn);
       }
 
@@ -983,7 +1037,7 @@
         btn.setAttribute("role", "listitem");
         btn.textContent = s.label;
         btn.addEventListener("click", () => {
-          rawSend(keysToSequence(s.keys));
+          sendSequence(keysToSequence(s.keys));
           closeModal(shortcutsOverlay);
         });
         shortcutsGrid.appendChild(btn);
@@ -1069,8 +1123,19 @@
     const saveBtn = document.getElementById("modal-save");
 
     function renderComposerTags(keys) {
-      keyComposer.querySelectorAll(".key-tag").forEach(t => t.remove());
+      keyComposer.querySelectorAll(".key-tag, .key-comma").forEach(t => t.remove());
       keys.forEach((k, i) => {
+        if (k === ",") {
+          const sep = document.createElement("span");
+          sep.className = "key-comma";
+          sep.textContent = ",";
+          sep.addEventListener("click", () => {
+            composedKeys = composedKeys.filter((_, idx) => idx !== i);
+            renderComposerTags(composedKeys);
+          });
+          keyComposer.insertBefore(sep, keyInput);
+          return;
+        }
         const tag = document.createElement("span");
         tag.className = "key-tag";
         tag.innerHTML = `${displayKey(k)}<button class="key-tag-remove" aria-label="Remove ${displayKey(k)}"><i class="ph ph-x"></i></button>`;
@@ -1247,6 +1312,30 @@
       location.href = "/login";
     });
     dismissModal(settingsOverlay);
+
+    // --- Dictation modal ---
+
+    const dictationOverlay = document.getElementById("dictation-overlay");
+    const dictationInput = document.getElementById("dictation-input");
+
+    function openDictationModal() {
+      dictationInput.value = "";
+      openModal(dictationOverlay);
+      dictationInput.focus();
+    }
+
+    function closeDictationModal() {
+      dictationInput.value = "";
+      closeModal(dictationOverlay);
+    }
+
+    document.getElementById("dictation-send").addEventListener("click", () => {
+      const text = dictationInput.value;
+      if (text) rawSend(text);
+      closeDictationModal();
+    });
+
+    dismissModal(dictationOverlay, closeDictationModal);
 
     // --- Global paste ---
 

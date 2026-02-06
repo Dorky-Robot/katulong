@@ -2,5 +2,13 @@
   {
     "label": "Ctrl+C",
     "keys": "ctrl+c"
+  },
+  {
+    "label": "Ctrl+C, Ctrl+C",
+    "keys": "ctrl+c,ctrl+c"
+  },
+  {
+    "label": "Cmd+K",
+    "keys": "cmd+k"
   }
 ]
