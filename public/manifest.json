@@ -1,6 +1,6 @@
 {
-  "name": "katulong",
-  "short_name": "katulong",
+  "name": "Katulong",
+  "short_name": "Katulong",
   "description": "Web terminal with tmux-style session management",
   "start_url": "/",
   "display": "standalone",
