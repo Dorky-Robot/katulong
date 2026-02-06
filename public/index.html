@@ -1025,6 +1025,7 @@
 
       const sessBtn = document.createElement("button");
       sessBtn.className = "session-btn";
+      sessBtn.tabIndex = -1;
       sessBtn.setAttribute("aria-label", `Session: ${name}`);
       sessBtn.innerHTML = '<i class="ph ph-terminal-window"></i> ';
       sessBtn.appendChild(document.createTextNode(name));
@@ -1038,6 +1039,7 @@
       for (const s of pinnedKeys) {
         const btn = document.createElement("button");
         btn.className = "shortcut-btn";
+        btn.tabIndex = -1;
         btn.textContent = s.label;
         btn.setAttribute("aria-label", `Send ${s.label}`);
         btn.addEventListener("click", () => { sendSequence(keysToSequence(s.keys)); term.focus(); });
@@ -1046,6 +1048,7 @@
 
       const kbBtn = document.createElement("button");
       kbBtn.className = "bar-icon-btn";
+      kbBtn.tabIndex = -1;
       kbBtn.setAttribute("aria-label", "Open shortcuts");
       kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
       kbBtn.addEventListener("click", () => openShortcutsPopup(shortcuts));
@@ -1053,6 +1056,7 @@
 
       const setBtn = document.createElement("button");
       setBtn.className = "bar-icon-btn";
+      setBtn.tabIndex = -1;
       setBtn.setAttribute("aria-label", "Settings");
       setBtn.innerHTML = '<i class="ph ph-gear"></i>';
       setBtn.addEventListener("click", () => openModal(settingsOverlay));
