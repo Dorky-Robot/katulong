@@ -698,6 +698,13 @@
       if ((ev.metaKey || ev.ctrlKey) && ev.key === "v") return false;
       if (ev.ctrlKey && ev.key === "c" && !term.hasSelection()) return true;
 
+      // Tab: prevent browser focus navigation, send \t to the shell
+      if (ev.key === "Tab" && !ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.type === "keydown") {
+        ev.preventDefault();
+        rawSend("\t");
+        return false;
+      }
+
       // Shift+Enter: quoted-insert (\x16) + newline (\x0a) — inserts a literal
       // newline without executing, works in zsh/bash with no shell config needed
       if (ev.shiftKey && ev.key === "Enter" && ev.type === "keydown") {
