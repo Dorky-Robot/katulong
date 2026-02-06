@@ -103,6 +103,25 @@
     }
     #scroll-bottom:active { opacity: 0.7; }
 
+    /* --- Swipe gesture zone --- */
+    #swipe-zone {
+      position: absolute; top: 0; left: 0; bottom: 0; width: 44px;
+      z-index: 2; touch-action: none;
+    }
+    @media (hover: hover) and (pointer: fine) {
+      #swipe-zone { display: none; }
+    }
+    .swipe-feedback {
+      position: fixed; width: 48px; height: 48px; border-radius: 50%;
+      background: var(--accent-active); opacity: 0; z-index: 10;
+      pointer-events: none; transform: translate(-50%, -50%) scale(0.5);
+      animation: swipe-pulse 0.35s ease-out forwards;
+    }
+    @keyframes swipe-pulse {
+      0% { opacity: 0.5; transform: translate(-50%, -50%) scale(0.5); }
+      100% { opacity: 0; transform: translate(-50%, -50%) scale(1.2); }
+    }
+
     /* --- Shortcut bar --- */
     #shortcut-bar {
       position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
@@ -362,7 +381,9 @@
   </style>
 </head>
 <body>
-  <div id="terminal-container"></div>
+  <div id="terminal-container">
+    <div id="swipe-zone" aria-hidden="true"></div>
+  </div>
   <button id="scroll-bottom" aria-label="Scroll to bottom">
     <i class="ph ph-caret-down"></i>
   </button>
@@ -749,7 +770,62 @@
     const termContainer = document.getElementById("terminal-container");
     const bar = document.getElementById("shortcut-bar");
 
-    document.getElementById("terminal-container").addEventListener("touchstart", () => term.focus());
+    // --- Swipe gesture system ---
+    const swipeZone = document.getElementById("swipe-zone");
+    let touchStartX = 0, touchStartY = 0, touchStartTime = 0, inSwipeZone = false;
+
+    termContainer.addEventListener("touchstart", (e) => {
+      const t = e.touches[0];
+      touchStartX = t.clientX;
+      touchStartY = t.clientY;
+      touchStartTime = Date.now();
+      const rect = termContainer.getBoundingClientRect();
+      inSwipeZone = (t.clientX - rect.left) < 44;
+      term.focus();
+    }, { passive: true });
+
+    termContainer.addEventListener("touchend", (e) => {
+      const t = e.changedTouches[0];
+      const dx = t.clientX - touchStartX;
+      const dy = t.clientY - touchStartY;
+      const elapsed = Date.now() - touchStartTime;
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
+
+      if (elapsed > 300) return;
+      if (absDx < 30 && absDy < 30) return;
+
+      if (absDx > absDy * 1.5) {
+        // Horizontal swipe — works anywhere
+        rawSend(dx > 0 ? "\x1b[C" : "\x1b[D");
+        showSwipeFeedback(t.clientX, t.clientY);
+      } else if (absDy > absDx * 1.5 && inSwipeZone) {
+        // Vertical swipe — only in left edge zone
+        rawSend(dy > 0 ? "\x1b[B" : "\x1b[A");
+        showSwipeFeedback(t.clientX, t.clientY);
+      }
+    }, { passive: true });
+
+    termContainer.addEventListener("touchcancel", () => {
+      touchStartX = touchStartY = touchStartTime = 0;
+      inSwipeZone = false;
+    }, { passive: true });
+
+    swipeZone.addEventListener("touchmove", (e) => {
+      const t = e.touches[0];
+      const dy = Math.abs(t.clientY - touchStartY);
+      const dx = Math.abs(t.clientX - touchStartX);
+      if (dy > dx) e.preventDefault();
+    }, { passive: false });
+
+    function showSwipeFeedback(x, y) {
+      const el = document.createElement("div");
+      el.className = "swipe-feedback";
+      el.style.left = x + "px";
+      el.style.top = y + "px";
+      document.body.appendChild(el);
+      el.addEventListener("animationend", () => el.remove());
+    }
 
     const ro = new ResizeObserver(() => {
       fit.fit();
@@ -845,10 +921,6 @@
 
     const pinnedKeys = [
       { label: "Esc", keys: "esc" },
-      { label: "\u2190", keys: "left" },
-      { label: "\u2192", keys: "right" },
-      { label: "\u2191", keys: "up" },
-      { label: "\u2193", keys: "down" },
     ];
 
     function renderBar(name) {
