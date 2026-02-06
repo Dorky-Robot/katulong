@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { createServer } from "node:http";
 import { createConnection } from "node:net";
 import { readFileSync, realpathSync, existsSync, watch } from "node:fs";
@@ -408,7 +409,7 @@ function sendToSession(sessionName, payload, { preferP2P = false } = {}) {
 function relayBroadcast(msg) {
   switch (msg.type) {
     case "output":
-      sendToSession(msg.session, { type: "output", data: msg.data }, { preferP2P: true });
+      sendToSession(msg.session, { type: "output", data: msg.data });
       break;
     case "exit":
       sendToSession(msg.session, { type: "exit", code: msg.code });
