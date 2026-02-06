@@ -53,4 +53,14 @@ test.describe("Keyboard handling", () => {
     // Plain Enter must NOT trigger the quoted-insert sequence
     expect(combined).not.toContain("\x16");
   });
+
+  test("Tab sends \\t to the terminal", async ({ page }) => {
+    await page.keyboard.press("Tab");
+    await page.waitForTimeout(300);
+
+    const inputs = await page.evaluate(() => window.__inputsSent);
+    expect(inputs.length).toBeGreaterThan(0);
+    const combined = inputs.join("");
+    expect(combined).toContain("\t");
+  });
 });

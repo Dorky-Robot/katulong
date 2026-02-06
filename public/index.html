@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
-  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1e1e2e">
   <title>Katulong</title>
@@ -416,6 +416,128 @@
       margin-bottom: 0.5rem;
     }
     .settings-logout-btn:active { opacity: 0.8; }
+
+    .settings-pair-btn {
+      width: 100%; height: 2.75rem; border: none; border-radius: 0.5rem;
+      background: var(--accent); color: var(--text); font-size: 0.875rem; cursor: pointer;
+      margin-bottom: 0.5rem;
+      display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+    }
+    .settings-pair-btn:active { background: var(--accent-active); }
+
+    /* --- Settings wizard views (inline pairing) --- */
+    .settings-views {
+      position: relative;
+      overflow: hidden;
+      transition: height 250ms ease;
+    }
+    .settings-view {
+      opacity: 0;
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      visibility: hidden;
+      transition: opacity 250ms ease, visibility 0ms 250ms;
+    }
+    .settings-view.active {
+      opacity: 1;
+      position: relative;
+      visibility: visible;
+      transition: opacity 250ms ease 50ms, visibility 0ms 0ms;
+    }
+    .wizard-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding-top: 1rem;
+      margin-bottom: 0.875rem;
+    }
+    .wizard-header h3 {
+      margin: 0;
+      padding: 0;
+    }
+    .settings-back-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.25rem;
+      cursor: pointer;
+      padding: 0.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 0.375rem;
+    }
+    .settings-back-btn:active { color: var(--text); }
+    .wizard-step-dots {
+      display: flex;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .wizard-step-dots .step-dot {
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 50%;
+      background: var(--border);
+      transition: background 0.2s;
+    }
+    .wizard-step-dots .step-dot.active { background: var(--accent-active); }
+    .wizard-step-dots .step-dot.done { background: var(--success); }
+    .wizard-subtitle {
+      color: var(--text-muted);
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      margin-bottom: 1.25rem;
+      text-align: center;
+    }
+    .wizard-qr-container {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 1rem;
+      min-height: 200px;
+      align-items: center;
+    }
+    .wizard-qr-container canvas {
+      border-radius: 0.5rem;
+    }
+    .wizard-pin {
+      font-size: 2rem;
+      font-weight: 500;
+      letter-spacing: 0.3em;
+      color: var(--text);
+      margin-bottom: 0.5rem;
+      text-align: center;
+    }
+    .wizard-countdown {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-bottom: 1rem;
+      text-align: center;
+    }
+    .wizard-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 2.75rem;
+      border: none;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      font-family: var(--font-mono);
+      font-weight: 500;
+      cursor: pointer;
+      margin-bottom: 1rem;
+    }
+    .wizard-btn:active { opacity: 0.8; }
+    .wizard-btn-primary { background: var(--accent-active); color: #1e1e2e; }
+    .wizard-btn-success { background: var(--success); color: #1e1e2e; }
+    .wizard-success-icon {
+      font-size: 3rem;
+      margin: 1rem 0;
+      color: var(--success);
+      text-align: center;
+    }
+
   </style>
 </head>
 <body>
@@ -509,23 +631,80 @@
   <!-- Settings -->
   <div id="settings-overlay" class="modal-overlay" role="dialog" aria-label="Settings">
     <div id="settings-panel" class="modal-panel">
-      <h3>Settings</h3>
-      <div class="settings-row">
-        <span class="settings-label">Theme</span>
-        <div class="theme-toggle" role="radiogroup" aria-label="Theme selection">
-          <button data-theme-val="auto" role="radio" aria-checked="true">
-            <i class="ph ph-circle-half"></i> Auto
-          </button>
-          <button data-theme-val="light" role="radio" aria-checked="false">
-            <i class="ph ph-sun"></i> Light
-          </button>
-          <button data-theme-val="dark" role="radio" aria-checked="false">
-            <i class="ph ph-moon"></i> Dark
-          </button>
+      <div id="settings-views" class="settings-views">
+        <!-- View 0: Main settings -->
+        <div class="settings-view active" id="settings-view-main">
+          <h3>Settings</h3>
+          <div class="settings-row">
+            <span class="settings-label">Theme</span>
+            <div class="theme-toggle" role="radiogroup" aria-label="Theme selection">
+              <button data-theme-val="auto" role="radio" aria-checked="true">
+                <i class="ph ph-circle-half"></i> Auto
+              </button>
+              <button data-theme-val="light" role="radio" aria-checked="false">
+                <i class="ph ph-sun"></i> Light
+              </button>
+              <button data-theme-val="dark" role="radio" aria-checked="false">
+                <i class="ph ph-moon"></i> Dark
+              </button>
+            </div>
+          </div>
+          <div class="settings-footer">
+            <button class="settings-pair-btn" id="settings-pair">
+              <i class="ph ph-qr-code"></i> Pair Device
+            </button>
+            <button class="settings-logout-btn" id="settings-logout">Log Out</button>
+          </div>
         </div>
-      </div>
-      <div class="settings-footer">
-        <button class="settings-logout-btn" id="settings-logout">Log Out</button>
+
+        <!-- View 1: Trust / install certificate -->
+        <div class="settings-view" id="settings-view-trust">
+          <div class="wizard-header">
+            <button class="settings-back-btn" id="wizard-back-trust" aria-label="Back to settings">
+              <i class="ph ph-arrow-left"></i>
+            </button>
+            <h3>Install Certificate</h3>
+          </div>
+          <div class="wizard-step-dots">
+            <span class="step-dot active"></span>
+            <span class="step-dot"></span>
+            <span class="step-dot"></span>
+          </div>
+          <p class="wizard-subtitle">Scan this QR code with your phone to install the trust certificate.</p>
+          <div class="wizard-qr-container" id="wizard-trust-qr"></div>
+          <button class="wizard-btn wizard-btn-primary" id="wizard-next-pair">Next</button>
+        </div>
+
+        <!-- View 2: Pair / rotating QR + PIN -->
+        <div class="settings-view" id="settings-view-pair">
+          <div class="wizard-header">
+            <button class="settings-back-btn" id="wizard-back-pair" aria-label="Back to certificate step">
+              <i class="ph ph-arrow-left"></i>
+            </button>
+            <h3>Pair Device</h3>
+          </div>
+          <div class="wizard-step-dots">
+            <span class="step-dot done"></span>
+            <span class="step-dot active"></span>
+            <span class="step-dot"></span>
+          </div>
+          <p class="wizard-subtitle">Scan the QR code and enter the PIN on your phone.</p>
+          <div class="wizard-qr-container" id="wizard-pair-qr"></div>
+          <div class="wizard-pin" id="wizard-pair-pin"></div>
+          <div class="wizard-countdown" id="wizard-pair-countdown"></div>
+        </div>
+
+        <!-- View 3: Success -->
+        <div class="settings-view" id="settings-view-success">
+          <div class="wizard-step-dots" style="margin-top:1rem">
+            <span class="step-dot done"></span>
+            <span class="step-dot done"></span>
+            <span class="step-dot active"></span>
+          </div>
+          <div class="wizard-success-icon">&#10003;</div>
+          <p class="wizard-subtitle">Device paired successfully.</p>
+          <button class="wizard-btn wizard-btn-success" id="wizard-done">Done</button>
+        </div>
       </div>
     </div>
   </div>
@@ -693,10 +872,28 @@
       }
     }
 
+    // Intercept Tab at document level (capture phase) to prevent browser
+    // focus navigation and send \t to the PTY.
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Tab" || ev.ctrlKey || ev.altKey || ev.metaKey) return;
+      const active = document.activeElement;
+      const inTerminal = active && (
+        active.classList.contains("xterm-helper-textarea") ||
+        active.closest("#terminal-container")
+      );
+      if (!inTerminal) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      rawSend(ev.shiftKey ? "\x1b[Z" : "\t");
+    }, true);
+
     term.attachCustomKeyEventHandler((ev) => {
       if (ev.metaKey && ev.key === "c" && term.hasSelection()) return false;
       if ((ev.metaKey || ev.ctrlKey) && ev.key === "v") return false;
       if (ev.ctrlKey && ev.key === "c" && !term.hasSelection()) return true;
+
+      // Tab handled by capture-phase listener above
+      if (ev.key === "Tab") return false;
 
       // Shift+Enter: quoted-insert (\x16) + newline (\x0a) — inserts a literal
       // newline without executing, works in zsh/bash with no shell config needed
@@ -717,7 +914,13 @@
       return true;
     });
 
-    term.onData((data) => rawSend(data));
+    term.onData((data) => {
+      // Filter focus-reporting sequences (CSI I / CSI O) that xterm.js
+      // emits when the browser tab gains/loses focus. These leak into
+      // CLI apps like Claude Code as garbage input (issue #10375).
+      const filtered = data.replace(/\x1b\[I/g, "").replace(/\x1b\[O/g, "");
+      if (filtered) rawSend(filtered);
+    });
 
     function destroyP2P() {
       clearTimeout(p2pRetryTimer);
@@ -806,6 +1009,11 @@
           console.log("[P2P] Server reports DataChannel closed");
           p2pConnected = false;
           updateP2PIndicator();
+        } else if (msg.type === "pair-complete") {
+          if (wizardActivePairCode && msg.code === wizardActivePairCode) {
+            stopWizardPairing();
+            switchSettingsView(viewSuccess);
+          }
         } else if (msg.type === "reload") {
           location.reload();
         } else if (msg.type === "exit") {
@@ -1025,6 +1233,7 @@
 
       const sessBtn = document.createElement("button");
       sessBtn.className = "session-btn";
+      sessBtn.tabIndex = -1;
       sessBtn.setAttribute("aria-label", `Session: ${name}`);
       sessBtn.innerHTML = '<i class="ph ph-terminal-window"></i> ';
       sessBtn.appendChild(document.createTextNode(name));
@@ -1038,6 +1247,7 @@
       for (const s of pinnedKeys) {
         const btn = document.createElement("button");
         btn.className = "shortcut-btn";
+        btn.tabIndex = -1;
         btn.textContent = s.label;
         btn.setAttribute("aria-label", `Send ${s.label}`);
         btn.addEventListener("click", () => { sendSequence(keysToSequence(s.keys)); term.focus(); });
@@ -1046,6 +1256,7 @@
 
       const kbBtn = document.createElement("button");
       kbBtn.className = "bar-icon-btn";
+      kbBtn.tabIndex = -1;
       kbBtn.setAttribute("aria-label", "Open shortcuts");
       kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
       kbBtn.addEventListener("click", () => openShortcutsPopup(shortcuts));
@@ -1053,6 +1264,7 @@
 
       const setBtn = document.createElement("button");
       setBtn.className = "bar-icon-btn";
+      setBtn.tabIndex = -1;
       setBtn.setAttribute("aria-label", "Settings");
       setBtn.innerHTML = '<i class="ph ph-gear"></i>';
       setBtn.addEventListener("click", () => openModal(settingsOverlay));
@@ -1356,7 +1568,187 @@
       await fetch("/auth/logout", { method: "POST" });
       location.href = "/login";
     });
-    dismissModal(settingsOverlay);
+    dismissModal(settingsOverlay, () => { cleanupWizard(); closeModal(settingsOverlay); });
+
+    // --- Inline pairing wizard ---
+
+    const settingsViews = document.getElementById("settings-views");
+    const viewMain = document.getElementById("settings-view-main");
+    const viewTrust = document.getElementById("settings-view-trust");
+    const viewPair = document.getElementById("settings-view-pair");
+    const viewSuccess = document.getElementById("settings-view-success");
+
+    let wizardPairRefreshTimer = 0;
+    let wizardPairCountdownTimer = 0;
+    let wizardActivePairCode = null;
+    let connectInfoCache = null;
+    let qrLibLoaded = false;
+
+    function switchSettingsView(toView) {
+      const current = settingsViews.querySelector(".settings-view.active");
+      if (current === toView) return;
+
+      // Measure target height
+      toView.style.position = "relative";
+      toView.style.visibility = "hidden";
+      toView.style.opacity = "0";
+      toView.classList.add("active");
+      const targetHeight = toView.scrollHeight;
+      toView.classList.remove("active");
+      toView.style.position = "";
+      toView.style.visibility = "";
+      toView.style.opacity = "";
+
+      // Animate wrapper height
+      settingsViews.style.height = (current ? current.scrollHeight : 0) + "px";
+      requestAnimationFrame(() => {
+        settingsViews.style.height = targetHeight + "px";
+      });
+
+      // Cross-fade
+      if (current) current.classList.remove("active");
+      toView.classList.add("active");
+
+      // Clear explicit height after transition
+      const onEnd = () => {
+        settingsViews.style.height = "";
+        settingsViews.removeEventListener("transitionend", onEnd);
+      };
+      settingsViews.addEventListener("transitionend", onEnd);
+    }
+
+    async function loadQRLib() {
+      if (qrLibLoaded) return;
+      if (typeof QRCode !== "undefined") { qrLibLoaded = true; return; }
+      await new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = "https://cdn.jsdelivr.net/npm/qrcode@1/build/qrcode.min.js";
+        s.onload = () => { qrLibLoaded = true; resolve(); };
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+
+    async function getConnectInfo() {
+      if (connectInfoCache) return connectInfoCache;
+      const res = await fetch("/connect/info");
+      connectInfoCache = await res.json();
+      return connectInfoCache;
+    }
+
+    async function renderTrustQR() {
+      const container = document.getElementById("wizard-trust-qr");
+      container.innerHTML = "";
+      try {
+        await loadQRLib();
+        const info = await getConnectInfo();
+        if (info.trustUrl) {
+          const isDark = getEffectiveTheme() === "dark";
+          QRCode.toCanvas(info.trustUrl, {
+            width: 200, margin: 2,
+            color: { dark: isDark ? "#cdd6f4" : "#4c4f69", light: isDark ? "#1e1e2e" : "#eff1f5" },
+          }, (err, canvas) => {
+            if (!err) container.appendChild(canvas);
+          });
+        }
+      } catch { /* ignore */ }
+    }
+
+    function stopWizardPairing() {
+      clearTimeout(wizardPairRefreshTimer);
+      clearInterval(wizardPairCountdownTimer);
+      wizardActivePairCode = null;
+    }
+
+    async function refreshWizardPairCode() {
+      try {
+        const res = await fetch("/auth/pair/start", { method: "POST" });
+        if (!res.ok) return;
+        const data = await res.json();
+
+        wizardActivePairCode = data.code;
+
+        // Render QR
+        const qrContainer = document.getElementById("wizard-pair-qr");
+        qrContainer.innerHTML = "";
+        if (data.url) {
+          await loadQRLib();
+          const isDark = getEffectiveTheme() === "dark";
+          QRCode.toCanvas(data.url, {
+            width: 200, margin: 2,
+            color: { dark: isDark ? "#cdd6f4" : "#4c4f69", light: isDark ? "#1e1e2e" : "#eff1f5" },
+          }, (err, canvas) => {
+            if (!err) qrContainer.appendChild(canvas);
+          });
+        }
+
+        // Show PIN
+        document.getElementById("wizard-pair-pin").textContent = data.pin;
+
+        // Countdown
+        clearInterval(wizardPairCountdownTimer);
+        const countdownEl = document.getElementById("wizard-pair-countdown");
+        function updateCountdown() {
+          const left = Math.max(0, Math.ceil((data.expiresAt - Date.now()) / 1000));
+          countdownEl.textContent = left > 0 ? `Refreshing in ${left}s` : "Refreshing\u2026";
+        }
+        updateCountdown();
+        wizardPairCountdownTimer = setInterval(updateCountdown, 1000);
+
+        // Schedule refresh ~25s (5s before expiry)
+        const refreshIn = Math.max(1000, (data.expiresAt - Date.now()) - 5000);
+        wizardPairRefreshTimer = setTimeout(() => {
+          if (viewPair.classList.contains("active")) refreshWizardPairCode();
+        }, refreshIn);
+      } catch { /* ignore */ }
+    }
+
+    async function startWizardPairing() {
+      stopWizardPairing();
+      await refreshWizardPairCode();
+    }
+
+    function cleanupWizard() {
+      stopWizardPairing();
+      // Reset to main view instantly (no transition)
+      settingsViews.querySelectorAll(".settings-view").forEach(v => v.classList.remove("active"));
+      viewMain.classList.add("active");
+      settingsViews.style.height = "";
+      // Clear wizard QR containers
+      document.getElementById("wizard-trust-qr").innerHTML = "";
+      document.getElementById("wizard-pair-qr").innerHTML = "";
+      document.getElementById("wizard-pair-pin").textContent = "";
+      document.getElementById("wizard-pair-countdown").textContent = "";
+    }
+
+    // Event: Pair Device → step 1 (trust)
+    document.getElementById("settings-pair").addEventListener("click", async () => {
+      switchSettingsView(viewTrust);
+      await renderTrustQR();
+    });
+
+    // Event: Next → step 2 (pair)
+    document.getElementById("wizard-next-pair").addEventListener("click", () => {
+      switchSettingsView(viewPair);
+      startWizardPairing();
+    });
+
+    // Event: Back from trust → main
+    document.getElementById("wizard-back-trust").addEventListener("click", () => {
+      switchSettingsView(viewMain);
+    });
+
+    // Event: Back from pair → trust
+    document.getElementById("wizard-back-pair").addEventListener("click", () => {
+      stopWizardPairing();
+      switchSettingsView(viewTrust);
+    });
+
+    // Event: Done → cleanup + close
+    document.getElementById("wizard-done").addEventListener("click", () => {
+      cleanupWizard();
+      closeModal(settingsOverlay);
+    });
 
     // --- Dictation modal ---
 

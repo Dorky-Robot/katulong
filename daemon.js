@@ -48,7 +48,12 @@ function spawnSession(name, cols = 120, rows = 40) {
     cols,
     rows,
     cwd: process.env.HOME,
-    env: { ...process.env, TERM: "xterm-256color" },
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      TERM_PROGRAM: "katulong",
+      COLORTERM: "truecolor",
+    },
   });
 
   const session = { pty: p, outputBuffer: [], bufferBytes: 0, alive: true };

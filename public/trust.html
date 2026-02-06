@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1e1e2e">
+  <title>Katulong — Trust Certificate</title>
+  <link rel="icon" href="/favicon.ico" sizes="32x32">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --font-mono: 'JetBrains Mono', monospace;
+      --bg: #1e1e2e;
+      --bg-surface: #313244;
+      --bg-input: #1e1e2e;
+      --border: #45475a;
+      --text: #cdd6f4;
+      --text-muted: #a6adc8;
+      --text-dim: #6c7086;
+      --accent: #45475a;
+      --accent-active: #cba6f7;
+      --success: #a6e3a1;
+      --danger: #f38ba8;
+      --focus-ring: rgba(137,180,250,0.5);
+    }
+
+    [data-theme="light"] {
+      --bg: #eff1f5;
+      --bg-surface: #ffffff;
+      --bg-input: #e6e9ef;
+      --border: #ccd0da;
+      --text: #4c4f69;
+      --text-muted: #6c6f85;
+      --text-dim: #9ca0b0;
+      --accent: #ccd0da;
+      --accent-active: #8839ef;
+      --success: #40a02b;
+      --danger: #d20f39;
+      --focus-ring: rgba(30,102,245,0.4);
+    }
+
+    @media (prefers-color-scheme: light) {
+      [data-theme="auto"] {
+        --bg: #eff1f5;
+        --bg-surface: #ffffff;
+        --bg-input: #e6e9ef;
+        --border: #ccd0da;
+        --text: #4c4f69;
+        --text-muted: #6c6f85;
+        --text-dim: #9ca0b0;
+        --accent: #ccd0da;
+        --accent-active: #8839ef;
+        --success: #40a02b;
+        --danger: #d20f39;
+        --focus-ring: rgba(30,102,245,0.4);
+      }
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      min-height: 100%; background: var(--bg); color: var(--text);
+      font-family: var(--font-mono);
+    }
+
+    body {
+      display: flex; align-items: center; justify-content: center;
+      padding: 1rem;
+    }
+
+    .trust-card {
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 0.75rem; padding: 2rem; width: min(440px, 100%);
+    }
+
+    h1 { font-size: 1.25rem; font-weight: 500; margin-bottom: 0.25rem; }
+
+    .subtitle {
+      color: var(--text-muted); font-size: 0.8125rem; margin-bottom: 1.5rem;
+    }
+
+    .download-btn {
+      display: flex; align-items: center; justify-content: center;
+      width: 100%; height: 2.75rem; border: none; border-radius: 0.5rem;
+      background: var(--accent-active); color: #1e1e2e;
+      font-size: 0.875rem; font-family: var(--font-mono); font-weight: 500;
+      cursor: pointer; text-decoration: none; margin-bottom: 1rem;
+    }
+    .download-btn:active { opacity: 0.8; }
+
+    .steps {
+      list-style: none; padding: 0; margin: 0 0 1.5rem;
+      color: var(--text-muted); font-size: 0.8125rem; line-height: 1.7;
+    }
+    .steps li { padding: 0.2rem 0; }
+    .steps li::before {
+      content: attr(data-step) ". ";
+      color: var(--text-dim);
+    }
+    .steps strong { color: var(--text); font-weight: 500; }
+
+    .platform-section { display: none; }
+    .platform-section.active { display: block; }
+
+    .success-banner {
+      display: none; padding: 0.75rem 1rem; border-radius: 0.5rem;
+      background: rgba(166, 227, 161, 0.15); border: 1px solid var(--success);
+      color: var(--success); font-size: 0.8125rem; margin-bottom: 1rem;
+      text-align: center;
+    }
+    .success-banner.visible { display: block; }
+
+    .note {
+      color: var(--text-dim); font-size: 0.75rem; line-height: 1.5;
+      margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);
+    }
+
+    .open-btn {
+      display: none; align-items: center; justify-content: center;
+      width: 100%; height: 2.75rem; border: none; border-radius: 0.5rem;
+      background: var(--success); color: #1e1e2e;
+      font-size: 0.875rem; font-family: var(--font-mono); font-weight: 500;
+      cursor: pointer; text-decoration: none; margin-bottom: 1rem;
+    }
+    .open-btn.visible { display: flex; }
+    .open-btn:active { opacity: 0.8; }
+  </style>
+</head>
+<body>
+  <div class="trust-card">
+    <h1>Trust Certificate</h1>
+    <p class="subtitle">Install the Katulong CA certificate to enable secure HTTPS access on your local network.</p>
+
+    <div class="success-banner" id="success-banner">
+      Certificate is already trusted. You're all set.
+    </div>
+
+    <a class="open-btn" id="open-btn" href="#">Open Katulong (HTTPS)</a>
+
+    <!-- iOS -->
+    <div class="platform-section" id="ios-section">
+      <a class="download-btn" href="/connect/trust/ca.mobileconfig" id="ios-download">Download Profile</a>
+      <ol class="steps">
+        <li data-step="1">Tap <strong>Download Profile</strong> above</li>
+        <li data-step="2">Open <strong>Settings</strong> > <strong>General</strong> > <strong>VPN & Device Management</strong></li>
+        <li data-step="3">Tap the <strong>Katulong Local CA</strong> profile and install it</li>
+        <li data-step="4">Go to <strong>Settings</strong> > <strong>General</strong> > <strong>About</strong> > <strong>Certificate Trust Settings</strong></li>
+        <li data-step="5">Enable full trust for <strong>Katulong Local CA</strong></li>
+      </ol>
+    </div>
+
+    <!-- Android -->
+    <div class="platform-section" id="android-section">
+      <a class="download-btn" href="/connect/trust/ca.crt" id="android-download">Download Certificate</a>
+      <ol class="steps">
+        <li data-step="1">Tap <strong>Download Certificate</strong> above</li>
+        <li data-step="2">Open <strong>Settings</strong> > <strong>Security</strong> > <strong>Encryption & credentials</strong></li>
+        <li data-step="3">Tap <strong>Install a certificate</strong> > <strong>CA certificate</strong></li>
+        <li data-step="4">Select the downloaded <strong>ca.crt</strong> file</li>
+      </ol>
+    </div>
+
+    <!-- Desktop -->
+    <div class="platform-section" id="desktop-section">
+      <a class="download-btn" href="/connect/trust/ca.crt" id="desktop-download">Download CA Certificate</a>
+      <ol class="steps" id="desktop-steps-mac">
+        <li data-step="1">Download the certificate above</li>
+        <li data-step="2">Double-click <strong>ca.crt</strong> to open in Keychain Access</li>
+        <li data-step="3">Double-click the certificate, expand <strong>Trust</strong>, set to <strong>Always Trust</strong></li>
+      </ol>
+      <ol class="steps" id="desktop-steps-other" style="display:none">
+        <li data-step="1">Download the certificate above</li>
+        <li data-step="2">Add it to your system's trusted certificate store</li>
+      </ol>
+    </div>
+
+    <p class="note">
+      This is a private certificate generated by your Katulong instance. It only secures connections on your local network.
+    </p>
+  </div>
+
+  <script>
+    var httpsUrl = document.body.dataset.httpsUrl || '';
+    var ua = navigator.userAgent || '';
+
+    // Platform detection
+    if (/iPad|iPhone|iPod/.test(ua)) {
+      document.getElementById('ios-section').classList.add('active');
+    } else if (/Android/.test(ua)) {
+      document.getElementById('android-section').classList.add('active');
+    } else {
+      document.getElementById('desktop-section').classList.add('active');
+      // Show macOS-specific or generic steps
+      if (!/Mac/.test(ua)) {
+        document.getElementById('desktop-steps-mac').style.display = 'none';
+        document.getElementById('desktop-steps-other').style.display = '';
+      }
+    }
+
+    // Check if cert is already trusted
+    if (httpsUrl) {
+      var openBtn = document.getElementById('open-btn');
+      openBtn.href = httpsUrl;
+
+      fetch(httpsUrl + '/auth/status', { mode: 'no-cors' })
+        .then(function() {
+          document.getElementById('success-banner').classList.add('visible');
+          openBtn.classList.add('visible');
+        })
+        .catch(function() {
+          // Not trusted yet — instructions are shown
+        });
+    }
+  </script>
+</body>
+</html>

@@ -10,7 +10,7 @@ test.describe("Settings modal", () => {
 
   test("Opens when gear icon is clicked", async ({ page }) => {
     // beforeEach already verified this
-    await expect(page.locator("#settings-panel h3")).toHaveText("Settings");
+    await expect(page.locator("#settings-view-main h3")).toHaveText("Settings");
   });
 
   test("Theme toggle has Auto, Light, and Dark buttons", async ({ page }) => {
