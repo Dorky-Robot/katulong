@@ -455,9 +455,18 @@
     import { FitAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm";
     import { WebLinksAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/+esm";
 
+    // --- Modal helpers ---
+
+    function openModal(overlay) { overlay.classList.add("visible"); }
+    function closeModal(overlay) { overlay.classList.remove("visible"); term.focus(); }
+    function dismissModal(overlay, onClose) {
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) onClose ? onClose() : closeModal(overlay);
+      });
+    }
+
     // --- Theme ---
 
-    // Catppuccin Mocha
     const DARK_THEME = {
       background: "#1e1e2e", foreground: "#cdd6f4", cursor: "#f5e0dc",
       selectionBackground: "rgba(137,180,250,0.3)",
@@ -470,7 +479,6 @@
       cyan: "#94e2d5", brightCyan: "#94e2d5",
       white: "#bac2de", brightWhite: "#a6adc8",
     };
-    // Catppuccin Latte
     const LIGHT_THEME = {
       background: "#eff1f5", foreground: "#4c4f69", cursor: "#dc8a78",
       selectionBackground: "rgba(30,102,245,0.2)",
@@ -486,10 +494,9 @@
 
     function getEffectiveTheme() {
       const pref = localStorage.getItem("theme") || "auto";
-      if (pref === "auto") {
-        return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-      }
-      return pref;
+      return pref === "auto"
+        ? (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+        : pref;
     }
 
     function applyTheme(pref) {
@@ -497,10 +504,8 @@
       document.documentElement.setAttribute("data-theme", pref);
       const effective = getEffectiveTheme();
       term.options.theme = effective === "light" ? LIGHT_THEME : DARK_THEME;
-      // Update browser chrome color
       const metaTheme = document.querySelector('meta[name="theme-color"]');
       if (metaTheme) metaTheme.content = effective === "light" ? "#eff1f5" : "#1e1e2e";
-      // Update toggle buttons
       document.querySelectorAll(".theme-toggle button").forEach(btn => {
         const active = btn.dataset.themeVal === pref;
         btn.classList.toggle("active", active);
@@ -508,16 +513,22 @@
       });
     }
 
-    // --- Session name from URL ---
-    const urlParams = new URLSearchParams(window.location.search);
-    let sessionName = urlParams.get("s") || "default";
+    // --- State ---
+
+    let sessionName = new URLSearchParams(location.search).get("s") || "default";
+    let shortcuts = [];
+    let composedKeys = [];
+    let ws;
+    let reconnectDelay = 1000;
+
     document.title = sessionName;
 
-    const initialTheme = getEffectiveTheme();
+    // --- Terminal setup ---
+
     const term = new Terminal({
       fontSize: 14,
       fontFamily: "'JetBrains Mono', monospace",
-      theme: initialTheme === "light" ? LIGHT_THEME : DARK_THEME,
+      theme: getEffectiveTheme() === "light" ? LIGHT_THEME : DARK_THEME,
       cursorBlink: true,
       scrollback: 10000,
       convertEol: true,
@@ -527,8 +538,7 @@
     term.loadAddon(new WebLinksAddon());
     term.open(document.getElementById("terminal-container"));
 
-    // Disable mobile autocorrect/suggestions on xterm's hidden textarea.
-    // Android GBoard ignores most attrs — we throw everything at it.
+    // Disable mobile autocorrect/suggestions on xterm's hidden textarea
     function disableSuggestions(el) {
       el.setAttribute("autocorrect", "off");
       el.setAttribute("autocapitalize", "none");
@@ -537,7 +547,6 @@
       el.setAttribute("data-gramm", "false");
       el.setAttribute("data-form-type", "other");
       el.setAttribute("data-lpignore", "true");
-      // Set properties directly (some keyboards check these, not just attributes)
       el.autocomplete = "new-password";
       el.autocapitalize = "none";
       el.spellcheck = false;
@@ -547,34 +556,25 @@
       if (ta) disableSuggestions(ta);
     }
     patchTextarea();
-    // Re-apply if xterm recreates the textarea
     new MutationObserver(patchTextarea).observe(
       document.getElementById("terminal-container"),
       { childList: true, subtree: true }
     );
-    // Also cancel any IME composition that Android keyboards try to start
     term.textarea?.addEventListener("compositionstart", (e) => e.preventDefault());
     document.addEventListener("compositionstart", (e) => {
       if (e.target?.classList?.contains("xterm-helper-textarea")) e.preventDefault();
     }, true);
     document.fonts.ready.then(() => fit.fit());
 
-    // Apply stored theme
     applyTheme(localStorage.getItem("theme") || "auto");
-
-    // Listen for system theme changes (for auto mode)
     window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
-      const pref = localStorage.getItem("theme") || "auto";
-      if (pref === "auto") applyTheme("auto");
+      if ((localStorage.getItem("theme") || "auto") === "auto") applyTheme("auto");
     });
 
-    let ws;
-    let reconnectDelay = 1000;
+    // --- WebSocket ---
 
     function rawSend(data) {
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: "input", data }));
-      }
+      if (ws?.readyState === 1) ws.send(JSON.stringify({ type: "input", data }));
     }
 
     term.attachCustomKeyEventHandler((ev) => {
@@ -583,19 +583,13 @@
       if (ev.ctrlKey && ev.key === "c" && !term.hasSelection()) return true;
 
       if (ev.metaKey && ev.type === "keydown") {
-        const seq = {
-          "Backspace": "\x15", "ArrowLeft": "\x01", "ArrowRight": "\x05", "k": "\x0b",
-        }[ev.key];
+        const seq = { Backspace: "\x15", ArrowLeft: "\x01", ArrowRight: "\x05", k: "\x0b" }[ev.key];
         if (seq) { rawSend(seq); return false; }
       }
-
       if (ev.altKey && ev.type === "keydown") {
-        const seq = {
-          "Backspace": "\x1b\x7f", "ArrowLeft": "\x1bb", "ArrowRight": "\x1bf",
-        }[ev.key];
+        const seq = { Backspace: "\x1b\x7f", ArrowLeft: "\x1bb", ArrowRight: "\x1bf" }[ev.key];
         if (seq) { rawSend(seq); return false; }
       }
-
       return true;
     });
 
@@ -627,7 +621,7 @@
           const url = new URL(window.location);
           url.searchParams.set("s", sessionName);
           history.replaceState(null, "", url);
-          renderBar();
+          renderBar(sessionName);
         }
       };
 
@@ -635,90 +629,26 @@
         setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 10000);
       };
-
       ws.onerror = () => ws.close();
     }
 
-    document.getElementById("terminal-container").addEventListener("touchstart", () => {
-      term.focus();
-    });
+    // --- Layout ---
+
+    const termContainer = document.getElementById("terminal-container");
+    const bar = document.getElementById("shortcut-bar");
+
+    document.getElementById("terminal-container").addEventListener("touchstart", () => term.focus());
 
     const ro = new ResizeObserver(() => {
       fit.fit();
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-      }
+      if (ws?.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
     });
-    ro.observe(document.getElementById("terminal-container"));
+    ro.observe(termContainer);
 
-    const scrollBtn = document.getElementById("scroll-bottom");
-    const viewport = document.querySelector(".xterm-viewport");
-    if (viewport) {
-      viewport.addEventListener("scroll", () => {
-        const atBottom = viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 10;
-        scrollBtn.style.display = atBottom ? "none" : "flex";
-      });
-    }
-    scrollBtn.addEventListener("click", () => {
-      term.scrollToBottom();
-      scrollBtn.style.display = "none";
-    });
-
-    // --- Shortcut bar ---
-
-    function keysToSequence(keys) {
-      const parts = keys.toLowerCase().trim().split("+");
-      const mods = new Set();
-      let base = null;
-
-      for (const p of parts) {
-        if (["ctrl", "cmd", "alt", "shift"].includes(p)) {
-          mods.add(p);
-        } else {
-          base = p;
-        }
-      }
-
-      const named = {
-        esc: "\x1b", tab: "\t", enter: "\r", space: " ",
-        backspace: "\x7f", delete: "\x1b[3~",
-        up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D",
-      };
-
-      if (!base && mods.size > 0) return "";
-      if (mods.has("ctrl") && base && base.length === 1 && base >= "a" && base <= "z") {
-        return String.fromCharCode(base.charCodeAt(0) - 96);
-      }
-      if (mods.has("ctrl")) {
-        const m = { backspace: "\x08", space: "\x00" };
-        if (m[base]) return m[base];
-      }
-      if (mods.has("cmd")) {
-        const m = { backspace: "\x15", left: "\x01", right: "\x05", k: "\x0b" };
-        if (m[base]) return m[base];
-      }
-      if (mods.has("alt")) {
-        const m = { backspace: "\x1b\x7f", left: "\x1bb", right: "\x1bf" };
-        if (m[base]) return m[base];
-        if (base && base.length === 1) return "\x1b" + base;
-      }
-      if (mods.has("shift") && base && base.length === 1) return base.toUpperCase();
-      if (named[base]) return named[base];
-      if (base && base.length === 1) return base;
-      return keys;
-    }
-
-    let shortcuts = [];
-    const bar = document.getElementById("shortcut-bar");
-    const editOverlay = document.getElementById("edit-overlay");
-    const editList = document.getElementById("edit-list");
-
-    const termContainer = document.getElementById("terminal-container");
     function resizeToViewport() {
       const vv = window.visualViewport;
       const h = vv ? vv.height : window.innerHeight;
-      const top = vv ? vv.offsetTop : 0;
-      bar.style.top = top + "px";
+      bar.style.top = (vv ? vv.offsetTop : 0) + "px";
       termContainer.style.height = (h - 44) + "px";
     }
     resizeToViewport();
@@ -728,6 +658,79 @@
     }
     window.addEventListener("resize", resizeToViewport);
 
+    const scrollBtn = document.getElementById("scroll-bottom");
+    const viewport = document.querySelector(".xterm-viewport");
+    if (viewport) {
+      viewport.addEventListener("scroll", () => {
+        scrollBtn.style.display =
+          viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 10 ? "none" : "flex";
+      });
+    }
+    scrollBtn.addEventListener("click", () => { term.scrollToBottom(); scrollBtn.style.display = "none"; });
+
+    // --- Pure: key sequence mapping ---
+
+    function keysToSequence(keys) {
+      const parts = keys.toLowerCase().trim().split("+");
+      const mods = new Set();
+      let base = null;
+
+      for (const p of parts) {
+        if (["ctrl", "cmd", "alt", "shift"].includes(p)) mods.add(p);
+        else base = p;
+      }
+
+      const named = {
+        esc: "\x1b", tab: "\t", enter: "\r", space: " ",
+        backspace: "\x7f", delete: "\x1b[3~",
+        up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D",
+      };
+
+      if (!base && mods.size > 0) return "";
+      if (mods.has("ctrl") && base?.length === 1 && base >= "a" && base <= "z")
+        return String.fromCharCode(base.charCodeAt(0) - 96);
+      if (mods.has("ctrl")) { const m = { backspace: "\x08", space: "\x00" }; if (m[base]) return m[base]; }
+      if (mods.has("cmd"))  { const m = { backspace: "\x15", left: "\x01", right: "\x05", k: "\x0b" }; if (m[base]) return m[base]; }
+      if (mods.has("alt"))  {
+        const m = { backspace: "\x1b\x7f", left: "\x1bb", right: "\x1bf" };
+        if (m[base]) return m[base];
+        if (base?.length === 1) return "\x1b" + base;
+      }
+      if (mods.has("shift") && base?.length === 1) return base.toUpperCase();
+      if (named[base]) return named[base];
+      if (base?.length === 1) return base;
+      return keys;
+    }
+
+    // --- Pure: key display ---
+
+    const KEY_DISPLAY = {
+      ctrl: "Ctrl", cmd: "Cmd", alt: "Alt", option: "Option", shift: "Shift",
+      esc: "Esc", escape: "Esc", tab: "Tab", enter: "Enter", return: "Enter",
+      space: "Space", backspace: "Bksp", delete: "Del",
+      up: "Up", down: "Down", left: "Left", right: "Right",
+    };
+
+    function displayKey(k) { return KEY_DISPLAY[k] || k.toUpperCase(); }
+    function keysLabel(keys) { return keys.map(displayKey).join("+"); }
+    function keysString(keys) { return keys.join("+"); }
+
+    const VALID_KEYS = new Set([
+      "ctrl", "cmd", "alt", "option", "shift",
+      ..."abcdefghijklmnopqrstuvwxyz".split(""),
+      ..."0123456789".split(""),
+      "esc", "escape", "tab", "enter", "return", "space", "backspace", "delete",
+      "up", "down", "left", "right",
+      "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+    ]);
+
+    function normalizeKey(val) {
+      const aliases = { option: "alt", escape: "esc", return: "enter" };
+      return aliases[val] || val;
+    }
+
+    // --- Shortcut bar (render takes data) ---
+
     const pinnedKeys = [
       { label: "Esc", keys: "esc" },
       { label: "\u2190", keys: "left" },
@@ -736,55 +739,79 @@
       { label: "\u2193", keys: "down" },
     ];
 
-    function renderBar() {
+    function renderBar(name) {
       bar.innerHTML = "";
 
-      // Session button
       const sessBtn = document.createElement("button");
       sessBtn.className = "session-btn";
-      sessBtn.setAttribute("aria-label", `Session: ${sessionName}`);
-      sessBtn.innerHTML = `<i class="ph ph-terminal-window"></i> ${sessionName}`;
+      sessBtn.setAttribute("aria-label", `Session: ${name}`);
+      sessBtn.innerHTML = `<i class="ph ph-terminal-window"></i> ${name}`;
       sessBtn.addEventListener("click", openSessionManager);
       bar.appendChild(sessBtn);
 
-      // Pinned keys
-      pinnedKeys.forEach((s) => {
+      for (const s of pinnedKeys) {
         const btn = document.createElement("button");
         btn.className = "shortcut-btn";
         btn.textContent = s.label;
         btn.setAttribute("aria-label", `Send ${s.label}`);
-        btn.addEventListener("click", () => {
-          rawSend(keysToSequence(s.keys));
-          term.focus();
-        });
+        btn.addEventListener("click", () => { rawSend(keysToSequence(s.keys)); term.focus(); });
         bar.appendChild(btn);
-      });
+      }
 
-      // Spacer
       const spacer = document.createElement("span");
       spacer.className = "bar-spacer";
       bar.appendChild(spacer);
 
-      // Keyboard icon
       const kbBtn = document.createElement("button");
       kbBtn.className = "bar-icon-btn";
       kbBtn.setAttribute("aria-label", "Open shortcuts");
       kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
-      kbBtn.addEventListener("click", openShortcutsPopup);
+      kbBtn.addEventListener("click", () => openShortcutsPopup(shortcuts));
       bar.appendChild(kbBtn);
 
-      // Settings icon
       const setBtn = document.createElement("button");
       setBtn.className = "bar-icon-btn";
       setBtn.setAttribute("aria-label", "Settings");
       setBtn.innerHTML = '<i class="ph ph-gear"></i>';
-      setBtn.addEventListener("click", openSettings);
+      setBtn.addEventListener("click", () => openModal(settingsOverlay));
       bar.appendChild(setBtn);
     }
 
-    function renderEditList() {
+    // --- Shortcuts popup (render takes data) ---
+
+    const shortcutsOverlay = document.getElementById("shortcuts-overlay");
+    const shortcutsGrid = document.getElementById("shortcuts-grid");
+
+    function openShortcutsPopup(items) {
+      shortcutsGrid.innerHTML = "";
+      for (const s of items) {
+        const btn = document.createElement("button");
+        btn.className = "shortcut-btn";
+        btn.setAttribute("role", "listitem");
+        btn.textContent = s.label;
+        btn.addEventListener("click", () => {
+          rawSend(keysToSequence(s.keys));
+          closeModal(shortcutsOverlay);
+        });
+        shortcutsGrid.appendChild(btn);
+      }
+      openModal(shortcutsOverlay);
+    }
+
+    document.getElementById("shortcuts-edit-btn").addEventListener("click", () => {
+      shortcutsOverlay.classList.remove("visible");
+      openEditPanel();
+    });
+    dismissModal(shortcutsOverlay);
+
+    // --- Edit shortcuts (render takes data) ---
+
+    const editOverlay = document.getElementById("edit-overlay");
+    const editList = document.getElementById("edit-list");
+
+    function renderEditList(items) {
       editList.innerHTML = "";
-      shortcuts.forEach((s, i) => {
+      items.forEach((s, i) => {
         const row = document.createElement("div");
         row.className = "edit-item";
         row.setAttribute("role", "listitem");
@@ -797,8 +824,8 @@
         rm.setAttribute("aria-label", `Remove ${s.label}`);
         rm.innerHTML = '<i class="ph ph-x"></i>';
         rm.addEventListener("click", () => {
-          shortcuts.splice(i, 1);
-          renderEditList();
+          shortcuts = shortcuts.filter((_, idx) => idx !== i);
+          renderEditList(shortcuts);
         });
         row.appendChild(rm);
         editList.appendChild(row);
@@ -806,57 +833,18 @@
     }
 
     function openEditPanel() {
-      renderEditList();
-      editOverlay.classList.add("visible");
+      renderEditList(shortcuts);
+      openModal(editOverlay);
     }
 
-    document.getElementById("edit-done").addEventListener("click", () => {
+    function closeEditPanel() {
       editOverlay.classList.remove("visible");
       saveShortcuts();
-    });
-
-    document.getElementById("edit-add").addEventListener("click", openAddModal);
-
-    editOverlay.addEventListener("click", (e) => {
-      if (e.target === editOverlay) {
-        editOverlay.classList.remove("visible");
-        saveShortcuts();
-      }
-    });
-
-    // --- Shortcuts popup ---
-
-    const shortcutsOverlay = document.getElementById("shortcuts-overlay");
-    const shortcutsGrid = document.getElementById("shortcuts-grid");
-
-    function openShortcutsPopup() {
-      shortcutsGrid.innerHTML = "";
-      shortcuts.forEach((s) => {
-        const btn = document.createElement("button");
-        btn.className = "shortcut-btn";
-        btn.setAttribute("role", "listitem");
-        btn.textContent = s.label;
-        btn.addEventListener("click", () => {
-          rawSend(keysToSequence(s.keys));
-          shortcutsOverlay.classList.remove("visible");
-          term.focus();
-        });
-        shortcutsGrid.appendChild(btn);
-      });
-      shortcutsOverlay.classList.add("visible");
     }
 
-    document.getElementById("shortcuts-edit-btn").addEventListener("click", () => {
-      shortcutsOverlay.classList.remove("visible");
-      openEditPanel();
-    });
-
-    shortcutsOverlay.addEventListener("click", (e) => {
-      if (e.target === shortcutsOverlay) {
-        shortcutsOverlay.classList.remove("visible");
-        term.focus();
-      }
-    });
+    document.getElementById("edit-done").addEventListener("click", closeEditPanel);
+    document.getElementById("edit-add").addEventListener("click", openAddModal);
+    dismissModal(editOverlay, closeEditPanel);
 
     async function loadShortcuts() {
       try {
@@ -865,7 +853,7 @@
       } catch {
         shortcuts = [];
       }
-      renderBar();
+      renderBar(sessionName);
     }
 
     async function saveShortcuts() {
@@ -876,73 +864,39 @@
           body: JSON.stringify(shortcuts),
         });
       } catch { /* ignore */ }
-      renderBar();
+      renderBar(sessionName);
     }
 
-    // --- Add modal (tag composer) ---
+    // --- Add shortcut modal (render takes data) ---
 
     const addOverlay = document.getElementById("add-modal-overlay");
     const keyComposer = document.getElementById("key-composer");
     const keyInput = document.getElementById("key-composer-input");
     const keyPreview = document.getElementById("key-preview-value");
     const saveBtn = document.getElementById("modal-save");
-    let composedKeys = [];
 
-    const VALID_KEYS = new Set([
-      "ctrl", "cmd", "alt", "option", "shift",
-      ..."abcdefghijklmnopqrstuvwxyz".split(""),
-      ..."0123456789".split(""),
-      "esc", "escape", "tab", "enter", "return", "space", "backspace", "delete",
-      "up", "down", "left", "right",
-      "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
-    ]);
-
-    const KEY_DISPLAY = {
-      ctrl: "Ctrl", cmd: "Cmd", alt: "Alt", option: "Option", shift: "Shift",
-      esc: "Esc", escape: "Esc", tab: "Tab", enter: "Enter", return: "Enter",
-      space: "Space", backspace: "Bksp", delete: "Del",
-      up: "Up", down: "Down", left: "Left", right: "Right",
-    };
-
-    function displayKey(k) {
-      return KEY_DISPLAY[k] || k.toUpperCase();
-    }
-
-    function composedLabel() {
-      return composedKeys.map(displayKey).join("+");
-    }
-
-    function composedKeysString() {
-      return composedKeys.join("+");
-    }
-
-    function renderComposerTags() {
+    function renderComposerTags(keys) {
       keyComposer.querySelectorAll(".key-tag").forEach(t => t.remove());
-      composedKeys.forEach((k, i) => {
+      keys.forEach((k, i) => {
         const tag = document.createElement("span");
         tag.className = "key-tag";
         tag.innerHTML = `${displayKey(k)}<button class="key-tag-remove" aria-label="Remove ${displayKey(k)}"><i class="ph ph-x"></i></button>`;
         tag.querySelector(".key-tag-remove").addEventListener("click", () => {
-          composedKeys.splice(i, 1);
-          renderComposerTags();
+          composedKeys = composedKeys.filter((_, idx) => idx !== i);
+          renderComposerTags(composedKeys);
         });
         keyComposer.insertBefore(tag, keyInput);
       });
-      if (composedKeys.length > 0) {
-        keyPreview.textContent = composedLabel();
-        saveBtn.disabled = false;
-      } else {
-        keyPreview.textContent = "";
-        saveBtn.disabled = true;
-      }
-      keyInput.placeholder = composedKeys.length ? "" : "type a key...";
+      keyPreview.textContent = keys.length > 0 ? keysLabel(keys) : "";
+      saveBtn.disabled = keys.length === 0;
+      keyInput.placeholder = keys.length ? "" : "type a key...";
     }
 
     function openAddModal() {
       composedKeys = [];
       keyInput.value = "";
-      renderComposerTags();
-      addOverlay.classList.add("visible");
+      renderComposerTags(composedKeys);
+      openModal(addOverlay);
       keyInput.focus();
     }
 
@@ -954,46 +908,42 @@
         const val = keyInput.value.trim().toLowerCase();
         if (!val) return;
         if (VALID_KEYS.has(val)) {
-          composedKeys.push(val === "option" ? "alt" : val === "escape" ? "esc" : val === "return" ? "enter" : val);
+          composedKeys = [...composedKeys, normalizeKey(val)];
           keyInput.value = "";
-          renderComposerTags();
+          renderComposerTags(composedKeys);
         } else {
           keyComposer.classList.add("invalid");
           setTimeout(() => keyComposer.classList.remove("invalid"), 350);
         }
       } else if (e.key === "Backspace" && keyInput.value === "" && composedKeys.length > 0) {
-        composedKeys.pop();
-        renderComposerTags();
+        composedKeys = composedKeys.slice(0, -1);
+        renderComposerTags(composedKeys);
       }
     });
 
-    document.getElementById("modal-cancel").addEventListener("click", () => {
-      addOverlay.classList.remove("visible");
-    });
+    document.getElementById("modal-cancel").addEventListener("click", () => closeModal(addOverlay));
 
     document.getElementById("modal-save").addEventListener("click", () => {
       if (composedKeys.length === 0) return;
-      shortcuts.push({ label: composedLabel(), keys: composedKeysString() });
-      addOverlay.classList.remove("visible");
-      renderEditList();
+      shortcuts = [...shortcuts, { label: keysLabel(composedKeys), keys: keysString(composedKeys) }];
+      closeModal(addOverlay);
+      renderEditList(shortcuts);
     });
 
-    addOverlay.addEventListener("click", (e) => {
-      if (e.target === addOverlay) addOverlay.classList.remove("visible");
-    });
+    dismissModal(addOverlay);
 
-    // --- Session manager ---
+    // --- Session manager (render takes data) ---
 
     const sessionOverlay = document.getElementById("session-overlay");
     const sessionListEl = document.getElementById("session-list");
     const sessionNewName = document.getElementById("session-new-name");
 
     async function openSessionManager() {
-      sessionOverlay.classList.add("visible");
-      await renderSessionList();
+      openModal(sessionOverlay);
+      await renderSessionList(sessionName);
     }
 
-    async function renderSessionList() {
+    async function renderSessionList(currentSession) {
       let sessions = [];
       try {
         const res = await fetch("/sessions");
@@ -1001,7 +951,7 @@
       } catch { /* ignore */ }
 
       sessionListEl.innerHTML = "";
-      sessions.forEach((s) => {
+      for (const s of sessions) {
         const row = document.createElement("div");
         row.className = "session-item";
         row.setAttribute("role", "listitem");
@@ -1019,33 +969,30 @@
         nameInput.setAttribute("autocorrect", "off");
         nameInput.setAttribute("autocapitalize", "off");
         nameInput.setAttribute("spellcheck", "false");
-        let currentName = s.name;
+        const originalName = s.name;
 
         async function commitRename() {
           const newName = nameInput.value.trim();
-          if (!newName || newName === currentName) {
-            nameInput.value = currentName;
-            return;
-          }
+          if (!newName || newName === originalName) { nameInput.value = originalName; return; }
           try {
-            const res = await fetch(`/sessions/${encodeURIComponent(currentName)}`, {
+            const res = await fetch(`/sessions/${encodeURIComponent(originalName)}`, {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ name: newName }),
             });
-            if (!res.ok) { nameInput.value = currentName; return; }
-          } catch { nameInput.value = currentName; return; }
-          await renderSessionList();
+            if (!res.ok) { nameInput.value = originalName; return; }
+          } catch { nameInput.value = originalName; return; }
+          await renderSessionList(currentSession);
         }
 
         nameInput.addEventListener("keydown", (e) => {
           if (e.key === "Enter") { e.preventDefault(); nameInput.blur(); }
-          if (e.key === "Escape") { nameInput.value = currentName; nameInput.blur(); }
+          if (e.key === "Escape") { nameInput.value = originalName; nameInput.blur(); }
         });
         nameInput.addEventListener("blur", commitRename);
         row.appendChild(nameInput);
 
-        if (s.name === sessionName) {
+        if (s.name === currentSession) {
           const cur = document.createElement("span");
           cur.className = "session-current-tag";
           cur.textContent = "(current)";
@@ -1055,9 +1002,7 @@
           openBtn.className = "session-icon-btn open";
           openBtn.setAttribute("aria-label", `Switch to ${s.name}`);
           openBtn.innerHTML = '<i class="ph ph-arrow-right"></i>';
-          openBtn.addEventListener("click", () => {
-            window.location.href = `/?s=${encodeURIComponent(s.name)}`;
-          });
+          openBtn.addEventListener("click", () => { location.href = `/?s=${encodeURIComponent(s.name)}`; });
           row.appendChild(openBtn);
         }
 
@@ -1066,15 +1011,12 @@
         delBtn.setAttribute("aria-label", `Delete session ${s.name}`);
         delBtn.innerHTML = '<i class="ph ph-trash"></i>';
         delBtn.addEventListener("click", async () => {
-          try {
-            await fetch(`/sessions/${encodeURIComponent(s.name)}`, { method: "DELETE" });
-          } catch { /* ignore */ }
-          await renderSessionList();
+          try { await fetch(`/sessions/${encodeURIComponent(s.name)}`, { method: "DELETE" }); } catch {}
+          await renderSessionList(currentSession);
         });
         row.appendChild(delBtn);
-
         sessionListEl.appendChild(row);
-      });
+      }
     }
 
     document.getElementById("session-new-create").addEventListener("click", async () => {
@@ -1090,7 +1032,7 @@
           const data = await res.json();
           sessionNewName.value = "";
           window.open(`/?s=${encodeURIComponent(data.name)}`, "_blank");
-          await renderSessionList();
+          await renderSessionList(sessionName);
         }
       } catch { /* ignore */ }
     });
@@ -1098,54 +1040,31 @@
     sessionNewName.addEventListener("keydown", (e) => {
       if (e.key === "Enter") document.getElementById("session-new-create").click();
     });
-
-    sessionOverlay.addEventListener("click", (e) => {
-      if (e.target === sessionOverlay) {
-        sessionOverlay.classList.remove("visible");
-        term.focus();
-      }
-    });
+    dismissModal(sessionOverlay);
 
     // --- Settings ---
 
     const settingsOverlay = document.getElementById("settings-overlay");
 
-    function openSettings() {
-      settingsOverlay.classList.add("visible");
-    }
-
     document.querySelectorAll(".theme-toggle button").forEach(btn => {
-      btn.addEventListener("click", () => {
-        applyTheme(btn.dataset.themeVal);
-      });
+      btn.addEventListener("click", () => applyTheme(btn.dataset.themeVal));
     });
+    document.getElementById("settings-done").addEventListener("click", () => closeModal(settingsOverlay));
+    dismissModal(settingsOverlay);
 
-    document.getElementById("settings-done").addEventListener("click", () => {
-      settingsOverlay.classList.remove("visible");
-      term.focus();
-    });
+    // --- Global paste ---
 
-    settingsOverlay.addEventListener("click", (e) => {
-      if (e.target === settingsOverlay) {
-        settingsOverlay.classList.remove("visible");
-        term.focus();
-      }
-    });
-
-    // Global paste handler — ensures paste works even when xterm's textarea misses it
     document.addEventListener("paste", (e) => {
       const text = e.clipboardData?.getData("text");
-      if (text) {
-        rawSend(text);
-        e.preventDefault();
-      }
+      if (text) { rawSend(text); e.preventDefault(); }
     });
+
+    // --- Boot ---
 
     connect();
     loadShortcuts();
     term.focus();
 
-    // Service worker registration
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
