@@ -21,4 +21,15 @@ test.describe("Session manager modal", () => {
     await page.locator("#session-overlay").click({ position: { x: 5, y: 5 } });
     await expect(page.locator("#session-overlay")).not.toHaveClass(/visible/);
   });
+
+  test("Session list shows current session with (current) tag", async ({ page }) => {
+    const currentTag = page.locator(".session-current-tag");
+    await expect(currentTag).toBeVisible();
+    await expect(currentTag).toHaveText("(current)");
+  });
+
+  test("Session list shows alive status dot", async ({ page }) => {
+    const statusDot = page.locator(".session-status.alive").first();
+    await expect(statusDot).toBeVisible();
+  });
 });
