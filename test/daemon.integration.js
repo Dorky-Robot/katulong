@@ -2,15 +2,17 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync, mkdtempSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { encode, decoder } from "../lib/ndjson.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DAEMON_PATH = join(__dirname, "..", "daemon.js");
 const SOCKET_PATH = `/tmp/katulong-test-${process.pid}.sock`;
+const DATA_DIR = mkdtempSync(join(tmpdir(), "katulong-test-"));
 
 function waitForSocket(path, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
@@ -54,7 +56,7 @@ describe("daemon integration", () => {
     if (existsSync(SOCKET_PATH)) unlinkSync(SOCKET_PATH);
 
     daemonProc = spawn("node", [DAEMON_PATH], {
-      env: { ...process.env, KATULONG_SOCK: SOCKET_PATH },
+      env: { ...process.env, KATULONG_SOCK: SOCKET_PATH, KATULONG_DATA_DIR: DATA_DIR },
       stdio: "pipe",
     });
 
@@ -141,7 +143,7 @@ describe("daemon integration", () => {
   });
 
   it("set-shortcuts + get-shortcuts round-trip", async () => {
-    const shortcuts = [{ key: "ctrl+t", command: "new-tab" }];
+    const shortcuts = [{ label: "Ctrl+T", keys: "ctrl+t" }];
     const setResult = await rpc(sock, { type: "set-shortcuts", data: shortcuts });
     assert.ok(setResult.ok);
 
