@@ -213,6 +213,9 @@ async function start() {
 
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
+  process.on("unhandledRejection", (err) => {
+    log.error("Unhandled rejection", { error: err?.message || String(err) });
+  });
 
   server.listen(SOCKET_PATH, () => {
     log.info("Katulong daemon listening", { socket: SOCKET_PATH });
