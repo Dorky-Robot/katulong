@@ -1,270 +1,444 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="auto">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>katulong</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
   <style>
+    /* --- Catppuccin Mocha (dark) / Latte (light) --- */
+    :root {
+      --font-mono: 'JetBrains Mono', monospace;
+      --bg: #1e1e2e;
+      --bg-surface: #313244;
+      --bg-input: #1e1e2e;
+      --border: #45475a;
+      --text: #cdd6f4;
+      --text-muted: #a6adc8;
+      --text-dim: #6c7086;
+      --accent: #45475a;
+      --accent-active: #cba6f7;
+      --success: #a6e3a1;
+      --danger: #f38ba8;
+      --overlay-bg: rgba(0,0,0,0.6);
+      --focus-ring: rgba(137,180,250,0.5);
+      --tag-bg: #45475a;
+    }
+
+    [data-theme="light"] {
+      --bg: #eff1f5;
+      --bg-surface: #ffffff;
+      --bg-input: #e6e9ef;
+      --border: #ccd0da;
+      --text: #4c4f69;
+      --text-muted: #6c6f85;
+      --text-dim: #9ca0b0;
+      --accent: #ccd0da;
+      --accent-active: #8839ef;
+      --success: #40a02b;
+      --danger: #d20f39;
+      --overlay-bg: rgba(0,0,0,0.3);
+      --focus-ring: rgba(30,102,245,0.4);
+      --tag-bg: #dce0e8;
+    }
+
+    @media (prefers-color-scheme: light) {
+      [data-theme="auto"] {
+        --bg: #eff1f5;
+        --bg-surface: #ffffff;
+        --bg-input: #e6e9ef;
+        --border: #ccd0da;
+        --text: #4c4f69;
+        --text-muted: #6c6f85;
+        --text-dim: #9ca0b0;
+        --accent: #ccd0da;
+        --accent-active: #8839ef;
+        --success: #40a02b;
+        --danger: #d20f39;
+        --overlay-bg: rgba(0,0,0,0.3);
+        --focus-ring: rgba(30,102,245,0.4);
+        --tag-bg: #dce0e8;
+      }
+    }
+
+    /* --- Reset & base --- */
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { height: 100%; background: #1a1a2e; overflow: hidden; }
-    #terminal-container { width: 100%; margin-top: 44px; position: relative; z-index: 1; }
+    html, body { height: 100%; background: var(--bg); overflow: hidden; color: var(--text); }
+
+    /* --- Focus & motion --- */
+    :focus-visible {
+      outline: 2px solid var(--focus-ring);
+      outline-offset: 2px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* --- Terminal --- */
+    #terminal-container { width: 100%; margin-top: 2.75rem; position: relative; z-index: 1; }
     #terminal-container .xterm { height: 100%; }
+
+    /* --- Scroll to bottom --- */
     #scroll-bottom {
-      position: fixed; bottom: 16px; right: 16px; z-index: 10;
-      width: 40px; height: 40px; border-radius: 50%; border: none;
-      background: rgba(255,255,255,0.15); color: #eee; font-size: 20px;
+      position: fixed; bottom: 1rem; right: 1rem; z-index: 10;
+      width: 2.5rem; height: 2.5rem; border-radius: 50%; border: none;
+      background: var(--overlay-bg); color: var(--text); font-size: 1.25rem;
       cursor: pointer; display: none; align-items: center; justify-content: center;
       backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
     }
-    #scroll-bottom:active { background: rgba(255,255,255,0.3); }
+    #scroll-bottom:active { opacity: 0.7; }
 
-    /* Shortcut bar */
+    /* --- Shortcut bar --- */
     #shortcut-bar {
       position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
-      height: 44px; background: #16213e; border-bottom: 1px solid #0f3460;
-      transform: translate3d(0,0,0); /* force compositing layer */
-      display: flex; align-items: center; padding: 0 6px; gap: 4px;
+      height: 2.75rem; background: var(--bg-surface); border-bottom: 1px solid var(--border);
+      transform: translate3d(0,0,0);
+      display: flex; align-items: center; padding: 0 0.375rem; gap: 0.25rem;
       overflow-x: auto; overflow-y: hidden;
       -webkit-overflow-scrolling: touch;
     }
     #shortcut-bar::-webkit-scrollbar { display: none; }
+
     .shortcut-btn {
-      flex-shrink: 0; height: 32px; padding: 0 12px;
-      border: 1px solid #0f3460; border-radius: 6px; background: #1a1a2e;
-      color: #e0e0e0; font-size: 13px; font-family: 'SF Mono', Menlo, monospace;
-      cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 4px;
+      flex-shrink: 0; height: 2rem; padding: 0 0.75rem;
+      border: 1px solid var(--border); border-radius: 0.375rem; background: var(--bg-input);
+      color: var(--text); font-size: 0.8125rem; font-family: var(--font-mono);
+      cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 0.25rem;
     }
-    .shortcut-btn:active { background: #0f3460; }
+    .shortcut-btn:active { background: var(--accent); }
+
     .session-btn {
-      flex-shrink: 0; height: 32px; padding: 0 10px;
-      border: 1px solid #0f3460; border-radius: 6px; background: #0f3460;
-      color: #e0e0e0; font-size: 13px; font-family: 'SF Mono', Menlo, monospace;
-      cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 5px;
+      flex-shrink: 0; height: 2rem; padding: 0 0.625rem;
+      border: 1px solid var(--border); border-radius: 0.375rem; background: var(--accent);
+      color: var(--text); font-size: 0.8125rem; font-family: var(--font-mono);
+      cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 0.375rem;
     }
-    .session-btn:active { background: #e94560; }
+    .session-btn:active { background: var(--accent-active); }
+
     .bar-icon-btn {
-      margin-left: auto; flex-shrink: 0; height: 32px; width: 32px; padding: 0;
-      border: 1px solid #0f3460; border-radius: 6px; background: #1a1a2e;
-      color: #888; font-size: 16px; cursor: pointer;
+      flex-shrink: 0; height: 2rem; width: 2rem; padding: 0;
+      border: 1px solid var(--border); border-radius: 0.375rem; background: var(--bg-input);
+      color: var(--text-muted); font-size: 1.125rem; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
     }
-    .bar-icon-btn:active { background: #0f3460; }
+    .bar-icon-btn:active { background: var(--accent); }
+    .bar-spacer { margin-left: auto; }
 
-    /* Shortcuts popup */
-    #shortcuts-overlay { z-index: 10000; }
-    .shortcuts-grid {
-      display: flex; flex-direction: column; gap: 8px; padding-bottom: 8px;
-    }
-    .shortcuts-grid .shortcut-btn {
-      width: 100%; height: 48px; justify-content: center; font-size: 15px;
-    }
-    .shortcuts-footer {
-      display: flex; gap: 8px; padding: 12px 0; position: sticky; bottom: 0;
-      background: #16213e; border-top: 1px solid #0f3460;
-    }
-    .shortcuts-footer button {
-      height: 44px; padding: 0 16px; border: none; border-radius: 8px;
-      font-size: 0.875rem; cursor: pointer; flex: 1;
-    }
-    .shortcuts-edit-btn { background: #1a1a2e; color: #e0e0e0; border: 1px solid #0f3460 !important; }
-    .shortcuts-edit-btn:active { background: #0f3460; }
-
-    /* Shared overlay base */
+    /* --- Shared modal --- */
     .modal-overlay {
       display: none; position: fixed; inset: 0; z-index: 10000;
-      background: rgba(0,0,0,0.7);
+      background: var(--overlay-bg);
+      align-items: flex-end; justify-content: center;
     }
     .modal-overlay.visible { display: flex; }
-
-    /* Shared panel base */
     .modal-panel {
-      background: #16213e; overflow-y: auto;
-      padding: env(safe-area-inset-top, 0) 16px env(safe-area-inset-bottom, 0);
+      background: var(--bg-surface); overflow-y: auto;
+      padding: env(safe-area-inset-top, 0) 1rem env(safe-area-inset-bottom, 0);
+      width: 100%; max-height: 85vh; border-radius: 0.75rem 0.75rem 0 0;
+      border: 1px solid var(--border); border-bottom: none;
     }
-    .modal-panel h3 { color: #e0e0e0; font-size: 1rem; margin-bottom: 14px; padding-top: 16px; }
-
-    /* Mobile-first: full-screen sheet */
-    .modal-overlay { align-items: flex-end; justify-content: center; }
-    .modal-panel {
-      width: 100%; max-height: 85vh; border-radius: 12px 12px 0 0;
-      border: 1px solid #0f3460; border-bottom: none;
+    .modal-panel h3 {
+      color: var(--text); font-size: 1rem; margin-bottom: 0.875rem; padding-top: 1rem;
     }
-
-    /* Wider screens: centered floating panel */
     @media (min-width: 480px) {
       .modal-overlay { align-items: center; }
       .modal-panel {
         width: min(400px, 90vw); max-height: 80vh;
-        border-radius: 12px; border-bottom: 1px solid #0f3460;
-        padding: 0 20px;
+        border-radius: 0.75rem; border-bottom: 1px solid var(--border);
+        padding: 0 1.25rem;
       }
     }
 
-    /* Edit panel */
+    /* --- Shortcuts popup --- */
+    #shortcuts-overlay { z-index: 10000; }
+    .shortcuts-grid {
+      display: flex; flex-direction: column; gap: 0.5rem; padding-bottom: 0.5rem;
+    }
+    .shortcuts-grid .shortcut-btn {
+      width: 100%; height: 3rem; justify-content: center; font-size: 0.9375rem;
+    }
+    .shortcuts-footer {
+      display: flex; gap: 0.5rem; padding: 0.75rem 0; position: sticky; bottom: 0;
+      background: var(--bg-surface); border-top: 1px solid var(--border);
+    }
+    .shortcuts-footer button {
+      height: 2.75rem; padding: 0 1rem; border: none; border-radius: 0.5rem;
+      font-size: 0.875rem; cursor: pointer; flex: 1;
+      display: flex; align-items: center; justify-content: center; gap: 0.375rem;
+    }
+    .shortcuts-edit-btn {
+      background: var(--bg-input); color: var(--text);
+      border: 1px solid var(--border) !important;
+    }
+    .shortcuts-edit-btn:active { background: var(--accent); }
+
+    /* --- Edit panel --- */
     #edit-overlay { z-index: 10000; }
     .edit-item {
-      display: flex; align-items: center; gap: 10px; padding: 10px 0;
-      border-bottom: 1px solid #0f3460;
+      display: flex; align-items: center; gap: 0.625rem; padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
     }
     .edit-item-label {
-      color: #e0e0e0; font-size: 0.875rem; font-family: 'SF Mono', Menlo, monospace; flex: 1;
+      color: var(--text); font-size: 0.875rem; font-family: var(--font-mono); flex: 1;
       min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    .edit-item-keys { color: #888; font-size: 0.75rem; font-family: 'SF Mono', Menlo, monospace; flex-shrink: 0; }
+    .edit-item-keys {
+      color: var(--text-muted); font-size: 0.75rem; font-family: var(--font-mono);
+      flex-shrink: 0;
+    }
     .edit-item-remove {
-      width: 44px; height: 44px; border: none; border-radius: 8px;
-      background: transparent; color: #e94560; font-size: 20px; cursor: pointer;
+      width: 2.75rem; height: 2.75rem; border: none; border-radius: 0.5rem;
+      background: transparent; color: var(--danger); font-size: 1.125rem; cursor: pointer;
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
-    .edit-item-remove:active { background: rgba(233,69,96,0.2); }
+    .edit-item-remove:active { background: rgba(233,69,96,0.15); }
     .edit-actions {
-      display: flex; gap: 8px; padding: 14px 0; position: sticky; bottom: 0;
-      background: #16213e;
+      display: flex; gap: 0.5rem; padding: 0.875rem 0; position: sticky; bottom: 0;
+      background: var(--bg-surface);
     }
     .edit-actions button {
-      height: 44px; padding: 0 16px; border: none; border-radius: 8px;
+      height: 2.75rem; padding: 0 1rem; border: none; border-radius: 0.5rem;
       font-size: 0.875rem; cursor: pointer; flex: 1;
+      display: flex; align-items: center; justify-content: center; gap: 0.375rem;
     }
-    .edit-add-btn { background: #1a1a2e; color: #e0e0e0; border: 1px dashed #0f3460 !important; }
-    .edit-add-btn:active { background: #0f3460; }
-    .edit-done-btn { background: #0f3460; color: #e0e0e0; }
-    .edit-done-btn:active { background: #e94560; }
+    .edit-add-btn {
+      background: var(--bg-input); color: var(--text);
+      border: 1px dashed var(--border) !important;
+    }
+    .edit-add-btn:active { background: var(--accent); }
+    .edit-done-btn { background: var(--accent); color: var(--text); }
+    .edit-done-btn:active { background: var(--accent-active); }
 
-    /* Add shortcut modal */
+    /* --- Add shortcut (tag composer) --- */
     #add-modal-overlay { z-index: 10001; }
-    #add-modal label { color: #aaa; font-size: 0.75rem; display: block; margin-bottom: 4px; }
-    #add-modal input, #add-modal select {
-      width: 100%; height: 44px; border: 1px solid #0f3460; border-radius: 8px;
-      background: #1a1a2e; color: #e0e0e0; padding: 0 12px; font-size: 1rem;
-      font-family: 'SF Mono', Menlo, monospace; margin-bottom: 12px;
+    .key-composer {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem;
+      min-height: 3rem; padding: 0.5rem 0.625rem;
+      border: 1px solid var(--border); border-radius: 0.5rem; background: var(--bg-input);
+      margin-bottom: 0.75rem; cursor: text;
     }
-    #add-modal select { cursor: pointer; }
-    #add-modal .modal-actions { display: flex; gap: 8px; padding-bottom: 16px; }
+    .key-composer:focus-within { border-color: var(--success); }
+    .key-composer.invalid { animation: shake 0.3s; border-color: var(--danger); }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-4px); }
+      75% { transform: translateX(4px); }
+    }
+    .key-tag {
+      display: inline-flex; align-items: center; gap: 0.25rem;
+      height: 1.875rem; padding: 0 0.625rem; border-radius: 0.375rem;
+      background: var(--tag-bg); color: var(--text); font-size: 0.8125rem;
+      font-family: var(--font-mono); white-space: nowrap;
+    }
+    .key-tag-remove {
+      background: none; border: none; color: var(--text-muted); font-size: 0.875rem;
+      cursor: pointer; padding: 0; margin-left: 0.125rem; line-height: 1;
+      display: flex; align-items: center;
+    }
+    .key-tag-remove:active { color: var(--danger); }
+    .key-composer-input {
+      flex: 1; min-width: 3.75rem; height: 1.875rem; border: none; background: transparent;
+      color: var(--text); font-size: 0.875rem; font-family: var(--font-mono);
+      outline: none;
+    }
+    .key-composer-input::placeholder { color: var(--text-dim); }
+    .key-composer-hint {
+      color: var(--text-dim); font-size: 0.6875rem; font-family: var(--font-mono);
+      margin-bottom: 0.875rem; line-height: 1.4;
+    }
+    .key-preview {
+      display: flex; align-items: center; gap: 0.25rem; margin-bottom: 0.875rem;
+      min-height: 1.5rem; color: var(--text-muted); font-size: 0.75rem;
+      font-family: var(--font-mono);
+    }
+    .key-preview-label { color: var(--text-dim); }
+    #add-modal .modal-actions { display: flex; gap: 0.5rem; padding-bottom: 1rem; }
     #add-modal .modal-actions button {
-      height: 44px; padding: 0 16px; border: none; border-radius: 8px;
+      height: 2.75rem; padding: 0 1rem; border: none; border-radius: 0.5rem;
       font-size: 0.875rem; cursor: pointer; flex: 1;
     }
-    .cancel-btn { background: #1a1a2e; color: #aaa; border: 1px solid #0f3460 !important; }
-    .save-btn { background: #0f3460; color: #e0e0e0; }
-    .save-btn:active { background: #e94560; }
+    .cancel-btn { background: var(--bg-input); color: var(--text-muted); border: 1px solid var(--border) !important; }
+    .save-btn { background: var(--accent); color: var(--text); }
+    .save-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .save-btn:active:not(:disabled) { background: var(--accent-active); }
 
-    /* Session manager modal */
+    /* --- Session manager --- */
     #session-overlay { z-index: 10000; }
     .session-item {
-      display: flex; align-items: center; gap: 10px; padding: 10px 0;
-      border-bottom: 1px solid #0f3460;
+      display: flex; align-items: center; gap: 0.625rem; padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
     }
-    .session-status {
-      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-    }
-    .session-status.alive { background: #4ade80; }
-    .session-status.dead { background: #888; }
+    .session-status { width: 0.5rem; height: 0.5rem; border-radius: 50%; flex-shrink: 0; }
+    .session-status.alive { background: var(--success); }
+    .session-status.dead { background: var(--text-muted); }
     .session-name-input {
-      flex: 1; min-width: 0; height: 36px; border: 1px solid transparent; border-radius: 6px;
-      background: transparent; color: #e0e0e0; padding: 0 8px;
-      font-size: 0.875rem; font-family: 'SF Mono', Menlo, monospace;
+      flex: 1; min-width: 0; height: 2.25rem; border: 1px solid transparent; border-radius: 0.375rem;
+      background: transparent; color: var(--text); padding: 0 0.5rem;
+      font-size: 0.875rem; font-family: var(--font-mono);
     }
     .session-name-input:focus {
-      outline: none; border-color: #0f3460; background: #1a1a2e;
+      outline: none; border-color: var(--border); background: var(--bg-input);
     }
     .session-current-tag {
-      color: #4ade80; font-size: 0.625rem; flex-shrink: 0;
-      font-family: 'SF Mono', Menlo, monospace;
+      color: var(--success); font-size: 0.625rem; flex-shrink: 0;
+      font-family: var(--font-mono);
     }
-    .session-open-btn, .session-delete-btn {
-      width: 36px; height: 36px; border: none; border-radius: 6px;
-      background: transparent; font-size: 14px; cursor: pointer; flex-shrink: 0;
+    .session-icon-btn {
+      width: 2.25rem; height: 2.25rem; border: none; border-radius: 0.375rem;
+      background: transparent; font-size: 1.125rem; cursor: pointer; flex-shrink: 0;
       display: flex; align-items: center; justify-content: center;
     }
-    .session-open-btn { color: #888; }
-    .session-open-btn:active { background: rgba(255,255,255,0.1); }
-    .session-delete-btn { color: #e94560; }
-    .session-delete-btn:active { background: rgba(233,69,96,0.2); }
+    .session-icon-btn.open { color: var(--text-muted); }
+    .session-icon-btn.open:active { background: rgba(255,255,255,0.1); }
+    .session-icon-btn.delete { color: var(--danger); }
+    .session-icon-btn.delete:active { background: rgba(233,69,96,0.15); }
     .session-new-row {
-      display: flex; gap: 8px; padding: 14px 0; position: sticky; bottom: 0;
-      background: #16213e;
+      display: flex; gap: 0.5rem; padding: 0.875rem 0; position: sticky; bottom: 0;
+      background: var(--bg-surface);
     }
     .session-new-input {
-      flex: 1; height: 44px; border: 1px solid #0f3460; border-radius: 8px;
-      background: #1a1a2e; color: #e0e0e0; padding: 0 12px; font-size: 0.875rem;
-      font-family: 'SF Mono', Menlo, monospace;
+      flex: 1; height: 2.75rem; border: 1px solid var(--border); border-radius: 0.5rem;
+      background: var(--bg-input); color: var(--text); padding: 0 0.75rem; font-size: 0.875rem;
+      font-family: var(--font-mono);
     }
     .session-new-btn {
-      height: 44px; padding: 0 16px; border: none; border-radius: 8px;
-      background: #0f3460; color: #e0e0e0; font-size: 0.875rem; cursor: pointer;
+      height: 2.75rem; padding: 0 1rem; border: none; border-radius: 0.5rem;
+      background: var(--accent); color: var(--text); font-size: 0.875rem; cursor: pointer;
+      display: flex; align-items: center; gap: 0.375rem;
     }
-    .session-new-btn:active { background: #e94560; }
+    .session-new-btn:active { background: var(--accent-active); }
+
+    /* --- Settings modal --- */
+    #settings-overlay { z-index: 10000; }
+    .settings-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0.75rem 0; border-bottom: 1px solid var(--border);
+    }
+    .settings-label {
+      color: var(--text); font-size: 0.875rem; font-family: var(--font-mono);
+    }
+    .theme-toggle {
+      display: flex; border: 1px solid var(--border); border-radius: 0.375rem; overflow: hidden;
+    }
+    .theme-toggle button {
+      height: 2rem; padding: 0 0.75rem; border: none; background: var(--bg-input);
+      color: var(--text-muted); font-size: 0.75rem; font-family: var(--font-mono);
+      cursor: pointer; border-right: 1px solid var(--border);
+      display: flex; align-items: center; gap: 0.25rem;
+    }
+    .theme-toggle button:last-child { border-right: none; }
+    .theme-toggle button.active { background: var(--accent); color: var(--text); }
+    .theme-toggle button:active { background: var(--accent-active); }
+    .settings-footer {
+      padding: 0.875rem 0;
+    }
+    .settings-done-btn {
+      width: 100%; height: 2.75rem; border: none; border-radius: 0.5rem;
+      background: var(--accent); color: var(--text); font-size: 0.875rem; cursor: pointer;
+    }
+    .settings-done-btn:active { background: var(--accent-active); }
   </style>
 </head>
 <body>
   <div id="terminal-container"></div>
-  <button id="scroll-bottom" aria-label="Scroll to bottom">&darr;</button>
-  <div id="shortcut-bar"></div>
+  <button id="scroll-bottom" aria-label="Scroll to bottom">
+    <i class="ph ph-caret-down"></i>
+  </button>
+  <nav id="shortcut-bar" role="toolbar" aria-label="Shortcut bar"></nav>
 
-  <div id="edit-overlay" class="modal-overlay">
+  <!-- Edit shortcuts -->
+  <div id="edit-overlay" class="modal-overlay" role="dialog" aria-label="Edit shortcuts">
     <div id="edit-panel" class="modal-panel">
       <h3>Edit Shortcuts</h3>
-      <div id="edit-list"></div>
+      <div id="edit-list" role="list"></div>
       <div class="edit-actions">
-        <button class="edit-add-btn" id="edit-add">+ Add</button>
+        <button class="edit-add-btn" id="edit-add">
+          <i class="ph ph-plus"></i> Add
+        </button>
         <button class="edit-done-btn" id="edit-done">Done</button>
       </div>
     </div>
   </div>
 
-  <div id="add-modal-overlay" class="modal-overlay">
+  <!-- Add shortcut (tag composer) -->
+  <div id="add-modal-overlay" class="modal-overlay" role="dialog" aria-label="Add shortcut">
     <div id="add-modal" class="modal-panel">
       <h3>Add Shortcut</h3>
-      <label for="preset-select">Preset</label>
-      <select id="preset-select">
-        <option value="">Custom...</option>
-        <option value="ctrl+a">Ctrl+A</option>
-        <option value="ctrl+b">Ctrl+B</option>
-        <option value="ctrl+c">Ctrl+C</option>
-        <option value="ctrl+d">Ctrl+D</option>
-        <option value="ctrl+e">Ctrl+E</option>
-        <option value="ctrl+k">Ctrl+K</option>
-        <option value="ctrl+l">Ctrl+L</option>
-        <option value="ctrl+r">Ctrl+R</option>
-        <option value="ctrl+u">Ctrl+U</option>
-        <option value="ctrl+z">Ctrl+Z</option>
-        <option value="esc">Esc</option>
-        <option value="tab">Tab</option>
-        <option value="enter">Enter</option>
-        <option value="up">Up</option>
-        <option value="down">Down</option>
-        <option value="left">Left</option>
-        <option value="right">Right</option>
-      </select>
-      <label for="label-input">Label</label>
-      <input type="text" id="label-input" placeholder="e.g. Ctrl+C">
-      <label for="keys-input">Keys</label>
-      <input type="text" id="keys-input" placeholder="e.g. ctrl+c or literal text">
+      <div id="key-composer" class="key-composer" role="group" aria-label="Key composer">
+        <input type="text" id="key-composer-input" class="key-composer-input"
+          placeholder="type a key..." autocorrect="off" autocapitalize="off"
+          autocomplete="off" spellcheck="false" aria-label="Key name input">
+      </div>
+      <div class="key-composer-hint" aria-hidden="true">
+        ctrl, cmd, alt, shift, a-z, 0-9, esc, tab, enter, space, backspace, up, down, left, right
+      </div>
+      <div class="key-preview" aria-live="polite">
+        <span class="key-preview-label">Sends:</span>
+        <span id="key-preview-value"></span>
+      </div>
       <div class="modal-actions">
         <button class="cancel-btn" id="modal-cancel">Cancel</button>
-        <button class="save-btn" id="modal-save">Add</button>
+        <button class="save-btn" id="modal-save" disabled>Add</button>
       </div>
     </div>
   </div>
 
-  <div id="session-overlay" class="modal-overlay">
+  <!-- Sessions -->
+  <div id="session-overlay" class="modal-overlay" role="dialog" aria-label="Session manager">
     <div id="session-panel" class="modal-panel">
       <h3>Sessions</h3>
-      <div id="session-list"></div>
+      <div id="session-list" role="list"></div>
       <div class="session-new-row">
-        <input type="text" class="session-new-input" id="session-new-name" placeholder="new-session-name">
-        <button class="session-new-btn" id="session-new-create">+ New</button>
+        <input type="text" class="session-new-input" id="session-new-name"
+          placeholder="new-session-name" autocorrect="off" autocapitalize="off"
+          spellcheck="false" aria-label="New session name">
+        <button class="session-new-btn" id="session-new-create">
+          <i class="ph ph-plus"></i> New
+        </button>
       </div>
     </div>
   </div>
 
-  <div id="shortcuts-overlay" class="modal-overlay">
+  <!-- Shortcuts popup -->
+  <div id="shortcuts-overlay" class="modal-overlay" role="dialog" aria-label="Shortcuts">
     <div id="shortcuts-panel" class="modal-panel">
       <h3>Shortcuts</h3>
-      <div id="shortcuts-grid" class="shortcuts-grid"></div>
+      <div id="shortcuts-grid" class="shortcuts-grid" role="list"></div>
       <div class="shortcuts-footer">
-        <button class="shortcuts-edit-btn" id="shortcuts-edit-btn">&#9998; Edit</button>
+        <button class="shortcuts-edit-btn" id="shortcuts-edit-btn">
+          <i class="ph ph-pencil-simple"></i> Edit
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div id="settings-overlay" class="modal-overlay" role="dialog" aria-label="Settings">
+    <div id="settings-panel" class="modal-panel">
+      <h3>Settings</h3>
+      <div class="settings-row">
+        <span class="settings-label">Theme</span>
+        <div class="theme-toggle" role="radiogroup" aria-label="Theme selection">
+          <button data-theme-val="auto" role="radio" aria-checked="true">
+            <i class="ph ph-circle-half"></i> Auto
+          </button>
+          <button data-theme-val="light" role="radio" aria-checked="false">
+            <i class="ph ph-sun"></i> Light
+          </button>
+          <button data-theme-val="dark" role="radio" aria-checked="false">
+            <i class="ph ph-moon"></i> Dark
+          </button>
+        </div>
+      </div>
+      <div class="settings-footer">
+        <button class="settings-done-btn" id="settings-done">Done</button>
       </div>
     </div>
   </div>
@@ -274,15 +448,66 @@
     import { FitAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm";
     import { WebLinksAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/+esm";
 
+    // --- Theme ---
+
+    // Catppuccin Mocha
+    const DARK_THEME = {
+      background: "#1e1e2e", foreground: "#cdd6f4", cursor: "#f5e0dc",
+      selectionBackground: "rgba(137,180,250,0.3)",
+      black: "#45475a", brightBlack: "#585b70",
+      red: "#f38ba8", brightRed: "#f38ba8",
+      green: "#a6e3a1", brightGreen: "#a6e3a1",
+      yellow: "#f9e2af", brightYellow: "#f9e2af",
+      blue: "#89b4fa", brightBlue: "#89b4fa",
+      magenta: "#f5c2e7", brightMagenta: "#f5c2e7",
+      cyan: "#94e2d5", brightCyan: "#94e2d5",
+      white: "#bac2de", brightWhite: "#a6adc8",
+    };
+    // Catppuccin Latte
+    const LIGHT_THEME = {
+      background: "#eff1f5", foreground: "#4c4f69", cursor: "#dc8a78",
+      selectionBackground: "rgba(30,102,245,0.2)",
+      black: "#5c5f77", brightBlack: "#6c6f85",
+      red: "#d20f39", brightRed: "#d20f39",
+      green: "#40a02b", brightGreen: "#40a02b",
+      yellow: "#df8e1d", brightYellow: "#df8e1d",
+      blue: "#1e66f5", brightBlue: "#1e66f5",
+      magenta: "#ea76cb", brightMagenta: "#ea76cb",
+      cyan: "#179299", brightCyan: "#179299",
+      white: "#acb0be", brightWhite: "#bcc0cc",
+    };
+
+    function getEffectiveTheme() {
+      const pref = localStorage.getItem("theme") || "auto";
+      if (pref === "auto") {
+        return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      }
+      return pref;
+    }
+
+    function applyTheme(pref) {
+      localStorage.setItem("theme", pref);
+      document.documentElement.setAttribute("data-theme", pref);
+      const effective = getEffectiveTheme();
+      term.options.theme = effective === "light" ? LIGHT_THEME : DARK_THEME;
+      // Update toggle buttons
+      document.querySelectorAll(".theme-toggle button").forEach(btn => {
+        const active = btn.dataset.themeVal === pref;
+        btn.classList.toggle("active", active);
+        btn.setAttribute("aria-checked", active);
+      });
+    }
+
     // --- Session name from URL ---
     const urlParams = new URLSearchParams(window.location.search);
     let sessionName = urlParams.get("s") || "default";
     document.title = `katulong — ${sessionName}`;
 
+    const initialTheme = getEffectiveTheme();
     const term = new Terminal({
       fontSize: 14,
-      fontFamily: "'SF Mono', Menlo, monospace",
-      theme: { background: "#1a1a2e" },
+      fontFamily: "'JetBrains Mono', monospace",
+      theme: initialTheme === "light" ? LIGHT_THEME : DARK_THEME,
       cursorBlink: true,
       scrollback: 10000,
       convertEol: true,
@@ -291,7 +516,8 @@
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(document.getElementById("terminal-container"));
-    // Disable mobile autocorrect/suggestions on xterm's hidden textarea
+
+    // Disable mobile autocorrect on xterm's hidden textarea
     const xtermTextarea = document.querySelector(".xterm-helper-textarea");
     if (xtermTextarea) {
       xtermTextarea.setAttribute("autocorrect", "off");
@@ -299,8 +525,16 @@
       xtermTextarea.setAttribute("autocomplete", "off");
       xtermTextarea.setAttribute("spellcheck", "false");
     }
-    // Defer fit until fonts are loaded so character cell measurements are accurate
     document.fonts.ready.then(() => fit.fit());
+
+    // Apply stored theme
+    applyTheme(localStorage.getItem("theme") || "auto");
+
+    // Listen for system theme changes (for auto mode)
+    window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+      const pref = localStorage.getItem("theme") || "auto";
+      if (pref === "auto") applyTheme("auto");
+    });
 
     let ws;
     let reconnectDelay = 1000;
@@ -312,30 +546,20 @@
     }
 
     term.attachCustomKeyEventHandler((ev) => {
-      // Let browser handle Cmd+C (copy) when there's a selection
       if (ev.metaKey && ev.key === "c" && term.hasSelection()) return false;
-      // Let browser handle Cmd+V / Ctrl+V (paste)
       if ((ev.metaKey || ev.ctrlKey) && ev.key === "v") return false;
-      // Let Ctrl+C through to terminal (SIGINT) when no selection
       if (ev.ctrlKey && ev.key === "c" && !term.hasSelection()) return true;
 
-      // Cmd (Meta) key combos → send terminal sequences
       if (ev.metaKey && ev.type === "keydown") {
         const seq = {
-          "Backspace": "\x15",       // Ctrl+U: kill line backward
-          "ArrowLeft":  "\x01",      // Ctrl+A: beginning of line
-          "ArrowRight": "\x05",      // Ctrl+E: end of line
-          "k":          "\x0b",      // Ctrl+K: kill to end of line
+          "Backspace": "\x15", "ArrowLeft": "\x01", "ArrowRight": "\x05", "k": "\x0b",
         }[ev.key];
         if (seq) { rawSend(seq); return false; }
       }
 
-      // Option (Alt) key combos → send escape-prefixed sequences
       if (ev.altKey && ev.type === "keydown") {
         const seq = {
-          "Backspace":  "\x1b\x7f", // delete word backward
-          "ArrowLeft":  "\x1bb",     // word left
-          "ArrowRight": "\x1bf",     // word right
+          "Backspace": "\x1b\x7f", "ArrowLeft": "\x1bb", "ArrowRight": "\x1bf",
         }[ev.key];
         if (seq) { rawSend(seq); return false; }
       }
@@ -351,7 +575,6 @@
 
       ws.onopen = () => {
         reconnectDelay = 1000;
-        // Attach to session before sending anything else
         ws.send(JSON.stringify({ type: "attach", session: sessionName }));
         ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       };
@@ -369,7 +592,6 @@
         } else if (msg.type === "session-renamed") {
           sessionName = msg.name;
           document.title = `katulong — ${sessionName}`;
-          // Update URL without reload
           const url = new URL(window.location);
           url.searchParams.set("s", sessionName);
           history.replaceState(null, "", url);
@@ -413,26 +635,45 @@
     // --- Shortcut bar ---
 
     function keysToSequence(keys) {
-      const k = keys.toLowerCase().trim();
-      // ctrl+letter
-      const ctrlMatch = k.match(/^ctrl\+([a-z])$/);
-      if (ctrlMatch) {
-        return String.fromCharCode(ctrlMatch[1].charCodeAt(0) - 96);
+      const parts = keys.toLowerCase().trim().split("+");
+      const mods = new Set();
+      let base = null;
+
+      for (const p of parts) {
+        if (["ctrl", "cmd", "alt", "shift"].includes(p)) {
+          mods.add(p);
+        } else {
+          base = p;
+        }
       }
-      // Named keys
+
       const named = {
-        esc: "\x1b",
-        escape: "\x1b",
-        tab: "\t",
-        enter: "\r",
-        up: "\x1b[A",
-        down: "\x1b[B",
-        right: "\x1b[C",
-        left: "\x1b[D",
+        esc: "\x1b", tab: "\t", enter: "\r", space: " ",
+        backspace: "\x7f", delete: "\x1b[3~",
+        up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D",
       };
-      if (named[k]) return named[k];
-      // Literal — interpret \n as actual newline
-      return keys.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\r/g, "\r");
+
+      if (!base && mods.size > 0) return "";
+      if (mods.has("ctrl") && base && base.length === 1 && base >= "a" && base <= "z") {
+        return String.fromCharCode(base.charCodeAt(0) - 96);
+      }
+      if (mods.has("ctrl")) {
+        const m = { backspace: "\x08", space: "\x00" };
+        if (m[base]) return m[base];
+      }
+      if (mods.has("cmd")) {
+        const m = { backspace: "\x15", left: "\x01", right: "\x05", k: "\x0b" };
+        if (m[base]) return m[base];
+      }
+      if (mods.has("alt")) {
+        const m = { backspace: "\x1b\x7f", left: "\x1bb", right: "\x1bf" };
+        if (m[base]) return m[base];
+        if (base && base.length === 1) return "\x1b" + base;
+      }
+      if (mods.has("shift") && base && base.length === 1) return base.toUpperCase();
+      if (named[base]) return named[base];
+      if (base && base.length === 1) return base;
+      return keys;
     }
 
     let shortcuts = [];
@@ -440,7 +681,6 @@
     const editOverlay = document.getElementById("edit-overlay");
     const editList = document.getElementById("edit-list");
 
-    // Resize terminal to actual visible viewport (accounts for virtual keyboard)
     const termContainer = document.getElementById("terminal-container");
     function resizeToViewport() {
       const vv = window.visualViewport;
@@ -456,7 +696,6 @@
     }
     window.addEventListener("resize", resizeToViewport);
 
-    // Pinned keys always visible in the bar
     const pinnedKeys = [
       { label: "Esc", keys: "esc" },
       { label: "\u2190", keys: "left" },
@@ -468,10 +707,11 @@
     function renderBar() {
       bar.innerHTML = "";
 
-      // Session button (first item)
+      // Session button
       const sessBtn = document.createElement("button");
       sessBtn.className = "session-btn";
-      sessBtn.innerHTML = `&#9654; ${sessionName}`;
+      sessBtn.setAttribute("aria-label", `Session: ${sessionName}`);
+      sessBtn.innerHTML = `<i class="ph ph-terminal-window"></i> ${sessionName}`;
       sessBtn.addEventListener("click", openSessionManager);
       bar.appendChild(sessBtn);
 
@@ -480,6 +720,7 @@
         const btn = document.createElement("button");
         btn.className = "shortcut-btn";
         btn.textContent = s.label;
+        btn.setAttribute("aria-label", `Send ${s.label}`);
         btn.addEventListener("click", () => {
           rawSend(keysToSequence(s.keys));
           term.focus();
@@ -487,12 +728,26 @@
         bar.appendChild(btn);
       });
 
-      // Keyboard icon to open shortcuts popup
+      // Spacer
+      const spacer = document.createElement("span");
+      spacer.className = "bar-spacer";
+      bar.appendChild(spacer);
+
+      // Keyboard icon
       const kbBtn = document.createElement("button");
       kbBtn.className = "bar-icon-btn";
-      kbBtn.innerHTML = "&#9000;"; // keyboard symbol
+      kbBtn.setAttribute("aria-label", "Open shortcuts");
+      kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
       kbBtn.addEventListener("click", openShortcutsPopup);
       bar.appendChild(kbBtn);
+
+      // Settings icon
+      const setBtn = document.createElement("button");
+      setBtn.className = "bar-icon-btn";
+      setBtn.setAttribute("aria-label", "Settings");
+      setBtn.innerHTML = '<i class="ph ph-gear"></i>';
+      setBtn.addEventListener("click", openSettings);
+      bar.appendChild(setBtn);
     }
 
     function renderEditList() {
@@ -500,13 +755,15 @@
       shortcuts.forEach((s, i) => {
         const row = document.createElement("div");
         row.className = "edit-item";
+        row.setAttribute("role", "listitem");
         row.innerHTML = `
           <span class="edit-item-label">${s.label}</span>
           <span class="edit-item-keys">${s.keys}</span>
         `;
         const rm = document.createElement("button");
         rm.className = "edit-item-remove";
-        rm.textContent = "\u00d7";
+        rm.setAttribute("aria-label", `Remove ${s.label}`);
+        rm.innerHTML = '<i class="ph ph-x"></i>';
         rm.addEventListener("click", () => {
           shortcuts.splice(i, 1);
           renderEditList();
@@ -545,6 +802,7 @@
       shortcuts.forEach((s) => {
         const btn = document.createElement("button");
         btn.className = "shortcut-btn";
+        btn.setAttribute("role", "listitem");
         btn.textContent = s.label;
         btn.addEventListener("click", () => {
           rawSend(keysToSequence(s.keys));
@@ -589,26 +847,92 @@
       renderBar();
     }
 
-    // --- Add modal ---
+    // --- Add modal (tag composer) ---
 
     const addOverlay = document.getElementById("add-modal-overlay");
-    const presetSelect = document.getElementById("preset-select");
-    const labelInput = document.getElementById("label-input");
-    const keysInput = document.getElementById("keys-input");
+    const keyComposer = document.getElementById("key-composer");
+    const keyInput = document.getElementById("key-composer-input");
+    const keyPreview = document.getElementById("key-preview-value");
+    const saveBtn = document.getElementById("modal-save");
+    let composedKeys = [];
 
-    function openAddModal() {
-      presetSelect.value = "";
-      labelInput.value = "";
-      keysInput.value = "";
-      addOverlay.classList.add("visible");
-      labelInput.focus();
+    const VALID_KEYS = new Set([
+      "ctrl", "cmd", "alt", "option", "shift",
+      ..."abcdefghijklmnopqrstuvwxyz".split(""),
+      ..."0123456789".split(""),
+      "esc", "escape", "tab", "enter", "return", "space", "backspace", "delete",
+      "up", "down", "left", "right",
+      "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+    ]);
+
+    const KEY_DISPLAY = {
+      ctrl: "Ctrl", cmd: "Cmd", alt: "Alt", option: "Option", shift: "Shift",
+      esc: "Esc", escape: "Esc", tab: "Tab", enter: "Enter", return: "Enter",
+      space: "Space", backspace: "Bksp", delete: "Del",
+      up: "Up", down: "Down", left: "Left", right: "Right",
+    };
+
+    function displayKey(k) {
+      return KEY_DISPLAY[k] || k.toUpperCase();
     }
 
-    presetSelect.addEventListener("change", () => {
-      const v = presetSelect.value;
-      if (!v) return;
-      keysInput.value = v;
-      labelInput.value = presetSelect.options[presetSelect.selectedIndex].textContent;
+    function composedLabel() {
+      return composedKeys.map(displayKey).join("+");
+    }
+
+    function composedKeysString() {
+      return composedKeys.join("+");
+    }
+
+    function renderComposerTags() {
+      keyComposer.querySelectorAll(".key-tag").forEach(t => t.remove());
+      composedKeys.forEach((k, i) => {
+        const tag = document.createElement("span");
+        tag.className = "key-tag";
+        tag.innerHTML = `${displayKey(k)}<button class="key-tag-remove" aria-label="Remove ${displayKey(k)}"><i class="ph ph-x"></i></button>`;
+        tag.querySelector(".key-tag-remove").addEventListener("click", () => {
+          composedKeys.splice(i, 1);
+          renderComposerTags();
+        });
+        keyComposer.insertBefore(tag, keyInput);
+      });
+      if (composedKeys.length > 0) {
+        keyPreview.textContent = composedLabel();
+        saveBtn.disabled = false;
+      } else {
+        keyPreview.textContent = "";
+        saveBtn.disabled = true;
+      }
+      keyInput.placeholder = composedKeys.length ? "" : "type a key...";
+    }
+
+    function openAddModal() {
+      composedKeys = [];
+      keyInput.value = "";
+      renderComposerTags();
+      addOverlay.classList.add("visible");
+      keyInput.focus();
+    }
+
+    keyComposer.addEventListener("click", () => keyInput.focus());
+
+    keyInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const val = keyInput.value.trim().toLowerCase();
+        if (!val) return;
+        if (VALID_KEYS.has(val)) {
+          composedKeys.push(val === "option" ? "alt" : val === "escape" ? "esc" : val === "return" ? "enter" : val);
+          keyInput.value = "";
+          renderComposerTags();
+        } else {
+          keyComposer.classList.add("invalid");
+          setTimeout(() => keyComposer.classList.remove("invalid"), 350);
+        }
+      } else if (e.key === "Backspace" && keyInput.value === "" && composedKeys.length > 0) {
+        composedKeys.pop();
+        renderComposerTags();
+      }
     });
 
     document.getElementById("modal-cancel").addEventListener("click", () => {
@@ -616,10 +940,8 @@
     });
 
     document.getElementById("modal-save").addEventListener("click", () => {
-      const label = labelInput.value.trim();
-      const keys = keysInput.value.trim();
-      if (!label || !keys) return;
-      shortcuts.push({ label, keys });
+      if (composedKeys.length === 0) return;
+      shortcuts.push({ label: composedLabel(), keys: composedKeysString() });
       addOverlay.classList.remove("visible");
       renderEditList();
     });
@@ -650,16 +972,21 @@
       sessions.forEach((s) => {
         const row = document.createElement("div");
         row.className = "session-item";
+        row.setAttribute("role", "listitem");
 
         const dot = document.createElement("span");
         dot.className = `session-status ${s.alive ? "alive" : "dead"}`;
+        dot.setAttribute("aria-label", s.alive ? "Running" : "Exited");
         row.appendChild(dot);
 
-        // Editable name input — Enter to rename
         const nameInput = document.createElement("input");
         nameInput.type = "text";
         nameInput.className = "session-name-input";
         nameInput.value = s.name;
+        nameInput.setAttribute("aria-label", `Session name: ${s.name}`);
+        nameInput.setAttribute("autocorrect", "off");
+        nameInput.setAttribute("autocapitalize", "off");
+        nameInput.setAttribute("spellcheck", "false");
         let currentName = s.name;
 
         async function commitRename() {
@@ -674,26 +1001,14 @@
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ name: newName }),
             });
-            if (!res.ok) {
-              nameInput.value = currentName;
-              return;
-            }
-          } catch {
-            nameInput.value = currentName;
-            return;
-          }
+            if (!res.ok) { nameInput.value = currentName; return; }
+          } catch { nameInput.value = currentName; return; }
           await renderSessionList();
         }
 
         nameInput.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            nameInput.blur();
-          }
-          if (e.key === "Escape") {
-            nameInput.value = currentName;
-            nameInput.blur();
-          }
+          if (e.key === "Enter") { e.preventDefault(); nameInput.blur(); }
+          if (e.key === "Escape") { nameInput.value = currentName; nameInput.blur(); }
         });
         nameInput.addEventListener("blur", commitRename);
         row.appendChild(nameInput);
@@ -704,21 +1019,20 @@
           cur.textContent = "(current)";
           row.appendChild(cur);
         } else {
-          // Open in new tab button (only for non-current sessions)
           const openBtn = document.createElement("button");
-          openBtn.className = "session-open-btn";
-          openBtn.innerHTML = "&#8599;"; // arrow
-          openBtn.title = "Open in new tab";
+          openBtn.className = "session-icon-btn open";
+          openBtn.setAttribute("aria-label", `Open ${s.name} in new tab`);
+          openBtn.innerHTML = '<i class="ph ph-arrow-square-out"></i>';
           openBtn.addEventListener("click", () => {
             window.open(`/?s=${encodeURIComponent(s.name)}`, "_blank");
           });
           row.appendChild(openBtn);
         }
 
-        // Delete button
         const delBtn = document.createElement("button");
-        delBtn.className = "session-delete-btn";
-        delBtn.textContent = "\u00d7";
+        delBtn.className = "session-icon-btn delete";
+        delBtn.setAttribute("aria-label", `Delete session ${s.name}`);
+        delBtn.innerHTML = '<i class="ph ph-trash"></i>';
         delBtn.addEventListener("click", async () => {
           try {
             await fetch(`/sessions/${encodeURIComponent(s.name)}`, { method: "DELETE" });
@@ -750,14 +1064,38 @@
     });
 
     sessionNewName.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        document.getElementById("session-new-create").click();
-      }
+      if (e.key === "Enter") document.getElementById("session-new-create").click();
     });
 
     sessionOverlay.addEventListener("click", (e) => {
       if (e.target === sessionOverlay) {
         sessionOverlay.classList.remove("visible");
+        term.focus();
+      }
+    });
+
+    // --- Settings ---
+
+    const settingsOverlay = document.getElementById("settings-overlay");
+
+    function openSettings() {
+      settingsOverlay.classList.add("visible");
+    }
+
+    document.querySelectorAll(".theme-toggle button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        applyTheme(btn.dataset.themeVal);
+      });
+    });
+
+    document.getElementById("settings-done").addEventListener("click", () => {
+      settingsOverlay.classList.remove("visible");
+      term.focus();
+    });
+
+    settingsOverlay.addEventListener("click", (e) => {
+      if (e.target === settingsOverlay) {
+        settingsOverlay.classList.remove("visible");
         term.focus();
       }
     });
