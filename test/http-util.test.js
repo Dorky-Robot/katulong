@@ -230,4 +230,27 @@ describe("createChallengeStore", () => {
     consume("current");
     assert.ok(!_challenges.has("old"));
   });
+
+  it("periodic sweep cleans up expired challenges", () => {
+    const { store, _challenges, _sweep } = createChallengeStore(100);
+
+    // Store some challenges
+    store("challenge-1");
+    store("challenge-2");
+    store("challenge-3");
+
+    // All challenges should exist initially
+    assert.equal(_challenges.size, 3);
+
+    // Manually expire all challenges
+    for (const [key] of _challenges) {
+      _challenges.set(key, Date.now() - 1);
+    }
+
+    // Trigger sweep manually
+    _sweep();
+
+    // After sweep, expired challenges should be removed
+    assert.equal(_challenges.size, 0, "Expired challenges should be removed by sweep");
+  });
 });
