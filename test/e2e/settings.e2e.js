@@ -52,4 +52,26 @@ test.describe("Settings modal", () => {
     await page.waitForURL("**/login");
     expect(page.url()).toContain("/login");
   });
+
+  test("Theme persists after reload", async ({ page }) => {
+    // Switch to light theme
+    await page.locator("button[data-theme-val='light']").click();
+    await expect(page.locator("button[data-theme-val='light']")).toHaveClass(/active/);
+
+    // Close modal and reload
+    await page.locator("#settings-overlay").click({ position: { x: 5, y: 5 } });
+    await page.reload();
+    await page.waitForSelector("#shortcut-bar");
+
+    // Verify theme attribute persisted
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+
+    // Re-open settings and verify active button state
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await expect(page.locator("#settings-overlay")).toHaveClass(/visible/);
+    await expect(page.locator("button[data-theme-val='light']")).toHaveClass(/active/);
+
+    // Reset to auto
+    await page.locator("button[data-theme-val='auto']").click();
+  });
 });
