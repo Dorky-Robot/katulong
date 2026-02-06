@@ -16,6 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/simple-peer@9/simplepeer.min.js"></script>
   <style>
     /* --- Catppuccin Mocha (dark) / Latte (light) --- */
     :root {
@@ -137,6 +138,13 @@
     }
     .bar-icon-btn:active { background: var(--accent); }
     .bar-spacer { margin-left: auto; }
+
+    /* P2P status indicator */
+    #p2p-indicator {
+      flex-shrink: 0; width: 0.5rem; height: 0.5rem; border-radius: 50%;
+      background: var(--text-dim); transition: background 0.2s;
+    }
+    #p2p-indicator.p2p-active { background: var(--success); }
 
     /* --- Shared modal --- */
     .modal-overlay {
@@ -520,6 +528,15 @@
     let composedKeys = [];
     let ws;
     let reconnectDelay = 1000;
+    let p2pPeer = null;
+    let p2pConnected = false;
+
+    function updateP2PIndicator() {
+      const dot = document.getElementById("p2p-indicator");
+      if (!dot) return;
+      dot.classList.toggle("p2p-active", p2pConnected);
+      dot.title = p2pConnected ? "P2P: direct" : "P2P: relay";
+    }
 
     document.title = sessionName;
 
@@ -539,31 +556,24 @@
     term.open(document.getElementById("terminal-container"));
 
     // Disable mobile autocorrect/suggestions on xterm's hidden textarea
-    function disableSuggestions(el) {
-      el.setAttribute("autocorrect", "off");
-      el.setAttribute("autocapitalize", "none");
-      el.setAttribute("autocomplete", "new-password");
-      el.setAttribute("spellcheck", "false");
-      el.setAttribute("data-gramm", "false");
-      el.setAttribute("data-form-type", "other");
-      el.setAttribute("data-lpignore", "true");
-      el.autocomplete = "new-password";
-      el.autocapitalize = "none";
-      el.spellcheck = false;
-    }
     function patchTextarea() {
       const ta = document.querySelector(".xterm-helper-textarea");
-      if (ta) disableSuggestions(ta);
+      if (!ta || ta._patched) return;
+      ta._patched = true;
+      ta.setAttribute("autocorrect", "off");
+      ta.setAttribute("autocapitalize", "none");
+      ta.setAttribute("autocomplete", "new-password");
+      ta.setAttribute("spellcheck", "false");
+      ta.autocomplete = "new-password";
+      ta.autocapitalize = "none";
+      ta.spellcheck = false;
+      ta.addEventListener("compositionstart", (e) => e.preventDefault());
     }
     patchTextarea();
     new MutationObserver(patchTextarea).observe(
       document.getElementById("terminal-container"),
       { childList: true, subtree: true }
     );
-    term.textarea?.addEventListener("compositionstart", (e) => e.preventDefault());
-    document.addEventListener("compositionstart", (e) => {
-      if (e.target?.classList?.contains("xterm-helper-textarea")) e.preventDefault();
-    }, true);
     document.fonts.ready.then(() => fit.fit());
 
     applyTheme(localStorage.getItem("theme") || "auto");
@@ -573,8 +583,29 @@
 
     // --- WebSocket ---
 
+    let sendBuf = "";
+    let sendTimer = 0;
     function rawSend(data) {
-      if (ws?.readyState === 1) ws.send(JSON.stringify({ type: "input", data }));
+      sendBuf += data;
+      if (!sendTimer) {
+        sendTimer = requestAnimationFrame(() => {
+          sendTimer = 0;
+          if (!sendBuf) return;
+          if (p2pConnected && p2pPeer) {
+            try {
+              p2pPeer.send(JSON.stringify({ type: "input", data: sendBuf }));
+            } catch {
+              // DataChannel send failed, fall back to WS
+              if (ws?.readyState === 1) {
+                ws.send(JSON.stringify({ type: "input", data: sendBuf }));
+              }
+            }
+          } else if (ws?.readyState === 1) {
+            ws.send(JSON.stringify({ type: "input", data: sendBuf }));
+          }
+          sendBuf = "";
+        });
+      }
     }
 
     term.attachCustomKeyEventHandler((ev) => {
@@ -595,6 +626,63 @@
 
     term.onData((data) => rawSend(data));
 
+    function destroyP2P() {
+      if (p2pPeer) {
+        try { p2pPeer.destroy(); } catch {}
+        p2pPeer = null;
+      }
+      p2pConnected = false;
+      updateP2PIndicator();
+    }
+
+    function initP2P() {
+      if (typeof SimplePeer === "undefined") return;
+      destroyP2P();
+
+      const peer = new SimplePeer({ initiator: true, trickle: true });
+
+      peer.on("signal", (data) => {
+        if (ws?.readyState === 1) {
+          ws.send(JSON.stringify({ type: "p2p-signal", data }));
+        }
+      });
+
+      peer.on("connect", () => {
+        p2pConnected = true;
+        console.log("[P2P] DataChannel connected");
+        updateP2PIndicator();
+      });
+
+      peer.on("data", (chunk) => {
+        const str = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+        try {
+          const msg = JSON.parse(str);
+          if (msg.type === "output") {
+            term.write(msg.data);
+          }
+        } catch {
+          // raw data, write directly
+          term.write(str);
+        }
+      });
+
+      peer.on("close", () => {
+        console.log("[P2P] DataChannel closed, using WS");
+        p2pConnected = false;
+        p2pPeer = null;
+        updateP2PIndicator();
+      });
+
+      peer.on("error", (err) => {
+        console.warn("[P2P] error:", err.message);
+        p2pConnected = false;
+        p2pPeer = null;
+        updateP2PIndicator();
+      });
+
+      p2pPeer = peer;
+    }
+
     function connect() {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       ws = new WebSocket(`${proto}//${location.host}`);
@@ -607,8 +695,19 @@
 
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
-        if (msg.type === "output") {
+        if (msg.type === "attached") {
+          initP2P();
+        } else if (msg.type === "output") {
           term.write(msg.data);
+        } else if (msg.type === "p2p-signal") {
+          if (p2pPeer) p2pPeer.signal(msg.data);
+        } else if (msg.type === "p2p-ready") {
+          console.log("[P2P] Server confirmed DataChannel ready");
+          updateP2PIndicator();
+        } else if (msg.type === "p2p-closed") {
+          console.log("[P2P] Server reports DataChannel closed");
+          p2pConnected = false;
+          updateP2PIndicator();
         } else if (msg.type === "reload") {
           location.reload();
         } else if (msg.type === "exit") {
@@ -626,6 +725,7 @@
       };
 
       ws.onclose = () => {
+        destroyP2P();
         setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 10000);
       };
@@ -748,6 +848,12 @@
       sessBtn.innerHTML = `<i class="ph ph-terminal-window"></i> ${name}`;
       sessBtn.addEventListener("click", openSessionManager);
       bar.appendChild(sessBtn);
+
+      const p2pDot = document.createElement("span");
+      p2pDot.id = "p2p-indicator";
+      p2pDot.title = "P2P: connecting...";
+      bar.appendChild(p2pDot);
+      updateP2PIndicator();
 
       for (const s of pinnedKeys) {
         const btn = document.createElement("button");

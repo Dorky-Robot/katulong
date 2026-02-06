@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.0.0",
+    "node-datachannel": "^0.12.0",
     "node-pty": "^1.0.0",
+    "simple-peer": "^9.11.1",
     "ws": "^8.18.2"
   }
 }
