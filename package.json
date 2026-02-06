@@ -8,7 +8,11 @@
     "daemon": "node daemon.js",
     "start": "node server.js",
     "dev": "node daemon.js & node server.js",
-    "start:all": "node --env-file=.env.local entrypoint.js"
+    "start:all": "node --env-file=.env.local entrypoint.js",
+    "test": "node --test 'test/*.test.js' 'test/*.integration.js'",
+    "test:unit": "node --test 'test/*.test.js'",
+    "test:integration": "node --test 'test/*.integration.js'",
+    "prepare": "husky"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.0.0",
@@ -16,5 +20,8 @@
     "node-pty": "^1.0.0",
     "simple-peer": "^9.11.1",
     "ws": "^8.18.2"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
   }
 }

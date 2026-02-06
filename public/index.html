@@ -701,7 +701,7 @@
 
       ws.onopen = () => {
         reconnectDelay = 1000;
-        ws.send(JSON.stringify({ type: "attach", session: sessionName }));
+        ws.send(JSON.stringify({ type: "attach", session: sessionName, cols: term.cols, rows: term.rows }));
         ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       };
 

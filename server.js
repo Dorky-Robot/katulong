@@ -14,6 +14,10 @@ import {
   generateAuthOpts, verifyAuth,
   createSession, validateSession, pruneExpiredSessions,
 } from "./lib/auth.js";
+import {
+  parseCookies, setSessionCookie, getOriginAndRpID,
+  isPublicPath, sanitizeName, createChallengeStore,
+} from "./lib/http-util.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -28,55 +32,7 @@ if (!process.env.SETUP_TOKEN) {
 
 // --- Challenge storage (in-memory, 5-min expiry) ---
 
-const challenges = new Map(); // challenge -> expiry timestamp
-const CHALLENGE_TTL_MS = 5 * 60 * 1000;
-
-function storeChallenge(challenge) {
-  challenges.set(challenge, Date.now() + CHALLENGE_TTL_MS);
-}
-
-function consumeChallenge(challenge) {
-  const expiry = challenges.get(challenge);
-  if (!expiry) return false;
-  challenges.delete(challenge);
-  // Prune expired challenges while we're here (skip metadata keys)
-  const now = Date.now();
-  for (const [c, exp] of challenges) {
-    if (typeof exp === "number" && now >= exp) challenges.delete(c);
-  }
-  return now < expiry;
-}
-
-// --- Cookie helpers ---
-
-function parseCookies(header) {
-  const map = new Map();
-  if (!header) return map;
-  for (const pair of header.split(";")) {
-    const idx = pair.indexOf("=");
-    if (idx < 0) continue;
-    map.set(pair.slice(0, idx).trim(), pair.slice(idx + 1).trim());
-  }
-  return map;
-}
-
-function setSessionCookie(res, token, expiry) {
-  const maxAge = Math.floor((expiry - Date.now()) / 1000);
-  const existing = res.getHeader("Set-Cookie") || [];
-  const cookies = Array.isArray(existing) ? existing : [existing].filter(Boolean);
-  cookies.push(`katulong_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`);
-  res.setHeader("Set-Cookie", cookies);
-}
-
-// --- Auth helpers ---
-
-function getOriginAndRpID(req) {
-  const host = req.headers.host || "localhost";
-  const hostname = host.split(":")[0];
-  const proto = req.headers["x-forwarded-proto"] || "http";
-  const origin = `${proto}://${host}`;
-  return { origin, rpID: hostname };
-}
+const { store: storeChallenge, consume: consumeChallenge, _challenges: challenges } = createChallengeStore(5 * 60 * 1000);
 
 function isAuthenticated(req) {
   const cookies = parseCookies(req.headers.cookie);
@@ -84,17 +40,6 @@ function isAuthenticated(req) {
   if (!token) return false;
   const state = loadState();
   return validateSession(state, token);
-}
-
-const STATIC_EXTS = new Set([".js", ".css", ".png", ".ico", ".webp", ".svg", ".woff2", ".json"]);
-
-function isPublicPath(pathname) {
-  if (pathname === "/login" || pathname === "/login.html") return true;
-  if (pathname.startsWith("/auth/")) return true;
-  // Allow static assets through (fonts, icons, etc.)
-  const ext = extname(pathname);
-  if (ext && STATIC_EXTS.has(ext) && pathname !== "/") return true;
-  return false;
 }
 
 // --- IPC client to daemon ---
@@ -177,12 +122,6 @@ function readBody(req) {
 function json(res, status, data) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
-}
-
-function sanitizeName(raw) {
-  if (!raw || typeof raw !== "string") return null;
-  const safe = raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
-  return safe || null;
 }
 
 async function parseJSON(req) {
@@ -472,7 +411,7 @@ wss.on("connection", (ws) => {
     if (msg.type === "attach") {
       const name = msg.session || "default";
       try {
-        const result = await daemonRPC({ type: "attach", clientId, session: name });
+        const result = await daemonRPC({ type: "attach", clientId, session: name, cols: msg.cols, rows: msg.rows });
         wsClients.set(clientId, { ws, session: name, p2pPeer: null, p2pConnected: false });
         log.debug("Client attached", { clientId, session: name });
         ws.send(JSON.stringify({ type: "attached" }));

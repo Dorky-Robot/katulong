@@ -41,11 +41,11 @@ function broadcast(msg) {
   for (const sock of uiSockets) sock.write(line);
 }
 
-function spawnSession(name) {
+function spawnSession(name, cols = 120, rows = 40) {
   const p = pty.spawn(SHELL, ["-l"], {
     name: "xterm-256color",
-    cols: 120,
-    rows: 40,
+    cols,
+    rows,
     cwd: process.env.HOME,
     env: { ...process.env, TERM: "xterm-256color" },
   });
@@ -69,8 +69,8 @@ function spawnSession(name) {
   return session;
 }
 
-function ensureSession(name) {
-  return sessions.get(name) || spawnSession(name);
+function ensureSession(name, cols, rows) {
+  return sessions.get(name) || spawnSession(name, cols, rows);
 }
 
 function removeSession(name) {
@@ -120,7 +120,7 @@ const rpcHandlers = {
 
   "attach": (msg, socket) => {
     const name = msg.session || "default";
-    const session = ensureSession(name);
+    const session = ensureSession(name, msg.cols, msg.rows);
     clients.set(msg.clientId, { session: name, socket });
     return { buffer: session.outputBuffer.join(""), alive: session.alive };
   },

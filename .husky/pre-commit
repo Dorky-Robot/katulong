@@ -1,0 +1,38 @@
+# Run only the tests relevant to staged files
+
+map_to_test() {
+  case "$1" in
+    lib/ndjson.js)    echo "test/ndjson.test.js" ;;
+    lib/http-util.js) echo "test/http-util.test.js" ;;
+    lib/auth.js)      echo "test/auth.test.js" ;;
+    lib/log.js)       echo "test/log.test.js" ;;
+    lib/p2p.js)       echo "test/p2p.test.js" ;;
+    server.js)        echo "test/http-util.test.js" ;;
+    daemon.js)        echo "test/daemon.integration.js" ;;
+    test/*.test.js|test/*.integration.js) echo "$1" ;;
+  esac
+}
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+TO_RUN=""
+
+for file in $STAGED; do
+  test_file=$(map_to_test "$file")
+  if [ -n "$test_file" ]; then
+    # Deduplicate: only add if not already present
+    case " $TO_RUN " in
+      *" $test_file "*) ;;
+      *) TO_RUN="$TO_RUN $test_file" ;;
+    esac
+  fi
+done
+
+# Trim leading space
+TO_RUN=$(echo "$TO_RUN" | sed 's/^ //')
+
+if [ -z "$TO_RUN" ]; then
+  exit 0
+fi
+
+echo "pre-commit: running $TO_RUN"
+node --test $TO_RUN

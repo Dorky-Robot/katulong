@@ -1,0 +1,2 @@
+echo "pre-push: running full test suite"
+npm test
