@@ -866,7 +866,7 @@
       el.style.left = x + "px";
       el.style.top = y + "px";
       document.body.appendChild(el);
-      el.addEventListener("animationend", () => el.remove());
+      el.addEventListener("animationend", () => el.remove(), { once: true });
     }
 
     const ro = new ResizeObserver(() => {

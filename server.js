@@ -476,8 +476,8 @@ wss.on("connection", (ws) => {
               if (parsed.type === "input") {
                 daemonSend({ type: "input", clientId, data: parsed.data });
               }
-            } catch {
-              // ignore malformed data
+            } catch (err) {
+              log.warn("Malformed P2P data", { clientId, error: err.message });
             }
           },
           // onClose: clean up P2P state, notify browser

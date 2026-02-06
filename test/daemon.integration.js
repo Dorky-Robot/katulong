@@ -150,4 +150,39 @@ describe("daemon integration", () => {
     const getResult = await rpc(sock, { type: "get-shortcuts" });
     assert.deepEqual(getResult.shortcuts, shortcuts);
   });
+
+  it("output buffer respects 5MB byte cap under heavy output", async () => {
+    // Create a session for testing
+    const sessionName = "buffer-test";
+    await rpc(sock, { type: "create-session", name: sessionName });
+
+    // Generate output that would exceed 5MB if not capped
+    // Use a command that outputs a large amount of data
+    const largeChunk = "A".repeat(100000); // 100KB chunk
+    const iterations = 60; // 60 * 100KB = 6MB total, exceeds 5MB cap
+
+    // Send command to generate heavy output using yes command
+    await rpc(sock, {
+      type: "input",
+      session: sessionName,
+      data: `yes "${largeChunk}" | head -n ${iterations}\n`,
+    });
+
+    // Wait for output to be generated
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    // Attach to get the buffer
+    const result = await rpc(sock, { type: "attach", clientId: "buffer-client", session: sessionName });
+
+    // Buffer should not exceed 5MB
+    const bufferSize = Buffer.byteLength(result.buffer, "utf8");
+    const maxBytes = 5 * 1024 * 1024; // 5MB
+    assert.ok(
+      bufferSize <= maxBytes,
+      `Buffer size ${bufferSize} should not exceed ${maxBytes} bytes`
+    );
+
+    // Clean up
+    await rpc(sock, { type: "delete-session", name: sessionName });
+  });
 });
