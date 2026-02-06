@@ -490,7 +490,13 @@ wss.on("connection", (ws) => {
       const info = wsClients.get(clientId);
       if (!info) return;
 
-      // Create server peer on first signal, reuse on subsequent
+      // If this is a new SDP offer, tear down the old peer and start fresh
+      if (msg.data?.type === "offer" && info.p2pPeer) {
+        destroyPeer(info.p2pPeer);
+        info.p2pPeer = null;
+        info.p2pConnected = false;
+      }
+
       if (!info.p2pPeer) {
         info.p2pPeer = createServerPeer(
           // onSignal: relay SDP/ICE back to browser via WS

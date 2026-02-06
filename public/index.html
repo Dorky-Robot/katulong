@@ -530,6 +530,15 @@
     let reconnectDelay = 1000;
     let p2pPeer = null;
     let p2pConnected = false;
+    let p2pRetryTimer = 0;
+    const P2P_RETRY_MS = 3000;
+
+    function scheduleP2PRetry() {
+      clearTimeout(p2pRetryTimer);
+      p2pRetryTimer = setTimeout(() => {
+        if (!p2pConnected && ws?.readyState === 1) initP2P();
+      }, P2P_RETRY_MS);
+    }
 
     function updateP2PIndicator() {
       const dot = document.getElementById("p2p-indicator");
@@ -627,6 +636,7 @@
     term.onData((data) => rawSend(data));
 
     function destroyP2P() {
+      clearTimeout(p2pRetryTimer);
       if (p2pPeer) {
         try { p2pPeer.destroy(); } catch {}
         p2pPeer = null;
@@ -639,7 +649,7 @@
       if (typeof SimplePeer === "undefined") return;
       destroyP2P();
 
-      const peer = new SimplePeer({ initiator: true, trickle: true });
+      const peer = new SimplePeer({ initiator: true, trickle: true, config: { iceServers: [] } });
 
       peer.on("signal", (data) => {
         if (ws?.readyState === 1) {
@@ -671,6 +681,7 @@
         p2pConnected = false;
         p2pPeer = null;
         updateP2PIndicator();
+        scheduleP2PRetry();
       });
 
       peer.on("error", (err) => {
@@ -678,6 +689,7 @@
         p2pConnected = false;
         p2pPeer = null;
         updateP2PIndicator();
+        scheduleP2PRetry();
       });
 
       p2pPeer = peer;
@@ -1164,6 +1176,19 @@
       const text = e.clipboardData?.getData("text");
       if (text) { rawSend(text); e.preventDefault(); }
     });
+
+    // --- Network change: re-establish P2P ---
+
+    function onNetworkChange() {
+      if (!ws || ws.readyState !== 1) return;
+      console.log("[P2P] Network change detected, re-establishing");
+      initP2P();
+    }
+
+    window.addEventListener("online", onNetworkChange);
+    if (navigator.connection) {
+      navigator.connection.addEventListener("change", onNetworkChange);
+    }
 
     // --- Boot ---
 
