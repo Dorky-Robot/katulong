@@ -1,8 +1,8 @@
 import { createServer } from "node:http";
 import { createConnection } from "node:net";
-import { readFileSync, existsSync, watch } from "node:fs";
+import { readFileSync, realpathSync, existsSync, watch } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, extname } from "node:path";
+import { dirname, join, extname, resolve } from "node:path";
 import { WebSocketServer } from "ws";
 import { randomUUID, randomBytes } from "node:crypto";
 import { encode, decoder } from "./lib/ndjson.js";
@@ -47,6 +47,7 @@ function isAuthenticated(req) {
 
 let daemonSocket = null;
 let daemonConnected = false;
+let daemonReconnectDelay = 1000;
 const pendingRPC = new Map();
 
 function connectDaemon() {
@@ -59,6 +60,7 @@ function connectDaemon() {
 
   daemonSocket.on("connect", () => {
     daemonConnected = true;
+    daemonReconnectDelay = 1000;
     log.info("Connected to daemon");
   });
 
@@ -75,13 +77,14 @@ function connectDaemon() {
 
   daemonSocket.on("close", () => {
     daemonConnected = false;
-    log.warn("Disconnected from daemon, reconnecting in 1s");
+    log.warn("Disconnected from daemon", { reconnectMs: daemonReconnectDelay });
     for (const [, { reject, timer }] of pendingRPC) {
       clearTimeout(timer);
       reject(new Error("Daemon disconnected"));
     }
     pendingRPC.clear();
-    setTimeout(connectDaemon, 1000);
+    setTimeout(connectDaemon, daemonReconnectDelay);
+    daemonReconnectDelay = Math.min(daemonReconnectDelay * 2, 30000);
   });
 
   daemonSocket.on("error", (err) => {
@@ -348,11 +351,18 @@ const server = createServer(async (req, res) => {
   }
 
   // Static files
-  const filePath = join(__dirname, "public", pathname);
-  if (req.method === "GET" && existsSync(filePath)) {
-    const ext = extname(filePath);
-    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
-    res.end(readFileSync(filePath));
+  const publicDir = join(__dirname, "public");
+  const filePath = resolve(publicDir, pathname.slice(1));
+  if (req.method === "GET" && filePath.startsWith(publicDir) && existsSync(filePath)) {
+    try {
+      const ext = extname(filePath);
+      res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
+      res.end(readFileSync(filePath));
+    } catch (err) {
+      log.error("Static file read error", { path: pathname, error: err.message });
+      res.writeHead(500);
+      res.end("Internal server error");
+    }
   } else {
     res.writeHead(404);
     res.end("Not found");
@@ -515,6 +525,10 @@ if (process.env.NODE_ENV !== "production") {
     }
   });
 }
+
+process.on("unhandledRejection", (err) => {
+  log.error("Unhandled rejection", { error: err?.message || String(err) });
+});
 
 server.listen(PORT, "0.0.0.0", () => {
   log.info("Katulong UI started", { port: PORT });
