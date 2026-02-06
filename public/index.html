@@ -698,6 +698,13 @@
       if ((ev.metaKey || ev.ctrlKey) && ev.key === "v") return false;
       if (ev.ctrlKey && ev.key === "c" && !term.hasSelection()) return true;
 
+      // Shift+Enter: quoted-insert (\x16) + newline (\x0a) — inserts a literal
+      // newline without executing, works in zsh/bash with no shell config needed
+      if (ev.shiftKey && ev.key === "Enter" && ev.type === "keydown") {
+        rawSend("\x16\x0a");
+        return false;
+      }
+
       if (ev.metaKey && ev.type === "keydown") {
         if (ev.key === "k") { term.clear(); return false; }
         const seq = { Backspace: "\x15", ArrowLeft: "\x01", ArrowRight: "\x05" }[ev.key];
