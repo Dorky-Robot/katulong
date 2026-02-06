@@ -35,6 +35,7 @@ if (!process.env.SETUP_TOKEN) {
 const { store: storeChallenge, consume: consumeChallenge, _challenges: challenges } = createChallengeStore(5 * 60 * 1000);
 
 function isAuthenticated(req) {
+  if (process.env.KATULONG_NO_AUTH === "1") return true;
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies.get("katulong_session");
   if (!token) return false;
@@ -253,6 +254,20 @@ const routes = [
     } catch (err) {
       json(res, 400, { error: err.message });
     }
+  }},
+
+  { method: "POST", path: "/auth/logout", handler: (req, res) => {
+    const cookies = parseCookies(req.headers.cookie);
+    const token = cookies.get("katulong_session");
+    if (token) {
+      const state = loadState();
+      if (state?.sessions?.[token]) {
+        delete state.sessions[token];
+        saveState(state);
+      }
+    }
+    res.setHeader("Set-Cookie", "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+    json(res, 200, { ok: true });
   }},
 
   // --- App routes ---

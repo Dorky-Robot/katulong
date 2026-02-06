@@ -12,6 +12,7 @@
     "test": "node --test 'test/*.test.js' 'test/*.integration.js'",
     "test:unit": "node --test 'test/*.test.js'",
     "test:integration": "node --test 'test/*.integration.js'",
+    "test:e2e": "npx playwright test",
     "prepare": "husky"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "ws": "^8.18.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.1",
     "husky": "^9.1.7"
   }
 }

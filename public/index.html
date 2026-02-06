@@ -75,7 +75,8 @@
 
     /* --- Reset & base --- */
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { height: 100%; background: var(--bg); overflow: hidden; color: var(--text); }
+    button, input { font-family: inherit; }
+    html, body { height: 100%; background: var(--bg); overflow: hidden; color: var(--text); font-family: var(--font-mono); }
 
     /* --- Focus & motion --- */
     :focus-visible {
@@ -161,6 +162,7 @@
     /* P2P status indicator */
     #p2p-indicator {
       flex-shrink: 0; width: 0.5rem; height: 0.5rem; border-radius: 50%;
+      margin-right: 0.25rem;
       background: var(--text-dim); transition: background 0.2s;
     }
     #p2p-indicator.p2p-active { background: var(--success); }
@@ -373,11 +375,12 @@
     .settings-footer {
       padding: 0.875rem 0;
     }
-    .settings-done-btn {
+    .settings-logout-btn {
       width: 100%; height: 2.75rem; border: none; border-radius: 0.5rem;
-      background: var(--accent); color: var(--text); font-size: 0.875rem; cursor: pointer;
+      background: var(--danger); color: #fff; font-size: 0.875rem; cursor: pointer;
+      margin-bottom: 0.5rem;
     }
-    .settings-done-btn:active { background: var(--accent-active); }
+    .settings-logout-btn:active { opacity: 0.8; }
   </style>
 </head>
 <body>
@@ -474,7 +477,7 @@
         </div>
       </div>
       <div class="settings-footer">
-        <button class="settings-done-btn" id="settings-done">Done</button>
+        <button class="settings-logout-btn" id="settings-logout">Log Out</button>
       </div>
     </div>
   </div>
@@ -926,6 +929,12 @@
     function renderBar(name) {
       bar.innerHTML = "";
 
+      const p2pDot = document.createElement("span");
+      p2pDot.id = "p2p-indicator";
+      p2pDot.title = "P2P: connecting...";
+      bar.appendChild(p2pDot);
+      updateP2PIndicator();
+
       const sessBtn = document.createElement("button");
       sessBtn.className = "session-btn";
       sessBtn.setAttribute("aria-label", `Session: ${name}`);
@@ -933,11 +942,9 @@
       sessBtn.addEventListener("click", openSessionManager);
       bar.appendChild(sessBtn);
 
-      const p2pDot = document.createElement("span");
-      p2pDot.id = "p2p-indicator";
-      p2pDot.title = "P2P: connecting...";
-      bar.appendChild(p2pDot);
-      updateP2PIndicator();
+      const spacer = document.createElement("span");
+      spacer.className = "bar-spacer";
+      bar.appendChild(spacer);
 
       for (const s of pinnedKeys) {
         const btn = document.createElement("button");
@@ -947,10 +954,6 @@
         btn.addEventListener("click", () => { rawSend(keysToSequence(s.keys)); term.focus(); });
         bar.appendChild(btn);
       }
-
-      const spacer = document.createElement("span");
-      spacer.className = "bar-spacer";
-      bar.appendChild(spacer);
 
       const kbBtn = document.createElement("button");
       kbBtn.className = "bar-icon-btn";
@@ -1239,7 +1242,10 @@
     document.querySelectorAll(".theme-toggle button").forEach(btn => {
       btn.addEventListener("click", () => applyTheme(btn.dataset.themeVal));
     });
-    document.getElementById("settings-done").addEventListener("click", () => closeModal(settingsOverlay));
+    document.getElementById("settings-logout").addEventListener("click", async () => {
+      await fetch("/auth/logout", { method: "POST" });
+      location.href = "/login";
+    });
     dismissModal(settingsOverlay);
 
     // --- Global paste ---
