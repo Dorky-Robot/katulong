@@ -13,10 +13,11 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
-  <script src="https://cdn.jsdelivr.net/npm/simple-peer@9/simplepeer.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" media="print" onload="this.media='all'">
+  <script async src="https://cdn.jsdelivr.net/npm/simple-peer@9/simplepeer.min.js"></script>
   <style>
     /* --- Catppuccin Mocha (dark) / Latte (light) --- */
     :root {
@@ -31,6 +32,7 @@
       --accent: #45475a;
       --accent-active: #cba6f7;
       --success: #a6e3a1;
+      --warning: #f9e2af;
       --danger: #f38ba8;
       --overlay-bg: rgba(0,0,0,0.6);
       --focus-ring: rgba(137,180,250,0.5);
@@ -48,6 +50,7 @@
       --accent: #ccd0da;
       --accent-active: #8839ef;
       --success: #40a02b;
+      --warning: #df8e1d;
       --danger: #d20f39;
       --overlay-bg: rgba(0,0,0,0.3);
       --focus-ring: rgba(30,102,245,0.4);
@@ -66,6 +69,7 @@
         --accent: #ccd0da;
         --accent-active: #8839ef;
         --success: #40a02b;
+        --warning: #df8e1d;
         --danger: #d20f39;
         --overlay-bg: rgba(0,0,0,0.3);
         --focus-ring: rgba(30,102,245,0.4);
@@ -163,6 +167,7 @@
       background: var(--text-dim); transition: background 0.2s;
     }
     #p2p-indicator.p2p-active { background: var(--success); }
+    #p2p-indicator.p2p-relay { background: var(--warning); }
 
     /* --- Shared modal --- */
     .modal-overlay {
@@ -597,6 +602,7 @@
     let reconnectDelay = 1000;
     let p2pPeer = null;
     let p2pConnected = false;
+    let wsAttached = false;
     let p2pRetryTimer = 0;
     const P2P_RETRY_MS = 3000;
 
@@ -611,7 +617,10 @@
       const dot = document.getElementById("p2p-indicator");
       if (!dot) return;
       dot.classList.toggle("p2p-active", p2pConnected);
-      dot.title = p2pConnected ? "P2P: direct" : "P2P: relay";
+      dot.classList.toggle("p2p-relay", wsAttached && !p2pConnected);
+      dot.title = p2pConnected ? "Connected (direct)"
+        : wsAttached ? "Connected (relay)"
+        : "Disconnected";
     }
 
     document.title = sessionName;
@@ -776,6 +785,8 @@
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
         if (msg.type === "attached") {
+          wsAttached = true;
+          updateP2PIndicator();
           initP2P();
         } else if (msg.type === "output") {
           term.write(msg.data);
@@ -805,6 +816,7 @@
       };
 
       ws.onclose = () => {
+        wsAttached = false;
         destroyP2P();
         setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 10000);
