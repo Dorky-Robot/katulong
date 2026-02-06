@@ -1019,7 +1019,8 @@
       const sessBtn = document.createElement("button");
       sessBtn.className = "session-btn";
       sessBtn.setAttribute("aria-label", `Session: ${name}`);
-      sessBtn.innerHTML = `<i class="ph ph-terminal-window"></i> ${name}`;
+      sessBtn.innerHTML = '<i class="ph ph-terminal-window"></i> ';
+      sessBtn.appendChild(document.createTextNode(name));
       sessBtn.addEventListener("click", openSessionManager);
       bar.appendChild(sessBtn);
 
@@ -1089,10 +1090,14 @@
         const row = document.createElement("div");
         row.className = "edit-item";
         row.setAttribute("role", "listitem");
-        row.innerHTML = `
-          <span class="edit-item-label">${s.label}</span>
-          <span class="edit-item-keys">${s.keys}</span>
-        `;
+        const labelSpan = document.createElement("span");
+        labelSpan.className = "edit-item-label";
+        labelSpan.textContent = s.label;
+        row.appendChild(labelSpan);
+        const keysSpan = document.createElement("span");
+        keysSpan.className = "edit-item-keys";
+        keysSpan.textContent = s.keys;
+        row.appendChild(keysSpan);
         const rm = document.createElement("button");
         rm.className = "edit-item-remove";
         rm.setAttribute("aria-label", `Remove ${s.label}`);
@@ -1165,8 +1170,13 @@
         }
         const tag = document.createElement("span");
         tag.className = "key-tag";
-        tag.innerHTML = `${displayKey(k)}<button class="key-tag-remove" aria-label="Remove ${displayKey(k)}"><i class="ph ph-x"></i></button>`;
-        tag.querySelector(".key-tag-remove").addEventListener("click", () => {
+        tag.appendChild(document.createTextNode(displayKey(k)));
+        const rmBtn = document.createElement("button");
+        rmBtn.className = "key-tag-remove";
+        rmBtn.setAttribute("aria-label", `Remove ${displayKey(k)}`);
+        rmBtn.innerHTML = '<i class="ph ph-x"></i>';
+        tag.appendChild(rmBtn);
+        rmBtn.addEventListener("click", () => {
           composedKeys = composedKeys.filter((_, idx) => idx !== i);
           renderComposerTags(composedKeys);
         });
