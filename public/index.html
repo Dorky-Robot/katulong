@@ -17,7 +17,6 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
   <script src="https://cdn.jsdelivr.net/npm/simple-peer@9/simplepeer.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
   <style>
     /* --- Catppuccin Mocha (dark) / Latte (light) --- */
     :root {
@@ -94,6 +93,10 @@
     /* --- Terminal --- */
     #terminal-container { width: 100%; margin-top: 2.75rem; position: relative; z-index: 1; }
     #terminal-container .xterm { height: 100%; }
+    #terminal-container .xterm-viewport {
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
 
     /* --- Scroll to bottom --- */
     #scroll-bottom {
@@ -198,7 +201,9 @@
       display: flex; gap: 0.5rem; padding: 0.75rem 0; position: sticky; bottom: 0;
       background: var(--bg-surface); border-top: 1px solid var(--border);
     }
-    .shortcuts-footer button {
+    .shortcuts-footer button,
+    .edit-actions button,
+    .modal-actions button {
       height: 2.75rem; padding: 0 1rem; border: none; border-radius: 0.5rem;
       font-size: 0.875rem; cursor: pointer; flex: 1;
       display: flex; align-items: center; justify-content: center; gap: 0.375rem;
@@ -232,11 +237,6 @@
     .edit-actions {
       display: flex; gap: 0.5rem; padding: 0.875rem 0; position: sticky; bottom: 0;
       background: var(--bg-surface);
-    }
-    .edit-actions button {
-      height: 2.75rem; padding: 0 1rem; border: none; border-radius: 0.5rem;
-      font-size: 0.875rem; cursor: pointer; flex: 1;
-      display: flex; align-items: center; justify-content: center; gap: 0.375rem;
     }
     .edit-add-btn {
       background: var(--bg-input); color: var(--text);
@@ -330,10 +330,6 @@
     }
     .key-preview-label { color: var(--text-dim); }
     .modal-actions { display: flex; gap: 0.5rem; padding-bottom: 1rem; }
-    .modal-actions button {
-      height: 2.75rem; padding: 0 1rem; border: none; border-radius: 0.5rem;
-      font-size: 0.875rem; cursor: pointer; flex: 1;
-    }
     .cancel-btn { background: var(--bg-input); color: var(--text-muted); border: 1px solid var(--border) !important; }
     .save-btn { background: var(--accent); color: var(--text); }
     .save-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -821,14 +817,27 @@
     const termContainer = document.getElementById("terminal-container");
     const bar = document.getElementById("shortcut-bar");
 
-    // --- Joystick swipe zone (Hammer.js) ---
+    // --- Joystick swipe zone (native touch) ---
     const joystick = document.getElementById("joystick");
-    const joyMc = new Hammer.Manager(joystick, { inputClass: Hammer.TouchInput });
-    joyMc.add(new Hammer.Swipe({ direction: Hammer.DIRECTION_ALL, threshold: 10, velocity: 0.3 }));
-    joyMc.on("swipeleft",  (e) => { rawSend("\x1b[D"); showSwipeFeedback(e.center.x, e.center.y); });
-    joyMc.on("swiperight", (e) => { rawSend("\x1b[C"); showSwipeFeedback(e.center.x, e.center.y); });
-    joyMc.on("swipeup",    (e) => { rawSend("\x1b[A"); showSwipeFeedback(e.center.x, e.center.y); });
-    joyMc.on("swipedown",  (e) => { rawSend("\x1b[B"); showSwipeFeedback(e.center.x, e.center.y); });
+    {
+      let startX, startY;
+      joystick.addEventListener("touchstart", (e) => {
+        const t = e.touches[0];
+        startX = t.clientX;
+        startY = t.clientY;
+      }, { passive: true });
+      joystick.addEventListener("touchend", (e) => {
+        const t = e.changedTouches[0];
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return;
+        const seq = Math.abs(dx) >= Math.abs(dy)
+          ? (dx > 0 ? "\x1b[C" : "\x1b[D")
+          : (dy > 0 ? "\x1b[B" : "\x1b[A");
+        rawSend(seq);
+        showSwipeFeedback(t.clientX, t.clientY);
+      });
+    }
 
     // Focus terminal on tap
     termContainer.addEventListener("touchstart", () => term.focus(), { passive: true });
@@ -874,10 +883,16 @@
     const scrollBtn = document.getElementById("scroll-bottom");
     const viewport = document.querySelector(".xterm-viewport");
     if (viewport) {
+      let scrollRaf = 0;
       viewport.addEventListener("scroll", () => {
-        scrollBtn.style.display =
-          viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 10 ? "none" : "flex";
-      });
+        if (!scrollRaf) {
+          scrollRaf = requestAnimationFrame(() => {
+            scrollRaf = 0;
+            const atBottom = viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 10;
+            scrollBtn.style.display = atBottom ? "none" : "flex";
+          });
+        }
+      }, { passive: true });
     }
     scrollBtn.addEventListener("click", () => { term.scrollToBottom(); scrollBtn.style.display = "none"; });
 
