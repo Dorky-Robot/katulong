@@ -1,6 +1,9 @@
-import { describe, it } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { createSession, validateSession, pruneExpiredSessions } from "../lib/auth.js";
+import { writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createSession, validateSession, pruneExpiredSessions, loadState, saveState, _invalidateCache } from "../lib/auth.js";
 
 describe("createSession", () => {
   it("returns a token that is 64 hex characters", () => {
@@ -96,5 +99,88 @@ describe("pruneExpiredSessions", () => {
   it("handles null state", () => {
     const result = pruneExpiredSessions(null);
     assert.equal(result, null);
+  });
+});
+
+describe("loadState caching", () => {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const DATA_DIR = process.env.KATULONG_DATA_DIR || join(__dirname, "..");
+  const STATE_PATH = join(DATA_DIR, "katulong-auth.json");
+  let originalExists = false;
+  let originalContent;
+
+  beforeEach(() => {
+    // Back up existing state file if present
+    try {
+      originalContent = require("node:fs").readFileSync(STATE_PATH, "utf-8");
+      originalExists = true;
+    } catch {
+      originalExists = false;
+    }
+    _invalidateCache();
+  });
+
+  afterEach(() => {
+    // Restore original state
+    _invalidateCache();
+    if (originalExists) {
+      writeFileSync(STATE_PATH, originalContent);
+    } else {
+      try { unlinkSync(STATE_PATH); } catch {}
+    }
+  });
+
+  it("returns cached value on second call without re-reading disk", () => {
+    const state = { credentials: [], sessions: {}, test: true };
+    saveState(state);
+
+    const first = loadState();
+    // Overwrite the file directly — loadState should still return the cached value
+    writeFileSync(STATE_PATH, JSON.stringify({ overwritten: true }));
+    const second = loadState();
+
+    assert.deepEqual(first, state);
+    assert.deepEqual(second, state, "second call should return cached value, not re-read disk");
+  });
+
+  it("saveState updates the cache immediately", () => {
+    const stateA = { credentials: [], sessions: {}, version: "a" };
+    const stateB = { credentials: [], sessions: {}, version: "b" };
+
+    saveState(stateA);
+    assert.deepEqual(loadState(), stateA);
+
+    saveState(stateB);
+    assert.deepEqual(loadState(), stateB, "cache should reflect the latest saveState call");
+  });
+
+  it("_invalidateCache forces a re-read from disk", () => {
+    const original = { credentials: [], sessions: {}, v: 1 };
+    saveState(original);
+    assert.deepEqual(loadState(), original);
+
+    // Write different data directly to disk
+    const updated = { credentials: [], sessions: {}, v: 2 };
+    writeFileSync(STATE_PATH, JSON.stringify(updated));
+
+    // Cache still holds old value
+    assert.deepEqual(loadState(), original);
+
+    // After invalidation, it re-reads from disk
+    _invalidateCache();
+    assert.deepEqual(loadState(), updated, "should re-read from disk after cache invalidation");
+  });
+
+  it("loadState returns null and caches it when file does not exist", () => {
+    try { unlinkSync(STATE_PATH); } catch {}
+    _invalidateCache();
+
+    assert.equal(loadState(), null);
+    // Write a file — but cache should still return null
+    writeFileSync(STATE_PATH, JSON.stringify({ surprise: true }));
+    assert.equal(loadState(), null, "null should be cached too");
+
+    _invalidateCache();
+    assert.deepEqual(loadState(), { surprise: true }, "after invalidation should read new file");
   });
 });
