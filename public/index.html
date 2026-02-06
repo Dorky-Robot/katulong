@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>katulong</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; background: #1a1a2e; overflow: hidden; }
+    #terminal-container { width: 100%; margin-top: 44px; position: relative; z-index: 1; }
+    #terminal-container .xterm { height: 100%; }
+    #scroll-bottom {
+      position: fixed; bottom: 16px; right: 16px; z-index: 10;
+      width: 40px; height: 40px; border-radius: 50%; border: none;
+      background: rgba(255,255,255,0.15); color: #eee; font-size: 20px;
+      cursor: pointer; display: none; align-items: center; justify-content: center;
+      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    }
+    #scroll-bottom:active { background: rgba(255,255,255,0.3); }
+
+    /* Shortcut bar */
+    #shortcut-bar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+      height: 44px; background: #16213e; border-bottom: 1px solid #0f3460;
+      transform: translate3d(0,0,0); /* force compositing layer */
+      display: flex; align-items: center; padding: 0 6px; gap: 4px;
+      overflow-x: auto; overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+    }
+    #shortcut-bar::-webkit-scrollbar { display: none; }
+    .shortcut-btn {
+      flex-shrink: 0; height: 32px; padding: 0 12px;
+      border: 1px solid #0f3460; border-radius: 6px; background: #1a1a2e;
+      color: #e0e0e0; font-size: 13px; font-family: 'SF Mono', Menlo, monospace;
+      cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 4px;
+    }
+    .shortcut-btn:active { background: #0f3460; }
+    .session-btn {
+      flex-shrink: 0; height: 32px; padding: 0 10px;
+      border: 1px solid #0f3460; border-radius: 6px; background: #0f3460;
+      color: #e0e0e0; font-size: 13px; font-family: 'SF Mono', Menlo, monospace;
+      cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 5px;
+    }
+    .session-btn:active { background: #e94560; }
+    .bar-icon-btn {
+      margin-left: auto; flex-shrink: 0; height: 32px; width: 32px; padding: 0;
+      border: 1px solid #0f3460; border-radius: 6px; background: #1a1a2e;
+      color: #888; font-size: 16px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .bar-icon-btn:active { background: #0f3460; }
+
+    /* Shortcuts popup */
+    #shortcuts-overlay { z-index: 10000; }
+    .shortcuts-grid {
+      display: flex; flex-direction: column; gap: 8px; padding-bottom: 8px;
+    }
+    .shortcuts-grid .shortcut-btn {
+      width: 100%; height: 48px; justify-content: center; font-size: 15px;
+    }
+    .shortcuts-footer {
+      display: flex; gap: 8px; padding: 12px 0; position: sticky; bottom: 0;
+      background: #16213e; border-top: 1px solid #0f3460;
+    }
+    .shortcuts-footer button {
+      height: 44px; padding: 0 16px; border: none; border-radius: 8px;
+      font-size: 0.875rem; cursor: pointer; flex: 1;
+    }
+    .shortcuts-edit-btn { background: #1a1a2e; color: #e0e0e0; border: 1px solid #0f3460 !important; }
+    .shortcuts-edit-btn:active { background: #0f3460; }
+
+    /* Shared overlay base */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; z-index: 10000;
+      background: rgba(0,0,0,0.7);
+    }
+    .modal-overlay.visible { display: flex; }
+
+    /* Shared panel base */
+    .modal-panel {
+      background: #16213e; overflow-y: auto;
+      padding: env(safe-area-inset-top, 0) 16px env(safe-area-inset-bottom, 0);
+    }
+    .modal-panel h3 { color: #e0e0e0; font-size: 1rem; margin-bottom: 14px; padding-top: 16px; }
+
+    /* Mobile-first: full-screen sheet */
+    .modal-overlay { align-items: flex-end; justify-content: center; }
+    .modal-panel {
+      width: 100%; max-height: 85vh; border-radius: 12px 12px 0 0;
+      border: 1px solid #0f3460; border-bottom: none;
+    }
+
+    /* Wider screens: centered floating panel */
+    @media (min-width: 480px) {
+      .modal-overlay { align-items: center; }
+      .modal-panel {
+        width: min(400px, 90vw); max-height: 80vh;
+        border-radius: 12px; border-bottom: 1px solid #0f3460;
+        padding: 0 20px;
+      }
+    }
+
+    /* Edit panel */
+    #edit-overlay { z-index: 10000; }
+    .edit-item {
+      display: flex; align-items: center; gap: 10px; padding: 10px 0;
+      border-bottom: 1px solid #0f3460;
+    }
+    .edit-item-label {
+      color: #e0e0e0; font-size: 0.875rem; font-family: 'SF Mono', Menlo, monospace; flex: 1;
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .edit-item-keys { color: #888; font-size: 0.75rem; font-family: 'SF Mono', Menlo, monospace; flex-shrink: 0; }
+    .edit-item-remove {
+      width: 44px; height: 44px; border: none; border-radius: 8px;
+      background: transparent; color: #e94560; font-size: 20px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .edit-item-remove:active { background: rgba(233,69,96,0.2); }
+    .edit-actions {
+      display: flex; gap: 8px; padding: 14px 0; position: sticky; bottom: 0;
+      background: #16213e;
+    }
+    .edit-actions button {
+      height: 44px; padding: 0 16px; border: none; border-radius: 8px;
+      font-size: 0.875rem; cursor: pointer; flex: 1;
+    }
+    .edit-add-btn { background: #1a1a2e; color: #e0e0e0; border: 1px dashed #0f3460 !important; }
+    .edit-add-btn:active { background: #0f3460; }
+    .edit-done-btn { background: #0f3460; color: #e0e0e0; }
+    .edit-done-btn:active { background: #e94560; }
+
+    /* Add shortcut modal */
+    #add-modal-overlay { z-index: 10001; }
+    #add-modal label { color: #aaa; font-size: 0.75rem; display: block; margin-bottom: 4px; }
+    #add-modal input, #add-modal select {
+      width: 100%; height: 44px; border: 1px solid #0f3460; border-radius: 8px;
+      background: #1a1a2e; color: #e0e0e0; padding: 0 12px; font-size: 1rem;
+      font-family: 'SF Mono', Menlo, monospace; margin-bottom: 12px;
+    }
+    #add-modal select { cursor: pointer; }
+    #add-modal .modal-actions { display: flex; gap: 8px; padding-bottom: 16px; }
+    #add-modal .modal-actions button {
+      height: 44px; padding: 0 16px; border: none; border-radius: 8px;
+      font-size: 0.875rem; cursor: pointer; flex: 1;
+    }
+    .cancel-btn { background: #1a1a2e; color: #aaa; border: 1px solid #0f3460 !important; }
+    .save-btn { background: #0f3460; color: #e0e0e0; }
+    .save-btn:active { background: #e94560; }
+
+    /* Session manager modal */
+    #session-overlay { z-index: 10000; }
+    .session-item {
+      display: flex; align-items: center; gap: 10px; padding: 10px 0;
+      border-bottom: 1px solid #0f3460;
+    }
+    .session-status {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .session-status.alive { background: #4ade80; }
+    .session-status.dead { background: #888; }
+    .session-name-input {
+      flex: 1; min-width: 0; height: 36px; border: 1px solid transparent; border-radius: 6px;
+      background: transparent; color: #e0e0e0; padding: 0 8px;
+      font-size: 0.875rem; font-family: 'SF Mono', Menlo, monospace;
+    }
+    .session-name-input:focus {
+      outline: none; border-color: #0f3460; background: #1a1a2e;
+    }
+    .session-current-tag {
+      color: #4ade80; font-size: 0.625rem; flex-shrink: 0;
+      font-family: 'SF Mono', Menlo, monospace;
+    }
+    .session-open-btn, .session-delete-btn {
+      width: 36px; height: 36px; border: none; border-radius: 6px;
+      background: transparent; font-size: 14px; cursor: pointer; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .session-open-btn { color: #888; }
+    .session-open-btn:active { background: rgba(255,255,255,0.1); }
+    .session-delete-btn { color: #e94560; }
+    .session-delete-btn:active { background: rgba(233,69,96,0.2); }
+    .session-new-row {
+      display: flex; gap: 8px; padding: 14px 0; position: sticky; bottom: 0;
+      background: #16213e;
+    }
+    .session-new-input {
+      flex: 1; height: 44px; border: 1px solid #0f3460; border-radius: 8px;
+      background: #1a1a2e; color: #e0e0e0; padding: 0 12px; font-size: 0.875rem;
+      font-family: 'SF Mono', Menlo, monospace;
+    }
+    .session-new-btn {
+      height: 44px; padding: 0 16px; border: none; border-radius: 8px;
+      background: #0f3460; color: #e0e0e0; font-size: 0.875rem; cursor: pointer;
+    }
+    .session-new-btn:active { background: #e94560; }
+  </style>
+</head>
+<body>
+  <div id="terminal-container"></div>
+  <button id="scroll-bottom" aria-label="Scroll to bottom">&darr;</button>
+  <div id="shortcut-bar"></div>
+
+  <div id="edit-overlay" class="modal-overlay">
+    <div id="edit-panel" class="modal-panel">
+      <h3>Edit Shortcuts</h3>
+      <div id="edit-list"></div>
+      <div class="edit-actions">
+        <button class="edit-add-btn" id="edit-add">+ Add</button>
+        <button class="edit-done-btn" id="edit-done">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="add-modal-overlay" class="modal-overlay">
+    <div id="add-modal" class="modal-panel">
+      <h3>Add Shortcut</h3>
+      <label for="preset-select">Preset</label>
+      <select id="preset-select">
+        <option value="">Custom...</option>
+        <option value="ctrl+a">Ctrl+A</option>
+        <option value="ctrl+b">Ctrl+B</option>
+        <option value="ctrl+c">Ctrl+C</option>
+        <option value="ctrl+d">Ctrl+D</option>
+        <option value="ctrl+e">Ctrl+E</option>
+        <option value="ctrl+k">Ctrl+K</option>
+        <option value="ctrl+l">Ctrl+L</option>
+        <option value="ctrl+r">Ctrl+R</option>
+        <option value="ctrl+u">Ctrl+U</option>
+        <option value="ctrl+z">Ctrl+Z</option>
+        <option value="esc">Esc</option>
+        <option value="tab">Tab</option>
+        <option value="enter">Enter</option>
+        <option value="up">Up</option>
+        <option value="down">Down</option>
+        <option value="left">Left</option>
+        <option value="right">Right</option>
+      </select>
+      <label for="label-input">Label</label>
+      <input type="text" id="label-input" placeholder="e.g. Ctrl+C">
+      <label for="keys-input">Keys</label>
+      <input type="text" id="keys-input" placeholder="e.g. ctrl+c or literal text">
+      <div class="modal-actions">
+        <button class="cancel-btn" id="modal-cancel">Cancel</button>
+        <button class="save-btn" id="modal-save">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="session-overlay" class="modal-overlay">
+    <div id="session-panel" class="modal-panel">
+      <h3>Sessions</h3>
+      <div id="session-list"></div>
+      <div class="session-new-row">
+        <input type="text" class="session-new-input" id="session-new-name" placeholder="new-session-name">
+        <button class="session-new-btn" id="session-new-create">+ New</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="shortcuts-overlay" class="modal-overlay">
+    <div id="shortcuts-panel" class="modal-panel">
+      <h3>Shortcuts</h3>
+      <div id="shortcuts-grid" class="shortcuts-grid"></div>
+      <div class="shortcuts-footer">
+        <button class="shortcuts-edit-btn" id="shortcuts-edit-btn">&#9998; Edit</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { Terminal } from "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm";
+    import { FitAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm";
+    import { WebLinksAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/+esm";
+
+    // --- Session name from URL ---
+    const urlParams = new URLSearchParams(window.location.search);
+    let sessionName = urlParams.get("s") || "default";
+    document.title = `katulong — ${sessionName}`;
+
+    const term = new Terminal({
+      fontSize: 14,
+      fontFamily: "'SF Mono', Menlo, monospace",
+      theme: { background: "#1a1a2e" },
+      cursorBlink: true,
+      scrollback: 10000,
+      convertEol: true,
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.loadAddon(new WebLinksAddon());
+    term.open(document.getElementById("terminal-container"));
+    // Disable mobile autocorrect/suggestions on xterm's hidden textarea
+    const xtermTextarea = document.querySelector(".xterm-helper-textarea");
+    if (xtermTextarea) {
+      xtermTextarea.setAttribute("autocorrect", "off");
+      xtermTextarea.setAttribute("autocapitalize", "off");
+      xtermTextarea.setAttribute("autocomplete", "off");
+      xtermTextarea.setAttribute("spellcheck", "false");
+    }
+    // Defer fit until fonts are loaded so character cell measurements are accurate
+    document.fonts.ready.then(() => fit.fit());
+
+    let ws;
+    let reconnectDelay = 1000;
+
+    function rawSend(data) {
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: "input", data }));
+      }
+    }
+
+    term.attachCustomKeyEventHandler((ev) => {
+      // Let browser handle Cmd+C (copy) when there's a selection
+      if (ev.metaKey && ev.key === "c" && term.hasSelection()) return false;
+      // Let browser handle Cmd+V / Ctrl+V (paste)
+      if ((ev.metaKey || ev.ctrlKey) && ev.key === "v") return false;
+      // Let Ctrl+C through to terminal (SIGINT) when no selection
+      if (ev.ctrlKey && ev.key === "c" && !term.hasSelection()) return true;
+
+      // Cmd (Meta) key combos → send terminal sequences
+      if (ev.metaKey && ev.type === "keydown") {
+        const seq = {
+          "Backspace": "\x15",       // Ctrl+U: kill line backward
+          "ArrowLeft":  "\x01",      // Ctrl+A: beginning of line
+          "ArrowRight": "\x05",      // Ctrl+E: end of line
+          "k":          "\x0b",      // Ctrl+K: kill to end of line
+        }[ev.key];
+        if (seq) { rawSend(seq); return false; }
+      }
+
+      // Option (Alt) key combos → send escape-prefixed sequences
+      if (ev.altKey && ev.type === "keydown") {
+        const seq = {
+          "Backspace":  "\x1b\x7f", // delete word backward
+          "ArrowLeft":  "\x1bb",     // word left
+          "ArrowRight": "\x1bf",     // word right
+        }[ev.key];
+        if (seq) { rawSend(seq); return false; }
+      }
+
+      return true;
+    });
+
+    term.onData((data) => rawSend(data));
+
+    function connect() {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(`${proto}//${location.host}`);
+
+      ws.onopen = () => {
+        reconnectDelay = 1000;
+        // Attach to session before sending anything else
+        ws.send(JSON.stringify({ type: "attach", session: sessionName }));
+        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+      };
+
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "output") {
+          term.write(msg.data);
+        } else if (msg.type === "reload") {
+          location.reload();
+        } else if (msg.type === "exit") {
+          term.write("\r\n[shell exited]\r\n");
+        } else if (msg.type === "session-removed") {
+          term.write("\r\n[session deleted]\r\n");
+        } else if (msg.type === "session-renamed") {
+          sessionName = msg.name;
+          document.title = `katulong — ${sessionName}`;
+          // Update URL without reload
+          const url = new URL(window.location);
+          url.searchParams.set("s", sessionName);
+          history.replaceState(null, "", url);
+          renderBar();
+        }
+      };
+
+      ws.onclose = () => {
+        setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+      };
+
+      ws.onerror = () => ws.close();
+    }
+
+    document.getElementById("terminal-container").addEventListener("touchstart", () => {
+      term.focus();
+    });
+
+    const ro = new ResizeObserver(() => {
+      fit.fit();
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+      }
+    });
+    ro.observe(document.getElementById("terminal-container"));
+
+    const scrollBtn = document.getElementById("scroll-bottom");
+    const viewport = document.querySelector(".xterm-viewport");
+    if (viewport) {
+      viewport.addEventListener("scroll", () => {
+        const atBottom = viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 10;
+        scrollBtn.style.display = atBottom ? "none" : "flex";
+      });
+    }
+    scrollBtn.addEventListener("click", () => {
+      term.scrollToBottom();
+      scrollBtn.style.display = "none";
+    });
+
+    // --- Shortcut bar ---
+
+    function keysToSequence(keys) {
+      const k = keys.toLowerCase().trim();
+      // ctrl+letter
+      const ctrlMatch = k.match(/^ctrl\+([a-z])$/);
+      if (ctrlMatch) {
+        return String.fromCharCode(ctrlMatch[1].charCodeAt(0) - 96);
+      }
+      // Named keys
+      const named = {
+        esc: "\x1b",
+        escape: "\x1b",
+        tab: "\t",
+        enter: "\r",
+        up: "\x1b[A",
+        down: "\x1b[B",
+        right: "\x1b[C",
+        left: "\x1b[D",
+      };
+      if (named[k]) return named[k];
+      // Literal — interpret \n as actual newline
+      return keys.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\r/g, "\r");
+    }
+
+    let shortcuts = [];
+    const bar = document.getElementById("shortcut-bar");
+    const editOverlay = document.getElementById("edit-overlay");
+    const editList = document.getElementById("edit-list");
+
+    // Resize terminal to actual visible viewport (accounts for virtual keyboard)
+    const termContainer = document.getElementById("terminal-container");
+    function resizeToViewport() {
+      const vv = window.visualViewport;
+      const h = vv ? vv.height : window.innerHeight;
+      const top = vv ? vv.offsetTop : 0;
+      bar.style.top = top + "px";
+      termContainer.style.height = (h - 44) + "px";
+    }
+    resizeToViewport();
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", resizeToViewport);
+      window.visualViewport.addEventListener("scroll", resizeToViewport);
+    }
+    window.addEventListener("resize", resizeToViewport);
+
+    // Pinned keys always visible in the bar
+    const pinnedKeys = [
+      { label: "Esc", keys: "esc" },
+      { label: "\u2190", keys: "left" },
+      { label: "\u2192", keys: "right" },
+      { label: "\u2191", keys: "up" },
+      { label: "\u2193", keys: "down" },
+    ];
+
+    function renderBar() {
+      bar.innerHTML = "";
+
+      // Session button (first item)
+      const sessBtn = document.createElement("button");
+      sessBtn.className = "session-btn";
+      sessBtn.innerHTML = `&#9654; ${sessionName}`;
+      sessBtn.addEventListener("click", openSessionManager);
+      bar.appendChild(sessBtn);
+
+      // Pinned keys
+      pinnedKeys.forEach((s) => {
+        const btn = document.createElement("button");
+        btn.className = "shortcut-btn";
+        btn.textContent = s.label;
+        btn.addEventListener("click", () => {
+          rawSend(keysToSequence(s.keys));
+          term.focus();
+        });
+        bar.appendChild(btn);
+      });
+
+      // Keyboard icon to open shortcuts popup
+      const kbBtn = document.createElement("button");
+      kbBtn.className = "bar-icon-btn";
+      kbBtn.innerHTML = "&#9000;"; // keyboard symbol
+      kbBtn.addEventListener("click", openShortcutsPopup);
+      bar.appendChild(kbBtn);
+    }
+
+    function renderEditList() {
+      editList.innerHTML = "";
+      shortcuts.forEach((s, i) => {
+        const row = document.createElement("div");
+        row.className = "edit-item";
+        row.innerHTML = `
+          <span class="edit-item-label">${s.label}</span>
+          <span class="edit-item-keys">${s.keys}</span>
+        `;
+        const rm = document.createElement("button");
+        rm.className = "edit-item-remove";
+        rm.textContent = "\u00d7";
+        rm.addEventListener("click", () => {
+          shortcuts.splice(i, 1);
+          renderEditList();
+        });
+        row.appendChild(rm);
+        editList.appendChild(row);
+      });
+    }
+
+    function openEditPanel() {
+      renderEditList();
+      editOverlay.classList.add("visible");
+    }
+
+    document.getElementById("edit-done").addEventListener("click", () => {
+      editOverlay.classList.remove("visible");
+      saveShortcuts();
+    });
+
+    document.getElementById("edit-add").addEventListener("click", openAddModal);
+
+    editOverlay.addEventListener("click", (e) => {
+      if (e.target === editOverlay) {
+        editOverlay.classList.remove("visible");
+        saveShortcuts();
+      }
+    });
+
+    // --- Shortcuts popup ---
+
+    const shortcutsOverlay = document.getElementById("shortcuts-overlay");
+    const shortcutsGrid = document.getElementById("shortcuts-grid");
+
+    function openShortcutsPopup() {
+      shortcutsGrid.innerHTML = "";
+      shortcuts.forEach((s) => {
+        const btn = document.createElement("button");
+        btn.className = "shortcut-btn";
+        btn.textContent = s.label;
+        btn.addEventListener("click", () => {
+          rawSend(keysToSequence(s.keys));
+          shortcutsOverlay.classList.remove("visible");
+          term.focus();
+        });
+        shortcutsGrid.appendChild(btn);
+      });
+      shortcutsOverlay.classList.add("visible");
+    }
+
+    document.getElementById("shortcuts-edit-btn").addEventListener("click", () => {
+      shortcutsOverlay.classList.remove("visible");
+      openEditPanel();
+    });
+
+    shortcutsOverlay.addEventListener("click", (e) => {
+      if (e.target === shortcutsOverlay) {
+        shortcutsOverlay.classList.remove("visible");
+        term.focus();
+      }
+    });
+
+    async function loadShortcuts() {
+      try {
+        const res = await fetch("/shortcuts");
+        shortcuts = await res.json();
+      } catch {
+        shortcuts = [];
+      }
+      renderBar();
+    }
+
+    async function saveShortcuts() {
+      try {
+        await fetch("/shortcuts", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(shortcuts),
+        });
+      } catch { /* ignore */ }
+      renderBar();
+    }
+
+    // --- Add modal ---
+
+    const addOverlay = document.getElementById("add-modal-overlay");
+    const presetSelect = document.getElementById("preset-select");
+    const labelInput = document.getElementById("label-input");
+    const keysInput = document.getElementById("keys-input");
+
+    function openAddModal() {
+      presetSelect.value = "";
+      labelInput.value = "";
+      keysInput.value = "";
+      addOverlay.classList.add("visible");
+      labelInput.focus();
+    }
+
+    presetSelect.addEventListener("change", () => {
+      const v = presetSelect.value;
+      if (!v) return;
+      keysInput.value = v;
+      labelInput.value = presetSelect.options[presetSelect.selectedIndex].textContent;
+    });
+
+    document.getElementById("modal-cancel").addEventListener("click", () => {
+      addOverlay.classList.remove("visible");
+    });
+
+    document.getElementById("modal-save").addEventListener("click", () => {
+      const label = labelInput.value.trim();
+      const keys = keysInput.value.trim();
+      if (!label || !keys) return;
+      shortcuts.push({ label, keys });
+      addOverlay.classList.remove("visible");
+      renderEditList();
+    });
+
+    addOverlay.addEventListener("click", (e) => {
+      if (e.target === addOverlay) addOverlay.classList.remove("visible");
+    });
+
+    // --- Session manager ---
+
+    const sessionOverlay = document.getElementById("session-overlay");
+    const sessionListEl = document.getElementById("session-list");
+    const sessionNewName = document.getElementById("session-new-name");
+
+    async function openSessionManager() {
+      sessionOverlay.classList.add("visible");
+      await renderSessionList();
+    }
+
+    async function renderSessionList() {
+      let sessions = [];
+      try {
+        const res = await fetch("/sessions");
+        sessions = await res.json();
+      } catch { /* ignore */ }
+
+      sessionListEl.innerHTML = "";
+      sessions.forEach((s) => {
+        const row = document.createElement("div");
+        row.className = "session-item";
+
+        const dot = document.createElement("span");
+        dot.className = `session-status ${s.alive ? "alive" : "dead"}`;
+        row.appendChild(dot);
+
+        // Editable name input — Enter to rename
+        const nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.className = "session-name-input";
+        nameInput.value = s.name;
+        let currentName = s.name;
+
+        async function commitRename() {
+          const newName = nameInput.value.trim();
+          if (!newName || newName === currentName) {
+            nameInput.value = currentName;
+            return;
+          }
+          try {
+            const res = await fetch(`/sessions/${encodeURIComponent(currentName)}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: newName }),
+            });
+            if (!res.ok) {
+              nameInput.value = currentName;
+              return;
+            }
+          } catch {
+            nameInput.value = currentName;
+            return;
+          }
+          await renderSessionList();
+        }
+
+        nameInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            nameInput.blur();
+          }
+          if (e.key === "Escape") {
+            nameInput.value = currentName;
+            nameInput.blur();
+          }
+        });
+        nameInput.addEventListener("blur", commitRename);
+        row.appendChild(nameInput);
+
+        if (s.name === sessionName) {
+          const cur = document.createElement("span");
+          cur.className = "session-current-tag";
+          cur.textContent = "(current)";
+          row.appendChild(cur);
+        } else {
+          // Open in new tab button (only for non-current sessions)
+          const openBtn = document.createElement("button");
+          openBtn.className = "session-open-btn";
+          openBtn.innerHTML = "&#8599;"; // arrow
+          openBtn.title = "Open in new tab";
+          openBtn.addEventListener("click", () => {
+            window.open(`/?s=${encodeURIComponent(s.name)}`, "_blank");
+          });
+          row.appendChild(openBtn);
+        }
+
+        // Delete button
+        const delBtn = document.createElement("button");
+        delBtn.className = "session-delete-btn";
+        delBtn.textContent = "\u00d7";
+        delBtn.addEventListener("click", async () => {
+          try {
+            await fetch(`/sessions/${encodeURIComponent(s.name)}`, { method: "DELETE" });
+          } catch { /* ignore */ }
+          await renderSessionList();
+        });
+        row.appendChild(delBtn);
+
+        sessionListEl.appendChild(row);
+      });
+    }
+
+    document.getElementById("session-new-create").addEventListener("click", async () => {
+      const name = sessionNewName.value.trim();
+      if (!name) return;
+      try {
+        const res = await fetch("/sessions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          sessionNewName.value = "";
+          window.open(`/?s=${encodeURIComponent(data.name)}`, "_blank");
+          await renderSessionList();
+        }
+      } catch { /* ignore */ }
+    });
+
+    sessionNewName.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        document.getElementById("session-new-create").click();
+      }
+    });
+
+    sessionOverlay.addEventListener("click", (e) => {
+      if (e.target === sessionOverlay) {
+        sessionOverlay.classList.remove("visible");
+        term.focus();
+      }
+    });
+
+    connect();
+    loadShortcuts();
+    term.focus();
+  </script>
+</body>
+</html>
