@@ -1,11 +1,11 @@
 # katulong
 
-A minimal web terminal with tmux-style session management. Three files, zero frameworks.
+A minimal web terminal with tmux-style session management. Zero frameworks.
 
 ## Features
 
 - **Named sessions** via URL — `/?s=myproject` connects to a session called "myproject"
-- **Sessions persist** when you close the browser, like `tmux detach`
+- **Sessions survive UI restarts** — daemon owns PTYs, so restarting the web server preserves all sessions
 - **Shared sessions** — open the same URL in multiple windows to share a terminal
 - **Session manager** — create, rename, delete sessions from a modal UI
 - **Configurable shortcuts** — pinned keys in the toolbar, full list in a popup
@@ -16,7 +16,24 @@ A minimal web terminal with tmux-style session management. Three files, zero fra
 
 ```
 npm install
+```
+
+Start the daemon (owns PTY sessions):
+
+```
+npm run daemon
+```
+
+In another terminal, start the UI server:
+
+```
 npm start
+```
+
+Or run both together:
+
+```
+npm run dev
 ```
 
 Open `http://localhost:3001` in a browser.
@@ -43,18 +60,25 @@ Open `http://localhost:3001` in a browser.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `3001` | Server port |
-| `SHELL` | `/bin/zsh` | Shell to spawn |
+| `PORT` | `3001` | UI server port |
+| `SHELL` | `/bin/zsh` | Shell to spawn in sessions |
+| `KATULONG_SOCK` | `/tmp/katulong-daemon.sock` | Unix socket path for daemon IPC |
 
 ## Architecture
 
 ```
-server.js          — HTTP + WebSocket server, session lifecycle, REST API
-public/index.html  — xterm.js terminal, session manager UI, shortcut bar
-shortcuts.json     — user-configured keyboard shortcuts
+Browser  <--WebSocket-->  UI Server (server.js)  <--Unix Socket-->  Daemon (daemon.js)
+                          HTTP + static files                       PTY sessions
+                          Live-reload watcher                       Output buffers
+                                                                    Shortcuts I/O
 ```
 
-Sessions are a `Map<name, { pty, outputBuffer, clients, alive }>`. PTYs are spawned lazily on first connect and persist until explicitly deleted. Output is buffered so reconnecting clients see recent history.
+- **`daemon.js`** — Manages PTY sessions, reads/writes shortcuts, communicates over a Unix domain socket using newline-delimited JSON
+- **`server.js`** — HTTP + WebSocket server that proxies all session/shortcut operations to the daemon
+- **`public/index.html`** — xterm.js terminal, session manager UI, shortcut bar
+- **`shortcuts.json`** — User-configured keyboard shortcuts
+
+The daemon owns all PTY processes. The UI server is stateless — you can restart it freely without losing terminal sessions. On restart, the browser's reconnect logic kicks in and the daemon replays the output buffer.
 
 ## License
 

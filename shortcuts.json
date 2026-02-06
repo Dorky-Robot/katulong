@@ -2,25 +2,5 @@
   {
     "label": "Ctrl+C",
     "keys": "ctrl+c"
-  },
-  {
-    "label": "Esc",
-    "keys": "esc"
-  },
-  {
-    "label": "Tab",
-    "keys": "tab"
-  },
-  {
-    "label": "Enter",
-    "keys": "enter"
-  },
-  {
-    "label": "Up",
-    "keys": "up"
-  },
-  {
-    "label": "Down",
-    "keys": "down"
   }
 ]

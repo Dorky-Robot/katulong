@@ -528,8 +528,7 @@
     term.open(document.getElementById("terminal-container"));
 
     // Disable mobile autocorrect/suggestions on xterm's hidden textarea.
-    // Android GBoard ignores autocomplete="off" — "new-password" actually works.
-    // MutationObserver re-applies attrs if xterm recreates the textarea.
+    // Android GBoard ignores most attrs — we throw everything at it.
     function disableSuggestions(el) {
       el.setAttribute("autocorrect", "off");
       el.setAttribute("autocapitalize", "none");
@@ -537,13 +536,27 @@
       el.setAttribute("spellcheck", "false");
       el.setAttribute("data-gramm", "false");
       el.setAttribute("data-form-type", "other");
+      el.setAttribute("data-lpignore", "true");
+      // Set properties directly (some keyboards check these, not just attributes)
+      el.autocomplete = "new-password";
+      el.autocapitalize = "none";
+      el.spellcheck = false;
     }
-    const xtermTextarea = document.querySelector(".xterm-helper-textarea");
-    if (xtermTextarea) disableSuggestions(xtermTextarea);
-    new MutationObserver(() => {
+    function patchTextarea() {
       const ta = document.querySelector(".xterm-helper-textarea");
-      if (ta && ta.getAttribute("autocomplete") !== "new-password") disableSuggestions(ta);
-    }).observe(document.getElementById("terminal-container"), { childList: true, subtree: true });
+      if (ta) disableSuggestions(ta);
+    }
+    patchTextarea();
+    // Re-apply if xterm recreates the textarea
+    new MutationObserver(patchTextarea).observe(
+      document.getElementById("terminal-container"),
+      { childList: true, subtree: true }
+    );
+    // Also cancel any IME composition that Android keyboards try to start
+    term.textarea?.addEventListener("compositionstart", (e) => e.preventDefault());
+    document.addEventListener("compositionstart", (e) => {
+      if (e.target?.classList?.contains("xterm-helper-textarea")) e.preventDefault();
+    }, true);
     document.fonts.ready.then(() => fit.fit());
 
     // Apply stored theme
@@ -1040,10 +1053,10 @@
         } else {
           const openBtn = document.createElement("button");
           openBtn.className = "session-icon-btn open";
-          openBtn.setAttribute("aria-label", `Open ${s.name} in new tab`);
-          openBtn.innerHTML = '<i class="ph ph-arrow-square-out"></i>';
+          openBtn.setAttribute("aria-label", `Switch to ${s.name}`);
+          openBtn.innerHTML = '<i class="ph ph-arrow-right"></i>';
           openBtn.addEventListener("click", () => {
-            window.open(`/?s=${encodeURIComponent(s.name)}`, "_blank");
+            window.location.href = `/?s=${encodeURIComponent(s.name)}`;
           });
           row.appendChild(openBtn);
         }
@@ -1116,6 +1129,15 @@
       if (e.target === settingsOverlay) {
         settingsOverlay.classList.remove("visible");
         term.focus();
+      }
+    });
+
+    // Global paste handler — ensures paste works even when xterm's textarea misses it
+    document.addEventListener("paste", (e) => {
+      const text = e.clipboardData?.getData("text");
+      if (text) {
+        rawSend(text);
+        e.preventDefault();
       }
     });
 

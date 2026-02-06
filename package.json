@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
-    "start": "node server.js"
+    "daemon": "node daemon.js",
+    "start": "node server.js",
+    "dev": "node daemon.js & node server.js"
   },
   "dependencies": {
     "node-pty": "^1.0.0",
