@@ -527,14 +527,23 @@
     term.loadAddon(new WebLinksAddon());
     term.open(document.getElementById("terminal-container"));
 
-    // Disable mobile autocorrect on xterm's hidden textarea
-    const xtermTextarea = document.querySelector(".xterm-helper-textarea");
-    if (xtermTextarea) {
-      xtermTextarea.setAttribute("autocorrect", "off");
-      xtermTextarea.setAttribute("autocapitalize", "off");
-      xtermTextarea.setAttribute("autocomplete", "off");
-      xtermTextarea.setAttribute("spellcheck", "false");
+    // Disable mobile autocorrect/suggestions on xterm's hidden textarea.
+    // Android GBoard ignores autocomplete="off" — "new-password" actually works.
+    // MutationObserver re-applies attrs if xterm recreates the textarea.
+    function disableSuggestions(el) {
+      el.setAttribute("autocorrect", "off");
+      el.setAttribute("autocapitalize", "none");
+      el.setAttribute("autocomplete", "new-password");
+      el.setAttribute("spellcheck", "false");
+      el.setAttribute("data-gramm", "false");
+      el.setAttribute("data-form-type", "other");
     }
+    const xtermTextarea = document.querySelector(".xterm-helper-textarea");
+    if (xtermTextarea) disableSuggestions(xtermTextarea);
+    new MutationObserver(() => {
+      const ta = document.querySelector(".xterm-helper-textarea");
+      if (ta && ta.getAttribute("autocomplete") !== "new-password") disableSuggestions(ta);
+    }).observe(document.getElementById("terminal-container"), { childList: true, subtree: true });
     document.fonts.ready.then(() => fit.fit());
 
     // Apply stored theme
