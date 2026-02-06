@@ -693,17 +693,28 @@
       }
     }
 
+    // Intercept Tab at the document level (capture phase) so it reaches
+    // the PTY before the browser can use it for focus navigation.
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Tab" || ev.ctrlKey || ev.altKey || ev.metaKey) return;
+      const active = document.activeElement;
+      const inTerminal = active && (
+        active.classList.contains("xterm-helper-textarea") ||
+        active.closest("#terminal-container")
+      );
+      if (!inTerminal) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      rawSend("\t");
+    }, true); // capture phase
+
     term.attachCustomKeyEventHandler((ev) => {
       if (ev.metaKey && ev.key === "c" && term.hasSelection()) return false;
       if ((ev.metaKey || ev.ctrlKey) && ev.key === "v") return false;
       if (ev.ctrlKey && ev.key === "c" && !term.hasSelection()) return true;
 
-      // Tab: prevent browser focus navigation, send \t to the shell
-      if (ev.key === "Tab" && !ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.type === "keydown") {
-        ev.preventDefault();
-        rawSend("\t");
-        return false;
-      }
+      // Tab already handled by document-level capture listener
+      if (ev.key === "Tab") return false;
 
       // Shift+Enter: quoted-insert (\x16) + newline (\x0a) — inserts a literal
       // newline without executing, works in zsh/bash with no shell config needed
