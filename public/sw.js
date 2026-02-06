@@ -1,4 +1,4 @@
-const CACHE_NAME = "katulong-v2";
+const CACHE_NAME = "katulong-v3";
 const PRECACHE = [
   "/",
   "/icon-192.png",
@@ -26,12 +26,13 @@ self.addEventListener("fetch", (e) => {
   // Network-first for HTML and API calls, cache-first for static assets
   const url = new URL(e.request.url);
 
-  // Skip WebSocket, API, and auth requests
+  // Skip WebSocket, API, auth, and dynamic manifest requests
   if (
     e.request.url.startsWith("ws") ||
     url.pathname.startsWith("/sessions") ||
     url.pathname.startsWith("/shortcuts") ||
     url.pathname === "/login" ||
+    url.pathname === "/manifest.json" ||
     url.pathname.startsWith("/auth/")
   ) {
     return;

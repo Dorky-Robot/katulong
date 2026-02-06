@@ -174,10 +174,26 @@ const MIME = {
   ".webp": "image/webp", ".svg": "image/svg+xml", ".woff2": "font/woff2",
 };
 
+function isLanHost(req) {
+  const host = (req.headers.host || "").replace(/:\d+$/, "");
+  return host === "localhost" || host === "127.0.0.1" || host === "::1"
+    || /^(10|172\.(1[6-9]|2\d|3[01])|192\.168)\./.test(host);
+}
+
 const routes = [
   { method: "GET", path: "/", handler: (req, res) => {
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(readFileSync(join(__dirname, "public", "index.html"), "utf-8"));
+  }},
+
+  { method: "GET", path: "/manifest.json", handler: (req, res) => {
+    const manifest = JSON.parse(readFileSync(join(__dirname, "public", "manifest.json"), "utf-8"));
+    if (isLanHost(req)) {
+      manifest.name = "Katulong (LAN)";
+      manifest.short_name = "Katulong LAN";
+    }
+    res.writeHead(200, { "Content-Type": "application/manifest+json" });
+    res.end(JSON.stringify(manifest));
   }},
 
   { method: "GET", path: "/login", handler: (req, res) => {
