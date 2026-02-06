@@ -398,6 +398,12 @@ const routes = [
     res.end(mobileconfig);
   }},
 
+  { method: "GET", path: "/connect/info", handler: (req, res) => {
+    const lanIP = getLanIP();
+    const trustUrl = lanIP ? `http://${lanIP}:${PORT}/connect/trust` : `/connect/trust`;
+    json(res, 200, { trustUrl, httpsPort: HTTPS_PORT });
+  }},
+
   { method: "GET", path: "/connect", handler: (req, res) => {
     const lanIP = getLanIP();
     const trustUrl = lanIP ? `http://${lanIP}:${PORT}/connect/trust` : `/connect/trust`;
