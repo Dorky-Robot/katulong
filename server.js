@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
-import { readFileSync, writeFileSync, watch } from "node:fs";
+import { readFileSync, writeFileSync, watch, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, extname } from "node:path";
 import { WebSocketServer } from "ws";
 import pty from "node-pty";
 
@@ -194,8 +194,23 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify({ error: "Invalid JSON" }));
     }
   } else {
-    res.writeHead(404);
-    res.end("Not found");
+    // Static file serving from public/
+    const MIME = {
+      ".html": "text/html", ".js": "text/javascript", ".json": "application/json",
+      ".css": "text/css", ".png": "image/png", ".ico": "image/x-icon",
+      ".webp": "image/webp", ".svg": "image/svg+xml", ".woff2": "font/woff2",
+    };
+    const filePath = join(__dirname, "public", path);
+    if (req.method === "GET" && existsSync(filePath)) {
+      const ext = extname(filePath);
+      const contentType = MIME[ext] || "application/octet-stream";
+      const data = readFileSync(filePath);
+      res.writeHead(200, { "Content-Type": contentType });
+      res.end(data);
+    } else {
+      res.writeHead(404);
+      res.end("Not found");
+    }
   }
 });
 

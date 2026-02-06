@@ -3,7 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1e1e2e">
   <title>katulong</title>
+  <link rel="icon" href="/favicon.ico" sizes="32x32">
+  <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -490,6 +497,9 @@
       document.documentElement.setAttribute("data-theme", pref);
       const effective = getEffectiveTheme();
       term.options.theme = effective === "light" ? LIGHT_THEME : DARK_THEME;
+      // Update browser chrome color
+      const metaTheme = document.querySelector('meta[name="theme-color"]');
+      if (metaTheme) metaTheme.content = effective === "light" ? "#eff1f5" : "#1e1e2e";
       // Update toggle buttons
       document.querySelectorAll(".theme-toggle button").forEach(btn => {
         const active = btn.dataset.themeVal === pref;
@@ -501,7 +511,7 @@
     // --- Session name from URL ---
     const urlParams = new URLSearchParams(window.location.search);
     let sessionName = urlParams.get("s") || "default";
-    document.title = `katulong — ${sessionName}`;
+    document.title = sessionName;
 
     const initialTheme = getEffectiveTheme();
     const term = new Terminal({
@@ -591,7 +601,7 @@
           term.write("\r\n[session deleted]\r\n");
         } else if (msg.type === "session-renamed") {
           sessionName = msg.name;
-          document.title = `katulong — ${sessionName}`;
+          document.title = sessionName;
           const url = new URL(window.location);
           url.searchParams.set("s", sessionName);
           history.replaceState(null, "", url);
@@ -1103,6 +1113,11 @@
     connect();
     loadShortcuts();
     term.focus();
+
+    // Service worker registration
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
   </script>
 </body>
 </html>
