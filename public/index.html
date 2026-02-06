@@ -1128,7 +1128,8 @@
     async function loadShortcuts() {
       try {
         const res = await fetch("/shortcuts");
-        shortcuts = await res.json();
+        const data = await res.json();
+        shortcuts = Array.isArray(data) ? data.filter(s => s.label && s.keys) : [];
       } catch {
         shortcuts = [];
       }
