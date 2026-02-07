@@ -182,7 +182,7 @@
     <!-- Pair flow (HTTP — no passkey, use QR pairing) -->
     <div id="pair-view" class="hidden">
       <h1>Katulong</h1>
-      <p class="subtitle">Passkeys require HTTPS. Use QR pairing instead.</p>
+      <p class="subtitle">Pair this device using the QR code on your computer.</p>
       <div class="pair-hint">
         <ol class="pair-steps">
           <li data-step="1">Open Katulong on your computer at <strong>localhost</strong></li>
@@ -213,16 +213,18 @@
     const loginError = document.getElementById("login-error");
 
     const hasWebAuthn = window.isSecureContext && !!window.PublicKeyCredential;
+    const isMobile = /Android|iPad|iPhone|iPod/.test(navigator.userAgent);
 
     async function checkStatus() {
       const res = await fetch("/auth/status");
       const { setup } = await res.json();
       loadingView.classList.add("hidden");
       if (setup) {
-        if (hasWebAuthn) {
+        if (hasWebAuthn && !isMobile) {
+          // Desktop with HTTPS — passkey login
           loginView.classList.remove("hidden");
         } else {
-          // No WebAuthn (HTTP) — show QR pairing instructions
+          // Mobile or HTTP — show QR pairing instructions
           pairView.classList.remove("hidden");
         }
       } else {

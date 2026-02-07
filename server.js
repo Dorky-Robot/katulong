@@ -405,10 +405,8 @@ const routes = [
   { method: "GET", path: "/connect/trust", handler: (req, res) => {
     const lanIP = getLanIP();
     const targetUrl = lanIP ? `https://katulong.local` : `https://localhost:${HTTPS_PORT}`;
-    const installCmd = lanIP ? `curl -fsSL http://${lanIP}:${PORT}/connect/install.sh | sudo bash` : "";
-    const uninstallCmd = lanIP ? `curl -fsSL http://${lanIP}:${PORT}/connect/uninstall.sh | sudo bash` : "";
     let html = readFileSync(join(__dirname, "public", "trust.html"), "utf-8");
-    html = html.replace("<body>", `<body data-https-url="${targetUrl}" data-install-cmd="${installCmd}" data-uninstall-cmd="${uninstallCmd}" data-lan-ip="${lanIP || ""}" data-https-port="${HTTPS_PORT}">`);
+    html = html.replace("<body>", `<body data-https-url="${targetUrl}" data-lan-ip="${lanIP || ""}" data-https-port="${HTTPS_PORT}">`);
 
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(html);

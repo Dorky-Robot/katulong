@@ -168,10 +168,17 @@ describe("getOriginAndRpID", () => {
     assert.equal(rpID, "example.com");
   });
 
-  it("ignores x-forwarded-proto header", () => {
+  it("trusts x-forwarded-proto as fallback when socket is not encrypted", () => {
     const req = { headers: { host: "example.com", "x-forwarded-proto": "https" } };
     const { origin, rpID } = getOriginAndRpID(req);
-    assert.equal(origin, "http://example.com");
+    assert.equal(origin, "https://example.com");
+    assert.equal(rpID, "example.com");
+  });
+
+  it("prefers socket.encrypted over x-forwarded-proto", () => {
+    const req = { headers: { host: "example.com", "x-forwarded-proto": "http" }, socket: { encrypted: true } };
+    const { origin, rpID } = getOriginAndRpID(req);
+    assert.equal(origin, "https://example.com");
     assert.equal(rpID, "example.com");
   });
 
