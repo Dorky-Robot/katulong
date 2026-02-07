@@ -347,7 +347,7 @@ const routes = [
       return json(res, 401, { error: "Authentication required" });
     }
     const code = randomUUID();
-    const pin = String(Math.floor(100000 + Math.random() * 900000));
+    const pin = String(100000 + (randomBytes(4).readUInt32BE() % 900000));
     const expiresAt = Date.now() + PAIR_TTL_MS;
     pairingChallenges.set(code, { pin, expiresAt });
     // Sweep expired entries
@@ -373,7 +373,8 @@ const routes = [
     // Normalize: strip anything that isn't a digit
     const submittedPin = String(pin).replace(/\D/g, "");
     if (challenge.pin !== submittedPin) {
-      log.warn("Pair verify: PIN mismatch", { expected: challenge.pin, got: submittedPin, rawPin: pin });
+      pairingChallenges.delete(code); // single-attempt: prevent brute-force within TTL
+      log.warn("Pair verify: PIN mismatch", { code });
       return json(res, 403, { error: "Invalid PIN" });
     }
     pairingChallenges.delete(code);
@@ -815,20 +816,24 @@ function handleUpgrade(req, socket, head) {
   if (!isLocalRequest(req)) {
     const origin = req.headers.origin;
     const host = req.headers.host;
-    if (origin && host) {
-      try {
-        const originHost = new URL(origin).host;
-        if (originHost !== host) {
-          log.warn("WebSocket origin mismatch", { origin, host });
-          socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-          socket.destroy();
-          return;
-        }
-      } catch {
+    if (!origin) {
+      log.warn("WebSocket rejected: missing Origin header");
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    try {
+      const originHost = new URL(origin).host;
+      if (originHost !== host) {
+        log.warn("WebSocket origin mismatch", { origin, host });
         socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
         socket.destroy();
         return;
       }
+    } catch {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
     }
   }
 
