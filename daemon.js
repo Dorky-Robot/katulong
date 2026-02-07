@@ -1,5 +1,5 @@
 import { createServer, createConnection } from "node:net";
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, unlinkSync, existsSync, chmodSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import pty from "node-pty";
@@ -228,6 +228,8 @@ async function start() {
   });
 
   server.listen(SOCKET_PATH, () => {
+    // Restrict socket to owner-only to prevent other users from connecting
+    try { chmodSync(SOCKET_PATH, 0o600); } catch { /* best-effort */ }
     log.info("Katulong daemon listening", { socket: SOCKET_PATH });
   });
 }

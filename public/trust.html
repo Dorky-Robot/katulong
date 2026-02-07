@@ -111,20 +111,34 @@
     }
     .success-banner.visible { display: block; }
 
+    .next-step {
+      display: none; padding: 1rem; border-radius: 0.5rem;
+      background: var(--bg-input); border: 1px solid var(--border);
+      margin-bottom: 1rem;
+    }
+    .next-step.visible { display: block; }
+    .next-step p {
+      color: var(--text-muted); font-size: 0.8125rem; line-height: 1.6;
+    }
+    .next-step strong { color: var(--text); }
+
     .note {
       color: var(--text-dim); font-size: 0.75rem; line-height: 1.5;
       margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);
     }
 
-    .open-btn {
-      display: none; align-items: center; justify-content: center;
-      width: 100%; height: 2.75rem; border: none; border-radius: 0.5rem;
-      background: var(--success); color: #1e1e2e;
-      font-size: 0.875rem; font-family: var(--font-mono); font-weight: 500;
-      cursor: pointer; text-decoration: none; margin-bottom: 1rem;
+    .uninstall-section {
+      margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);
     }
-    .open-btn.visible { display: flex; }
-    .open-btn:active { opacity: 0.8; }
+    .uninstall-toggle {
+      background: none; border: none; color: var(--text-muted);
+      font-size: 0.8125rem; font-family: var(--font-mono); cursor: pointer;
+      padding: 0; text-decoration: underline; text-underline-offset: 2px;
+      width: auto; height: auto; display: inline;
+    }
+    .uninstall-toggle:active { color: var(--text); }
+    .uninstall-content { display: none; margin-top: 0.75rem; }
+    .uninstall-content.visible { display: block; }
   </style>
 </head>
 <body>
@@ -133,14 +147,16 @@
     <p class="subtitle">Install the Katulong CA certificate to enable secure HTTPS access on your local network.</p>
 
     <div class="success-banner" id="success-banner">
-      Certificate is already trusted. You're all set.
+      Certificate installed.
     </div>
 
-    <a class="open-btn" id="open-btn" href="#">Open Katulong (HTTPS)</a>
+    <div class="next-step" id="next-step">
+      <p>Now go back to your computer and tap <strong>Next</strong> to scan the pairing QR code.</p>
+    </div>
 
-    <!-- iOS -->
+    <!-- iOS install -->
     <div class="platform-section" id="ios-section">
-      <a class="download-btn" href="/connect/trust/ca.mobileconfig" id="ios-download">Download Profile</a>
+      <a class="download-btn" href="/connect/trust/ca.mobileconfig">Download Profile</a>
       <ol class="steps">
         <li data-step="1">Tap <strong>Download Profile</strong> above</li>
         <li data-step="2">Open <strong>Settings</strong> > <strong>General</strong> > <strong>VPN & Device Management</strong></li>
@@ -150,9 +166,9 @@
       </ol>
     </div>
 
-    <!-- Android -->
+    <!-- Android install -->
     <div class="platform-section" id="android-section">
-      <a class="download-btn" href="/connect/trust/ca.crt" id="android-download">Download Certificate</a>
+      <a class="download-btn" href="/connect/trust/ca.crt">Download Certificate</a>
       <ol class="steps">
         <li data-step="1">Tap <strong>Download Certificate</strong> above</li>
         <li data-step="2">Open <strong>Settings</strong> > <strong>Security</strong> > <strong>Encryption & credentials</strong></li>
@@ -161,9 +177,9 @@
       </ol>
     </div>
 
-    <!-- Desktop -->
+    <!-- Desktop install -->
     <div class="platform-section" id="desktop-section">
-      <a class="download-btn" href="/connect/trust/ca.crt" id="desktop-download">Download CA Certificate</a>
+      <a class="download-btn" href="/connect/trust/ca.crt">Download CA Certificate</a>
       <ol class="steps" id="desktop-steps-mac">
         <li data-step="1">Download the certificate above</li>
         <li data-step="2">Double-click <strong>ca.crt</strong> to open in Keychain Access</li>
@@ -175,6 +191,40 @@
       </ol>
     </div>
 
+    <!-- Uninstall -->
+    <div class="uninstall-section">
+      <button class="uninstall-toggle" id="uninstall-toggle">Uninstall instructions</button>
+      <div class="uninstall-content" id="uninstall-content">
+        <!-- iOS uninstall -->
+        <div class="platform-section" id="ios-uninstall">
+          <ol class="steps">
+            <li data-step="1">Open <strong>Settings</strong> > <strong>General</strong> > <strong>VPN & Device Management</strong></li>
+            <li data-step="2">Tap the <strong>Katulong Local CA</strong> profile</li>
+            <li data-step="3">Tap <strong>Remove Profile</strong></li>
+          </ol>
+        </div>
+        <!-- Android uninstall -->
+        <div class="platform-section" id="android-uninstall">
+          <ol class="steps">
+            <li data-step="1">Open <strong>Settings</strong> > <strong>Security</strong> > <strong>Encryption & credentials</strong></li>
+            <li data-step="2">Tap <strong>Trusted credentials</strong> > <strong>User</strong> tab</li>
+            <li data-step="3">Find <strong>Katulong Local CA</strong> and remove it</li>
+          </ol>
+        </div>
+        <!-- Desktop uninstall -->
+        <div class="platform-section" id="desktop-uninstall">
+          <ol class="steps" id="desktop-uninstall-mac">
+            <li data-step="1">Open <strong>Keychain Access</strong></li>
+            <li data-step="2">Find <strong>Katulong Local CA</strong> in the System keychain</li>
+            <li data-step="3">Right-click and <strong>Delete</strong></li>
+          </ol>
+          <ol class="steps" id="desktop-uninstall-other" style="display:none">
+            <li data-step="1">Remove <strong>katulong-ca.crt</strong> from your system's trusted certificate store</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
     <p class="note">
       This is a private certificate generated by your Katulong instance. It only secures connections on your local network.
     </p>
@@ -182,35 +232,59 @@
 
   <script>
     var httpsUrl = document.body.dataset.httpsUrl || '';
+    var lanIP = document.body.dataset.lanIp || '';
+    var httpsPort = document.body.dataset.httpsPort || '443';
     var ua = navigator.userAgent || '';
 
-    // Platform detection
+    // Android browsers don't resolve .local via mDNS — use LAN IP directly
+    if (/Android/.test(ua) && lanIP && httpsUrl) {
+      httpsUrl = 'https://' + lanIP + ':' + httpsPort;
+    }
+    // iOS: include port since phones can't do client-side port forwarding
+    else if (/iPad|iPhone|iPod/.test(ua) && httpsPort !== '443' && httpsUrl) {
+      try {
+        var u = new URL(httpsUrl);
+        u.port = httpsPort;
+        httpsUrl = u.toString().replace(/\/$/, '');
+      } catch(e) {}
+    }
+
+    // Platform detection — show matching install + uninstall sections
     if (/iPad|iPhone|iPod/.test(ua)) {
       document.getElementById('ios-section').classList.add('active');
+      document.getElementById('ios-uninstall').classList.add('active');
     } else if (/Android/.test(ua)) {
       document.getElementById('android-section').classList.add('active');
+      document.getElementById('android-uninstall').classList.add('active');
     } else {
       document.getElementById('desktop-section').classList.add('active');
-      // Show macOS-specific or generic steps
+      document.getElementById('desktop-uninstall').classList.add('active');
       if (!/Mac/.test(ua)) {
         document.getElementById('desktop-steps-mac').style.display = 'none';
         document.getElementById('desktop-steps-other').style.display = '';
+        document.getElementById('desktop-uninstall-mac').style.display = 'none';
+        document.getElementById('desktop-uninstall-other').style.display = '';
       }
     }
 
-    // Check if cert is already trusted
-    if (httpsUrl) {
-      var openBtn = document.getElementById('open-btn');
-      openBtn.href = httpsUrl;
+    // Toggle uninstall section
+    document.getElementById('uninstall-toggle').addEventListener('click', function() {
+      document.getElementById('uninstall-content').classList.toggle('visible');
+    });
 
-      fetch(httpsUrl + '/auth/status', { mode: 'no-cors' })
-        .then(function() {
-          document.getElementById('success-banner').classList.add('visible');
-          openBtn.classList.add('visible');
-        })
-        .catch(function() {
-          // Not trusted yet — instructions are shown
-        });
+    // Check if cert is trusted
+    if (httpsUrl) {
+      function checkCert() {
+        fetch(httpsUrl + '/auth/status', { mode: 'no-cors' })
+          .then(function() {
+            document.getElementById('success-banner').classList.add('visible');
+            document.getElementById('next-step').classList.add('visible');
+          })
+          .catch(function() {
+            setTimeout(checkCert, 3000);
+          });
+      }
+      checkCert();
     }
   </script>
 </body>

@@ -14,9 +14,9 @@ import { createServerPeer, destroyPeer } from "./lib/p2p.js";
 import { detectImage, readRawBody, MAX_UPLOAD_BYTES } from "./lib/upload.js";
 import {
   loadState, saveState, isSetup,
-  generateRegistrationOpts, verifyRegistration,
+  generateRegistrationOpts, generateRegistrationOptsForUser, verifyRegistration,
   generateAuthOpts, verifyAuth,
-  createSession, validateSession, pruneExpiredSessions,
+  createSession, validateSession, pruneExpiredSessions, revokeAllSessions,
 } from "./lib/auth.js";
 import {
   parseCookies, setSessionCookie, getOriginAndRpID,
@@ -24,6 +24,7 @@ import {
 } from "./lib/http-util.js";
 import { ensureCerts, generateMobileConfig } from "./lib/tls.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
+import mdns from "multicast-dns";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -47,11 +48,15 @@ if (!process.env.SETUP_TOKEN) {
   log.info("Setup token generated", { token: SETUP_TOKEN });
 }
 
+if (process.env.KATULONG_NO_AUTH === "1") {
+  log.warn("WARNING: KATULONG_NO_AUTH=1 — authentication is DISABLED. All requests are treated as authenticated. Do NOT use this in production or on untrusted networks.");
+}
+
 // --- Challenge storage (in-memory, 5-min expiry) ---
 
 const { store: storeChallenge, consume: consumeChallenge, _challenges: challenges } = createChallengeStore(5 * 60 * 1000);
 
-// --- Device pairing (in-memory, 5-min expiry) ---
+// --- Device pairing (in-memory, 30s expiry) ---
 
 const pairingChallenges = new Map();
 const PAIR_TTL_MS = 30 * 1000;
@@ -88,6 +93,8 @@ const HTTP_ALLOWED_PATHS = [
   "/connect/trust",
   "/connect/trust/ca.crt",
   "/connect/trust/ca.mobileconfig",
+  "/connect/install.sh",
+  "/connect/uninstall.sh",
 ];
 
 // --- IPC client to daemon ---
@@ -226,11 +233,14 @@ const routes = [
     if (setupToken !== SETUP_TOKEN) {
       return json(res, 403, { error: "Invalid setup token" });
     }
-    if (isSetup()) {
-      return json(res, 409, { error: "Already set up" });
-    }
     const { origin, rpID } = getOriginAndRpID(req);
-    const { opts, userID } = await generateRegistrationOpts(RP_NAME, rpID, origin);
+    let opts, userID;
+    if (isSetup()) {
+      const state = loadState();
+      ({ opts, userID } = await generateRegistrationOptsForUser(state.user.id, RP_NAME, rpID, origin));
+    } else {
+      ({ opts, userID } = await generateRegistrationOpts(RP_NAME, rpID, origin));
+    }
     storeChallenge(opts.challenge);
     // Store userID temporarily with the challenge for use during verification
     challenges.set(`userID:${opts.challenge}`, userID);
@@ -241,9 +251,6 @@ const routes = [
     const { credential, setupToken } = await parseJSON(req);
     if (setupToken !== SETUP_TOKEN) {
       return json(res, 403, { error: "Invalid setup token" });
-    }
-    if (isSetup()) {
-      return json(res, 409, { error: "Already set up" });
     }
     const { origin, rpID } = getOriginAndRpID(req);
 
@@ -261,13 +268,23 @@ const routes = [
     try {
       const cred = await verifyRegistration(credential, challenge, origin, rpID);
       const session = createSession();
-      const state = {
-        user: { id: userID, name: "owner" },
-        credentials: [cred],
-        sessions: { [session.token]: session.expiry },
-      };
-      saveState(state);
-      setSessionCookie(res, session.token, session.expiry);
+      if (isSetup()) {
+        // Append credential to existing state
+        let state = loadState();
+        state = pruneExpiredSessions(state);
+        state.credentials.push(cred);
+        state.sessions[session.token] = session.expiry;
+        saveState(state);
+      } else {
+        // First device: create new state
+        const state = {
+          user: { id: userID, name: "owner" },
+          credentials: [cred],
+          sessions: { [session.token]: session.expiry },
+        };
+        saveState(state);
+      }
+      setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
       json(res, 200, { ok: true });
     } catch (err) {
       json(res, 400, { error: err.message });
@@ -315,12 +332,14 @@ const routes = [
       const session = createSession();
       state.sessions[session.token] = session.expiry;
       saveState(state);
-      setSessionCookie(res, session.token, session.expiry);
+      setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
       json(res, 200, { ok: true });
     } catch (err) {
       json(res, 400, { error: err.message });
     }
   }},
+
+  // --- Pairing routes ---
 
   { method: "POST", path: "/auth/pair/start", handler: (req, res) => {
     // Only authenticated users (e.g. localhost auto-auth) can start pairing
@@ -328,7 +347,7 @@ const routes = [
       return json(res, 401, { error: "Authentication required" });
     }
     const code = randomUUID();
-    const pin = String(Math.floor(100000 + Math.random() * 900000));
+    const pin = String(100000 + (randomBytes(4).readUInt32BE() % 900000));
     const expiresAt = Date.now() + PAIR_TTL_MS;
     pairingChallenges.set(code, { pin, expiresAt });
     // Sweep expired entries
@@ -354,7 +373,8 @@ const routes = [
     // Normalize: strip anything that isn't a digit
     const submittedPin = String(pin).replace(/\D/g, "");
     if (challenge.pin !== submittedPin) {
-      log.warn("Pair verify: PIN mismatch", { expected: challenge.pin, got: submittedPin, rawPin: pin });
+      pairingChallenges.delete(code); // single-attempt: prevent brute-force within TTL
+      log.warn("Pair verify: PIN mismatch", { code });
       return json(res, 403, { error: "Invalid PIN" });
     }
     pairingChallenges.delete(code);
@@ -366,7 +386,7 @@ const routes = [
     const session = createSession();
     state.sessions[session.token] = session.expiry;
     saveState(state);
-    setSessionCookie(res, session.token, session.expiry);
+    setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
     // Notify all connected WS clients so the pairing modal auto-dismisses
     for (const client of wss.clients) {
       if (client.readyState === 1) {
@@ -385,10 +405,10 @@ const routes = [
 
   { method: "GET", path: "/connect/trust", handler: (req, res) => {
     const lanIP = getLanIP();
-    const httpsUrl = lanIP ? `https://${lanIP}:${HTTPS_PORT}` : `https://localhost:${HTTPS_PORT}`;
+    const targetUrl = lanIP ? `https://katulong.local` : `https://localhost:${HTTPS_PORT}`;
     let html = readFileSync(join(__dirname, "public", "trust.html"), "utf-8");
-    // Inject the HTTPS URL via a data attribute on body
-    html = html.replace("<body>", `<body data-https-url="${httpsUrl}">`);
+    html = html.replace("<body>", `<body data-https-url="${targetUrl}" data-lan-ip="${lanIP || ""}" data-https-port="${HTTPS_PORT}">`);
+
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(html);
   }},
@@ -418,6 +438,182 @@ const routes = [
     json(res, 200, { trustUrl, httpsPort: HTTPS_PORT, sshPort: SSH_PORT, sshHost: lanIP || "localhost" });
   }},
 
+  { method: "GET", path: "/connect/install.sh", handler: (req, res) => {
+    const lanIP = getLanIP() || "127.0.0.1";
+    const certUrl = `http://${lanIP}:${PORT}/connect/trust/ca.crt`;
+    const targetUrl = `https://katulong.local`;
+    const script = `#!/usr/bin/env bash
+set -euo pipefail
+
+CERT_URL="${certUrl}"
+HTTPS_URL="${targetUrl}"
+HTTPS_PORT=${HTTPS_PORT}
+LAN_IP="${lanIP}"
+HOST_ENTRY="\$LAN_IP katulong.local"
+
+echo "Katulong — device setup"
+echo ""
+
+# --- Download CA certificate ---
+TMPDIR=\$(mktemp -d)
+CERT="\$TMPDIR/katulong-ca.crt"
+echo "Downloading CA certificate..."
+curl -fsSL "\$CERT_URL" -o "\$CERT"
+
+# --- Install certificate ---
+OS=\$(uname -s)
+case "\$OS" in
+  Darwin)
+    echo "Installing certificate into macOS keychain..."
+    sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "\$CERT"
+    ;;
+  Linux)
+    echo "Installing certificate into system trust store..."
+    if [ -d /usr/local/share/ca-certificates ]; then
+      sudo cp "\$CERT" /usr/local/share/ca-certificates/katulong-ca.crt
+      sudo update-ca-certificates
+    elif [ -d /etc/pki/ca-trust/source/anchors ]; then
+      sudo cp "\$CERT" /etc/pki/ca-trust/source/anchors/katulong-ca.crt
+      sudo update-ca-trust
+    else
+      echo "Could not detect certificate store. Install \$CERT manually."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Unsupported OS: \$OS. Install \$CERT manually."
+    exit 1
+    ;;
+esac
+
+# --- Add hosts entry ---
+if grep -q "katulong.local" /etc/hosts 2>/dev/null; then
+  echo "Updating existing katulong.local hosts entry..."
+  sudo sed -i.bak "/katulong\\.local/d" /etc/hosts
+fi
+echo "Adding \$HOST_ENTRY to /etc/hosts..."
+echo "\$HOST_ENTRY" | sudo tee -a /etc/hosts > /dev/null
+
+# --- Port forwarding (443 → HTTPS_PORT) for clean URLs ---
+if [ "\$HTTPS_PORT" -ne 443 ]; then
+  echo "Setting up port forwarding (443 → \$HTTPS_PORT)..."
+  case "\$OS" in
+    Darwin)
+      # Load into macOS's built-in com.apple/* rdr-anchor (no pf.conf editing needed)
+      printf "rdr pass on lo0 proto tcp from any to any port 443 -> 127.0.0.1 port %s\\nrdr pass proto tcp from any to %s port 443 -> %s port %s\\n" "\$HTTPS_PORT" "\$LAN_IP" "\$LAN_IP" "\$HTTPS_PORT" | sudo pfctl -a com.apple/katulong -f - 2>/dev/null
+      sudo pfctl -e 2>/dev/null || true
+      echo "Port forwarding enabled via pf"
+      echo "Note: re-run this script after a reboot to restore port forwarding"
+      ;;
+    Linux)
+      # Use iptables for port redirect
+      sudo iptables -t nat -D PREROUTING -p tcp --dport 443 -j REDIRECT --to-port "\$HTTPS_PORT" 2>/dev/null || true
+      sudo iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port "\$HTTPS_PORT"
+      sudo iptables -t nat -D OUTPUT -o lo -p tcp --dport 443 -j REDIRECT --to-port "\$HTTPS_PORT" 2>/dev/null || true
+      sudo iptables -t nat -A OUTPUT -o lo -p tcp --dport 443 -j REDIRECT --to-port "\$HTTPS_PORT"
+      echo "Port forwarding enabled via iptables"
+      echo "Note: run 'sudo iptables-save' or install iptables-persistent to keep across reboots"
+      ;;
+  esac
+fi
+
+# --- Cleanup ---
+rm -rf "\$TMPDIR"
+
+echo ""
+echo "Done! Open Katulong at:"
+echo "  \$HTTPS_URL"
+echo ""
+echo "To uninstall later:"
+echo "  curl -fsSL http://\$LAN_IP:${PORT}/connect/uninstall.sh | sudo bash"
+echo ""
+`;
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end(script);
+  }},
+
+  { method: "GET", path: "/connect/uninstall.sh", handler: (req, res) => {
+    const lanIP = getLanIP() || "127.0.0.1";
+    const script = `#!/usr/bin/env bash
+set -euo pipefail
+
+HTTPS_PORT=${HTTPS_PORT}
+LAN_IP="${lanIP}"
+
+echo "Katulong — uninstall"
+echo ""
+
+OS=\$(uname -s)
+
+# --- Remove port forwarding ---
+if [ "\$HTTPS_PORT" -ne 443 ]; then
+  echo "Removing port forwarding..."
+  case "\$OS" in
+    Darwin)
+      # Flush the katulong pf anchor (safe — only removes our rules)
+      sudo pfctl -a com.apple/katulong -F all 2>/dev/null || true
+      echo "  Flushed pf anchor com.apple/katulong"
+      ;;
+    Linux)
+      # Remove only the specific iptables rules we added
+      sudo iptables -t nat -D PREROUTING -p tcp --dport 443 -j REDIRECT --to-port "\$HTTPS_PORT" 2>/dev/null || true
+      sudo iptables -t nat -D OUTPUT -o lo -p tcp --dport 443 -j REDIRECT --to-port "\$HTTPS_PORT" 2>/dev/null || true
+      echo "  Removed iptables NAT rules"
+      ;;
+  esac
+fi
+
+# --- Remove hosts entry ---
+if grep -q "katulong\\.local" /etc/hosts 2>/dev/null; then
+  echo "Removing katulong.local from /etc/hosts..."
+  case "\$OS" in
+    Darwin)
+      sudo sed -i '' '/katulong\\.local/d' /etc/hosts
+      ;;
+    Linux)
+      sudo sed -i '/katulong\\.local/d' /etc/hosts
+      ;;
+  esac
+  echo "  Removed hosts entry"
+else
+  echo "No katulong.local entry in /etc/hosts (already clean)"
+fi
+
+# --- Remove CA certificate ---
+echo "Removing CA certificate..."
+case "\$OS" in
+  Darwin)
+    # Find and delete only the Katulong CA from the system keychain
+    if security find-certificate -c "Katulong Local CA" /Library/Keychains/System.keychain >/dev/null 2>&1; then
+      sudo security delete-certificate -c "Katulong Local CA" /Library/Keychains/System.keychain 2>/dev/null || true
+      echo "  Removed Katulong Local CA from system keychain"
+    else
+      echo "  Katulong Local CA not found in system keychain (already clean)"
+    fi
+    ;;
+  Linux)
+    if [ -f /usr/local/share/ca-certificates/katulong-ca.crt ]; then
+      sudo rm /usr/local/share/ca-certificates/katulong-ca.crt
+      sudo update-ca-certificates --fresh
+      echo "  Removed certificate and refreshed trust store"
+    elif [ -f /etc/pki/ca-trust/source/anchors/katulong-ca.crt ]; then
+      sudo rm /etc/pki/ca-trust/source/anchors/katulong-ca.crt
+      sudo update-ca-trust
+      echo "  Removed certificate and refreshed trust store"
+    else
+      echo "  Katulong CA certificate not found (already clean)"
+    fi
+    ;;
+esac
+
+echo ""
+echo "Done! Katulong has been uninstalled from this device."
+echo ""
+`;
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end(script);
+  }},
+
   { method: "GET", path: "/connect", handler: (req, res) => {
     const lanIP = getLanIP();
     const trustUrl = lanIP ? `http://${lanIP}:${PORT}/connect/trust` : `/connect/trust`;
@@ -437,7 +633,19 @@ const routes = [
         saveState(state);
       }
     }
-    res.setHeader("Set-Cookie", "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+    let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+    if (req.socket.encrypted) clearCookie += "; Secure";
+    res.setHeader("Set-Cookie", clearCookie);
+    json(res, 200, { ok: true });
+  }},
+
+  { method: "POST", path: "/auth/revoke-all", handler: (req, res) => {
+    const state = loadState();
+    if (!state) return json(res, 400, { error: "Not set up" });
+    revokeAllSessions(state);
+    let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+    if (req.socket.encrypted) clearCookie += "; Secure";
+    res.setHeader("Set-Cookie", clearCookie);
     json(res, 200, { ok: true });
   }},
 
@@ -602,6 +810,33 @@ function handleUpgrade(req, socket, head) {
     socket.destroy();
     return;
   }
+
+  // Origin check to prevent Cross-Site WebSocket Hijacking (CSWSH)
+  // Localhost bypasses this since browsers may omit Origin for local pages
+  if (!isLocalRequest(req)) {
+    const origin = req.headers.origin;
+    const host = req.headers.host;
+    if (!origin) {
+      log.warn("WebSocket rejected: missing Origin header");
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    try {
+      const originHost = new URL(origin).host;
+      if (originHost !== host) {
+        log.warn("WebSocket origin mismatch", { origin, host });
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+    } catch {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+  }
+
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit("connection", ws, req);
   });
@@ -768,6 +1003,32 @@ httpsServer.listen(HTTPS_PORT, "0.0.0.0", () => {
     trustUrl: lanIP ? `http://${lanIP}:${PORT}/connect/trust` : null,
   });
 });
+
+// --- mDNS: advertise katulong.local on the LAN ---
+{
+  const mdnsIP = getLanIP();
+  if (mdnsIP) {
+    try {
+      const mdnsServer = mdns();
+      mdnsServer.on("query", (query) => {
+        for (const q of query.questions) {
+          if (q.name === "katulong.local" && (q.type === "A" || q.type === "ANY")) {
+            mdnsServer.respond({
+              answers: [{ name: "katulong.local", type: "A", ttl: 120, data: mdnsIP }],
+            });
+            break;
+          }
+        }
+      });
+      mdnsServer.on("error", (err) => {
+        log.warn("mDNS error", { error: err.message });
+      });
+      log.info("mDNS advertising katulong.local", { ip: mdnsIP });
+    } catch (err) {
+      log.warn("Failed to start mDNS", { error: err.message });
+    }
+  }
+}
 
 sshRelay = startSSHServer({
   port: SSH_PORT,

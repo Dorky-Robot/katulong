@@ -146,6 +146,7 @@
       content: attr(data-step) ". ";
       color: var(--text-dim);
     }
+
   </style>
 </head>
 <body>
@@ -166,13 +167,22 @@
       <h1>Katulong</h1>
       <p class="subtitle">Authenticate with your passkey to continue.</p>
       <button id="login-btn">Login with Passkey</button>
+      <div id="register-section" style="margin-top: 1rem;">
+        <button id="show-register-btn" style="background: none; border: 1px solid var(--border); color: var(--text-muted); font-size: 0.8125rem;">Register New Passkey</button>
+        <div id="register-fields" class="hidden" style="margin-top: 1rem;">
+          <label for="register-token">Setup Token</label>
+          <input type="text" id="register-token" placeholder="paste token from console"
+            autocorrect="off" autocapitalize="off" autocomplete="off" spellcheck="false">
+          <button id="register-new-btn">Register Passkey</button>
+        </div>
+      </div>
       <p class="error" id="login-error"></p>
     </div>
 
     <!-- Pair flow (HTTP — no passkey, use QR pairing) -->
     <div id="pair-view" class="hidden">
       <h1>Katulong</h1>
-      <p class="subtitle">Passkeys require HTTPS. Use QR pairing instead.</p>
+      <p class="subtitle">Pair this device using the QR code on your computer.</p>
       <div class="pair-hint">
         <ol class="pair-steps">
           <li data-step="1">Open Katulong on your computer at <strong>localhost</strong></li>
@@ -203,16 +213,18 @@
     const loginError = document.getElementById("login-error");
 
     const hasWebAuthn = window.isSecureContext && !!window.PublicKeyCredential;
+    const isMobile = /Android|iPad|iPhone|iPod/.test(navigator.userAgent);
 
     async function checkStatus() {
       const res = await fetch("/auth/status");
       const { setup } = await res.json();
       loadingView.classList.add("hidden");
       if (setup) {
-        if (hasWebAuthn) {
+        if (hasWebAuthn && !isMobile) {
+          // Desktop with HTTPS — passkey login
           loginView.classList.remove("hidden");
         } else {
-          // No WebAuthn (HTTP) — show QR pairing instructions
+          // Mobile or HTTP — show QR pairing instructions
           pairView.classList.remove("hidden");
         }
       } else {
@@ -260,6 +272,50 @@
         window.location.href = "/";
       } catch (err) {
         setupError.textContent = err.name === "NotAllowedError"
+          ? "Passkey registration was cancelled."
+          : err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // --- Register new passkey (on already-setup instance) ---
+
+    document.getElementById("show-register-btn").addEventListener("click", () => {
+      document.getElementById("register-fields").classList.toggle("hidden");
+    });
+
+    document.getElementById("register-new-btn").addEventListener("click", async () => {
+      const btn = document.getElementById("register-new-btn");
+      const token = document.getElementById("register-token").value.trim();
+      loginError.textContent = "";
+      if (!token) { loginError.textContent = "Setup token is required."; return; }
+
+      btn.disabled = true;
+      try {
+        const optsRes = await fetch("/auth/register/options", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ setupToken: token }),
+        });
+        if (!optsRes.ok) {
+          const err = await optsRes.json();
+          throw new Error(err.error || "Failed to get registration options");
+        }
+        const opts = await optsRes.json();
+        const credential = await startRegistration({ optionsJSON: opts });
+        const verifyRes = await fetch("/auth/register/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ credential, setupToken: token }),
+        });
+        if (!verifyRes.ok) {
+          const err = await verifyRes.json();
+          throw new Error(err.error || "Registration failed");
+        }
+        window.location.href = "/";
+      } catch (err) {
+        loginError.textContent = err.name === "NotAllowedError"
           ? "Passkey registration was cancelled."
           : err.message;
       } finally {

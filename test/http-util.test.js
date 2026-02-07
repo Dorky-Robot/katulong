@@ -95,20 +95,42 @@ describe("isPublicPath", () => {
     assert.ok(isPublicPath("/login.html"));
   });
 
-  it("allows /auth/* paths", () => {
+  it("allows explicit auth routes", () => {
     assert.ok(isPublicPath("/auth/status"));
     assert.ok(isPublicPath("/auth/login/options"));
+    assert.ok(isPublicPath("/auth/login/verify"));
+    assert.ok(isPublicPath("/auth/register/options"));
     assert.ok(isPublicPath("/auth/register/verify"));
+    assert.ok(isPublicPath("/auth/logout"));
   });
 
   it("allows /pair", () => {
     assert.ok(isPublicPath("/pair"));
   });
 
+  it("allows /auth/pair/verify", () => {
+    assert.ok(isPublicPath("/auth/pair/verify"));
+  });
+
+  it("rejects /auth/pair/start (protected)", () => {
+    assert.ok(!isPublicPath("/auth/pair/start"));
+  });
+
+  it("rejects unknown /auth/ paths", () => {
+    assert.ok(!isPublicPath("/auth/admin"));
+    assert.ok(!isPublicPath("/auth/secret"));
+    assert.ok(!isPublicPath("/auth/"));
+  });
+
   it("allows /connect/trust paths", () => {
     assert.ok(isPublicPath("/connect/trust"));
     assert.ok(isPublicPath("/connect/trust/ca.crt"));
     assert.ok(isPublicPath("/connect/trust/ca.mobileconfig"));
+  });
+
+  it("allows install and uninstall scripts", () => {
+    assert.ok(isPublicPath("/connect/install.sh"));
+    assert.ok(isPublicPath("/connect/uninstall.sh"));
   });
 
   it("allows static extensions", () => {
@@ -139,8 +161,22 @@ describe("getOriginAndRpID", () => {
     assert.equal(rpID, "example.com");
   });
 
-  it("respects x-forwarded-proto", () => {
+  it("uses https when socket is encrypted", () => {
+    const req = { headers: { host: "example.com" }, socket: { encrypted: true } };
+    const { origin, rpID } = getOriginAndRpID(req);
+    assert.equal(origin, "https://example.com");
+    assert.equal(rpID, "example.com");
+  });
+
+  it("trusts x-forwarded-proto as fallback when socket is not encrypted", () => {
     const req = { headers: { host: "example.com", "x-forwarded-proto": "https" } };
+    const { origin, rpID } = getOriginAndRpID(req);
+    assert.equal(origin, "https://example.com");
+    assert.equal(rpID, "example.com");
+  });
+
+  it("prefers socket.encrypted over x-forwarded-proto", () => {
+    const req = { headers: { host: "example.com", "x-forwarded-proto": "http" }, socket: { encrypted: true } };
     const { origin, rpID } = getOriginAndRpID(req);
     assert.equal(origin, "https://example.com");
     assert.equal(rpID, "example.com");
@@ -184,6 +220,28 @@ describe("setSessionCookie", () => {
     assert.equal(cookies.length, 2);
     assert.equal(cookies[0], "existing=one");
     assert.ok(cookies[1].includes("katulong_session=tok456"));
+  });
+
+  it("includes Secure flag when secure option is true", () => {
+    const headers = {};
+    const res = {
+      getHeader: (name) => headers[name],
+      setHeader: (name, value) => { headers[name] = value; },
+    };
+    setSessionCookie(res, "tok-secure", Date.now() + 60000, { secure: true });
+    const cookie = headers["Set-Cookie"][0];
+    assert.ok(cookie.includes("Secure"), "Cookie should include Secure flag");
+  });
+
+  it("omits Secure flag by default", () => {
+    const headers = {};
+    const res = {
+      getHeader: (name) => headers[name],
+      setHeader: (name, value) => { headers[name] = value; },
+    };
+    setSessionCookie(res, "tok-http", Date.now() + 60000);
+    const cookie = headers["Set-Cookie"][0];
+    assert.ok(!cookie.includes("Secure"), "Cookie should not include Secure flag on HTTP");
   });
 
   it("calculates Max-Age from expiry", () => {
