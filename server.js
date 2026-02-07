@@ -21,8 +21,10 @@ import {
 } from "./lib/auth.js";
 import {
   parseCookies, setSessionCookie, getOriginAndRpID,
-  isPublicPath, sanitizeName, createChallengeStore, escapeAttr,
+  isPublicPath, createChallengeStore, escapeAttr,
 } from "./lib/http-util.js";
+import { SessionName } from "./lib/session-name.js";
+import { PairingChallengeStore } from "./lib/pairing-challenge.js";
 import { ensureCerts, generateMobileConfig } from "./lib/tls.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 import mdns from "multicast-dns";
@@ -60,8 +62,6 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const PAIR_TTL_MS = 30 * 1000; // 30 seconds
 const DAEMON_RECONNECT_INITIAL_MS = 1000; // 1 second
 const DAEMON_RECONNECT_MAX_MS = 30000; // 30 seconds
-const PIN_MIN = 100000; // 6-digit PIN minimum value
-const PIN_MAX = 999999; // 6-digit PIN maximum value
 
 // --- Challenge storage (in-memory, 5-min expiry) ---
 
@@ -69,7 +69,7 @@ const { store: storeChallenge, consume: consumeChallenge, _challenges: challenge
 
 // --- Device pairing (in-memory, 30s expiry) ---
 
-const pairingChallenges = new Map();
+const pairingStore = new PairingChallengeStore(PAIR_TTL_MS);
 
 function getLanIP() {
   const nets = networkInterfaces();
@@ -379,58 +379,44 @@ const routes = [
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
     }
-    const code = randomUUID();
-    const pin = String(PIN_MIN + (randomBytes(4).readUInt32BE() % (PIN_MAX - PIN_MIN + 1)));
-    const expiresAt = Date.now() + PAIR_TTL_MS;
-    pairingChallenges.set(code, { pin, expiresAt });
-    // Sweep expired entries
-    for (const [c, v] of pairingChallenges) {
-      if (Date.now() >= v.expiresAt) pairingChallenges.delete(c);
-    }
+    const challenge = pairingStore.create();
     const lanIP = getLanIP();
-    const url = lanIP ? `https://${lanIP}:${HTTPS_PORT}/pair?code=${code}` : null;
-    json(res, 200, { code, pin, url, expiresAt });
+    const url = lanIP ? `https://${lanIP}:${HTTPS_PORT}/pair?code=${challenge.code}` : null;
+    json(res, 200, { ...challenge.toJSON(), url });
   }},
 
   { method: "POST", path: "/auth/pair/verify", handler: async (req, res) => {
     const { code, pin } = await parseJSON(req);
 
-    // Validate input presence
-    if (!code || !pin) {
-      return json(res, 400, { error: "Missing code or PIN" });
+    const result = pairingStore.consume(code, pin);
+
+    if (!result.valid) {
+      // Map internal reasons to user-facing errors
+      const errorMessages = {
+        "invalid-code-format": "Invalid code format",
+        "missing-pin": "Missing code or PIN",
+        "not-found": "Invalid or expired pairing code",
+        "expired": "Pairing code expired",
+        "invalid-format": "PIN must be exactly 6 digits",
+        "wrong-pin": "Invalid PIN",
+      };
+
+      const statusCodes = {
+        "invalid-code-format": 400,
+        "missing-pin": 400,
+        "not-found": 400,
+        "expired": 400,
+        "invalid-format": 400,
+        "wrong-pin": 403,
+      };
+
+      const error = errorMessages[result.reason] || "Pairing failed";
+      const status = statusCodes[result.reason] || 400;
+
+      log.warn("Pair verify failed", { reason: result.reason, code, storeSize: pairingStore.size() });
+      return json(res, status, { error });
     }
 
-    // Validate code format (UUID)
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(String(code))) {
-      return json(res, 400, { error: "Invalid code format" });
-    }
-
-    const challenge = pairingChallenges.get(code);
-    if (!challenge) {
-      log.warn("Pair verify: code not found", { code, mapSize: pairingChallenges.size });
-      return json(res, 400, { error: "Invalid or expired pairing code" });
-    }
-    if (Date.now() >= challenge.expiresAt) {
-      pairingChallenges.delete(code);
-      return json(res, 400, { error: "Pairing code expired" });
-    }
-    // Normalize: strip anything that isn't a digit
-    const submittedPin = String(pin).replace(/\D/g, "");
-
-    // Validate PIN format (exactly 6 digits)
-    if (submittedPin.length !== 6 || !/^\d{6}$/.test(submittedPin)) {
-      pairingChallenges.delete(code); // single-attempt: prevent brute-force within TTL
-      log.warn("Pair verify: invalid PIN format", { code, pinLength: submittedPin.length });
-      return json(res, 400, { error: "PIN must be exactly 6 digits" });
-    }
-
-    if (challenge.pin !== submittedPin) {
-      pairingChallenges.delete(code); // single-attempt: prevent brute-force within TTL
-      log.warn("Pair verify: PIN mismatch", { code });
-      return json(res, 403, { error: "Invalid PIN" });
-    }
-    pairingChallenges.delete(code);
     const session = createSession();
 
     // Use withStateLock to prevent race conditions during state modification
@@ -575,9 +561,9 @@ const routes = [
 
   { method: "POST", path: "/sessions", handler: async (req, res) => {
     const { name } = await parseJSON(req);
-    const safeName = sanitizeName(name);
-    if (!safeName) return json(res, 400, { error: "Invalid name" });
-    const result = await daemonRPC({ type: "create-session", name: safeName });
+    const sessionName = SessionName.tryCreate(name);
+    if (!sessionName) return json(res, 400, { error: "Invalid name" });
+    const result = await daemonRPC({ type: "create-session", name: sessionName.toString() });
     json(res, result.error ? 409 : 201, result.error ? { error: result.error } : { name: result.name });
   }},
 
@@ -588,9 +574,9 @@ const routes = [
 
   { method: "PUT", prefix: "/sessions/", handler: async (req, res, name) => {
     const { name: newName } = await parseJSON(req);
-    const safeName = sanitizeName(newName);
-    if (!safeName) return json(res, 400, { error: "Invalid name" });
-    const result = await daemonRPC({ type: "rename-session", oldName: name, newName: safeName });
+    const sessionName = SessionName.tryCreate(newName);
+    if (!sessionName) return json(res, 400, { error: "Invalid name" });
+    const result = await daemonRPC({ type: "rename-session", oldName: name, newName: sessionName.toString() });
     json(res, result.error ? 404 : 200, result.error ? { error: result.error } : { name: result.name });
   }},
 ];

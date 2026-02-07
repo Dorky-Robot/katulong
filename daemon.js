@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import pty from "node-pty";
 import { encode, decoder } from "./lib/ndjson.js";
 import { log } from "./lib/log.js";
+import { RingBuffer } from "./lib/ring-buffer.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
@@ -73,15 +74,10 @@ function spawnSession(name, cols = 120, rows = 40) {
     },
   });
 
-  const session = { pty: p, outputBuffer: [], bufferBytes: 0, alive: true };
+  const session = { pty: p, outputBuffer: new RingBuffer(MAX_BUFFER, MAX_BUFFER_BYTES), alive: true };
 
   p.onData((data) => {
     session.outputBuffer.push(data);
-    session.bufferBytes += data.length;
-    while (session.outputBuffer.length > MAX_BUFFER || session.bufferBytes > MAX_BUFFER_BYTES) {
-      const removed = session.outputBuffer.shift();
-      if (removed) session.bufferBytes -= removed.length;
-    }
     broadcast({ type: "output", session: name, data });
   });
 
@@ -157,7 +153,7 @@ const rpcHandlers = {
     const name = msg.session || "default";
     const session = ensureSession(name, msg.cols, msg.rows);
     clients.set(msg.clientId, { session: name, socket });
-    return { buffer: session.outputBuffer.join(""), alive: session.alive };
+    return { buffer: session.outputBuffer.toString(), alive: session.alive };
   },
 
   "detach": (msg) =>
