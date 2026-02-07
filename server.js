@@ -512,6 +512,24 @@ function matchRoute(method, pathname) {
 async function handleRequest(req, res) {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
 
+  // LAN HTTP → HTTPS redirect (except /connect flow for cert installation)
+  if (!req.socket.encrypted && !isLocalRequest(req) && !pathname.startsWith("/connect")) {
+    const cookies = parseCookies(req.headers.cookie);
+    const token = cookies.get("katulong_session");
+    const state = loadState();
+    if (token && state && validateSession(state, token)) {
+      // Has valid session (cert installed) → redirect to HTTPS
+      const host = (req.headers.host || "").replace(/:\d+$/, "");
+      res.writeHead(302, { Location: `https://${host}:${HTTPS_PORT}${req.url}` });
+      res.end();
+      return;
+    }
+    // No valid session → show cert installation page
+    res.writeHead(302, { Location: "/connect/trust" });
+    res.end();
+    return;
+  }
+
   // Auth middleware: redirect unauthenticated requests to /login
   if (!isPublicPath(pathname) && !isAuthenticated(req)) {
     res.writeHead(302, { Location: "/login" });
