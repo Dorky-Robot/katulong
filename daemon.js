@@ -93,6 +93,14 @@ function spawnSession(name, cols = 120, rows = 40) {
 
   sessions.set(name, session);
   log.info("Session created", { session: name, pid: p.pid });
+
+  // Clear initial prompt artifacts on spawn
+  setTimeout(() => {
+    if (session.alive) {
+      p.write("clear\n");
+    }
+  }, 100);
+
   return session;
 }
 
