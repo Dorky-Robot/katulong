@@ -23,6 +23,12 @@ import {
   parseCookies, setSessionCookie, getOriginAndRpID,
   isPublicPath, createChallengeStore, escapeAttr,
 } from "./lib/http-util.js";
+import {
+  processRegistration,
+  processAuthentication,
+  processPairing,
+  extractChallenge,
+} from "./lib/auth-handlers.js";
 import { SessionName } from "./lib/session-name.js";
 import { PairingChallengeStore } from "./lib/pairing-challenge.js";
 import { AuthState } from "./lib/auth-state.js";
@@ -274,45 +280,40 @@ const routes = [
   }},
 
   { method: "POST", path: "/auth/register/verify", handler: async (req, res) => {
+    // I/O: Parse request
     const { credential, setupToken } = await parseJSON(req);
-    if (setupToken !== SETUP_TOKEN) {
-      return json(res, 403, { error: "Invalid setup token" });
-    }
     const { origin, rpID } = getOriginAndRpID(req);
 
-    // Extract challenge from clientDataJSON
-    const clientData = JSON.parse(
-      Buffer.from(credential.response.clientDataJSON, "base64url").toString()
-    );
-    const challenge = clientData.challenge;
-    if (!consumeChallenge(challenge)) {
-      return json(res, 400, { error: "Challenge expired or invalid" });
-    }
+    // I/O: Extract and consume challenge
+    const challenge = extractChallenge(credential);
+    const challengeValid = consumeChallenge(challenge);
+
+    // I/O: Retrieve userID
     const userID = challenges.get(`userID:${challenge}`);
     challenges.delete(`userID:${challenge}`);
 
-    try {
-      const cred = await verifyRegistration(credential, challenge, origin, rpID);
-      const session = createSession();
+    // Functional core: Process registration logic
+    const result = await processRegistration({
+      credential,
+      setupToken,
+      expectedSetupToken: SETUP_TOKEN,
+      challenge,
+      challengeValid,
+      userID,
+      origin,
+      rpID,
+      currentState: loadState(),
+    });
 
-      // Use withStateLock to prevent race conditions during state modification
-      await withStateLock(async (state) => {
-        if (!state) {
-          // First device: create new state
-          state = AuthState.empty(userID);
-        }
-        // Immutable operations
-        return state
-          .pruneExpired()
-          .addCredential(cred)
-          .addSession(session.token, session.expiry);
-      });
-
-      setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
-      json(res, 200, { ok: true });
-    } catch (err) {
-      json(res, 400, { error: err.message });
+    // I/O: Handle result
+    if (!result.success) {
+      return json(res, result.statusCode, { error: result.message });
     }
+
+    // I/O: Persist state and set cookie
+    await withStateLock(async () => result.updatedState);
+    setSessionCookie(res, result.session.token, result.session.expiry, { secure: !!req.socket.encrypted });
+    json(res, 200, { ok: true });
   }},
 
   { method: "POST", path: "/auth/login/options", handler: async (req, res) => {
@@ -327,45 +328,33 @@ const routes = [
   }},
 
   { method: "POST", path: "/auth/login/verify", handler: async (req, res) => {
+    // I/O: Parse request
     const { credential } = await parseJSON(req);
-    let state = loadState();
-    if (!state) {
-      return json(res, 400, { error: "Not set up yet" });
-    }
     const { origin, rpID } = getOriginAndRpID(req);
 
-    // Find matching credential
-    const storedCred = state.credentials.find((c) => c.id === credential.id);
-    if (!storedCred) {
-      return json(res, 400, { error: "Unknown credential" });
+    // I/O: Extract and consume challenge
+    const challenge = extractChallenge(credential);
+    const challengeValid = consumeChallenge(challenge);
+
+    // Functional core: Process authentication logic
+    const result = await processAuthentication({
+      credential,
+      challenge,
+      challengeValid,
+      origin,
+      rpID,
+      currentState: loadState(),
+    });
+
+    // I/O: Handle result
+    if (!result.success) {
+      return json(res, result.statusCode, { error: result.message });
     }
 
-    // Extract and consume challenge from clientDataJSON
-    const clientData = JSON.parse(
-      Buffer.from(credential.response.clientDataJSON, "base64url").toString()
-    );
-    const challenge = clientData.challenge;
-    if (!consumeChallenge(challenge)) {
-      return json(res, 400, { error: "Challenge expired or invalid" });
-    }
-
-    try {
-      const newCounter = await verifyAuth(credential, storedCred, challenge, origin, rpID);
-      storedCred.counter = newCounter;
-      const session = createSession();
-
-      // Use withStateLock to prevent race conditions during state modification
-      await withStateLock(async (state) => {
-        return state
-          .pruneExpired()
-          .addSession(session.token, session.expiry);
-      });
-
-      setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
-      json(res, 200, { ok: true });
-    } catch (err) {
-      json(res, 400, { error: err.message });
-    }
+    // I/O: Persist state and set cookie
+    await withStateLock(async () => result.updatedState);
+    setSessionCookie(res, result.session.token, result.session.expiry, { secure: !!req.socket.encrypted });
+    json(res, 200, { ok: true });
   }},
 
   // --- Pairing routes ---
@@ -382,56 +371,33 @@ const routes = [
   }},
 
   { method: "POST", path: "/auth/pair/verify", handler: async (req, res) => {
+    // I/O: Parse request and consume pairing challenge
     const { code, pin } = await parseJSON(req);
+    const pairingResult = pairingStore.consume(code, pin);
 
-    const result = pairingStore.consume(code, pin);
-
-    if (!result.valid) {
-      // Map internal reasons to user-facing errors
-      const errorMessages = {
-        "invalid-code-format": "Invalid code format",
-        "missing-pin": "Missing code or PIN",
-        "not-found": "Invalid or expired pairing code",
-        "expired": "Pairing code expired",
-        "invalid-format": "PIN must be exactly 6 digits",
-        "wrong-pin": "Invalid PIN",
-      };
-
-      const statusCodes = {
-        "invalid-code-format": 400,
-        "missing-pin": 400,
-        "not-found": 400,
-        "expired": 400,
-        "invalid-format": 400,
-        "wrong-pin": 403,
-      };
-
-      const error = errorMessages[result.reason] || "Pairing failed";
-      const status = statusCodes[result.reason] || 400;
-
-      log.warn("Pair verify failed", { reason: result.reason, code, storeSize: pairingStore.size() });
-      return json(res, status, { error });
-    }
-
-    const session = createSession();
-
-    // Use withStateLock to prevent race conditions during state modification
-    await withStateLock(async (state) => {
-      if (!state) {
-        state = AuthState.empty("paired-user");
-      }
-      return state
-        .pruneExpired()
-        .addSession(session.token, session.expiry);
+    // Functional core: Process pairing logic
+    const result = processPairing({
+      pairingResult,
+      currentState: loadState(),
     });
 
-    setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
-    // Notify all connected WS clients so the pairing modal auto-dismisses
+    // I/O: Handle result
+    if (!result.success) {
+      log.warn("Pair verify failed", { reason: result.reason, code, storeSize: pairingStore.size() });
+      return json(res, result.statusCode, { error: result.message });
+    }
+
+    // I/O: Persist state and set cookie
+    await withStateLock(async () => result.updatedState);
+    setSessionCookie(res, result.session.token, result.session.expiry, { secure: !!req.socket.encrypted });
+
+    // I/O: Notify WebSocket clients
     for (const client of wss.clients) {
       if (client.readyState === 1) {
         client.send(JSON.stringify({ type: "pair-complete", code }));
       }
     }
+
     json(res, 200, { ok: true });
   }},
 
