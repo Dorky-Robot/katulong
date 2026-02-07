@@ -26,6 +26,7 @@ ENV NODE_ENV=production
 ENV KATULONG_DATA_DIR=/data
 
 EXPOSE 3001
+EXPOSE 2222
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD curl -f http://localhost:3001/auth/status || exit 1

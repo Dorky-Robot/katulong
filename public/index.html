@@ -368,8 +368,37 @@
     }
     .session-icon-btn.open { color: var(--text-muted); }
     .session-icon-btn.open:active { background: rgba(255,255,255,0.1); }
+    .session-icon-btn.ssh { color: var(--text-muted); }
+    .session-icon-btn.ssh:active { background: rgba(255,255,255,0.1); }
     .session-icon-btn.delete { color: var(--danger); }
     .session-icon-btn.delete:active { background: rgba(233,69,96,0.15); }
+    .ssh-password-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0.625rem 0; border-top: 1px solid var(--border); margin-top: 0.25rem;
+    }
+    .ssh-password-label {
+      font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); flex-shrink: 0;
+    }
+    .ssh-password-field { display: flex; align-items: center; gap: 0.25rem; }
+    .ssh-password-input {
+      width: 8rem; height: 2rem; border: 1px solid var(--border); border-radius: 0.375rem;
+      background: var(--bg-input); color: var(--text); padding: 0 0.5rem;
+      font-size: 0.75rem; font-family: var(--font-mono); letter-spacing: 0.1em;
+    }
+    .ssh-password-input:focus { outline: none; }
+    .session-icon-btn.ssh-reveal { color: var(--text-muted); }
+    .session-icon-btn.ssh-reveal:active { background: rgba(255,255,255,0.1); }
+    .session-icon-btn.ssh-copy-pw { color: var(--text-muted); }
+    .session-icon-btn.ssh-copy-pw:active { background: rgba(255,255,255,0.1); }
+    .ssh-hint {
+      font-size: 0.6875rem; color: var(--text-muted); font-family: var(--font-mono);
+      padding: 0.375rem 0 0;
+    }
+    .ssh-hint kbd {
+      display: inline-block; padding: 0.05rem 0.35rem; border: 1px solid var(--border);
+      border-radius: 0.25rem; font-size: 0.625rem; font-family: var(--font-mono);
+      background: var(--bg-input); line-height: 1.4;
+    }
     .session-new-row {
       display: flex; gap: 0.5rem; padding: 0.875rem 0; position: sticky; bottom: 0;
       background: var(--bg-surface);
@@ -589,6 +618,19 @@
     <div id="session-panel" class="modal-panel">
       <h3>Sessions</h3>
       <div id="session-list" role="list"></div>
+      <div class="ssh-password-row" id="ssh-password-row">
+        <span class="ssh-password-label">SSH password</span>
+        <div class="ssh-password-field">
+          <input type="password" id="ssh-password-value" readonly class="ssh-password-input" value="" aria-label="SSH password">
+          <button class="session-icon-btn ssh-reveal" id="ssh-password-reveal" aria-label="Toggle password visibility">
+            <i class="ph ph-eye"></i>
+          </button>
+          <button class="session-icon-btn ssh-copy-pw" id="ssh-password-copy" aria-label="Copy SSH password">
+            <i class="ph ph-copy"></i>
+          </button>
+        </div>
+      </div>
+      <div class="ssh-hint">Disconnect: <kbd>Enter</kbd> <kbd>~</kbd> <kbd>.</kbd></div>
       <div class="session-new-row">
         <input type="text" class="session-new-input" id="session-new-name"
           placeholder="new-session-name" autocorrect="off" autocapitalize="off"
@@ -1456,13 +1498,49 @@
     async function openSessionManager() {
       openModal(sessionOverlay);
       await renderSessionList(sessionName);
+      // Fetch and populate SSH password
+      try {
+        const res = await fetch("/ssh/password");
+        if (res.ok) {
+          const { password } = await res.json();
+          const pwInput = document.getElementById("ssh-password-value");
+          pwInput.value = password;
+        }
+      } catch { /* ignore */ }
     }
+
+    // SSH password reveal toggle
+    document.getElementById("ssh-password-reveal").addEventListener("click", () => {
+      const pwInput = document.getElementById("ssh-password-value");
+      const icon = document.querySelector("#ssh-password-reveal i");
+      if (pwInput.type === "password") {
+        pwInput.type = "text";
+        icon.className = "ph ph-eye-slash";
+      } else {
+        pwInput.type = "password";
+        icon.className = "ph ph-eye";
+      }
+    });
+
+    // SSH password copy
+    document.getElementById("ssh-password-copy").addEventListener("click", async () => {
+      const pwInput = document.getElementById("ssh-password-value");
+      const btn = document.getElementById("ssh-password-copy");
+      try {
+        await navigator.clipboard.writeText(pwInput.value);
+        btn.innerHTML = '<i class="ph ph-check"></i>';
+        btn.style.color = "var(--success)";
+        setTimeout(() => { btn.innerHTML = '<i class="ph ph-copy"></i>'; btn.style.color = ""; }, 1500);
+      } catch { /* clipboard not available */ }
+    });
 
     async function renderSessionList(currentSession) {
       let sessions = [];
+      let sshInfo = { sshPort: 2222, sshHost: "localhost" };
       try {
-        const res = await fetch("/sessions");
-        sessions = await res.json();
+        const [sessRes, infoRes] = await Promise.all([fetch("/sessions"), fetch("/connect/info")]);
+        sessions = await sessRes.json();
+        if (infoRes.ok) Object.assign(sshInfo, await infoRes.json());
       } catch { /* ignore */ }
 
       sessionListEl.innerHTML = "";
@@ -1520,6 +1598,21 @@
           openBtn.addEventListener("click", () => { location.href = `/?s=${encodeURIComponent(s.name)}`; });
           row.appendChild(openBtn);
         }
+
+        const sshBtn = document.createElement("button");
+        sshBtn.className = "session-icon-btn ssh";
+        sshBtn.setAttribute("aria-label", `Copy SSH command for ${s.name}`);
+        sshBtn.innerHTML = '<i class="ph ph-terminal"></i>';
+        sshBtn.addEventListener("click", async () => {
+          const cmd = `ssh ${s.name}@${sshInfo.sshHost} -p ${sshInfo.sshPort}`;
+          try {
+            await navigator.clipboard.writeText(cmd);
+            sshBtn.innerHTML = '<i class="ph ph-check"></i>';
+            sshBtn.style.color = "var(--success)";
+            setTimeout(() => { sshBtn.innerHTML = '<i class="ph ph-terminal"></i>'; sshBtn.style.color = ""; }, 1500);
+          } catch { /* clipboard not available */ }
+        });
+        row.appendChild(sshBtn);
 
         const delBtn = document.createElement("button");
         delBtn.className = "session-icon-btn delete";

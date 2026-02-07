@@ -11,6 +11,7 @@ Katulong is a self-hosted web terminal that gives remote shell access to the hos
 - `lib/http-util.js` — Cookie parsing, public path allowlist, session cookies, challenge store
 - `lib/tls.js` — Auto-generated CA + server certificates for LAN HTTPS
 - `lib/p2p.js` — WebRTC DataChannel for low-latency terminal I/O
+- `lib/ssh.js` — SSH server bridging native terminals to daemon PTY sessions
 - `lib/ndjson.js` — Newline-delimited JSON encode/decode for daemon IPC
 
 ## Security model
@@ -22,6 +23,7 @@ Katulong is a self-hosted web terminal that gives remote shell access to the hos
 - Localhost requests (`127.0.0.1`, `::1`) bypass auth (auto-authenticated).
 - LAN/remote requests require a valid `katulong_session` cookie.
 - Sessions are 30-day tokens stored server-side. Expired sessions are pruned.
+- SSH access authenticates via password (`SSH_PASSWORD` or `SETUP_TOKEN`). Username maps to session name.
 
 ### Authorization boundaries
 - `isPublicPath()` in `lib/http-util.js` controls which routes skip auth. Any change here is security-critical.
@@ -35,6 +37,7 @@ Katulong is a self-hosted web terminal that gives remote shell access to the hos
 - **Path traversal**: Static file serving resolves paths against `public/` and checks the prefix. Changes to static file handling must maintain this check.
 - **Pairing flow**: Pairing codes are short-lived (30s) and single-use. PIN brute-force is mitigated by expiry. The pairing endpoint (`POST /auth/pair/start`) requires authentication.
 - **XSS**: The frontend is a single HTML file with no templating. Any server-side HTML injection (e.g., `data-` attribute interpolation) must escape user-controlled values.
+- **SSH access**: Password compared via `timingSafeEqual`. Host key persisted to `DATA_DIR/ssh/`. SSH port should be firewalled on untrusted networks.
 - **WebSocket origin**: Currently no origin check on WS upgrade — relies on cookie auth only.
 - **TLS**: LAN HTTPS uses auto-generated self-signed certs. The CA cert must never be served without user intent.
 
