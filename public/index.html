@@ -13,11 +13,11 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" media="print" onload="this.media='all'">
-  <script async src="https://cdn.jsdelivr.net/npm/simple-peer@9/simplepeer.min.js"></script>
+  <!-- Self-hosted dependencies for security (no CDN trust needed) -->
+  <link rel="stylesheet" href="/vendor/xterm/xterm.min.css">
+  <link rel="stylesheet" href="/vendor/phosphor-icons/style.css" media="print" onload="this.media='all'">
+  <script async src="/vendor/simple-peer/simplepeer.min.js"></script>
   <style>
     /* --- Catppuccin Mocha (dark) / Latte (light) --- */
     :root {
@@ -805,14 +805,10 @@
   </div>
 
   <script type="module">
-    // TODO: Consider adding SRI integrity checks via import maps for CDN security
-    // Current ES module imports from jsdelivr (SRI not directly supported in import statements):
-    // - @xterm/xterm@5.5.0: sha384-I8EVhv3OATAXzhxDmvGh1nCg4X4kChXk/Rd2Cz8aDudqQB5rnm2PWjyLCVJbwIhB
-    // - @xterm/addon-fit@0.10.0: sha384-2xEHlBNKUfGgoPjVJKeL3b0v0iEAWsPy05g1J6vPmIhgVRRkBeulz3NsWKIGe59T
-    // - @xterm/addon-web-links@0.11.0: sha384-Txd3DEPuEy7HspbyZcDDWNTbaE9Utq72lvO3E/T/W946W4jlR0jZWtYl237pFKff
-    import { Terminal } from "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm";
-    import { FitAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm";
-    import { WebLinksAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/+esm";
+    // Self-hosted xterm.js modules for security (no CDN dependencies)
+    import { Terminal } from "/vendor/xterm/xterm.esm.js";
+    import { FitAddon } from "/vendor/xterm/addon-fit.esm.js";
+    import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
 
     // --- Modal helpers ---
 
@@ -1773,7 +1769,7 @@
       if (typeof QRCode !== "undefined") { qrLibLoaded = true; return; }
       await new Promise((resolve, reject) => {
         const s = document.createElement("script");
-        s.src = "https://cdn.jsdelivr.net/npm/qrcode@1/build/qrcode.min.js";
+        s.src = "/vendor/qrcode/qrcode.min.js";
         s.onload = () => { qrLibLoaded = true; resolve(); };
         s.onerror = reject;
         document.head.appendChild(s);

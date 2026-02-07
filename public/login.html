@@ -200,10 +200,11 @@
   </div>
 
   <script type="module">
+    // Self-hosted for security
     import {
       startRegistration,
       startAuthentication,
-    } from "https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@13/+esm";
+    } from "/vendor/simplewebauthn/browser.esm.js";
 
     const setupView = document.getElementById("setup-view");
     const loginView = document.getElementById("login-view");

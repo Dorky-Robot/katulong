@@ -210,7 +210,8 @@ async function parseJSON(req, maxSize = MAX_REQUEST_BODY_SIZE) {
 const MIME = {
   ".html": "text/html", ".js": "text/javascript", ".json": "application/json",
   ".css": "text/css", ".png": "image/png", ".ico": "image/x-icon",
-  ".webp": "image/webp", ".svg": "image/svg+xml", ".woff2": "font/woff2",
+  ".webp": "image/webp", ".svg": "image/svg+xml",
+  ".woff": "font/woff", ".woff2": "font/woff2",
 };
 
 function isLanHost(req) {
