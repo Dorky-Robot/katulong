@@ -199,7 +199,7 @@
     <div class="platform-section" id="desktop-section">
       <div id="install-cmd-section" style="display:none">
         <p style="color:var(--text-muted); font-size:0.8125rem; margin-bottom:0.75rem;">
-          Run this in your terminal to install the certificate and set up <strong style="color:var(--text)">katulong.local</strong>:
+          Run this in your terminal to set up <strong style="color:var(--text)">https://katulong.local</strong>:
         </p>
         <div class="install-cmd" id="install-cmd" role="button" tabindex="0" aria-label="Copy install command">
           <code id="install-cmd-text"></code>
@@ -208,22 +208,10 @@
       </div>
       <div id="manual-section" style="display:none">
         <div class="or-divider">or</div>
-        <a class="download-btn" href="/connect/trust/ca.crt" id="desktop-download">Download CA Certificate</a>
-        <ol class="steps" id="desktop-steps-mac">
-          <li data-step="1">Download the certificate above</li>
-          <li data-step="2">Double-click <strong>ca.crt</strong> to open in Keychain Access</li>
-          <li data-step="3">Double-click the certificate, expand <strong>Trust</strong>, set to <strong>Always Trust</strong></li>
-          <li data-step="4">Run in terminal:</li>
-        </ol>
-        <ol class="steps" id="desktop-steps-other" style="display:none">
-          <li data-step="1">Download the certificate above</li>
-          <li data-step="2">Add it to your system's trusted certificate store</li>
-          <li data-step="3">Run in terminal:</li>
-        </ol>
-        <div class="install-cmd" id="hosts-cmd" role="button" tabindex="0" aria-label="Copy hosts command" style="display:none">
-          <code id="hosts-cmd-text"></code>
-          <span class="copy-hint">Click to copy</span>
-        </div>
+        <p style="color:var(--text-muted); font-size:0.8125rem; margin-bottom:0.5rem;">
+          Run these commands one at a time:
+        </p>
+        <div id="manual-commands"></div>
       </div>
       <button class="manual-toggle" id="manual-toggle">Manual install</button>
     </div>
@@ -237,8 +225,8 @@
     var httpsUrl = document.body.dataset.httpsUrl || '';
     var installCmd = document.body.dataset.installCmd || '';
     var lanIP = document.body.dataset.lanIp || '';
+    var httpsPort = document.body.dataset.httpsPort || '443';
     var ua = navigator.userAgent || '';
-    var hostsEntry = lanIP ? lanIP + ' katulong.local' : '';
 
     function copyText(text, cb) {
       if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -296,19 +284,55 @@
         manual.style.display = manual.style.display === 'none' ? '' : 'none';
       });
 
-      // Populate hosts command in manual steps
-      if (hostsEntry) {
-        var hostsCmd = 'echo "' + hostsEntry + '" | sudo tee -a /etc/hosts';
-        var hostsCmdBox = document.getElementById('hosts-cmd');
-        document.getElementById('hosts-cmd-text').textContent = hostsCmd;
-        hostsCmdBox.style.display = '';
-        makeCopyable(hostsCmdBox, hostsCmd);
-      }
+      // Build manual install commands based on platform
+      if (lanIP) {
+        var isMac = /Mac/.test(ua);
+        var certUrl = location.origin + '/connect/trust/ca.crt';
+        var commands = [];
 
-      // Show macOS-specific or generic steps
-      if (!/Mac/.test(ua)) {
-        document.getElementById('desktop-steps-mac').style.display = 'none';
-        document.getElementById('desktop-steps-other').style.display = '';
+        // Step 1: Download cert
+        commands.push({ label: 'Download the CA certificate', cmd: 'curl -fsSL ' + certUrl + ' -o /tmp/katulong-ca.crt' });
+
+        // Step 2: Install cert
+        if (isMac) {
+          commands.push({ label: 'Trust the certificate', cmd: 'sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /tmp/katulong-ca.crt' });
+        } else {
+          commands.push({ label: 'Install the certificate', cmd: 'sudo cp /tmp/katulong-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates' });
+        }
+
+        // Step 3: Add hosts entry
+        commands.push({ label: 'Point katulong.local to this server', cmd: 'echo "' + lanIP + ' katulong.local" | sudo tee -a /etc/hosts' });
+
+        // Step 4: Port forwarding (only if HTTPS is not already on 443)
+        if (httpsPort !== '443') {
+          if (isMac) {
+            commands.push({ label: 'Forward port 443 to ' + httpsPort, cmd: 'printf "rdr pass on lo0 proto tcp from any to any port 443 -> 127.0.0.1 port ' + httpsPort + '\\nrdr pass proto tcp from any to ' + lanIP + ' port 443 -> ' + lanIP + ' port ' + httpsPort + '\\n" | sudo pfctl -a com.apple/katulong -f - 2>/dev/null; sudo pfctl -e 2>/dev/null' });
+          } else {
+            commands.push({ label: 'Forward port 443 to ' + httpsPort, cmd: 'sudo iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port ' + httpsPort + ' && sudo iptables -t nat -A OUTPUT -o lo -p tcp --dport 443 -j REDIRECT --to-port ' + httpsPort });
+          }
+        }
+
+        var cmdsEl = document.getElementById('manual-commands');
+        for (var i = 0; i < commands.length; i++) {
+          var label = document.createElement('p');
+          label.style.cssText = 'color:var(--text-muted); font-size:0.75rem; margin:' + (i === 0 ? '0' : '0.75rem') + ' 0 0.375rem;';
+          label.textContent = (i + 1) + '. ' + commands[i].label;
+          cmdsEl.appendChild(label);
+
+          var box = document.createElement('div');
+          box.className = 'install-cmd';
+          box.setAttribute('role', 'button');
+          box.setAttribute('tabindex', '0');
+          var code = document.createElement('code');
+          code.textContent = commands[i].cmd;
+          var hint = document.createElement('span');
+          hint.className = 'copy-hint';
+          hint.textContent = 'Click to copy';
+          box.appendChild(code);
+          box.appendChild(hint);
+          cmdsEl.appendChild(box);
+          makeCopyable(box, commands[i].cmd);
+        }
       }
     }
 

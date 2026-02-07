@@ -88,6 +88,7 @@ const HTTP_ALLOWED_PATHS = [
   "/connect/trust/ca.crt",
   "/connect/trust/ca.mobileconfig",
   "/connect/install.sh",
+  "/connect/uninstall.sh",
 ];
 
 // --- IPC client to daemon ---
@@ -336,10 +337,10 @@ const routes = [
 
   { method: "GET", path: "/connect/trust", handler: (req, res) => {
     const lanIP = getLanIP();
-    const httpsUrl = lanIP ? `https://katulong.local:${HTTPS_PORT}` : `https://localhost:${HTTPS_PORT}`;
+    const targetUrl = lanIP ? `https://katulong.local` : `https://localhost:${HTTPS_PORT}`;
     const installCmd = lanIP ? `curl -fsSL http://${lanIP}:${PORT}/connect/install.sh | sudo bash` : "";
     let html = readFileSync(join(__dirname, "public", "trust.html"), "utf-8");
-    html = html.replace("<body>", `<body data-https-url="${httpsUrl}" data-install-cmd="${installCmd}" data-lan-ip="${lanIP || ""}">`);
+    html = html.replace("<body>", `<body data-https-url="${targetUrl}" data-install-cmd="${installCmd}" data-lan-ip="${lanIP || ""}" data-https-port="${HTTPS_PORT}">`);
 
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(html);
@@ -373,12 +374,13 @@ const routes = [
   { method: "GET", path: "/connect/install.sh", handler: (req, res) => {
     const lanIP = getLanIP() || "127.0.0.1";
     const certUrl = `http://${lanIP}:${PORT}/connect/trust/ca.crt`;
-    const httpsUrl = `https://katulong.local:${HTTPS_PORT}`;
+    const targetUrl = `https://katulong.local`;
     const script = `#!/usr/bin/env bash
 set -euo pipefail
 
 CERT_URL="${certUrl}"
-HTTPS_URL="${httpsUrl}"
+HTTPS_URL="${targetUrl}"
+HTTPS_PORT=${HTTPS_PORT}
 LAN_IP="${lanIP}"
 HOST_ENTRY="\$LAN_IP katulong.local"
 
@@ -425,12 +427,120 @@ fi
 echo "Adding \$HOST_ENTRY to /etc/hosts..."
 echo "\$HOST_ENTRY" | sudo tee -a /etc/hosts > /dev/null
 
+# --- Port forwarding (443 → HTTPS_PORT) for clean URLs ---
+if [ "\$HTTPS_PORT" -ne 443 ]; then
+  echo "Setting up port forwarding (443 → \$HTTPS_PORT)..."
+  case "\$OS" in
+    Darwin)
+      # Load into macOS's built-in com.apple/* rdr-anchor (no pf.conf editing needed)
+      printf "rdr pass on lo0 proto tcp from any to any port 443 -> 127.0.0.1 port %s\\nrdr pass proto tcp from any to %s port 443 -> %s port %s\\n" "\$HTTPS_PORT" "\$LAN_IP" "\$LAN_IP" "\$HTTPS_PORT" | sudo pfctl -a com.apple/katulong -f - 2>/dev/null
+      sudo pfctl -e 2>/dev/null || true
+      echo "Port forwarding enabled via pf"
+      echo "Note: re-run this script after a reboot to restore port forwarding"
+      ;;
+    Linux)
+      # Use iptables for port redirect
+      sudo iptables -t nat -D PREROUTING -p tcp --dport 443 -j REDIRECT --to-port "\$HTTPS_PORT" 2>/dev/null || true
+      sudo iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port "\$HTTPS_PORT"
+      sudo iptables -t nat -D OUTPUT -o lo -p tcp --dport 443 -j REDIRECT --to-port "\$HTTPS_PORT" 2>/dev/null || true
+      sudo iptables -t nat -A OUTPUT -o lo -p tcp --dport 443 -j REDIRECT --to-port "\$HTTPS_PORT"
+      echo "Port forwarding enabled via iptables"
+      echo "Note: run 'sudo iptables-save' or install iptables-persistent to keep across reboots"
+      ;;
+  esac
+fi
+
 # --- Cleanup ---
 rm -rf "\$TMPDIR"
 
 echo ""
 echo "Done! Open Katulong at:"
 echo "  \$HTTPS_URL"
+echo ""
+echo "To uninstall later:"
+echo "  curl -fsSL http://\$LAN_IP:${PORT}/connect/uninstall.sh | sudo bash"
+echo ""
+`;
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end(script);
+  }},
+
+  { method: "GET", path: "/connect/uninstall.sh", handler: (req, res) => {
+    const lanIP = getLanIP() || "127.0.0.1";
+    const script = `#!/usr/bin/env bash
+set -euo pipefail
+
+HTTPS_PORT=${HTTPS_PORT}
+LAN_IP="${lanIP}"
+
+echo "Katulong — uninstall"
+echo ""
+
+OS=\$(uname -s)
+
+# --- Remove port forwarding ---
+if [ "\$HTTPS_PORT" -ne 443 ]; then
+  echo "Removing port forwarding..."
+  case "\$OS" in
+    Darwin)
+      # Flush the katulong pf anchor (safe — only removes our rules)
+      sudo pfctl -a com.apple/katulong -F all 2>/dev/null || true
+      echo "  Flushed pf anchor com.apple/katulong"
+      ;;
+    Linux)
+      # Remove only the specific iptables rules we added
+      sudo iptables -t nat -D PREROUTING -p tcp --dport 443 -j REDIRECT --to-port "\$HTTPS_PORT" 2>/dev/null || true
+      sudo iptables -t nat -D OUTPUT -o lo -p tcp --dport 443 -j REDIRECT --to-port "\$HTTPS_PORT" 2>/dev/null || true
+      echo "  Removed iptables NAT rules"
+      ;;
+  esac
+fi
+
+# --- Remove hosts entry ---
+if grep -q "katulong\\.local" /etc/hosts 2>/dev/null; then
+  echo "Removing katulong.local from /etc/hosts..."
+  case "\$OS" in
+    Darwin)
+      sudo sed -i '' '/katulong\\.local/d' /etc/hosts
+      ;;
+    Linux)
+      sudo sed -i '/katulong\\.local/d' /etc/hosts
+      ;;
+  esac
+  echo "  Removed hosts entry"
+else
+  echo "No katulong.local entry in /etc/hosts (already clean)"
+fi
+
+# --- Remove CA certificate ---
+echo "Removing CA certificate..."
+case "\$OS" in
+  Darwin)
+    # Find and delete only the Katulong CA from the system keychain
+    if security find-certificate -c "Katulong Local CA" /Library/Keychains/System.keychain >/dev/null 2>&1; then
+      sudo security delete-certificate -c "Katulong Local CA" /Library/Keychains/System.keychain 2>/dev/null || true
+      echo "  Removed Katulong Local CA from system keychain"
+    else
+      echo "  Katulong Local CA not found in system keychain (already clean)"
+    fi
+    ;;
+  Linux)
+    if [ -f /usr/local/share/ca-certificates/katulong-ca.crt ]; then
+      sudo rm /usr/local/share/ca-certificates/katulong-ca.crt
+      sudo update-ca-certificates --fresh
+      echo "  Removed certificate and refreshed trust store"
+    elif [ -f /etc/pki/ca-trust/source/anchors/katulong-ca.crt ]; then
+      sudo rm /etc/pki/ca-trust/source/anchors/katulong-ca.crt
+      sudo update-ca-trust
+      echo "  Removed certificate and refreshed trust store"
+    else
+      echo "  Katulong CA certificate not found (already clean)"
+    fi
+    ;;
+esac
+
+echo ""
+echo "Done! Katulong has been uninstalled from this device."
 echo ""
 `;
     res.writeHead(200, { "Content-Type": "text/plain" });

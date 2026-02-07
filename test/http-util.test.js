@@ -120,6 +120,11 @@ describe("isPublicPath", () => {
     assert.ok(isPublicPath("/connect/trust/ca.mobileconfig"));
   });
 
+  it("allows install and uninstall scripts", () => {
+    assert.ok(isPublicPath("/connect/install.sh"));
+    assert.ok(isPublicPath("/connect/uninstall.sh"));
+  });
+
   it("allows static extensions", () => {
     assert.ok(isPublicPath("/style.css"));
     assert.ok(isPublicPath("/app.js"));
