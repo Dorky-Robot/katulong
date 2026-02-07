@@ -47,6 +47,10 @@ if (!process.env.SETUP_TOKEN) {
   log.info("Setup token generated", { token: SETUP_TOKEN });
 }
 
+if (process.env.KATULONG_NO_AUTH === "1") {
+  log.warn("WARNING: KATULONG_NO_AUTH=1 — authentication is DISABLED. All requests are treated as authenticated. Do NOT use this in production or on untrusted networks.");
+}
+
 // --- Challenge storage (in-memory, 5-min expiry) ---
 
 const { store: storeChallenge, consume: consumeChallenge, _challenges: challenges } = createChallengeStore(5 * 60 * 1000);
@@ -273,7 +277,7 @@ const routes = [
         };
         saveState(state);
       }
-      setSessionCookie(res, session.token, session.expiry);
+      setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
       json(res, 200, { ok: true });
     } catch (err) {
       json(res, 400, { error: err.message });
@@ -321,7 +325,7 @@ const routes = [
       const session = createSession();
       state.sessions[session.token] = session.expiry;
       saveState(state);
-      setSessionCookie(res, session.token, session.expiry);
+      setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
       json(res, 200, { ok: true });
     } catch (err) {
       json(res, 400, { error: err.message });
@@ -452,7 +456,9 @@ echo ""
         saveState(state);
       }
     }
-    res.setHeader("Set-Cookie", "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+    let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+    if (req.socket.encrypted) clearCookie += "; Secure";
+    res.setHeader("Set-Cookie", clearCookie);
     json(res, 200, { ok: true });
   }},
 
@@ -617,6 +623,29 @@ function handleUpgrade(req, socket, head) {
     socket.destroy();
     return;
   }
+
+  // Origin check to prevent Cross-Site WebSocket Hijacking (CSWSH)
+  // Localhost bypasses this since browsers may omit Origin for local pages
+  if (!isLocalRequest(req)) {
+    const origin = req.headers.origin;
+    const host = req.headers.host;
+    if (origin && host) {
+      try {
+        const originHost = new URL(origin).host;
+        if (originHost !== host) {
+          log.warn("WebSocket origin mismatch", { origin, host });
+          socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+      } catch {
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+    }
+  }
+
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit("connection", ws, req);
   });
