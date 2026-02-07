@@ -82,6 +82,14 @@ function isAuthenticated(req) {
   return validateSession(state, token);
 }
 
+// Paths that are explicitly allowed over HTTP (for certificate installation)
+// Everything else MUST use HTTPS (or localhost)
+const HTTP_ALLOWED_PATHS = [
+  "/connect/trust",
+  "/connect/trust/ca.crt",
+  "/connect/trust/ca.mobileconfig",
+];
+
 // --- IPC client to daemon ---
 
 let daemonSocket = null;
@@ -512,22 +520,26 @@ function matchRoute(method, pathname) {
 async function handleRequest(req, res) {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
 
-  // LAN HTTP → HTTPS redirect (except /connect flow for cert installation)
-  if (!req.socket.encrypted && !isLocalRequest(req) && !pathname.startsWith("/connect")) {
-    const cookies = parseCookies(req.headers.cookie);
-    const token = cookies.get("katulong_session");
-    const state = loadState();
-    if (token && state && validateSession(state, token)) {
-      // Has valid session (cert installed) → redirect to HTTPS
-      const host = (req.headers.host || "").replace(/:\d+$/, "");
-      res.writeHead(302, { Location: `https://${host}:${HTTPS_PORT}${req.url}` });
+  // HTTPS enforcement: only allow specific paths on HTTP for certificate installation
+  // Everything else requires HTTPS (or localhost)
+  if (!req.socket.encrypted && !isLocalRequest(req)) {
+    // Allow explicitly listed paths on HTTP (cert installation flow)
+    if (!HTTP_ALLOWED_PATHS.includes(pathname)) {
+      const cookies = parseCookies(req.headers.cookie);
+      const token = cookies.get("katulong_session");
+      const state = loadState();
+      if (token && state && validateSession(state, token)) {
+        // Has valid session (cert installed) → redirect to HTTPS
+        const host = (req.headers.host || "").replace(/:\d+$/, "");
+        res.writeHead(302, { Location: `https://${host}:${HTTPS_PORT}${req.url}` });
+        res.end();
+        return;
+      }
+      // No valid session → show cert installation page
+      res.writeHead(302, { Location: "/connect/trust" });
       res.end();
       return;
     }
-    // No valid session → show cert installation page
-    res.writeHead(302, { Location: "/connect/trust" });
-    res.end();
-    return;
   }
 
   // Auth middleware: redirect unauthenticated requests to /login
