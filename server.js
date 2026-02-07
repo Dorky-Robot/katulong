@@ -167,11 +167,21 @@ connectDaemon();
 
 // --- Helpers ---
 
-function readBody(req) {
-  return new Promise((resolve) => {
+function readBody(req, maxSize = 1024 * 1024) {
+  return new Promise((resolve, reject) => {
     let body = "";
-    req.on("data", (chunk) => (body += chunk));
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > maxSize) {
+        req.destroy();
+        reject(new Error("Request body too large"));
+        return;
+      }
+      body += chunk;
+    });
     req.on("end", () => resolve(body));
+    req.on("error", reject);
   });
 }
 
@@ -180,8 +190,8 @@ function json(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
-async function parseJSON(req) {
-  const body = await readBody(req);
+async function parseJSON(req, maxSize = 1024 * 1024) {
+  const body = await readBody(req, maxSize);
   return JSON.parse(body);
 }
 
@@ -359,6 +369,18 @@ const routes = [
 
   { method: "POST", path: "/auth/pair/verify", handler: async (req, res) => {
     const { code, pin } = await parseJSON(req);
+
+    // Validate input presence
+    if (!code || !pin) {
+      return json(res, 400, { error: "Missing code or PIN" });
+    }
+
+    // Validate code format (UUID)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(String(code))) {
+      return json(res, 400, { error: "Invalid code format" });
+    }
+
     const challenge = pairingChallenges.get(code);
     if (!challenge) {
       log.warn("Pair verify: code not found", { code, mapSize: pairingChallenges.size });
@@ -370,6 +392,14 @@ const routes = [
     }
     // Normalize: strip anything that isn't a digit
     const submittedPin = String(pin).replace(/\D/g, "");
+
+    // Validate PIN format (exactly 6 digits)
+    if (submittedPin.length !== 6 || !/^\d{6}$/.test(submittedPin)) {
+      pairingChallenges.delete(code); // single-attempt: prevent brute-force within TTL
+      log.warn("Pair verify: invalid PIN format", { code, pinLength: submittedPin.length });
+      return json(res, 400, { error: "PIN must be exactly 6 digits" });
+    }
+
     if (challenge.pin !== submittedPin) {
       pairingChallenges.delete(code); // single-attempt: prevent brute-force within TTL
       log.warn("Pair verify: PIN mismatch", { code });
@@ -587,6 +617,8 @@ async function handleRequest(req, res) {
     } catch (err) {
       if (err instanceof SyntaxError) {
         json(res, 400, { error: "Invalid JSON" });
+      } else if (err.message === "Request body too large") {
+        json(res, 413, { error: "Request body too large" });
       } else {
         const status = err.message === "Daemon not connected" ? 503 : 500;
         json(res, status, { error: err.message });

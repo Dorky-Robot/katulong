@@ -37,6 +37,23 @@ function aliveSessionFor(clientId) {
 
 // --- Side-effectful session operations ---
 
+// Filter sensitive environment variables from PTY
+const SENSITIVE_ENV_VARS = new Set([
+  "SSH_PASSWORD",
+  "SETUP_TOKEN",
+  "KATULONG_NO_AUTH",
+]);
+
+function getSafeEnv() {
+  const safe = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!SENSITIVE_ENV_VARS.has(key)) {
+      safe[key] = value;
+    }
+  }
+  return safe;
+}
+
 function broadcast(msg) {
   const line = encode(msg);
   for (const sock of uiSockets) sock.write(line);
@@ -49,7 +66,7 @@ function spawnSession(name, cols = 120, rows = 40) {
     rows,
     cwd: process.env.HOME,
     env: {
-      ...process.env,
+      ...getSafeEnv(), // Filter out sensitive environment variables
       TERM: "xterm-256color",
       TERM_PROGRAM: "katulong",
       COLORTERM: "truecolor",

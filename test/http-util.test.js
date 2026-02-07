@@ -163,6 +163,14 @@ describe("isPublicPath", () => {
     assert.ok(!isPublicPath("/dashboard"));
   });
 
+  it("rejects path traversal attempts even with static extensions", () => {
+    assert.ok(!isPublicPath("/../secret.json"));
+    assert.ok(!isPublicPath("/../../etc/passwd.json"));
+    assert.ok(!isPublicPath("/foo/../bar.css"));
+    assert.ok(!isPublicPath("/foo//bar.js"));
+    assert.ok(!isPublicPath("/.hidden.json"));
+  });
+
   it("rejects root even though / has no extension", () => {
     assert.ok(!isPublicPath("/"));
   });
@@ -183,14 +191,14 @@ describe("getOriginAndRpID", () => {
     assert.equal(rpID, "example.com");
   });
 
-  it("trusts x-forwarded-proto as fallback when socket is not encrypted", () => {
+  it("ignores x-forwarded-proto when socket is not encrypted (no header trust)", () => {
     const req = { headers: { host: "example.com", "x-forwarded-proto": "https" } };
     const { origin, rpID } = getOriginAndRpID(req);
-    assert.equal(origin, "https://example.com");
+    assert.equal(origin, "http://example.com"); // Should be http, not https
     assert.equal(rpID, "example.com");
   });
 
-  it("prefers socket.encrypted over x-forwarded-proto", () => {
+  it("uses socket.encrypted regardless of x-forwarded-proto header", () => {
     const req = { headers: { host: "example.com", "x-forwarded-proto": "http" }, socket: { encrypted: true } };
     const { origin, rpID } = getOriginAndRpID(req);
     assert.equal(origin, "https://example.com");
