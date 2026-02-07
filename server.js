@@ -25,6 +25,7 @@ import {
 } from "./lib/http-util.js";
 import { SessionName } from "./lib/session-name.js";
 import { PairingChallengeStore } from "./lib/pairing-challenge.js";
+import { AuthState } from "./lib/auth-state.js";
 import { ensureCerts, generateMobileConfig } from "./lib/tls.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 import mdns from "multicast-dns";
@@ -296,20 +297,15 @@ const routes = [
 
       // Use withStateLock to prevent race conditions during state modification
       await withStateLock(async (state) => {
-        if (state) {
-          // Append credential to existing state
-          state = pruneExpiredSessions(state);
-          state.credentials.push(cred);
-          state.sessions[session.token] = session.expiry;
-        } else {
+        if (!state) {
           // First device: create new state
-          state = {
-            user: { id: userID, name: "owner" },
-            credentials: [cred],
-            sessions: { [session.token]: session.expiry },
-          };
+          state = AuthState.empty(userID);
         }
-        return state;
+        // Immutable operations
+        return state
+          .pruneExpired()
+          .addCredential(cred)
+          .addSession(session.token, session.expiry);
       });
 
       setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
@@ -359,10 +355,10 @@ const routes = [
       const session = createSession();
 
       // Use withStateLock to prevent race conditions during state modification
-      await withStateLock(async (s) => {
-        s = pruneExpiredSessions(s);
-        s.sessions[session.token] = session.expiry;
-        return s;
+      await withStateLock(async (state) => {
+        return state
+          .pruneExpired()
+          .addSession(session.token, session.expiry);
       });
 
       setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
@@ -422,11 +418,11 @@ const routes = [
     // Use withStateLock to prevent race conditions during state modification
     await withStateLock(async (state) => {
       if (!state) {
-        state = { user: { id: "paired-user", name: "owner" }, credentials: [], sessions: {} };
+        state = AuthState.empty("paired-user");
       }
-      state = pruneExpiredSessions(state);
-      state.sessions[session.token] = session.expiry;
-      return state;
+      return state
+        .pruneExpired()
+        .addSession(session.token, session.expiry);
     });
 
     setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
@@ -490,15 +486,17 @@ const routes = [
     res.end(html);
   }},
 
-  { method: "POST", path: "/auth/logout", handler: (req, res) => {
+  { method: "POST", path: "/auth/logout", handler: async (req, res) => {
     const cookies = parseCookies(req.headers.cookie);
     const token = cookies.get("katulong_session");
     if (token) {
-      const state = loadState();
-      if (state?.sessions?.[token]) {
-        delete state.sessions[token];
-        saveState(state);
-      }
+      // Use withStateLock for atomic state modification
+      await withStateLock(async (state) => {
+        if (state && state.isValidSession(token)) {
+          return state.removeSession(token);
+        }
+        return state;
+      });
     }
     let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
     if (req.socket.encrypted) clearCookie += "; Secure";

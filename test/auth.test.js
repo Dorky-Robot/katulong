@@ -131,44 +131,44 @@ describe("loadState caching", () => {
   });
 
   it("returns cached value on second call without re-reading disk", () => {
-    const state = { credentials: [], sessions: {}, test: true };
+    const state = { user: null, credentials: [], sessions: {} };
     saveState(state);
 
     const first = loadState();
     // Overwrite the file directly — loadState should still return the cached value
-    writeFileSync(STATE_PATH, JSON.stringify({ overwritten: true }));
+    writeFileSync(STATE_PATH, JSON.stringify({ user: { id: "changed", name: "owner" }, credentials: [], sessions: {} }));
     const second = loadState();
 
-    assert.deepEqual(first, state);
-    assert.deepEqual(second, state, "second call should return cached value, not re-read disk");
+    assert.deepEqual(first.toJSON(), state);
+    assert.deepEqual(second.toJSON(), state, "second call should return cached value, not re-read disk");
   });
 
   it("saveState updates the cache immediately", () => {
-    const stateA = { credentials: [], sessions: {}, version: "a" };
-    const stateB = { credentials: [], sessions: {}, version: "b" };
+    const stateA = { user: { id: "a", name: "owner" }, credentials: [], sessions: {} };
+    const stateB = { user: { id: "b", name: "owner" }, credentials: [], sessions: {} };
 
     saveState(stateA);
-    assert.deepEqual(loadState(), stateA);
+    assert.deepEqual(loadState().toJSON(), stateA);
 
     saveState(stateB);
-    assert.deepEqual(loadState(), stateB, "cache should reflect the latest saveState call");
+    assert.deepEqual(loadState().toJSON(), stateB, "cache should reflect the latest saveState call");
   });
 
   it("_invalidateCache forces a re-read from disk", () => {
-    const original = { credentials: [], sessions: {}, v: 1 };
+    const original = { user: { id: "1", name: "owner" }, credentials: [], sessions: {} };
     saveState(original);
-    assert.deepEqual(loadState(), original);
+    assert.deepEqual(loadState().toJSON(), original);
 
     // Write different data directly to disk
-    const updated = { credentials: [], sessions: {}, v: 2 };
+    const updated = { user: { id: "2", name: "owner" }, credentials: [], sessions: {} };
     writeFileSync(STATE_PATH, JSON.stringify(updated));
 
     // Cache still holds old value
-    assert.deepEqual(loadState(), original);
+    assert.deepEqual(loadState().toJSON(), original);
 
     // After invalidation, it re-reads from disk
     _invalidateCache();
-    assert.deepEqual(loadState(), updated, "should re-read from disk after cache invalidation");
+    assert.deepEqual(loadState().toJSON(), updated, "should re-read from disk after cache invalidation");
   });
 
   it("loadState returns null and caches it when file does not exist", () => {
@@ -177,10 +177,12 @@ describe("loadState caching", () => {
 
     assert.equal(loadState(), null);
     // Write a file — but cache should still return null
-    writeFileSync(STATE_PATH, JSON.stringify({ surprise: true }));
+    writeFileSync(STATE_PATH, JSON.stringify({ user: { id: "test", name: "owner" }, credentials: [], sessions: {} }));
     assert.equal(loadState(), null, "null should be cached too");
 
     _invalidateCache();
-    assert.deepEqual(loadState(), { surprise: true }, "after invalidation should read new file");
+    const loaded = loadState();
+    assert.ok(loaded, "should load state after invalidation");
+    assert.deepEqual(loaded.toJSON(), { user: { id: "test", name: "owner" }, credentials: [], sessions: {} }, "after invalidation should read new file");
   });
 });
