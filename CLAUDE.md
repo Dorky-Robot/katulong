@@ -32,14 +32,15 @@ Katulong is a self-hosted web terminal that gives remote shell access to the hos
 
 ### Threat surface
 - **Auth bypass**: Any route that serves content or accepts input without checking `isAuthenticated()` is a direct shell access vulnerability.
-- **Session hijacking**: Cookie flags (HttpOnly, SameSite=Lax) must be maintained. No session tokens in URLs or localStorage.
-- **Command injection**: Terminal input goes directly to a PTY. The server must never interpolate user data into shell commands on the server side.
-- **Path traversal**: Static file serving resolves paths against `public/` and checks the prefix. Changes to static file handling must maintain this check.
-- **Pairing flow**: Pairing codes are short-lived (30s) and single-use. PIN brute-force is mitigated by expiry. The pairing endpoint (`POST /auth/pair/start`) requires authentication.
-- **XSS**: The frontend is a single HTML file with no templating. Any server-side HTML injection (e.g., `data-` attribute interpolation) must escape user-controlled values.
+- **Session hijacking**: Cookie flags (HttpOnly, SameSite=Lax) must be maintained. No session tokens in URLs or localStorage. Auth state files use atomic writes (temp + rename) to prevent corruption.
+- **Command injection**: Terminal input goes directly to a PTY. The server must never interpolate user data into shell commands on the server side. Sensitive env vars (SSH_PASSWORD, SETUP_TOKEN) are filtered from PTY environments.
+- **Path traversal**: Static file serving resolves paths against `public/` and checks the prefix. `isPublicPath()` rejects paths with `..`, `//`, or leading dots to prevent traversal. Changes to static file handling must maintain these checks.
+- **Pairing flow**: Pairing codes are short-lived (30s), single-use, and validated (UUID format for code, exactly 6 digits for PIN). PIN brute-force is mitigated by expiry. The pairing endpoint (`POST /auth/pair/start`) requires authentication.
+- **XSS**: The frontend is a single HTML file with no templating. Any server-side HTML injection (e.g., `data-` attribute interpolation) must escape user-controlled values via `escapeAttr()`.
 - **SSH access**: Password compared via `timingSafeEqual`. Host key persisted to `DATA_DIR/ssh/`. SSH port should be firewalled on untrusted networks.
-- **WebSocket origin**: Currently no origin check on WS upgrade — relies on cookie auth only.
-- **TLS**: LAN HTTPS uses auto-generated self-signed certs. The CA cert must never be served without user intent.
+- **WebSocket origin**: Origin header validated on WS upgrade — must match Host header for non-localhost requests. Rejects missing or mismatched origins.
+- **TLS**: LAN HTTPS uses auto-generated self-signed certs. The CA cert must never be served without user intent. Only actual TLS socket state (`req.socket.encrypted`) is trusted, never `X-Forwarded-Proto` header.
+- **Request body size**: All public auth endpoints enforce 1MB request body limit to prevent DoS attacks.
 
 ## Code review checklist
 
@@ -47,13 +48,17 @@ When reviewing PRs, pay close attention to:
 
 1. **Auth changes**: Any modification to `isAuthenticated()`, `isPublicPath()`, `isLocalRequest()`, session validation, or cookie handling
 2. **New routes**: Every new HTTP route must either be in `isPublicPath()` (with justification) or protected by the auth middleware
-3. **WebSocket handling**: New message types must not allow unauthenticated actions
-4. **Input handling**: Server-side code must never pass unsanitized input to `child_process`, `exec`, or similar
-5. **Static file serving**: The `filePath.startsWith(publicDir)` guard must not be weakened
-6. **Dependency changes**: New dependencies increase attack surface — flag additions for review
-7. **Frontend security**: No `innerHTML` with user-controlled data, no eval, no dynamic script injection from user input
-8. **Pairing flow**: Pairing challenges must remain time-limited and single-use
-9. **Error handling**: Error responses must not leak internal paths, stack traces, or secrets
+3. **WebSocket handling**: Origin validation must be maintained. New message types must not allow unauthenticated actions.
+4. **Input handling**: Server-side code must never pass unsanitized input to `child_process`, `exec`, or similar. Validate all input formats (UUIDs, PINs, etc.).
+5. **Static file serving**: The `filePath.startsWith(publicDir)` guard must not be weakened. Path traversal checks in `isPublicPath()` must remain strict.
+6. **Request body handling**: All public endpoints must use `readBody()` with size limits (max 1MB for auth endpoints).
+7. **Dependency changes**: New dependencies increase attack surface — flag additions for review. CDN dependencies should document their SRI hashes.
+8. **Frontend security**: No `innerHTML` with user-controlled data, no eval, no dynamic script injection from user input. Use `escapeAttr()` for HTML attribute injection.
+9. **Pairing flow**: Pairing challenges must remain time-limited, single-use, and format-validated.
+10. **Error handling**: Error responses must not leak internal paths, stack traces, or secrets.
+11. **File I/O**: Auth state writes must be atomic (temp + rename). Add error handling for corrupt JSON.
+12. **Environment variables**: Never expose sensitive env vars (SSH_PASSWORD, SETUP_TOKEN, KATULONG_NO_AUTH) to PTY processes.
+13. **Header trust**: Never trust request headers (`X-Forwarded-*`) for security decisions. Only trust actual socket state.
 
 ## Testing
 
