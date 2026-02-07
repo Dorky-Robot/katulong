@@ -16,7 +16,7 @@ import {
   loadState, saveState, isSetup,
   generateRegistrationOpts, generateRegistrationOptsForUser, verifyRegistration,
   generateAuthOpts, verifyAuth,
-  createSession, validateSession, pruneExpiredSessions,
+  createSession, validateSession, pruneExpiredSessions, revokeAllSessions,
 } from "./lib/auth.js";
 import {
   parseCookies, setSessionCookie, getOriginAndRpID,
@@ -24,6 +24,7 @@ import {
 } from "./lib/http-util.js";
 import { ensureCerts, generateMobileConfig } from "./lib/tls.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
+import mdns from "multicast-dns";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -54,6 +55,11 @@ if (process.env.KATULONG_NO_AUTH === "1") {
 // --- Challenge storage (in-memory, 5-min expiry) ---
 
 const { store: storeChallenge, consume: consumeChallenge, _challenges: challenges } = createChallengeStore(5 * 60 * 1000);
+
+// --- Device pairing (in-memory, 30s expiry) ---
+
+const pairingChallenges = new Map();
+const PAIR_TTL_MS = 30 * 1000;
 
 function getLanIP() {
   const nets = networkInterfaces();
@@ -333,14 +339,76 @@ const routes = [
     }
   }},
 
+  // --- Pairing routes ---
+
+  { method: "POST", path: "/auth/pair/start", handler: (req, res) => {
+    // Only authenticated users (e.g. localhost auto-auth) can start pairing
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+    const code = randomUUID();
+    const pin = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = Date.now() + PAIR_TTL_MS;
+    pairingChallenges.set(code, { pin, expiresAt });
+    // Sweep expired entries
+    for (const [c, v] of pairingChallenges) {
+      if (Date.now() >= v.expiresAt) pairingChallenges.delete(c);
+    }
+    const lanIP = getLanIP();
+    const url = lanIP ? `https://${lanIP}:${HTTPS_PORT}/pair?code=${code}` : null;
+    json(res, 200, { code, pin, url, expiresAt });
+  }},
+
+  { method: "POST", path: "/auth/pair/verify", handler: async (req, res) => {
+    const { code, pin } = await parseJSON(req);
+    const challenge = pairingChallenges.get(code);
+    if (!challenge) {
+      log.warn("Pair verify: code not found", { code, mapSize: pairingChallenges.size });
+      return json(res, 400, { error: "Invalid or expired pairing code" });
+    }
+    if (Date.now() >= challenge.expiresAt) {
+      pairingChallenges.delete(code);
+      return json(res, 400, { error: "Pairing code expired" });
+    }
+    // Normalize: strip anything that isn't a digit
+    const submittedPin = String(pin).replace(/\D/g, "");
+    if (challenge.pin !== submittedPin) {
+      log.warn("Pair verify: PIN mismatch", { expected: challenge.pin, got: submittedPin, rawPin: pin });
+      return json(res, 403, { error: "Invalid PIN" });
+    }
+    pairingChallenges.delete(code);
+    let state = loadState();
+    if (!state) {
+      state = { user: { id: "paired-user", name: "owner" }, credentials: [], sessions: {} };
+    }
+    state = pruneExpiredSessions(state);
+    const session = createSession();
+    state.sessions[session.token] = session.expiry;
+    saveState(state);
+    setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
+    // Notify all connected WS clients so the pairing modal auto-dismisses
+    for (const client of wss.clients) {
+      if (client.readyState === 1) {
+        client.send(JSON.stringify({ type: "pair-complete", code }));
+      }
+    }
+    json(res, 200, { ok: true });
+  }},
+
+  { method: "GET", path: "/pair", handler: (req, res) => {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(readFileSync(join(__dirname, "public", "pair.html"), "utf-8"));
+  }},
+
   // --- Trust / certificate routes ---
 
   { method: "GET", path: "/connect/trust", handler: (req, res) => {
     const lanIP = getLanIP();
     const targetUrl = lanIP ? `https://katulong.local` : `https://localhost:${HTTPS_PORT}`;
     const installCmd = lanIP ? `curl -fsSL http://${lanIP}:${PORT}/connect/install.sh | sudo bash` : "";
+    const uninstallCmd = lanIP ? `curl -fsSL http://${lanIP}:${PORT}/connect/uninstall.sh | sudo bash` : "";
     let html = readFileSync(join(__dirname, "public", "trust.html"), "utf-8");
-    html = html.replace("<body>", `<body data-https-url="${targetUrl}" data-install-cmd="${installCmd}" data-lan-ip="${lanIP || ""}" data-https-port="${HTTPS_PORT}">`);
+    html = html.replace("<body>", `<body data-https-url="${targetUrl}" data-install-cmd="${installCmd}" data-uninstall-cmd="${uninstallCmd}" data-lan-ip="${lanIP || ""}" data-https-port="${HTTPS_PORT}">`);
 
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(html);
@@ -566,6 +634,16 @@ echo ""
         saveState(state);
       }
     }
+    let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+    if (req.socket.encrypted) clearCookie += "; Secure";
+    res.setHeader("Set-Cookie", clearCookie);
+    json(res, 200, { ok: true });
+  }},
+
+  { method: "POST", path: "/auth/revoke-all", handler: (req, res) => {
+    const state = loadState();
+    if (!state) return json(res, 400, { error: "Not set up" });
+    revokeAllSessions(state);
     let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
     if (req.socket.encrypted) clearCookie += "; Secure";
     res.setHeader("Set-Cookie", clearCookie);
@@ -922,6 +1000,32 @@ httpsServer.listen(HTTPS_PORT, "0.0.0.0", () => {
     trustUrl: lanIP ? `http://${lanIP}:${PORT}/connect/trust` : null,
   });
 });
+
+// --- mDNS: advertise katulong.local on the LAN ---
+{
+  const mdnsIP = getLanIP();
+  if (mdnsIP) {
+    try {
+      const mdnsServer = mdns();
+      mdnsServer.on("query", (query) => {
+        for (const q of query.questions) {
+          if (q.name === "katulong.local" && (q.type === "A" || q.type === "ANY")) {
+            mdnsServer.respond({
+              answers: [{ name: "katulong.local", type: "A", ttl: 120, data: mdnsIP }],
+            });
+            break;
+          }
+        }
+      });
+      mdnsServer.on("error", (err) => {
+        log.warn("mDNS error", { error: err.message });
+      });
+      log.info("mDNS advertising katulong.local", { ip: mdnsIP });
+    } catch (err) {
+      log.warn("Failed to start mDNS", { error: err.message });
+    }
+  }
+}
 
 sshRelay = startSSHServer({
   port: SSH_PORT,
