@@ -567,10 +567,33 @@
       text-align: center;
     }
 
+    /* --- Drop overlay --- */
+    .drop-overlay {
+      display: none; position: fixed; inset: 0; z-index: 20000;
+      background: rgba(0,0,0,0.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+      place-items: center; font-size: 1.25rem; color: var(--text);
+      font-family: var(--font-mono);
+      border: 3px dashed var(--accent-active);
+    }
+    .drop-overlay.visible { display: grid; }
+
+    /* --- Upload toast --- */
+    .upload-toast {
+      position: fixed; bottom: 3rem; left: 50%; transform: translateX(-50%);
+      z-index: 20001; padding: 0.5rem 1rem; border-radius: 0.5rem;
+      font-size: 0.8125rem; font-family: var(--font-mono);
+      background: var(--bg-surface); color: var(--text); border: 1px solid var(--border);
+      opacity: 0; transition: opacity 0.2s;
+      pointer-events: none;
+    }
+    .upload-toast.visible { opacity: 1; }
+    .upload-toast.error { border-color: var(--danger); color: var(--danger); }
+
   </style>
 </head>
 <body>
   <div id="terminal-container"></div>
+  <div id="drop-overlay" class="drop-overlay">Drop image here</div>
   <button id="scroll-bottom" aria-label="Scroll to bottom">
     <i class="ph ph-caret-down"></i>
   </button>
@@ -1867,9 +1890,89 @@
 
     dismissModal(dictationOverlay, closeDictationModal);
 
+    // --- Image upload helpers ---
+
+    function showToast(msg, isError) {
+      const el = document.createElement("div");
+      el.className = "upload-toast" + (isError ? " error" : "");
+      el.textContent = msg;
+      document.body.appendChild(el);
+      requestAnimationFrame(() => el.classList.add("visible"));
+      setTimeout(() => {
+        el.classList.remove("visible");
+        setTimeout(() => el.remove(), 300);
+      }, 2500);
+    }
+
+    async function uploadImage(file) {
+      try {
+        const res = await fetch("/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream", "X-Filename": file.name },
+          body: file,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: "Upload failed" }));
+          showToast(err.error || "Upload failed", true);
+          return;
+        }
+        const { path } = await res.json();
+        rawSend(path + " ");
+      } catch {
+        showToast("Upload failed", true);
+      }
+    }
+
+    function isImageFile(file) {
+      return file.type.startsWith("image/");
+    }
+
+    // --- Drag-and-drop ---
+
+    const dropOverlay = document.getElementById("drop-overlay");
+    let dragCounter = 0;
+
+    document.addEventListener("dragenter", (e) => {
+      e.preventDefault();
+      dragCounter++;
+      if (dragCounter === 1) dropOverlay.classList.add("visible");
+    });
+
+    document.addEventListener("dragover", (e) => {
+      e.preventDefault();
+    });
+
+    document.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter <= 0) {
+        dragCounter = 0;
+        dropOverlay.classList.remove("visible");
+      }
+    });
+
+    document.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dragCounter = 0;
+      dropOverlay.classList.remove("visible");
+      const files = [...(e.dataTransfer?.files || [])].filter(isImageFile);
+      if (files.length === 0) {
+        if (e.dataTransfer?.files?.length > 0) showToast("Not an image file", true);
+        return;
+      }
+      for (const file of files) uploadImage(file);
+    });
+
     // --- Global paste ---
 
     document.addEventListener("paste", (e) => {
+      // Check for pasted images first (e.g., screenshots)
+      const imageFiles = [...(e.clipboardData?.files || [])].filter(isImageFile);
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        for (const file of imageFiles) uploadImage(file);
+        return;
+      }
       const text = e.clipboardData?.getData("text");
       if (text) { rawSend(text); e.preventDefault(); }
     });
