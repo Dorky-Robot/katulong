@@ -8,6 +8,7 @@ import {
   isPublicPath,
   sanitizeName,
   createChallengeStore,
+  escapeAttr,
 } from "../lib/http-util.js";
 
 describe("parseCookies", () => {
@@ -49,6 +50,20 @@ describe("parseCookies", () => {
     assert.equal(map.size, 2);
     assert.equal(map.get("good"), "value");
     assert.equal(map.get("also"), "ok");
+  });
+});
+
+describe("escapeAttr", () => {
+  it("escapes quotes and angle brackets", () => {
+    assert.equal(escapeAttr('a"b<c>d&e'), "a&quot;b&lt;c&gt;d&amp;e");
+  });
+
+  it("passes through safe strings unchanged", () => {
+    assert.equal(escapeAttr("https://192.168.1.5:3002"), "https://192.168.1.5:3002");
+  });
+
+  it("handles numbers", () => {
+    assert.equal(escapeAttr(3002), "3002");
   });
 });
 
@@ -128,9 +143,9 @@ describe("isPublicPath", () => {
     assert.ok(isPublicPath("/connect/trust/ca.mobileconfig"));
   });
 
-  it("allows install and uninstall scripts", () => {
-    assert.ok(isPublicPath("/connect/install.sh"));
-    assert.ok(isPublicPath("/connect/uninstall.sh"));
+  it("rejects install and uninstall scripts (removed — MITM risk)", () => {
+    assert.ok(!isPublicPath("/connect/install.sh"));
+    assert.ok(!isPublicPath("/connect/uninstall.sh"));
   });
 
   it("allows static extensions", () => {
