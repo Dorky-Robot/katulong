@@ -22,17 +22,22 @@ import {
   isPublicPath, sanitizeName, createChallengeStore,
 } from "./lib/http-util.js";
 import { ensureCerts, generateMobileConfig } from "./lib/tls.js";
+import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || "3002", 10);
 const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
 const DATA_DIR = process.env.KATULONG_DATA_DIR || __dirname;
+const SSH_PORT = parseInt(process.env.SSH_PORT || "2222", 10);
+const SSH_PASSWORD = process.env.SSH_PASSWORD || null; // falls back to SETUP_TOKEN
 
 // --- TLS certificates (auto-generated) ---
 
 const tlsPaths = ensureCerts(DATA_DIR, "Katulong");
 log.info("TLS certificates ready", { dir: join(DATA_DIR, "tls") });
+
+const sshHostKey = ensureHostKey(DATA_DIR);
 
 const SETUP_TOKEN = process.env.SETUP_TOKEN || randomBytes(16).toString("hex");
 const RP_NAME = "Katulong";
@@ -401,7 +406,7 @@ const routes = [
   { method: "GET", path: "/connect/info", handler: (req, res) => {
     const lanIP = getLanIP();
     const trustUrl = lanIP ? `http://${lanIP}:${PORT}/connect/trust` : `/connect/trust`;
-    json(res, 200, { trustUrl, httpsPort: HTTPS_PORT });
+    json(res, 200, { trustUrl, httpsPort: HTTPS_PORT, sshPort: SSH_PORT, sshHost: lanIP || "localhost" });
   }},
 
   { method: "GET", path: "/connect", handler: (req, res) => {
@@ -428,6 +433,10 @@ const routes = [
   }},
 
   // --- App routes ---
+
+  { method: "GET", path: "/ssh/password", handler: (req, res) => {
+    json(res, 200, { password: SSH_PASSWORD || SETUP_TOKEN });
+  }},
 
   { method: "GET", path: "/shortcuts", handler: async (req, res) => {
     const result = await daemonRPC({ type: "get-shortcuts" });
@@ -568,6 +577,8 @@ function sendToSession(sessionName, payload, { preferP2P = false } = {}) {
   }
 }
 
+let sshRelay = null;
+
 function relayBroadcast(msg) {
   switch (msg.type) {
     case "output":
@@ -586,6 +597,7 @@ function relayBroadcast(msg) {
       }
       break;
   }
+  sshRelay?.relayBroadcast(msg);
 }
 
 wss.on("connection", (ws) => {
@@ -703,4 +715,12 @@ httpsServer.listen(HTTPS_PORT, "0.0.0.0", () => {
     port: HTTPS_PORT,
     trustUrl: lanIP ? `http://${lanIP}:${PORT}/connect/trust` : null,
   });
+});
+
+sshRelay = startSSHServer({
+  port: SSH_PORT,
+  hostKey: sshHostKey,
+  password: SSH_PASSWORD || SETUP_TOKEN,
+  daemonRPC,
+  daemonSend,
 });
