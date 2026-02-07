@@ -313,11 +313,12 @@ describe("processPairing", () => {
     });
 
     assert.ok(result instanceof AuthSuccess);
-    assert.ok(result.session);
-    assert.ok(result.session.token);
-    assert.ok(result.session.expiry);
-    assert.ok(result.updatedState);
-    assert.ok(result.updatedState instanceof AuthState);
+    assert.ok(result.data);
+    assert.ok(result.data.session);
+    assert.ok(result.data.session.token);
+    assert.ok(result.data.session.expiry);
+    assert.ok(result.data.updatedState);
+    assert.ok(result.data.updatedState instanceof AuthState);
   });
 
   it("creates new state when currentState is null", () => {
@@ -327,8 +328,8 @@ describe("processPairing", () => {
     });
 
     assert.ok(result instanceof AuthSuccess);
-    assert.ok(result.updatedState);
-    assert.ok(result.updatedState.hasUser());
+    assert.ok(result.data.updatedState);
+    assert.ok(result.data.updatedState.hasUser());
   });
 
   it("adds session to existing state", () => {
@@ -340,7 +341,7 @@ describe("processPairing", () => {
     });
 
     assert.ok(result instanceof AuthSuccess);
-    assert.equal(result.updatedState.sessionCount(), 1);
+    assert.equal(result.data.updatedState.sessionCount(), 1);
   });
 
   it("prunes expired sessions during pairing", () => {
@@ -358,9 +359,9 @@ describe("processPairing", () => {
 
     assert.ok(result instanceof AuthSuccess);
     // Should have 2 sessions: the valid one + new one (expired was pruned)
-    assert.equal(result.updatedState.sessionCount(), 2);
-    assert.ok(!result.updatedState.isValidSession("expired-token"));
-    assert.ok(result.updatedState.isValidSession("valid-token"));
+    assert.equal(result.data.updatedState.sessionCount(), 2);
+    assert.ok(!result.data.updatedState.isValidSession("expired-token"));
+    assert.ok(result.data.updatedState.isValidSession("valid-token"));
   });
 });
 
@@ -369,11 +370,11 @@ describe("AuthSuccess", () => {
     const session = { token: "abc123", expiry: Date.now() + 10000 };
     const state = AuthState.empty("user123");
 
-    const result = new AuthSuccess(session, state);
+    const result = new AuthSuccess({ session, updatedState: state });
 
     assert.equal(result.success, true);
-    assert.deepEqual(result.session, session);
-    assert.equal(result.updatedState, state);
+    assert.deepEqual(result.data.session, session);
+    assert.equal(result.data.updatedState, state);
   });
 });
 

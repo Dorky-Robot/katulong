@@ -163,7 +163,7 @@ const rpcHandlers = {
   "get-shortcuts": () => {
     const result = loadShortcuts(SHORTCUTS_PATH);
     return result.success
-      ? { shortcuts: result.shortcuts }
+      ? { shortcuts: result.data }
       : { shortcuts: [] };
   },
 

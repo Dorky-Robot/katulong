@@ -23,16 +23,16 @@ describe("parseShortcuts", () => {
     const result = parseShortcuts(json);
 
     assert.ok(result instanceof ShortcutsSuccess);
-    assert.equal(result.shortcuts.length, 2);
-    assert.equal(result.shortcuts[0].label, "Clear");
-    assert.equal(result.shortcuts[1].keys, "ctrl+d");
+    assert.equal(result.data.length, 2);
+    assert.equal(result.data[0].label, "Clear");
+    assert.equal(result.data[1].keys, "ctrl+d");
   });
 
   it("accepts empty array", () => {
     const result = parseShortcuts("[]");
 
     assert.ok(result instanceof ShortcutsSuccess);
-    assert.deepEqual(result.shortcuts, []);
+    assert.deepEqual(result.data, []);
   });
 
   it("returns failure for invalid JSON", () => {
@@ -161,15 +161,15 @@ describe("loadShortcuts", () => {
     const result = loadShortcuts(testFile);
 
     assert.ok(result instanceof ShortcutsSuccess);
-    assert.equal(result.shortcuts.length, 2);
-    assert.equal(result.shortcuts[0].label, "Clear");
+    assert.equal(result.data.length, 2);
+    assert.equal(result.data[0].label, "Clear");
   });
 
   it("returns empty array when file does not exist", () => {
     const result = loadShortcuts(join(testDir, "nonexistent.json"));
 
     assert.ok(result instanceof ShortcutsSuccess);
-    assert.deepEqual(result.shortcuts, []);
+    assert.deepEqual(result.data, []);
   });
 
   it("returns failure when file contains invalid JSON", () => {
@@ -217,7 +217,7 @@ describe("saveShortcuts", () => {
     // Verify file contents
     const loaded = loadShortcuts(testFile);
     assert.ok(loaded instanceof ShortcutsSuccess);
-    assert.equal(loaded.shortcuts.length, 2);
+    assert.equal(loaded.data.length, 2);
   });
 
   it("returns failure when shortcuts are invalid", () => {
@@ -333,7 +333,7 @@ describe("ShortcutsSuccess", () => {
     const result = new ShortcutsSuccess(shortcuts);
 
     assert.equal(result.success, true);
-    assert.deepEqual(result.shortcuts, shortcuts);
+    assert.deepEqual(result.data, shortcuts);
   });
 });
 

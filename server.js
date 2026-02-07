@@ -311,8 +311,9 @@ const routes = [
     }
 
     // I/O: Persist state and set cookie
-    await withStateLock(async () => result.updatedState);
-    setSessionCookie(res, result.session.token, result.session.expiry, { secure: !!req.socket.encrypted });
+    const { session, updatedState } = result.data;
+    await withStateLock(async () => updatedState);
+    setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
     json(res, 200, { ok: true });
   }},
 
@@ -352,8 +353,9 @@ const routes = [
     }
 
     // I/O: Persist state and set cookie
-    await withStateLock(async () => result.updatedState);
-    setSessionCookie(res, result.session.token, result.session.expiry, { secure: !!req.socket.encrypted });
+    const { session, updatedState } = result.data;
+    await withStateLock(async () => updatedState);
+    setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
     json(res, 200, { ok: true });
   }},
 
@@ -388,8 +390,9 @@ const routes = [
     }
 
     // I/O: Persist state and set cookie
-    await withStateLock(async () => result.updatedState);
-    setSessionCookie(res, result.session.token, result.session.expiry, { secure: !!req.socket.encrypted });
+    const { session, updatedState } = result.data;
+    await withStateLock(async () => updatedState);
+    setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
 
     // I/O: Notify WebSocket clients
     for (const client of wss.clients) {
