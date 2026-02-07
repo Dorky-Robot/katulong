@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import pty from "node-pty";
 import { encode, decoder } from "./lib/ndjson.js";
 import { log } from "./lib/log.js";
-import { RingBuffer } from "./lib/ring-buffer.js";
+import { Session } from "./lib/session.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
@@ -74,26 +74,25 @@ function spawnSession(name, cols = 120, rows = 40) {
     },
   });
 
-  const session = { pty: p, outputBuffer: new RingBuffer(MAX_BUFFER, MAX_BUFFER_BYTES), alive: true };
-
-  p.onData((data) => {
-    session.outputBuffer.push(data);
-    broadcast({ type: "output", session: name, data });
-  });
-
-  p.onExit(({ exitCode }) => {
-    log.info("Session exited", { session: name, exitCode });
-    session.alive = false;
-    broadcast({ type: "exit", session: name, code: exitCode });
+  const session = new Session(name, p, {
+    maxBufferItems: MAX_BUFFER,
+    maxBufferBytes: MAX_BUFFER_BYTES,
+    onData: (sessionName, data) => {
+      broadcast({ type: "output", session: sessionName, data });
+    },
+    onExit: (sessionName, exitCode) => {
+      log.info("Session exited", { session: sessionName, exitCode });
+      broadcast({ type: "exit", session: sessionName, code: exitCode });
+    },
   });
 
   sessions.set(name, session);
-  log.info("Session created", { session: name, pid: p.pid });
+  log.info("Session created", { session: name, pid: session.pid });
 
   // Clear initial prompt artifacts on spawn
   setTimeout(() => {
     if (session.alive) {
-      p.write("clear\n");
+      session.write("clear\n");
     }
   }, 100);
 
@@ -107,7 +106,7 @@ function ensureSession(name, cols, rows) {
 function removeSession(name) {
   const session = sessions.get(name);
   if (!session) return false;
-  if (session.alive) session.pty.kill();
+  session.kill();
   sessions.delete(name);
   for (const [cid, info] of clients) {
     if (info.session === name) clients.delete(cid);
@@ -120,6 +119,7 @@ function removeSession(name) {
 function renameSession(oldName, newName) {
   const session = sessions.get(oldName);
   if (!session || sessions.has(newName)) return false;
+  session.name = newName;
   sessions.delete(oldName);
   sessions.set(newName, session);
   for (const [, info] of clients) {
@@ -153,7 +153,7 @@ const rpcHandlers = {
     const name = msg.session || "default";
     const session = ensureSession(name, msg.cols, msg.rows);
     clients.set(msg.clientId, { session: name, socket });
-    return { buffer: session.outputBuffer.toString(), alive: session.alive };
+    return { buffer: session.getBuffer(), alive: session.alive };
   },
 
   "detach": (msg) =>
@@ -184,8 +184,8 @@ function handleMessage(msg, socket) {
 
   // Fire-and-forget: no response needed
   if (!id) {
-    if (type === "input")  aliveSessionFor(msg.clientId)?.pty.write(msg.data);
-    if (type === "resize") aliveSessionFor(msg.clientId)?.pty.resize(msg.cols, msg.rows);
+    if (type === "input")  aliveSessionFor(msg.clientId)?.write(msg.data);
+    if (type === "resize") aliveSessionFor(msg.clientId)?.resize(msg.cols, msg.rows);
     if (type === "detach") clients.delete(msg.clientId);
     return;
   }
