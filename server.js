@@ -17,6 +17,7 @@ import {
   generateRegistrationOpts, generateRegistrationOptsForUser, verifyRegistration,
   generateAuthOpts, verifyAuth,
   createSession, validateSession, pruneExpiredSessions, revokeAllSessions,
+  withStateLock,
 } from "./lib/auth.js";
 import {
   parseCookies, setSessionCookie, getOriginAndRpID,
@@ -52,14 +53,23 @@ if (process.env.KATULONG_NO_AUTH === "1") {
   log.warn("WARNING: KATULONG_NO_AUTH=1 — authentication is DISABLED. All requests are treated as authenticated. Do NOT use this in production or on untrusted networks.");
 }
 
+// --- Constants ---
+
+const MAX_REQUEST_BODY_SIZE = 1024 * 1024; // 1MB limit for request bodies
+const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const PAIR_TTL_MS = 30 * 1000; // 30 seconds
+const DAEMON_RECONNECT_INITIAL_MS = 1000; // 1 second
+const DAEMON_RECONNECT_MAX_MS = 30000; // 30 seconds
+const PIN_MIN = 100000; // 6-digit PIN minimum value
+const PIN_MAX = 999999; // 6-digit PIN maximum value
+
 // --- Challenge storage (in-memory, 5-min expiry) ---
 
-const { store: storeChallenge, consume: consumeChallenge, _challenges: challenges } = createChallengeStore(5 * 60 * 1000);
+const { store: storeChallenge, consume: consumeChallenge, _challenges: challenges } = createChallengeStore(CHALLENGE_TTL_MS);
 
 // --- Device pairing (in-memory, 30s expiry) ---
 
 const pairingChallenges = new Map();
-const PAIR_TTL_MS = 30 * 1000;
 
 function getLanIP() {
   const nets = networkInterfaces();
@@ -99,7 +109,7 @@ const HTTP_ALLOWED_PATHS = [
 
 let daemonSocket = null;
 let daemonConnected = false;
-let daemonReconnectDelay = 1000;
+let daemonReconnectDelay = DAEMON_RECONNECT_INITIAL_MS;
 const pendingRPC = new Map();
 
 function connectDaemon() {
@@ -112,7 +122,7 @@ function connectDaemon() {
 
   daemonSocket.on("connect", () => {
     daemonConnected = true;
-    daemonReconnectDelay = 1000;
+    daemonReconnectDelay = DAEMON_RECONNECT_INITIAL_MS;
     log.info("Connected to daemon");
   });
 
@@ -136,7 +146,7 @@ function connectDaemon() {
     }
     pendingRPC.clear();
     setTimeout(connectDaemon, daemonReconnectDelay);
-    daemonReconnectDelay = Math.min(daemonReconnectDelay * 2, 30000);
+    daemonReconnectDelay = Math.min(daemonReconnectDelay * 2, DAEMON_RECONNECT_MAX_MS);
   });
 
   daemonSocket.on("error", (err) => {
@@ -167,7 +177,7 @@ connectDaemon();
 
 // --- Helpers ---
 
-function readBody(req, maxSize = 1024 * 1024) {
+function readBody(req, maxSize = MAX_REQUEST_BODY_SIZE) {
   return new Promise((resolve, reject) => {
     let body = "";
     let size = 0;
@@ -190,7 +200,7 @@ function json(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
-async function parseJSON(req, maxSize = 1024 * 1024) {
+async function parseJSON(req, maxSize = MAX_REQUEST_BODY_SIZE) {
   const body = await readBody(req, maxSize);
   return JSON.parse(body);
 }
@@ -282,22 +292,25 @@ const routes = [
     try {
       const cred = await verifyRegistration(credential, challenge, origin, rpID);
       const session = createSession();
-      if (isSetup()) {
-        // Append credential to existing state
-        let state = loadState();
-        state = pruneExpiredSessions(state);
-        state.credentials.push(cred);
-        state.sessions[session.token] = session.expiry;
-        saveState(state);
-      } else {
-        // First device: create new state
-        const state = {
-          user: { id: userID, name: "owner" },
-          credentials: [cred],
-          sessions: { [session.token]: session.expiry },
-        };
-        saveState(state);
-      }
+
+      // Use withStateLock to prevent race conditions during state modification
+      await withStateLock(async (state) => {
+        if (state) {
+          // Append credential to existing state
+          state = pruneExpiredSessions(state);
+          state.credentials.push(cred);
+          state.sessions[session.token] = session.expiry;
+        } else {
+          // First device: create new state
+          state = {
+            user: { id: userID, name: "owner" },
+            credentials: [cred],
+            sessions: { [session.token]: session.expiry },
+          };
+        }
+        return state;
+      });
+
       setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
       json(res, 200, { ok: true });
     } catch (err) {
@@ -342,10 +355,15 @@ const routes = [
     try {
       const newCounter = await verifyAuth(credential, storedCred, challenge, origin, rpID);
       storedCred.counter = newCounter;
-      state = pruneExpiredSessions(state);
       const session = createSession();
-      state.sessions[session.token] = session.expiry;
-      saveState(state);
+
+      // Use withStateLock to prevent race conditions during state modification
+      await withStateLock(async (s) => {
+        s = pruneExpiredSessions(s);
+        s.sessions[session.token] = session.expiry;
+        return s;
+      });
+
       setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
       json(res, 200, { ok: true });
     } catch (err) {
@@ -361,7 +379,7 @@ const routes = [
       return json(res, 401, { error: "Authentication required" });
     }
     const code = randomUUID();
-    const pin = String(100000 + (randomBytes(4).readUInt32BE() % 900000));
+    const pin = String(PIN_MIN + (randomBytes(4).readUInt32BE() % (PIN_MAX - PIN_MIN + 1)));
     const expiresAt = Date.now() + PAIR_TTL_MS;
     pairingChallenges.set(code, { pin, expiresAt });
     // Sweep expired entries
@@ -412,14 +430,18 @@ const routes = [
       return json(res, 403, { error: "Invalid PIN" });
     }
     pairingChallenges.delete(code);
-    let state = loadState();
-    if (!state) {
-      state = { user: { id: "paired-user", name: "owner" }, credentials: [], sessions: {} };
-    }
-    state = pruneExpiredSessions(state);
     const session = createSession();
-    state.sessions[session.token] = session.expiry;
-    saveState(state);
+
+    // Use withStateLock to prevent race conditions during state modification
+    await withStateLock(async (state) => {
+      if (!state) {
+        state = { user: { id: "paired-user", name: "owner" }, credentials: [], sessions: {} };
+      }
+      state = pruneExpiredSessions(state);
+      state.sessions[session.token] = session.expiry;
+      return state;
+    });
+
     setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
     // Notify all connected WS clients so the pairing modal auto-dismisses
     for (const client of wss.clients) {
