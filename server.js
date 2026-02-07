@@ -14,7 +14,7 @@ import { createServerPeer, destroyPeer } from "./lib/p2p.js";
 import { detectImage, readRawBody, MAX_UPLOAD_BYTES } from "./lib/upload.js";
 import {
   loadState, saveState, isSetup,
-  generateRegistrationOpts, verifyRegistration,
+  generateRegistrationOpts, generateRegistrationOptsForUser, verifyRegistration,
   generateAuthOpts, verifyAuth,
   createSession, validateSession, pruneExpiredSessions,
 } from "./lib/auth.js";
@@ -51,11 +51,6 @@ if (!process.env.SETUP_TOKEN) {
 
 const { store: storeChallenge, consume: consumeChallenge, _challenges: challenges } = createChallengeStore(5 * 60 * 1000);
 
-// --- Device pairing (in-memory, 5-min expiry) ---
-
-const pairingChallenges = new Map();
-const PAIR_TTL_MS = 30 * 1000;
-
 function getLanIP() {
   const nets = networkInterfaces();
   for (const ifaces of Object.values(nets)) {
@@ -88,6 +83,7 @@ const HTTP_ALLOWED_PATHS = [
   "/connect/trust",
   "/connect/trust/ca.crt",
   "/connect/trust/ca.mobileconfig",
+  "/connect/install.sh",
 ];
 
 // --- IPC client to daemon ---
@@ -226,11 +222,14 @@ const routes = [
     if (setupToken !== SETUP_TOKEN) {
       return json(res, 403, { error: "Invalid setup token" });
     }
-    if (isSetup()) {
-      return json(res, 409, { error: "Already set up" });
-    }
     const { origin, rpID } = getOriginAndRpID(req);
-    const { opts, userID } = await generateRegistrationOpts(RP_NAME, rpID, origin);
+    let opts, userID;
+    if (isSetup()) {
+      const state = loadState();
+      ({ opts, userID } = await generateRegistrationOptsForUser(state.user.id, RP_NAME, rpID, origin));
+    } else {
+      ({ opts, userID } = await generateRegistrationOpts(RP_NAME, rpID, origin));
+    }
     storeChallenge(opts.challenge);
     // Store userID temporarily with the challenge for use during verification
     challenges.set(`userID:${opts.challenge}`, userID);
@@ -241,9 +240,6 @@ const routes = [
     const { credential, setupToken } = await parseJSON(req);
     if (setupToken !== SETUP_TOKEN) {
       return json(res, 403, { error: "Invalid setup token" });
-    }
-    if (isSetup()) {
-      return json(res, 409, { error: "Already set up" });
     }
     const { origin, rpID } = getOriginAndRpID(req);
 
@@ -261,12 +257,22 @@ const routes = [
     try {
       const cred = await verifyRegistration(credential, challenge, origin, rpID);
       const session = createSession();
-      const state = {
-        user: { id: userID, name: "owner" },
-        credentials: [cred],
-        sessions: { [session.token]: session.expiry },
-      };
-      saveState(state);
+      if (isSetup()) {
+        // Append credential to existing state
+        let state = loadState();
+        state = pruneExpiredSessions(state);
+        state.credentials.push(cred);
+        state.sessions[session.token] = session.expiry;
+        saveState(state);
+      } else {
+        // First device: create new state
+        const state = {
+          user: { id: userID, name: "owner" },
+          credentials: [cred],
+          sessions: { [session.token]: session.expiry },
+        };
+        saveState(state);
+      }
       setSessionCookie(res, session.token, session.expiry);
       json(res, 200, { ok: true });
     } catch (err) {
@@ -322,73 +328,15 @@ const routes = [
     }
   }},
 
-  { method: "POST", path: "/auth/pair/start", handler: (req, res) => {
-    // Only authenticated users (e.g. localhost auto-auth) can start pairing
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-    const code = randomUUID();
-    const pin = String(Math.floor(100000 + Math.random() * 900000));
-    const expiresAt = Date.now() + PAIR_TTL_MS;
-    pairingChallenges.set(code, { pin, expiresAt });
-    // Sweep expired entries
-    for (const [c, v] of pairingChallenges) {
-      if (Date.now() >= v.expiresAt) pairingChallenges.delete(c);
-    }
-    const lanIP = getLanIP();
-    const url = lanIP ? `https://${lanIP}:${HTTPS_PORT}/pair?code=${code}` : null;
-    json(res, 200, { code, pin, url, expiresAt });
-  }},
-
-  { method: "POST", path: "/auth/pair/verify", handler: async (req, res) => {
-    const { code, pin } = await parseJSON(req);
-    const challenge = pairingChallenges.get(code);
-    if (!challenge) {
-      log.warn("Pair verify: code not found", { code, mapSize: pairingChallenges.size });
-      return json(res, 400, { error: "Invalid or expired pairing code" });
-    }
-    if (Date.now() >= challenge.expiresAt) {
-      pairingChallenges.delete(code);
-      return json(res, 400, { error: "Pairing code expired" });
-    }
-    // Normalize: strip anything that isn't a digit
-    const submittedPin = String(pin).replace(/\D/g, "");
-    if (challenge.pin !== submittedPin) {
-      log.warn("Pair verify: PIN mismatch", { expected: challenge.pin, got: submittedPin, rawPin: pin });
-      return json(res, 403, { error: "Invalid PIN" });
-    }
-    pairingChallenges.delete(code);
-    let state = loadState();
-    if (!state) {
-      state = { user: { id: "paired-user", name: "owner" }, credentials: [], sessions: {} };
-    }
-    state = pruneExpiredSessions(state);
-    const session = createSession();
-    state.sessions[session.token] = session.expiry;
-    saveState(state);
-    setSessionCookie(res, session.token, session.expiry);
-    // Notify all connected WS clients so the pairing modal auto-dismisses
-    for (const client of wss.clients) {
-      if (client.readyState === 1) {
-        client.send(JSON.stringify({ type: "pair-complete", code }));
-      }
-    }
-    json(res, 200, { ok: true });
-  }},
-
-  { method: "GET", path: "/pair", handler: (req, res) => {
-    res.writeHead(200, { "Content-Type": "text/html" });
-    res.end(readFileSync(join(__dirname, "public", "pair.html"), "utf-8"));
-  }},
-
   // --- Trust / certificate routes ---
 
   { method: "GET", path: "/connect/trust", handler: (req, res) => {
     const lanIP = getLanIP();
-    const httpsUrl = lanIP ? `https://${lanIP}:${HTTPS_PORT}` : `https://localhost:${HTTPS_PORT}`;
+    const httpsUrl = lanIP ? `https://katulong.local:${HTTPS_PORT}` : `https://localhost:${HTTPS_PORT}`;
+    const installCmd = lanIP ? `curl -fsSL http://${lanIP}:${PORT}/connect/install.sh | sudo bash` : "";
     let html = readFileSync(join(__dirname, "public", "trust.html"), "utf-8");
-    // Inject the HTTPS URL via a data attribute on body
-    html = html.replace("<body>", `<body data-https-url="${httpsUrl}">`);
+    html = html.replace("<body>", `<body data-https-url="${httpsUrl}" data-install-cmd="${installCmd}" data-lan-ip="${lanIP || ""}">`);
+
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(html);
   }},
@@ -416,6 +364,73 @@ const routes = [
     const lanIP = getLanIP();
     const trustUrl = lanIP ? `http://${lanIP}:${PORT}/connect/trust` : `/connect/trust`;
     json(res, 200, { trustUrl, httpsPort: HTTPS_PORT, sshPort: SSH_PORT, sshHost: lanIP || "localhost" });
+  }},
+
+  { method: "GET", path: "/connect/install.sh", handler: (req, res) => {
+    const lanIP = getLanIP() || "127.0.0.1";
+    const certUrl = `http://${lanIP}:${PORT}/connect/trust/ca.crt`;
+    const httpsUrl = `https://katulong.local:${HTTPS_PORT}`;
+    const script = `#!/usr/bin/env bash
+set -euo pipefail
+
+CERT_URL="${certUrl}"
+HTTPS_URL="${httpsUrl}"
+LAN_IP="${lanIP}"
+HOST_ENTRY="\$LAN_IP katulong.local"
+
+echo "Katulong — device setup"
+echo ""
+
+# --- Download CA certificate ---
+TMPDIR=\$(mktemp -d)
+CERT="\$TMPDIR/katulong-ca.crt"
+echo "Downloading CA certificate..."
+curl -fsSL "\$CERT_URL" -o "\$CERT"
+
+# --- Install certificate ---
+OS=\$(uname -s)
+case "\$OS" in
+  Darwin)
+    echo "Installing certificate into macOS keychain..."
+    sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "\$CERT"
+    ;;
+  Linux)
+    echo "Installing certificate into system trust store..."
+    if [ -d /usr/local/share/ca-certificates ]; then
+      sudo cp "\$CERT" /usr/local/share/ca-certificates/katulong-ca.crt
+      sudo update-ca-certificates
+    elif [ -d /etc/pki/ca-trust/source/anchors ]; then
+      sudo cp "\$CERT" /etc/pki/ca-trust/source/anchors/katulong-ca.crt
+      sudo update-ca-trust
+    else
+      echo "Could not detect certificate store. Install \$CERT manually."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Unsupported OS: \$OS. Install \$CERT manually."
+    exit 1
+    ;;
+esac
+
+# --- Add hosts entry ---
+if grep -q "katulong.local" /etc/hosts 2>/dev/null; then
+  echo "Updating existing katulong.local hosts entry..."
+  sudo sed -i.bak "/katulong\\.local/d" /etc/hosts
+fi
+echo "Adding \$HOST_ENTRY to /etc/hosts..."
+echo "\$HOST_ENTRY" | sudo tee -a /etc/hosts > /dev/null
+
+# --- Cleanup ---
+rm -rf "\$TMPDIR"
+
+echo ""
+echo "Done! Open Katulong at:"
+echo "  \$HTTPS_URL"
+echo ""
+`;
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end(script);
   }},
 
   { method: "GET", path: "/connect", handler: (req, res) => {

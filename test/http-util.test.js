@@ -101,8 +101,8 @@ describe("isPublicPath", () => {
     assert.ok(isPublicPath("/auth/register/verify"));
   });
 
-  it("allows /pair", () => {
-    assert.ok(isPublicPath("/pair"));
+  it("rejects /pair (removed)", () => {
+    assert.ok(!isPublicPath("/pair"));
   });
 
   it("allows /connect/trust paths", () => {

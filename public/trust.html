@@ -125,6 +125,40 @@
     }
     .open-btn.visible { display: flex; }
     .open-btn:active { opacity: 0.8; }
+
+    .install-cmd {
+      position: relative;
+      background: var(--bg-input); border: 1px solid var(--border);
+      border-radius: 0.5rem; padding: 0.75rem; margin-bottom: 1rem;
+      font-size: 0.75rem; line-height: 1.6;
+      word-break: break-all; color: var(--text);
+      cursor: pointer;
+    }
+    .install-cmd:hover { border-color: var(--accent-active); }
+    .install-cmd .copy-hint {
+      display: block; color: var(--text-dim); font-size: 0.6875rem;
+      margin-top: 0.375rem;
+    }
+    .install-cmd.copied .copy-hint { color: var(--success); }
+
+    .or-divider {
+      color: var(--text-dim); font-size: 0.75rem; text-align: center;
+      margin: 1rem 0; position: relative;
+    }
+    .or-divider::before, .or-divider::after {
+      content: ""; position: absolute; top: 50%;
+      width: calc(50% - 1.5rem); height: 1px; background: var(--border);
+    }
+    .or-divider::before { left: 0; }
+    .or-divider::after { right: 0; }
+
+    .manual-toggle {
+      background: none; border: none; color: var(--text-muted);
+      font-size: 0.8125rem; font-family: var(--font-mono); cursor: pointer;
+      padding: 0; text-decoration: underline; text-underline-offset: 2px;
+      width: auto; height: auto; display: inline;
+    }
+    .manual-toggle:active { color: var(--text); }
   </style>
 </head>
 <body>
@@ -163,16 +197,35 @@
 
     <!-- Desktop -->
     <div class="platform-section" id="desktop-section">
-      <a class="download-btn" href="/connect/trust/ca.crt" id="desktop-download">Download CA Certificate</a>
-      <ol class="steps" id="desktop-steps-mac">
-        <li data-step="1">Download the certificate above</li>
-        <li data-step="2">Double-click <strong>ca.crt</strong> to open in Keychain Access</li>
-        <li data-step="3">Double-click the certificate, expand <strong>Trust</strong>, set to <strong>Always Trust</strong></li>
-      </ol>
-      <ol class="steps" id="desktop-steps-other" style="display:none">
-        <li data-step="1">Download the certificate above</li>
-        <li data-step="2">Add it to your system's trusted certificate store</li>
-      </ol>
+      <div id="install-cmd-section" style="display:none">
+        <p style="color:var(--text-muted); font-size:0.8125rem; margin-bottom:0.75rem;">
+          Run this in your terminal to install the certificate and set up <strong style="color:var(--text)">katulong.local</strong>:
+        </p>
+        <div class="install-cmd" id="install-cmd" role="button" tabindex="0" aria-label="Copy install command">
+          <code id="install-cmd-text"></code>
+          <span class="copy-hint">Click to copy</span>
+        </div>
+      </div>
+      <div id="manual-section" style="display:none">
+        <div class="or-divider">or</div>
+        <a class="download-btn" href="/connect/trust/ca.crt" id="desktop-download">Download CA Certificate</a>
+        <ol class="steps" id="desktop-steps-mac">
+          <li data-step="1">Download the certificate above</li>
+          <li data-step="2">Double-click <strong>ca.crt</strong> to open in Keychain Access</li>
+          <li data-step="3">Double-click the certificate, expand <strong>Trust</strong>, set to <strong>Always Trust</strong></li>
+          <li data-step="4">Run in terminal:</li>
+        </ol>
+        <ol class="steps" id="desktop-steps-other" style="display:none">
+          <li data-step="1">Download the certificate above</li>
+          <li data-step="2">Add it to your system's trusted certificate store</li>
+          <li data-step="3">Run in terminal:</li>
+        </ol>
+        <div class="install-cmd" id="hosts-cmd" role="button" tabindex="0" aria-label="Copy hosts command" style="display:none">
+          <code id="hosts-cmd-text"></code>
+          <span class="copy-hint">Click to copy</span>
+        </div>
+      </div>
+      <button class="manual-toggle" id="manual-toggle">Manual install</button>
     </div>
 
     <p class="note">
@@ -182,7 +235,41 @@
 
   <script>
     var httpsUrl = document.body.dataset.httpsUrl || '';
+    var installCmd = document.body.dataset.installCmd || '';
+    var lanIP = document.body.dataset.lanIp || '';
     var ua = navigator.userAgent || '';
+    var hostsEntry = lanIP ? lanIP + ' katulong.local' : '';
+
+    function copyText(text, cb) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(cb).catch(function() { fallbackCopy(text, cb); });
+      } else {
+        fallbackCopy(text, cb);
+      }
+    }
+    function fallbackCopy(text, cb) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      cb();
+    }
+    function makeCopyable(el, text) {
+      el.addEventListener('click', function() {
+        copyText(text, function() {
+          el.classList.add('copied');
+          el.querySelector('.copy-hint').textContent = 'Copied!';
+          setTimeout(function() {
+            el.classList.remove('copied');
+            el.querySelector('.copy-hint').textContent = 'Click to copy';
+          }, 2000);
+        });
+      });
+    }
 
     // Platform detection
     if (/iPad|iPhone|iPod/.test(ua)) {
@@ -191,6 +278,33 @@
       document.getElementById('android-section').classList.add('active');
     } else {
       document.getElementById('desktop-section').classList.add('active');
+
+      // Show install command if available
+      if (installCmd) {
+        document.getElementById('install-cmd-section').style.display = '';
+        document.getElementById('install-cmd-text').textContent = installCmd;
+        makeCopyable(document.getElementById('install-cmd'), installCmd);
+      } else {
+        // No install command — show manual steps directly
+        document.getElementById('manual-section').style.display = '';
+        document.getElementById('manual-toggle').style.display = 'none';
+      }
+
+      // Toggle manual section
+      document.getElementById('manual-toggle').addEventListener('click', function() {
+        var manual = document.getElementById('manual-section');
+        manual.style.display = manual.style.display === 'none' ? '' : 'none';
+      });
+
+      // Populate hosts command in manual steps
+      if (hostsEntry) {
+        var hostsCmd = 'echo "' + hostsEntry + '" | sudo tee -a /etc/hosts';
+        var hostsCmdBox = document.getElementById('hosts-cmd');
+        document.getElementById('hosts-cmd-text').textContent = hostsCmd;
+        hostsCmdBox.style.display = '';
+        makeCopyable(hostsCmdBox, hostsCmd);
+      }
+
       // Show macOS-specific or generic steps
       if (!/Mac/.test(ua)) {
         document.getElementById('desktop-steps-mac').style.display = 'none';
@@ -198,19 +312,27 @@
       }
     }
 
-    // Check if cert is already trusted
+    // Check if cert is trusted (poll every 3s until it is)
     if (httpsUrl) {
       var openBtn = document.getElementById('open-btn');
       openBtn.href = httpsUrl;
+      var certTrusted = false;
 
-      fetch(httpsUrl + '/auth/status', { mode: 'no-cors' })
-        .then(function() {
-          document.getElementById('success-banner').classList.add('visible');
-          openBtn.classList.add('visible');
-        })
-        .catch(function() {
-          // Not trusted yet — instructions are shown
-        });
+      function checkCert() {
+        if (certTrusted) return;
+        fetch(httpsUrl + '/auth/status', { mode: 'no-cors' })
+          .then(function() {
+            certTrusted = true;
+            document.getElementById('success-banner').classList.add('visible');
+            openBtn.classList.add('visible');
+          })
+          .catch(function() {
+            // Not trusted yet — retry
+            setTimeout(checkCert, 3000);
+          });
+      }
+
+      checkCert();
     }
   </script>
 </body>
