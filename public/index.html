@@ -293,9 +293,34 @@
       box-sizing: border-box;
     }
     .dictation-input::placeholder { color: var(--text-muted); }
-    .dictation-footer { padding: 0.75rem 0; }
+    .dictation-images-btn {
+      display: flex; align-items: center; gap: 0.375rem;
+      height: 2.25rem; padding: 0 0.75rem; margin-top: 0.625rem;
+      border: 1px dashed var(--border); border-radius: 0.375rem;
+      background: var(--bg-input); color: var(--text-muted);
+      font-size: 0.8125rem; font-family: var(--font-mono); cursor: pointer;
+    }
+    .dictation-images-btn:active { background: var(--accent); }
+    .dictation-thumbs {
+      display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.625rem;
+    }
+    .dictation-thumb {
+      position: relative; width: 3.5rem; height: 3.5rem; border-radius: 0.375rem;
+      overflow: hidden; border: 1px solid var(--border);
+    }
+    .dictation-thumb img {
+      width: 100%; height: 100%; object-fit: cover;
+    }
+    .dictation-thumb-remove {
+      position: absolute; top: -0.25rem; right: -0.25rem;
+      width: 1.25rem; height: 1.25rem; border-radius: 50%; border: none;
+      background: var(--danger); color: #fff; font-size: 0.625rem;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      line-height: 1;
+    }
+    .dictation-footer { display: flex; gap: 0.5rem; padding: 0.75rem 0; }
     .dictation-send-btn {
-      width: 100%; height: 2.75rem; border: none; border-radius: 0.5rem;
+      flex: 1; height: 2.75rem; border: none; border-radius: 0.5rem;
       background: var(--success); color: #1e1e2e; font-size: 0.875rem;
       font-family: var(--font-mono); cursor: pointer;
     }
@@ -684,6 +709,11 @@
       <textarea id="dictation-input" class="dictation-input"
         rows="3" placeholder="speak or type..." autocorrect="off" autocapitalize="off"
         autocomplete="off" spellcheck="false" aria-label="Dictation input"></textarea>
+      <button class="dictation-images-btn" id="dictation-add-images" type="button">
+        <i class="ph ph-image"></i> Add Images
+      </button>
+      <input type="file" id="dictation-file-input" accept="image/*" multiple hidden>
+      <div class="dictation-thumbs" id="dictation-thumbs"></div>
       <div class="dictation-footer">
         <button class="dictation-send-btn" id="dictation-send">Send</button>
       </div>
@@ -1870,22 +1900,67 @@
 
     const dictationOverlay = document.getElementById("dictation-overlay");
     const dictationInput = document.getElementById("dictation-input");
+    const dictationThumbs = document.getElementById("dictation-thumbs");
+    const dictationFileInput = document.getElementById("dictation-file-input");
+    let dictationImages = []; // queued File objects
+
+    function renderDictationThumbs() {
+      dictationThumbs.innerHTML = "";
+      dictationImages.forEach((file, i) => {
+        const wrap = document.createElement("div");
+        wrap.className = "dictation-thumb";
+        const img = document.createElement("img");
+        img.src = URL.createObjectURL(file);
+        img.alt = file.name;
+        wrap.appendChild(img);
+        const rm = document.createElement("button");
+        rm.className = "dictation-thumb-remove";
+        rm.setAttribute("aria-label", `Remove ${file.name}`);
+        rm.innerHTML = '<i class="ph ph-x"></i>';
+        rm.addEventListener("click", () => {
+          URL.revokeObjectURL(img.src);
+          dictationImages.splice(i, 1);
+          renderDictationThumbs();
+        });
+        wrap.appendChild(rm);
+        dictationThumbs.appendChild(wrap);
+      });
+    }
+
+    document.getElementById("dictation-add-images").addEventListener("click", () => {
+      dictationFileInput.click();
+    });
+
+    dictationFileInput.addEventListener("change", () => {
+      const files = [...dictationFileInput.files].filter(f => f.type.startsWith("image/"));
+      dictationImages.push(...files);
+      renderDictationThumbs();
+      dictationFileInput.value = "";
+    });
 
     function openDictationModal() {
       dictationInput.value = "";
+      dictationImages = [];
+      renderDictationThumbs();
       openModal(dictationOverlay);
       dictationInput.focus();
     }
 
     function closeDictationModal() {
       dictationInput.value = "";
+      dictationImages = [];
+      renderDictationThumbs();
       closeModal(dictationOverlay);
     }
 
-    document.getElementById("dictation-send").addEventListener("click", () => {
+    document.getElementById("dictation-send").addEventListener("click", async () => {
       const text = dictationInput.value;
-      if (text) rawSend(text);
+      const images = [...dictationImages];
       closeDictationModal();
+      if (text) rawSend(text);
+      for (const file of images) {
+        await uploadImage(file);
+      }
     });
 
     dismissModal(dictationOverlay, closeDictationModal);
