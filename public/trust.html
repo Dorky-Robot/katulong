@@ -272,15 +272,25 @@
       document.getElementById('uninstall-content').classList.toggle('visible');
     });
 
-    // Check if cert is trusted
+    // Check if cert is trusted by attempting HTTPS fetch
+    // This will only succeed if the certificate is trusted by the browser
     if (httpsUrl) {
       function checkCert() {
-        fetch(httpsUrl + '/auth/status', { mode: 'no-cors' })
-          .then(function() {
-            document.getElementById('success-banner').classList.add('visible');
-            document.getElementById('next-step').classList.add('visible');
+        fetch(httpsUrl + '/auth/status', {
+          mode: 'cors',
+          credentials: 'include',
+          cache: 'no-store'
+        })
+          .then(function(response) {
+            if (response.ok) {
+              document.getElementById('success-banner').classList.add('visible');
+              document.getElementById('next-step').classList.add('visible');
+            } else {
+              setTimeout(checkCert, 3000);
+            }
           })
           .catch(function() {
+            // Certificate not trusted or network error - retry
             setTimeout(checkCert, 3000);
           });
       }

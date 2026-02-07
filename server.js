@@ -233,6 +233,12 @@ const routes = [
   // --- Auth routes ---
 
   { method: "GET", path: "/auth/status", handler: (req, res) => {
+    // Allow CORS for certificate trust check (HTTP → HTTPS cross-origin fetch)
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+    }
     json(res, 200, { setup: isSetup() });
   }},
 

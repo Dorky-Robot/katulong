@@ -805,6 +805,11 @@
   </div>
 
   <script type="module">
+    // TODO: Consider adding SRI integrity checks via import maps for CDN security
+    // Current ES module imports from jsdelivr (SRI not directly supported in import statements):
+    // - @xterm/xterm@5.5.0: sha384-I8EVhv3OATAXzhxDmvGh1nCg4X4kChXk/Rd2Cz8aDudqQB5rnm2PWjyLCVJbwIhB
+    // - @xterm/addon-fit@0.10.0: sha384-2xEHlBNKUfGgoPjVJKeL3b0v0iEAWsPy05g1J6vPmIhgVRRkBeulz3NsWKIGe59T
+    // - @xterm/addon-web-links@0.11.0: sha384-Txd3DEPuEy7HspbyZcDDWNTbaE9Utq72lvO3E/T/W946W4jlR0jZWtYl237pFKff
     import { Terminal } from "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm";
     import { FitAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm";
     import { WebLinksAddon } from "https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/+esm";
