@@ -6,6 +6,7 @@ import pty from "node-pty";
 import { encode, decoder } from "./lib/ndjson.js";
 import { log } from "./lib/log.js";
 import { Session } from "./lib/session.js";
+import { loadShortcuts, saveShortcuts } from "./lib/shortcuts.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
@@ -160,20 +161,17 @@ const rpcHandlers = {
     (clients.delete(msg.clientId), { ok: true }),
 
   "get-shortcuts": () => {
-    try {
-      return { shortcuts: JSON.parse(readFileSync(SHORTCUTS_PATH, "utf-8")) };
-    } catch {
-      return { shortcuts: [] };
-    }
+    const result = loadShortcuts(SHORTCUTS_PATH);
+    return result.success
+      ? { shortcuts: result.shortcuts }
+      : { shortcuts: [] };
   },
 
   "set-shortcuts": (msg) => {
-    try {
-      writeFileSync(SHORTCUTS_PATH, JSON.stringify(msg.data, null, 2) + "\n");
-      return { ok: true };
-    } catch (e) {
-      return { error: e.message };
-    }
+    const result = saveShortcuts(SHORTCUTS_PATH, msg.data);
+    return result.success
+      ? { ok: true }
+      : { error: result.message };
   },
 };
 
