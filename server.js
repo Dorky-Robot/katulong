@@ -2,7 +2,7 @@ import "dotenv/config";
 import { createServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { createConnection } from "node:net";
-import { readFileSync, realpathSync, existsSync, watch } from "node:fs";
+import { readFileSync, realpathSync, existsSync, watch, mkdirSync, writeFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname, resolve } from "node:path";
@@ -11,6 +11,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import { encode, decoder } from "./lib/ndjson.js";
 import { log } from "./lib/log.js";
 import { createServerPeer, destroyPeer } from "./lib/p2p.js";
+import { detectImage, readRawBody, MAX_UPLOAD_BYTES } from "./lib/upload.js";
 import {
   loadState, saveState, isSetup,
   generateRegistrationOpts, verifyRegistration,
@@ -430,6 +431,27 @@ const routes = [
     }
     res.setHeader("Set-Cookie", "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
     json(res, 200, { ok: true });
+  }},
+
+  // --- Upload route ---
+
+  { method: "POST", path: "/upload", handler: async (req, res) => {
+    let buf;
+    try {
+      buf = await readRawBody(req, MAX_UPLOAD_BYTES);
+    } catch {
+      return json(res, 413, { error: "File too large (max 10 MB)" });
+    }
+    const ext = detectImage(buf);
+    if (!ext) {
+      return json(res, 400, { error: "Not a supported image type" });
+    }
+    const uploadsDir = join(DATA_DIR, "uploads");
+    mkdirSync(uploadsDir, { recursive: true });
+    const filename = `${randomUUID()}.${ext}`;
+    const filePath = join(uploadsDir, filename);
+    writeFileSync(filePath, buf);
+    json(res, 200, { path: filePath });
   }},
 
   // --- App routes ---
