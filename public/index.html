@@ -858,7 +858,14 @@
       localStorage.setItem("theme", pref);
       document.documentElement.setAttribute("data-theme", pref);
       const effective = getEffectiveTheme();
+
+      const viewport = document.querySelector(".xterm-viewport");
+      const wasAtBottom = isAtBottom(viewport);
+
       term.options.theme = effective === "light" ? LIGHT_THEME : DARK_THEME;
+
+      scrollToBottomIfWasAtBottom(wasAtBottom);
+
       const metaTheme = document.querySelector('meta[name="theme-color"]');
       if (metaTheme) metaTheme.content = effective === "light" ? "#eff1f5" : "#1e1e2e";
       document.querySelectorAll(".theme-toggle button").forEach(btn => {
@@ -878,6 +885,7 @@
     let p2pPeer = null;
     let p2pConnected = false;
     let wsAttached = false;
+    let userScrolledUpBeforeDisconnect = false;
     let p2pRetryTimer = 0;
     const P2P_RETRY_MS = 3000;
 
@@ -934,12 +942,39 @@
       document.getElementById("terminal-container"),
       { childList: true, subtree: true }
     );
-    document.fonts.ready.then(() => fit.fit());
+    document.fonts.ready.then(() => {
+      preserveScrollDuring(() => fit.fit());
+    });
 
     applyTheme(localStorage.getItem("theme") || "auto");
     window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
       if ((localStorage.getItem("theme") || "auto") === "auto") applyTheme("auto");
     });
+
+    // --- Scroll state utilities ---
+
+    function isAtBottom(viewport = document.querySelector(".xterm-viewport")) {
+      if (!viewport) return true;
+      // Dynamic threshold: 10px minimum or 2% of viewport height (better for high-DPI)
+      const threshold = Math.max(10, viewport.clientHeight * 0.02);
+      return viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - threshold;
+    }
+
+    function scrollToBottomIfWasAtBottom(wasAtBottom) {
+      if (wasAtBottom) {
+        // Double RAF ensures layout settles before scrolling
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => term.scrollToBottom());
+        });
+      }
+    }
+
+    function preserveScrollDuring(operation) {
+      const viewport = document.querySelector(".xterm-viewport");
+      const wasAtBottom = isAtBottom(viewport);
+      operation();
+      scrollToBottomIfWasAtBottom(wasAtBottom);
+    }
 
     // --- WebSocket ---
 
@@ -1094,6 +1129,13 @@
           wsAttached = true;
           updateP2PIndicator();
           initP2P();
+          // Only scroll to bottom if user wasn't deliberately viewing history
+          if (!userScrolledUpBeforeDisconnect) {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => term.scrollToBottom());
+            });
+          }
+          userScrolledUpBeforeDisconnect = false; // Reset
         } else if (msg.type === "output") {
           term.write(msg.data);
         } else if (msg.type === "p2p-signal") {
@@ -1127,6 +1169,8 @@
       };
 
       ws.onclose = () => {
+        const viewport = document.querySelector(".xterm-viewport");
+        userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
         wsAttached = false;
         destroyP2P();
         setTimeout(connect, reconnectDelay);
@@ -1181,12 +1225,15 @@
     }
 
     const ro = new ResizeObserver(() => {
-      fit.fit();
+      preserveScrollDuring(() => fit.fit());
       if (ws?.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
     });
     ro.observe(termContainer);
 
     function resizeToViewport() {
+      const viewport = document.querySelector(".xterm-viewport");
+      const wasAtBottom = isAtBottom(viewport);
+
       const vv = window.visualViewport;
       const h = vv ? vv.height : window.innerHeight;
       const top = vv ? vv.offsetTop : 0;
@@ -1195,6 +1242,9 @@
       const s = document.documentElement.style;
       s.setProperty("--viewport-h", h + "px");
       s.setProperty("--viewport-top", top + "px");
+
+      // Container height changed, restore scroll position
+      scrollToBottomIfWasAtBottom(wasAtBottom);
     }
     resizeToViewport();
     if (window.visualViewport) {
