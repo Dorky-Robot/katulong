@@ -2,17 +2,30 @@
 
 > **Warning:** This project is highly experimental. Expect breaking changes, rough edges, and missing features.
 
-A minimal web terminal with tmux-style session management. Zero frameworks.
+A self-hosted web terminal designed for mobile-first development. Built for the modern workflow where writing commit messages, documentation, and code reviews is as critical as writing code itself.
+
+## Why Katulong?
+
+Modern development isn't just coding—it's communicating. You write commit messages, pull request descriptions, code reviews, documentation, and chat messages. Most mobile terminals treat prose as an afterthought. Katulong makes long-form writing on mobile a first-class experience.
 
 ## Features
 
+### Mobile-First Terminal
+- **Dictation mode** — Full-screen composition area for writing commit messages, documentation, or any long-form text. Supports voice dictation and image attachments.
+- **Swipe navigation** — Dedicated touch zone for arrow keys. Swipe left/right/up/down to navigate without obscuring the terminal.
+- **Smart keyboard handling** — Autocorrect, autocomplete, and autocapitalize disabled to prevent interference. Virtual keyboard detection keeps the terminal in view.
+- **PWA-ready** — Install as a full-screen app. Works offline, no app store needed.
+
+### Session Management
 - **Named sessions** via URL — `/?s=myproject` connects to a session called "myproject"
-- **Sessions survive UI restarts** — daemon owns PTYs, so restarting the web server preserves all sessions
+- **Sessions survive restarts** — daemon owns PTYs, so restarting the web server preserves all sessions
 - **Shared sessions** — open the same URL in multiple windows to share a terminal
 - **Session manager** — create, rename, delete sessions from a modal UI
+
+### Power User Features
 - **Configurable shortcuts** — pinned keys in the toolbar, full list in a popup
 - **Cmd/Option key support** — Cmd+Backspace (kill line), Option+Backspace (delete word), etc.
-- **Mobile-friendly** — autocorrect disabled, touch-optimized buttons, virtual keyboard awareness
+- **Touch-optimized toolbar** — Essential keys always accessible, no hunting for special characters
 
 ## Setup
 
