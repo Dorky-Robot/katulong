@@ -351,17 +351,16 @@ describe("Session", () => {
   });
 
   describe("toJSON", () => {
-    it("serializes to JSON with name, pid, alive", () => {
+    it("serializes to JSON with name, pid, alive, hasChildProcesses", () => {
       const pty = new MockPTY(12345);
       const session = new Session("test", pty);
 
       const json = session.toJSON();
 
-      assert.deepStrictEqual(json, {
-        name: "test",
-        pid: 12345,
-        alive: true,
-      });
+      assert.strictEqual(json.name, "test");
+      assert.strictEqual(json.pid, 12345);
+      assert.strictEqual(json.alive, true);
+      assert.strictEqual(typeof json.hasChildProcesses, "boolean");
     });
 
     it("works with JSON.stringify", () => {
@@ -370,7 +369,12 @@ describe("Session", () => {
 
       const json = JSON.stringify(session);
 
-      assert.strictEqual(json, '{"name":"test","pid":12345,"alive":true}');
+      // Should include all fields including hasChildProcesses
+      const parsed = JSON.parse(json);
+      assert.strictEqual(parsed.name, "test");
+      assert.strictEqual(parsed.pid, 12345);
+      assert.strictEqual(parsed.alive, true);
+      assert.strictEqual(typeof parsed.hasChildProcesses, "boolean");
     });
   });
 
@@ -464,6 +468,38 @@ describe("Session", () => {
       assert.ok(buffer.includes("line2"));
       assert.ok(buffer.includes("line3"));
       assert.ok(buffer.includes("line4"));
+    });
+  });
+
+  describe("hasChildProcesses", () => {
+    it("returns false for dead session", () => {
+      const pty = new MockPTY();
+      const session = new Session("test", pty);
+      session.alive = false;
+
+      const result = session.hasChildProcesses();
+
+      assert.strictEqual(result, false);
+    });
+
+    it("returns boolean for alive session", () => {
+      const pty = new MockPTY();
+      const session = new Session("test", pty);
+
+      const result = session.hasChildProcesses();
+
+      // Should return boolean (actual value depends on system state)
+      assert.strictEqual(typeof result, "boolean");
+    });
+
+    it("includes hasChildProcesses in toJSON", () => {
+      const pty = new MockPTY();
+      const session = new Session("test", pty);
+
+      const json = session.toJSON();
+
+      assert.ok("hasChildProcesses" in json);
+      assert.strictEqual(typeof json.hasChildProcesses, "boolean");
     });
   });
 });

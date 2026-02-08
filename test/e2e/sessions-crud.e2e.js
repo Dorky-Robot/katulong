@@ -63,6 +63,10 @@ test.describe("Session CRUD", () => {
       has: page.getByLabel(`Session name: ${name}`),
     });
     await expect(row).toBeVisible();
+
+    // Handle potential confirmation dialog
+    page.on("dialog", (dialog) => dialog.accept());
+
     await row.locator(".session-icon-btn.delete").click();
 
     // Verify removed from list

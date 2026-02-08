@@ -25,9 +25,7 @@ const uiSockets = new Set();
 // --- Pure-ish helpers ---
 
 function sessionList() {
-  return [...sessions].map(([name, s]) => ({
-    name, pid: s.pty.pid, alive: s.alive,
-  }));
+  return [...sessions.values()].map(s => s.toJSON());
 }
 
 function aliveSessionFor(clientId) {

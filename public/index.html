@@ -1673,6 +1673,13 @@
         delBtn.setAttribute("aria-label", `Delete session ${s.name}`);
         delBtn.innerHTML = '<i class="ph ph-trash"></i>';
         delBtn.addEventListener("click", async () => {
+          // Check if session has running processes or important content
+          if (s.hasChildProcesses) {
+            const confirmed = confirm(
+              `Session "${s.name}" contains running processes or important content (like Claude Code history). Deleting it will lose this data.\n\nAre you sure you want to delete this session?`
+            );
+            if (!confirmed) return;
+          }
           try { await fetch(`/sessions/${encodeURIComponent(s.name)}`, { method: "DELETE" }); } catch {}
           await renderSessionList(currentSession);
         });
