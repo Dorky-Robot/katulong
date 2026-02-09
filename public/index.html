@@ -1359,6 +1359,9 @@
 
         if (distance > SWIPE_THRESHOLD) {
           hasMoved = true;
+          // Cancel double-tap detection if we moved - it's a swipe, not a tap
+          lastTapTime = 0;
+          clearTimeout(tapTimer);
         }
 
         // For holds (not swipes), allow direction changes
