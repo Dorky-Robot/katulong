@@ -11,17 +11,15 @@
   <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="manifest" href="/manifest.json">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <!-- Self-hosted dependencies for security (no CDN trust needed) -->
+  <link rel="stylesheet" href="/vendor/fonts/fonts.css">
   <link rel="stylesheet" href="/vendor/xterm/xterm.min.css">
   <link rel="stylesheet" href="/vendor/phosphor-icons/style.css" media="print" onload="this.media='all'">
   <script async src="/vendor/simple-peer/simplepeer.min.js"></script>
   <style>
     /* --- Catppuccin Mocha (dark) / Latte (light) --- */
     :root {
-      --font-mono: 'JetBrains Mono', monospace;
+      --font-mono: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
       --bg: #1e1e2e;
       --bg-surface: #313244;
       --bg-input: #1e1e2e;
@@ -923,7 +921,7 @@
 
     const term = new Terminal({
       fontSize: 14,
-      fontFamily: "'JetBrains Mono', monospace",
+      fontFamily: "'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace",
       theme: getEffectiveTheme() === "light" ? LIGHT_THEME : DARK_THEME,
       cursorBlink: true,
       scrollback: 10000,
