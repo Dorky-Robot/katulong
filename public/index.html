@@ -944,6 +944,10 @@
     );
     document.fonts.ready.then(() => {
       preserveScrollDuring(() => fit.fit());
+      // Ensure we start at bottom on initial page load
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => term.scrollToBottom());
+      });
     });
 
     applyTheme(localStorage.getItem("theme") || "auto");
@@ -1083,6 +1087,8 @@
 
       peer.on("data", (chunk) => {
         const str = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+        const viewport = document.querySelector(".xterm-viewport");
+        const wasAtBottom = isAtBottom(viewport);
         try {
           const msg = JSON.parse(str);
           if (msg.type === "output") {
@@ -1091,6 +1097,10 @@
         } catch {
           // raw data, write directly
           term.write(str);
+        }
+        // Preserve scroll-to-bottom behavior for large writes
+        if (wasAtBottom) {
+          requestAnimationFrame(() => term.scrollToBottom());
         }
       });
 
@@ -1137,7 +1147,13 @@
           }
           userScrolledUpBeforeDisconnect = false; // Reset
         } else if (msg.type === "output") {
+          const viewport = document.querySelector(".xterm-viewport");
+          const wasAtBottom = isAtBottom(viewport);
           term.write(msg.data);
+          // Preserve scroll-to-bottom behavior for large writes
+          if (wasAtBottom) {
+            requestAnimationFrame(() => term.scrollToBottom());
+          }
         } else if (msg.type === "p2p-signal") {
           if (p2pPeer) p2pPeer.signal(msg.data);
         } else if (msg.type === "p2p-ready") {
