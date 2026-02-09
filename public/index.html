@@ -719,7 +719,7 @@
   </div>
 
   <!-- Joystick swipe zone -->
-  <div id="joystick" aria-label="Swipe or hold joystick for arrows, double-tap center for Enter"></div>
+  <div id="joystick" aria-label="Swipe or hold joystick for arrows, long-press center for Enter"></div>
 
   <!-- Settings -->
   <div id="settings-overlay" class="modal-overlay" role="dialog" aria-label="Settings">
@@ -1208,15 +1208,15 @@
     const termContainer = document.getElementById("terminal-container");
     const bar = document.getElementById("shortcut-bar");
 
-    // --- Joystick: hold left/right, flick up/down, double-tap center for Enter ---
+    // --- Joystick: hold left/right, flick up/down, long-press center for Enter ---
     const joystick = document.getElementById("joystick");
     {
       let startX, startY;
       let repeatTimer = null;
       let currentDirection = null; // 'left' or 'right' when holding
-      let lastTapTime = 0;
-      let tapTimer = null;
+      let longPressTimer = null;
       let hasMoved = false;
+      let enterSent = false;
 
       const arrows = {
         up: "\x1b[A",
@@ -1226,7 +1226,7 @@
       };
 
       const CENTER_THRESHOLD = 0.25; // 25% of radius for center zone
-      const DOUBLE_TAP_WINDOW = 300; // ms
+      const LONG_PRESS_DURATION = 400; // ms to trigger Enter
 
       // Determine initial zone from touch position
       function getZone(touch, rect) {
@@ -1279,12 +1279,20 @@
         startX = t.clientX;
         startY = t.clientY;
         hasMoved = false;
+        enterSent = false;
 
         const rect = joystick.getBoundingClientRect();
         const zone = getZone(t, rect);
 
-        // Center: handle double-tap for Enter (wait for touchend)
+        // Center: start long-press timer for Enter
         if (zone === 'center') {
+          longPressTimer = setTimeout(() => {
+            if (!hasMoved) {
+              rawSend("\r");
+              showSwipeFeedback();
+              enterSent = true;
+            }
+          }, LONG_PRESS_DURATION);
           return;
         }
 
@@ -1299,11 +1307,16 @@
         e.preventDefault();
         const t = e.touches[0];
 
-        // Track if significant movement occurred (cancels center tap)
+        // Track if significant movement occurred (cancels center long-press)
         const dx = t.clientX - startX;
         const dy = t.clientY - startY;
         if (Math.sqrt(dx * dx + dy * dy) > 10) {
           hasMoved = true;
+          // Cancel long-press timer if moving
+          if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+          }
         }
 
         // If holding left/right, allow switching between them
@@ -1323,39 +1336,22 @@
         e.preventDefault();
         const t = e.changedTouches[0];
 
-        // Stop any active hold
+        // Clean up timers
         stopHold();
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+
+        // If Enter was already sent via long-press, don't process further
+        if (enterSent) {
+          return;
+        }
 
         // Calculate swipe direction
         const dx = t.clientX - startX;
         const dy = t.clientY - startY;
         const moved = Math.max(Math.abs(dx), Math.abs(dy));
-
-        // Check if this was a center tap (no movement)
-        const rect = joystick.getBoundingClientRect();
-        const endZone = getZone(t, rect);
-
-        if (endZone === 'center' && !hasMoved && moved < 10) {
-          // Center tap detected - check for double-tap
-          const now = Date.now();
-          const timeSinceLastTap = now - lastTapTime;
-
-          if (timeSinceLastTap < DOUBLE_TAP_WINDOW) {
-            // Double-tap! Send Enter
-            rawSend("\r");
-            showSwipeFeedback();
-            lastTapTime = 0; // Reset to prevent triple-tap
-            clearTimeout(tapTimer);
-          } else {
-            // First tap - wait for possible second tap
-            lastTapTime = now;
-            clearTimeout(tapTimer);
-            tapTimer = setTimeout(() => {
-              lastTapTime = 0;
-            }, DOUBLE_TAP_WINDOW);
-          }
-          return;
-        }
 
         // Only process directional swipes if moved enough
         if (moved < 10) return;
