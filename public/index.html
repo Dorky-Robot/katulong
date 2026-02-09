@@ -1208,35 +1208,130 @@
     const termContainer = document.getElementById("terminal-container");
     const bar = document.getElementById("shortcut-bar");
 
-    // --- Joystick swipe zone (native touch) ---
+    // --- Joystick: hold left/right, flick up/down ---
     const joystick = document.getElementById("joystick");
     {
       let startX, startY;
+      let repeatTimer = null;
+      let currentDirection = null; // 'left' or 'right' when holding
+
+      const arrows = {
+        up: "\x1b[A",
+        down: "\x1b[B",
+        right: "\x1b[C",
+        left: "\x1b[D",
+      };
+
+      // Determine initial zone from touch position
+      function getZone(touch, rect) {
+        const x = touch.clientX - rect.left - rect.width / 2;
+        const y = touch.clientY - rect.top - rect.height / 2;
+
+        // Determine if horizontal or vertical is dominant
+        if (Math.abs(x) > Math.abs(y)) {
+          return x > 0 ? 'right' : 'left';
+        } else {
+          return y > 0 ? 'down' : 'up';
+        }
+      }
+
+      function startHold(direction) {
+        if (currentDirection === direction) return; // Already holding
+        stopHold();
+
+        currentDirection = direction;
+        const seq = arrows[direction];
+
+        // Send immediately
+        rawSend(seq);
+        showSwipeFeedback();
+
+        // Then repeat every 50ms
+        repeatTimer = setInterval(() => {
+          rawSend(seq);
+        }, 50);
+      }
+
+      function stopHold() {
+        if (repeatTimer) {
+          clearInterval(repeatTimer);
+          repeatTimer = null;
+        }
+        currentDirection = null;
+      }
+
       joystick.addEventListener("touchstart", (e) => {
+        e.preventDefault();
         const t = e.touches[0];
         startX = t.clientX;
         startY = t.clientY;
-      }, { passive: true });
+
+        const rect = joystick.getBoundingClientRect();
+        const zone = getZone(t, rect);
+
+        // Left/right: start hold-to-repeat
+        if (zone === 'left' || zone === 'right') {
+          startHold(zone);
+        }
+        // Up/down: wait for flick on touchend
+      });
+
+      joystick.addEventListener("touchmove", (e) => {
+        e.preventDefault();
+
+        // If holding left/right, allow switching between them
+        if (currentDirection) {
+          const t = e.touches[0];
+          const rect = joystick.getBoundingClientRect();
+          const zone = getZone(t, rect);
+
+          if (zone === 'left' || zone === 'right') {
+            if (zone !== currentDirection) {
+              startHold(zone);
+            }
+          }
+        }
+      });
+
       joystick.addEventListener("touchend", (e) => {
+        e.preventDefault();
         const t = e.changedTouches[0];
+
+        // Stop any active hold
+        stopHold();
+
+        // Calculate swipe direction
         const dx = t.clientX - startX;
         const dy = t.clientY - startY;
-        if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return;
-        const seq = Math.abs(dx) >= Math.abs(dy)
-          ? (dx > 0 ? "\x1b[C" : "\x1b[D")
-          : (dy > 0 ? "\x1b[B" : "\x1b[A");
-        rawSend(seq);
-        showSwipeFeedback(t.clientX, t.clientY);
-      });
-    }
 
-    function showSwipeFeedback(x, y) {
-      const el = document.createElement("div");
-      el.className = "swipe-feedback";
-      el.style.left = x + "px";
-      el.style.top = y + "px";
-      document.body.appendChild(el);
-      el.addEventListener("animationend", () => el.remove(), { once: true });
+        // Only process if moved enough
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return;
+
+        // If primarily vertical movement, send one arrow for up/down flick
+        if (Math.abs(dy) > Math.abs(dx)) {
+          const seq = dy > 0 ? arrows.down : arrows.up;
+          rawSend(seq);
+          showSwipeFeedback();
+        }
+        // Note: horizontal is handled by hold-to-repeat
+      });
+
+      joystick.addEventListener("touchcancel", (e) => {
+        e.preventDefault();
+        stopHold();
+      });
+
+      function showSwipeFeedback() {
+        const rect = joystick.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const el = document.createElement("div");
+        el.className = "swipe-feedback";
+        el.style.left = x + "px";
+        el.style.top = y + "px";
+        document.body.appendChild(el);
+        el.addEventListener("animationend", () => el.remove(), { once: true });
+      }
     }
 
     // Focus terminal on tap
