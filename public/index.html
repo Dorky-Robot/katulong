@@ -1225,12 +1225,16 @@
       let repeatTimer = null;
       let holdTimer = null;
       let currentDirection = null;
+      let touchStartX = 0;
+      let touchStartY = 0;
       let touchStartTime = 0;
+      let hasMoved = false;
       let lastTapTime = 0;
       let tapTimer = null;
 
       const HOLD_DELAY = 300; // ms before repeat starts
       const REPEAT_RATE = 50; // ms between repeats
+      const SWIPE_THRESHOLD = 20; // pixels of movement to count as swipe
 
       // Arrow key escape sequences
       const arrows = {
@@ -1260,6 +1264,15 @@
         }
       }
 
+      // Detect swipe direction from movement
+      function getSwipeDirection(dx, dy) {
+        if (Math.abs(dx) > Math.abs(dy)) {
+          return dx > 0 ? "right" : "left";
+        } else {
+          return dy > 0 ? "down" : "up";
+        }
+      }
+
       // Start hold-to-repeat for a direction
       function startHold(direction) {
         if (currentDirection === direction && holdTimer) return; // Already holding this direction
@@ -1268,12 +1281,12 @@
         currentDirection = direction;
         const seq = arrows[direction];
 
-        // Send first arrow key immediately (for tap/swipe)
-        rawSend(seq);
-        showSwipeFeedback();
-
         // Add active class for visual feedback
         joystick.classList.add("active");
+
+        // Send first arrow key immediately
+        rawSend(seq);
+        showSwipeFeedback();
 
         // Wait before starting repeat (allows quick taps without repeat)
         holdTimer = setTimeout(() => {
@@ -1300,9 +1313,14 @@
 
       joystick.addEventListener("touchstart", (e) => {
         e.preventDefault();
+        const touch = e.touches[0];
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
         touchStartTime = Date.now();
+        hasMoved = false;
+
         const rect = joystick.getBoundingClientRect();
-        const direction = getDirection(e.touches[0], rect);
+        const direction = getDirection(touch, rect);
 
         // Center tap - check for double-tap to send Enter
         if (direction === null) {
@@ -1318,7 +1336,6 @@
           } else {
             // First tap, wait to see if there's a second
             lastTapTime = now;
-            // Clear the lastTapTime after 300ms if no second tap
             clearTimeout(tapTimer);
             tapTimer = setTimeout(() => {
               lastTapTime = 0;
@@ -1327,30 +1344,61 @@
           return;
         }
 
-        // Directional touch - start hold (sends one key immediately, repeats after delay)
+        // Directional touch - start hold (sends one key, repeats after delay)
         startHold(direction);
       });
 
       joystick.addEventListener("touchmove", (e) => {
         e.preventDefault();
-        const rect = joystick.getBoundingClientRect();
-        const direction = getDirection(e.touches[0], rect);
 
-        // If moved to center, stop
-        if (direction === null) {
-          stopHold();
-          return;
+        // Track if significant movement occurred
+        const touch = e.touches[0];
+        const dx = touch.clientX - touchStartX;
+        const dy = touch.clientY - touchStartY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance > SWIPE_THRESHOLD) {
+          hasMoved = true;
         }
 
-        // If direction changed, start new hold
-        if (direction !== currentDirection) {
-          startHold(direction);
+        // For holds (not swipes), allow direction changes
+        if (!hasMoved) {
+          const rect = joystick.getBoundingClientRect();
+          const direction = getDirection(touch, rect);
+
+          // If moved to center, stop
+          if (direction === null) {
+            stopHold();
+            return;
+          }
+
+          // If direction changed, start new hold
+          if (direction !== currentDirection) {
+            startHold(direction);
+          }
         }
       });
 
       joystick.addEventListener("touchend", (e) => {
         e.preventDefault();
-        stopHold();
+
+        // If it was a swipe (moved significantly), send one arrow for swipe direction
+        if (hasMoved) {
+          const touch = e.changedTouches[0];
+          const dx = touch.clientX - touchStartX;
+          const dy = touch.clientY - touchStartY;
+          const swipeDirection = getSwipeDirection(dx, dy);
+
+          // Clear any pending hold/repeat
+          stopHold();
+
+          // Send single arrow for swipe
+          rawSend(arrows[swipeDirection]);
+          showSwipeFeedback();
+        } else {
+          // Not a swipe, just stop the hold
+          stopHold();
+        }
       });
 
       joystick.addEventListener("touchcancel", (e) => {
