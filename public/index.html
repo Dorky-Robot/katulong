@@ -1223,9 +1223,14 @@
     const joystick = document.getElementById("joystick");
     {
       let repeatTimer = null;
+      let holdTimer = null;
       let currentDirection = null;
+      let touchStartTime = 0;
       let lastTapTime = 0;
       let tapTimer = null;
+
+      const HOLD_DELAY = 300; // ms before repeat starts
+      const REPEAT_RATE = 50; // ms between repeats
 
       // Arrow key escape sequences
       const arrows = {
@@ -1255,29 +1260,36 @@
         }
       }
 
-      // Start repeating arrow keys
-      function startRepeat(direction) {
-        if (currentDirection === direction) return; // Already repeating this direction
-        stopRepeat(); // Stop any existing repeat
+      // Start hold-to-repeat for a direction
+      function startHold(direction) {
+        if (currentDirection === direction && holdTimer) return; // Already holding this direction
+        stopHold(); // Stop any existing hold
 
         currentDirection = direction;
         const seq = arrows[direction];
 
-        // Add active class for visual feedback
-        joystick.classList.add("active");
-
-        // Send immediately
+        // Send first arrow key immediately (for tap/swipe)
         rawSend(seq);
         showSwipeFeedback();
 
-        // Then repeat every 50ms (20 times per second)
-        repeatTimer = setInterval(() => {
-          rawSend(seq);
-        }, 50);
+        // Add active class for visual feedback
+        joystick.classList.add("active");
+
+        // Wait before starting repeat (allows quick taps without repeat)
+        holdTimer = setTimeout(() => {
+          // Start repeating after delay
+          repeatTimer = setInterval(() => {
+            rawSend(seq);
+          }, REPEAT_RATE);
+        }, HOLD_DELAY);
       }
 
-      // Stop repeating
-      function stopRepeat() {
+      // Stop hold and repeat
+      function stopHold() {
+        if (holdTimer) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+        }
         if (repeatTimer) {
           clearInterval(repeatTimer);
           repeatTimer = null;
@@ -1288,6 +1300,7 @@
 
       joystick.addEventListener("touchstart", (e) => {
         e.preventDefault();
+        touchStartTime = Date.now();
         const rect = joystick.getBoundingClientRect();
         const direction = getDirection(e.touches[0], rect);
 
@@ -1314,8 +1327,8 @@
           return;
         }
 
-        // Directional hold - start repeating
-        startRepeat(direction);
+        // Directional touch - start hold (sends one key immediately, repeats after delay)
+        startHold(direction);
       });
 
       joystick.addEventListener("touchmove", (e) => {
@@ -1323,26 +1336,26 @@
         const rect = joystick.getBoundingClientRect();
         const direction = getDirection(e.touches[0], rect);
 
-        // If moved to center, stop repeating
+        // If moved to center, stop
         if (direction === null) {
-          stopRepeat();
+          stopHold();
           return;
         }
 
-        // If direction changed, start new repeat
+        // If direction changed, start new hold
         if (direction !== currentDirection) {
-          startRepeat(direction);
+          startHold(direction);
         }
       });
 
       joystick.addEventListener("touchend", (e) => {
         e.preventDefault();
-        stopRepeat();
+        stopHold();
       });
 
       joystick.addEventListener("touchcancel", (e) => {
         e.preventDefault();
-        stopRepeat();
+        stopHold();
       });
 
       function showSwipeFeedback() {
