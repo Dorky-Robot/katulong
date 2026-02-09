@@ -227,7 +227,7 @@ describe("setSessionCookie", () => {
     assert.equal(cookies.length, 1);
     assert.ok(cookies[0].includes("katulong_session=tok123"));
     assert.ok(cookies[0].includes("HttpOnly"));
-    assert.ok(cookies[0].includes("SameSite=Lax"));
+    assert.ok(cookies[0].includes("SameSite=Strict"));
     assert.ok(cookies[0].includes("Path=/"));
     assert.ok(cookies[0].includes("Max-Age="));
   });
