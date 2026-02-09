@@ -332,21 +332,10 @@
       background: transparent;
       touch-action: none;
       align-items: center; justify-content: center;
-      transition: background 0.1s, border-color 0.1s;
     }
     #joystick::before {
       content: "+"; color: var(--text-dim); font-size: 1.25rem;
       pointer-events: none; opacity: 0.5;
-      transition: opacity 0.1s;
-    }
-    #joystick.active {
-      background: var(--accent-bg);
-      border-color: var(--accent);
-      border-style: solid;
-    }
-    #joystick.active::before {
-      opacity: 0.8;
-      color: var(--accent);
     }
     @media (pointer: coarse) {
       #joystick { display: flex; }
@@ -729,8 +718,8 @@
     </div>
   </div>
 
-  <!-- Joystick hold-to-repeat zone -->
-  <div id="joystick" aria-label="Hold for arrow keys, double-tap center for Enter"></div>
+  <!-- Joystick swipe zone -->
+  <div id="joystick" aria-label="Swipe joystick for arrow keys"></div>
 
   <!-- Settings -->
   <div id="settings-overlay" class="modal-overlay" role="dialog" aria-label="Settings">
@@ -1219,143 +1208,35 @@
     const termContainer = document.getElementById("terminal-container");
     const bar = document.getElementById("shortcut-bar");
 
-    // --- Joystick hold-to-repeat zone (native touch) ---
+    // --- Joystick swipe zone (native touch) ---
     const joystick = document.getElementById("joystick");
     {
-      let repeatTimer = null;
-      let currentDirection = null;
-      let lastTapTime = 0;
-      let tapTimer = null;
-
-      // Arrow key escape sequences
-      const arrows = {
-        up: "\x1b[A",
-        down: "\x1b[B",
-        right: "\x1b[C",
-        left: "\x1b[D",
-      };
-
-      // Determine direction from touch position, or null if center
-      function getDirection(touch, rect) {
-        const x = touch.clientX - rect.left - rect.width / 2;
-        const y = touch.clientY - rect.top - rect.height / 2;
-        const distance = Math.sqrt(x * x + y * y);
-
-        // If touch is in center (within 30% of radius), return null
-        const centerThreshold = Math.min(rect.width, rect.height) * 0.3;
-        if (distance < centerThreshold) {
-          return null;
-        }
-
-        // Determine if horizontal or vertical movement is dominant
-        if (Math.abs(x) > Math.abs(y)) {
-          return x > 0 ? "right" : "left";
-        } else {
-          return y > 0 ? "down" : "up";
-        }
-      }
-
-      // Start repeating arrow keys
-      function startRepeat(direction) {
-        if (currentDirection === direction) return; // Already repeating this direction
-        stopRepeat(); // Stop any existing repeat
-
-        currentDirection = direction;
-        const seq = arrows[direction];
-
-        // Add active class for visual feedback
-        joystick.classList.add("active");
-
-        // Send immediately
-        rawSend(seq);
-        showSwipeFeedback();
-
-        // Then repeat every 50ms (20 times per second)
-        repeatTimer = setInterval(() => {
-          rawSend(seq);
-        }, 50);
-      }
-
-      // Stop repeating
-      function stopRepeat() {
-        if (repeatTimer) {
-          clearInterval(repeatTimer);
-          repeatTimer = null;
-        }
-        currentDirection = null;
-        joystick.classList.remove("active");
-      }
-
+      let startX, startY;
       joystick.addEventListener("touchstart", (e) => {
-        e.preventDefault();
-        const rect = joystick.getBoundingClientRect();
-        const direction = getDirection(e.touches[0], rect);
-
-        // Center tap - check for double-tap to send Enter
-        if (direction === null) {
-          const now = Date.now();
-          const timeSinceLastTap = now - lastTapTime;
-
-          if (timeSinceLastTap < 300) {
-            // Double-tap detected! Send Enter key
-            rawSend("\r");
-            showSwipeFeedback();
-            lastTapTime = 0; // Reset to prevent triple-tap
-            clearTimeout(tapTimer);
-          } else {
-            // First tap, wait to see if there's a second
-            lastTapTime = now;
-            // Clear the lastTapTime after 300ms if no second tap
-            clearTimeout(tapTimer);
-            tapTimer = setTimeout(() => {
-              lastTapTime = 0;
-            }, 300);
-          }
-          return;
-        }
-
-        // Directional hold - start repeating
-        startRepeat(direction);
-      });
-
-      joystick.addEventListener("touchmove", (e) => {
-        e.preventDefault();
-        const rect = joystick.getBoundingClientRect();
-        const direction = getDirection(e.touches[0], rect);
-
-        // If moved to center, stop repeating
-        if (direction === null) {
-          stopRepeat();
-          return;
-        }
-
-        // If direction changed, start new repeat
-        if (direction !== currentDirection) {
-          startRepeat(direction);
-        }
-      });
-
+        const t = e.touches[0];
+        startX = t.clientX;
+        startY = t.clientY;
+      }, { passive: true });
       joystick.addEventListener("touchend", (e) => {
-        e.preventDefault();
-        stopRepeat();
+        const t = e.changedTouches[0];
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return;
+        const seq = Math.abs(dx) >= Math.abs(dy)
+          ? (dx > 0 ? "\x1b[C" : "\x1b[D")
+          : (dy > 0 ? "\x1b[B" : "\x1b[A");
+        rawSend(seq);
+        showSwipeFeedback(t.clientX, t.clientY);
       });
+    }
 
-      joystick.addEventListener("touchcancel", (e) => {
-        e.preventDefault();
-        stopRepeat();
-      });
-
-      function showSwipeFeedback() {
-        const rect = joystick.getBoundingClientRect();
-        const x = rect.left + rect.width / 2;
-        const y = rect.top + rect.height / 2;
-        const el = document.createElement("div");
-        el.className = "swipe-feedback";
-        el.style.left = x + "px";
-        el.style.top = y + "px";
-        document.body.appendChild(el);
-        el.addEventListener("animationend", () => el.remove(), { once: true });
-      }
+    function showSwipeFeedback(x, y) {
+      const el = document.createElement("div");
+      el.className = "swipe-feedback";
+      el.style.left = x + "px";
+      el.style.top = y + "px";
+      document.body.appendChild(el);
+      el.addEventListener("animationend", () => el.remove(), { once: true });
     }
 
     // Focus terminal on tap
