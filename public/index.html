@@ -341,6 +341,30 @@
       #joystick { display: flex; }
     }
 
+    /* --- Enter key progress ring --- */
+    #enter-progress-ring {
+      display: none;
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      width: 5rem;
+      height: 5rem;
+      pointer-events: none;
+      z-index: 51;
+    }
+    #enter-progress-ring.active {
+      display: block;
+    }
+    #enter-progress-ring circle {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 3;
+      stroke-linecap: round;
+      transform: rotate(-90deg);
+      transform-origin: center;
+      opacity: 0.9;
+    }
+
     .key-composer-input {
       flex: 1; min-width: 3.75rem; height: 1.875rem; border: none; background: transparent;
       color: var(--text); font-size: 0.875rem; font-family: var(--font-mono);
@@ -720,6 +744,11 @@
 
   <!-- Joystick swipe zone -->
   <div id="joystick" aria-label="Swipe or hold joystick for arrows, long-press center for Enter"></div>
+
+  <!-- Enter key progress ring -->
+  <svg id="enter-progress-ring" viewBox="0 0 80 80">
+    <circle cx="40" cy="40" r="36" />
+  </svg>
 
   <!-- Settings -->
   <div id="settings-overlay" class="modal-overlay" role="dialog" aria-label="Settings">
@@ -1210,6 +1239,8 @@
 
     // --- Joystick: hold left/right, flick up/down, long-press center for Enter ---
     const joystick = document.getElementById("joystick");
+    const enterRing = document.getElementById("enter-progress-ring");
+    const enterCircle = enterRing.querySelector("circle");
     {
       let startX, startY;
       let repeatTimer = null;
@@ -1227,6 +1258,26 @@
 
       const CENTER_THRESHOLD = 0.25; // 25% of radius for center zone
       const LONG_PRESS_DURATION = 400; // ms to trigger Enter
+      const RING_CIRCUMFERENCE = 2 * Math.PI * 36; // circle radius = 36
+
+      // Progress ring helpers
+      function showEnterRing() {
+        enterRing.classList.add("active");
+        enterCircle.style.strokeDasharray = RING_CIRCUMFERENCE;
+        enterCircle.style.strokeDashoffset = RING_CIRCUMFERENCE; // Start empty
+        enterCircle.style.transition = `stroke-dashoffset ${LONG_PRESS_DURATION}ms linear`;
+
+        // Trigger animation on next frame
+        requestAnimationFrame(() => {
+          enterCircle.style.strokeDashoffset = 0; // Fill to complete
+        });
+      }
+
+      function hideEnterRing() {
+        enterRing.classList.remove("active");
+        enterCircle.style.transition = "none";
+        enterCircle.style.strokeDashoffset = RING_CIRCUMFERENCE;
+      }
 
       // Determine initial zone from touch position
       function getZone(touch, rect) {
@@ -1284,13 +1335,15 @@
         const rect = joystick.getBoundingClientRect();
         const zone = getZone(t, rect);
 
-        // Center: start long-press timer for Enter
+        // Center: start long-press timer for Enter and show progress ring
         if (zone === 'center') {
+          showEnterRing();
           longPressTimer = setTimeout(() => {
             if (!hasMoved) {
               rawSend("\r");
               showSwipeFeedback();
               enterSent = true;
+              hideEnterRing();
             }
           }, LONG_PRESS_DURATION);
           return;
@@ -1312,10 +1365,11 @@
         const dy = t.clientY - startY;
         if (Math.sqrt(dx * dx + dy * dy) > 10) {
           hasMoved = true;
-          // Cancel long-press timer if moving
+          // Cancel long-press timer and hide ring if moving
           if (longPressTimer) {
             clearTimeout(longPressTimer);
             longPressTimer = null;
+            hideEnterRing();
           }
         }
 
@@ -1336,11 +1390,12 @@
         e.preventDefault();
         const t = e.changedTouches[0];
 
-        // Clean up timers
+        // Clean up timers and hide ring
         stopHold();
         if (longPressTimer) {
           clearTimeout(longPressTimer);
           longPressTimer = null;
+          hideEnterRing();
         }
 
         // If Enter was already sent via long-press, don't process further
@@ -1368,6 +1423,11 @@
       joystick.addEventListener("touchcancel", (e) => {
         e.preventDefault();
         stopHold();
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+        hideEnterRing();
       });
 
       function showSwipeFeedback() {
