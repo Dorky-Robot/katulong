@@ -244,8 +244,13 @@ async function start() {
     log.error("Unhandled rejection", { error: err?.message || String(err) });
   });
 
+  // Set umask before creating socket to prevent race condition
+  // This ensures socket is created with 0600 permissions from the start
+  const oldUmask = process.umask(0o077);
   server.listen(SOCKET_PATH, () => {
-    // Restrict socket to owner-only to prevent other users from connecting
+    // Restore original umask
+    process.umask(oldUmask);
+    // Double-check permissions (defense-in-depth)
     try { chmodSync(SOCKET_PATH, 0o600); } catch { /* best-effort */ }
     log.info("Katulong daemon listening", { socket: SOCKET_PATH });
   });

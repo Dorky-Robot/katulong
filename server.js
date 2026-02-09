@@ -23,6 +23,7 @@ import {
   parseCookies, setSessionCookie, getOriginAndRpID,
   isPublicPath, createChallengeStore, escapeAttr,
 } from "./lib/http-util.js";
+import { rateLimit } from "./lib/rate-limit.js";
 import {
   processRegistration,
   processAuthentication,
@@ -53,6 +54,12 @@ const sshHostKey = ensureHostKey(DATA_DIR);
 
 const SETUP_TOKEN = process.env.SETUP_TOKEN || randomBytes(16).toString("hex");
 const RP_NAME = "Katulong";
+
+// --- Rate limiting ---
+// 10 attempts per minute for auth endpoints
+const authRateLimit = rateLimit(10, 60000);
+// Stricter limit for pairing (10 attempts per 30 seconds)
+const pairingRateLimit = rateLimit(10, 30000);
 
 if (!process.env.SETUP_TOKEN) {
   log.info("Setup token generated", { token: SETUP_TOKEN });
@@ -562,6 +569,11 @@ function matchRoute(method, pathname) {
 async function handleRequest(req, res) {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
 
+  // Add HSTS header for HTTPS requests
+  if (req.socket.encrypted) {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+
   // HTTPS enforcement: only allow specific paths on HTTP for certificate installation
   // Everything else requires HTTPS (or localhost)
   if (!req.socket.encrypted && !isLocalRequest(req)) {
@@ -594,6 +606,24 @@ async function handleRequest(req, res) {
   const match = matchRoute(req.method, pathname);
 
   if (match) {
+    // Apply rate limiting to auth endpoints
+    const authPaths = ["/auth/register/options", "/auth/register/verify", "/auth/login/options", "/auth/login/verify"];
+    const pairingPaths = ["/auth/pair/verify"];
+
+    if (pairingPaths.includes(pathname)) {
+      // Check pairing rate limit (stricter)
+      const rateLimitResult = await new Promise((resolve) => {
+        pairingRateLimit(req, res, () => resolve(true));
+      });
+      if (!rateLimitResult) return; // Rate limit exceeded, response already sent
+    } else if (authPaths.includes(pathname)) {
+      // Check auth rate limit
+      const rateLimitResult = await new Promise((resolve) => {
+        authRateLimit(req, res, () => resolve(true));
+      });
+      if (!rateLimitResult) return; // Rate limit exceeded, response already sent
+    }
+
     try {
       await match.route.handler(req, res, match.param);
     } catch (err) {
