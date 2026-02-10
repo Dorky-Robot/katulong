@@ -9,6 +9,7 @@ import {
   sanitizeName,
   createChallengeStore,
   escapeAttr,
+  getCspHeaders,
 } from "../lib/http-util.js";
 
 describe("parseCookies", () => {
@@ -343,5 +344,66 @@ describe("createChallengeStore", () => {
 
     // After sweep, expired challenges should be removed
     assert.equal(_challenges.size, 0, "Expired challenges should be removed by sweep");
+  });
+});
+
+describe("getCspHeaders", () => {
+  it("returns enforce mode CSP header by default", () => {
+    const headers = getCspHeaders();
+    assert.ok(headers["Content-Security-Policy"]);
+    assert.equal(headers["Content-Security-Policy-Report-Only"], undefined);
+  });
+
+  it("returns report-only mode CSP header when requested", () => {
+    const headers = getCspHeaders(true);
+    assert.ok(headers["Content-Security-Policy-Report-Only"]);
+    assert.equal(headers["Content-Security-Policy"], undefined);
+  });
+
+  it("includes all required CSP directives", () => {
+    const headers = getCspHeaders();
+    const policy = headers["Content-Security-Policy"];
+
+    // Check for all required directives
+    assert.match(policy, /default-src 'self'/);
+    assert.match(policy, /script-src 'self'/);
+    assert.match(policy, /style-src 'self' 'unsafe-inline'/);
+    assert.match(policy, /connect-src 'self' ws: wss:/);
+    assert.match(policy, /img-src 'self' data:/);
+    assert.match(policy, /font-src 'self'/);
+    assert.match(policy, /object-src 'none'/);
+    assert.match(policy, /base-uri 'self'/);
+    assert.match(policy, /form-action 'self'/);
+  });
+
+  it("disallows unsafe-eval in script-src", () => {
+    const headers = getCspHeaders();
+    const policy = headers["Content-Security-Policy"];
+    assert.doesNotMatch(policy, /unsafe-eval/);
+  });
+
+  it("allows WebSocket connections", () => {
+    const headers = getCspHeaders();
+    const policy = headers["Content-Security-Policy"];
+    assert.match(policy, /ws:/);
+    assert.match(policy, /wss:/);
+  });
+
+  it("blocks object sources (Flash, Java, etc.)", () => {
+    const headers = getCspHeaders();
+    const policy = headers["Content-Security-Policy"];
+    assert.match(policy, /object-src 'none'/);
+  });
+
+  it("restricts base URI to same origin", () => {
+    const headers = getCspHeaders();
+    const policy = headers["Content-Security-Policy"];
+    assert.match(policy, /base-uri 'self'/);
+  });
+
+  it("restricts form actions to same origin", () => {
+    const headers = getCspHeaders();
+    const policy = headers["Content-Security-Policy"];
+    assert.match(policy, /form-action 'self'/);
   });
 });

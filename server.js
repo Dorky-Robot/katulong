@@ -22,7 +22,7 @@ import {
 import {
   parseCookies, setSessionCookie, getOriginAndRpID,
   isPublicPath, createChallengeStore, escapeAttr,
-  getCsrfToken, validateCsrfToken,
+  getCsrfToken, validateCsrfToken, getCspHeaders,
 } from "./lib/http-util.js";
 import { rateLimit } from "./lib/rate-limit.js";
 import {
@@ -293,7 +293,10 @@ const routes = [
       }
     }
 
-    res.writeHead(200, { "Content-Type": "text/html" });
+    res.writeHead(200, {
+      "Content-Type": "text/html",
+      ...getCspHeaders()
+    });
     res.end(html);
   }},
 
@@ -308,7 +311,10 @@ const routes = [
   }},
 
   { method: "GET", path: "/login", handler: (req, res) => {
-    res.writeHead(200, { "Content-Type": "text/html" });
+    res.writeHead(200, {
+      "Content-Type": "text/html",
+      ...getCspHeaders()
+    });
     res.end(readFileSync(join(__dirname, "public", "login.html"), "utf-8"));
   }},
 
@@ -494,7 +500,10 @@ const routes = [
   }},
 
   { method: "GET", path: "/pair", handler: (req, res) => {
-    res.writeHead(200, { "Content-Type": "text/html" });
+    res.writeHead(200, {
+      "Content-Type": "text/html",
+      ...getCspHeaders()
+    });
     res.end(readFileSync(join(__dirname, "public", "pair.html"), "utf-8"));
   }},
 
@@ -506,7 +515,10 @@ const routes = [
     let html = readFileSync(join(__dirname, "public", "trust.html"), "utf-8");
     html = html.replace("<body>", `<body data-https-url="${escapeAttr(targetUrl)}" data-lan-ip="${escapeAttr(lanIP || "")}" data-https-port="${escapeAttr(HTTPS_PORT)}">`);
 
-    res.writeHead(200, { "Content-Type": "text/html" });
+    res.writeHead(200, {
+      "Content-Type": "text/html",
+      ...getCspHeaders()
+    });
     res.end(html);
   }},
 
@@ -540,7 +552,10 @@ const routes = [
     const trustUrl = lanIP ? `http://${lanIP}:${PORT}/connect/trust` : `/connect/trust`;
     let html = readFileSync(join(__dirname, "public", "connect.html"), "utf-8");
     html = html.replace("<body>", `<body data-trust-url="${escapeAttr(trustUrl)}" data-https-port="${escapeAttr(HTTPS_PORT)}">`);
-    res.writeHead(200, { "Content-Type": "text/html" });
+    res.writeHead(200, {
+      "Content-Type": "text/html",
+      ...getCspHeaders()
+    });
     res.end(html);
   }},
 
