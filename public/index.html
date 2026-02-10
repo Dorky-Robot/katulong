@@ -986,7 +986,29 @@
 
     // Compatibility aliases (to be removed as refactoring progresses)
     let sessionName = state.session.name;
-    let shortcuts = state.session.shortcuts;
+    // --- Shortcuts state management (reducer pattern) ---
+    const shortcutsReducer = (currentShortcuts, action) => {
+      switch (action.type) {
+        case 'LOAD':
+          return Array.isArray(action.items) ? action.items.filter(s => s.label && s.keys) : [];
+        case 'ADD':
+          return [...currentShortcuts, action.item];
+        case 'REMOVE':
+          return currentShortcuts.filter((_, idx) => idx !== action.index);
+        default:
+          return currentShortcuts;
+      }
+    };
+
+    const dispatchShortcuts = (action) => {
+      const newShortcuts = shortcutsReducer(state.session.shortcuts, action);
+      state.update('session.shortcuts', newShortcuts);
+      // Render effects
+      renderBar(sessionName);
+      if (action.type === 'REMOVE' || action.type === 'ADD') {
+        renderEditList(state.session.shortcuts);
+      }
+    };
     let composedKeys = state.session.composedKeys;
     let ws = state.connection.ws;
     let reconnectDelay = state.connection.reconnectDelay;
@@ -1939,7 +1961,7 @@
       kbBtn.tabIndex = -1;
       kbBtn.setAttribute("aria-label", "Open shortcuts");
       kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
-      kbBtn.addEventListener("click", () => openShortcutsPopup(shortcuts));
+      kbBtn.addEventListener("click", () => openShortcutsPopup(state.session.shortcuts));
       bar.appendChild(kbBtn);
 
       const setBtn = document.createElement("button");
@@ -2002,8 +2024,7 @@
         rm.setAttribute("aria-label", `Remove ${s.label}`);
         rm.innerHTML = '<i class="ph ph-x"></i>';
         rm.addEventListener("click", () => {
-          shortcuts = shortcuts.filter((_, idx) => idx !== i);
-          renderEditList(shortcuts);
+          dispatchShortcuts({ type: 'REMOVE', index: i });
         });
         row.appendChild(rm);
         editList.appendChild(row);
@@ -2011,7 +2032,7 @@
     }
 
     function openEditPanel() {
-      renderEditList(shortcuts);
+      renderEditList(state.session.shortcuts);
       openModal(editOverlay);
     }
 
@@ -2028,11 +2049,10 @@
       try {
         const res = await fetch("/shortcuts");
         const data = await res.json();
-        shortcuts = Array.isArray(data) ? data.filter(s => s.label && s.keys) : [];
+        dispatchShortcuts({ type: 'LOAD', items: data });
       } catch {
-        shortcuts = [];
+        dispatchShortcuts({ type: 'LOAD', items: [] });
       }
-      renderBar(sessionName);
     }
 
     async function saveShortcuts() {
@@ -2040,10 +2060,9 @@
         await fetch("/shortcuts", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(shortcuts),
+          body: JSON.stringify(state.session.shortcuts),
         });
       } catch { /* ignore */ }
-      renderBar(sessionName);
     }
 
     // --- Add shortcut modal (render takes data) ---
@@ -2120,9 +2139,8 @@
 
     document.getElementById("modal-save").addEventListener("click", () => {
       if (composedKeys.length === 0) return;
-      shortcuts = [...shortcuts, { label: keysLabel(composedKeys), keys: keysString(composedKeys) }];
+      dispatchShortcuts({ type: 'ADD', item: { label: keysLabel(composedKeys), keys: keysString(composedKeys) } });
       closeModal(addOverlay);
-      renderEditList(shortcuts);
     });
 
     dismissModal(addOverlay);
