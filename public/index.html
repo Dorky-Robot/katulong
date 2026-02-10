@@ -2557,7 +2557,27 @@
     const dictationInput = document.getElementById("dictation-input");
     const dictationThumbs = document.getElementById("dictation-thumbs");
     const dictationFileInput = document.getElementById("dictation-file-input");
-    let dictationImages = []; // queued File objects
+
+    // --- Dictation state management (immutable reducer) ---
+    const dictationReducer = (images, action) => {
+      switch (action.type) {
+        case 'ADD_IMAGES':
+          return [...images, ...action.files];
+        case 'REMOVE_IMAGE':
+          return images.filter((_, idx) => idx !== action.index);
+        case 'CLEAR':
+          return [];
+        default:
+          return images;
+      }
+    };
+
+    let dictationImages = [];
+
+    const dispatchDictation = (action) => {
+      dictationImages = dictationReducer(dictationImages, action);
+      renderDictationThumbs();
+    };
 
     function renderDictationThumbs() {
       dictationThumbs.innerHTML = "";
@@ -2574,8 +2594,7 @@
         rm.innerHTML = '<i class="ph ph-x"></i>';
         rm.addEventListener("click", () => {
           URL.revokeObjectURL(img.src);
-          dictationImages.splice(i, 1);
-          renderDictationThumbs();
+          dispatchDictation({ type: 'REMOVE_IMAGE', index: i });
         });
         wrap.appendChild(rm);
         dictationThumbs.appendChild(wrap);
@@ -2588,23 +2607,20 @@
 
     dictationFileInput.addEventListener("change", () => {
       const files = [...dictationFileInput.files].filter(f => f.type.startsWith("image/"));
-      dictationImages.push(...files);
-      renderDictationThumbs();
+      dispatchDictation({ type: 'ADD_IMAGES', files });
       dictationFileInput.value = "";
     });
 
     function openDictationModal() {
       dictationInput.value = "";
-      dictationImages = [];
-      renderDictationThumbs();
+      dispatchDictation({ type: 'CLEAR' });
       openModal(dictationOverlay);
       dictationInput.focus();
     }
 
     function closeDictationModal() {
       dictationInput.value = "";
-      dictationImages = [];
-      renderDictationThumbs();
+      dispatchDictation({ type: 'CLEAR' });
       closeModal(dictationOverlay);
     }
 
