@@ -781,7 +781,7 @@
   <!-- Pull-up refresh indicator -->
   <div id="pull-refresh-indicator">
     <i class="ph ph-arrow-up"></i>
-    <span>Release to reconnect</span>
+    <span>Release to refresh</span>
   </div>
 
   <!-- Settings -->
@@ -1541,9 +1541,15 @@
           const pullDistance = pullStartY - lastY;
 
           if (pullDistance >= PULL_THRESHOLD) {
-            // Trigger reconnect!
-            console.log("[Pull-refresh] Manual reconnect triggered");
-            if (ws) ws.close();
+            // If connected, just refresh screen. If disconnected, reconnect.
+            if (ws && ws.readyState === WebSocket.OPEN && wsAttached) {
+              console.log("[Pull-refresh] Connected - clearing screen");
+              term.clear();
+              term.reset();
+            } else {
+              console.log("[Pull-refresh] Disconnected - forcing reconnect");
+              if (ws) ws.close();
+            }
           }
         }
 
