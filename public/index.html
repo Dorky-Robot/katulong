@@ -365,6 +365,34 @@
       opacity: 0.9;
     }
 
+    /* --- Pull-up refresh indicator --- */
+    #pull-refresh-indicator {
+      position: fixed;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%) translateY(100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 1rem;
+      background: var(--accent);
+      color: var(--bg);
+      border-radius: 0.5rem 0.5rem 0 0;
+      font-size: 0.875rem;
+      font-family: var(--font-mono);
+      pointer-events: none;
+      z-index: 100;
+      transition: transform 0.2s ease-out;
+      opacity: 0;
+    }
+    #pull-refresh-indicator.visible {
+      opacity: 1;
+    }
+    #pull-refresh-indicator i {
+      font-size: 1.5rem;
+    }
+
     .key-composer-input {
       flex: 1; min-width: 3.75rem; height: 1.875rem; border: none; background: transparent;
       color: var(--text); font-size: 0.875rem; font-family: var(--font-mono);
@@ -749,6 +777,12 @@
   <svg id="enter-progress-ring" viewBox="0 0 80 80">
     <circle cx="40" cy="40" r="36" />
   </svg>
+
+  <!-- Pull-up refresh indicator -->
+  <div id="pull-refresh-indicator">
+    <i class="ph ph-arrow-up"></i>
+    <span>Release to reconnect</span>
+  </div>
 
   <!-- Settings -->
   <div id="settings-overlay" class="modal-overlay" role="dialog" aria-label="Settings">
@@ -1466,6 +1500,66 @@
         document.body.appendChild(el);
         el.addEventListener("animationend", () => el.remove(), { once: true });
       }
+    }
+
+    // --- Pull-up to refresh (force reconnect) ---
+    {
+      const indicator = document.getElementById("pull-refresh-indicator");
+      let pullStartY = 0;
+      let isPulling = false;
+      const PULL_THRESHOLD = 80; // pixels to pull before triggering
+
+      termContainer.addEventListener("touchstart", (e) => {
+        const viewport = document.querySelector(".xterm-viewport");
+        // Only allow pull-up if at bottom of scrollback
+        if (isAtBottom(viewport)) {
+          pullStartY = e.touches[0].clientY;
+          isPulling = false;
+        }
+      });
+
+      termContainer.addEventListener("touchmove", (e) => {
+        if (pullStartY === 0) return;
+
+        const currentY = e.touches[0].clientY;
+        const pullDistance = pullStartY - currentY; // Negative = pulling down, Positive = pulling up
+
+        if (pullDistance > 20) {
+          isPulling = true;
+          const progress = Math.min(pullDistance / PULL_THRESHOLD, 1);
+          indicator.style.transform = `translateX(-50%) translateY(${100 - progress * 100}%)`;
+          indicator.classList.add("visible");
+        } else {
+          indicator.classList.remove("visible");
+          indicator.style.transform = "translateX(-50%) translateY(100%)";
+        }
+      });
+
+      termContainer.addEventListener("touchend", (e) => {
+        if (isPulling && pullStartY > 0) {
+          const lastY = e.changedTouches[0].clientY;
+          const pullDistance = pullStartY - lastY;
+
+          if (pullDistance >= PULL_THRESHOLD) {
+            // Trigger reconnect!
+            console.log("[Pull-refresh] Manual reconnect triggered");
+            if (ws) ws.close();
+          }
+        }
+
+        // Reset
+        pullStartY = 0;
+        isPulling = false;
+        indicator.classList.remove("visible");
+        indicator.style.transform = "translateX(-50%) translateY(100%)";
+      });
+
+      termContainer.addEventListener("touchcancel", () => {
+        pullStartY = 0;
+        isPulling = false;
+        indicator.classList.remove("visible");
+        indicator.style.transform = "translateX(-50%) translateY(100%)";
+      });
     }
 
     // Focus terminal on tap
