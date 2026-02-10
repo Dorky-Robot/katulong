@@ -977,8 +977,7 @@
       return {
         session: {
           name: initialSessionName,
-          shortcuts: [],
-          composedKeys: []
+          shortcuts: []
         },
         connection: {
           ws: null,
@@ -1016,8 +1015,6 @@
 
     const state = createAppState();
 
-    // Compatibility aliases (to be removed as refactoring progresses)
-    let sessionName = state.session.name;
     // --- Shortcuts state management (reducer pattern) ---
     const shortcutsReducer = (currentShortcuts, action) => {
       switch (action.type) {
@@ -1036,16 +1033,11 @@
       const newShortcuts = shortcutsReducer(state.session.shortcuts, action);
       state.update('session.shortcuts', newShortcuts);
       // Render effects
-      renderBar(sessionName);
+      renderBar(state.session.name);
       if (action.type === 'REMOVE' || action.type === 'ADD') {
         renderEditList(state.session.shortcuts);
       }
     };
-    let composedKeys = state.session.composedKeys;
-    let ws = state.connection.ws;
-    let reconnectDelay = state.connection.reconnectDelay;
-    let wsAttached = state.connection.attached;
-    let userScrolledUpBeforeDisconnect = state.scroll.userScrolledUpBeforeDisconnect;
 
     // --- P2P Manager (edge module) ---
     const createP2PManager = (config) => {
@@ -1073,7 +1065,7 @@
         clearTimeout(retryTimer);
         retryTimer = setTimeout(() => {
           const ws = getWS();
-          if (!connected && ws?.readyState === 1) {
+          if (!connected && state.connection.ws?.readyState === 1) {
             create();
           }
         }, RETRY_MS);
@@ -1087,8 +1079,8 @@
         const newPeer = new SimplePeer({ initiator: true, trickle: true, config: { iceServers: [] } });
 
         newPeer.on("signal", (data) => {
-          if (ws?.readyState === 1) {
-            ws.send(JSON.stringify({ type: "p2p-signal", data }));
+          if (state.connection.ws?.readyState === 1) {
+            state.connection.ws.send(JSON.stringify({ type: "p2p-signal", data }));
           }
         });
 
@@ -1159,7 +1151,7 @@
           terminalWriteWithScroll(str);
         }
       },
-      getWS: () => ws
+      getWS: () => state.connection.ws
     });
 
     // P2P UI indicator (pure effect)
@@ -1168,13 +1160,13 @@
       if (!dot) return;
       const p2pState = p2pManager.getState();
       dot.classList.toggle("p2p-active", p2pState.connected);
-      dot.classList.toggle("p2p-relay", wsAttached && !p2pState.connected);
+      dot.classList.toggle("p2p-relay", state.connection.attached && !p2pState.connected);
       dot.title = p2pState.connected ? "Connected (direct)"
-        : wsAttached ? "Connected (relay)"
+        : state.connection.attached ? "Connected (relay)"
         : "Disconnected";
     }
 
-    document.title = sessionName;
+    document.title = state.session.name;
 
     // --- Terminal setup ---
 
@@ -1234,8 +1226,8 @@
           const payload = JSON.stringify({ type: "input", data: sendBuf });
           // Try P2P first, fall back to WebSocket
           if (!p2pManager.send(payload)) {
-            if (ws?.readyState === 1) {
-              ws.send(payload);
+            if (state.connection.ws?.readyState === 1) {
+              state.connection.ws.send(payload);
             }
           }
           sendBuf = "";
@@ -1402,7 +1394,6 @@
           location.reload();
           break;
         case 'updateSessionUI':
-          sessionName = effect.name;
           document.title = effect.name;
           const url = new URL(window.location);
           url.searchParams.set("s", effect.name);
@@ -1414,15 +1405,15 @@
 
     function connect() {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      ws = new WebSocket(`${proto}//${location.host}`);
+      state.connection.ws = new WebSocket(`${proto}//${location.host}`);
 
-      ws.onopen = () => {
-        reconnectDelay = 1000;
-        ws.send(JSON.stringify({ type: "attach", session: sessionName, cols: term.cols, rows: term.rows }));
-        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+      state.connection.ws.onopen = () => {
+        state.connection.reconnectDelay = 1000;
+        state.connection.ws.send(JSON.stringify({ type: "attach", session: state.session.name, cols: term.cols, rows: term.rows }));
+        state.connection.ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       };
 
-      ws.onmessage = (e) => {
+      state.connection.ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
         const handler = wsMessageHandlers[msg.type];
 
@@ -1432,10 +1423,6 @@
           // Apply state updates
           if (Object.keys(stateUpdates).length > 0) {
             state.updateMany(stateUpdates);
-            // Sync compatibility aliases
-            wsAttached = state.connection.attached;
-            sessionName = state.session.name;
-            userScrolledUpBeforeDisconnect = state.scroll.userScrolledUpBeforeDisconnect;
           }
 
           // Execute effects
@@ -1443,15 +1430,15 @@
         }
       };
 
-      ws.onclose = () => {
+      state.connection.ws.onclose = () => {
         const viewport = document.querySelector(".xterm-viewport");
-        userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
-        wsAttached = false;
+        state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
+        state.connection.attached = false;
         p2pManager.destroy();
-        setTimeout(connect, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+        setTimeout(connect, state.connection.reconnectDelay);
+        state.connection.reconnectDelay = Math.min(state.connection.reconnectDelay * 2, 10000);
       };
-      ws.onerror = () => ws.close();
+      state.connection.ws.onerror = () => state.connection.ws.close();
     }
 
     // Force reconnect when returning to PWA after being backgrounded
@@ -1464,16 +1451,16 @@
         const hiddenDuration = Date.now() - hiddenAt;
 
         // If was hidden for more than 5 seconds, force reconnect
-        if (hiddenDuration > 5000 && ws) {
+        if (hiddenDuration > 5000 && state.connection.ws) {
           console.log(`[Reconnect] Was hidden for ${Math.round(hiddenDuration/1000)}s, forcing reconnect`);
-          ws.close();
-        } else if (ws && ws.readyState === WebSocket.OPEN) {
+          state.connection.ws.close();
+        } else if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
           // Quick test - send resize to verify connection is alive
           try {
-            ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+            state.connection.ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
           } catch (e) {
             console.log("[Reconnect] Send failed, forcing reconnect");
-            ws.close();
+            state.connection.ws.close();
           }
         }
       }
@@ -1766,12 +1753,12 @@
 
           if (pullDistance >= PULL_THRESHOLD) {
             // If connected, send Ctrl-L to refresh. If disconnected, reconnect.
-            if (ws && ws.readyState === WebSocket.OPEN && wsAttached) {
+            if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN && state.connection.attached) {
               console.log("[Pull-refresh] Connected - sending Ctrl-L");
               rawSend("\x0C"); // Ctrl-L: refresh screen
             } else {
               console.log("[Pull-refresh] Disconnected - forcing reconnect");
-              if (ws) ws.close();
+              if (state.connection.ws) state.connection.ws.close();
             }
           }
         }
@@ -1802,7 +1789,7 @@
 
     const ro = new ResizeObserver(() => {
       withPreservedScroll(() => fit.fit());
-      if (ws?.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+      if (state.connection.ws?.readyState === 1) state.connection.ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
     });
     ro.observe(termContainer);
 
@@ -2108,6 +2095,9 @@
     const keyPreview = document.getElementById("key-preview-value");
     const saveBtn = document.getElementById("modal-save");
 
+    // Local UI state for key composition
+    let composedKeys = [];
+
     function renderComposerTags(keys) {
       keyComposer.querySelectorAll(".key-tag, .key-comma").forEach(t => t.remove());
       keys.forEach((k, i) => {
@@ -2188,7 +2178,7 @@
 
     async function openSessionManager() {
       openModal(sessionOverlay);
-      await renderSessionList(sessionName);
+      await renderSessionList(state.session.name);
       // Fetch and populate SSH password
       try {
         const res = await fetch("/ssh/password");
@@ -2338,7 +2328,7 @@
           const data = await res.json();
           sessionNewName.value = "";
           window.open(`/?s=${encodeURIComponent(data.name)}`, "_blank");
-          await renderSessionList(sessionName);
+          await renderSessionList(state.session.name);
         }
       } catch { /* ignore */ }
     });
@@ -2783,7 +2773,7 @@
     // --- Network change: re-establish P2P ---
 
     function onNetworkChange() {
-      if (!ws || ws.readyState !== 1) return;
+      if (!state.connection.ws || state.connection.ws.readyState !== 1) return;
       console.log("[P2P] Network change detected, re-establishing");
       initP2P();
     }
