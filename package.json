@@ -10,6 +10,7 @@
     "dev": "node daemon.js & node server.js",
     "start:all": "node --env-file=.env.local entrypoint.js",
     "test": "node --test test/*.test.js test/*.integration.js",
+    "test:all": "npm test && npm run test:e2e",
     "test:unit": "node --test test/*.test.js",
     "test:integration": "node --test test/*.integration.js",
     "test:e2e": "npx playwright test",
