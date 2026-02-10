@@ -347,14 +347,18 @@ describe("processPairing", () => {
   it("prunes expired sessions during pairing", () => {
     const now = Date.now();
     const state = AuthState.empty("user123")
-      .addSession("expired-token", now - 1000)
-      .addSession("valid-token", now + 10000);
+      .addCredential({ id: "cred1", publicKey: "key1", counter: 1 })
+      .addSession("expired-token", now - 1000, "cred1")
+      .addSession("valid-token", now + 10000, "cred1");
 
     assert.equal(state.sessionCount(), 2);
 
     const result = processPairing({
       pairingResult: { valid: true },
       currentState: state,
+      deviceId: "device123",
+      deviceName: "Test Device",
+      userAgent: "Test Agent",
     });
 
     assert.ok(result instanceof AuthSuccess);

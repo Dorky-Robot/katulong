@@ -203,7 +203,7 @@ describe("loadState caching", () => {
         "token3": now + 10000,
         // Old object format without credentialId property (should be removed)
         "token4": { expiry: now + 10000 },
-        // Pairing session (credentialId: null - should be kept)
+        // Old pairing session (credentialId: null - should be removed, pairing now creates credentials)
         "token5": { expiry: now + 10000, credentialId: null }
       }
     };
@@ -227,8 +227,7 @@ describe("loadState caching", () => {
     // Should remove token4 (old format - missing credentialId property)
     assert.equal(sessions.token4, undefined, "should remove old object format sessions");
 
-    // Should keep token5 (pairing session with credentialId: null)
-    assert.ok(sessions.token5, "should keep pairing sessions");
-    assert.equal(sessions.token5.credentialId, null);
+    // Should remove token5 (old pairing session - pairing now creates credentials)
+    assert.equal(sessions.token5, undefined, "should remove old pairing sessions");
   });
 });

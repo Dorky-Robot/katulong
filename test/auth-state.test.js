@@ -334,17 +334,17 @@ describe("AuthState", () => {
       assert.strictEqual(state.isValidSession("token1", now), true);
     });
 
-    it("returns true for pairing session without credentialId", () => {
+    it("returns false for pairing session without credentialId", () => {
       const now = Date.now();
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [{ id: "cred1", publicKey: "key1", counter: 1 }],
         sessions: {
-          token1: { expiry: now + 10000, credentialId: null }, // Pairing session
+          token1: { expiry: now + 10000, credentialId: null }, // Old pairing session
         },
       });
 
-      assert.strictEqual(state.isValidSession("token1", now), true);
+      assert.strictEqual(state.isValidSession("token1", now), false);
     });
   });
 
