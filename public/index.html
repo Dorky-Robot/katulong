@@ -1541,11 +1541,10 @@
           const pullDistance = pullStartY - lastY;
 
           if (pullDistance >= PULL_THRESHOLD) {
-            // If connected, just refresh screen. If disconnected, reconnect.
+            // If connected, send Ctrl-L to refresh. If disconnected, reconnect.
             if (ws && ws.readyState === WebSocket.OPEN && wsAttached) {
-              console.log("[Pull-refresh] Connected - clearing screen");
-              term.clear();
-              term.reset();
+              console.log("[Pull-refresh] Connected - sending Ctrl-L");
+              rawSend("\x0C"); // Ctrl-L: refresh screen
             } else {
               console.log("[Pull-refresh] Disconnected - forcing reconnect");
               if (ws) ws.close();
