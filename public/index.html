@@ -990,26 +990,143 @@
     let composedKeys = state.session.composedKeys;
     let ws = state.connection.ws;
     let reconnectDelay = state.connection.reconnectDelay;
-    let p2pPeer = state.p2p.peer;
-    let p2pConnected = state.p2p.connected;
     let wsAttached = state.connection.attached;
     let userScrolledUpBeforeDisconnect = state.scroll.userScrolledUpBeforeDisconnect;
-    let p2pRetryTimer = state.p2p.retryTimer;
-    const P2P_RETRY_MS = state.p2p.RETRY_MS;
 
-    function scheduleP2PRetry() {
-      clearTimeout(p2pRetryTimer);
-      p2pRetryTimer = setTimeout(() => {
-        if (!p2pConnected && ws?.readyState === 1) initP2P();
-      }, P2P_RETRY_MS);
-    }
+    // --- P2P Manager (edge module) ---
+    const createP2PManager = (config) => {
+      let peer = null;
+      let connected = false;
+      let retryTimer = 0;
+      const RETRY_MS = 3000;
 
+      const { onStateChange, onData, getWS } = config;
+
+      const destroy = () => {
+        clearTimeout(retryTimer);
+        retryTimer = 0;
+        if (peer) {
+          try { peer.destroy(); } catch {}
+          peer = null;
+        }
+        if (connected) {
+          connected = false;
+          onStateChange({ connected: false, peer: null });
+        }
+      };
+
+      const scheduleRetry = () => {
+        clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => {
+          const ws = getWS();
+          if (!connected && ws?.readyState === 1) {
+            create();
+          }
+        }, RETRY_MS);
+      };
+
+      const create = () => {
+        if (typeof SimplePeer === "undefined") return;
+        destroy();
+
+        const ws = getWS();
+        const newPeer = new SimplePeer({ initiator: true, trickle: true, config: { iceServers: [] } });
+
+        newPeer.on("signal", (data) => {
+          if (ws?.readyState === 1) {
+            ws.send(JSON.stringify({ type: "p2p-signal", data }));
+          }
+        });
+
+        newPeer.on("connect", () => {
+          connected = true;
+          console.log("[P2P] DataChannel connected");
+          onStateChange({ connected: true, peer: newPeer });
+        });
+
+        newPeer.on("data", (chunk) => {
+          const str = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+          onData(str);
+        });
+
+        newPeer.on("close", () => {
+          console.log("[P2P] DataChannel closed, using WS");
+          connected = false;
+          peer = null;
+          onStateChange({ connected: false, peer: null });
+          scheduleRetry();
+        });
+
+        newPeer.on("error", (err) => {
+          console.warn("[P2P] error:", err.message);
+          connected = false;
+          peer = null;
+          onStateChange({ connected: false, peer: null });
+          scheduleRetry();
+        });
+
+        peer = newPeer;
+        onStateChange({ connected: false, peer: newPeer });
+      };
+
+      const signal = (data) => {
+        if (peer) peer.signal(data);
+      };
+
+      const send = (data) => {
+        if (!connected || !peer) return false;
+        try {
+          peer.send(data);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      const getState = () => ({ connected, peer });
+
+      return { create, destroy, signal, send, getState, scheduleRetry };
+    };
+
+    // Initialize P2P manager
+    const p2pManager = createP2PManager({
+      onStateChange: (p2pState) => {
+        state.update('p2p.connected', p2pState.connected);
+        state.update('p2p.peer', p2pState.peer);
+        updateP2PIndicator();
+      },
+      onData: (str) => {
+        const viewport = document.querySelector(".xterm-viewport");
+        const wasAtBottom = isAtBottom(viewport);
+
+        const scrollIfNeeded = () => {
+          if (wasAtBottom) {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => term.scrollToBottom());
+            });
+          }
+        };
+
+        try {
+          const msg = JSON.parse(str);
+          if (msg.type === "output") {
+            term.write(msg.data, scrollIfNeeded);
+          }
+        } catch {
+          term.write(str, scrollIfNeeded);
+        }
+      },
+      getWS: () => ws
+    });
+
+    // P2P UI indicator (pure effect)
     function updateP2PIndicator() {
       const dot = document.getElementById("p2p-indicator");
       if (!dot) return;
-      dot.classList.toggle("p2p-active", p2pConnected);
-      dot.classList.toggle("p2p-relay", wsAttached && !p2pConnected);
-      dot.title = p2pConnected ? "Connected (direct)"
+      const p2pState = p2pManager.getState();
+      dot.classList.toggle("p2p-active", p2pState.connected);
+      dot.classList.toggle("p2p-relay", wsAttached && !p2pState.connected);
+      dot.title = p2pState.connected ? "Connected (direct)"
         : wsAttached ? "Connected (relay)"
         : "Disconnected";
     }
@@ -1098,17 +1215,12 @@
         sendTimer = requestAnimationFrame(() => {
           sendTimer = 0;
           if (!sendBuf) return;
-          if (p2pConnected && p2pPeer) {
-            try {
-              p2pPeer.send(JSON.stringify({ type: "input", data: sendBuf }));
-            } catch {
-              // DataChannel send failed, fall back to WS
-              if (ws?.readyState === 1) {
-                ws.send(JSON.stringify({ type: "input", data: sendBuf }));
-              }
+          const payload = JSON.stringify({ type: "input", data: sendBuf });
+          // Try P2P first, fall back to WebSocket
+          if (!p2pManager.send(payload)) {
+            if (ws?.readyState === 1) {
+              ws.send(payload);
             }
-          } else if (ws?.readyState === 1) {
-            ws.send(JSON.stringify({ type: "input", data: sendBuf }));
           }
           sendBuf = "";
         });
@@ -1164,78 +1276,6 @@
       const filtered = data.replace(/\x1b\[I/g, "").replace(/\x1b\[O/g, "");
       if (filtered) rawSend(filtered);
     });
-
-    function destroyP2P() {
-      clearTimeout(p2pRetryTimer);
-      if (p2pPeer) {
-        try { p2pPeer.destroy(); } catch {}
-        p2pPeer = null;
-      }
-      p2pConnected = false;
-      updateP2PIndicator();
-    }
-
-    function initP2P() {
-      if (typeof SimplePeer === "undefined") return;
-      destroyP2P();
-
-      const peer = new SimplePeer({ initiator: true, trickle: true, config: { iceServers: [] } });
-
-      peer.on("signal", (data) => {
-        if (ws?.readyState === 1) {
-          ws.send(JSON.stringify({ type: "p2p-signal", data }));
-        }
-      });
-
-      peer.on("connect", () => {
-        p2pConnected = true;
-        console.log("[P2P] DataChannel connected");
-        updateP2PIndicator();
-      });
-
-      peer.on("data", (chunk) => {
-        const str = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
-        const viewport = document.querySelector(".xterm-viewport");
-        const wasAtBottom = isAtBottom(viewport);
-
-        // Helper to scroll after write completes
-        const scrollIfNeeded = () => {
-          if (wasAtBottom) {
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => term.scrollToBottom());
-            });
-          }
-        };
-
-        try {
-          const msg = JSON.parse(str);
-          if (msg.type === "output") {
-            term.write(msg.data, scrollIfNeeded);
-          }
-        } catch {
-          // raw data, write directly
-          term.write(str, scrollIfNeeded);
-        }
-      });
-
-      peer.on("close", () => {
-        console.log("[P2P] DataChannel closed, using WS");
-        p2pConnected = false;
-        p2pPeer = null;
-        updateP2PIndicator();
-        scheduleP2PRetry();
-      });
-
-      peer.on("error", (err) => {
-        console.warn("[P2P] error:", err.message);
-        p2pConnected = false;
-        p2pPeer = null;
-        updateP2PIndicator();
-        scheduleP2PRetry();
-      });
-
-      p2pPeer = peer;
-    }
 
     // --- Pure WebSocket message handlers (functional core) ---
     const wsMessageHandlers = {
@@ -1316,7 +1356,7 @@
           updateP2PIndicator();
           break;
         case 'initP2P':
-          initP2P();
+          p2pManager.create();
           break;
         case 'scrollToBottomIfNeeded':
           if (effect.condition) {
@@ -1341,7 +1381,7 @@
           }
           break;
         case 'p2pSignal':
-          if (p2pPeer) p2pPeer.signal(effect.data);
+          p2pManager.signal(effect.data);
           break;
         case 'log':
           console.log(effect.message);
@@ -1388,7 +1428,6 @@
             state.updateMany(stateUpdates);
             // Sync compatibility aliases
             wsAttached = state.connection.attached;
-            p2pConnected = state.p2p.connected;
             sessionName = state.session.name;
             userScrolledUpBeforeDisconnect = state.scroll.userScrolledUpBeforeDisconnect;
           }
@@ -1402,7 +1441,7 @@
         const viewport = document.querySelector(".xterm-viewport");
         userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
         wsAttached = false;
-        destroyP2P();
+        p2pManager.destroy();
         setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 10000);
       };
