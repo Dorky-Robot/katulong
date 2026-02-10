@@ -861,9 +861,14 @@ async function handleRequest(req, res) {
 
       // LAN access needs certificate trust flow, internet access goes directly to login
       const redirectTo = isLanAccess ? "/connect/trust" : "/login";
-      res.writeHead(302, { Location: redirectTo });
-      res.end();
-      return;
+
+      // Prevent redirect loop - don't redirect if already on the target page
+      if (pathname !== redirectTo) {
+        res.writeHead(302, { Location: redirectTo });
+        res.end();
+        return;
+      }
+      // If already on target page, allow it through to be served
     }
   }
 
