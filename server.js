@@ -852,8 +852,16 @@ async function handleRequest(req, res) {
         res.end();
         return;
       }
-      // No valid session → show cert installation page
-      res.writeHead(302, { Location: "/connect/trust" });
+      // No valid session → determine where to redirect based on access method
+      const host = (req.headers.host || "").split(":")[0];
+      const isLanAccess = host === "katulong.local" ||
+                         /^\d+\.\d+\.\d+\.\d+$/.test(host) ||  // IP address
+                         host === "localhost" ||
+                         host === "127.0.0.1";
+
+      // LAN access needs certificate trust flow, internet access goes directly to login
+      const redirectTo = isLanAccess ? "/connect/trust" : "/login";
+      res.writeHead(302, { Location: redirectTo });
       res.end();
       return;
     }
