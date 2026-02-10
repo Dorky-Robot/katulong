@@ -22,6 +22,7 @@ import {
 import {
   parseCookies, setSessionCookie, getOriginAndRpID,
   isPublicPath, createChallengeStore, escapeAttr,
+  getCsrfToken, validateCsrfToken,
 } from "./lib/http-util.js";
 import { rateLimit } from "./lib/rate-limit.js";
 import {
@@ -277,8 +278,22 @@ function isLanHost(req) {
 
 const routes = [
   { method: "GET", path: "/", handler: (req, res) => {
+    let html = readFileSync(join(__dirname, "public", "index.html"), "utf-8");
+
+    // Inject CSRF token if authenticated
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionToken = cookies.get("katulong_session");
+    if (sessionToken) {
+      const state = loadState();
+      const csrfToken = getCsrfToken(state, sessionToken);
+      if (csrfToken) {
+        // Inject CSRF token as a meta tag
+        html = html.replace("<head>", `<head>\n    <meta name="csrf-token" content="${escapeAttr(csrfToken)}">`);
+      }
+    }
+
     res.writeHead(200, { "Content-Type": "text/html" });
-    res.end(readFileSync(join(__dirname, "public", "index.html"), "utf-8"));
+    res.end(html);
   }},
 
   { method: "GET", path: "/manifest.json", handler: (req, res) => {
@@ -420,6 +435,10 @@ const routes = [
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
     }
+    const state = loadState();
+    if (!validateCsrfToken(req, state)) {
+      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    }
     const challenge = pairingStore.create();
     const lanIP = getLanIP();
     const url = lanIP ? `https://${lanIP}:${HTTPS_PORT}/pair?code=${challenge.code}` : null;
@@ -525,6 +544,10 @@ const routes = [
   }},
 
   { method: "POST", path: "/auth/logout", handler: async (req, res) => {
+    const state = loadState();
+    if (!validateCsrfToken(req, state)) {
+      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    }
     const cookies = parseCookies(req.headers.cookie);
     const token = cookies.get("katulong_session");
     if (token) {
@@ -545,6 +568,9 @@ const routes = [
   { method: "POST", path: "/auth/revoke-all", handler: (req, res) => {
     const state = loadState();
     if (!state) return json(res, 400, { error: "Not set up" });
+    if (!validateCsrfToken(req, state)) {
+      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    }
     revokeAllSessions(state);
     let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
     if (req.socket.encrypted) clearCookie += "; Secure";
@@ -620,6 +646,10 @@ const routes = [
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
     }
+    const state = loadState();
+    if (!validateCsrfToken(req, state)) {
+      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    }
     // Prevent removing devices from localhost (the server machine)
     // This prevents accidentally breaking the server
     if (isLocalRequest(req)) {
@@ -688,6 +718,10 @@ const routes = [
   { method: "PUT", path: "/shortcuts", handler: async (req, res) => {
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
+    }
+    const state = loadState();
+    if (!validateCsrfToken(req, state)) {
+      return json(res, 403, { error: "Invalid or missing CSRF token" });
     }
     const data = await parseJSON(req);
     const result = await daemonRPC({ type: "set-shortcuts", data });

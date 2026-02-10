@@ -1042,6 +1042,21 @@
       });
     }
 
+    // --- CSRF Protection ---
+
+    function getCsrfToken() {
+      const meta = document.querySelector('meta[name="csrf-token"]');
+      return meta ? meta.content : null;
+    }
+
+    function addCsrfHeader(headers = {}) {
+      const token = getCsrfToken();
+      if (token) {
+        headers['X-CSRF-Token'] = token;
+      }
+      return headers;
+    }
+
     // --- Theme ---
 
     const DARK_THEME = {
@@ -2352,7 +2367,7 @@
       try {
         await fetch("/shortcuts", {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: addCsrfHeader({ "Content-Type": "application/json" }),
           body: JSON.stringify(state.session.shortcuts),
         });
       } catch { /* ignore */ }
@@ -2617,7 +2632,10 @@
       btn.addEventListener("click", () => applyTheme(btn.dataset.themeVal));
     });
     document.getElementById("settings-logout").addEventListener("click", async () => {
-      await fetch("/auth/logout", { method: "POST" });
+      await fetch("/auth/logout", {
+        method: "POST",
+        headers: addCsrfHeader()
+      });
       location.href = "/login";
     });
 
@@ -2821,6 +2839,7 @@
       try {
         const res = await fetch(`/auth/devices/${deviceId}`, {
           method: "DELETE",
+          headers: addCsrfHeader()
         });
         if (!res.ok) {
           const err = await res.json();
@@ -2974,7 +2993,10 @@
 
     async function refreshWizardPairCode() {
       try {
-        const res = await fetch("/auth/pair/start", { method: "POST" });
+        const res = await fetch("/auth/pair/start", {
+          method: "POST",
+          headers: addCsrfHeader()
+        });
         if (!res.ok) return;
         const data = await res.json();
 

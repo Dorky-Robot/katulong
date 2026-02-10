@@ -80,9 +80,9 @@ describe("AuthState", () => {
       const original = AuthState.empty("user123");
       const expiry = Date.now() + 10000;
 
-      const newState = original.addSession("token1", expiry, "cred123");
+      const newState = original.addSession("token1", expiry, "cred123", "csrf123");
 
-      assert.deepStrictEqual(newState.sessions.token1, { expiry, credentialId: "cred123" });
+      assert.deepStrictEqual(newState.sessions.token1, { expiry, credentialId: "cred123", csrfToken: "csrf123" });
     });
 
     it("does not mutate original state", () => {
