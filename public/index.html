@@ -1887,8 +1887,35 @@
       });
     }
 
-    // --- Pure: key display ---
+    // --- Key transformation pipeline (composable) ---
 
+    // Pure: Composition helper
+    const pipe = (...fns) => (x) => fns.reduce((v, f) => f(v), x);
+
+    // Pure: Group keys by comma separator
+    const groupKeysBySeparator = (keys) => {
+      const groups = [];
+      let current = [];
+      for (const k of keys) {
+        if (k === ",") {
+          if (current.length > 0) groups.push(current);
+          current = [];
+        } else {
+          current.push(k);
+        }
+      }
+      if (current.length > 0) groups.push(current);
+      return groups;
+    };
+
+    // Pure: Transform groups with mapper function
+    const mapGroups = (groupMapper) => (groups) => groups.map(groupMapper);
+
+    // Pure: Join groups with separators
+    const joinGroups = (innerSep, outerSep) => (groups) =>
+      groups.map(g => g.join(innerSep)).join(outerSep);
+
+    // Pure: Key display mapping
     const KEY_DISPLAY = {
       ctrl: "Ctrl", cmd: "Cmd", alt: "Alt", option: "Option", shift: "Shift",
       esc: "Esc", escape: "Esc", tab: "Tab", enter: "Enter", return: "Enter",
@@ -1896,27 +1923,19 @@
       up: "Up", down: "Down", left: "Left", right: "Right",
     };
 
-    function displayKey(k) { return KEY_DISPLAY[k] || k.toUpperCase(); }
-    function keysLabel(keys) {
-      const groups = [];
-      let cur = [];
-      for (const k of keys) {
-        if (k === ",") { groups.push(cur.map(displayKey).join("+")); cur = []; }
-        else cur.push(k);
-      }
-      groups.push(cur.map(displayKey).join("+"));
-      return groups.join(", ");
-    }
-    function keysString(keys) {
-      const groups = [];
-      let cur = [];
-      for (const k of keys) {
-        if (k === ",") { groups.push(cur.join("+")); cur = []; }
-        else cur.push(k);
-      }
-      groups.push(cur.join("+"));
-      return groups.join(",");
-    }
+    const displayKey = (k) => KEY_DISPLAY[k] || k.toUpperCase();
+
+    // Composable pipelines
+    const keysLabel = pipe(
+      groupKeysBySeparator,
+      mapGroups(group => group.map(displayKey)),
+      joinGroups("+", ", ")
+    );
+
+    const keysString = pipe(
+      groupKeysBySeparator,
+      joinGroups("+", ",")
+    );
 
     const VALID_KEYS = new Set([
       "ctrl", "cmd", "alt", "option", "shift",
