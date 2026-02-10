@@ -457,6 +457,19 @@ const routes = [
     const { code, pin, deviceId, deviceName, userAgent: clientUserAgent } = await parseJSON(req);
     const pairingResult = pairingStore.consume(code, pin);
 
+    // Handle rate limiting (exponential backoff)
+    if (pairingResult.reason === "rate-limited" && pairingResult.retryAfter) {
+      res.writeHead(429, {
+        "Content-Type": "application/json",
+        "Retry-After": String(pairingResult.retryAfter),
+      });
+      res.end(JSON.stringify({
+        error: "Too many failed attempts. Please wait before trying again.",
+        retryAfter: pairingResult.retryAfter,
+      }));
+      return;
+    }
+
     // Extract user-agent (prefer client-provided, fallback to header)
     const userAgent = clientUserAgent || req.headers['user-agent'] || 'Unknown';
 

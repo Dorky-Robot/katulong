@@ -218,13 +218,15 @@ describe("PairingChallengeStore", () => {
       assert.ok(!store.challenges.has(challenge.code));
     });
 
-    it("removes challenge even when PIN is wrong (single-attempt)", () => {
+    it("keeps challenge when PIN is wrong (for exponential backoff)", () => {
       const store = new PairingChallengeStore();
       const challenge = store.create();
 
-      store.consume(challenge.code, "000000");
+      store.consume(challenge.code, "00000000");
 
-      assert.strictEqual(store.size(), 0);
+      // Challenge should still exist (not deleted) for backoff tracking
+      assert.strictEqual(store.size(), 1);
+      assert.ok(store.challenges.has(challenge.code));
     });
 
     it("returns not-found for unknown code", () => {
@@ -379,18 +381,103 @@ describe("PairingChallengeStore", () => {
       assert.strictEqual(result2.reason, "not-found");
     });
 
-    it("prevents brute-force by deleting on wrong PIN", () => {
+    it("applies exponential backoff on wrong PIN", () => {
       const store = new PairingChallengeStore();
       const challenge = store.create();
 
-      // Wrong PIN deletes challenge
-      const result1 = store.consume(challenge.code, "000000");
+      // First wrong PIN - should return retryAfter
+      const result1 = store.consume(challenge.code, "00000000");
       assert.strictEqual(result1.valid, false);
+      assert.strictEqual(result1.reason, "wrong-pin");
+      assert.ok(result1.retryAfter > 0, "Should have retryAfter on first failure");
 
-      // Can't retry with correct PIN
-      const result2 = store.consume(challenge.code, challenge.pin);
+      // Immediate retry should be rate-limited
+      const result2 = store.consume(challenge.code, "11111111");
       assert.strictEqual(result2.valid, false);
-      assert.strictEqual(result2.reason, "not-found");
+      assert.strictEqual(result2.reason, "rate-limited");
+      assert.ok(result2.retryAfter > 0, "Should have retryAfter when rate-limited");
+    });
+
+    it("increases backoff delay with each failed attempt", () => {
+      const store = new PairingChallengeStore();
+      const challenge = store.create();
+
+      // Simulate multiple failed attempts to get measurable differences
+      // After 3 attempts: 2^3 * 100ms = 800ms → 1 second
+      // After 4 attempts: 2^4 * 100ms = 1600ms → 2 seconds
+
+      // Make 3 failed attempts
+      for (let i = 0; i < 3; i++) {
+        store.backoffUntil.delete(challenge.code);
+        store.consume(challenge.code, "00000000");
+      }
+
+      // Clear backoff for next attempt
+      store.backoffUntil.delete(challenge.code);
+      const result1 = store.consume(challenge.code, "11111111");
+      assert.strictEqual(result1.reason, "wrong-pin");
+      const delay1 = result1.retryAfter; // Should be ~2 seconds (2^4 * 100ms = 1600ms)
+
+      // Clear backoff and do one more attempt
+      store.backoffUntil.delete(challenge.code);
+      const result2 = store.consume(challenge.code, "22222222");
+      assert.strictEqual(result2.reason, "wrong-pin");
+      const delay2 = result2.retryAfter; // Should be ~4 seconds (2^5 * 100ms = 3200ms)
+
+      // Second delay should be longer than first
+      assert.ok(delay2 > delay1, `Backoff should increase (${delay1}s -> ${delay2}s)`);
+    });
+
+    it("caps backoff delay at 10 seconds", () => {
+      const store = new PairingChallengeStore();
+      const challenge = store.create();
+
+      // Simulate many failed attempts
+      for (let i = 0; i < 10; i++) {
+        store.failedAttempts.set(challenge.code, i);
+        store.backoffUntil.delete(challenge.code);
+        const result = store.consume(challenge.code, "00000000");
+        if (result.retryAfter) {
+          assert.ok(result.retryAfter <= 10, "Backoff should be capped at 10 seconds");
+        }
+      }
+    });
+
+    it("resets backoff on successful pairing", () => {
+      const store = new PairingChallengeStore();
+      const challenge = store.create();
+
+      // Failed attempt
+      store.consume(challenge.code, "00000000");
+      assert.ok(store.failedAttempts.has(challenge.code), "Should track failed attempts");
+      assert.ok(store.backoffUntil.has(challenge.code), "Should have backoff");
+
+      // Clear backoff for testing
+      store.backoffUntil.delete(challenge.code);
+
+      // Successful attempt
+      const result = store.consume(challenge.code, challenge.pin);
+      assert.strictEqual(result.valid, true);
+
+      // Backoff tracking should be cleared
+      assert.strictEqual(store.failedAttempts.has(challenge.code), false);
+      assert.strictEqual(store.backoffUntil.has(challenge.code), false);
+    });
+
+    it("cleans up backoff tracking on challenge expiry", () => {
+      const store = new PairingChallengeStore(100); // 100ms TTL
+      const challenge = store.create();
+
+      // Failed attempt
+      store.consume(challenge.code, "00000000");
+      assert.ok(store.failedAttempts.has(challenge.code));
+
+      // Wait for expiry
+      setTimeout(() => {
+        store.sweep();
+        assert.strictEqual(store.failedAttempts.has(challenge.code), false);
+        assert.strictEqual(store.backoffUntil.has(challenge.code), false);
+      }, 150);
     });
   });
 });
