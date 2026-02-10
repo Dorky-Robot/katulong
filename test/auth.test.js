@@ -185,4 +185,49 @@ describe("loadState caching", () => {
     assert.ok(loaded, "should load state after invalidation");
     assert.deepEqual(loaded.toJSON(), { user: { id: "test", name: "owner" }, credentials: [], sessions: {} }, "after invalidation should read new file");
   });
+
+  it("loadState migrates and cleans up orphaned sessions", () => {
+    const now = Date.now();
+    const state = {
+      user: { id: "user123", name: "owner" },
+      credentials: [
+        { id: "cred1", publicKey: "key1", counter: 1, deviceId: "dev1", name: "Device 1" },
+        { id: "cred2", publicKey: "key2", counter: 1, deviceId: "dev2", name: "Device 2" }
+      ],
+      sessions: {
+        // Valid session for existing credential
+        "token1": { expiry: now + 10000, credentialId: "cred1" },
+        // Orphaned session for removed credential
+        "token2": { expiry: now + 10000, credentialId: "cred999" },
+        // Old format session (should be removed)
+        "token3": now + 10000,
+        // Old object format without credentialId property (should be removed)
+        "token4": { expiry: now + 10000 },
+        // Old pairing session (credentialId: null - should be removed, pairing now creates credentials)
+        "token5": { expiry: now + 10000, credentialId: null }
+      }
+    };
+
+    writeFileSync(STATE_PATH, JSON.stringify(state));
+    _invalidateCache();
+
+    const loaded = loadState();
+    const sessions = loaded.sessions;
+
+    // Should keep token1 (valid credential)
+    assert.ok(sessions.token1, "should keep session for existing credential");
+    assert.equal(sessions.token1.credentialId, "cred1");
+
+    // Should remove token2 (orphaned - credential doesn't exist)
+    assert.equal(sessions.token2, undefined, "should remove session for non-existent credential");
+
+    // Should remove token3 (old format - number)
+    assert.equal(sessions.token3, undefined, "should remove old format sessions");
+
+    // Should remove token4 (old format - missing credentialId property)
+    assert.equal(sessions.token4, undefined, "should remove old object format sessions");
+
+    // Should remove token5 (old pairing session - pairing now creates credentials)
+    assert.equal(sessions.token5, undefined, "should remove old pairing sessions");
+  });
 });
