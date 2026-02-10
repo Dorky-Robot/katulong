@@ -938,17 +938,64 @@
 
     // --- State ---
 
-    let sessionName = new URLSearchParams(location.search).get("s") || "default";
-    let shortcuts = [];
-    let composedKeys = [];
-    let ws;
-    let reconnectDelay = 1000;
-    let p2pPeer = null;
-    let p2pConnected = false;
-    let wsAttached = false;
-    let userScrolledUpBeforeDisconnect = false;
-    let p2pRetryTimer = 0;
-    const P2P_RETRY_MS = 3000;
+    // --- Centralized application state (at edge) ---
+    const createAppState = () => {
+      const initialSessionName = new URLSearchParams(location.search).get("s") || "default";
+
+      return {
+        session: {
+          name: initialSessionName,
+          shortcuts: [],
+          composedKeys: []
+        },
+        connection: {
+          ws: null,
+          attached: false,
+          reconnectDelay: 1000
+        },
+        p2p: {
+          peer: null,
+          connected: false,
+          retryTimer: 0,
+          RETRY_MS: 3000
+        },
+        scroll: {
+          userScrolledUpBeforeDisconnect: false
+        },
+        // Controlled state updates
+        update(path, value) {
+          const keys = path.split('.');
+          let obj = this;
+          for (let i = 0; i < keys.length - 1; i++) {
+            obj = obj[keys[i]];
+          }
+          obj[keys[keys.length - 1]] = value;
+          return this;
+        },
+        // Batch updates
+        updateMany(updates) {
+          Object.entries(updates).forEach(([path, value]) => {
+            this.update(path, value);
+          });
+          return this;
+        }
+      };
+    };
+
+    const state = createAppState();
+
+    // Compatibility aliases (to be removed as refactoring progresses)
+    let sessionName = state.session.name;
+    let shortcuts = state.session.shortcuts;
+    let composedKeys = state.session.composedKeys;
+    let ws = state.connection.ws;
+    let reconnectDelay = state.connection.reconnectDelay;
+    let p2pPeer = state.p2p.peer;
+    let p2pConnected = state.p2p.connected;
+    let wsAttached = state.connection.attached;
+    let userScrolledUpBeforeDisconnect = state.scroll.userScrolledUpBeforeDisconnect;
+    let p2pRetryTimer = state.p2p.retryTimer;
+    const P2P_RETRY_MS = state.p2p.RETRY_MS;
 
     function scheduleP2PRetry() {
       clearTimeout(p2pRetryTimer);
