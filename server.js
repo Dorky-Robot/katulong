@@ -725,11 +725,11 @@ const routes = [
       });
       json(res, 200, { ok: true });
     } catch (err) {
-      if (err.message.includes('last credential')) {
-        return json(res, 400, { error: err.message });
+      if (err.message === 'Cannot remove the last credential - would lock you out') {
+        return json(res, 400, { error: "Cannot remove the last device. At least one device must remain." });
       }
       if (err.message === 'Device not found') {
-        return json(res, 404, { error: err.message });
+        return json(res, 404, { error: "Device not found" });
       }
       throw err;
     }
@@ -902,9 +902,12 @@ async function handleRequest(req, res) {
         json(res, 400, { error: "Invalid JSON" });
       } else if (err.message === "Request body too large") {
         json(res, 413, { error: "Request body too large" });
+      } else if (err.message === "Daemon not connected") {
+        json(res, 503, { error: "Service temporarily unavailable" });
       } else {
-        const status = err.message === "Daemon not connected" ? 503 : 500;
-        json(res, status, { error: err.message });
+        // Log the actual error for debugging, but return generic message to client
+        log.error("Request handler error", { path: req.url, error: err.message, stack: err.stack });
+        json(res, 500, { error: "Internal server error" });
       }
     }
     return;
