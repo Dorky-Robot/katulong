@@ -759,9 +759,9 @@
       <textarea id="dictation-input" class="dictation-input"
         rows="3" placeholder="type..." autocorrect="off" autocapitalize="off"
         autocomplete="off" spellcheck="false" aria-label="Dictation input"></textarea>
-      <button class="dictation-images-btn" id="dictation-add-images" type="button">
+      <label for="dictation-file-input" class="dictation-images-btn">
         <i class="ph ph-image"></i> Add Images
-      </button>
+      </label>
       <input type="file" id="dictation-file-input" accept="image/*" multiple hidden>
       <div class="dictation-thumbs" id="dictation-thumbs"></div>
       <div class="dictation-footer">
@@ -2619,10 +2619,6 @@
         dictationThumbs.appendChild(wrap);
       });
     }
-
-    document.getElementById("dictation-add-images").addEventListener("click", () => {
-      dictationFileInput.click();
-    });
 
     dictationFileInput.addEventListener("change", () => {
       const files = [...dictationFileInput.files].filter(f => f.type.startsWith("image/"));
