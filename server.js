@@ -97,18 +97,59 @@ function getLanIP() {
 
 function isLocalRequest(req) {
   const addr = req.socket.remoteAddress || "";
-  // Only loopback — LAN is untrusted (public WiFi, etc.)
-  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+
+  // Check socket address
+  const isLoopback = addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+  if (!isLoopback) return false;
+
+  // CRITICAL SECURITY: Even if socket is loopback, check Host/Origin headers
+  // to detect reverse proxies (ngrok, Cloudflare Tunnel, etc.)
+  // If Host/Origin indicates external domain, this is PROXIED traffic = NOT local
+  const host = (req.headers.host || "").toLowerCase();
+  const origin = (req.headers.origin || "").toLowerCase();
+
+  // Check if Host header indicates localhost
+  const hostIsLocal = host.startsWith("localhost:") ||
+                      host === "localhost" ||
+                      host.startsWith("127.0.0.1:") ||
+                      host === "127.0.0.1" ||
+                      host.startsWith("[::1]:") ||
+                      host === "[::1]";
+
+  // Check if Origin header indicates localhost (if present)
+  const originIsLocal = !origin ||
+                        origin.includes("://localhost") ||
+                        origin.includes("://127.0.0.1") ||
+                        origin.includes("://[::1]");
+
+  // Only treat as local if BOTH socket AND headers indicate localhost
+  return hostIsLocal && originIsLocal;
 }
 
 function isAuthenticated(req) {
-  if (process.env.KATULONG_NO_AUTH === "1") return true;
-  if (isLocalRequest(req)) return true;
+  if (process.env.KATULONG_NO_AUTH === "1") {
+    log.debug("Auth bypassed: KATULONG_NO_AUTH=1");
+    return true;
+  }
+  if (isLocalRequest(req)) {
+    log.debug("Auth bypassed: localhost", { ip: req.socket.remoteAddress });
+    return true;
+  }
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies.get("katulong_session");
-  if (!token) return false;
+  if (!token) {
+    log.debug("Auth rejected: no token", { ip: req.socket.remoteAddress });
+    return false;
+  }
   const state = loadState();
-  return validateSession(state, token);
+  const valid = validateSession(state, token);
+  log.debug("Auth check", {
+    ip: req.socket.remoteAddress,
+    hasState: state !== null,
+    tokenPrefix: token.substring(0, 8) + "...",
+    valid
+  });
+  return valid;
 }
 
 // Paths that are explicitly allowed over HTTP (for certificate installation)
@@ -288,7 +329,7 @@ const routes = [
 
   { method: "POST", path: "/auth/register/verify", handler: async (req, res) => {
     // I/O: Parse request
-    const { credential, setupToken } = await parseJSON(req);
+    const { credential, setupToken, deviceId, deviceName, userAgent: clientUserAgent } = await parseJSON(req);
     const { origin, rpID } = getOriginAndRpID(req);
 
     // I/O: Extract and consume challenge
@@ -298,6 +339,9 @@ const routes = [
     // I/O: Retrieve userID
     const userID = challenges.get(`userID:${challenge}`);
     challenges.delete(`userID:${challenge}`);
+
+    // Extract user-agent (prefer client-provided, fallback to header)
+    const userAgent = clientUserAgent || req.headers['user-agent'] || 'Unknown';
 
     // Functional core: Process registration logic
     const result = await processRegistration({
@@ -310,6 +354,9 @@ const routes = [
       origin,
       rpID,
       currentState: loadState(),
+      deviceId,
+      deviceName,
+      userAgent,
     });
 
     // I/O: Handle result
@@ -488,6 +535,92 @@ const routes = [
     if (req.socket.encrypted) clearCookie += "; Secure";
     res.setHeader("Set-Cookie", clearCookie);
     json(res, 200, { ok: true });
+  }},
+
+  // --- Device management ---
+
+  { method: "GET", path: "/auth/devices", handler: (req, res) => {
+    const state = loadState();
+    if (!state) return json(res, 400, { error: "Not set up" });
+    const devices = state.getCredentialsWithMetadata();
+    json(res, 200, { devices });
+  }},
+
+  { method: "POST", prefix: "/auth/devices/", handler: async (req, res, param) => {
+    // param is everything after /auth/devices/
+    // e.g., "abc123/name" or "abc123/refresh"
+    const parts = param.split('/');
+    const id = parts[0];
+    const action = parts[1];
+
+    if (action === 'name') {
+      // POST /auth/devices/:id/name
+      const { name } = await parseJSON(req);
+      if (!name || typeof name !== 'string' || name.trim().length === 0) {
+        return json(res, 400, { error: "Device name is required" });
+      }
+
+      try {
+        await withStateLock(async (state) => {
+          if (!state) throw new Error("Not set up");
+          const credential = state.getCredential(id);
+          if (!credential) throw new Error("Device not found");
+          return state.updateCredential(id, { name: name.trim() });
+        });
+        json(res, 200, { ok: true });
+      } catch (err) {
+        if (err.message === 'Device not found') {
+          return json(res, 404, { error: err.message });
+        }
+        throw err;
+      }
+    } else if (action === 'refresh') {
+      // POST /auth/devices/:id/refresh
+      try {
+        await withStateLock(async (state) => {
+          if (!state) throw new Error("Not set up");
+          const credential = state.getCredential(id);
+          if (!credential) throw new Error("Device not found");
+          return state.updateCredential(id, { lastUsedAt: Date.now() });
+        });
+        json(res, 200, { ok: true });
+      } catch (err) {
+        if (err.message === 'Device not found') {
+          return json(res, 404, { error: err.message });
+        }
+        throw err;
+      }
+    } else {
+      json(res, 404, { error: "Not found" });
+    }
+  }},
+
+  { method: "DELETE", prefix: "/auth/devices/", handler: async (req, res, id) => {
+    // Prevent removing devices from localhost (the server machine)
+    // This prevents accidentally breaking the server
+    if (isLocalRequest(req)) {
+      return json(res, 403, {
+        error: "Cannot remove devices from the server machine (would break Katulong). Remove from a remote device instead."
+      });
+    }
+
+    try {
+      await withStateLock(async (state) => {
+        if (!state) throw new Error("Not set up");
+        const credential = state.getCredential(id);
+        if (!credential) throw new Error("Device not found");
+        return state.removeCredential(id);
+      });
+      json(res, 200, { ok: true });
+    } catch (err) {
+      if (err.message.includes('last credential')) {
+        return json(res, 400, { error: err.message });
+      }
+      if (err.message === 'Device not found') {
+        return json(res, 404, { error: err.message });
+      }
+      throw err;
+    }
   }},
 
   // --- Upload route ---
@@ -670,12 +803,21 @@ const wss = new WebSocketServer({ noServer: true });
 const wsClients = new Map(); // clientId -> { ws, session, p2pPeer, p2pConnected }
 
 function handleUpgrade(req, socket, head) {
+  log.info("WebSocket upgrade attempt", {
+    ip: req.socket.remoteAddress,
+    origin: req.headers.origin,
+    host: req.headers.host
+  });
+
   // Validate session cookie on WebSocket upgrade
   if (!isAuthenticated(req)) {
+    log.warn("WebSocket rejected: not authenticated", { ip: req.socket.remoteAddress });
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
     socket.destroy();
     return;
   }
+
+  log.info("WebSocket authenticated", { ip: req.socket.remoteAddress });
 
   // Origin check to prevent Cross-Site WebSocket Hijacking (CSWSH)
   // Localhost bypasses this since browsers may omit Origin for local pages

@@ -80,9 +80,9 @@ describe("AuthState", () => {
       const original = AuthState.empty("user123");
       const expiry = Date.now() + 10000;
 
-      const newState = original.addSession("token1", expiry);
+      const newState = original.addSession("token1", expiry, "cred123");
 
-      assert.strictEqual(newState.sessions.token1, expiry);
+      assert.deepStrictEqual(newState.sessions.token1, { expiry, credentialId: "cred123" });
     });
 
     it("does not mutate original state", () => {
@@ -264,8 +264,8 @@ describe("AuthState", () => {
       const now = Date.now();
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
-        credentials: [],
-        sessions: { token1: now + 10000 },
+        credentials: [{ id: "cred1", publicKey: "key1", counter: 1 }],
+        sessions: { token1: { expiry: now + 10000, credentialId: "cred1" } },
       });
 
       assert.strictEqual(state.isValidSession("token1", now), true);
@@ -301,11 +301,50 @@ describe("AuthState", () => {
       const future = Date.now() + 10000;
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
-        credentials: [],
-        sessions: { token1: future },
+        credentials: [{ id: "cred1", publicKey: "key1", counter: 1 }],
+        sessions: { token1: { expiry: future, credentialId: "cred1" } },
       });
 
       assert.strictEqual(state.isValidSession("token1"), true);
+    });
+
+    it("returns false for session with non-existent credentialId (whitelist validation)", () => {
+      const now = Date.now();
+      const state = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [{ id: "cred1", publicKey: "key1", counter: 1 }],
+        sessions: {
+          token1: { expiry: now + 10000, credentialId: "cred999" }, // Non-existent credential
+        },
+      });
+
+      assert.strictEqual(state.isValidSession("token1", now), false);
+    });
+
+    it("returns true for session with valid credentialId", () => {
+      const now = Date.now();
+      const state = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [{ id: "cred1", publicKey: "key1", counter: 1 }],
+        sessions: {
+          token1: { expiry: now + 10000, credentialId: "cred1" },
+        },
+      });
+
+      assert.strictEqual(state.isValidSession("token1", now), true);
+    });
+
+    it("returns true for pairing session without credentialId", () => {
+      const now = Date.now();
+      const state = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [{ id: "cred1", publicKey: "key1", counter: 1 }],
+        sessions: {
+          token1: { expiry: now + 10000, credentialId: null }, // Pairing session
+        },
+      });
+
+      assert.strictEqual(state.isValidSession("token1", now), true);
     });
   });
 
