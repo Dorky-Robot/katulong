@@ -1232,6 +1232,31 @@
       ws.onerror = () => ws.close();
     }
 
+    // Force reconnect when returning to PWA after being backgrounded
+    let hiddenAt = 0;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        hiddenAt = Date.now();
+      } else {
+        // Coming back to foreground
+        const hiddenDuration = Date.now() - hiddenAt;
+
+        // If was hidden for more than 5 seconds, force reconnect
+        if (hiddenDuration > 5000 && ws) {
+          console.log(`[Reconnect] Was hidden for ${Math.round(hiddenDuration/1000)}s, forcing reconnect`);
+          ws.close();
+        } else if (ws && ws.readyState === WebSocket.OPEN) {
+          // Quick test - send resize to verify connection is alive
+          try {
+            ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+          } catch (e) {
+            console.log("[Reconnect] Send failed, forcing reconnect");
+            ws.close();
+          }
+        }
+      }
+    });
+
     // --- Layout ---
 
     const termContainer = document.getElementById("terminal-container");
