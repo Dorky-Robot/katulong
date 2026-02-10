@@ -36,6 +36,7 @@ import { PairingChallengeStore } from "./lib/pairing-challenge.js";
 import { AuthState } from "./lib/auth-state.js";
 import { ensureCerts, generateMobileConfig } from "./lib/tls.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
+import { validateMessage } from "./lib/websocket-validation.js";
 import mdns from "multicast-dns";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -982,6 +983,14 @@ wss.on("connection", (ws) => {
   ws.on("message", async (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+    // Validate message structure and types
+    const validation = validateMessage(msg);
+    if (!validation.valid) {
+      log.warn("Invalid WebSocket message", { clientId, error: validation.error, type: msg?.type });
+      ws.send(JSON.stringify({ type: "error", message: "Invalid message format" }));
+      return;
+    }
 
     if (msg.type === "attach") {
       const name = msg.session || "default";
