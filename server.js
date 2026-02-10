@@ -841,7 +841,8 @@ async function handleRequest(req, res) {
   // Everything else requires HTTPS (or localhost)
   if (!req.socket.encrypted && !isLocalRequest(req)) {
     // Allow explicitly listed paths on HTTP (cert installation flow)
-    if (!HTTP_ALLOWED_PATHS.includes(pathname)) {
+    // Also allow public paths and their static resources through
+    if (!HTTP_ALLOWED_PATHS.includes(pathname) && !isPublicPath(pathname)) {
       const cookies = parseCookies(req.headers.cookie);
       const token = cookies.get("katulong_session");
       const state = loadState();
