@@ -10,12 +10,12 @@ describe("PairingChallenge", () => {
       assert.ok(uuidRegex.test(challenge.code));
     });
 
-    it("creates a challenge with 6-digit PIN", () => {
+    it("creates a challenge with 8-digit PIN", () => {
       const challenge = PairingChallenge.generate();
-      assert.strictEqual(challenge.pin.length, 6);
-      assert.ok(/^\d{6}$/.test(challenge.pin));
+      assert.strictEqual(challenge.pin.length, 8);
+      assert.ok(/^\d{8}$/.test(challenge.pin));
       const pinNum = parseInt(challenge.pin, 10);
-      assert.ok(pinNum >= 100000 && pinNum <= 999999);
+      assert.ok(pinNum >= 10000000 && pinNum <= 99999999);
     });
 
     it("sets expiry timestamp based on TTL", () => {
@@ -51,18 +51,18 @@ describe("PairingChallenge", () => {
 
   describe("isExpired", () => {
     it("returns false for future expiry", () => {
-      const challenge = new PairingChallenge("test-code", "123456", Date.now() + 10000);
+      const challenge = new PairingChallenge("test-code", "12345678", Date.now() + 10000);
       assert.strictEqual(challenge.isExpired(), false);
     });
 
     it("returns true for past expiry", () => {
-      const challenge = new PairingChallenge("test-code", "123456", Date.now() - 1000);
+      const challenge = new PairingChallenge("test-code", "12345678", Date.now() - 1000);
       assert.strictEqual(challenge.isExpired(), true);
     });
 
     it("returns true when exactly at expiry time", () => {
       const now = Date.now();
-      const challenge = new PairingChallenge("test-code", "123456", now);
+      const challenge = new PairingChallenge("test-code", "12345678", now);
 
       // Wait a tiny bit to ensure we're past expiry
       const start = Date.now();
@@ -74,56 +74,56 @@ describe("PairingChallenge", () => {
 
   describe("verify", () => {
     it("returns valid: true for correct PIN", () => {
-      const challenge = new PairingChallenge("test-code", "123456", Date.now() + 10000);
-      const result = challenge.verify("123456");
+      const challenge = new PairingChallenge("test-code", "12345678", Date.now() + 10000);
+      const result = challenge.verify("12345678");
       assert.strictEqual(result.valid, true);
       assert.strictEqual(result.reason, undefined);
     });
 
     it("returns valid: false for incorrect PIN", () => {
-      const challenge = new PairingChallenge("test-code", "123456", Date.now() + 10000);
-      const result = challenge.verify("654321");
+      const challenge = new PairingChallenge("test-code", "12345678", Date.now() + 10000);
+      const result = challenge.verify("87654321");
       assert.strictEqual(result.valid, false);
       assert.strictEqual(result.reason, "wrong-pin");
     });
 
     it("normalizes PIN by stripping non-digits", () => {
-      const challenge = new PairingChallenge("test-code", "123456", Date.now() + 10000);
-      const result = challenge.verify("12-34-56");
+      const challenge = new PairingChallenge("test-code", "12345678", Date.now() + 10000);
+      const result = challenge.verify("12-34-56-78");
       assert.strictEqual(result.valid, true);
     });
 
     it("returns invalid-format for too short PIN", () => {
-      const challenge = new PairingChallenge("test-code", "123456", Date.now() + 10000);
-      const result = challenge.verify("12345");
-      assert.strictEqual(result.valid, false);
-      assert.strictEqual(result.reason, "invalid-format");
-    });
-
-    it("returns invalid-format for too long PIN", () => {
-      const challenge = new PairingChallenge("test-code", "123456", Date.now() + 10000);
+      const challenge = new PairingChallenge("test-code", "12345678", Date.now() + 10000);
       const result = challenge.verify("1234567");
       assert.strictEqual(result.valid, false);
       assert.strictEqual(result.reason, "invalid-format");
     });
 
+    it("returns invalid-format for too long PIN", () => {
+      const challenge = new PairingChallenge("test-code", "12345678", Date.now() + 10000);
+      const result = challenge.verify("123456789");
+      assert.strictEqual(result.valid, false);
+      assert.strictEqual(result.reason, "invalid-format");
+    });
+
     it("returns invalid-format for non-numeric PIN", () => {
-      const challenge = new PairingChallenge("test-code", "123456", Date.now() + 10000);
-      const result = challenge.verify("abcdef");
+      const challenge = new PairingChallenge("test-code", "12345678", Date.now() + 10000);
+      const result = challenge.verify("abcdefgh");
       assert.strictEqual(result.valid, false);
       assert.strictEqual(result.reason, "invalid-format");
     });
 
     it("returns invalid-format for empty PIN after normalization", () => {
-      const challenge = new PairingChallenge("test-code", "123456", Date.now() + 10000);
+      const challenge = new PairingChallenge("test-code", "12345678", Date.now() + 10000);
       const result = challenge.verify("---");
       assert.strictEqual(result.valid, false);
       assert.strictEqual(result.reason, "invalid-format");
     });
 
     it("handles numeric PIN input", () => {
-      const challenge = new PairingChallenge("test-code", "123456", Date.now() + 10000);
-      const result = challenge.verify(123456);
+      const challenge = new PairingChallenge("test-code", "12345678", Date.now() + 10000);
+      const result = challenge.verify(12345678);
       assert.strictEqual(result.valid, true);
     });
   });
@@ -131,22 +131,22 @@ describe("PairingChallenge", () => {
   describe("toJSON", () => {
     it("serializes to object with code, pin, expiresAt", () => {
       const expiresAt = Date.now() + 10000;
-      const challenge = new PairingChallenge("test-code", "123456", expiresAt);
+      const challenge = new PairingChallenge("test-code", "12345678", expiresAt);
       const json = challenge.toJSON();
 
       assert.deepStrictEqual(json, {
         code: "test-code",
-        pin: "123456",
+        pin: "12345678",
         expiresAt,
       });
     });
 
     it("works with JSON.stringify", () => {
       const expiresAt = Date.now() + 10000;
-      const challenge = new PairingChallenge("test-code", "123456", expiresAt);
+      const challenge = new PairingChallenge("test-code", "12345678", expiresAt);
       const json = JSON.stringify(challenge);
 
-      assert.strictEqual(json, `{"code":"test-code","pin":"123456","expiresAt":${expiresAt}}`);
+      assert.strictEqual(json, `{"code":"test-code","pin":"12345678","expiresAt":${expiresAt}}`);
     });
   });
 });
@@ -229,7 +229,7 @@ describe("PairingChallengeStore", () => {
 
     it("returns not-found for unknown code", () => {
       const store = new PairingChallengeStore();
-      const result = store.consume("00000000-0000-0000-0000-000000000000", "123456");
+      const result = store.consume("00000000-0000-0000-0000-000000000000", "12345678");
 
       assert.strictEqual(result.valid, false);
       assert.strictEqual(result.reason, "not-found");
@@ -253,7 +253,7 @@ describe("PairingChallengeStore", () => {
       const store = new PairingChallengeStore();
       const challenge = store.create();
 
-      const result = store.consume(challenge.code, "000000");
+      const result = store.consume(challenge.code, "00000000");
 
       assert.strictEqual(result.valid, false);
       assert.strictEqual(result.reason, "wrong-pin");
@@ -261,7 +261,7 @@ describe("PairingChallengeStore", () => {
 
     it("returns invalid-code-format for non-UUID code", () => {
       const store = new PairingChallengeStore();
-      const result = store.consume("not-a-uuid", "123456");
+      const result = store.consume("not-a-uuid", "12345678");
 
       assert.strictEqual(result.valid, false);
       assert.strictEqual(result.reason, "invalid-code-format");
@@ -269,7 +269,7 @@ describe("PairingChallengeStore", () => {
 
     it("returns invalid-code-format for null code", () => {
       const store = new PairingChallengeStore();
-      const result = store.consume(null, "123456");
+      const result = store.consume(null, "12345678");
 
       assert.strictEqual(result.valid, false);
       assert.strictEqual(result.reason, "invalid-code-format");
@@ -287,7 +287,7 @@ describe("PairingChallengeStore", () => {
     it("returns invalid-format for invalid PIN format", () => {
       const store = new PairingChallengeStore();
       const challenge = store.create();
-      const result = store.consume(challenge.code, "12345"); // Only 5 digits
+      const result = store.consume(challenge.code, "1234567"); // Only 5 digits
 
       assert.strictEqual(result.valid, false);
       assert.strictEqual(result.reason, "invalid-format");
