@@ -2350,11 +2350,61 @@
     const viewPair = document.getElementById("settings-view-pair");
     const viewSuccess = document.getElementById("settings-view-success");
 
-    let wizardPairRefreshTimer = 0;
-    let wizardPairCountdownTimer = 0;
+    // --- Wizard lifecycle manager (edge module) ---
+    const createWizardManager = () => {
+      let state = {
+        activePairCode: null,
+        connectInfoCache: null,
+        qrLibLoaded: false,
+        timers: {
+          refresh: 0,
+          countdown: 0
+        }
+      };
+
+      const cleanup = () => {
+        clearTimeout(state.timers.refresh);
+        clearInterval(state.timers.countdown);
+        state.timers = { refresh: 0, countdown: 0 };
+        state.activePairCode = null;
+      };
+
+      const loadQRLib = async () => {
+        if (state.qrLibLoaded) return;
+        if (typeof QRCode !== "undefined") {
+          state.qrLibLoaded = true;
+          return;
+        }
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "/vendor/qrcode/qrcode.min.js";
+          s.onload = () => {
+            state.qrLibLoaded = true;
+            resolve();
+          };
+          s.onerror = reject;
+          document.head.appendChild(s);
+        });
+      };
+
+      const getConnectInfo = async () => {
+        if (state.connectInfoCache) return state.connectInfoCache;
+        const res = await fetch("/connect/info");
+        state.connectInfoCache = await res.json();
+        return state.connectInfoCache;
+      };
+
+      const getActivePairCode = () => state.activePairCode;
+
+      return { cleanup, loadQRLib, getConnectInfo, getActivePairCode, state };
+    };
+
+    const wizardManager = createWizardManager();
+    // Expose for WebSocket handler compatibility
     let wizardActivePairCode = null;
-    let connectInfoCache = null;
-    let qrLibLoaded = false;
+    Object.defineProperty(window, 'wizardActivePairCode', {
+      get: () => wizardManager.getActivePairCode()
+    });
 
     function switchSettingsView(toView) {
       const current = settingsViews.querySelector(".settings-view.active");
@@ -2389,31 +2439,12 @@
       settingsViews.addEventListener("transitionend", onEnd);
     }
 
-    async function loadQRLib() {
-      if (qrLibLoaded) return;
-      if (typeof QRCode !== "undefined") { qrLibLoaded = true; return; }
-      await new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = "/vendor/qrcode/qrcode.min.js";
-        s.onload = () => { qrLibLoaded = true; resolve(); };
-        s.onerror = reject;
-        document.head.appendChild(s);
-      });
-    }
-
-    async function getConnectInfo() {
-      if (connectInfoCache) return connectInfoCache;
-      const res = await fetch("/connect/info");
-      connectInfoCache = await res.json();
-      return connectInfoCache;
-    }
-
     async function renderTrustQR() {
       const container = document.getElementById("wizard-trust-qr");
       container.innerHTML = "";
       try {
-        await loadQRLib();
-        const info = await getConnectInfo();
+        await wizardManager.loadQRLib();
+        const info = await wizardManager.getConnectInfo();
         if (info.trustUrl) {
           const isDark = getEffectiveTheme() === "dark";
           QRCode.toCanvas(info.trustUrl, {
@@ -2427,9 +2458,7 @@
     }
 
     function stopWizardPairing() {
-      clearTimeout(wizardPairRefreshTimer);
-      clearInterval(wizardPairCountdownTimer);
-      wizardActivePairCode = null;
+      wizardManager.cleanup();
     }
 
     async function refreshWizardPairCode() {
@@ -2438,13 +2467,13 @@
         if (!res.ok) return;
         const data = await res.json();
 
-        wizardActivePairCode = data.code;
+        wizardManager.state.activePairCode = data.code;
 
         // Render QR
         const qrContainer = document.getElementById("wizard-pair-qr");
         qrContainer.innerHTML = "";
         if (data.url) {
-          await loadQRLib();
+          await wizardManager.loadQRLib();
           const isDark = getEffectiveTheme() === "dark";
           QRCode.toCanvas(data.url, {
             width: 200, margin: 2,
@@ -2458,18 +2487,18 @@
         document.getElementById("wizard-pair-pin").textContent = data.pin;
 
         // Countdown
-        clearInterval(wizardPairCountdownTimer);
+        clearInterval(wizardManager.state.timers.countdown);
         const countdownEl = document.getElementById("wizard-pair-countdown");
         function updateCountdown() {
           const left = Math.max(0, Math.ceil((data.expiresAt - Date.now()) / 1000));
           countdownEl.textContent = left > 0 ? `Refreshing in ${left}s` : "Refreshing\u2026";
         }
         updateCountdown();
-        wizardPairCountdownTimer = setInterval(updateCountdown, 1000);
+        wizardManager.state.timers.countdown = setInterval(updateCountdown, 1000);
 
         // Schedule refresh ~25s (5s before expiry)
         const refreshIn = Math.max(1000, (data.expiresAt - Date.now()) - 5000);
-        wizardPairRefreshTimer = setTimeout(() => {
+        wizardManager.state.timers.refresh = setTimeout(() => {
           if (viewPair.classList.contains("active")) refreshWizardPairCode();
         }, refreshIn);
       } catch { /* ignore */ }
