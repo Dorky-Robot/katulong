@@ -555,6 +555,9 @@ const routes = [
   // --- Device management ---
 
   { method: "GET", path: "/auth/devices", handler: (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
     const state = loadState();
     if (!state) return json(res, 400, { error: "Not set up" });
     const devices = state.getCredentialsWithMetadata();
@@ -562,6 +565,9 @@ const routes = [
   }},
 
   { method: "POST", prefix: "/auth/devices/", handler: async (req, res, param) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
     // param is everything after /auth/devices/
     // e.g., "abc123/name" or "abc123/refresh"
     const parts = param.split('/');
@@ -611,6 +617,9 @@ const routes = [
   }},
 
   { method: "DELETE", prefix: "/auth/devices/", handler: async (req, res, id) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
     // Prevent removing devices from localhost (the server machine)
     // This prevents accidentally breaking the server
     if (isLocalRequest(req)) {
@@ -641,6 +650,9 @@ const routes = [
   // --- Upload route ---
 
   { method: "POST", path: "/upload", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
     let buf;
     try {
       buf = await readRawBody(req, MAX_UPLOAD_BYTES);
@@ -662,6 +674,9 @@ const routes = [
   // --- App routes ---
 
   { method: "GET", path: "/ssh/password", handler: (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
     json(res, 200, { password: SSH_PASSWORD || SETUP_TOKEN });
   }},
 
@@ -671,6 +686,9 @@ const routes = [
   }},
 
   { method: "PUT", path: "/shortcuts", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
     const data = await parseJSON(req);
     const result = await daemonRPC({ type: "set-shortcuts", data });
     json(res, result.error ? 400 : 200, result.error ? { error: result.error } : { ok: true });
