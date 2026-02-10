@@ -17,7 +17,7 @@ import {
   generateRegistrationOpts, generateRegistrationOptsForUser, verifyRegistration,
   generateAuthOpts, verifyAuth,
   createSession, validateSession, pruneExpiredSessions, revokeAllSessions,
-  withStateLock,
+  withStateLock, refreshSessionActivity,
 } from "./lib/auth.js";
 import {
   parseCookies, setSessionCookie, getOriginAndRpID,
@@ -801,6 +801,19 @@ async function handleRequest(req, res) {
     res.writeHead(302, { Location: "/login" });
     res.end();
     return;
+  }
+
+  // Refresh session activity for authenticated requests (sliding expiry)
+  // Skip for localhost (auto-authenticated) and public paths
+  if (!isPublicPath(pathname) && !isLocalRequest(req) && process.env.KATULONG_NO_AUTH !== "1") {
+    const cookies = parseCookies(req.headers.cookie);
+    const token = cookies.get("katulong_session");
+    if (token) {
+      // Fire and forget - don't block request processing
+      refreshSessionActivity(token).catch(err => {
+        log.error("Failed to refresh session activity", { error: err.message });
+      });
+    }
   }
 
   const match = matchRoute(req.method, pathname);
