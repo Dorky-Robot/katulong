@@ -2692,15 +2692,62 @@
       return file.type.startsWith("image/");
     }
 
-    // --- Drag-and-drop ---
+    // --- Drag-and-drop state machine ---
 
     const dropOverlay = document.getElementById("drop-overlay");
-    let dragCounter = 0;
+
+    // Drag-and-drop state machine
+    const dragDropReducer = (state, action) => {
+      switch (action.type) {
+        case 'DRAG_ENTER':
+          return {
+            ...state,
+            dragCounter: state.dragCounter + 1,
+            isDragging: true
+          };
+        case 'DRAG_LEAVE':
+          const newCounter = state.dragCounter - 1;
+          return {
+            ...state,
+            dragCounter: Math.max(0, newCounter),
+            isDragging: newCounter > 0
+          };
+        case 'DROP':
+          return {
+            dragCounter: 0,
+            isDragging: false
+          };
+        default:
+          return state;
+      }
+    };
+
+    // Drag-and-drop manager (stateful edge module)
+    const createDragDropManager = () => {
+      let dragState = { dragCounter: 0, isDragging: false };
+
+      const dispatch = (action) => {
+        const prevState = dragState;
+        dragState = dragDropReducer(dragState, action);
+
+        // Side effect: Update overlay visibility
+        if (prevState.isDragging !== dragState.isDragging) {
+          if (dragState.isDragging) {
+            dropOverlay.classList.add("visible");
+          } else {
+            dropOverlay.classList.remove("visible");
+          }
+        }
+      };
+
+      return { dispatch, getState: () => dragState };
+    };
+
+    const dragDropManager = createDragDropManager();
 
     document.addEventListener("dragenter", (e) => {
       e.preventDefault();
-      dragCounter++;
-      if (dragCounter === 1) dropOverlay.classList.add("visible");
+      dragDropManager.dispatch({ type: 'DRAG_ENTER' });
     });
 
     document.addEventListener("dragover", (e) => {
@@ -2709,17 +2756,12 @@
 
     document.addEventListener("dragleave", (e) => {
       e.preventDefault();
-      dragCounter--;
-      if (dragCounter <= 0) {
-        dragCounter = 0;
-        dropOverlay.classList.remove("visible");
-      }
+      dragDropManager.dispatch({ type: 'DRAG_LEAVE' });
     });
 
     document.addEventListener("drop", (e) => {
       e.preventDefault();
-      dragCounter = 0;
-      dropOverlay.classList.remove("visible");
+      dragDropManager.dispatch({ type: 'DROP' });
       const files = [...(e.dataTransfer?.files || [])].filter(isImageFile);
       if (files.length === 0) {
         if (e.dataTransfer?.files?.length > 0) showToast("Not an image file", true);
