@@ -759,9 +759,9 @@
       <textarea id="dictation-input" class="dictation-input"
         rows="3" placeholder="type..." autocorrect="off" autocapitalize="off"
         autocomplete="off" spellcheck="false" aria-label="Dictation input"></textarea>
-      <button class="dictation-images-btn" id="dictation-add-images" type="button">
+      <label for="dictation-file-input" class="dictation-images-btn">
         <i class="ph ph-image"></i> Add Images
-      </button>
+      </label>
       <input type="file" id="dictation-file-input" accept="image/*" multiple hidden>
       <div class="dictation-thumbs" id="dictation-thumbs"></div>
       <div class="dictation-footer">
@@ -908,6 +908,41 @@
       white: "#acb0be", brightWhite: "#bcc0cc",
     };
 
+    // --- Scroll state management (composable effects) ---
+
+    // Pure: Check if viewport is at bottom
+    function isAtBottom(viewport = document.querySelector(".xterm-viewport")) {
+      if (!viewport) return true;
+      // Dynamic threshold: 10px minimum or 2% of viewport height (better for high-DPI)
+      const threshold = Math.max(10, viewport.clientHeight * 0.02);
+      return viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - threshold;
+    }
+
+    // Effect: Scroll to bottom with double RAF for layout settling
+    const scrollToBottom = () => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => term.scrollToBottom());
+      });
+    };
+
+    // Composable: Preserve scroll position during operation
+    const withPreservedScroll = (operation) => {
+      const viewport = document.querySelector(".xterm-viewport");
+      const wasAtBottom = isAtBottom(viewport);
+      operation();
+      if (wasAtBottom) scrollToBottom();
+    };
+
+    // Composable: Terminal write with preserved scroll
+    const terminalWriteWithScroll = (data, onComplete) => {
+      const viewport = document.querySelector(".xterm-viewport");
+      const wasAtBottom = isAtBottom(viewport);
+      term.write(data, () => {
+        if (wasAtBottom) scrollToBottom();
+        if (onComplete) onComplete();
+      });
+    };
+
     function getEffectiveTheme() {
       const pref = localStorage.getItem("theme") || "auto";
       return pref === "auto"
@@ -920,12 +955,9 @@
       document.documentElement.setAttribute("data-theme", pref);
       const effective = getEffectiveTheme();
 
-      const viewport = document.querySelector(".xterm-viewport");
-      const wasAtBottom = isAtBottom(viewport);
-
-      term.options.theme = effective === "light" ? LIGHT_THEME : DARK_THEME;
-
-      scrollToBottomIfWasAtBottom(wasAtBottom);
+      withPreservedScroll(() => {
+        term.options.theme = effective === "light" ? LIGHT_THEME : DARK_THEME;
+      });
 
       const metaTheme = document.querySelector('meta[name="theme-color"]');
       if (metaTheme) metaTheme.content = effective === "light" ? "#eff1f5" : "#1e1e2e";
@@ -938,31 +970,206 @@
 
     // --- State ---
 
-    let sessionName = new URLSearchParams(location.search).get("s") || "default";
-    let shortcuts = [];
-    let composedKeys = [];
-    let ws;
-    let reconnectDelay = 1000;
-    let p2pPeer = null;
-    let p2pConnected = false;
-    let wsAttached = false;
-    let userScrolledUpBeforeDisconnect = false;
-    let p2pRetryTimer = 0;
-    const P2P_RETRY_MS = 3000;
+    // --- Centralized application state (at edge) ---
+    const createAppState = () => {
+      const initialSessionName = new URLSearchParams(location.search).get("s") || "default";
 
-    function scheduleP2PRetry() {
-      clearTimeout(p2pRetryTimer);
-      p2pRetryTimer = setTimeout(() => {
-        if (!p2pConnected && ws?.readyState === 1) initP2P();
-      }, P2P_RETRY_MS);
-    }
+      return {
+        session: {
+          name: initialSessionName,
+          shortcuts: [],
+          composedKeys: []
+        },
+        connection: {
+          ws: null,
+          attached: false,
+          reconnectDelay: 1000
+        },
+        p2p: {
+          peer: null,
+          connected: false,
+          retryTimer: 0,
+          RETRY_MS: 3000
+        },
+        scroll: {
+          userScrolledUpBeforeDisconnect: false
+        },
+        // Controlled state updates
+        update(path, value) {
+          const keys = path.split('.');
+          let obj = this;
+          for (let i = 0; i < keys.length - 1; i++) {
+            obj = obj[keys[i]];
+          }
+          obj[keys[keys.length - 1]] = value;
+          return this;
+        },
+        // Batch updates
+        updateMany(updates) {
+          Object.entries(updates).forEach(([path, value]) => {
+            this.update(path, value);
+          });
+          return this;
+        }
+      };
+    };
 
+    const state = createAppState();
+
+    // Compatibility aliases (to be removed as refactoring progresses)
+    let sessionName = state.session.name;
+    // --- Shortcuts state management (reducer pattern) ---
+    const shortcutsReducer = (currentShortcuts, action) => {
+      switch (action.type) {
+        case 'LOAD':
+          return Array.isArray(action.items) ? action.items.filter(s => s.label && s.keys) : [];
+        case 'ADD':
+          return [...currentShortcuts, action.item];
+        case 'REMOVE':
+          return currentShortcuts.filter((_, idx) => idx !== action.index);
+        default:
+          return currentShortcuts;
+      }
+    };
+
+    const dispatchShortcuts = (action) => {
+      const newShortcuts = shortcutsReducer(state.session.shortcuts, action);
+      state.update('session.shortcuts', newShortcuts);
+      // Render effects
+      renderBar(sessionName);
+      if (action.type === 'REMOVE' || action.type === 'ADD') {
+        renderEditList(state.session.shortcuts);
+      }
+    };
+    let composedKeys = state.session.composedKeys;
+    let ws = state.connection.ws;
+    let reconnectDelay = state.connection.reconnectDelay;
+    let wsAttached = state.connection.attached;
+    let userScrolledUpBeforeDisconnect = state.scroll.userScrolledUpBeforeDisconnect;
+
+    // --- P2P Manager (edge module) ---
+    const createP2PManager = (config) => {
+      let peer = null;
+      let connected = false;
+      let retryTimer = 0;
+      const RETRY_MS = 3000;
+
+      const { onStateChange, onData, getWS } = config;
+
+      const destroy = () => {
+        clearTimeout(retryTimer);
+        retryTimer = 0;
+        if (peer) {
+          try { peer.destroy(); } catch {}
+          peer = null;
+        }
+        if (connected) {
+          connected = false;
+          onStateChange({ connected: false, peer: null });
+        }
+      };
+
+      const scheduleRetry = () => {
+        clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => {
+          const ws = getWS();
+          if (!connected && ws?.readyState === 1) {
+            create();
+          }
+        }, RETRY_MS);
+      };
+
+      const create = () => {
+        if (typeof SimplePeer === "undefined") return;
+        destroy();
+
+        const ws = getWS();
+        const newPeer = new SimplePeer({ initiator: true, trickle: true, config: { iceServers: [] } });
+
+        newPeer.on("signal", (data) => {
+          if (ws?.readyState === 1) {
+            ws.send(JSON.stringify({ type: "p2p-signal", data }));
+          }
+        });
+
+        newPeer.on("connect", () => {
+          connected = true;
+          console.log("[P2P] DataChannel connected");
+          onStateChange({ connected: true, peer: newPeer });
+        });
+
+        newPeer.on("data", (chunk) => {
+          const str = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+          onData(str);
+        });
+
+        newPeer.on("close", () => {
+          console.log("[P2P] DataChannel closed, using WS");
+          connected = false;
+          peer = null;
+          onStateChange({ connected: false, peer: null });
+          scheduleRetry();
+        });
+
+        newPeer.on("error", (err) => {
+          console.warn("[P2P] error:", err.message);
+          connected = false;
+          peer = null;
+          onStateChange({ connected: false, peer: null });
+          scheduleRetry();
+        });
+
+        peer = newPeer;
+        onStateChange({ connected: false, peer: newPeer });
+      };
+
+      const signal = (data) => {
+        if (peer) peer.signal(data);
+      };
+
+      const send = (data) => {
+        if (!connected || !peer) return false;
+        try {
+          peer.send(data);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      const getState = () => ({ connected, peer });
+
+      return { create, destroy, signal, send, getState, scheduleRetry };
+    };
+
+    // Initialize P2P manager
+    const p2pManager = createP2PManager({
+      onStateChange: (p2pState) => {
+        state.update('p2p.connected', p2pState.connected);
+        state.update('p2p.peer', p2pState.peer);
+        updateP2PIndicator();
+      },
+      onData: (str) => {
+        try {
+          const msg = JSON.parse(str);
+          if (msg.type === "output") {
+            terminalWriteWithScroll(msg.data);
+          }
+        } catch {
+          terminalWriteWithScroll(str);
+        }
+      },
+      getWS: () => ws
+    });
+
+    // P2P UI indicator (pure effect)
     function updateP2PIndicator() {
       const dot = document.getElementById("p2p-indicator");
       if (!dot) return;
-      dot.classList.toggle("p2p-active", p2pConnected);
-      dot.classList.toggle("p2p-relay", wsAttached && !p2pConnected);
-      dot.title = p2pConnected ? "Connected (direct)"
+      const p2pState = p2pManager.getState();
+      dot.classList.toggle("p2p-active", p2pState.connected);
+      dot.classList.toggle("p2p-relay", wsAttached && !p2pState.connected);
+      dot.title = p2pState.connected ? "Connected (direct)"
         : wsAttached ? "Connected (relay)"
         : "Disconnected";
     }
@@ -1004,42 +1211,15 @@
       { childList: true, subtree: true }
     );
     document.fonts.ready.then(() => {
-      preserveScrollDuring(() => fit.fit());
+      withPreservedScroll(() => fit.fit());
       // Ensure we start at bottom on initial page load
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => term.scrollToBottom());
-      });
+      scrollToBottom();
     });
 
     applyTheme(localStorage.getItem("theme") || "auto");
     window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
       if ((localStorage.getItem("theme") || "auto") === "auto") applyTheme("auto");
     });
-
-    // --- Scroll state utilities ---
-
-    function isAtBottom(viewport = document.querySelector(".xterm-viewport")) {
-      if (!viewport) return true;
-      // Dynamic threshold: 10px minimum or 2% of viewport height (better for high-DPI)
-      const threshold = Math.max(10, viewport.clientHeight * 0.02);
-      return viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - threshold;
-    }
-
-    function scrollToBottomIfWasAtBottom(wasAtBottom) {
-      if (wasAtBottom) {
-        // Double RAF ensures layout settles before scrolling
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => term.scrollToBottom());
-        });
-      }
-    }
-
-    function preserveScrollDuring(operation) {
-      const viewport = document.querySelector(".xterm-viewport");
-      const wasAtBottom = isAtBottom(viewport);
-      operation();
-      scrollToBottomIfWasAtBottom(wasAtBottom);
-    }
 
     // --- WebSocket ---
 
@@ -1051,17 +1231,12 @@
         sendTimer = requestAnimationFrame(() => {
           sendTimer = 0;
           if (!sendBuf) return;
-          if (p2pConnected && p2pPeer) {
-            try {
-              p2pPeer.send(JSON.stringify({ type: "input", data: sendBuf }));
-            } catch {
-              // DataChannel send failed, fall back to WS
-              if (ws?.readyState === 1) {
-                ws.send(JSON.stringify({ type: "input", data: sendBuf }));
-              }
+          const payload = JSON.stringify({ type: "input", data: sendBuf });
+          // Try P2P first, fall back to WebSocket
+          if (!p2pManager.send(payload)) {
+            if (ws?.readyState === 1) {
+              ws.send(payload);
             }
-          } else if (ws?.readyState === 1) {
-            ws.send(JSON.stringify({ type: "input", data: sendBuf }));
           }
           sendBuf = "";
         });
@@ -1118,76 +1293,123 @@
       if (filtered) rawSend(filtered);
     });
 
-    function destroyP2P() {
-      clearTimeout(p2pRetryTimer);
-      if (p2pPeer) {
-        try { p2pPeer.destroy(); } catch {}
-        p2pPeer = null;
+    // --- Pure WebSocket message handlers (functional core) ---
+    const wsMessageHandlers = {
+      attached: (msg, currentState) => ({
+        stateUpdates: {
+          'connection.attached': true,
+          'scroll.userScrolledUpBeforeDisconnect': false
+        },
+        effects: [
+          { type: 'updateP2PIndicator' },
+          { type: 'initP2P' },
+          { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect }
+        ]
+      }),
+
+      output: (msg) => ({
+        stateUpdates: {},
+        effects: [
+          { type: 'terminalWrite', data: msg.data, preserveScroll: true }
+        ]
+      }),
+
+      'p2p-signal': (msg, currentState) => ({
+        stateUpdates: {},
+        effects: currentState.p2p.peer
+          ? [{ type: 'p2pSignal', data: msg.data }]
+          : []
+      }),
+
+      'p2p-ready': () => ({
+        stateUpdates: {},
+        effects: [
+          { type: 'log', message: '[P2P] Server confirmed DataChannel ready' },
+          { type: 'updateP2PIndicator' }
+        ]
+      }),
+
+      'p2p-closed': () => ({
+        stateUpdates: { 'p2p.connected': false },
+        effects: [
+          { type: 'log', message: '[P2P] Server reports DataChannel closed' },
+          { type: 'updateP2PIndicator' }
+        ]
+      }),
+
+      'pair-complete': (msg, currentState, wizardActivePairCode) => ({
+        stateUpdates: {},
+        effects: (wizardActivePairCode && msg.code === wizardActivePairCode)
+          ? [{ type: 'stopWizardPairing' }, { type: 'switchSettingsView', view: 'success' }]
+          : []
+      }),
+
+      reload: () => ({
+        stateUpdates: {},
+        effects: [{ type: 'reload' }]
+      }),
+
+      exit: () => ({
+        stateUpdates: {},
+        effects: [{ type: 'terminalWrite', data: '\r\n[shell exited]\r\n' }]
+      }),
+
+      'session-removed': () => ({
+        stateUpdates: {},
+        effects: [{ type: 'terminalWrite', data: '\r\n[session deleted]\r\n' }]
+      }),
+
+      'session-renamed': (msg) => ({
+        stateUpdates: { 'session.name': msg.name },
+        effects: [{ type: 'updateSessionUI', name: msg.name }]
+      })
+    };
+
+    // Effect executor (side effects at edges)
+    function executeEffect(effect) {
+      switch (effect.type) {
+        case 'updateP2PIndicator':
+          updateP2PIndicator();
+          break;
+        case 'initP2P':
+          p2pManager.create();
+          break;
+        case 'scrollToBottomIfNeeded':
+          if (effect.condition) {
+            scrollToBottom();
+          }
+          break;
+        case 'terminalWrite':
+          if (effect.preserveScroll) {
+            terminalWriteWithScroll(effect.data);
+          } else {
+            term.write(effect.data);
+          }
+          break;
+        case 'p2pSignal':
+          p2pManager.signal(effect.data);
+          break;
+        case 'log':
+          console.log(effect.message);
+          break;
+        case 'stopWizardPairing':
+          stopWizardPairing();
+          break;
+        case 'switchSettingsView':
+          switchSettingsView(effect.view === 'success' ? viewSuccess : null);
+          break;
+        case 'reload':
+          location.reload();
+          break;
+        case 'updateSessionUI':
+          sessionName = effect.name;
+          document.title = effect.name;
+          const url = new URL(window.location);
+          url.searchParams.set("s", effect.name);
+          history.replaceState(null, "", url);
+          renderBar(effect.name);
+          break;
       }
-      p2pConnected = false;
-      updateP2PIndicator();
-    }
-
-    function initP2P() {
-      if (typeof SimplePeer === "undefined") return;
-      destroyP2P();
-
-      const peer = new SimplePeer({ initiator: true, trickle: true, config: { iceServers: [] } });
-
-      peer.on("signal", (data) => {
-        if (ws?.readyState === 1) {
-          ws.send(JSON.stringify({ type: "p2p-signal", data }));
-        }
-      });
-
-      peer.on("connect", () => {
-        p2pConnected = true;
-        console.log("[P2P] DataChannel connected");
-        updateP2PIndicator();
-      });
-
-      peer.on("data", (chunk) => {
-        const str = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
-        const viewport = document.querySelector(".xterm-viewport");
-        const wasAtBottom = isAtBottom(viewport);
-
-        // Helper to scroll after write completes
-        const scrollIfNeeded = () => {
-          if (wasAtBottom) {
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => term.scrollToBottom());
-            });
-          }
-        };
-
-        try {
-          const msg = JSON.parse(str);
-          if (msg.type === "output") {
-            term.write(msg.data, scrollIfNeeded);
-          }
-        } catch {
-          // raw data, write directly
-          term.write(str, scrollIfNeeded);
-        }
-      });
-
-      peer.on("close", () => {
-        console.log("[P2P] DataChannel closed, using WS");
-        p2pConnected = false;
-        p2pPeer = null;
-        updateP2PIndicator();
-        scheduleP2PRetry();
-      });
-
-      peer.on("error", (err) => {
-        console.warn("[P2P] error:", err.message);
-        p2pConnected = false;
-        p2pPeer = null;
-        updateP2PIndicator();
-        scheduleP2PRetry();
-      });
-
-      p2pPeer = peer;
     }
 
     function connect() {
@@ -1202,56 +1424,22 @@
 
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
-        if (msg.type === "attached") {
-          wsAttached = true;
-          updateP2PIndicator();
-          initP2P();
-          // Only scroll to bottom if user wasn't deliberately viewing history
-          if (!userScrolledUpBeforeDisconnect) {
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => term.scrollToBottom());
-            });
+        const handler = wsMessageHandlers[msg.type];
+
+        if (handler) {
+          const { stateUpdates, effects } = handler(msg, state, wizardActivePairCode);
+
+          // Apply state updates
+          if (Object.keys(stateUpdates).length > 0) {
+            state.updateMany(stateUpdates);
+            // Sync compatibility aliases
+            wsAttached = state.connection.attached;
+            sessionName = state.session.name;
+            userScrolledUpBeforeDisconnect = state.scroll.userScrolledUpBeforeDisconnect;
           }
-          userScrolledUpBeforeDisconnect = false; // Reset
-        } else if (msg.type === "output") {
-          const viewport = document.querySelector(".xterm-viewport");
-          const wasAtBottom = isAtBottom(viewport);
-          // Write with callback to ensure scroll happens AFTER write completes
-          term.write(msg.data, () => {
-            // Preserve scroll-to-bottom behavior for large writes
-            if (wasAtBottom) {
-              requestAnimationFrame(() => {
-                requestAnimationFrame(() => term.scrollToBottom());
-              });
-            }
-          });
-        } else if (msg.type === "p2p-signal") {
-          if (p2pPeer) p2pPeer.signal(msg.data);
-        } else if (msg.type === "p2p-ready") {
-          console.log("[P2P] Server confirmed DataChannel ready");
-          updateP2PIndicator();
-        } else if (msg.type === "p2p-closed") {
-          console.log("[P2P] Server reports DataChannel closed");
-          p2pConnected = false;
-          updateP2PIndicator();
-        } else if (msg.type === "pair-complete") {
-          if (wizardActivePairCode && msg.code === wizardActivePairCode) {
-            stopWizardPairing();
-            switchSettingsView(viewSuccess);
-          }
-        } else if (msg.type === "reload") {
-          location.reload();
-        } else if (msg.type === "exit") {
-          term.write("\r\n[shell exited]\r\n");
-        } else if (msg.type === "session-removed") {
-          term.write("\r\n[session deleted]\r\n");
-        } else if (msg.type === "session-renamed") {
-          sessionName = msg.name;
-          document.title = sessionName;
-          const url = new URL(window.location);
-          url.searchParams.set("s", sessionName);
-          history.replaceState(null, "", url);
-          renderBar(sessionName);
+
+          // Execute effects
+          effects.forEach(executeEffect);
         }
       };
 
@@ -1259,7 +1447,7 @@
         const viewport = document.querySelector(".xterm-viewport");
         userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
         wsAttached = false;
-        destroyP2P();
+        p2pManager.destroy();
         setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 10000);
       };
@@ -1297,199 +1485,117 @@
     const bar = document.getElementById("shortcut-bar");
 
     // --- Joystick: hold left/right, flick up/down, long-press center for Enter ---
+    // --- Joystick state machine ---
     const joystick = document.getElementById("joystick");
     const enterRing = document.getElementById("enter-progress-ring");
     const enterCircle = enterRing.querySelector("circle");
-    {
-      let startX, startY;
-      let repeatTimer = null;
-      let currentDirection = null; // 'left' or 'right' when holding
-      let longPressTimer = null;
-      let hasMoved = false;
-      let enterSent = false;
 
-      const arrows = {
-        up: "\x1b[A",
-        down: "\x1b[B",
-        right: "\x1b[C",
-        left: "\x1b[D",
-      };
+    const ARROWS = {
+      up: "\x1b[A",
+      down: "\x1b[B",
+      right: "\x1b[C",
+      left: "\x1b[D",
+    };
 
-      const CENTER_THRESHOLD = 0.4; // 40% of radius for center zone
-      const LONG_PRESS_DURATION = 600; // ms to trigger Enter
-      const RING_CIRCUMFERENCE = 2 * Math.PI * 36; // circle radius = 36
+    const JOYSTICK_CONFIG = {
+      CENTER_THRESHOLD: 0.4,
+      LONG_PRESS_DURATION: 600,
+      RING_CIRCUMFERENCE: 2 * Math.PI * 36,
+      MOVEMENT_THRESHOLD: 10,
+      REPEAT_INTERVAL: 50
+    };
 
-      // Progress ring helpers
-      function showEnterRing() {
-        enterRing.classList.add("active");
-        enterCircle.style.strokeDasharray = RING_CIRCUMFERENCE;
-        enterCircle.style.strokeDashoffset = RING_CIRCUMFERENCE; // Start empty
-        enterCircle.style.transition = `stroke-dashoffset ${LONG_PRESS_DURATION}ms linear`;
+    // Pure: Determine zone from touch position
+    const getZone = (touch, rect) => {
+      const x = touch.clientX - rect.left - rect.width / 2;
+      const y = touch.clientY - rect.top - rect.height / 2;
+      const distance = Math.sqrt(x * x + y * y);
+      const radius = Math.min(rect.width, rect.height) / 2;
 
-        // Trigger animation on next frame
-        requestAnimationFrame(() => {
-          enterCircle.style.strokeDashoffset = 0; // Fill to complete
-        });
+      if (distance < radius * JOYSTICK_CONFIG.CENTER_THRESHOLD) {
+        return 'center';
       }
 
-      function hideEnterRing() {
+      return Math.abs(x) > Math.abs(y)
+        ? (x > 0 ? 'right' : 'left')
+        : (y > 0 ? 'down' : 'up');
+    };
+
+    // Joystick state reducer
+    const joystickReducer = (state, action) => {
+      switch (action.type) {
+        case 'TOUCH_START':
+          return {
+            mode: action.zone === 'center' ? 'long-press'
+              : (action.zone === 'left' || action.zone === 'right') ? 'hold'
+              : 'flick-wait',
+            zone: action.zone,
+            startX: action.x,
+            startY: action.y,
+            hasMoved: false,
+            enterSent: false
+          };
+
+        case 'TOUCH_MOVE':
+          const moved = Math.sqrt(action.dx * action.dx + action.dy * action.dy) > JOYSTICK_CONFIG.MOVEMENT_THRESHOLD;
+          return {
+            ...state,
+            hasMoved: state.hasMoved || moved,
+            zone: action.newZone || state.zone
+          };
+
+        case 'TOUCH_END':
+          return {
+            mode: 'idle',
+            zone: null,
+            startX: 0,
+            startY: 0,
+            hasMoved: false,
+            enterSent: false
+          };
+
+        case 'LONG_PRESS_COMPLETE':
+          return { ...state, enterSent: true };
+
+        case 'TOUCH_CANCEL':
+          return {
+            mode: 'idle',
+            zone: null,
+            startX: 0,
+            startY: 0,
+            hasMoved: false,
+            enterSent: false
+          };
+
+        default:
+          return state;
+      }
+    };
+
+    // Joystick effects (side effects at edges)
+    const joystickEffects = {
+      showRing: () => {
+        enterRing.classList.add("active");
+        enterCircle.style.strokeDasharray = JOYSTICK_CONFIG.RING_CIRCUMFERENCE;
+        enterCircle.style.strokeDashoffset = JOYSTICK_CONFIG.RING_CIRCUMFERENCE;
+        enterCircle.style.transition = `stroke-dashoffset ${JOYSTICK_CONFIG.LONG_PRESS_DURATION}ms linear`;
+        requestAnimationFrame(() => {
+          enterCircle.style.strokeDashoffset = 0;
+        });
+      },
+
+      hideRing: () => {
         enterRing.classList.remove("active");
         enterCircle.style.transition = "none";
-        enterCircle.style.strokeDashoffset = RING_CIRCUMFERENCE;
-      }
+        enterCircle.style.strokeDashoffset = JOYSTICK_CONFIG.RING_CIRCUMFERENCE;
+      },
 
-      // Determine initial zone from touch position
-      function getZone(touch, rect) {
-        const x = touch.clientX - rect.left - rect.width / 2;
-        const y = touch.clientY - rect.top - rect.height / 2;
-        const distance = Math.sqrt(x * x + y * y);
-        const radius = Math.min(rect.width, rect.height) / 2;
+      sendSequence: (sequence) => {
+        rawSend(sequence);
+        joystickEffects.showFeedback();
+      },
 
-        // Check if in center zone
-        if (distance < radius * CENTER_THRESHOLD) {
-          return 'center';
-        }
-
-        // Determine if horizontal or vertical is dominant
-        if (Math.abs(x) > Math.abs(y)) {
-          return x > 0 ? 'right' : 'left';
-        } else {
-          return y > 0 ? 'down' : 'up';
-        }
-      }
-
-      function startHold(direction) {
-        if (currentDirection === direction) return; // Already holding
-        stopHold();
-
-        currentDirection = direction;
-        const seq = arrows[direction];
-
-        // Send immediately
-        rawSend(seq);
-        showSwipeFeedback();
-
-        // Then repeat every 50ms
-        repeatTimer = setInterval(() => {
-          rawSend(seq);
-        }, 50);
-      }
-
-      function stopHold() {
-        if (repeatTimer) {
-          clearInterval(repeatTimer);
-          repeatTimer = null;
-        }
-        currentDirection = null;
-      }
-
-      joystick.addEventListener("touchstart", (e) => {
-        e.preventDefault();
-        const t = e.touches[0];
-        startX = t.clientX;
-        startY = t.clientY;
-        hasMoved = false;
-        enterSent = false;
-
-        const rect = joystick.getBoundingClientRect();
-        const zone = getZone(t, rect);
-
-        // Center: start long-press timer for Enter and show progress ring
-        if (zone === 'center') {
-          showEnterRing();
-          longPressTimer = setTimeout(() => {
-            if (!hasMoved) {
-              rawSend("\r");
-              showSwipeFeedback();
-              enterSent = true;
-              hideEnterRing();
-            }
-          }, LONG_PRESS_DURATION);
-          return;
-        }
-
-        // Left/right: start hold-to-repeat
-        if (zone === 'left' || zone === 'right') {
-          startHold(zone);
-        }
-        // Up/down: wait for flick on touchend
-      });
-
-      joystick.addEventListener("touchmove", (e) => {
-        e.preventDefault();
-        const t = e.touches[0];
-
-        // Track if significant movement occurred (cancels center long-press)
-        const dx = t.clientX - startX;
-        const dy = t.clientY - startY;
-        if (Math.sqrt(dx * dx + dy * dy) > 10) {
-          hasMoved = true;
-          // Cancel long-press timer and hide ring if moving
-          if (longPressTimer) {
-            clearTimeout(longPressTimer);
-            longPressTimer = null;
-            hideEnterRing();
-          }
-        }
-
-        // If holding left/right, allow switching between them
-        if (currentDirection) {
-          const rect = joystick.getBoundingClientRect();
-          const zone = getZone(t, rect);
-
-          if (zone === 'left' || zone === 'right') {
-            if (zone !== currentDirection) {
-              startHold(zone);
-            }
-          }
-        }
-      });
-
-      joystick.addEventListener("touchend", (e) => {
-        e.preventDefault();
-        const t = e.changedTouches[0];
-
-        // Clean up timers and hide ring
-        stopHold();
-        if (longPressTimer) {
-          clearTimeout(longPressTimer);
-          longPressTimer = null;
-          hideEnterRing();
-        }
-
-        // If Enter was already sent via long-press, don't process further
-        if (enterSent) {
-          return;
-        }
-
-        // Calculate swipe direction
-        const dx = t.clientX - startX;
-        const dy = t.clientY - startY;
-        const moved = Math.max(Math.abs(dx), Math.abs(dy));
-
-        // Only process directional swipes if moved enough
-        if (moved < 10) return;
-
-        // If primarily vertical movement, send one arrow for up/down flick
-        if (Math.abs(dy) > Math.abs(dx)) {
-          const seq = dy > 0 ? arrows.down : arrows.up;
-          rawSend(seq);
-          showSwipeFeedback();
-        }
-        // Note: horizontal is handled by hold-to-repeat
-      });
-
-      joystick.addEventListener("touchcancel", (e) => {
-        e.preventDefault();
-        stopHold();
-        if (longPressTimer) {
-          clearTimeout(longPressTimer);
-          longPressTimer = null;
-        }
-        hideEnterRing();
-      });
-
-      function showSwipeFeedback() {
+      showFeedback: () => {
         const rect = joystick.getBoundingClientRect();
         const x = rect.left + rect.width / 2;
         const y = rect.top + rect.height / 2;
@@ -1500,7 +1606,125 @@
         document.body.appendChild(el);
         el.addEventListener("animationend", () => el.remove(), { once: true });
       }
-    }
+    };
+
+    // Joystick manager (stateful edge module)
+    const createJoystickManager = () => {
+      let joyState = {
+        mode: 'idle',
+        zone: null,
+        startX: 0,
+        startY: 0,
+        hasMoved: false,
+        enterSent: false
+      };
+
+      let repeatTimer = null;
+      let longPressTimer = null;
+
+      const dispatch = (action) => {
+        const prevState = joyState;
+        joyState = joystickReducer(joyState, action);
+
+        // Handle side effects based on state transitions
+        if (prevState.mode !== joyState.mode) {
+          if (joyState.mode === 'long-press') {
+            joystickEffects.showRing();
+            longPressTimer = setTimeout(() => {
+              if (!joyState.hasMoved) {
+                joystickEffects.sendSequence("\r");
+                dispatch({ type: 'LONG_PRESS_COMPLETE' });
+                joystickEffects.hideRing();
+              }
+            }, JOYSTICK_CONFIG.LONG_PRESS_DURATION);
+          } else if (joyState.mode === 'hold' && (joyState.zone === 'left' || joyState.zone === 'right')) {
+            const seq = ARROWS[joyState.zone];
+            joystickEffects.sendSequence(seq);
+            repeatTimer = setInterval(() => {
+              rawSend(seq);
+            }, JOYSTICK_CONFIG.REPEAT_INTERVAL);
+          } else if (joyState.mode === 'idle' || joyState.mode === 'flick-wait') {
+            if (repeatTimer) {
+              clearInterval(repeatTimer);
+              repeatTimer = null;
+            }
+            if (longPressTimer) {
+              clearTimeout(longPressTimer);
+              longPressTimer = null;
+            }
+            joystickEffects.hideRing();
+          }
+        }
+
+        // Handle zone changes in hold mode
+        if (joyState.mode === 'hold' && prevState.zone !== joyState.zone && (joyState.zone === 'left' || joyState.zone === 'right')) {
+          if (repeatTimer) {
+            clearInterval(repeatTimer);
+          }
+          const seq = ARROWS[joyState.zone];
+          joystickEffects.sendSequence(seq);
+          repeatTimer = setInterval(() => {
+            rawSend(seq);
+          }, JOYSTICK_CONFIG.REPEAT_INTERVAL);
+        }
+
+        // Handle movement canceling long-press
+        if (joyState.mode === 'long-press' && joyState.hasMoved && !prevState.hasMoved) {
+          if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+          }
+          joystickEffects.hideRing();
+        }
+      };
+
+      return { dispatch, getState: () => joyState };
+    };
+
+    const joyManager = createJoystickManager();
+
+    joystick.addEventListener("touchstart", (e) => {
+      e.preventDefault();
+      const t = e.touches[0];
+      const rect = joystick.getBoundingClientRect();
+      const zone = getZone(t, rect);
+      joyManager.dispatch({ type: 'TOUCH_START', zone, x: t.clientX, y: t.clientY });
+    });
+
+    joystick.addEventListener("touchmove", (e) => {
+      e.preventDefault();
+      const t = e.touches[0];
+      const state = joyManager.getState();
+      const dx = t.clientX - state.startX;
+      const dy = t.clientY - state.startY;
+      const rect = joystick.getBoundingClientRect();
+      const newZone = (state.mode === 'hold') ? getZone(t, rect) : null;
+      joyManager.dispatch({ type: 'TOUCH_MOVE', dx, dy, newZone });
+    });
+
+    joystick.addEventListener("touchend", (e) => {
+      e.preventDefault();
+      const state = joyManager.getState();
+
+      if (!state.enterSent && state.mode === 'flick-wait') {
+        const t = e.changedTouches[0];
+        const dx = t.clientX - state.startX;
+        const dy = t.clientY - state.startY;
+        const moved = Math.max(Math.abs(dx), Math.abs(dy));
+
+        if (moved >= JOYSTICK_CONFIG.MOVEMENT_THRESHOLD && Math.abs(dy) > Math.abs(dx)) {
+          const seq = dy > 0 ? ARROWS.down : ARROWS.up;
+          joystickEffects.sendSequence(seq);
+        }
+      }
+
+      joyManager.dispatch({ type: 'TOUCH_END' });
+    });
+
+    joystick.addEventListener("touchcancel", (e) => {
+      e.preventDefault();
+      joyManager.dispatch({ type: 'TOUCH_CANCEL' });
+    });
 
     // --- Pull-up to refresh (force reconnect) ---
     {
@@ -1577,26 +1801,22 @@
     });
 
     const ro = new ResizeObserver(() => {
-      preserveScrollDuring(() => fit.fit());
+      withPreservedScroll(() => fit.fit());
       if (ws?.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
     });
     ro.observe(termContainer);
 
     function resizeToViewport() {
-      const viewport = document.querySelector(".xterm-viewport");
-      const wasAtBottom = isAtBottom(viewport);
-
-      const vv = window.visualViewport;
-      const h = vv ? vv.height : window.innerHeight;
-      const top = vv ? vv.offsetTop : 0;
-      bar.style.top = top + "px";
-      termContainer.style.height = (h - 44) + "px";
-      const s = document.documentElement.style;
-      s.setProperty("--viewport-h", h + "px");
-      s.setProperty("--viewport-top", top + "px");
-
-      // Container height changed, restore scroll position
-      scrollToBottomIfWasAtBottom(wasAtBottom);
+      withPreservedScroll(() => {
+        const vv = window.visualViewport;
+        const h = vv ? vv.height : window.innerHeight;
+        const top = vv ? vv.offsetTop : 0;
+        bar.style.top = top + "px";
+        termContainer.style.height = (h - 44) + "px";
+        const s = document.documentElement.style;
+        s.setProperty("--viewport-h", h + "px");
+        s.setProperty("--viewport-top", top + "px");
+      });
     }
     resizeToViewport();
     if (window.visualViewport) {
@@ -1667,8 +1887,35 @@
       });
     }
 
-    // --- Pure: key display ---
+    // --- Key transformation pipeline (composable) ---
 
+    // Pure: Composition helper
+    const pipe = (...fns) => (x) => fns.reduce((v, f) => f(v), x);
+
+    // Pure: Group keys by comma separator
+    const groupKeysBySeparator = (keys) => {
+      const groups = [];
+      let current = [];
+      for (const k of keys) {
+        if (k === ",") {
+          if (current.length > 0) groups.push(current);
+          current = [];
+        } else {
+          current.push(k);
+        }
+      }
+      if (current.length > 0) groups.push(current);
+      return groups;
+    };
+
+    // Pure: Transform groups with mapper function
+    const mapGroups = (groupMapper) => (groups) => groups.map(groupMapper);
+
+    // Pure: Join groups with separators
+    const joinGroups = (innerSep, outerSep) => (groups) =>
+      groups.map(g => g.join(innerSep)).join(outerSep);
+
+    // Pure: Key display mapping
     const KEY_DISPLAY = {
       ctrl: "Ctrl", cmd: "Cmd", alt: "Alt", option: "Option", shift: "Shift",
       esc: "Esc", escape: "Esc", tab: "Tab", enter: "Enter", return: "Enter",
@@ -1676,27 +1923,19 @@
       up: "Up", down: "Down", left: "Left", right: "Right",
     };
 
-    function displayKey(k) { return KEY_DISPLAY[k] || k.toUpperCase(); }
-    function keysLabel(keys) {
-      const groups = [];
-      let cur = [];
-      for (const k of keys) {
-        if (k === ",") { groups.push(cur.map(displayKey).join("+")); cur = []; }
-        else cur.push(k);
-      }
-      groups.push(cur.map(displayKey).join("+"));
-      return groups.join(", ");
-    }
-    function keysString(keys) {
-      const groups = [];
-      let cur = [];
-      for (const k of keys) {
-        if (k === ",") { groups.push(cur.join("+")); cur = []; }
-        else cur.push(k);
-      }
-      groups.push(cur.join("+"));
-      return groups.join(",");
-    }
+    const displayKey = (k) => KEY_DISPLAY[k] || k.toUpperCase();
+
+    // Composable pipelines
+    const keysLabel = pipe(
+      groupKeysBySeparator,
+      mapGroups(group => group.map(displayKey)),
+      joinGroups("+", ", ")
+    );
+
+    const keysString = pipe(
+      groupKeysBySeparator,
+      joinGroups("+", ",")
+    );
 
     const VALID_KEYS = new Set([
       "ctrl", "cmd", "alt", "option", "shift",
@@ -1757,7 +1996,7 @@
       kbBtn.tabIndex = -1;
       kbBtn.setAttribute("aria-label", "Open shortcuts");
       kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
-      kbBtn.addEventListener("click", () => openShortcutsPopup(shortcuts));
+      kbBtn.addEventListener("click", () => openShortcutsPopup(state.session.shortcuts));
       bar.appendChild(kbBtn);
 
       const setBtn = document.createElement("button");
@@ -1820,8 +2059,7 @@
         rm.setAttribute("aria-label", `Remove ${s.label}`);
         rm.innerHTML = '<i class="ph ph-x"></i>';
         rm.addEventListener("click", () => {
-          shortcuts = shortcuts.filter((_, idx) => idx !== i);
-          renderEditList(shortcuts);
+          dispatchShortcuts({ type: 'REMOVE', index: i });
         });
         row.appendChild(rm);
         editList.appendChild(row);
@@ -1829,7 +2067,7 @@
     }
 
     function openEditPanel() {
-      renderEditList(shortcuts);
+      renderEditList(state.session.shortcuts);
       openModal(editOverlay);
     }
 
@@ -1846,11 +2084,10 @@
       try {
         const res = await fetch("/shortcuts");
         const data = await res.json();
-        shortcuts = Array.isArray(data) ? data.filter(s => s.label && s.keys) : [];
+        dispatchShortcuts({ type: 'LOAD', items: data });
       } catch {
-        shortcuts = [];
+        dispatchShortcuts({ type: 'LOAD', items: [] });
       }
-      renderBar(sessionName);
     }
 
     async function saveShortcuts() {
@@ -1858,10 +2095,9 @@
         await fetch("/shortcuts", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(shortcuts),
+          body: JSON.stringify(state.session.shortcuts),
         });
       } catch { /* ignore */ }
-      renderBar(sessionName);
     }
 
     // --- Add shortcut modal (render takes data) ---
@@ -1938,9 +2174,8 @@
 
     document.getElementById("modal-save").addEventListener("click", () => {
       if (composedKeys.length === 0) return;
-      shortcuts = [...shortcuts, { label: keysLabel(composedKeys), keys: keysString(composedKeys) }];
+      dispatchShortcuts({ type: 'ADD', item: { label: keysLabel(composedKeys), keys: keysString(composedKeys) } });
       closeModal(addOverlay);
-      renderEditList(shortcuts);
     });
 
     dismissModal(addOverlay);
@@ -2134,11 +2369,61 @@
     const viewPair = document.getElementById("settings-view-pair");
     const viewSuccess = document.getElementById("settings-view-success");
 
-    let wizardPairRefreshTimer = 0;
-    let wizardPairCountdownTimer = 0;
+    // --- Wizard lifecycle manager (edge module) ---
+    const createWizardManager = () => {
+      let state = {
+        activePairCode: null,
+        connectInfoCache: null,
+        qrLibLoaded: false,
+        timers: {
+          refresh: 0,
+          countdown: 0
+        }
+      };
+
+      const cleanup = () => {
+        clearTimeout(state.timers.refresh);
+        clearInterval(state.timers.countdown);
+        state.timers = { refresh: 0, countdown: 0 };
+        state.activePairCode = null;
+      };
+
+      const loadQRLib = async () => {
+        if (state.qrLibLoaded) return;
+        if (typeof QRCode !== "undefined") {
+          state.qrLibLoaded = true;
+          return;
+        }
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "/vendor/qrcode/qrcode.min.js";
+          s.onload = () => {
+            state.qrLibLoaded = true;
+            resolve();
+          };
+          s.onerror = reject;
+          document.head.appendChild(s);
+        });
+      };
+
+      const getConnectInfo = async () => {
+        if (state.connectInfoCache) return state.connectInfoCache;
+        const res = await fetch("/connect/info");
+        state.connectInfoCache = await res.json();
+        return state.connectInfoCache;
+      };
+
+      const getActivePairCode = () => state.activePairCode;
+
+      return { cleanup, loadQRLib, getConnectInfo, getActivePairCode, state };
+    };
+
+    const wizardManager = createWizardManager();
+    // Expose for WebSocket handler compatibility
     let wizardActivePairCode = null;
-    let connectInfoCache = null;
-    let qrLibLoaded = false;
+    Object.defineProperty(window, 'wizardActivePairCode', {
+      get: () => wizardManager.getActivePairCode()
+    });
 
     function switchSettingsView(toView) {
       const current = settingsViews.querySelector(".settings-view.active");
@@ -2173,31 +2458,12 @@
       settingsViews.addEventListener("transitionend", onEnd);
     }
 
-    async function loadQRLib() {
-      if (qrLibLoaded) return;
-      if (typeof QRCode !== "undefined") { qrLibLoaded = true; return; }
-      await new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = "/vendor/qrcode/qrcode.min.js";
-        s.onload = () => { qrLibLoaded = true; resolve(); };
-        s.onerror = reject;
-        document.head.appendChild(s);
-      });
-    }
-
-    async function getConnectInfo() {
-      if (connectInfoCache) return connectInfoCache;
-      const res = await fetch("/connect/info");
-      connectInfoCache = await res.json();
-      return connectInfoCache;
-    }
-
     async function renderTrustQR() {
       const container = document.getElementById("wizard-trust-qr");
       container.innerHTML = "";
       try {
-        await loadQRLib();
-        const info = await getConnectInfo();
+        await wizardManager.loadQRLib();
+        const info = await wizardManager.getConnectInfo();
         if (info.trustUrl) {
           const isDark = getEffectiveTheme() === "dark";
           QRCode.toCanvas(info.trustUrl, {
@@ -2211,9 +2477,7 @@
     }
 
     function stopWizardPairing() {
-      clearTimeout(wizardPairRefreshTimer);
-      clearInterval(wizardPairCountdownTimer);
-      wizardActivePairCode = null;
+      wizardManager.cleanup();
     }
 
     async function refreshWizardPairCode() {
@@ -2222,13 +2486,13 @@
         if (!res.ok) return;
         const data = await res.json();
 
-        wizardActivePairCode = data.code;
+        wizardManager.state.activePairCode = data.code;
 
         // Render QR
         const qrContainer = document.getElementById("wizard-pair-qr");
         qrContainer.innerHTML = "";
         if (data.url) {
-          await loadQRLib();
+          await wizardManager.loadQRLib();
           const isDark = getEffectiveTheme() === "dark";
           QRCode.toCanvas(data.url, {
             width: 200, margin: 2,
@@ -2242,18 +2506,18 @@
         document.getElementById("wizard-pair-pin").textContent = data.pin;
 
         // Countdown
-        clearInterval(wizardPairCountdownTimer);
+        clearInterval(wizardManager.state.timers.countdown);
         const countdownEl = document.getElementById("wizard-pair-countdown");
         function updateCountdown() {
           const left = Math.max(0, Math.ceil((data.expiresAt - Date.now()) / 1000));
           countdownEl.textContent = left > 0 ? `Refreshing in ${left}s` : "Refreshing\u2026";
         }
         updateCountdown();
-        wizardPairCountdownTimer = setInterval(updateCountdown, 1000);
+        wizardManager.state.timers.countdown = setInterval(updateCountdown, 1000);
 
         // Schedule refresh ~25s (5s before expiry)
         const refreshIn = Math.max(1000, (data.expiresAt - Date.now()) - 5000);
-        wizardPairRefreshTimer = setTimeout(() => {
+        wizardManager.state.timers.refresh = setTimeout(() => {
           if (viewPair.classList.contains("active")) refreshWizardPairCode();
         }, refreshIn);
       } catch { /* ignore */ }
@@ -2312,7 +2576,27 @@
     const dictationInput = document.getElementById("dictation-input");
     const dictationThumbs = document.getElementById("dictation-thumbs");
     const dictationFileInput = document.getElementById("dictation-file-input");
-    let dictationImages = []; // queued File objects
+
+    // --- Dictation state management (immutable reducer) ---
+    const dictationReducer = (images, action) => {
+      switch (action.type) {
+        case 'ADD_IMAGES':
+          return [...images, ...action.files];
+        case 'REMOVE_IMAGE':
+          return images.filter((_, idx) => idx !== action.index);
+        case 'CLEAR':
+          return [];
+        default:
+          return images;
+      }
+    };
+
+    let dictationImages = [];
+
+    const dispatchDictation = (action) => {
+      dictationImages = dictationReducer(dictationImages, action);
+      renderDictationThumbs();
+    };
 
     function renderDictationThumbs() {
       dictationThumbs.innerHTML = "";
@@ -2329,37 +2613,29 @@
         rm.innerHTML = '<i class="ph ph-x"></i>';
         rm.addEventListener("click", () => {
           URL.revokeObjectURL(img.src);
-          dictationImages.splice(i, 1);
-          renderDictationThumbs();
+          dispatchDictation({ type: 'REMOVE_IMAGE', index: i });
         });
         wrap.appendChild(rm);
         dictationThumbs.appendChild(wrap);
       });
     }
 
-    document.getElementById("dictation-add-images").addEventListener("click", () => {
-      dictationFileInput.click();
-    });
-
     dictationFileInput.addEventListener("change", () => {
       const files = [...dictationFileInput.files].filter(f => f.type.startsWith("image/"));
-      dictationImages.push(...files);
-      renderDictationThumbs();
+      dispatchDictation({ type: 'ADD_IMAGES', files });
       dictationFileInput.value = "";
     });
 
     function openDictationModal() {
       dictationInput.value = "";
-      dictationImages = [];
-      renderDictationThumbs();
+      dispatchDictation({ type: 'CLEAR' });
       openModal(dictationOverlay);
       dictationInput.focus();
     }
 
     function closeDictationModal() {
       dictationInput.value = "";
-      dictationImages = [];
-      renderDictationThumbs();
+      dispatchDictation({ type: 'CLEAR' });
       closeModal(dictationOverlay);
     }
 
@@ -2412,15 +2688,62 @@
       return file.type.startsWith("image/");
     }
 
-    // --- Drag-and-drop ---
+    // --- Drag-and-drop state machine ---
 
     const dropOverlay = document.getElementById("drop-overlay");
-    let dragCounter = 0;
+
+    // Drag-and-drop state machine
+    const dragDropReducer = (state, action) => {
+      switch (action.type) {
+        case 'DRAG_ENTER':
+          return {
+            ...state,
+            dragCounter: state.dragCounter + 1,
+            isDragging: true
+          };
+        case 'DRAG_LEAVE':
+          const newCounter = state.dragCounter - 1;
+          return {
+            ...state,
+            dragCounter: Math.max(0, newCounter),
+            isDragging: newCounter > 0
+          };
+        case 'DROP':
+          return {
+            dragCounter: 0,
+            isDragging: false
+          };
+        default:
+          return state;
+      }
+    };
+
+    // Drag-and-drop manager (stateful edge module)
+    const createDragDropManager = () => {
+      let dragState = { dragCounter: 0, isDragging: false };
+
+      const dispatch = (action) => {
+        const prevState = dragState;
+        dragState = dragDropReducer(dragState, action);
+
+        // Side effect: Update overlay visibility
+        if (prevState.isDragging !== dragState.isDragging) {
+          if (dragState.isDragging) {
+            dropOverlay.classList.add("visible");
+          } else {
+            dropOverlay.classList.remove("visible");
+          }
+        }
+      };
+
+      return { dispatch, getState: () => dragState };
+    };
+
+    const dragDropManager = createDragDropManager();
 
     document.addEventListener("dragenter", (e) => {
       e.preventDefault();
-      dragCounter++;
-      if (dragCounter === 1) dropOverlay.classList.add("visible");
+      dragDropManager.dispatch({ type: 'DRAG_ENTER' });
     });
 
     document.addEventListener("dragover", (e) => {
@@ -2429,17 +2752,12 @@
 
     document.addEventListener("dragleave", (e) => {
       e.preventDefault();
-      dragCounter--;
-      if (dragCounter <= 0) {
-        dragCounter = 0;
-        dropOverlay.classList.remove("visible");
-      }
+      dragDropManager.dispatch({ type: 'DRAG_LEAVE' });
     });
 
     document.addEventListener("drop", (e) => {
       e.preventDefault();
-      dragCounter = 0;
-      dropOverlay.classList.remove("visible");
+      dragDropManager.dispatch({ type: 'DROP' });
       const files = [...(e.dataTransfer?.files || [])].filter(isImageFile);
       if (files.length === 0) {
         if (e.dataTransfer?.files?.length > 0) showToast("Not an image file", true);
