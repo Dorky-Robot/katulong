@@ -46,7 +46,6 @@ const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || "3002", 10);
 const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
 const DATA_DIR = process.env.KATULONG_DATA_DIR || __dirname;
 const SSH_PORT = parseInt(process.env.SSH_PORT || "2222", 10);
-const SSH_PASSWORD = process.env.SSH_PASSWORD || null; // falls back to SETUP_TOKEN
 
 // --- TLS certificates (auto-generated) ---
 
@@ -55,7 +54,10 @@ log.info("TLS certificates ready", { dir: join(DATA_DIR, "tls") });
 
 const sshHostKey = ensureHostKey(DATA_DIR);
 
+// --- Authentication tokens ---
+// Generate separate tokens for setup (WebAuthn registration) and SSH access
 const SETUP_TOKEN = process.env.SETUP_TOKEN || randomBytes(16).toString("hex");
+const SSH_PASSWORD = process.env.SSH_PASSWORD || randomBytes(16).toString("hex");
 const RP_NAME = "Katulong";
 
 // --- Rate limiting ---
@@ -66,6 +68,9 @@ const pairingRateLimit = rateLimit(10, 30000);
 
 if (!process.env.SETUP_TOKEN) {
   log.info("Setup token generated", { token: SETUP_TOKEN });
+}
+if (!process.env.SSH_PASSWORD) {
+  log.info("SSH password generated", { password: SSH_PASSWORD });
 }
 
 if (process.env.KATULONG_NO_AUTH === "1") {
@@ -765,7 +770,7 @@ const routes = [
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
     }
-    json(res, 200, { password: SSH_PASSWORD || SETUP_TOKEN });
+    json(res, 200, { password: SSH_PASSWORD });
   }},
 
   { method: "GET", path: "/shortcuts", handler: async (req, res) => {
@@ -1190,7 +1195,7 @@ httpsServer.listen(HTTPS_PORT, "0.0.0.0", () => {
 sshRelay = startSSHServer({
   port: SSH_PORT,
   hostKey: sshHostKey,
-  password: SSH_PASSWORD || SETUP_TOKEN,
+  password: SSH_PASSWORD,
   daemonRPC,
   daemonSend,
   credentialLockout,
