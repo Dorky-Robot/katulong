@@ -428,13 +428,19 @@ const routes = [
 
   { method: "POST", path: "/auth/pair/verify", handler: async (req, res) => {
     // I/O: Parse request and consume pairing challenge
-    const { code, pin } = await parseJSON(req);
+    const { code, pin, deviceId, deviceName, userAgent: clientUserAgent } = await parseJSON(req);
     const pairingResult = pairingStore.consume(code, pin);
+
+    // Extract user-agent (prefer client-provided, fallback to header)
+    const userAgent = clientUserAgent || req.headers['user-agent'] || 'Unknown';
 
     // Functional core: Process pairing logic
     const result = processPairing({
       pairingResult,
       currentState: loadState(),
+      deviceId,
+      deviceName,
+      userAgent,
     });
 
     // I/O: Handle result
