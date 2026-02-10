@@ -1237,6 +1237,135 @@
       p2pPeer = peer;
     }
 
+    // --- Pure WebSocket message handlers (functional core) ---
+    const wsMessageHandlers = {
+      attached: (msg, currentState) => ({
+        stateUpdates: {
+          'connection.attached': true,
+          'scroll.userScrolledUpBeforeDisconnect': false
+        },
+        effects: [
+          { type: 'updateP2PIndicator' },
+          { type: 'initP2P' },
+          { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect }
+        ]
+      }),
+
+      output: (msg) => ({
+        stateUpdates: {},
+        effects: [
+          { type: 'terminalWrite', data: msg.data, preserveScroll: true }
+        ]
+      }),
+
+      'p2p-signal': (msg, currentState) => ({
+        stateUpdates: {},
+        effects: currentState.p2p.peer
+          ? [{ type: 'p2pSignal', data: msg.data }]
+          : []
+      }),
+
+      'p2p-ready': () => ({
+        stateUpdates: {},
+        effects: [
+          { type: 'log', message: '[P2P] Server confirmed DataChannel ready' },
+          { type: 'updateP2PIndicator' }
+        ]
+      }),
+
+      'p2p-closed': () => ({
+        stateUpdates: { 'p2p.connected': false },
+        effects: [
+          { type: 'log', message: '[P2P] Server reports DataChannel closed' },
+          { type: 'updateP2PIndicator' }
+        ]
+      }),
+
+      'pair-complete': (msg, currentState, wizardActivePairCode) => ({
+        stateUpdates: {},
+        effects: (wizardActivePairCode && msg.code === wizardActivePairCode)
+          ? [{ type: 'stopWizardPairing' }, { type: 'switchSettingsView', view: 'success' }]
+          : []
+      }),
+
+      reload: () => ({
+        stateUpdates: {},
+        effects: [{ type: 'reload' }]
+      }),
+
+      exit: () => ({
+        stateUpdates: {},
+        effects: [{ type: 'terminalWrite', data: '\r\n[shell exited]\r\n' }]
+      }),
+
+      'session-removed': () => ({
+        stateUpdates: {},
+        effects: [{ type: 'terminalWrite', data: '\r\n[session deleted]\r\n' }]
+      }),
+
+      'session-renamed': (msg) => ({
+        stateUpdates: { 'session.name': msg.name },
+        effects: [{ type: 'updateSessionUI', name: msg.name }]
+      })
+    };
+
+    // Effect executor (side effects at edges)
+    function executeEffect(effect) {
+      switch (effect.type) {
+        case 'updateP2PIndicator':
+          updateP2PIndicator();
+          break;
+        case 'initP2P':
+          initP2P();
+          break;
+        case 'scrollToBottomIfNeeded':
+          if (effect.condition) {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => term.scrollToBottom());
+            });
+          }
+          break;
+        case 'terminalWrite':
+          if (effect.preserveScroll) {
+            const viewport = document.querySelector(".xterm-viewport");
+            const wasAtBottom = isAtBottom(viewport);
+            term.write(effect.data, () => {
+              if (wasAtBottom) {
+                requestAnimationFrame(() => {
+                  requestAnimationFrame(() => term.scrollToBottom());
+                });
+              }
+            });
+          } else {
+            term.write(effect.data);
+          }
+          break;
+        case 'p2pSignal':
+          if (p2pPeer) p2pPeer.signal(effect.data);
+          break;
+        case 'log':
+          console.log(effect.message);
+          break;
+        case 'stopWizardPairing':
+          stopWizardPairing();
+          break;
+        case 'switchSettingsView':
+          switchSettingsView(effect.view === 'success' ? viewSuccess : null);
+          break;
+        case 'reload':
+          location.reload();
+          break;
+        case 'updateSessionUI':
+          sessionName = effect.name;
+          document.title = effect.name;
+          const url = new URL(window.location);
+          url.searchParams.set("s", effect.name);
+          history.replaceState(null, "", url);
+          renderBar(effect.name);
+          break;
+      }
+    }
+
     function connect() {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       ws = new WebSocket(`${proto}//${location.host}`);
@@ -1249,56 +1378,23 @@
 
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
-        if (msg.type === "attached") {
-          wsAttached = true;
-          updateP2PIndicator();
-          initP2P();
-          // Only scroll to bottom if user wasn't deliberately viewing history
-          if (!userScrolledUpBeforeDisconnect) {
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => term.scrollToBottom());
-            });
+        const handler = wsMessageHandlers[msg.type];
+
+        if (handler) {
+          const { stateUpdates, effects } = handler(msg, state, wizardActivePairCode);
+
+          // Apply state updates
+          if (Object.keys(stateUpdates).length > 0) {
+            state.updateMany(stateUpdates);
+            // Sync compatibility aliases
+            wsAttached = state.connection.attached;
+            p2pConnected = state.p2p.connected;
+            sessionName = state.session.name;
+            userScrolledUpBeforeDisconnect = state.scroll.userScrolledUpBeforeDisconnect;
           }
-          userScrolledUpBeforeDisconnect = false; // Reset
-        } else if (msg.type === "output") {
-          const viewport = document.querySelector(".xterm-viewport");
-          const wasAtBottom = isAtBottom(viewport);
-          // Write with callback to ensure scroll happens AFTER write completes
-          term.write(msg.data, () => {
-            // Preserve scroll-to-bottom behavior for large writes
-            if (wasAtBottom) {
-              requestAnimationFrame(() => {
-                requestAnimationFrame(() => term.scrollToBottom());
-              });
-            }
-          });
-        } else if (msg.type === "p2p-signal") {
-          if (p2pPeer) p2pPeer.signal(msg.data);
-        } else if (msg.type === "p2p-ready") {
-          console.log("[P2P] Server confirmed DataChannel ready");
-          updateP2PIndicator();
-        } else if (msg.type === "p2p-closed") {
-          console.log("[P2P] Server reports DataChannel closed");
-          p2pConnected = false;
-          updateP2PIndicator();
-        } else if (msg.type === "pair-complete") {
-          if (wizardActivePairCode && msg.code === wizardActivePairCode) {
-            stopWizardPairing();
-            switchSettingsView(viewSuccess);
-          }
-        } else if (msg.type === "reload") {
-          location.reload();
-        } else if (msg.type === "exit") {
-          term.write("\r\n[shell exited]\r\n");
-        } else if (msg.type === "session-removed") {
-          term.write("\r\n[session deleted]\r\n");
-        } else if (msg.type === "session-renamed") {
-          sessionName = msg.name;
-          document.title = sessionName;
-          const url = new URL(window.location);
-          url.searchParams.set("s", sessionName);
-          history.replaceState(null, "", url);
-          renderBar(sessionName);
+
+          // Execute effects
+          effects.forEach(executeEffect);
         }
       };
 
