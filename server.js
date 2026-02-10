@@ -37,6 +37,7 @@ import { AuthState } from "./lib/auth-state.js";
 import { ensureCerts, generateMobileConfig } from "./lib/tls.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 import { validateMessage } from "./lib/websocket-validation.js";
+import { CredentialLockout } from "./lib/credential-lockout.js";
 import mdns from "multicast-dns";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -86,6 +87,14 @@ const { store: storeChallenge, consume: consumeChallenge, _challenges: challenge
 // --- Device pairing (in-memory, 30s expiry) ---
 
 const pairingStore = new PairingChallengeStore(PAIR_TTL_MS);
+
+// --- Credential lockout (in-memory, 15 min window) ---
+
+const credentialLockout = new CredentialLockout({
+  maxAttempts: 5,        // 5 failures
+  windowMs: 15 * 60 * 1000,  // within 15 minutes
+  lockoutMs: 15 * 60 * 1000, // locks for 15 minutes
+});
 
 function getLanIP() {
   const nets = networkInterfaces();
@@ -409,6 +418,15 @@ const routes = [
     const { credential } = await parseJSON(req);
     const { origin, rpID } = getOriginAndRpID(req);
 
+    // Check if credential is locked out
+    const lockoutStatus = credentialLockout.isLocked(credential.id);
+    if (lockoutStatus.locked) {
+      return json(res, 403, {
+        error: `Too many failed attempts. Try again in ${lockoutStatus.retryAfter} seconds.`,
+        retryAfter: lockoutStatus.retryAfter,
+      });
+    }
+
     // I/O: Extract and consume challenge
     const challenge = extractChallenge(credential);
     const challengeValid = consumeChallenge(challenge);
@@ -425,8 +443,19 @@ const routes = [
 
     // I/O: Handle result
     if (!result.success) {
+      // Record failed attempt
+      const lockout = credentialLockout.recordFailure(credential.id);
+      if (lockout.locked) {
+        return json(res, 403, {
+          error: `Too many failed attempts. Account locked for ${lockout.retryAfter} seconds.`,
+          retryAfter: lockout.retryAfter,
+        });
+      }
       return json(res, result.statusCode, { error: result.message });
     }
+
+    // Success: reset lockout counter
+    credentialLockout.recordSuccess(credential.id);
 
     // I/O: Persist state and set cookie
     const { session, updatedState } = result.data;
@@ -1161,4 +1190,5 @@ sshRelay = startSSHServer({
   password: SSH_PASSWORD || SETUP_TOKEN,
   daemonRPC,
   daemonSend,
+  credentialLockout,
 });
