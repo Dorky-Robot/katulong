@@ -458,6 +458,15 @@ const routes = [
     json(res, 200, { ok: true });
   }},
 
+  { method: "GET", prefix: "/auth/pair/status/", handler: (req, res, code) => {
+    // Only authenticated users can check pairing status
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+    const consumed = pairingStore.wasConsumed(code);
+    json(res, 200, { consumed });
+  }},
+
   { method: "GET", path: "/pair", handler: (req, res) => {
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(readFileSync(join(__dirname, "public", "pair.html"), "utf-8"));

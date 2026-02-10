@@ -529,6 +529,149 @@
     }
     .settings-pair-btn:active { background: var(--accent-active); }
 
+    /* --- Settings tabs --- */
+    .settings-tabs {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .settings-tab {
+      padding: 0.5rem 1rem;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      font-family: var(--font-mono);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .settings-tab.active {
+      color: var(--text);
+      border-bottom-color: var(--accent-active);
+    }
+    .settings-tab:hover:not(.active) {
+      color: var(--text);
+    }
+    .settings-tab-content {
+      display: none;
+    }
+    .settings-tab-content.active {
+      display: block;
+    }
+
+    /* --- Devices list --- */
+    .devices-list {
+      max-height: 300px;
+      overflow-y: auto;
+      margin-bottom: 1rem;
+    }
+    .devices-loading {
+      color: var(--text-muted);
+      font-size: 0.8125rem;
+      text-align: center;
+      padding: 2rem;
+    }
+    .device-section-header {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
+    }
+    .device-item {
+      padding: 0.875rem;
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      margin-bottom: 0.75rem;
+      background: var(--bg-input);
+    }
+    .device-item.current-device {
+      border-color: var(--accent-active);
+      background: var(--bg-surface);
+    }
+    .device-item-host {
+      background: var(--bg-surface);
+      border-color: var(--success);
+      border-width: 2px;
+    }
+    .device-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.375rem;
+    }
+    .device-icon {
+      font-size: 1.25rem;
+    }
+    .device-name {
+      flex: 1;
+      font-size: 0.875rem;
+      color: var(--text);
+      font-weight: 500;
+    }
+    .device-current-badge {
+      font-size: 0.6875rem;
+      color: var(--text-muted);
+      background: var(--tag-bg);
+      padding: 0.125rem 0.375rem;
+      border-radius: 0.25rem;
+    }
+    .device-host-badge {
+      font-size: 0.6875rem;
+      color: var(--success);
+      background: rgba(166, 227, 161, 0.15);
+      padding: 0.125rem 0.375rem;
+      border-radius: 0.25rem;
+      font-weight: 600;
+    }
+    [data-theme="light"] .device-host-badge {
+      background: rgba(64, 160, 43, 0.15);
+    }
+    .device-meta {
+      color: var(--text-dim);
+      font-size: 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+    .device-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+    .device-btn {
+      flex: 1;
+      height: 2rem;
+      border: none;
+      border-radius: 0.375rem;
+      background: var(--accent);
+      color: var(--text);
+      font-size: 0.75rem;
+      cursor: pointer;
+      font-family: var(--font-mono);
+    }
+    .device-btn:active { background: var(--accent-active); }
+    .device-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .device-btn-danger {
+      background: var(--danger);
+      color: #fff;
+    }
+    .device-btn-danger:active { opacity: 0.8; }
+    .devices-warning {
+      color: var(--warning);
+      font-size: 0.75rem;
+      padding: 0.5rem 0.75rem;
+      background: var(--bg-input);
+      border-radius: 0.375rem;
+      margin-top: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
     /* --- Settings wizard views (inline pairing) --- */
     .settings-views {
       position: relative;
@@ -791,20 +934,38 @@
         <!-- View 0: Main settings -->
         <div class="settings-view active" id="settings-view-main">
           <h3>Settings</h3>
-          <div class="settings-row">
-            <span class="settings-label">Theme</span>
-            <div class="theme-toggle" role="radiogroup" aria-label="Theme selection">
-              <button data-theme-val="auto" role="radio" aria-checked="true">
-                <i class="ph ph-circle-half"></i> Auto
-              </button>
-              <button data-theme-val="light" role="radio" aria-checked="false">
-                <i class="ph ph-sun"></i> Light
-              </button>
-              <button data-theme-val="dark" role="radio" aria-checked="false">
-                <i class="ph ph-moon"></i> Dark
-              </button>
+
+          <!-- Tab navigation -->
+          <div class="settings-tabs" role="tablist">
+            <button class="settings-tab active" data-tab="theme" role="tab" aria-selected="true">Theme</button>
+            <button class="settings-tab" data-tab="devices" role="tab" aria-selected="false">Devices</button>
+          </div>
+
+          <!-- Theme tab content -->
+          <div class="settings-tab-content active" id="settings-tab-theme">
+            <div class="settings-row">
+              <span class="settings-label">Theme</span>
+              <div class="theme-toggle" role="radiogroup" aria-label="Theme selection">
+                <button data-theme-val="auto" role="radio" aria-checked="true">
+                  <i class="ph ph-circle-half"></i> Auto
+                </button>
+                <button data-theme-val="light" role="radio" aria-checked="false">
+                  <i class="ph ph-sun"></i> Light
+                </button>
+                <button data-theme-val="dark" role="radio" aria-checked="false">
+                  <i class="ph ph-moon"></i> Dark
+                </button>
+              </div>
             </div>
           </div>
+
+          <!-- Devices tab content -->
+          <div class="settings-tab-content" id="settings-tab-devices">
+            <div class="devices-list" id="devices-list">
+              <p class="devices-loading">Loading devices...</p>
+            </div>
+          </div>
+
           <div class="settings-footer">
             <button class="settings-pair-btn" id="settings-pair">
               <i class="ph ph-qr-code"></i> Pair Device
@@ -966,6 +1127,116 @@
         btn.classList.toggle("active", active);
         btn.setAttribute("aria-checked", active);
       });
+    }
+
+    // --- Device ID Management ---
+
+    // Open IndexedDB for device ID persistence (fallback to localStorage)
+    async function openDeviceDB() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open('katulong', 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+        request.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains('config')) {
+            db.createObjectStore('config');
+          }
+        };
+      });
+    }
+
+    async function getFromIndexedDB(key) {
+      try {
+        const db = await openDeviceDB();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction('config', 'readonly');
+          const store = tx.objectStore('config');
+          const request = store.get(key);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      } catch {
+        return null;
+      }
+    }
+
+    async function saveToIndexedDB(key, value) {
+      try {
+        const db = await openDeviceDB();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction('config', 'readwrite');
+          const store = tx.objectStore('config');
+          const request = store.put(value, key);
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject(request.error);
+        });
+      } catch {
+        // IndexedDB not available, localStorage fallback is primary
+      }
+    }
+
+    // Get or create stable device ID (persists across pairing methods)
+    async function getOrCreateDeviceId() {
+      // Try localStorage first (fastest)
+      let deviceId = localStorage.getItem('katulong_device_id');
+
+      // Fallback to IndexedDB
+      if (!deviceId) {
+        deviceId = await getFromIndexedDB('deviceId');
+        if (deviceId) {
+          // Sync back to localStorage
+          localStorage.setItem('katulong_device_id', deviceId);
+        }
+      }
+
+      // Generate new ID if not found anywhere
+      if (!deviceId) {
+        deviceId = crypto.randomUUID();
+        localStorage.setItem('katulong_device_id', deviceId);
+        await saveToIndexedDB('deviceId', deviceId);
+      }
+
+      return deviceId;
+    }
+
+    // Generate device name from user agent
+    function generateDeviceName() {
+      const ua = navigator.userAgent;
+
+      // Mobile devices
+      if (/iPhone/i.test(ua)) {
+        const match = ua.match(/iPhone OS (\d+)/);
+        return match ? `iPhone (iOS ${match[1]})` : 'iPhone';
+      }
+      if (/iPad/i.test(ua)) {
+        return 'iPad';
+      }
+      if (/Android/i.test(ua)) {
+        const match = ua.match(/Android (\d+)/);
+        return match ? `Android ${match[1]}` : 'Android';
+      }
+
+      // Desktop browsers
+      if (/Mac OS X/i.test(ua)) {
+        if (/Chrome/i.test(ua)) return 'Chrome on Mac';
+        if (/Firefox/i.test(ua)) return 'Firefox on Mac';
+        if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) return 'Safari on Mac';
+        return 'Mac';
+      }
+      if (/Windows/i.test(ua)) {
+        if (/Chrome/i.test(ua)) return 'Chrome on Windows';
+        if (/Firefox/i.test(ua)) return 'Firefox on Windows';
+        if (/Edge/i.test(ua)) return 'Edge on Windows';
+        return 'Windows';
+      }
+      if (/Linux/i.test(ua)) {
+        if (/Chrome/i.test(ua)) return 'Chrome on Linux';
+        if (/Firefox/i.test(ua)) return 'Firefox on Linux';
+        return 'Linux';
+      }
+
+      return 'Unknown Device';
     }
 
     // --- State ---
@@ -2349,6 +2620,224 @@
       await fetch("/auth/logout", { method: "POST" });
       location.href = "/login";
     });
+
+    // --- Settings tabs ---
+
+    document.querySelectorAll(".settings-tab").forEach(tab => {
+      tab.addEventListener("click", () => {
+        const targetTab = tab.dataset.tab;
+
+        // Update tab buttons
+        document.querySelectorAll(".settings-tab").forEach(t => {
+          const active = t.dataset.tab === targetTab;
+          t.classList.toggle("active", active);
+          t.setAttribute("aria-selected", active);
+        });
+
+        // Update tab content
+        document.querySelectorAll(".settings-tab-content").forEach(content => {
+          content.classList.toggle("active", content.id === `settings-tab-${targetTab}`);
+        });
+
+        // Load devices when switching to devices tab
+        if (targetTab === "devices") {
+          loadDevices();
+        }
+      });
+    });
+
+    // --- Device management ---
+
+    async function loadDevices() {
+      const devicesList = document.getElementById("devices-list");
+      devicesList.innerHTML = '<p class="devices-loading">Loading devices...</p>';
+
+      try {
+        const res = await fetch("/auth/devices");
+        if (!res.ok) throw new Error("Failed to load devices");
+        const { devices } = await res.json();
+
+        if (devices.length === 0) {
+          devicesList.innerHTML = '<p class="devices-loading">No devices registered</p>';
+          return;
+        }
+
+        // Check if we're on localhost (server machine)
+        const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '::1';
+
+        // Get current credential ID to mark "this device"
+        const currentCredentialId = localStorage.getItem('katulong_current_credential');
+
+        // Separate devices into host (if on localhost) and remote
+        if (isLocalhost) {
+          // Show server device in special section
+          const hostDevice = devices[0]; // On localhost, treat first device as host
+          const isCurrent = currentCredentialId && hostDevice.id === currentCredentialId;
+          const createdDate = hostDevice.createdAt ? new Date(hostDevice.createdAt).toLocaleDateString() : 'Unknown';
+          const lastUsed = hostDevice.lastUsedAt ? formatRelativeTime(hostDevice.lastUsedAt) : 'Unknown';
+
+          devicesList.innerHTML = `
+            <div class="device-section-header">Server Device</div>
+            <div class="device-item device-item-host">
+              <div class="device-header">
+                <span class="device-icon">🖥️</span>
+                <span class="device-name">${escapeHtml(hostDevice.name)}</span>
+                <span class="device-host-badge">Server</span>
+              </div>
+              <div class="device-meta">
+                Added: ${createdDate} · Last used: ${lastUsed}
+              </div>
+              <div class="device-actions">
+                <button class="device-btn" data-action="rename" data-id="${hostDevice.id}">Rename</button>
+              </div>
+            </div>
+          `;
+
+          // Show other devices in remote section
+          if (devices.length > 1) {
+            devicesList.innerHTML += `<div class="device-section-header" style="margin-top: 1rem;">Remote Devices</div>`;
+            devicesList.innerHTML += devices.slice(1).map((device, index) => {
+              const isCurrent = currentCredentialId && device.id === currentCredentialId;
+              const createdDate = device.createdAt ? new Date(device.createdAt).toLocaleDateString() : 'Unknown';
+              const lastUsed = device.lastUsedAt ? formatRelativeTime(device.lastUsedAt) : 'Unknown';
+
+              return `
+                <div class="device-item ${isCurrent ? 'current-device' : ''}" data-device-id="${device.id}">
+                  <div class="device-header">
+                    <span class="device-icon">🔑</span>
+                    <span class="device-name">${escapeHtml(device.name)}</span>
+                    ${isCurrent ? '<span class="device-current-badge">This device</span>' : ''}
+                  </div>
+                  <div class="device-meta">
+                    Added: ${createdDate} · Last used: ${lastUsed}
+                  </div>
+                  <div class="device-actions">
+                    <button class="device-btn" data-action="rename" data-id="${device.id}">Rename</button>
+                    <span class="device-meta" style="font-size: 0.75rem; color: var(--text-dim); padding: 0 0.5rem;">Cannot remove from server</span>
+                  </div>
+                </div>
+              `;
+            }).join('');
+          }
+        } else {
+          // Remote view - show all devices with remove capability
+          devicesList.innerHTML = devices.map((device, index) => {
+            const isCurrent = currentCredentialId && device.id === currentCredentialId;
+            const createdDate = device.createdAt ? new Date(device.createdAt).toLocaleDateString() : 'Unknown';
+            const lastUsed = device.lastUsedAt ? formatRelativeTime(device.lastUsedAt) : 'Unknown';
+            const canRemove = devices.length > 1;
+
+            return `
+              <div class="device-item ${isCurrent ? 'current-device' : ''}" data-device-id="${device.id}">
+                <div class="device-header">
+                  <span class="device-icon">🔑</span>
+                  <span class="device-name">${escapeHtml(device.name)}</span>
+                  ${isCurrent ? '<span class="device-current-badge">This device</span>' : ''}
+                </div>
+                <div class="device-meta">
+                  Added: ${createdDate} · Last used: ${lastUsed}
+                </div>
+                <div class="device-actions">
+                  <button class="device-btn" data-action="rename" data-id="${device.id}">Rename</button>
+                  <button class="device-btn device-btn-danger" data-action="remove" data-id="${device.id}" data-is-current="${isCurrent}" ${!canRemove ? 'disabled' : ''}>Remove</button>
+                </div>
+              </div>
+            `;
+          }).join('');
+
+          // Show warning only if last device
+          if (devices.length === 1) {
+            devicesList.innerHTML += `
+              <div class="devices-warning">
+                <i class="ph ph-warning"></i>
+                <span>You cannot remove the last device (would lock you out)</span>
+              </div>
+            `;
+          }
+        }
+
+        // Attach event listeners
+        devicesList.querySelectorAll('[data-action="rename"]').forEach(btn => {
+          btn.addEventListener("click", () => renameDevice(btn.dataset.id));
+        });
+        devicesList.querySelectorAll('[data-action="remove"]').forEach(btn => {
+          const isCurrent = btn.dataset.isCurrent === 'true';
+          btn.addEventListener("click", () => removeDevice(btn.dataset.id, isCurrent));
+        });
+      } catch (err) {
+        devicesList.innerHTML = '<p class="devices-loading">Failed to load devices</p>';
+        console.error("Failed to load devices:", err);
+      }
+    }
+
+    function formatRelativeTime(timestamp) {
+      const now = Date.now();
+      const diff = now - timestamp;
+      const seconds = Math.floor(diff / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      const days = Math.floor(hours / 24);
+
+      if (seconds < 60) return 'Just now';
+      if (minutes < 60) return `${minutes}m ago`;
+      if (hours < 24) return `${hours}h ago`;
+      if (days < 7) return `${days}d ago`;
+      return new Date(timestamp).toLocaleDateString();
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    async function renameDevice(deviceId) {
+      const newName = prompt("Enter new device name:");
+      if (!newName || newName.trim().length === 0) return;
+
+      try {
+        const res = await fetch(`/auth/devices/${deviceId}/name`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newName.trim() }),
+        });
+        if (!res.ok) throw new Error("Failed to rename device");
+        loadDevices(); // Reload to show updated name
+      } catch (err) {
+        alert("Failed to rename device: " + err.message);
+      }
+    }
+
+    async function removeDevice(deviceId, isCurrent) {
+      // Different warning messages based on whether it's the current device
+      const message = isCurrent
+        ? "⚠️ You are about to remove THIS DEVICE (the one you're using right now).\n\nYou will be LOGGED OUT IMMEDIATELY and will need to re-register this device to access Katulong again.\n\nAre you sure you want to continue?"
+        : "Are you sure you want to remove this device? It will need to be re-registered to access Katulong again.";
+
+      if (!confirm(message)) {
+        return;
+      }
+
+      try {
+        const res = await fetch(`/auth/devices/${deviceId}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to remove device");
+        }
+
+        // If we removed the current device, we'll be logged out - redirect to login
+        if (isCurrent) {
+          window.location.href = "/login";
+        } else {
+          loadDevices(); // Reload to show updated list
+        }
+      } catch (err) {
+        alert("Failed to remove device: " + err.message);
+      }
+    }
+
     dismissModal(settingsOverlay, () => { cleanupWizard(); closeModal(settingsOverlay); });
 
     // --- Inline pairing wizard ---
@@ -2367,14 +2856,16 @@
         qrLibLoaded: false,
         timers: {
           refresh: 0,
-          countdown: 0
+          countdown: 0,
+          statusPoll: 0
         }
       };
 
       const cleanup = () => {
         clearTimeout(state.timers.refresh);
         clearInterval(state.timers.countdown);
-        state.timers = { refresh: 0, countdown: 0 };
+        clearInterval(state.timers.statusPoll);
+        state.timers = { refresh: 0, countdown: 0, statusPoll: 0 };
         state.activePairCode = null;
       };
 
@@ -2470,6 +2961,17 @@
       wizardManager.cleanup();
     }
 
+    async function checkPairingStatus(code) {
+      try {
+        const res = await fetch(`/auth/pair/status/${code}`);
+        if (!res.ok) return false;
+        const data = await res.json();
+        return data.consumed;
+      } catch {
+        return false;
+      }
+    }
+
     async function refreshWizardPairCode() {
       try {
         const res = await fetch("/auth/pair/start", { method: "POST" });
@@ -2504,6 +3006,21 @@
         }
         updateCountdown();
         wizardManager.state.timers.countdown = setInterval(updateCountdown, 1000);
+
+        // Poll for pairing success every 2 seconds
+        clearInterval(wizardManager.state.timers.statusPoll);
+        wizardManager.state.timers.statusPoll = setInterval(async () => {
+          if (!viewPair.classList.contains("active")) {
+            clearInterval(wizardManager.state.timers.statusPoll);
+            return;
+          }
+          const consumed = await checkPairingStatus(data.code);
+          if (consumed) {
+            clearInterval(wizardManager.state.timers.statusPoll);
+            stopWizardPairing();
+            switchSettingsView(viewSuccess);
+          }
+        }, 2000);
 
         // Schedule refresh ~25s (5s before expiry)
         const refreshIn = Math.max(1000, (data.expiresAt - Date.now()) - 5000);
