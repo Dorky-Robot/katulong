@@ -672,6 +672,219 @@
       gap: 0.5rem;
     }
 
+    /* --- Token list --- */
+    .tab-description {
+      color: var(--text-muted);
+      font-size: 0.8125rem;
+      margin-bottom: 1rem;
+      line-height: 1.4;
+    }
+    .tokens-list {
+      max-height: 300px;
+      overflow-y: auto;
+      margin-bottom: 1rem;
+    }
+    .tokens-loading {
+      color: var(--text-muted);
+      font-size: 0.8125rem;
+      text-align: center;
+      padding: 2rem;
+    }
+    .token-item {
+      padding: 0.875rem;
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      margin-bottom: 0.75rem;
+      background: var(--bg-input);
+    }
+    .token-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.375rem;
+    }
+    .token-icon {
+      font-size: 1.25rem;
+      color: var(--accent);
+    }
+    .token-name {
+      flex: 1;
+      font-size: 0.875rem;
+      color: var(--text);
+      font-weight: 500;
+    }
+    .token-meta {
+      color: var(--text-dim);
+      font-size: 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+    .token-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+    .token-btn {
+      flex: 1;
+      height: 2rem;
+      border: none;
+      border-radius: 0.375rem;
+      background: var(--accent);
+      color: var(--text);
+      font-size: 0.75rem;
+      cursor: pointer;
+      font-family: var(--font-mono);
+    }
+    .token-btn:active { background: var(--accent-active); }
+    .token-btn-danger {
+      background: var(--danger);
+      color: #fff;
+    }
+    .token-btn-danger:active { opacity: 0.8; }
+    .tokens-empty {
+      color: var(--text-muted);
+      font-size: 0.8125rem;
+      text-align: center;
+      padding: 2rem;
+    }
+
+    /* --- Token creation form (GitHub-style) --- */
+    .token-create-form {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    .token-form-header h4 {
+      margin: 0 0 1rem 0;
+      font-size: 0.9375rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .token-form-field {
+      margin-bottom: 1rem;
+    }
+    .token-form-field label {
+      display: block;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 0.375rem;
+    }
+    .token-form-field input {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.875rem;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 0.375rem;
+      color: var(--text);
+      font-family: var(--font-mono);
+      outline: none;
+    }
+    .token-form-field input:focus {
+      border-color: var(--accent);
+    }
+    .token-form-hint {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      margin: 0.25rem 0 0 0;
+    }
+    .token-form-actions {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+    }
+    .token-form-cancel,
+    .token-form-submit {
+      padding: 0.5rem 1rem;
+      font-size: 0.8125rem;
+      border: none;
+      border-radius: 0.375rem;
+      cursor: pointer;
+      font-family: var(--font-mono);
+      font-weight: 500;
+    }
+    .token-form-cancel {
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .token-form-cancel:hover {
+      background: var(--bg-input);
+    }
+    .token-form-submit {
+      background: var(--accent);
+      color: var(--text);
+    }
+    .token-form-submit:hover {
+      background: var(--accent-active);
+    }
+    .token-form-submit:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* --- New token display (1Password-style) --- */
+    .token-item-new {
+      border-color: var(--accent);
+      background: var(--bg-surface);
+      border-width: 2px;
+    }
+    .token-new-badge {
+      font-size: 0.6875rem;
+      color: var(--accent);
+      background: rgba(116, 172, 223, 0.15);
+      padding: 0.125rem 0.375rem;
+      border-radius: 0.25rem;
+      font-weight: 600;
+    }
+    .token-reveal-warning {
+      color: var(--warning);
+      font-size: 0.75rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+    .token-value-container {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .token-value-field {
+      flex: 1;
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      padding: 0.5rem 0.75rem;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 0.375rem;
+      color: var(--text);
+      outline: none;
+    }
+    .token-value-field:focus {
+      border-color: var(--accent);
+    }
+    .token-copy-btn {
+      height: 2rem;
+      padding: 0 1rem;
+      border: none;
+      border-radius: 0.375rem;
+      background: var(--accent);
+      color: var(--text);
+      font-size: 0.75rem;
+      cursor: pointer;
+      font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      white-space: nowrap;
+      transition: background 150ms ease;
+    }
+    .token-copy-btn:active {
+      background: var(--accent-active);
+    }
+
     /* --- Settings wizard views (inline pairing) --- */
     .settings-views {
       position: relative;
@@ -938,7 +1151,8 @@
           <!-- Tab navigation -->
           <div class="settings-tabs" role="tablist">
             <button class="settings-tab active" data-tab="theme" role="tab" aria-selected="true">Theme</button>
-            <button class="settings-tab" data-tab="devices" role="tab" aria-selected="false">Devices</button>
+            <button class="settings-tab" data-tab="lan" role="tab" aria-selected="false">LAN</button>
+            <button class="settings-tab" data-tab="remote" role="tab" aria-selected="false">Remote</button>
           </div>
 
           <!-- Theme tab content -->
@@ -959,20 +1173,46 @@
             </div>
           </div>
 
-          <!-- Devices tab content -->
-          <div class="settings-tab-content" id="settings-tab-devices">
+          <!-- LAN tab content -->
+          <div class="settings-tab-content" id="settings-tab-lan">
+            <p class="tab-description">Pair devices on your local network using QR code + PIN.</p>
             <div class="devices-list" id="devices-list">
               <p class="devices-loading">Loading devices...</p>
             </div>
-          </div>
-
-          <div class="settings-footer">
             <button class="settings-pair-btn" id="settings-pair-lan">
               <i class="ph ph-qr-code"></i> Pair Device on LAN
             </button>
-            <button class="settings-pair-btn" id="settings-setup-token">
-              <i class="ph ph-key"></i> Generate Setup Token
+          </div>
+
+          <!-- Remote tab content -->
+          <div class="settings-tab-content" id="settings-tab-remote">
+            <p class="tab-description">Manage setup tokens for pairing devices remotely (e.g., via ngrok).</p>
+
+            <!-- Inline token creation form (GitHub-style) -->
+            <div class="token-create-form" id="token-create-form" style="display: none;">
+              <div class="token-form-header">
+                <h4>Generate new setup token</h4>
+              </div>
+              <div class="token-form-field">
+                <label for="token-name-input">Token name</label>
+                <input type="text" id="token-name-input" placeholder="e.g., Personal MacBook, Work laptop" />
+                <p class="token-form-hint">What's this token for?</p>
+              </div>
+              <div class="token-form-actions">
+                <button class="token-form-cancel" id="token-form-cancel">Cancel</button>
+                <button class="token-form-submit" id="token-form-submit">Generate token</button>
+              </div>
+            </div>
+
+            <div class="tokens-list" id="tokens-list">
+              <p class="tokens-loading">Loading tokens...</p>
+            </div>
+            <button class="settings-pair-btn" id="settings-create-token">
+              <i class="ph ph-plus"></i> Generate New Token
             </button>
+          </div>
+
+          <div class="settings-footer">
             <button class="settings-logout-btn" id="settings-logout">Log Out</button>
           </div>
         </div>

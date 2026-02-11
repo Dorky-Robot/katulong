@@ -187,6 +187,14 @@
               loginBtn.style.display = 'none';
             }
 
+            // Hide the "Register New Passkey" button and show fields directly
+            const showRegisterBtn = document.getElementById("show-register-btn");
+            const registerFields = document.getElementById("register-fields");
+            if (showRegisterBtn && registerFields) {
+              showRegisterBtn.style.display = 'none';
+              registerFields.classList.remove('hidden');
+            }
+
             // Show helpful message
             loginError.innerHTML = 'ℹ️ No passkey registered yet. Please register your fingerprint/Touch ID below.';
             loginError.style.color = '#6b9bd1'; // Info blue instead of error red
@@ -207,7 +215,12 @@
       const token = document.getElementById("setup-token").value.trim();
       setupError.textContent = "";
 
-      if (!token) { setupError.textContent = "Setup token is required."; return; }
+      // Token is optional for first registration from localhost
+      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '::1';
+      if (!token && !isLocalhost) {
+        setupError.textContent = "Setup token is required for remote registration.";
+        return;
+      }
 
       // Check WebAuthn support
       const supportCheck = checkWebAuthnSupport();

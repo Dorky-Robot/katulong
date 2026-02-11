@@ -1627,9 +1627,11 @@
           content.classList.toggle("active", content.id === `settings-tab-${targetTab}`);
         });
 
-        // Load devices when switching to devices tab
-        if (targetTab === "devices") {
+        // Load data when switching tabs
+        if (targetTab === "lan") {
           loadDevices();
+        } else if (targetTab === "remote") {
+          loadTokens();
         }
       });
     });
@@ -1824,6 +1826,259 @@
         }
       } catch (err) {
         alert("Failed to remove device: " + err.message);
+      }
+    }
+
+    // --- Token management ---
+
+    async function loadTokens() {
+      const tokensList = document.getElementById("tokens-list");
+
+      // Preserve any newly created token display
+      const newTokenEl = tokensList.querySelector('.token-item-new');
+
+      tokensList.innerHTML = '<p class="tokens-loading">Loading tokens...</p>';
+
+      try {
+        const res = await fetch("/api/tokens");
+        if (!res.ok) throw new Error("Failed to load tokens");
+        const { tokens } = await res.json();
+
+        if (tokens.length === 0) {
+          tokensList.innerHTML = '<p class="tokens-empty">No setup tokens yet. Generate one to pair remote devices.</p>';
+          // Re-insert the new token display at the top if it exists
+          if (newTokenEl) {
+            tokensList.insertBefore(newTokenEl, tokensList.firstChild);
+          }
+          return;
+        }
+
+        // Filter out the newly created token if it's being displayed separately
+        const newTokenId = newTokenEl?.dataset?.tokenId;
+        const filteredTokens = newTokenId
+          ? tokens.filter(token => token.id !== newTokenId)
+          : tokens;
+
+        const tokensHTML = filteredTokens.map(token => {
+          const createdDate = token.createdAt ? new Date(token.createdAt).toLocaleDateString() : 'Unknown';
+          const lastUsed = token.lastUsedAt ? formatRelativeTime(token.lastUsedAt) : 'Never';
+
+          return `
+            <div class="token-item" data-token-id="${token.id}">
+              <div class="token-header">
+                <span class="token-icon">🔑</span>
+                <span class="token-name">${escapeHtml(token.name)}</span>
+              </div>
+              <div class="token-meta">
+                Created: ${createdDate} · Last used: ${lastUsed}
+              </div>
+              <div class="token-actions">
+                <button class="token-btn" data-action="rename" data-id="${token.id}">Rename</button>
+                <button class="token-btn token-btn-danger" data-action="revoke" data-id="${token.id}">Revoke</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        tokensList.innerHTML = tokensHTML;
+
+        // Re-insert the new token display at the top if it exists
+        if (newTokenEl) {
+          tokensList.insertBefore(newTokenEl, tokensList.firstChild);
+        }
+
+        // Attach event listeners
+        tokensList.querySelectorAll('[data-action="rename"]').forEach(btn => {
+          btn.addEventListener("click", () => renameToken(btn.dataset.id));
+        });
+        tokensList.querySelectorAll('[data-action="revoke"]').forEach(btn => {
+          btn.addEventListener("click", () => revokeToken(btn.dataset.id));
+        });
+      } catch (err) {
+        tokensList.innerHTML = '<p class="tokens-loading">Failed to load tokens</p>';
+        console.error("Failed to load tokens:", err);
+      }
+    }
+
+    // Token creation form handlers
+    const tokenCreateForm = document.getElementById("token-create-form");
+    const tokenNameInput = document.getElementById("token-name-input");
+    const tokenFormSubmit = document.getElementById("token-form-submit");
+    const tokenFormCancel = document.getElementById("token-form-cancel");
+    const createTokenBtn = document.getElementById("settings-create-token");
+
+    if (!tokenCreateForm || !tokenNameInput || !tokenFormSubmit || !tokenFormCancel || !createTokenBtn) {
+      console.error("Token form elements not found:", {
+        tokenCreateForm: !!tokenCreateForm,
+        tokenNameInput: !!tokenNameInput,
+        tokenFormSubmit: !!tokenFormSubmit,
+        tokenFormCancel: !!tokenFormCancel,
+        createTokenBtn: !!createTokenBtn
+      });
+    }
+
+    // Show form when "Generate New Token" is clicked
+    if (createTokenBtn) {
+      createTokenBtn.addEventListener("click", () => {
+        console.log("Generate New Token clicked");
+        tokenCreateForm.style.display = "block";
+        tokenNameInput.value = "";
+        tokenNameInput.focus();
+        createTokenBtn.style.display = "none";
+      });
+    }
+
+    // Hide form when "Cancel" is clicked
+    if (tokenFormCancel) {
+      tokenFormCancel.addEventListener("click", () => {
+        tokenCreateForm.style.display = "none";
+        createTokenBtn.style.display = "block";
+        tokenNameInput.value = "";
+      });
+    }
+
+    // Enable/disable submit button based on input
+    if (tokenNameInput && tokenFormSubmit) {
+      tokenNameInput.addEventListener("input", () => {
+        tokenFormSubmit.disabled = tokenNameInput.value.trim().length === 0;
+      });
+    }
+
+    // Submit form when "Generate token" is clicked
+    if (tokenFormSubmit) {
+      tokenFormSubmit.addEventListener("click", async () => {
+        console.log("Generate token button clicked, name:", tokenNameInput.value);
+        const name = tokenNameInput.value.trim();
+        if (!name) {
+          console.log("No name provided, aborting");
+          return;
+        }
+
+        console.log("Disabling submit button and creating token...");
+        tokenFormSubmit.disabled = true;
+        tokenFormSubmit.textContent = "Generating...";
+
+        try {
+          console.log("Fetching /api/tokens with name:", name);
+          const res = await fetch("/api/tokens", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+          });
+          console.log("Response status:", res.status);
+          if (!res.ok) throw new Error("Failed to create token");
+          const data = await res.json();
+          console.log("Token created successfully:", data);
+
+        // Hide form and reset
+        tokenCreateForm.style.display = "none";
+        tokenNameInput.value = "";
+        tokenFormSubmit.textContent = "Generate token";
+        createTokenBtn.style.display = "block";
+
+        // Display the token in the UI with copy button (1Password-style)
+        showNewTokenInList(data);
+      } catch (err) {
+        alert("Failed to create token: " + err.message);
+        tokenFormSubmit.disabled = false;
+        tokenFormSubmit.textContent = "Generate token";
+      }
+      });
+    }
+
+    // Allow Enter key to submit form
+    if (tokenNameInput && tokenFormSubmit) {
+      tokenNameInput.addEventListener("keypress", (e) => {
+        if (e.key === "Enter" && tokenNameInput.value.trim().length > 0) {
+          tokenFormSubmit.click();
+        }
+      });
+    }
+
+    function showNewTokenInList(tokenData) {
+      console.log("showNewTokenInList called with:", tokenData);
+      const tokensList = document.getElementById("tokens-list");
+      console.log("tokens-list element:", tokensList);
+
+      // Create a special UI element for the newly created token
+      const newTokenEl = document.createElement("div");
+      newTokenEl.className = "token-item token-item-new";
+      newTokenEl.dataset.tokenId = tokenData.id; // Store token ID to filter out duplicates
+      console.log("Created new token element");
+      newTokenEl.innerHTML = `
+        <div class="token-header">
+          <span class="token-icon">🔑</span>
+          <span class="token-name">${escapeHtml(tokenData.name)}</span>
+          <span class="token-new-badge">New</span>
+        </div>
+        <div class="token-reveal-warning">
+          ⚠️ Save this token now - you won't see it again!
+        </div>
+        <div class="token-value-container">
+          <input type="text" class="token-value-field" value="${escapeHtml(tokenData.token)}" readonly />
+          <button class="token-copy-btn" data-token="${escapeHtml(tokenData.token)}">
+            <i class="ph ph-copy"></i> Copy
+          </button>
+        </div>
+      `;
+
+      // Insert at the top of the list
+      tokensList.insertBefore(newTokenEl, tokensList.firstChild);
+
+      // Add copy button handler
+      const copyBtn = newTokenEl.querySelector(".token-copy-btn");
+      copyBtn.addEventListener("click", async () => {
+        const token = copyBtn.dataset.token;
+        try {
+          await navigator.clipboard.writeText(token);
+          copyBtn.innerHTML = '<i class="ph ph-check"></i> Copied!';
+          copyBtn.style.background = "var(--success)";
+          setTimeout(() => {
+            copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
+            copyBtn.style.background = "";
+          }, 2000);
+        } catch (err) {
+          copyBtn.innerHTML = '<i class="ph ph-x"></i> Failed';
+          setTimeout(() => {
+            copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
+          }, 2000);
+        }
+      });
+
+      // Load the rest of the tokens below
+      loadTokens();
+    }
+
+    async function renameToken(tokenId) {
+      const newName = prompt("Enter new token name:");
+      if (!newName || newName.trim().length === 0) return;
+
+      try {
+        const res = await fetch(`/api/tokens/${tokenId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newName.trim() }),
+        });
+        if (!res.ok) throw new Error("Failed to rename token");
+        loadTokens(); // Reload to show updated name
+      } catch (err) {
+        alert("Failed to rename token: " + err.message);
+      }
+    }
+
+    async function revokeToken(tokenId) {
+      if (!confirm("Are you sure you want to revoke this token? It will no longer work for device pairing.")) {
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/tokens/${tokenId}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) throw new Error("Failed to revoke token");
+        loadTokens(); // Reload to show updated list
+      } catch (err) {
+        alert("Failed to revoke token: " + err.message);
       }
     }
 
@@ -2044,27 +2299,6 @@
     document.getElementById("settings-pair-lan").addEventListener("click", async () => {
       switchSettingsView(viewTrust);
       await renderTrustQR();
-    });
-
-    // Event: Generate Setup Token (for remote access)
-    document.getElementById("settings-setup-token").addEventListener("click", async () => {
-      try {
-        const res = await fetch("/api/setup-token");
-        const { token } = await res.json();
-
-        // Show token in a modal or alert
-        const message = `Setup Token (for remote access):\n\n${token}\n\nUse this token to register passkeys from:\n• ngrok (https://felix-katulong.ngrok.app)\n• Other internet-accessible devices`;
-
-        // Copy to clipboard
-        if (navigator.clipboard) {
-          await navigator.clipboard.writeText(token);
-          alert(`${message}\n\n✓ Token copied to clipboard!`);
-        } else {
-          prompt("Setup Token (copy this):", token);
-        }
-      } catch (err) {
-        alert(`Failed to get setup token: ${err.message}`);
-      }
     });
 
     // Event: Next → step 2 (pair)

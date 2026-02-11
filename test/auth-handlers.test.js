@@ -39,28 +39,11 @@ describe("extractChallenge", () => {
 });
 
 describe("processRegistration", () => {
-  it("returns failure when setup token is invalid", async () => {
-    const result = await processRegistration({
-      setupToken: "wrong-token",
-      expectedSetupToken: "correct-token",
-      credential: {},
-      challenge: "test",
-      challengeValid: true,
-      userID: "user123",
-      origin: "https://example.com",
-      rpID: "example.com",
-      currentState: null,
-    });
-
-    assert.ok(result instanceof AuthFailure);
-    assert.equal(result.reason, "invalid-setup-token");
-    assert.equal(result.statusCode, 403);
-  });
+  // Note: Setup token validation is now performed in server.js (/auth/register/options)
+  // before calling processRegistration, so we don't test it here
 
   it("returns failure when challenge is invalid", async () => {
     const result = await processRegistration({
-      setupToken: "correct-token",
-      expectedSetupToken: "correct-token",
       credential: {},
       challenge: "test",
       challengeValid: false,
@@ -82,8 +65,6 @@ describe("processRegistration", () => {
 
     // We can't easily mock ES modules, so test with actual error case
     const result = await processRegistration({
-      setupToken: "correct-token",
-      expectedSetupToken: "correct-token",
       credential: {
         id: "cred123",
         response: {

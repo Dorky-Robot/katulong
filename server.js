@@ -55,6 +55,16 @@ const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
 const DATA_DIR = process.env.KATULONG_DATA_DIR || __dirname;
 const SSH_PORT = parseInt(process.env.SSH_PORT || "2222", 10);
 
+// Helper: Determine if connection is HTTPS (for setting Secure cookie flag)
+function isHttpsConnection(req) {
+  const hostname = (req.headers.host || 'localhost').split(':')[0];
+  const isHttpsTunnel = hostname.endsWith('.ngrok.app') ||
+                        hostname.endsWith('.ngrok.io') ||
+                        hostname.endsWith('.trycloudflare.com') ||
+                        hostname.endsWith('.loca.lt');
+  return req.socket?.encrypted || isHttpsTunnel;
+}
+
 // --- TLS certificates (auto-generated) ---
 
 const tlsPaths = ensureCerts(DATA_DIR, "Katulong");
@@ -312,25 +322,48 @@ const routes = [
   { method: "POST", path: "/auth/register/options", handler: async (req, res) => {
     const { setupToken } = await parseJSON(req);
 
-    // Get setup token from state (or generate if first time)
-    const state = loadState() || withStateLock(() => {
-      const currentState = loadState();
-      if (currentState) return currentState;
-      // First time - create empty state with setup token
-      const newState = AuthState.empty().setSetupToken(randomBytes(16).toString("hex"));
-      saveState(newState);
-      log.info("Setup token generated", { token: newState.setupToken });
-      return newState;
-    });
+    // Get state (or create empty if first time)
+    let state = loadState();
+    if (!state) {
+      state = await withStateLock((currentState) => {
+        if (currentState) return currentState;
+        // First time - create empty state
+        const newState = AuthState.empty();
+        log.info("First time setup - empty state created");
+        return newState;
+      });
+    }
 
-    if (setupToken !== state.setupToken) {
-      return json(res, 403, { error: "Invalid setup token" });
+    // First registration from localhost doesn't require a token
+    const isFirstRegistration = !isSetup();
+    const isLocal = isLocalRequest(req);
+
+    if (isFirstRegistration && isLocal) {
+      // Allow first registration from localhost without token
+      log.info("First passkey registration from localhost - no token required");
+    } else {
+      // Validate setup token (API-managed tokens)
+      const tokenData = state.findSetupToken(setupToken);
+      if (!tokenData) {
+        return json(res, 403, { error: "Invalid setup token" });
+      }
+
+      // Update lastUsedAt for the token (inside lock to prevent race)
+      await withStateLock((currentState) => {
+        return currentState.updateSetupToken(tokenData.id, { lastUsedAt: Date.now() });
+      });
     }
     const { origin, rpID } = getOriginAndRpID(req);
     let opts, userID;
     if (isSetup()) {
       const state = loadState();
-      ({ opts, userID } = await generateRegistrationOptsForUser(state.user.id, RP_NAME, rpID, origin));
+      // Handle case where credentials exist but user is null (shouldn't happen, but defensive)
+      if (state.user && state.user.id) {
+        ({ opts, userID } = await generateRegistrationOptsForUser(state.user.id, RP_NAME, rpID, origin));
+      } else {
+        // Fallback: create new user if somehow credentials exist without user
+        ({ opts, userID } = await generateRegistrationOpts(RP_NAME, rpID, origin));
+      }
     } else {
       ({ opts, userID } = await generateRegistrationOpts(RP_NAME, rpID, origin));
     }
@@ -356,31 +389,38 @@ const routes = [
     // Extract user-agent (prefer client-provided, fallback to header)
     const userAgent = clientUserAgent || req.headers['user-agent'] || 'Unknown';
 
-    // Functional core: Process registration logic
-    const result = await processRegistration({
-      credential,
-      setupToken,
-      expectedSetupToken: SETUP_TOKEN,
-      challenge,
-      challengeValid,
-      userID,
-      origin,
-      rpID,
-      currentState: loadState(),
-      deviceId,
-      deviceName,
-      userAgent,
+    // Process registration inside lock to prevent race conditions
+    const result = await withStateLock(async (currentState) => {
+      const result = await processRegistration({
+        credential,
+        challenge,
+        challengeValid,
+        userID,
+        origin,
+        rpID,
+        currentState,
+        deviceId,
+        deviceName,
+        userAgent,
+      });
+
+      if (!result.success) {
+        // Return error info without saving (state unchanged)
+        return { result };
+      }
+
+      // Return updated state and success result
+      return { state: result.data.updatedState, result };
     });
 
     // I/O: Handle result
-    if (!result.success) {
-      return json(res, result.statusCode, { error: result.message });
+    if (!result.result.success) {
+      return json(res, result.result.statusCode, { error: result.result.message });
     }
 
-    // I/O: Persist state and set cookie
-    const { session, updatedState } = result.data;
-    await withStateLock(async () => updatedState);
-    setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
+    // I/O: Set cookie
+    const { session } = result.result.data;
+    setSessionCookie(res, session.token, session.expiry, { secure: isHttpsConnection(req) });
     json(res, 200, { ok: true });
   }},
 
@@ -413,18 +453,28 @@ const routes = [
     const challenge = extractChallenge(credential);
     const challengeValid = consumeChallenge(challenge);
 
-    // Functional core: Process authentication logic
-    const result = await processAuthentication({
-      credential,
-      challenge,
-      challengeValid,
-      origin,
-      rpID,
-      currentState: loadState(),
+    // Process authentication inside lock to prevent race conditions
+    const result = await withStateLock(async (currentState) => {
+      const result = await processAuthentication({
+        credential,
+        challenge,
+        challengeValid,
+        origin,
+        rpID,
+        currentState,
+      });
+
+      if (!result.success) {
+        // Return error info without saving (state unchanged)
+        return { result };
+      }
+
+      // Return updated state and success result
+      return { state: result.data.updatedState, result };
     });
 
     // I/O: Handle result
-    if (!result.success) {
+    if (!result.result.success) {
       // Record failed attempt
       const lockout = credentialLockout.recordFailure(credential.id);
       if (lockout.locked) {
@@ -433,16 +483,15 @@ const routes = [
           retryAfter: lockout.retryAfter,
         });
       }
-      return json(res, result.statusCode, { error: result.message });
+      return json(res, result.result.statusCode, { error: result.result.message });
     }
 
     // Success: reset lockout counter
     credentialLockout.recordSuccess(credential.id);
 
-    // I/O: Persist state and set cookie
-    const { session, updatedState } = result.data;
-    await withStateLock(async () => updatedState);
-    setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
+    // I/O: Set cookie
+    const { session } = result.result.data;
+    setSessionCookie(res, session.token, session.expiry, { secure: isHttpsConnection(req) });
     json(res, 200, { ok: true });
   }},
 
@@ -484,25 +533,34 @@ const routes = [
     // Extract user-agent (prefer client-provided, fallback to header)
     const userAgent = clientUserAgent || req.headers['user-agent'] || 'Unknown';
 
-    // Functional core: Process pairing logic
-    const result = processPairing({
-      pairingResult,
-      currentState: loadState(),
-      deviceId,
-      deviceName,
-      userAgent,
+    // Process pairing inside lock to prevent race conditions
+    const result = await withStateLock(async (currentState) => {
+      const result = processPairing({
+        pairingResult,
+        currentState,
+        deviceId,
+        deviceName,
+        userAgent,
+      });
+
+      if (!result.success) {
+        // Return error info without saving (state unchanged)
+        return { result };
+      }
+
+      // Return updated state and success result
+      return { state: result.data.updatedState, result };
     });
 
     // I/O: Handle result
-    if (!result.success) {
-      log.warn("Pair verify failed", { reason: result.reason, code, storeSize: pairingStore.size() });
-      return json(res, result.statusCode, { error: result.message });
+    if (!result.result.success) {
+      log.warn("Pair verify failed", { reason: result.result.reason, code, storeSize: pairingStore.size() });
+      return json(res, result.result.statusCode, { error: result.result.message });
     }
 
-    // I/O: Persist state and set cookie
-    const { session, updatedState } = result.data;
-    await withStateLock(async () => updatedState);
-    setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
+    // I/O: Set cookie
+    const { session } = result.result.data;
+    setSessionCookie(res, session.token, session.expiry, { secure: isHttpsConnection(req) });
 
     // I/O: Notify WebSocket clients
     for (const client of wss.clients) {
@@ -523,43 +581,142 @@ const routes = [
     json(res, 200, { consumed });
   }},
 
-  // --- Setup token API ---
+  // --- Setup token API (GitHub-style token management) ---
 
-  { method: "GET", path: "/api/setup-token", handler: (req, res) => {
-    // Only authenticated users can view setup token
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-
-    const state = loadState();
-    if (!state || !state.setupToken) {
-      // Generate if it doesn't exist
-      const newState = (state || AuthState.empty()).setSetupToken(randomBytes(16).toString("hex"));
-      withStateLock(() => saveState(newState));
-      log.info("Setup token generated", { token: newState.setupToken });
-      return json(res, 200, { token: newState.setupToken });
-    }
-
-    json(res, 200, { token: state.setupToken });
-  }},
-
-  { method: "POST", path: "/api/setup-token/regenerate", handler: (req, res) => {
-    // Only authenticated users can regenerate setup token
+  { method: "GET", path: "/api/tokens", handler: (req, res) => {
+    // Only authenticated users can view tokens
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
     }
 
     const state = loadState();
     if (!state) {
-      return json(res, 404, { error: "No state found" });
+      return json(res, 200, { tokens: [] });
     }
 
-    const newToken = randomBytes(16).toString("hex");
-    const newState = state.setSetupToken(newToken);
-    withStateLock(() => saveState(newState));
-    log.info("Setup token regenerated", { token: newToken });
+    // Return token metadata (without the actual token values for security)
+    const tokens = state.setupTokens.map(t => ({
+      id: t.id,
+      name: t.name,
+      createdAt: t.createdAt,
+      lastUsedAt: t.lastUsedAt,
+    }));
 
-    json(res, 200, { token: newToken });
+    json(res, 200, { tokens });
+  }},
+
+  { method: "POST", path: "/api/tokens", handler: async (req, res) => {
+    // Only authenticated users can create tokens
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const { name } = await parseJSON(req);
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return json(res, 400, { error: "Token name is required" });
+    }
+
+    // Create token inside lock to prevent race conditions
+    const tokenData = await withStateLock((state) => {
+      const tokenValue = randomBytes(16).toString("hex");
+      const tokenData = {
+        id: randomBytes(8).toString("hex"),
+        token: tokenValue,
+        name: name.trim(),
+        createdAt: Date.now(),
+        lastUsedAt: null,
+      };
+
+      const newState = (state || AuthState.empty()).addSetupToken(tokenData);
+      return { state: newState, tokenData };
+    });
+
+    log.info("Setup token created", { id: tokenData.tokenData.id, name: tokenData.tokenData.name });
+
+    // Return the token value only once (on creation)
+    json(res, 200, {
+      id: tokenData.tokenData.id,
+      name: tokenData.tokenData.name,
+      token: tokenData.tokenData.token,
+      createdAt: tokenData.tokenData.createdAt,
+    });
+  }},
+
+  { method: "DELETE", prefix: "/api/tokens/", handler: async (req, res, param) => {
+    // Only authenticated users can delete tokens
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const id = param;
+    if (!id) {
+      return json(res, 400, { error: "Token ID is required" });
+    }
+
+    // Delete token inside lock to prevent race conditions
+    const result = await withStateLock((state) => {
+      if (!state) {
+        // No state file exists, so token not found
+        return { found: false };
+      }
+
+      const tokenExists = state.setupTokens.some(t => t.id === id);
+      if (!tokenExists) {
+        // Token not found, state unchanged
+        return { found: false };
+      }
+
+      // Token found, remove it
+      return { state: state.removeSetupToken(id), found: true };
+    });
+
+    if (!result.found) {
+      return json(res, 404, { error: "Token not found" });
+    }
+
+    log.info("Setup token revoked", { id });
+    json(res, 200, { ok: true });
+  }},
+
+  { method: "PATCH", prefix: "/api/tokens/", handler: async (req, res, param) => {
+    // Only authenticated users can update tokens
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const id = param;
+    if (!id) {
+      return json(res, 400, { error: "Token ID is required" });
+    }
+
+    const { name } = await parseJSON(req);
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return json(res, 400, { error: "Token name is required" });
+    }
+
+    // Update token inside lock to prevent race conditions
+    const result = await withStateLock((state) => {
+      if (!state) {
+        // No state file exists, so token not found
+        return { found: false };
+      }
+
+      const tokenExists = state.setupTokens.some(t => t.id === id);
+      if (!tokenExists) {
+        // Token not found, state unchanged
+        return { found: false };
+      }
+
+      // Token found, update it
+      return { state: state.updateSetupToken(id, { name: name.trim() }), found: true };
+    });
+
+    if (!result.found) {
+      return json(res, 404, { error: "Token not found" });
+    }
+
+    log.info("Setup token updated", { id, name: name.trim() });
+    json(res, 200, { ok: true });
   }},
 
   { method: "GET", path: "/pair", handler: (req, res) => {
@@ -872,7 +1029,7 @@ async function handleRequest(req, res) {
   }
 
   // HTTPS enforcement: Check if this request requires HTTPS
-  const httpsCheck = checkHttpsEnforcement(req, pathname, isPublicPath);
+  const httpsCheck = checkHttpsEnforcement(req, pathname, isPublicPath, isHttpsConnection);
   if (httpsCheck?.redirect) {
     res.writeHead(302, { Location: httpsCheck.redirect });
     res.end();

@@ -131,12 +131,12 @@ describe("loadState caching", () => {
   });
 
   it("returns cached value on second call without re-reading disk", () => {
-    const state = { user: null, credentials: [], sessions: {} };
+    const state = { user: null, credentials: [], sessions: {}, setupTokens: [] };
     saveState(state);
 
     const first = loadState();
     // Overwrite the file directly — loadState should still return the cached value
-    writeFileSync(STATE_PATH, JSON.stringify({ user: { id: "changed", name: "owner" }, credentials: [], sessions: {} }));
+    writeFileSync(STATE_PATH, JSON.stringify({ user: { id: "changed", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] }));
     const second = loadState();
 
     assert.deepEqual(first.toJSON(), state);
@@ -144,8 +144,8 @@ describe("loadState caching", () => {
   });
 
   it("saveState updates the cache immediately", () => {
-    const stateA = { user: { id: "a", name: "owner" }, credentials: [], sessions: {} };
-    const stateB = { user: { id: "b", name: "owner" }, credentials: [], sessions: {} };
+    const stateA = { user: { id: "a", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] };
+    const stateB = { user: { id: "b", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] };
 
     saveState(stateA);
     assert.deepEqual(loadState().toJSON(), stateA);
@@ -155,12 +155,12 @@ describe("loadState caching", () => {
   });
 
   it("_invalidateCache forces a re-read from disk", () => {
-    const original = { user: { id: "1", name: "owner" }, credentials: [], sessions: {} };
+    const original = { user: { id: "1", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] };
     saveState(original);
     assert.deepEqual(loadState().toJSON(), original);
 
     // Write different data directly to disk
-    const updated = { user: { id: "2", name: "owner" }, credentials: [], sessions: {} };
+    const updated = { user: { id: "2", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] };
     writeFileSync(STATE_PATH, JSON.stringify(updated));
 
     // Cache still holds old value
@@ -177,13 +177,13 @@ describe("loadState caching", () => {
 
     assert.equal(loadState(), null);
     // Write a file — but cache should still return null
-    writeFileSync(STATE_PATH, JSON.stringify({ user: { id: "test", name: "owner" }, credentials: [], sessions: {} }));
+    writeFileSync(STATE_PATH, JSON.stringify({ user: { id: "test", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] }));
     assert.equal(loadState(), null, "null should be cached too");
 
     _invalidateCache();
     const loaded = loadState();
     assert.ok(loaded, "should load state after invalidation");
-    assert.deepEqual(loaded.toJSON(), { user: { id: "test", name: "owner" }, credentials: [], sessions: {} }, "after invalidation should read new file");
+    assert.deepEqual(loaded.toJSON(), { user: { id: "test", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] }, "after invalidation should read new file");
   });
 
   it("loadState migrates and cleans up orphaned sessions", () => {

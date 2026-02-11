@@ -29,6 +29,19 @@ function mockValidateSession(req) {
   return req.url?.includes("?session=valid") || false;
 }
 
+function mockIsHttpsConnection(req) {
+  // Check if socket is encrypted
+  if (req.socket?.encrypted) return true;
+
+  // Check if host indicates HTTPS tunnel
+  const hostname = (req.headers.host || 'localhost').split(':')[0];
+  return hostname.endsWith('.ngrok.app') ||
+         hostname.endsWith('.ngrok.io') ||
+         hostname.endsWith('.trycloudflare.com') ||
+         hostname.endsWith('.loca.lt');
+}
+
+
 describe('https-enforcement', () => {
   describe('HTTP_ALLOWED_PATHS', () => {
     it('contains certificate installation paths', () => {
@@ -51,7 +64,7 @@ describe('https-enforcement', () => {
           host: 'katulong.local:3002',
           encrypted: true
         });
-        const result = checkHttpsEnforcement(req, '/any/path', mockIsPublicPath);
+        const result = checkHttpsEnforcement(req, '/any/path', mockIsPublicPath, mockIsHttpsConnection);
         assert.strictEqual(result, null);
       });
     });
@@ -62,7 +75,7 @@ describe('https-enforcement', () => {
           remoteAddress: '127.0.0.1',
           host: 'localhost:3001'
         });
-        const result = checkHttpsEnforcement(req, '/any/path', mockIsPublicPath);
+        const result = checkHttpsEnforcement(req, '/any/path', mockIsPublicPath, mockIsHttpsConnection);
         assert.strictEqual(result, null);
       });
 
@@ -71,7 +84,7 @@ describe('https-enforcement', () => {
           remoteAddress: '127.0.0.1',
           host: 'localhost:3001'
         });
-        const result = checkHttpsEnforcement(req, '/protected/api', mockIsPublicPath);
+        const result = checkHttpsEnforcement(req, '/protected/api', mockIsPublicPath, mockIsHttpsConnection);
         assert.strictEqual(result, null);
       });
     });
@@ -82,7 +95,7 @@ describe('https-enforcement', () => {
           remoteAddress: '192.168.1.100',
           host: 'katulong.local:3001'
         });
-        const result = checkHttpsEnforcement(req, '/connect/trust', mockIsPublicPath);
+        const result = checkHttpsEnforcement(req, '/connect/trust', mockIsPublicPath, mockIsHttpsConnection);
         assert.strictEqual(result, null);
       });
 
@@ -91,7 +104,7 @@ describe('https-enforcement', () => {
           remoteAddress: '192.168.1.100',
           host: '192.168.1.50:3001'
         });
-        const result = checkHttpsEnforcement(req, '/connect/trust/ca.crt', mockIsPublicPath);
+        const result = checkHttpsEnforcement(req, '/connect/trust/ca.crt', mockIsPublicPath, mockIsHttpsConnection);
         assert.strictEqual(result, null);
       });
 
@@ -100,7 +113,7 @@ describe('https-enforcement', () => {
           remoteAddress: '127.0.0.1',
           host: 'felix-katulong.ngrok.app'
         });
-        const result = checkHttpsEnforcement(req, '/connect/trust/ca.mobileconfig', mockIsPublicPath);
+        const result = checkHttpsEnforcement(req, '/connect/trust/ca.mobileconfig', mockIsPublicPath, mockIsHttpsConnection);
         assert.strictEqual(result, null);
       });
     });
@@ -111,7 +124,7 @@ describe('https-enforcement', () => {
           remoteAddress: '192.168.1.100',
           host: 'katulong.local:3001'
         });
-        const result = checkHttpsEnforcement(req, '/connect/trust/index.html', mockIsPublicPath);
+        const result = checkHttpsEnforcement(req, '/connect/trust/index.html', mockIsPublicPath, mockIsHttpsConnection);
         assert.strictEqual(result, null);
       });
 
@@ -121,7 +134,7 @@ describe('https-enforcement', () => {
           host: 'katulong.local:3001',
           url: '/login'
         });
-        const result = checkHttpsEnforcement(req, '/login', mockIsPublicPath);
+        const result = checkHttpsEnforcement(req, '/login', mockIsPublicPath, mockIsHttpsConnection);
         assert.ok(result?.redirect);
         assert.ok(result.redirect.startsWith('https://'));
         assert.ok(result.redirect.includes('katulong.local'));
@@ -133,7 +146,7 @@ describe('https-enforcement', () => {
           host: '192.168.1.50:3001',
           url: '/api/sessions'
         });
-        const result = checkHttpsEnforcement(req, '/api/sessions', mockIsPublicPath);
+        const result = checkHttpsEnforcement(req, '/api/sessions', mockIsPublicPath, mockIsHttpsConnection);
         assert.deepStrictEqual(result, { redirect: '/connect/trust' });
       });
 
@@ -143,7 +156,7 @@ describe('https-enforcement', () => {
           host: 'katulong.local:3001',
           url: '/login'
         });
-        const result = checkHttpsEnforcement(req, '/login', mockIsPublicPath);
+        const result = checkHttpsEnforcement(req, '/login', mockIsPublicPath, mockIsHttpsConnection);
         assert.ok(result.redirect.includes('katulong.local:3002')); // HTTPS port
         assert.ok(!result.redirect.includes(':3001')); // Not HTTP port
       });
@@ -155,7 +168,7 @@ describe('https-enforcement', () => {
           remoteAddress: '127.0.0.1',
           host: 'felix-katulong.ngrok.app'
         });
-        const result = checkHttpsEnforcement(req, '/login', mockIsPublicPath);
+        const result = checkHttpsEnforcement(req, '/login', mockIsPublicPath, mockIsHttpsConnection);
         assert.strictEqual(result, null);
       });
 
@@ -164,18 +177,19 @@ describe('https-enforcement', () => {
           remoteAddress: '127.0.0.1',
           host: 'felix-katulong.ngrok.app'
         });
-        const result = checkHttpsEnforcement(req, '/login.js', mockIsPublicPath);
+        const result = checkHttpsEnforcement(req, '/login.js', mockIsPublicPath, mockIsHttpsConnection);
         assert.strictEqual(result, null);
       });
 
-      it('redirects protected paths to /login', () => {
+      it('allows protected paths (ngrok provides HTTPS)', () => {
         const req = mockRequest({
           remoteAddress: '127.0.0.1',
           host: 'felix-katulong.ngrok.app',
           url: '/api/sessions'
         });
-        const result = checkHttpsEnforcement(req, '/api/sessions', mockIsPublicPath);
-        assert.deepStrictEqual(result, { redirect: '/login' });
+        const result = checkHttpsEnforcement(req, '/api/sessions', mockIsPublicPath, mockIsHttpsConnection);
+        // ngrok is treated as HTTPS, so no redirect required
+        assert.strictEqual(result, null);
       });
     });
   });
@@ -302,12 +316,12 @@ describe('https-enforcement', () => {
       });
 
       // HTTPS enforcement: Should redirect to /connect/trust
-      const httpsCheck = checkHttpsEnforcement(req, '/', mockIsPublicPath);
+      const httpsCheck = checkHttpsEnforcement(req, '/', mockIsPublicPath, mockIsHttpsConnection);
       assert.deepStrictEqual(httpsCheck, { redirect: '/connect/trust' });
 
       // After redirect, user is on /connect/trust
       const trustReq = { ...req, url: '/connect/trust' };
-      const trustCheck = checkHttpsEnforcement(trustReq, '/connect/trust', mockIsPublicPath);
+      const trustCheck = checkHttpsEnforcement(trustReq, '/connect/trust', mockIsPublicPath, mockIsHttpsConnection);
       assert.strictEqual(trustCheck, null); // Allowed
     });
 
@@ -333,7 +347,7 @@ describe('https-enforcement', () => {
       });
 
       // HTTPS enforcement: Should allow (public path on internet)
-      const httpsCheck = checkHttpsEnforcement(req, '/login', mockIsPublicPath);
+      const httpsCheck = checkHttpsEnforcement(req, '/login', mockIsPublicPath, mockIsHttpsConnection);
       assert.strictEqual(httpsCheck, null);
     });
 
@@ -345,11 +359,11 @@ describe('https-enforcement', () => {
         url: '/api/sessions'
       });
 
-      // HTTPS enforcement: Should redirect to /login
-      const httpsCheck = checkHttpsEnforcement(req, '/api/sessions', mockIsPublicPath);
-      assert.deepStrictEqual(httpsCheck, { redirect: '/login' });
+      // HTTPS enforcement: ngrok is treated as HTTPS, so no redirect
+      const httpsCheck = checkHttpsEnforcement(req, '/api/sessions', mockIsPublicPath, mockIsHttpsConnection);
+      assert.strictEqual(httpsCheck, null);
 
-      // Auth redirect: Should also go to /login
+      // Auth redirect: Unauthenticated users should still redirect to /login
       const authRedirect = getUnauthenticatedRedirect(req);
       assert.strictEqual(authRedirect, '/login');
     });

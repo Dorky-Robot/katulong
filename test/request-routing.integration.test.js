@@ -39,6 +39,19 @@ function mockResponse() {
   };
 }
 
+function mockIsHttpsConnection(req) {
+  // Check if socket is encrypted
+  if (req.socket?.encrypted) return true;
+
+  // Check if host indicates HTTPS tunnel
+  const hostname = (req.headers.host || 'localhost').split(':')[0];
+  return hostname.endsWith('.ngrok.app') ||
+         hostname.endsWith('.ngrok.io') ||
+         hostname.endsWith('.trycloudflare.com') ||
+         hostname.endsWith('.loca.lt');
+}
+
+
 describe('request-routing integration', () => {
   const testDir = join(process.cwd(), '.test-routing');
   const publicDir = join(testDir, 'public');
@@ -64,9 +77,9 @@ describe('request-routing integration', () => {
     });
 
     it('allows all paths over HTTP (no HTTPS enforcement)', () => {
-      assert.strictEqual(checkHttpsEnforcement(req, '/', isPublicPath), null);
-      assert.strictEqual(checkHttpsEnforcement(req, '/api/sessions', isPublicPath), null);
-      assert.strictEqual(checkHttpsEnforcement(req, '/login', isPublicPath), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/', isPublicPath, mockIsHttpsConnection), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/api/sessions', isPublicPath, mockIsHttpsConnection), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/login', isPublicPath, mockIsHttpsConnection), null);
     });
 
     it('serves static files correctly', () => {
@@ -96,17 +109,17 @@ describe('request-routing integration', () => {
     });
 
     it('allows /connect/trust over HTTP', () => {
-      const check = checkHttpsEnforcement(req, '/connect/trust', isPublicPath);
+      const check = checkHttpsEnforcement(req, '/connect/trust', isPublicPath, mockIsHttpsConnection);
       assert.strictEqual(check, null);
     });
 
     it('allows cert installation files over HTTP', () => {
-      assert.strictEqual(checkHttpsEnforcement(req, '/connect/trust/ca.crt', isPublicPath), null);
-      assert.strictEqual(checkHttpsEnforcement(req, '/connect/trust/ca.mobileconfig', isPublicPath), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/connect/trust/ca.crt', isPublicPath, mockIsHttpsConnection), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/connect/trust/ca.mobileconfig', isPublicPath, mockIsHttpsConnection), null);
     });
 
     it('redirects protected paths to /connect/trust', () => {
-      const check = checkHttpsEnforcement(req, '/api/sessions', isPublicPath);
+      const check = checkHttpsEnforcement(req, '/api/sessions', isPublicPath, mockIsHttpsConnection);
       assert.deepStrictEqual(check, { redirect: '/connect/trust' });
     });
 
@@ -136,9 +149,9 @@ describe('request-routing integration', () => {
     });
 
     it('allows all paths (HTTPS enforcement satisfied)', () => {
-      assert.strictEqual(checkHttpsEnforcement(req, '/', isPublicPath), null);
-      assert.strictEqual(checkHttpsEnforcement(req, '/api/sessions', isPublicPath), null);
-      assert.strictEqual(checkHttpsEnforcement(req, '/login', isPublicPath), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/', isPublicPath, mockIsHttpsConnection), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/api/sessions', isPublicPath, mockIsHttpsConnection), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/login', isPublicPath, mockIsHttpsConnection), null);
     });
 
     it('redirects unauthenticated users to /login', () => {
@@ -167,15 +180,16 @@ describe('request-routing integration', () => {
     });
 
     it('allows public paths over HTTP', () => {
-      assert.strictEqual(checkHttpsEnforcement(req, '/login', isPublicPath), null);
-      assert.strictEqual(checkHttpsEnforcement(req, '/login.html', isPublicPath), null);
-      assert.strictEqual(checkHttpsEnforcement(req, '/login.js', isPublicPath), null);
-      assert.strictEqual(checkHttpsEnforcement(req, '/login.css', isPublicPath), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/login', isPublicPath, mockIsHttpsConnection), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/login.html', isPublicPath, mockIsHttpsConnection), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/login.js', isPublicPath, mockIsHttpsConnection), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/login.css', isPublicPath, mockIsHttpsConnection), null);
     });
 
-    it('redirects protected paths to /login', () => {
-      const check = checkHttpsEnforcement(req, '/api/sessions', isPublicPath);
-      assert.deepStrictEqual(check, { redirect: '/login' });
+    it('allows protected paths (ngrok provides HTTPS)', () => {
+      const check = checkHttpsEnforcement(req, '/api/sessions', isPublicPath, mockIsHttpsConnection);
+      // ngrok is treated as HTTPS, so no redirect required
+      assert.strictEqual(check, null);
     });
 
     it('redirects unauthenticated users to /login', () => {
@@ -186,18 +200,18 @@ describe('request-routing integration', () => {
     it('NEVER redirects to /connect/trust (ngrok has valid cert)', () => {
       // Critical: Internet users should NEVER see certificate installation
       // because ngrok/cloudflare provide valid TLS certificates
-      const rootCheck = checkHttpsEnforcement(req, '/', isPublicPath);
-      const apiCheck = checkHttpsEnforcement(req, '/api/sessions', isPublicPath);
-      const settingsCheck = checkHttpsEnforcement(req, '/settings', isPublicPath);
+      const rootCheck = checkHttpsEnforcement(req, '/', isPublicPath, mockIsHttpsConnection);
+      const apiCheck = checkHttpsEnforcement(req, '/api/sessions', isPublicPath, mockIsHttpsConnection);
+      const settingsCheck = checkHttpsEnforcement(req, '/settings', isPublicPath, mockIsHttpsConnection);
 
-      // All protected paths should redirect to /login, NOT /connect/trust
-      assert.strictEqual(rootCheck?.redirect, '/login', 'Root should redirect to /login, not /connect/trust');
-      assert.strictEqual(apiCheck?.redirect, '/login', 'API should redirect to /login, not /connect/trust');
-      assert.strictEqual(settingsCheck?.redirect, '/login', 'Settings should redirect to /login, not /connect/trust');
+      // ngrok is treated as HTTPS, so no HTTPS redirect required
+      assert.strictEqual(rootCheck, null, 'Root should not redirect (ngrok provides HTTPS)');
+      assert.strictEqual(apiCheck, null, 'API should not redirect (ngrok provides HTTPS)');
+      assert.strictEqual(settingsCheck, null, 'Settings should not redirect (ngrok provides HTTPS)');
 
-      // Unauthenticated redirect should also be /login
+      // Unauthenticated redirect should still be /login (auth check, not HTTPS check)
       const unauthRedirect = getUnauthenticatedRedirect(req);
-      assert.strictEqual(unauthRedirect, '/login', 'Unauth redirect should be /login, not /connect/trust');
+      assert.strictEqual(unauthRedirect, '/login', 'Unauth redirect should be /login');
     });
 
     it('serves static files correctly (login assets)', () => {
@@ -251,12 +265,12 @@ describe('request-routing integration', () => {
       assert.strictEqual(getAccessMethod(req1), 'lan');
 
       // Should redirect to /connect/trust
-      const check1 = checkHttpsEnforcement(req1, '/', isPublicPath);
+      const check1 = checkHttpsEnforcement(req1, '/', isPublicPath, mockIsHttpsConnection);
       assert.strictEqual(check1.redirect, '/connect/trust');
 
       // User follows redirect to /connect/trust
       const req2 = { ...req1, url: '/connect/trust' };
-      const check2 = checkHttpsEnforcement(req2, '/connect/trust', isPublicPath);
+      const check2 = checkHttpsEnforcement(req2, '/connect/trust', isPublicPath, mockIsHttpsConnection);
       assert.strictEqual(check2, null); // Allowed
 
       // User downloads cert and accesses via HTTPS
@@ -268,7 +282,7 @@ describe('request-routing integration', () => {
       });
 
       // Should allow HTTPS access
-      const check3 = checkHttpsEnforcement(req3, '/login', isPublicPath);
+      const check3 = checkHttpsEnforcement(req3, '/login', isPublicPath, mockIsHttpsConnection);
       assert.strictEqual(check3, null);
 
       // Static files should work
@@ -290,7 +304,7 @@ describe('request-routing integration', () => {
       assert.strictEqual(getAccessMethod(req), 'internet');
 
       // Should allow login page over HTTP (ngrok terminates TLS)
-      const check = checkHttpsEnforcement(req, '/login', isPublicPath);
+      const check = checkHttpsEnforcement(req, '/login', isPublicPath, mockIsHttpsConnection);
       assert.strictEqual(check, null);
 
       // Should serve login.js correctly
@@ -312,8 +326,8 @@ describe('request-routing integration', () => {
       assert.strictEqual(getAccessMethod(req), 'localhost');
 
       // Should allow everything
-      assert.strictEqual(checkHttpsEnforcement(req, '/', isPublicPath), null);
-      assert.strictEqual(checkHttpsEnforcement(req, '/api/sessions', isPublicPath), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/', isPublicPath, mockIsHttpsConnection), null);
+      assert.strictEqual(checkHttpsEnforcement(req, '/api/sessions', isPublicPath, mockIsHttpsConnection), null);
 
       // Static files should work
       const res = mockResponse();
