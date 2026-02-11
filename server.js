@@ -17,11 +17,12 @@ import {
   generateRegistrationOpts, generateRegistrationOptsForUser, verifyRegistration,
   generateAuthOpts, verifyAuth,
   createSession, validateSession, pruneExpiredSessions, revokeAllSessions,
-  withStateLock,
+  withStateLock, refreshSessionActivity,
 } from "./lib/auth.js";
 import {
   parseCookies, setSessionCookie, getOriginAndRpID,
   isPublicPath, createChallengeStore, escapeAttr,
+  getCsrfToken, validateCsrfToken, getCspHeaders,
 } from "./lib/http-util.js";
 import { rateLimit } from "./lib/rate-limit.js";
 import {
@@ -35,6 +36,16 @@ import { PairingChallengeStore } from "./lib/pairing-challenge.js";
 import { AuthState } from "./lib/auth-state.js";
 import { ensureCerts, generateMobileConfig } from "./lib/tls.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
+import { validateMessage } from "./lib/websocket-validation.js";
+import { CredentialLockout } from "./lib/credential-lockout.js";
+import { isLocalRequest, getAccessMethod, getAccessDescription } from "./lib/access-method.js";
+import {
+  HTTP_ALLOWED_PATHS,
+  checkHttpsEnforcement,
+  getUnauthenticatedRedirect,
+  checkSessionHttpsRedirect
+} from "./lib/https-enforcement.js";
+import { serveStaticFile, MIME_TYPES } from "./lib/static-files.js";
 import mdns from "multicast-dns";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -43,7 +54,16 @@ const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || "3002", 10);
 const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
 const DATA_DIR = process.env.KATULONG_DATA_DIR || __dirname;
 const SSH_PORT = parseInt(process.env.SSH_PORT || "2222", 10);
-const SSH_PASSWORD = process.env.SSH_PASSWORD || null; // falls back to SETUP_TOKEN
+
+// Helper: Determine if connection is HTTPS (for setting Secure cookie flag)
+function isHttpsConnection(req) {
+  const hostname = (req.headers.host || 'localhost').split(':')[0];
+  const isHttpsTunnel = hostname.endsWith('.ngrok.app') ||
+                        hostname.endsWith('.ngrok.io') ||
+                        hostname.endsWith('.trycloudflare.com') ||
+                        hostname.endsWith('.loca.lt');
+  return req.socket?.encrypted || isHttpsTunnel;
+}
 
 // --- TLS certificates (auto-generated) ---
 
@@ -52,7 +72,10 @@ log.info("TLS certificates ready", { dir: join(DATA_DIR, "tls") });
 
 const sshHostKey = ensureHostKey(DATA_DIR);
 
-const SETUP_TOKEN = process.env.SETUP_TOKEN || randomBytes(16).toString("hex");
+// --- Authentication tokens ---
+// Setup token is now stored in AuthState (managed via API)
+// SSH access token is still generated here
+const SSH_PASSWORD = process.env.SSH_PASSWORD || randomBytes(16).toString("hex");
 const RP_NAME = "Katulong";
 
 // --- Rate limiting ---
@@ -61,8 +84,8 @@ const authRateLimit = rateLimit(10, 60000);
 // Stricter limit for pairing (10 attempts per 30 seconds)
 const pairingRateLimit = rateLimit(10, 30000);
 
-if (!process.env.SETUP_TOKEN) {
-  log.info("Setup token generated", { token: SETUP_TOKEN });
+if (!process.env.SSH_PASSWORD) {
+  log.info("SSH password generated", { password: SSH_PASSWORD });
 }
 
 if (process.env.KATULONG_NO_AUTH === "1") {
@@ -85,6 +108,14 @@ const { store: storeChallenge, consume: consumeChallenge, _challenges: challenge
 
 const pairingStore = new PairingChallengeStore(PAIR_TTL_MS);
 
+// --- Credential lockout (in-memory, 15 min window) ---
+
+const credentialLockout = new CredentialLockout({
+  maxAttempts: 5,        // 5 failures
+  windowMs: 15 * 60 * 1000,  // within 15 minutes
+  lockoutMs: 15 * 60 * 1000, // locks for 15 minutes
+});
+
 function getLanIP() {
   const nets = networkInterfaces();
   for (const ifaces of Object.values(nets)) {
@@ -95,36 +126,7 @@ function getLanIP() {
   return null;
 }
 
-function isLocalRequest(req) {
-  const addr = req.socket.remoteAddress || "";
-
-  // Check socket address
-  const isLoopback = addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
-  if (!isLoopback) return false;
-
-  // CRITICAL SECURITY: Even if socket is loopback, check Host/Origin headers
-  // to detect reverse proxies (ngrok, Cloudflare Tunnel, etc.)
-  // If Host/Origin indicates external domain, this is PROXIED traffic = NOT local
-  const host = (req.headers.host || "").toLowerCase();
-  const origin = (req.headers.origin || "").toLowerCase();
-
-  // Check if Host header indicates localhost
-  const hostIsLocal = host.startsWith("localhost:") ||
-                      host === "localhost" ||
-                      host.startsWith("127.0.0.1:") ||
-                      host === "127.0.0.1" ||
-                      host.startsWith("[::1]:") ||
-                      host === "[::1]";
-
-  // Check if Origin header indicates localhost (if present)
-  const originIsLocal = !origin ||
-                        origin.includes("://localhost") ||
-                        origin.includes("://127.0.0.1") ||
-                        origin.includes("://[::1]");
-
-  // Only treat as local if BOTH socket AND headers indicate localhost
-  return hostIsLocal && originIsLocal;
-}
+// isLocalRequest is now imported from lib/access-method.js
 
 function isAuthenticated(req) {
   if (process.env.KATULONG_NO_AUTH === "1") {
@@ -152,13 +154,7 @@ function isAuthenticated(req) {
   return valid;
 }
 
-// Paths that are explicitly allowed over HTTP (for certificate installation)
-// Everything else MUST use HTTPS (or localhost)
-const HTTP_ALLOWED_PATHS = [
-  "/connect/trust",
-  "/connect/trust/ca.crt",
-  "/connect/trust/ca.mobileconfig",
-];
+// HTTP_ALLOWED_PATHS is now imported from lib/https-enforcement.js
 
 // --- IPC client to daemon ---
 
@@ -262,12 +258,7 @@ async function parseJSON(req, maxSize = MAX_REQUEST_BODY_SIZE) {
 
 // --- HTTP routes ---
 
-const MIME = {
-  ".html": "text/html", ".js": "text/javascript", ".json": "application/json",
-  ".css": "text/css", ".png": "image/png", ".ico": "image/x-icon",
-  ".webp": "image/webp", ".svg": "image/svg+xml",
-  ".woff": "font/woff", ".woff2": "font/woff2",
-};
+// MIME_TYPES is now imported from lib/static-files.js
 
 function isLanHost(req) {
   const host = (req.headers.host || "").replace(/:\d+$/, "");
@@ -277,8 +268,25 @@ function isLanHost(req) {
 
 const routes = [
   { method: "GET", path: "/", handler: (req, res) => {
-    res.writeHead(200, { "Content-Type": "text/html" });
-    res.end(readFileSync(join(__dirname, "public", "index.html"), "utf-8"));
+    let html = readFileSync(join(__dirname, "public", "index.html"), "utf-8");
+
+    // Inject CSRF token if authenticated
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionToken = cookies.get("katulong_session");
+    if (sessionToken) {
+      const state = loadState();
+      const csrfToken = getCsrfToken(state, sessionToken);
+      if (csrfToken) {
+        // Inject CSRF token as a meta tag
+        html = html.replace("<head>", `<head>\n    <meta name="csrf-token" content="${escapeAttr(csrfToken)}">`);
+      }
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "text/html",
+      ...getCspHeaders()
+    });
+    res.end(html);
   }},
 
   { method: "GET", path: "/manifest.json", handler: (req, res) => {
@@ -292,7 +300,13 @@ const routes = [
   }},
 
   { method: "GET", path: "/login", handler: (req, res) => {
-    res.writeHead(200, { "Content-Type": "text/html" });
+    res.writeHead(200, {
+      "Content-Type": "text/html",
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      "Pragma": "no-cache",
+      "Expires": "0",
+      ...getCspHeaders()
+    });
     res.end(readFileSync(join(__dirname, "public", "login.html"), "utf-8"));
   }},
 
@@ -310,14 +324,49 @@ const routes = [
 
   { method: "POST", path: "/auth/register/options", handler: async (req, res) => {
     const { setupToken } = await parseJSON(req);
-    if (setupToken !== SETUP_TOKEN) {
-      return json(res, 403, { error: "Invalid setup token" });
+
+    // Get state (or create empty if first time)
+    let state = loadState();
+    if (!state) {
+      state = await withStateLock((currentState) => {
+        if (currentState) return currentState;
+        // First time - create empty state
+        const newState = AuthState.empty();
+        log.info("First time setup - empty state created");
+        return newState;
+      });
+    }
+
+    // First registration from localhost doesn't require a token
+    const isFirstRegistration = !isSetup();
+    const isLocal = isLocalRequest(req);
+
+    if (isFirstRegistration && isLocal) {
+      // Allow first registration from localhost without token
+      log.info("First passkey registration from localhost - no token required");
+    } else {
+      // Validate setup token (API-managed tokens)
+      const tokenData = state.findSetupToken(setupToken);
+      if (!tokenData) {
+        return json(res, 403, { error: "Invalid setup token" });
+      }
+
+      // Update lastUsedAt for the token (inside lock to prevent race)
+      await withStateLock((currentState) => {
+        return currentState.updateSetupToken(tokenData.id, { lastUsedAt: Date.now() });
+      });
     }
     const { origin, rpID } = getOriginAndRpID(req);
     let opts, userID;
     if (isSetup()) {
       const state = loadState();
-      ({ opts, userID } = await generateRegistrationOptsForUser(state.user.id, RP_NAME, rpID, origin));
+      // Handle case where credentials exist but user is null (shouldn't happen, but defensive)
+      if (state.user && state.user.id) {
+        ({ opts, userID } = await generateRegistrationOptsForUser(state.user.id, RP_NAME, rpID, origin));
+      } else {
+        // Fallback: create new user if somehow credentials exist without user
+        ({ opts, userID } = await generateRegistrationOpts(RP_NAME, rpID, origin));
+      }
     } else {
       ({ opts, userID } = await generateRegistrationOpts(RP_NAME, rpID, origin));
     }
@@ -343,31 +392,57 @@ const routes = [
     // Extract user-agent (prefer client-provided, fallback to header)
     const userAgent = clientUserAgent || req.headers['user-agent'] || 'Unknown';
 
-    // Functional core: Process registration logic
-    const result = await processRegistration({
-      credential,
-      setupToken,
-      expectedSetupToken: SETUP_TOKEN,
-      challenge,
-      challengeValid,
-      userID,
-      origin,
-      rpID,
-      currentState: loadState(),
-      deviceId,
-      deviceName,
-      userAgent,
+    // Find setup token ID (if provided)
+    let setupTokenId = null;
+    if (setupToken) {
+      const state = loadState();
+      const tokenData = state?.findSetupToken(setupToken);
+      if (tokenData) {
+        setupTokenId = tokenData.id;
+      }
+    }
+
+    // Process registration inside lock to prevent race conditions
+    const result = await withStateLock(async (currentState) => {
+      const result = await processRegistration({
+        credential,
+        challenge,
+        challengeValid,
+        userID,
+        origin,
+        rpID,
+        currentState,
+        deviceId,
+        deviceName,
+        userAgent,
+        setupTokenId, // Pass token ID to link credential to token
+      });
+
+      if (!result.success) {
+        // Return error info without saving (state unchanged)
+        return { result };
+      }
+
+      // Link credential to setup token
+      let updatedState = result.data.updatedState;
+      if (setupTokenId && result.data.credentialId) {
+        updatedState = updatedState.updateSetupToken(setupTokenId, {
+          credentialId: result.data.credentialId,
+        });
+      }
+
+      // Return updated state and success result
+      return { state: updatedState, result };
     });
 
     // I/O: Handle result
-    if (!result.success) {
-      return json(res, result.statusCode, { error: result.message });
+    if (!result.result.success) {
+      return json(res, result.result.statusCode, { error: result.result.message });
     }
 
-    // I/O: Persist state and set cookie
-    const { session, updatedState } = result.data;
-    await withStateLock(async () => updatedState);
-    setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
+    // I/O: Set cookie
+    const { session } = result.result.data;
+    setSessionCookie(res, session.token, session.expiry, { secure: isHttpsConnection(req) });
     json(res, 200, { ok: true });
   }},
 
@@ -387,29 +462,58 @@ const routes = [
     const { credential } = await parseJSON(req);
     const { origin, rpID } = getOriginAndRpID(req);
 
+    // Check if credential is locked out
+    const lockoutStatus = credentialLockout.isLocked(credential.id);
+    if (lockoutStatus.locked) {
+      return json(res, 403, {
+        error: `Too many failed attempts. Try again in ${lockoutStatus.retryAfter} seconds.`,
+        retryAfter: lockoutStatus.retryAfter,
+      });
+    }
+
     // I/O: Extract and consume challenge
     const challenge = extractChallenge(credential);
     const challengeValid = consumeChallenge(challenge);
 
-    // Functional core: Process authentication logic
-    const result = await processAuthentication({
-      credential,
-      challenge,
-      challengeValid,
-      origin,
-      rpID,
-      currentState: loadState(),
+    // Process authentication inside lock to prevent race conditions
+    const result = await withStateLock(async (currentState) => {
+      const result = await processAuthentication({
+        credential,
+        challenge,
+        challengeValid,
+        origin,
+        rpID,
+        currentState,
+      });
+
+      if (!result.success) {
+        // Return error info without saving (state unchanged)
+        return { result };
+      }
+
+      // Return updated state and success result
+      return { state: result.data.updatedState, result };
     });
 
     // I/O: Handle result
-    if (!result.success) {
-      return json(res, result.statusCode, { error: result.message });
+    if (!result.result.success) {
+      // Record failed attempt
+      const lockout = credentialLockout.recordFailure(credential.id);
+      if (lockout.locked) {
+        return json(res, 403, {
+          error: `Too many failed attempts. Account locked for ${lockout.retryAfter} seconds.`,
+          retryAfter: lockout.retryAfter,
+        });
+      }
+      return json(res, result.result.statusCode, { error: result.result.message });
     }
 
-    // I/O: Persist state and set cookie
-    const { session, updatedState } = result.data;
-    await withStateLock(async () => updatedState);
-    setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
+    // Success: reset lockout counter
+    credentialLockout.recordSuccess(credential.id);
+
+    // I/O: Set cookie
+    const { session } = result.result.data;
+    setSessionCookie(res, session.token, session.expiry, { secure: isHttpsConnection(req) });
     json(res, 200, { ok: true });
   }},
 
@@ -419,6 +523,11 @@ const routes = [
     // Only authenticated users (e.g. localhost auto-auth) can start pairing
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
+    }
+    const state = loadState();
+    // Skip CSRF validation for localhost (auto-authenticated, trusted environment)
+    if (!isLocalRequest(req) && !validateCsrfToken(req, state)) {
+      return json(res, 403, { error: "Invalid or missing CSRF token" });
     }
     const challenge = pairingStore.create();
     const lanIP = getLanIP();
@@ -431,28 +540,50 @@ const routes = [
     const { code, pin, deviceId, deviceName, userAgent: clientUserAgent } = await parseJSON(req);
     const pairingResult = pairingStore.consume(code, pin);
 
+    // Handle rate limiting (exponential backoff)
+    if (pairingResult.reason === "rate-limited" && pairingResult.retryAfter) {
+      res.writeHead(429, {
+        "Content-Type": "application/json",
+        "Retry-After": String(pairingResult.retryAfter),
+      });
+      res.end(JSON.stringify({
+        error: "Too many failed attempts. Please wait before trying again.",
+        retryAfter: pairingResult.retryAfter,
+      }));
+      return;
+    }
+
     // Extract user-agent (prefer client-provided, fallback to header)
     const userAgent = clientUserAgent || req.headers['user-agent'] || 'Unknown';
 
-    // Functional core: Process pairing logic
-    const result = processPairing({
-      pairingResult,
-      currentState: loadState(),
-      deviceId,
-      deviceName,
-      userAgent,
+    // Process pairing inside lock to prevent race conditions
+    const result = await withStateLock(async (currentState) => {
+      const result = processPairing({
+        pairingResult,
+        currentState,
+        deviceId,
+        deviceName,
+        userAgent,
+      });
+
+      if (!result.success) {
+        // Return error info without saving (state unchanged)
+        return { result };
+      }
+
+      // Return updated state and success result
+      return { state: result.data.updatedState, result };
     });
 
     // I/O: Handle result
-    if (!result.success) {
-      log.warn("Pair verify failed", { reason: result.reason, code, storeSize: pairingStore.size() });
-      return json(res, result.statusCode, { error: result.message });
+    if (!result.result.success) {
+      log.warn("Pair verify failed", { reason: result.result.reason, code, storeSize: pairingStore.size() });
+      return json(res, result.result.statusCode, { error: result.result.message });
     }
 
-    // I/O: Persist state and set cookie
-    const { session, updatedState } = result.data;
-    await withStateLock(async () => updatedState);
-    setSessionCookie(res, session.token, session.expiry, { secure: !!req.socket.encrypted });
+    // I/O: Set cookie
+    const { session } = result.result.data;
+    setSessionCookie(res, session.token, session.expiry, { secure: isHttpsConnection(req) });
 
     // I/O: Notify WebSocket clients
     for (const client of wss.clients) {
@@ -473,8 +604,189 @@ const routes = [
     json(res, 200, { consumed });
   }},
 
+  // --- Setup token API (GitHub-style token management) ---
+
+  { method: "GET", path: "/api/tokens", handler: (req, res) => {
+    // Only authenticated users can view tokens
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const state = loadState();
+    if (!state) {
+      return json(res, 200, { tokens: [] });
+    }
+
+    // Return token metadata with linked credential info (without actual token values for security)
+    const tokens = state.setupTokens.map(t => {
+      const tokenData = {
+        id: t.id,
+        name: t.name,
+        createdAt: t.createdAt,
+        lastUsedAt: t.lastUsedAt,
+        credential: null, // Will be populated if token was used
+      };
+
+      // If token was used to register a credential, include credential info
+      if (t.credentialId) {
+        const credential = state.getCredential(t.credentialId);
+        if (credential) {
+          tokenData.credential = {
+            id: credential.id,
+            name: credential.name,
+            createdAt: credential.createdAt,
+            lastUsedAt: credential.lastUsedAt,
+            userAgent: credential.userAgent,
+          };
+        }
+      }
+
+      return tokenData;
+    });
+
+    json(res, 200, { tokens });
+  }},
+
+  { method: "POST", path: "/api/tokens", handler: async (req, res) => {
+    // Only authenticated users can create tokens
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const { name } = await parseJSON(req);
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return json(res, 400, { error: "Token name is required" });
+    }
+
+    // Create token inside lock to prevent race conditions
+    const tokenData = await withStateLock((state) => {
+      const tokenValue = randomBytes(16).toString("hex");
+      const tokenData = {
+        id: randomBytes(8).toString("hex"),
+        token: tokenValue,
+        name: name.trim(),
+        createdAt: Date.now(),
+        lastUsedAt: null,
+      };
+
+      const newState = (state || AuthState.empty()).addSetupToken(tokenData);
+      return { state: newState, tokenData };
+    });
+
+    log.info("Setup token created", { id: tokenData.tokenData.id, name: tokenData.tokenData.name });
+
+    // Return the token value only once (on creation)
+    json(res, 200, {
+      id: tokenData.tokenData.id,
+      name: tokenData.tokenData.name,
+      token: tokenData.tokenData.token,
+      createdAt: tokenData.tokenData.createdAt,
+    });
+  }},
+
+  { method: "DELETE", prefix: "/api/tokens/", handler: async (req, res, param) => {
+    // Only authenticated users can delete tokens
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const id = param;
+    if (!id) {
+      return json(res, 400, { error: "Token ID is required" });
+    }
+
+    // Delete token (and its linked credential) inside lock to prevent race conditions
+    const result = await withStateLock((state) => {
+      if (!state) {
+        // No state file exists, so token not found
+        return { found: false };
+      }
+
+      const token = state.setupTokens.find(t => t.id === id);
+      if (!token) {
+        // Token not found, state unchanged
+        return { found: false };
+      }
+
+      let updatedState = state;
+
+      // If token has a linked credential, remove it (and its sessions)
+      if (token.credentialId) {
+        const credential = state.getCredential(token.credentialId);
+        if (credential && state.credentials.length > 1) {
+          // Only remove if it's not the last credential (prevent lockout)
+          try {
+            updatedState = updatedState.removeCredential(token.credentialId);
+          } catch (err) {
+            // If removal fails (e.g., last credential), just remove the token
+            log.warn("Cannot remove last credential, removing token only", { tokenId: id });
+          }
+        }
+      }
+
+      // Remove the setup token
+      updatedState = updatedState.removeSetupToken(id);
+
+      return { state: updatedState, found: true };
+    });
+
+    if (!result.found) {
+      return json(res, 404, { error: "Token not found" });
+    }
+
+    log.info("Setup token revoked", { id });
+    json(res, 200, { ok: true });
+  }},
+
+  { method: "PATCH", prefix: "/api/tokens/", handler: async (req, res, param) => {
+    // Only authenticated users can update tokens
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const id = param;
+    if (!id) {
+      return json(res, 400, { error: "Token ID is required" });
+    }
+
+    const { name } = await parseJSON(req);
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return json(res, 400, { error: "Token name is required" });
+    }
+
+    // Update token inside lock to prevent race conditions
+    const result = await withStateLock((state) => {
+      if (!state) {
+        // No state file exists, so token not found
+        return { found: false };
+      }
+
+      const tokenExists = state.setupTokens.some(t => t.id === id);
+      if (!tokenExists) {
+        // Token not found, state unchanged
+        return { found: false };
+      }
+
+      // Token found, update it
+      return { state: state.updateSetupToken(id, { name: name.trim() }), found: true };
+    });
+
+    if (!result.found) {
+      return json(res, 404, { error: "Token not found" });
+    }
+
+    log.info("Setup token updated", { id, name: name.trim() });
+    json(res, 200, { ok: true });
+  }},
+
   { method: "GET", path: "/pair", handler: (req, res) => {
-    res.writeHead(200, { "Content-Type": "text/html" });
+    res.writeHead(200, {
+      "Content-Type": "text/html",
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      "Pragma": "no-cache",
+      "Expires": "0",
+      ...getCspHeaders()
+    });
     res.end(readFileSync(join(__dirname, "public", "pair.html"), "utf-8"));
   }},
 
@@ -486,7 +798,10 @@ const routes = [
     let html = readFileSync(join(__dirname, "public", "trust.html"), "utf-8");
     html = html.replace("<body>", `<body data-https-url="${escapeAttr(targetUrl)}" data-lan-ip="${escapeAttr(lanIP || "")}" data-https-port="${escapeAttr(HTTPS_PORT)}">`);
 
-    res.writeHead(200, { "Content-Type": "text/html" });
+    res.writeHead(200, {
+      "Content-Type": "text/html",
+      ...getCspHeaders()
+    });
     res.end(html);
   }},
 
@@ -520,11 +835,18 @@ const routes = [
     const trustUrl = lanIP ? `http://${lanIP}:${PORT}/connect/trust` : `/connect/trust`;
     let html = readFileSync(join(__dirname, "public", "connect.html"), "utf-8");
     html = html.replace("<body>", `<body data-trust-url="${escapeAttr(trustUrl)}" data-https-port="${escapeAttr(HTTPS_PORT)}">`);
-    res.writeHead(200, { "Content-Type": "text/html" });
+    res.writeHead(200, {
+      "Content-Type": "text/html",
+      ...getCspHeaders()
+    });
     res.end(html);
   }},
 
   { method: "POST", path: "/auth/logout", handler: async (req, res) => {
+    const state = loadState();
+    if (!validateCsrfToken(req, state)) {
+      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    }
     const cookies = parseCookies(req.headers.cookie);
     const token = cookies.get("katulong_session");
     if (token) {
@@ -545,6 +867,9 @@ const routes = [
   { method: "POST", path: "/auth/revoke-all", handler: (req, res) => {
     const state = loadState();
     if (!state) return json(res, 400, { error: "Not set up" });
+    if (!validateCsrfToken(req, state)) {
+      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    }
     revokeAllSessions(state);
     let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
     if (req.socket.encrypted) clearCookie += "; Secure";
@@ -555,13 +880,34 @@ const routes = [
   // --- Device management ---
 
   { method: "GET", path: "/auth/devices", handler: (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
     const state = loadState();
     if (!state) return json(res, 400, { error: "Not set up" });
     const devices = state.getCredentialsWithMetadata();
-    json(res, 200, { devices });
+
+    // Find current device
+    let currentCredentialId = null;
+
+    if (isLocalRequest(req)) {
+      // Localhost is auto-authenticated (not a paired device), so currentCredentialId stays null
+      currentCredentialId = null;
+    } else {
+      // For remote access, use the session's credential
+      const cookies = parseCookies(req.headers.cookie);
+      const token = cookies.get("katulong_session");
+      const session = token ? state.getSession(token) : null;
+      currentCredentialId = session?.credentialId || null;
+    }
+
+    json(res, 200, { devices, currentCredentialId });
   }},
 
   { method: "POST", prefix: "/auth/devices/", handler: async (req, res, param) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
     // param is everything after /auth/devices/
     // e.g., "abc123/name" or "abc123/refresh"
     const parts = param.split('/');
@@ -611,13 +957,15 @@ const routes = [
   }},
 
   { method: "DELETE", prefix: "/auth/devices/", handler: async (req, res, id) => {
-    // Prevent removing devices from localhost (the server machine)
-    // This prevents accidentally breaking the server
-    if (isLocalRequest(req)) {
-      return json(res, 403, {
-        error: "Cannot remove devices from the server machine (would break Katulong). Remove from a remote device instead."
-      });
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
     }
+    const state = loadState();
+    // Skip CSRF validation for localhost (auto-authenticated, trusted environment)
+    if (!isLocalRequest(req) && !validateCsrfToken(req, state)) {
+      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    }
+    // Localhost can remove paired devices (localhost itself is not a paired device)
 
     try {
       await withStateLock(async (state) => {
@@ -628,11 +976,11 @@ const routes = [
       });
       json(res, 200, { ok: true });
     } catch (err) {
-      if (err.message.includes('last credential')) {
-        return json(res, 400, { error: err.message });
+      if (err.message === 'Cannot remove the last credential - would lock you out') {
+        return json(res, 400, { error: "Cannot remove the last device. At least one device must remain." });
       }
       if (err.message === 'Device not found') {
-        return json(res, 404, { error: err.message });
+        return json(res, 404, { error: "Device not found" });
       }
       throw err;
     }
@@ -641,6 +989,9 @@ const routes = [
   // --- Upload route ---
 
   { method: "POST", path: "/upload", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
     let buf;
     try {
       buf = await readRawBody(req, MAX_UPLOAD_BYTES);
@@ -662,7 +1013,10 @@ const routes = [
   // --- App routes ---
 
   { method: "GET", path: "/ssh/password", handler: (req, res) => {
-    json(res, 200, { password: SSH_PASSWORD || SETUP_TOKEN });
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+    json(res, 200, { password: SSH_PASSWORD });
   }},
 
   { method: "GET", path: "/shortcuts", handler: async (req, res) => {
@@ -671,6 +1025,13 @@ const routes = [
   }},
 
   { method: "PUT", path: "/shortcuts", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+    const state = loadState();
+    if (!validateCsrfToken(req, state)) {
+      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    }
     const data = await parseJSON(req);
     const result = await daemonRPC({ type: "set-shortcuts", data });
     json(res, result.error ? 400 : 200, result.error ? { error: result.error } : { ok: true });
@@ -722,33 +1083,51 @@ async function handleRequest(req, res) {
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   }
 
-  // HTTPS enforcement: only allow specific paths on HTTP for certificate installation
-  // Everything else requires HTTPS (or localhost)
-  if (!req.socket.encrypted && !isLocalRequest(req)) {
-    // Allow explicitly listed paths on HTTP (cert installation flow)
-    if (!HTTP_ALLOWED_PATHS.includes(pathname)) {
+  // HTTPS enforcement: Check if user with valid session should be redirected to HTTPS
+  const sessionRedirect = checkSessionHttpsRedirect(
+    req,
+    pathname,
+    isPublicPath,
+    (req) => {
       const cookies = parseCookies(req.headers.cookie);
       const token = cookies.get("katulong_session");
       const state = loadState();
-      if (token && state && validateSession(state, token)) {
-        // Has valid session (cert installed) → redirect to HTTPS
-        const host = (req.headers.host || "").replace(/:\d+$/, "");
-        res.writeHead(302, { Location: `https://${host}:${HTTPS_PORT}${req.url}` });
-        res.end();
-        return;
-      }
-      // No valid session → show cert installation page
-      res.writeHead(302, { Location: "/connect/trust" });
-      res.end();
-      return;
+      return token && state && validateSession(state, token);
     }
-  }
-
-  // Auth middleware: redirect unauthenticated requests to /login
-  if (!isPublicPath(pathname) && !isAuthenticated(req)) {
-    res.writeHead(302, { Location: "/login" });
+  );
+  if (sessionRedirect) {
+    res.writeHead(302, { Location: sessionRedirect.redirect });
     res.end();
     return;
+  }
+
+  // HTTPS enforcement: Check if this request requires HTTPS
+  const httpsCheck = checkHttpsEnforcement(req, pathname, isPublicPath, isHttpsConnection);
+  if (httpsCheck?.redirect) {
+    res.writeHead(302, { Location: httpsCheck.redirect });
+    res.end();
+    return;
+  }
+
+  // Auth middleware: redirect unauthenticated requests
+  if (!isPublicPath(pathname) && !isAuthenticated(req)) {
+    const redirectTo = getUnauthenticatedRedirect(req);
+    res.writeHead(302, { Location: redirectTo });
+    res.end();
+    return;
+  }
+
+  // Refresh session activity for authenticated requests (sliding expiry)
+  // Skip for localhost (auto-authenticated) and public paths
+  if (!isPublicPath(pathname) && !isLocalRequest(req) && process.env.KATULONG_NO_AUTH !== "1") {
+    const cookies = parseCookies(req.headers.cookie);
+    const token = cookies.get("katulong_session");
+    if (token) {
+      // Fire and forget - don't block request processing
+      refreshSessionActivity(token).catch(err => {
+        log.error("Failed to refresh session activity", { error: err.message });
+      });
+    }
   }
 
   const match = matchRoute(req.method, pathname);
@@ -779,31 +1158,29 @@ async function handleRequest(req, res) {
         json(res, 400, { error: "Invalid JSON" });
       } else if (err.message === "Request body too large") {
         json(res, 413, { error: "Request body too large" });
+      } else if (err.message === "Daemon not connected") {
+        json(res, 503, { error: "Service temporarily unavailable" });
       } else {
-        const status = err.message === "Daemon not connected" ? 503 : 500;
-        json(res, status, { error: err.message });
+        // Log the actual error for debugging, but return generic message to client
+        log.error("Request handler error", { path: req.url, error: err.message, stack: err.stack });
+        json(res, 500, { error: "Internal server error" });
       }
     }
     return;
   }
 
   // Static files
-  const publicDir = join(__dirname, "public");
-  const filePath = resolve(publicDir, pathname.slice(1));
-  if (req.method === "GET" && filePath.startsWith(publicDir) && existsSync(filePath)) {
-    try {
-      const ext = extname(filePath);
-      res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
-      res.end(readFileSync(filePath));
-    } catch (err) {
-      log.error("Static file read error", { path: pathname, error: err.message });
-      res.writeHead(500);
-      res.end("Internal server error");
+  if (req.method === "GET") {
+    const publicDir = join(__dirname, "public");
+    const served = serveStaticFile(res, publicDir, pathname);
+    if (served) {
+      return; // File was served successfully
     }
-  } else {
-    res.writeHead(404);
-    res.end("Not found");
   }
+
+  // 404 - Not found
+  res.writeHead(404);
+  res.end("Not found");
 }
 
 const server = createServer(handleRequest);
@@ -917,6 +1294,14 @@ wss.on("connection", (ws) => {
   ws.on("message", async (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+    // Validate message structure and types
+    const validation = validateMessage(msg);
+    if (!validation.valid) {
+      log.warn("Invalid WebSocket message", { clientId, error: validation.error, type: msg?.type });
+      ws.send(JSON.stringify({ type: "error", message: "Invalid message format" }));
+      return;
+    }
 
     if (msg.type === "attach") {
       const name = msg.session || "default";
@@ -1056,7 +1441,8 @@ httpsServer.listen(HTTPS_PORT, "0.0.0.0", () => {
 sshRelay = startSSHServer({
   port: SSH_PORT,
   hostKey: sshHostKey,
-  password: SSH_PASSWORD || SETUP_TOKEN,
+  password: SSH_PASSWORD,
   daemonRPC,
   daemonSend,
+  credentialLockout,
 });

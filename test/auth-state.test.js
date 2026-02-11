@@ -78,11 +78,17 @@ describe("AuthState", () => {
   describe("addSession", () => {
     it("returns new state with session added", () => {
       const original = AuthState.empty("user123");
-      const expiry = Date.now() + 10000;
+      const now = Date.now();
+      const expiry = now + 10000;
 
-      const newState = original.addSession("token1", expiry, "cred123");
+      const newState = original.addSession("token1", expiry, "cred123", "csrf123", now);
 
-      assert.deepStrictEqual(newState.sessions.token1, { expiry, credentialId: "cred123" });
+      assert.deepStrictEqual(newState.sessions.token1, {
+        expiry,
+        credentialId: "cred123",
+        csrfToken: "csrf123",
+        lastActivityAt: now
+      });
     });
 
     it("does not mutate original state", () => {
@@ -153,6 +159,70 @@ describe("AuthState", () => {
       const newState = original.removeSession("nonexistent");
 
       assert.deepStrictEqual(newState.sessions, { token1: 1000 });
+    });
+  });
+
+  describe("updateSessionActivity", () => {
+    it("updates lastActivityAt timestamp", () => {
+      const now = 1000000;
+      const original = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [],
+        sessions: {
+          token1: { expiry: now + 100000, credentialId: "cred1", csrfToken: "csrf1", lastActivityAt: now - 50000 }
+        },
+      });
+
+      const newState = original.updateSessionActivity("token1", now);
+
+      assert.strictEqual(newState.sessions.token1.lastActivityAt, now);
+      assert.strictEqual(newState.sessions.token1.expiry, now + 100000); // Expiry unchanged (within 24h)
+    });
+
+    it("extends expiry if activity was more than 24h ago", () => {
+      const now = 1000000;
+      const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+      const original = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [],
+        sessions: {
+          token1: { expiry: now + 100000, credentialId: "cred1", csrfToken: "csrf1", lastActivityAt: now - (25 * 60 * 60 * 1000) }
+        },
+      });
+
+      const newState = original.updateSessionActivity("token1", now);
+
+      assert.strictEqual(newState.sessions.token1.lastActivityAt, now);
+      assert.strictEqual(newState.sessions.token1.expiry, now + SESSION_TTL_MS); // Expiry extended
+    });
+
+    it("returns unchanged state for non-existent session", () => {
+      const now = 1000000;
+      const original = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [],
+        sessions: {},
+      });
+
+      const newState = original.updateSessionActivity("nonexistent", now);
+
+      assert.strictEqual(newState, original); // Same instance
+    });
+
+    it("does not mutate original state", () => {
+      const now = 1000000;
+      const original = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [],
+        sessions: {
+          token1: { expiry: now + 100000, credentialId: "cred1", csrfToken: "csrf1", lastActivityAt: now - 50000 }
+        },
+      });
+
+      const originalLastActivity = original.sessions.token1.lastActivityAt;
+      original.updateSessionActivity("token1", now);
+
+      assert.strictEqual(original.sessions.token1.lastActivityAt, originalLastActivity);
     });
   });
 
@@ -463,6 +533,7 @@ describe("AuthState", () => {
         user: { id: "user123", name: "owner" },
         credentials: [{ id: "cred1" }],
         sessions: { token1: 999999 },
+        setupTokens: [],
       });
     });
 
@@ -475,7 +546,7 @@ describe("AuthState", () => {
 
       const json = JSON.stringify(state);
 
-      assert.strictEqual(json, '{"user":{"id":"user123","name":"owner"},"credentials":[],"sessions":{}}');
+      assert.strictEqual(json, '{"user":{"id":"user123","name":"owner"},"credentials":[],"sessions":{},"setupTokens":[]}');
     });
   });
 
