@@ -3,6 +3,7 @@
     import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
     import { getOrCreateDeviceId, generateDeviceName } from "/lib/device.js";
     import { ModalRegistry } from "/lib/modal.js";
+    import { ListRenderer } from "/lib/list-renderer.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -19,6 +20,11 @@
       });
       modals.register('add', 'add-modal', {
         returnFocus: terminal,
+        onOpen: () => {
+          // Focus the key composer input after modal opens
+          const keyInput = document.getElementById("key-composer-input");
+          if (keyInput) keyInput.focus();
+        },
         onClose: () => terminal.focus()
       });
       modals.register('session', 'session-overlay', {
@@ -1311,7 +1317,7 @@
       keyInput.value = "";
       renderComposerTags(composedKeys);
       modals.open('add');
-      keyInput.focus();
+      // Focus is handled by modal's onOpen callback
     }
 
     keyComposer.addEventListener("click", () => keyInput.focus());
@@ -1563,11 +1569,51 @@
 
     // --- Device management ---
 
+    /**
+     * Creates device item HTML
+     * @param {Object} device - Device data
+     * @param {Object} context - Rendering context
+     * @returns {string} Device item HTML
+     */
+    function deviceItemTemplate(device, context) {
+      const { currentCredentialId, isLocalhost, deviceCount } = context;
+      const isCurrent = currentCredentialId && device.id === currentCredentialId;
+      const createdDate = device.createdAt ? new Date(device.createdAt).toLocaleDateString() : 'Unknown';
+      const lastUsed = device.lastUsedAt ? formatRelativeTime(device.lastUsedAt) : 'Unknown';
+      const canRemove = deviceCount > 1;
+
+      // Choose icon based on view type and device name
+      let iconClass;
+      if (isLocalhost) {
+        iconClass = device.name.includes('Android') || device.name.includes('iPhone') ? 'ph-device-mobile' : 'ph-desktop';
+      } else {
+        iconClass = 'ph-key';
+      }
+
+      return `
+        <div class="device-item ${isCurrent ? 'current-device' : ''}" data-device-id="${device.id}">
+          <div class="device-header">
+            <i class="device-icon ph ${iconClass}"></i>
+            <span class="device-name">${escapeHtml(device.name)}</span>
+            ${isCurrent ? '<span class="device-current-badge">This device</span>' : ''}
+          </div>
+          <div class="device-meta">
+            Added: ${createdDate} · Last used: ${lastUsed}
+          </div>
+          <div class="device-actions">
+            <button class="device-btn" data-action="rename" data-id="${device.id}">Rename</button>
+            <button class="device-btn device-btn-danger" data-action="remove" data-id="${device.id}" data-is-current="${isCurrent}" ${!canRemove ? 'disabled' : ''}>Remove</button>
+          </div>
+        </div>
+      `;
+    }
+
     async function loadDevices() {
       const devicesList = document.getElementById("devices-list");
-      devicesList.innerHTML = '<p class="devices-loading">Loading devices...</p>';
 
       try {
+        devicesList.innerHTML = '<p class="devices-loading">Loading devices...</p>';
+
         const res = await fetch("/auth/devices");
         if (!res.ok) throw new Error("Failed to load devices");
         const { devices, currentCredentialId } = await res.json();
@@ -1583,79 +1629,44 @@
         // Check if we're on localhost (server machine)
         const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '::1';
 
-        // Separate devices into host (if on localhost) and remote
-        if (isLocalhost) {
-          // Localhost is auto-authenticated (not a paired device)
-          // Just show all paired devices without a "server device" designation
-          devicesList.innerHTML = '<div class="device-section-header">LAN Devices</div>';
+        // Prepare context for rendering
+        const context = {
+          currentCredentialId,
+          isLocalhost,
+          deviceCount: devices.length
+        };
 
-          devicesList.innerHTML += lanDevices.map((device) => {
-              const createdDate = device.createdAt ? new Date(device.createdAt).toLocaleDateString() : 'Unknown';
-              const lastUsed = device.lastUsedAt ? formatRelativeTime(device.lastUsedAt) : 'Unknown';
-              // Choose icon based on device name
-              const iconClass = device.name.includes('Android') || device.name.includes('iPhone') ? 'ph-device-mobile' : 'ph-desktop';
-
-              return `
-                <div class="device-item" data-device-id="${device.id}">
-                  <div class="device-header">
-                    <i class="device-icon ph ${iconClass}"></i>
-                    <span class="device-name">${escapeHtml(device.name)}</span>
-                  </div>
-                  <div class="device-meta">
-                    Added: ${createdDate} · Last used: ${lastUsed}
-                  </div>
-                  <div class="device-actions">
-                    <button class="device-btn" data-action="rename" data-id="${device.id}">Rename</button>
-                    <button class="device-btn device-btn-danger" data-action="remove" data-id="${device.id}">Remove</button>
-                  </div>
+        // Create renderer with context-aware template
+        const renderer = new ListRenderer(devicesList, {
+          itemTemplate: (device) => deviceItemTemplate(device, context),
+          onAction: ({ action, id, element }) => {
+            if (action === 'rename') {
+              renameDevice(id);
+            } else if (action === 'remove') {
+              const isCurrent = element.dataset.isCurrent === 'true';
+              removeDevice(id, isCurrent);
+            }
+          },
+          beforeRender: () => {
+            // Add header for localhost view
+            if (isLocalhost) {
+              devicesList.innerHTML = '<div class="device-section-header">LAN Devices</div>';
+            }
+          },
+          afterRender: () => {
+            // Show warning if last device (remote view only)
+            if (!isLocalhost && devices.length === 1) {
+              devicesList.insertAdjacentHTML('beforeend', `
+                <div class="devices-warning">
+                  <i class="ph ph-warning"></i>
+                  <span>You cannot remove the last device (would lock you out)</span>
                 </div>
-              `;
-            }).join('');
-        } else {
-          // Remote view - show LAN-paired devices with remove capability
-          devicesList.innerHTML = lanDevices.map((device, index) => {
-            const isCurrent = currentCredentialId && device.id === currentCredentialId;
-            const createdDate = device.createdAt ? new Date(device.createdAt).toLocaleDateString() : 'Unknown';
-            const lastUsed = device.lastUsedAt ? formatRelativeTime(device.lastUsedAt) : 'Unknown';
-            const canRemove = devices.length > 1;
-
-            return `
-              <div class="device-item ${isCurrent ? 'current-device' : ''}" data-device-id="${device.id}">
-                <div class="device-header">
-                  <i class="device-icon ph ph-key"></i>
-                  <span class="device-name">${escapeHtml(device.name)}</span>
-                  ${isCurrent ? '<span class="device-current-badge">This device</span>' : ''}
-                </div>
-                <div class="device-meta">
-                  Added: ${createdDate} · Last used: ${lastUsed}
-                </div>
-                <div class="device-actions">
-                  <button class="device-btn" data-action="rename" data-id="${device.id}">Rename</button>
-                  <button class="device-btn device-btn-danger" data-action="remove" data-id="${device.id}" data-is-current="${isCurrent}" ${!canRemove ? 'disabled' : ''}>Remove</button>
-                </div>
-              </div>
-            `;
-          }).join('');
-
-          // Show warning only if last device
-          if (devices.length === 1) {
-            devicesList.innerHTML += `
-              <div class="devices-warning">
-                <i class="ph ph-warning"></i>
-                <span>You cannot remove the last device (would lock you out)</span>
-              </div>
-            `;
+              `);
+            }
           }
-        }
+        });
 
-        // Attach event listeners
-        devicesList.querySelectorAll('[data-action="rename"]').forEach(btn => {
-          btn.addEventListener("click", () => renameDevice(btn.dataset.id));
-        });
-        devicesList.querySelectorAll('[data-action="remove"]').forEach(btn => {
-          const isCurrent = btn.dataset.isCurrent === 'true';
-          btn.addEventListener("click", () => removeDevice(btn.dataset.id, isCurrent));
-        });
+        renderer.render(lanDevices);
       } catch (err) {
         devicesList.innerHTML = '<p class="devices-loading">Failed to load devices</p>';
         console.error("Failed to load devices:", err);
@@ -1733,27 +1744,66 @@
 
     // --- Token management ---
 
+    /**
+     * Creates token item HTML
+     * @param {Object} token - Token data
+     * @returns {string} Token item HTML
+     */
+    function tokenItemTemplate(token) {
+      const createdDate = token.createdAt ? new Date(token.createdAt).toLocaleDateString() : 'Unknown';
+
+      // Check if token has been used to register a device
+      const hasCredential = token.credential !== null && token.credential !== undefined;
+
+      let iconClass, statusText, metaText;
+      if (hasCredential) {
+        // Token was used - show device info
+        iconClass = 'ph-device-mobile'; // Device icon
+        const lastAuth = token.credential.lastUsedAt ? formatRelativeTime(token.credential.lastUsedAt) : 'Never';
+        statusText = `<span class="token-status-active">Active device</span>`;
+        metaText = `Registered: ${createdDate} · Last authenticated: ${lastAuth}`;
+
+        // Add user agent info if available
+        if (token.credential.userAgent && token.credential.userAgent !== 'Unknown') {
+          metaText += `<br><span class="token-device-info">${escapeHtml(token.credential.userAgent)}</span>`;
+        }
+      } else {
+        // Token not used yet - show as unused
+        iconClass = 'ph-key'; // Key icon
+        statusText = `<span class="token-status-unused">Unused</span>`;
+        metaText = `Created: ${createdDate}`;
+      }
+
+      return `
+        <div class="token-item ${hasCredential ? 'token-item-used' : ''}" data-token-id="${token.id}" data-has-credential="${hasCredential}">
+          <div class="token-header">
+            <i class="token-icon ph ${iconClass}"></i>
+            <span class="token-name">${escapeHtml(token.name)}</span>
+            ${statusText}
+          </div>
+          <div class="token-meta">
+            ${metaText}
+          </div>
+          <div class="token-actions">
+            <button class="token-btn" data-action="rename" data-id="${token.id}">Rename</button>
+            <button class="token-btn token-btn-danger" data-action="revoke" data-id="${token.id}">Revoke</button>
+          </div>
+        </div>
+      `;
+    }
+
     async function loadTokens() {
       const tokensList = document.getElementById("tokens-list");
 
       // Preserve any newly created token display
       const newTokenEl = tokensList.querySelector('.token-item-new');
 
-      tokensList.innerHTML = '<p class="tokens-loading">Loading tokens...</p>';
-
       try {
+        tokensList.innerHTML = '<p class="tokens-loading">Loading tokens...</p>';
+
         const res = await fetch("/api/tokens");
         if (!res.ok) throw new Error("Failed to load tokens");
         const { tokens } = await res.json();
-
-        if (tokens.length === 0) {
-          tokensList.innerHTML = '<p class="tokens-empty">No setup tokens yet. Generate one to pair remote devices.</p>';
-          // Re-insert the new token display at the top if it exists
-          if (newTokenEl) {
-            tokensList.insertBefore(newTokenEl, tokensList.firstChild);
-          }
-          return;
-        }
 
         // Filter out the newly created token if it's being displayed separately
         const newTokenId = newTokenEl?.dataset?.tokenId;
@@ -1761,65 +1811,28 @@
           ? tokens.filter(token => token.id !== newTokenId)
           : tokens;
 
-        const tokensHTML = filteredTokens.map(token => {
-          const createdDate = token.createdAt ? new Date(token.createdAt).toLocaleDateString() : 'Unknown';
-
-          // Check if token has been used to register a device
-          const hasCredential = token.credential !== null && token.credential !== undefined;
-
-          let iconClass, statusText, metaText;
-          if (hasCredential) {
-            // Token was used - show device info
-            iconClass = 'ph-device-mobile'; // Device icon
-            const lastAuth = token.credential.lastUsedAt ? formatRelativeTime(token.credential.lastUsedAt) : 'Never';
-            statusText = `<span class="token-status-active">Active device</span>`;
-            metaText = `Registered: ${createdDate} · Last authenticated: ${lastAuth}`;
-
-            // Add user agent info if available
-            if (token.credential.userAgent && token.credential.userAgent !== 'Unknown') {
-              metaText += `<br><span class="token-device-info">${escapeHtml(token.credential.userAgent)}</span>`;
+        // Create renderer
+        const renderer = new ListRenderer(tokensList, {
+          itemTemplate: tokenItemTemplate,
+          emptyState: '<p class="tokens-empty">No setup tokens yet. Generate one to pair remote devices.</p>',
+          onAction: ({ action, id, element }) => {
+            if (action === 'rename') {
+              renameToken(id);
+            } else if (action === 'revoke') {
+              const tokenItem = element.closest('.token-item');
+              const hasCredential = tokenItem.dataset.hasCredential === 'true';
+              revokeToken(id, hasCredential);
             }
-          } else {
-            // Token not used yet - show as unused
-            iconClass = 'ph-key'; // Key icon
-            statusText = `<span class="token-status-unused">Unused</span>`;
-            metaText = `Created: ${createdDate}`;
+          },
+          afterRender: () => {
+            // Re-insert the new token display at the top if it exists
+            if (newTokenEl) {
+              tokensList.insertBefore(newTokenEl, tokensList.firstChild);
+            }
           }
-
-          return `
-            <div class="token-item ${hasCredential ? 'token-item-used' : ''}" data-token-id="${token.id}" data-has-credential="${hasCredential}">
-              <div class="token-header">
-                <i class="token-icon ph ${iconClass}"></i>
-                <span class="token-name">${escapeHtml(token.name)}</span>
-                ${statusText}
-              </div>
-              <div class="token-meta">
-                ${metaText}
-              </div>
-              <div class="token-actions">
-                <button class="token-btn" data-action="rename" data-id="${token.id}">Rename</button>
-                <button class="token-btn token-btn-danger" data-action="revoke" data-id="${token.id}">Revoke</button>
-              </div>
-            </div>
-          `;
-        }).join('');
-
-        tokensList.innerHTML = tokensHTML;
-
-        // Re-insert the new token display at the top if it exists
-        if (newTokenEl) {
-          tokensList.insertBefore(newTokenEl, tokensList.firstChild);
-        }
-
-        // Attach event listeners
-        tokensList.querySelectorAll('[data-action="rename"]').forEach(btn => {
-          btn.addEventListener("click", () => renameToken(btn.dataset.id));
         });
-        tokensList.querySelectorAll('[data-action="revoke"]').forEach(btn => {
-          const tokenItem = btn.closest('.token-item');
-          const hasCredential = tokenItem.dataset.hasCredential === 'true';
-          btn.addEventListener("click", () => revokeToken(btn.dataset.id, hasCredential));
-        });
+
+        renderer.render(filteredTokens);
       } catch (err) {
         tokensList.innerHTML = '<p class="tokens-loading">Failed to load tokens</p>';
         console.error("Failed to load tokens:", err);
