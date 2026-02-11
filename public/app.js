@@ -1666,56 +1666,32 @@
 
         // Separate devices into host (if on localhost) and remote
         if (isLocalhost) {
-          // Find the actual current device (the one with the active session)
-          const hostDevice = lanDevices.find(d => d.id === currentCredentialId) || lanDevices[0];
-          const otherDevices = lanDevices.filter(d => d.id !== hostDevice.id);
-          const isCurrent = currentCredentialId && hostDevice.id === currentCredentialId;
-          const createdDate = hostDevice.createdAt ? new Date(hostDevice.createdAt).toLocaleDateString() : 'Unknown';
-          const lastUsed = hostDevice.lastUsedAt ? formatRelativeTime(hostDevice.lastUsedAt) : 'Unknown';
+          // Localhost is auto-authenticated (not a paired device)
+          // Just show all paired devices without a "server device" designation
+          devicesList.innerHTML = '<div class="device-section-header">LAN Devices</div>';
 
-          devicesList.innerHTML = `
-            <div class="device-section-header">Server Device</div>
-            <div class="device-item device-item-host">
-              <div class="device-header">
-                <span class="device-icon">🖥️</span>
-                <span class="device-name">${escapeHtml(hostDevice.name)}</span>
-                <span class="device-host-badge">Server</span>
-              </div>
-              <div class="device-meta">
-                Added: ${createdDate} · Last used: ${lastUsed}
-              </div>
-              <div class="device-actions">
-                <button class="device-btn" data-action="rename" data-id="${hostDevice.id}">Rename</button>
-              </div>
-            </div>
-          `;
-
-          // Show other devices in remote section
-          if (otherDevices.length > 0) {
-            devicesList.innerHTML += `<div class="device-section-header" style="margin-top: 1rem;">Remote Devices</div>`;
-            devicesList.innerHTML += otherDevices.map((device, index) => {
-              const isCurrent = currentCredentialId && device.id === currentCredentialId;
+          devicesList.innerHTML += lanDevices.map((device) => {
               const createdDate = device.createdAt ? new Date(device.createdAt).toLocaleDateString() : 'Unknown';
               const lastUsed = device.lastUsedAt ? formatRelativeTime(device.lastUsedAt) : 'Unknown';
+              // Choose icon based on device name
+              const icon = device.name.includes('Android') || device.name.includes('iPhone') ? '📱' : '🖥️';
 
               return `
-                <div class="device-item ${isCurrent ? 'current-device' : ''}" data-device-id="${device.id}">
+                <div class="device-item" data-device-id="${device.id}">
                   <div class="device-header">
-                    <span class="device-icon">🔑</span>
+                    <span class="device-icon">${icon}</span>
                     <span class="device-name">${escapeHtml(device.name)}</span>
-                    ${isCurrent ? '<span class="device-current-badge">This device</span>' : ''}
                   </div>
                   <div class="device-meta">
                     Added: ${createdDate} · Last used: ${lastUsed}
                   </div>
                   <div class="device-actions">
                     <button class="device-btn" data-action="rename" data-id="${device.id}">Rename</button>
-                    <span class="device-meta" style="font-size: 0.75rem; color: var(--text-dim); padding: 0 0.5rem;">Cannot remove from server</span>
+                    <button class="device-btn device-btn-danger" data-action="remove" data-id="${device.id}">Remove</button>
                   </div>
                 </div>
               `;
             }).join('');
-          }
         } else {
           // Remote view - show LAN-paired devices with remove capability
           devicesList.innerHTML = lanDevices.map((device, index) => {
@@ -2230,7 +2206,9 @@
 
     async function renderTrustQR() {
       const container = document.getElementById("wizard-trust-qr");
+      const copyBtn = document.getElementById("wizard-trust-copy-url");
       container.innerHTML = "";
+      copyBtn.style.display = "none";
       try {
         await wizardManager.loadQRLib();
         const info = await wizardManager.getConnectInfo();
@@ -2240,7 +2218,21 @@
             width: 200, margin: 2,
             color: { dark: isDark ? "#cdd6f4" : "#4c4f69", light: isDark ? "#1e1e2e" : "#eff1f5" },
           }, (err, canvas) => {
-            if (!err) container.appendChild(canvas);
+            if (!err) {
+              container.appendChild(canvas);
+              // Show copy button
+              copyBtn.style.display = "flex";
+              copyBtn.onclick = async () => {
+                try {
+                  await navigator.clipboard.writeText(info.trustUrl);
+                  const originalText = copyBtn.innerHTML;
+                  copyBtn.innerHTML = '<i class="ph ph-check"></i> Copied!';
+                  setTimeout(() => { copyBtn.innerHTML = originalText; }, 2000);
+                } catch {
+                  alert("Failed to copy URL");
+                }
+              };
+            }
           });
         }
       } catch { /* ignore */ }
@@ -2274,7 +2266,9 @@
 
         // Render QR
         const qrContainer = document.getElementById("wizard-pair-qr");
+        const copyBtn = document.getElementById("wizard-pair-copy-url");
         qrContainer.innerHTML = "";
+        copyBtn.style.display = "none";
         if (data.url) {
           await wizardManager.loadQRLib();
           const isDark = getEffectiveTheme() === "dark";
@@ -2282,7 +2276,21 @@
             width: 200, margin: 2,
             color: { dark: isDark ? "#cdd6f4" : "#4c4f69", light: isDark ? "#1e1e2e" : "#eff1f5" },
           }, (err, canvas) => {
-            if (!err) qrContainer.appendChild(canvas);
+            if (!err) {
+              qrContainer.appendChild(canvas);
+              // Show copy button
+              copyBtn.style.display = "flex";
+              copyBtn.onclick = async () => {
+                try {
+                  await navigator.clipboard.writeText(data.url);
+                  const originalText = copyBtn.innerHTML;
+                  copyBtn.innerHTML = '<i class="ph ph-check"></i> Copied!';
+                  setTimeout(() => { copyBtn.innerHTML = originalText; }, 2000);
+                } catch {
+                  alert("Failed to copy URL");
+                }
+              };
+            }
           });
         }
 
@@ -2338,6 +2346,9 @@
       document.getElementById("wizard-pair-qr").innerHTML = "";
       document.getElementById("wizard-pair-pin").textContent = "";
       document.getElementById("wizard-pair-countdown").textContent = "";
+      // Hide copy buttons
+      document.getElementById("wizard-trust-copy-url").style.display = "none";
+      document.getElementById("wizard-pair-copy-url").style.display = "none";
     }
 
     // Event: Pair Device → step 1 (trust)

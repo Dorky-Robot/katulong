@@ -1,0 +1,170 @@
+/**
+ * Tests for withStateLock state persistence
+ *
+ * This test suite verifies that withStateLock correctly saves AuthState instances
+ * returned by modifier functions. This was a critical bug where AuthState instances
+ * were incorrectly treated as read-only queries and not persisted.
+ */
+
+import { test } from "node:test";
+import assert from "node:assert";
+import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { withStateLock, saveState, _invalidateCache } from "../lib/auth.js";
+import { AuthState } from "../lib/auth-state.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const TEST_DIR = join(__dirname, ".test-data");
+const TEST_STATE_PATH = join(TEST_DIR, "katulong-auth.json");
+
+// Mock the state path for testing
+const originalEnv = process.env.KATULONG_DATA_DIR;
+
+test("withStateLock - saves AuthState instances returned by modifier", async () => {
+  // Setup
+  if (!existsSync(TEST_DIR)) mkdirSync(TEST_DIR, { recursive: true });
+  process.env.KATULONG_DATA_DIR = TEST_DIR;
+  _invalidateCache();
+
+  // Create initial state with 3 credentials
+  const initialState = new AuthState({
+    user: { id: "test-user", name: "Test User" },
+    credentials: [
+      { id: "cred-1", name: "Device 1" },
+      { id: "cred-2", name: "Device 2" },
+      { id: "cred-3", name: "Device 3" }
+    ],
+    sessions: {},
+    setupTokens: []
+  });
+
+  saveState(initialState);
+  _invalidateCache();
+
+  // Remove a credential using withStateLock
+  await withStateLock(async (state) => {
+    return state.removeCredential("cred-2");
+  });
+
+  // Reload from disk and verify
+  _invalidateCache();
+  const data = JSON.parse(readFileSync(TEST_STATE_PATH, "utf-8"));
+
+  assert.strictEqual(data.credentials.length, 2, "Should have 2 credentials after removal");
+  assert.ok(!data.credentials.find(c => c.id === "cred-2"), "Removed credential should not be in file");
+  assert.ok(data.credentials.find(c => c.id === "cred-1"), "Other credentials should remain");
+  assert.ok(data.credentials.find(c => c.id === "cred-3"), "Other credentials should remain");
+
+  // Cleanup
+  if (existsSync(TEST_STATE_PATH)) unlinkSync(TEST_STATE_PATH);
+  process.env.KATULONG_DATA_DIR = originalEnv;
+  _invalidateCache();
+});
+
+test("withStateLock - saves state when modifier returns { state, ...data }", async () => {
+  // Setup
+  if (!existsSync(TEST_DIR)) mkdirSync(TEST_DIR, { recursive: true });
+  process.env.KATULONG_DATA_DIR = TEST_DIR;
+  _invalidateCache();
+
+  const initialState = new AuthState({
+    user: { id: "test-user", name: "Test User" },
+    credentials: [{ id: "cred-1", name: "Device 1" }],
+    sessions: {},
+    setupTokens: []
+  });
+
+  saveState(initialState);
+  _invalidateCache();
+
+  // Modify state and return extra data
+  const result = await withStateLock(async (state) => {
+    const newState = state.addCredential({ id: "cred-2", name: "Device 2" });
+    return { state: newState, added: true };
+  });
+
+  assert.strictEqual(result.added, true, "Should return extra data");
+
+  // Verify state was saved
+  _invalidateCache();
+  const data = JSON.parse(readFileSync(TEST_STATE_PATH, "utf-8"));
+  assert.strictEqual(data.credentials.length, 2, "Should have 2 credentials");
+
+  // Cleanup
+  if (existsSync(TEST_STATE_PATH)) unlinkSync(TEST_STATE_PATH);
+  process.env.KATULONG_DATA_DIR = originalEnv;
+  _invalidateCache();
+});
+
+test("withStateLock - does not save when modifier returns plain object without state", async () => {
+  // Setup
+  if (!existsSync(TEST_DIR)) mkdirSync(TEST_DIR, { recursive: true });
+  process.env.KATULONG_DATA_DIR = TEST_DIR;
+  _invalidateCache();
+
+  const initialState = new AuthState({
+    user: { id: "test-user", name: "Test User" },
+    credentials: [{ id: "cred-1", name: "Device 1" }],
+    sessions: {},
+    setupTokens: []
+  });
+
+  saveState(initialState);
+  _invalidateCache();
+
+  // Read-only query
+  const result = await withStateLock(async (state) => {
+    return { hasCredentials: state.hasCredentials() };
+  });
+
+  assert.strictEqual(result.hasCredentials, true, "Should return query result");
+
+  // Verify state was NOT modified
+  _invalidateCache();
+  const data = JSON.parse(readFileSync(TEST_STATE_PATH, "utf-8"));
+  assert.strictEqual(data.credentials.length, 1, "Should still have 1 credential");
+
+  // Cleanup
+  if (existsSync(TEST_STATE_PATH)) unlinkSync(TEST_STATE_PATH);
+  process.env.KATULONG_DATA_DIR = originalEnv;
+  _invalidateCache();
+});
+
+test("withStateLock - preserves setupTokens when removing credentials", async () => {
+  // Setup
+  if (!existsSync(TEST_DIR)) mkdirSync(TEST_DIR, { recursive: true });
+  process.env.KATULONG_DATA_DIR = TEST_DIR;
+  _invalidateCache();
+
+  const initialState = new AuthState({
+    user: { id: "test-user", name: "Test User" },
+    credentials: [
+      { id: "cred-1", name: "Device 1" },
+      { id: "cred-2", name: "Device 2" }
+    ],
+    sessions: {},
+    setupTokens: [
+      { id: "token-1", token: "abc123", name: "Test Token", createdAt: Date.now(), lastUsedAt: null }
+    ]
+  });
+
+  saveState(initialState);
+  _invalidateCache();
+
+  // Remove a credential
+  await withStateLock(async (state) => {
+    return state.removeCredential("cred-2");
+  });
+
+  // Verify setupTokens were preserved
+  _invalidateCache();
+  const data = JSON.parse(readFileSync(TEST_STATE_PATH, "utf-8"));
+  assert.strictEqual(data.setupTokens.length, 1, "Should preserve setupTokens");
+  assert.strictEqual(data.setupTokens[0].id, "token-1", "Should preserve setupToken data");
+
+  // Cleanup
+  if (existsSync(TEST_STATE_PATH)) unlinkSync(TEST_STATE_PATH);
+  process.env.KATULONG_DATA_DIR = originalEnv;
+  _invalidateCache();
+});

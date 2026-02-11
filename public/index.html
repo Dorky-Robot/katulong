@@ -1019,6 +1019,28 @@
     .wizard-btn:active { opacity: 0.8; }
     .wizard-btn-primary { background: var(--accent-active); color: #1e1e2e; }
     .wizard-btn-success { background: var(--success); color: #1e1e2e; }
+    .wizard-copy-url-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.375rem;
+      width: 100%;
+      height: 2.25rem;
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      background: var(--bg-surface);
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      cursor: pointer;
+      margin-bottom: 1rem;
+    }
+    .wizard-copy-url-btn:hover {
+      background: var(--bg-input);
+      color: var(--text);
+    }
+    .wizard-copy-url-btn:active { opacity: 0.8; }
+    .wizard-copy-url-btn i { font-size: 0.875rem; }
     .wizard-success-icon {
       font-size: 3rem;
       margin: 1rem 0;
@@ -1260,6 +1282,9 @@
           </div>
           <p class="wizard-subtitle">Scan this QR code with your phone to install the trust certificate.</p>
           <div class="wizard-qr-container" id="wizard-trust-qr"></div>
+          <button class="wizard-copy-url-btn" id="wizard-trust-copy-url" style="display:none;">
+            <i class="ph ph-copy"></i> Copy URL
+          </button>
           <button class="wizard-btn wizard-btn-primary" id="wizard-next-pair">Next</button>
         </div>
 
@@ -1278,6 +1303,9 @@
           </div>
           <p class="wizard-subtitle">Scan the QR code and enter the PIN on your phone.</p>
           <div class="wizard-qr-container" id="wizard-pair-qr"></div>
+          <button class="wizard-copy-url-btn" id="wizard-pair-copy-url" style="display:none;">
+            <i class="ph ph-copy"></i> Copy URL
+          </button>
           <div class="wizard-pin" id="wizard-pair-pin"></div>
           <div class="wizard-countdown" id="wizard-pair-countdown"></div>
         </div>
@@ -1297,6 +1325,6 @@
     </div>
   </div>
 
-  <script type="module" src="/app.js?v=6"></script>
+  <script type="module" src="/app.js?v=7"></script>
 </body>
 </html>
