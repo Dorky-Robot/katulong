@@ -2,6 +2,8 @@
       startRegistration,
       startAuthentication,
     } from "/vendor/simplewebauthn/browser.esm.js";
+    import { getOrCreateDeviceId, generateDeviceName } from "/lib/device.js";
+    import { checkWebAuthnSupport, getWebAuthnErrorMessage } from "/lib/webauthn-errors.js";
 
     const setupView = document.getElementById("setup-view");
     const loginView = document.getElementById("login-view");
@@ -14,143 +16,10 @@
     const isMobile = /Android|iPad|iPhone|iPod/.test(navigator.userAgent);
 
     // --- WebAuthn Support Checks ---
+    // WebAuthn support and error functions imported from /lib/webauthn-errors.js
 
-    function checkWebAuthnSupport() {
-      if (!window.PublicKeyCredential) {
-        return {
-          supported: false,
-          error: "WebAuthn not supported. Please use a modern browser (Chrome, Safari, Firefox, Edge)."
-        };
-      }
-
-      if (!window.isSecureContext) {
-        return {
-          supported: false,
-          error: "Secure context required. Please use HTTPS or localhost."
-        };
-      }
-
-      return { supported: true };
-    }
-
-    function getWebAuthnErrorMessage(err) {
-      if (err.name === "NotAllowedError") {
-        // Check if we're in incognito mode (heuristic)
-        const isLikelyIncognito = !navigator.storage || !navigator.storage.estimate;
-        if (isLikelyIncognito) {
-          return "Passkey registration cancelled. Note: Private/Incognito mode may not support biometric authentication. Please use a regular browser window.";
-        }
-        return "Passkey registration cancelled. Please try again and approve the biometric prompt.";
-      }
-
-      if (err.name === "InvalidStateError") {
-        return "This passkey is already registered. Please use a different authenticator.";
-      }
-
-      if (err.name === "NotSupportedError") {
-        return "Passkey not supported on this device. Please try a different browser or device.";
-      }
-
-      if (err.name === "AbortError") {
-        return "Registration timed out. Please try again.";
-      }
-
-      // Generic error
-      return err.message || "An error occurred during passkey registration.";
-    }
-
-    // --- Device ID Management (same as index.html) ---
-
-    async function openDeviceDB() {
-      return new Promise((resolve, reject) => {
-        const request = indexedDB.open('katulong', 1);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result);
-        request.onupgradeneeded = (e) => {
-          const db = e.target.result;
-          if (!db.objectStoreNames.contains('config')) {
-            db.createObjectStore('config');
-          }
-        };
-      });
-    }
-
-    async function getFromIndexedDB(key) {
-      try {
-        const db = await openDeviceDB();
-        return new Promise((resolve, reject) => {
-          const tx = db.transaction('config', 'readonly');
-          const store = tx.objectStore('config');
-          const request = store.get(key);
-          request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(request.error);
-        });
-      } catch {
-        return null;
-      }
-    }
-
-    async function saveToIndexedDB(key, value) {
-      try {
-        const db = await openDeviceDB();
-        return new Promise((resolve, reject) => {
-          const tx = db.transaction('config', 'readwrite');
-          const store = tx.objectStore('config');
-          const request = store.put(value, key);
-          request.onsuccess = () => resolve();
-          request.onerror = () => reject(request.error);
-        });
-      } catch {
-        // IndexedDB not available
-      }
-    }
-
-    async function getOrCreateDeviceId() {
-      let deviceId = localStorage.getItem('katulong_device_id');
-      if (!deviceId) {
-        deviceId = await getFromIndexedDB('deviceId');
-        if (deviceId) {
-          localStorage.setItem('katulong_device_id', deviceId);
-        }
-      }
-      if (!deviceId) {
-        deviceId = crypto.randomUUID();
-        localStorage.setItem('katulong_device_id', deviceId);
-        await saveToIndexedDB('deviceId', deviceId);
-      }
-      return deviceId;
-    }
-
-    function generateDeviceName() {
-      const ua = navigator.userAgent;
-      if (/iPhone/i.test(ua)) {
-        const match = ua.match(/iPhone OS (\d+)/);
-        return match ? `iPhone (iOS ${match[1]})` : 'iPhone';
-      }
-      if (/iPad/i.test(ua)) return 'iPad';
-      if (/Android/i.test(ua)) {
-        const match = ua.match(/Android (\d+)/);
-        return match ? `Android ${match[1]}` : 'Android';
-      }
-      if (/Mac OS X/i.test(ua)) {
-        if (/Chrome/i.test(ua)) return 'Chrome on Mac';
-        if (/Firefox/i.test(ua)) return 'Firefox on Mac';
-        if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) return 'Safari on Mac';
-        return 'Mac';
-      }
-      if (/Windows/i.test(ua)) {
-        if (/Chrome/i.test(ua)) return 'Chrome on Windows';
-        if (/Firefox/i.test(ua)) return 'Firefox on Windows';
-        if (/Edge/i.test(ua)) return 'Edge on Windows';
-        return 'Windows';
-      }
-      if (/Linux/i.test(ua)) {
-        if (/Chrome/i.test(ua)) return 'Chrome on Linux';
-        if (/Firefox/i.test(ua)) return 'Firefox on Linux';
-        return 'Linux';
-      }
-      return 'Unknown Device';
-    }
+    // --- Device ID Management ---
+    // Device management functions imported from /lib/device.js
 
     async function checkStatus() {
       const res = await fetch("/auth/status");
