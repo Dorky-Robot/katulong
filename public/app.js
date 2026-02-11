@@ -619,7 +619,16 @@
         }
       };
 
-      state.connection.ws.onclose = () => {
+      state.connection.ws.onclose = (event) => {
+        // Check if connection was closed due to revoked credentials
+        if (event.code === 1008) { // 1008 = Policy Violation
+          console.log('[Auth] Session invalidated, redirecting to login');
+          // Redirect to login with message
+          window.location.href = '/login?reason=revoked';
+          return;
+        }
+
+        // Normal disconnect - attempt reconnection
         const viewport = document.querySelector(".xterm-viewport");
         state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
         state.connection.attached = false;
