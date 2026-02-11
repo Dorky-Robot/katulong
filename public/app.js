@@ -543,6 +543,11 @@
       'session-renamed': (msg) => ({
         stateUpdates: { 'session.name': msg.name },
         effects: [{ type: 'updateSessionUI', name: msg.name }]
+      }),
+
+      'credential-registered': () => ({
+        stateUpdates: {},
+        effects: [{ type: 'refreshTokensAfterRegistration' }]
       })
     };
 
@@ -588,6 +593,15 @@
           url.searchParams.set("s", effect.name);
           history.replaceState(null, "", url);
           renderBar(effect.name);
+          break;
+        case 'refreshTokensAfterRegistration':
+          // Refresh token list to show newly used token
+          loadTokens();
+          // Hide token creation form and show "Generate New Token" button
+          const tokenCreateForm = document.getElementById("token-create-form");
+          const createTokenBtn = document.getElementById("settings-create-token");
+          if (tokenCreateForm) tokenCreateForm.style.display = "none";
+          if (createTokenBtn) createTokenBtn.style.display = "block";
           break;
       }
     }

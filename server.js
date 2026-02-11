@@ -447,6 +447,12 @@ const routes = [
     // I/O: Set cookie
     const { session } = result.result.data;
     setSessionCookie(res, session.token, session.expiry, { secure: isHttpsConnection(req) });
+
+    // Broadcast to all connected clients (for real-time UI updates)
+    if (setupTokenId) {
+      broadcastToAll({ type: "credential-registered", tokenId: setupTokenId });
+    }
+
     json(res, 200, { ok: true });
   }},
 
@@ -1262,6 +1268,16 @@ function sendToSession(sessionName, payload, { preferP2P = false } = {}) {
         // DataChannel send failed, fall through to WS
       }
     }
+    if (info.ws.readyState === 1) {
+      info.ws.send(encoded);
+    }
+  }
+}
+
+// Broadcast to all connected WebSocket clients
+function broadcastToAll(payload) {
+  const encoded = JSON.stringify(payload);
+  for (const [, info] of wsClients) {
     if (info.ws.readyState === 1) {
       info.ws.send(encoded);
     }
