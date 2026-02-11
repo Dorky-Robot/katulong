@@ -20,6 +20,11 @@
       });
       modals.register('add', 'add-modal', {
         returnFocus: terminal,
+        onOpen: () => {
+          // Focus the key composer input after modal opens
+          const keyInput = document.getElementById("key-composer-input");
+          if (keyInput) keyInput.focus();
+        },
         onClose: () => terminal.focus()
       });
       modals.register('session', 'session-overlay', {
@@ -1312,7 +1317,7 @@
       keyInput.value = "";
       renderComposerTags(composedKeys);
       modals.open('add');
-      keyInput.focus();
+      // Focus is handled by modal's onOpen callback
     }
 
     keyComposer.addEventListener("click", () => keyInput.focus());
