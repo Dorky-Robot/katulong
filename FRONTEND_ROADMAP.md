@@ -1,6 +1,6 @@
 # Frontend Cleanup Roadmap
 
-## ✅ Completed (Phases 1-3)
+## ✅ Completed (Phases 1-6)
 
 ### Phase 1: Design Tokens & Utilities
 - ✅ Created `public/design-tokens.css` with CSS custom properties
@@ -20,17 +20,38 @@
 - ✅ Standardized button variants, sizes, states
 - ✅ Replaced all emoji icons with Phosphor icons
 
+### Phase 4: Centralized Modal Manager
+- ✅ Created `public/lib/modal.js` with ModalManager and ModalRegistry (266 lines)
+- ✅ Refactored all 9 modal instances to use ModalManager
+- ✅ Keyboard handling (Esc key) and focus management
+- ✅ Consistent modal behavior across app
+
+### Phase 5: List Renderer
+- ✅ Created `public/lib/list-renderer.js` - Reusable list rendering (229 lines)
+- ✅ Refactored device list to use ListRenderer
+- ✅ Refactored token list to use ListRenderer
+- ✅ Automatic event delegation and state management
+- ✅ ~140 lines of rendering logic simplified
+
+### Phase 6: State Management Formalization
+- ✅ Created `public/lib/store.js` - Centralized state management (130 lines)
+- ✅ Implemented Redux-like store with dispatch/subscribe pattern
+- ✅ Refactored shortcuts state to use store
+- ✅ Predictable state changes with action logging
+- ✅ Foundation for future state management needs
+
 **Total Impact:**
-- 6 new shared modules created
-- ~360 lines of duplication eliminated
-- Consistent design system across entire app
+- 9 new shared modules created
+- ~500+ lines of duplication eliminated
+- Consistent design system and patterns across entire app
 - All 666 tests passing
+- Maintainable, scalable architecture
 
 ---
 
-## 🔄 In Progress / Next Steps
+## 🔄 Future Enhancements
 
-### Phase 4: Modal Manager (Future PR)
+### Phase 4: Modal Manager (COMPLETED)
 
 **Current State:**
 - 9 modal overlays in `public/index.html`
