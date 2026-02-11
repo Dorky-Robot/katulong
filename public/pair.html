@@ -6,13 +6,12 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1e1e2e">
-  <title>Katulong — Pair Device</title>
+  <title>Katulong — Pair Device v6</title>
   <link rel="icon" href="/favicon.ico" sizes="32x32">
   <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <!-- Self-hosted fonts for security (no CDN trust needed) -->
+  <link rel="stylesheet" href="/vendor/fonts/fonts.css">
   <style>
     :root {
       --font-mono: 'JetBrains Mono', monospace;
@@ -118,6 +117,18 @@
     .success-msg {
       color: var(--success); font-size: 0.875rem; margin-top: 0.75rem;
     }
+
+    .debug-log {
+      margin-top: 1rem; padding: 0.75rem; background: var(--bg-input);
+      border: 1px solid var(--border); border-radius: 0.5rem;
+      font-size: 0.6875rem; max-height: 200px; overflow-y: auto;
+      text-align: left; font-family: var(--font-mono);
+    }
+    .debug-log div {
+      margin: 0.25rem 0; word-break: break-all;
+    }
+    .debug-log .log-error { color: var(--danger); }
+    .debug-log .log-info { color: var(--text-muted); }
   </style>
 </head>
 <body>
@@ -129,155 +140,9 @@
       autocomplete="off" inputmode="numeric" autofocus>
     <button id="pair-btn">Confirm</button>
     <p class="error" id="pair-error"></p>
+    <div class="debug-log" id="debug-log"></div>
   </div>
 
-  <script>
-    const code = new URLSearchParams(location.search).get("code");
-    const pinInput = document.getElementById("pin-input");
-    const pairBtn = document.getElementById("pair-btn");
-    const pairError = document.getElementById("pair-error");
-
-    if (!code) {
-      pairError.textContent = "Missing pairing code. Scan the QR code again.";
-      pairBtn.disabled = true;
-    }
-
-    // --- Device ID Management (same as login.html) ---
-
-    async function openDeviceDB() {
-      return new Promise((resolve, reject) => {
-        const request = indexedDB.open('katulong', 1);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result);
-        request.onupgradeneeded = (e) => {
-          const db = e.target.result;
-          if (!db.objectStoreNames.contains('config')) {
-            db.createObjectStore('config');
-          }
-        };
-      });
-    }
-
-    async function getFromIndexedDB(key) {
-      try {
-        const db = await openDeviceDB();
-        return new Promise((resolve, reject) => {
-          const tx = db.transaction('config', 'readonly');
-          const store = tx.objectStore('config');
-          const request = store.get(key);
-          request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(request.error);
-        });
-      } catch {
-        return null;
-      }
-    }
-
-    async function saveToIndexedDB(key, value) {
-      try {
-        const db = await openDeviceDB();
-        return new Promise((resolve, reject) => {
-          const tx = db.transaction('config', 'readwrite');
-          const store = tx.objectStore('config');
-          const request = store.put(value, key);
-          request.onsuccess = () => resolve();
-          request.onerror = () => reject(request.error);
-        });
-      } catch {
-        // IndexedDB not available
-      }
-    }
-
-    async function getOrCreateDeviceId() {
-      let deviceId = localStorage.getItem('katulong_device_id');
-      if (!deviceId) {
-        deviceId = await getFromIndexedDB('deviceId');
-        if (deviceId) {
-          localStorage.setItem('katulong_device_id', deviceId);
-        }
-      }
-      if (!deviceId) {
-        deviceId = crypto.randomUUID();
-        localStorage.setItem('katulong_device_id', deviceId);
-        await saveToIndexedDB('deviceId', deviceId);
-      }
-      return deviceId;
-    }
-
-    function generateDeviceName() {
-      const ua = navigator.userAgent;
-      if (/iPhone/i.test(ua)) {
-        const match = ua.match(/iPhone OS (\d+)/);
-        return match ? `iPhone (iOS ${match[1]})` : 'iPhone';
-      }
-      if (/iPad/i.test(ua)) return 'iPad';
-      if (/Android/i.test(ua)) {
-        const match = ua.match(/Android (\d+)/);
-        return match ? `Android ${match[1]}` : 'Android';
-      }
-      if (/Mac OS X/i.test(ua)) {
-        if (/Chrome/i.test(ua)) return 'Chrome on Mac';
-        if (/Firefox/i.test(ua)) return 'Firefox on Mac';
-        if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) return 'Safari on Mac';
-        return 'Mac';
-      }
-      if (/Windows/i.test(ua)) {
-        if (/Chrome/i.test(ua)) return 'Chrome on Windows';
-        if (/Firefox/i.test(ua)) return 'Firefox on Windows';
-        if (/Edge/i.test(ua)) return 'Edge on Windows';
-        return 'Windows';
-      }
-      if (/Linux/i.test(ua)) {
-        if (/Chrome/i.test(ua)) return 'Chrome on Linux';
-        if (/Firefox/i.test(ua)) return 'Firefox on Linux';
-        return 'Linux';
-      }
-      return 'Unknown Device';
-    }
-
-    async function submitPair() {
-      // Strip non-digits (some phones insert formatting in tel/numeric inputs)
-      const pin = pinInput.value.replace(/\D/g, "");
-      pairError.textContent = "";
-      if (!pin || pin.length !== 6) {
-        pairError.textContent = "Enter the 6-digit PIN.";
-        return;
-      }
-
-      pairBtn.disabled = true;
-      try {
-        // Get device metadata
-        const deviceId = await getOrCreateDeviceId();
-        const deviceName = generateDeviceName();
-        const userAgent = navigator.userAgent;
-
-        const res = await fetch("/auth/pair/verify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            code,
-            pin,
-            deviceId,
-            deviceName,
-            userAgent
-          }),
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || "Pairing failed");
-        }
-        window.location.href = "/";
-      } catch (err) {
-        pairError.textContent = err.message;
-      } finally {
-        pairBtn.disabled = false;
-      }
-    }
-
-    pairBtn.addEventListener("click", submitPair);
-    pinInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") submitPair();
-    });
-  </script>
+  <script src="/pair.js"></script>
 </body>
 </html>
