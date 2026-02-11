@@ -157,14 +157,14 @@
       const { setup } = await res.json();
       loadingView.classList.add("hidden");
       if (setup) {
-        if (hasWebAuthn && !isMobile) {
-          // Desktop with HTTPS — passkey login
+        if (hasWebAuthn) {
+          // HTTPS (desktop or mobile) — passkey login/registration
           loginView.classList.remove("hidden");
 
           // Check if user has passkeys for this domain
           await checkForExistingPasskeys();
         } else {
-          // Mobile or HTTP — show QR pairing instructions
+          // HTTP or no WebAuthn support — show QR pairing instructions
           pairView.classList.remove("hidden");
         }
       } else {
