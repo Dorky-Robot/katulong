@@ -2,14 +2,36 @@
     import { FitAddon } from "/vendor/xterm/addon-fit.esm.js";
     import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
     import { getOrCreateDeviceId, generateDeviceName } from "/lib/device.js";
+    import { ModalRegistry } from "/lib/modal.js";
 
-    // --- Modal helpers ---
+    // --- Modal Manager ---
+    const modals = new ModalRegistry();
 
-    function openModal(overlay) { overlay.classList.add("visible"); }
-    function closeModal(overlay) { overlay.classList.remove("visible"); term.focus(); }
-    function dismissModal(overlay, onClose) {
-      overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) onClose ? onClose() : closeModal(overlay);
+    // Register modals (will be called after terminal is created)
+    function initModals(terminal) {
+      modals.register('shortcuts', 'shortcuts-overlay', {
+        returnFocus: terminal,
+        onClose: () => terminal.focus()
+      });
+      modals.register('edit', 'edit-overlay', {
+        returnFocus: terminal,
+        onClose: () => terminal.focus()
+      });
+      modals.register('add', 'add-modal', {
+        returnFocus: terminal,
+        onClose: () => terminal.focus()
+      });
+      modals.register('session', 'session-overlay', {
+        returnFocus: terminal,
+        onClose: () => terminal.focus()
+      });
+      modals.register('dictation', 'dictation-overlay', {
+        returnFocus: terminal,
+        onClose: () => terminal.focus()
+      });
+      modals.register('settings', 'settings-overlay', {
+        returnFocus: terminal,
+        onClose: () => terminal.focus()
       });
     }
 
@@ -332,6 +354,9 @@
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(document.getElementById("terminal-container"));
+
+    // Initialize modals with terminal reference
+    initModals(term);
 
     // Disable mobile autocorrect/suggestions on xterm's hidden textarea
     function patchTextarea() {
@@ -1141,7 +1166,7 @@
       setBtn.tabIndex = -1;
       setBtn.setAttribute("aria-label", "Settings");
       setBtn.innerHTML = '<i class="ph ph-gear"></i>';
-      setBtn.addEventListener("click", () => openModal(settingsOverlay));
+      setBtn.addEventListener("click", () => modals.open('settings'));
       bar.appendChild(setBtn);
     }
 
@@ -1159,18 +1184,18 @@
         btn.textContent = s.label;
         btn.addEventListener("click", () => {
           sendSequence(keysToSequence(s.keys));
-          closeModal(shortcutsOverlay);
+          modals.close('shortcuts');
         });
         shortcutsGrid.appendChild(btn);
       }
-      openModal(shortcutsOverlay);
+      modals.open('shortcuts');
     }
 
     document.getElementById("shortcuts-edit-btn").addEventListener("click", () => {
-      shortcutsOverlay.classList.remove("visible");
+      modals.close('shortcuts');
       openEditPanel();
     });
-    dismissModal(shortcutsOverlay);
+    
 
     // --- Edit shortcuts (render takes data) ---
 
@@ -1205,17 +1230,17 @@
 
     function openEditPanel() {
       renderEditList(state.session.shortcuts);
-      openModal(editOverlay);
+      modals.open('edit');
     }
 
     function closeEditPanel() {
-      editOverlay.classList.remove("visible");
+      modals.close('edit');
       saveShortcuts();
     }
 
     document.getElementById("edit-done").addEventListener("click", closeEditPanel);
     document.getElementById("edit-add").addEventListener("click", openAddModal);
-    dismissModal(editOverlay, closeEditPanel);
+    
 
     async function loadShortcuts() {
       try {
@@ -1285,7 +1310,7 @@
       composedKeys = [];
       keyInput.value = "";
       renderComposerTags(composedKeys);
-      openModal(addOverlay);
+      modals.open('add');
       keyInput.focus();
     }
 
@@ -1310,15 +1335,15 @@
       }
     });
 
-    document.getElementById("modal-cancel").addEventListener("click", () => closeModal(addOverlay));
+    document.getElementById("modal-cancel").addEventListener("click", () => modals.close('add'));
 
     document.getElementById("modal-save").addEventListener("click", () => {
       if (composedKeys.length === 0) return;
       dispatchShortcuts({ type: 'ADD', item: { label: keysLabel(composedKeys), keys: keysString(composedKeys) } });
-      closeModal(addOverlay);
+      modals.close('add');
     });
 
-    dismissModal(addOverlay);
+    
 
     // --- Session manager (render takes data) ---
 
@@ -1327,7 +1352,7 @@
     const sessionNewName = document.getElementById("session-new-name");
 
     async function openSessionManager() {
-      openModal(sessionOverlay);
+      modals.open('session');
       await renderSessionList(state.session.name);
       // Fetch and populate SSH password
       try {
@@ -1486,7 +1511,7 @@
     sessionNewName.addEventListener("keydown", (e) => {
       if (e.key === "Enter") document.getElementById("session-new-create").click();
     });
-    dismissModal(sessionOverlay);
+    
 
     // --- Settings ---
 
@@ -1997,7 +2022,7 @@
       }
     }
 
-    dismissModal(settingsOverlay, () => { cleanupWizard(); closeModal(settingsOverlay); });
+    
 
     // --- Inline pairing wizard ---
 
@@ -2245,6 +2270,16 @@
       document.getElementById("wizard-pair-copy-url").style.display = "none";
     }
 
+    // Update settings modal to include cleanup on close
+    const settingsModal = modals.get('settings');
+    if (settingsModal) {
+      const originalOnClose = settingsModal.options.onClose;
+      settingsModal.options.onClose = () => {
+        cleanupWizard();
+        if (originalOnClose) originalOnClose();
+      };
+    }
+
     // Event: Pair Device → step 1 (trust)
     document.getElementById("settings-pair-lan").addEventListener("click", async () => {
       switchSettingsView(viewTrust);
@@ -2271,7 +2306,7 @@
     // Event: Done → cleanup + close
     document.getElementById("wizard-done").addEventListener("click", () => {
       cleanupWizard();
-      closeModal(settingsOverlay);
+      modals.close('settings');
     });
 
     // --- Dictation modal ---
@@ -2333,14 +2368,14 @@
     function openDictationModal() {
       dictationInput.value = "";
       dispatchDictation({ type: 'CLEAR' });
-      openModal(dictationOverlay);
+      modals.open('dictation');
       dictationInput.focus();
     }
 
     function closeDictationModal() {
       dictationInput.value = "";
       dispatchDictation({ type: 'CLEAR' });
-      closeModal(dictationOverlay);
+      modals.close('dictation');
     }
 
     document.getElementById("dictation-send").addEventListener("click", async () => {
@@ -2353,7 +2388,7 @@
       }
     });
 
-    dismissModal(dictationOverlay, closeDictationModal);
+    
 
     // --- Image upload helpers ---
 
