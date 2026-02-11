@@ -63,8 +63,8 @@ log.info("TLS certificates ready", { dir: join(DATA_DIR, "tls") });
 const sshHostKey = ensureHostKey(DATA_DIR);
 
 // --- Authentication tokens ---
-// Generate separate tokens for setup (WebAuthn registration) and SSH access
-const SETUP_TOKEN = process.env.SETUP_TOKEN || randomBytes(16).toString("hex");
+// Setup token is now stored in AuthState (managed via API)
+// SSH access token is still generated here
 const SSH_PASSWORD = process.env.SSH_PASSWORD || randomBytes(16).toString("hex");
 const RP_NAME = "Katulong";
 
@@ -74,9 +74,6 @@ const authRateLimit = rateLimit(10, 60000);
 // Stricter limit for pairing (10 attempts per 30 seconds)
 const pairingRateLimit = rateLimit(10, 30000);
 
-if (!process.env.SETUP_TOKEN) {
-  log.info("Setup token generated", { token: SETUP_TOKEN });
-}
 if (!process.env.SSH_PASSWORD) {
   log.info("SSH password generated", { password: SSH_PASSWORD });
 }
@@ -314,7 +311,19 @@ const routes = [
 
   { method: "POST", path: "/auth/register/options", handler: async (req, res) => {
     const { setupToken } = await parseJSON(req);
-    if (setupToken !== SETUP_TOKEN) {
+
+    // Get setup token from state (or generate if first time)
+    const state = loadState() || withStateLock(() => {
+      const currentState = loadState();
+      if (currentState) return currentState;
+      // First time - create empty state with setup token
+      const newState = AuthState.empty().setSetupToken(randomBytes(16).toString("hex"));
+      saveState(newState);
+      log.info("Setup token generated", { token: newState.setupToken });
+      return newState;
+    });
+
+    if (setupToken !== state.setupToken) {
       return json(res, 403, { error: "Invalid setup token" });
     }
     const { origin, rpID } = getOriginAndRpID(req);
@@ -512,6 +521,45 @@ const routes = [
     }
     const consumed = pairingStore.wasConsumed(code);
     json(res, 200, { consumed });
+  }},
+
+  // --- Setup token API ---
+
+  { method: "GET", path: "/api/setup-token", handler: (req, res) => {
+    // Only authenticated users can view setup token
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const state = loadState();
+    if (!state || !state.setupToken) {
+      // Generate if it doesn't exist
+      const newState = (state || AuthState.empty()).setSetupToken(randomBytes(16).toString("hex"));
+      withStateLock(() => saveState(newState));
+      log.info("Setup token generated", { token: newState.setupToken });
+      return json(res, 200, { token: newState.setupToken });
+    }
+
+    json(res, 200, { token: state.setupToken });
+  }},
+
+  { method: "POST", path: "/api/setup-token/regenerate", handler: (req, res) => {
+    // Only authenticated users can regenerate setup token
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const state = loadState();
+    if (!state) {
+      return json(res, 404, { error: "No state found" });
+    }
+
+    const newToken = randomBytes(16).toString("hex");
+    const newState = state.setSetupToken(newToken);
+    withStateLock(() => saveState(newState));
+    log.info("Setup token regenerated", { token: newToken });
+
+    json(res, 200, { token: newToken });
   }},
 
   { method: "GET", path: "/pair", handler: (req, res) => {
