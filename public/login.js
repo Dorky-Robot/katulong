@@ -65,7 +65,7 @@
             }
 
             // Show helpful message
-            loginError.innerHTML = 'ℹ️ No passkey registered yet. Please register your fingerprint/Touch ID below.';
+            loginError.innerHTML = '<i class="ph ph-info"></i> No passkey registered yet. Please register your fingerprint/Touch ID below.';
             loginError.style.color = '#6b9bd1'; // Info blue instead of error red
             loginError.style.textAlign = 'center';
             loginError.style.marginBottom = '1rem';

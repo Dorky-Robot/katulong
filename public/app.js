@@ -1568,12 +1568,12 @@
               const createdDate = device.createdAt ? new Date(device.createdAt).toLocaleDateString() : 'Unknown';
               const lastUsed = device.lastUsedAt ? formatRelativeTime(device.lastUsedAt) : 'Unknown';
               // Choose icon based on device name
-              const icon = device.name.includes('Android') || device.name.includes('iPhone') ? '📱' : '🖥️';
+              const iconClass = device.name.includes('Android') || device.name.includes('iPhone') ? 'ph-device-mobile' : 'ph-desktop';
 
               return `
                 <div class="device-item" data-device-id="${device.id}">
                   <div class="device-header">
-                    <span class="device-icon">${icon}</span>
+                    <i class="device-icon ph ${iconClass}"></i>
                     <span class="device-name">${escapeHtml(device.name)}</span>
                   </div>
                   <div class="device-meta">
@@ -1597,7 +1597,7 @@
             return `
               <div class="device-item ${isCurrent ? 'current-device' : ''}" data-device-id="${device.id}">
                 <div class="device-header">
-                  <span class="device-icon">🔑</span>
+                  <i class="device-icon ph ph-key"></i>
                   <span class="device-name">${escapeHtml(device.name)}</span>
                   ${isCurrent ? '<span class="device-current-badge">This device</span>' : ''}
                 </div>
@@ -1678,7 +1678,7 @@
     async function removeDevice(deviceId, isCurrent) {
       // Different warning messages based on whether it's the current device
       const message = isCurrent
-        ? "⚠️ You are about to remove THIS DEVICE (the one you're using right now).\n\nYou will be LOGGED OUT IMMEDIATELY and will need to re-register this device to access Katulong again.\n\nAre you sure you want to continue?"
+        ? "WARNING: You are about to remove THIS DEVICE (the one you're using right now).\n\nYou will be LOGGED OUT IMMEDIATELY and will need to re-register this device to access Katulong again.\n\nAre you sure you want to continue?"
         : "Are you sure you want to remove this device? It will need to be re-registered to access Katulong again.";
 
       if (!confirm(message)) {
@@ -1742,10 +1742,10 @@
           // Check if token has been used to register a device
           const hasCredential = token.credential !== null && token.credential !== undefined;
 
-          let icon, statusText, metaText;
+          let iconClass, statusText, metaText;
           if (hasCredential) {
             // Token was used - show device info
-            icon = '📱'; // Device icon
+            iconClass = 'ph-device-mobile'; // Device icon
             const lastAuth = token.credential.lastUsedAt ? formatRelativeTime(token.credential.lastUsedAt) : 'Never';
             statusText = `<span class="token-status-active">Active device</span>`;
             metaText = `Registered: ${createdDate} · Last authenticated: ${lastAuth}`;
@@ -1756,7 +1756,7 @@
             }
           } else {
             // Token not used yet - show as unused
-            icon = '🔑'; // Key icon
+            iconClass = 'ph-key'; // Key icon
             statusText = `<span class="token-status-unused">Unused</span>`;
             metaText = `Created: ${createdDate}`;
           }
@@ -1764,7 +1764,7 @@
           return `
             <div class="token-item ${hasCredential ? 'token-item-used' : ''}" data-token-id="${token.id}" data-has-credential="${hasCredential}">
               <div class="token-header">
-                <span class="token-icon">${icon}</span>
+                <i class="token-icon ph ${iconClass}"></i>
                 <span class="token-name">${escapeHtml(token.name)}</span>
                 ${statusText}
               </div>
@@ -1908,12 +1908,12 @@
       console.log("Created new token element");
       newTokenEl.innerHTML = `
         <div class="token-header">
-          <span class="token-icon">🔑</span>
+          <i class="token-icon ph ph-key"></i>
           <span class="token-name">${escapeHtml(tokenData.name)}</span>
           <span class="token-new-badge">New</span>
         </div>
         <div class="token-reveal-warning">
-          ⚠️ Save this token now - you won't see it again!
+          <i class="ph ph-warning"></i> Save this token now - you won't see it again!
         </div>
         <div class="token-value-container">
           <input type="text" class="token-value-field" value="${escapeHtml(tokenData.token)}" readonly />
