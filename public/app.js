@@ -4,6 +4,7 @@
     import { getOrCreateDeviceId, generateDeviceName } from "/lib/device.js";
     import { ModalRegistry } from "/lib/modal.js";
     import { ListRenderer } from "/lib/list-renderer.js";
+    import { createStore, createReducer } from "/lib/store.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -193,29 +194,36 @@
 
     const state = createAppState();
 
-    // --- Shortcuts state management (reducer pattern) ---
-    const shortcutsReducer = (currentShortcuts, action) => {
-      switch (action.type) {
-        case 'LOAD':
-          return Array.isArray(action.items) ? action.items.filter(s => s.label && s.keys) : [];
-        case 'ADD':
-          return [...currentShortcuts, action.item];
-        case 'REMOVE':
-          return currentShortcuts.filter((_, idx) => idx !== action.index);
-        default:
-          return currentShortcuts;
+    // --- Shortcuts state management (centralized store) ---
+    const shortcutsReducer = createReducer([], {
+      'LOAD': (shortcuts, action) => {
+        return Array.isArray(action.items) ? action.items.filter(s => s.label && s.keys) : [];
+      },
+      'ADD': (shortcuts, action) => {
+        return [...shortcuts, action.item];
+      },
+      'REMOVE': (shortcuts, action) => {
+        return shortcuts.filter((_, idx) => idx !== action.index);
       }
-    };
+    });
 
-    const dispatchShortcuts = (action) => {
-      const newShortcuts = shortcutsReducer(state.session.shortcuts, action);
-      state.update('session.shortcuts', newShortcuts);
+    // Create store for shortcuts
+    const shortcutsStore = createStore([], shortcutsReducer, { debug: false });
+
+    // Subscribe to shortcuts changes for render side effects
+    shortcutsStore.subscribe((shortcuts, action) => {
+      // Update legacy state object (for backward compatibility)
+      state.update('session.shortcuts', shortcuts);
+
       // Render effects
       renderBar(state.session.name);
       if (action.type === 'REMOVE' || action.type === 'ADD') {
-        renderEditList(state.session.shortcuts);
+        renderEditList(shortcuts);
       }
-    };
+    });
+
+    // Convenience wrapper (maintains same API)
+    const dispatchShortcuts = (action) => shortcutsStore.dispatch(action);
 
     // --- P2P Manager (edge module) ---
     const createP2PManager = (config) => {
