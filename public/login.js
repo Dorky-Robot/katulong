@@ -160,12 +160,34 @@
         if (hasWebAuthn && !isMobile) {
           // Desktop with HTTPS — passkey login
           loginView.classList.remove("hidden");
+
+          // Check if user has passkeys for this domain
+          await checkForExistingPasskeys();
         } else {
           // Mobile or HTTP — show QR pairing instructions
           pairView.classList.remove("hidden");
         }
       } else {
         setupView.classList.remove("hidden");
+      }
+    }
+
+    async function checkForExistingPasskeys() {
+      try {
+        // Try to get login options to see if there are any credentials
+        const optsRes = await fetch("/auth/login/options", { method: "POST" });
+        if (optsRes.ok) {
+          const opts = await optsRes.json();
+
+          // If no credentials available, show helpful message
+          if (!opts.allowCredentials || opts.allowCredentials.length === 0) {
+            loginError.innerHTML = 'ℹ️ No passkey found for this device. Click <strong>"Register New Passkey"</strong> below to set one up.';
+            loginError.style.color = '#6b9bd1'; // Info blue instead of error red
+          }
+        }
+      } catch (err) {
+        // Silently fail - user can still try to login and get proper error
+        console.log('Could not check for existing passkeys:', err);
       }
     }
 
@@ -307,6 +329,7 @@
     document.getElementById("login-btn").addEventListener("click", async () => {
       const btn = document.getElementById("login-btn");
       loginError.textContent = "";
+      loginError.style.color = ''; // Reset to default error color
 
       // Check WebAuthn support
       const supportCheck = checkWebAuthnSupport();
@@ -325,6 +348,12 @@
           throw new Error(err.error || "Failed to get login options");
         }
         const opts = await optsRes.json();
+
+        // Check if there are any passkeys available for this domain
+        if (!opts.allowCredentials || opts.allowCredentials.length === 0) {
+          loginError.innerHTML = 'No passkeys registered for this device. Please click <strong>"Register New Passkey"</strong> below to set one up.';
+          return;
+        }
 
         // Start WebAuthn authentication
         const credential = await startAuthentication({ optionsJSON: opts });
@@ -346,7 +375,12 @@
         // Success — redirect
         window.location.href = "/";
       } catch (err) {
-        loginError.textContent = getWebAuthnErrorMessage(err);
+        // Special handling for "no passkeys available" error
+        if (err.name === "NotAllowedError" && err.message?.includes("No available authenticator")) {
+          loginError.innerHTML = 'No passkeys found for this device. Please click <strong>"Register New Passkey"</strong> below to set one up.';
+        } else {
+          loginError.textContent = getWebAuthnErrorMessage(err);
+        }
       } finally {
         btn.disabled = false;
       }
