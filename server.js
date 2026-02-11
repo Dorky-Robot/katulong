@@ -709,6 +709,7 @@ const routes = [
       }
 
       let updatedState = state;
+      let removedCredentialId = null;
 
       // If token has a linked credential, remove it (and its sessions)
       if (token.credentialId) {
@@ -717,6 +718,7 @@ const routes = [
           // Only remove if it's not the last credential (prevent lockout)
           try {
             updatedState = updatedState.removeCredential(token.credentialId);
+            removedCredentialId = token.credentialId;
           } catch (err) {
             // If removal fails (e.g., last credential), just remove the token
             log.warn("Cannot remove last credential, removing token only", { tokenId: id });
@@ -727,11 +729,16 @@ const routes = [
       // Remove the setup token
       updatedState = updatedState.removeSetupToken(id);
 
-      return { state: updatedState, found: true };
+      return { state: updatedState, found: true, removedCredentialId };
     });
 
     if (!result.found) {
       return json(res, 404, { error: "Token not found" });
+    }
+
+    // SECURITY: Close all active WebSocket connections for the revoked credential
+    if (result.removedCredentialId) {
+      closeWebSocketsForCredential(result.removedCredentialId);
     }
 
     log.info("Setup token revoked", { id });
@@ -974,6 +981,10 @@ const routes = [
         if (!credential) throw new Error("Device not found");
         return state.removeCredential(id);
       });
+
+      // SECURITY: Close all active WebSocket connections for this credential
+      closeWebSocketsForCredential(id);
+
       json(res, 200, { ok: true });
     } catch (err) {
       if (err.message === 'Cannot remove the last credential - would lock you out') {
@@ -1192,7 +1203,7 @@ const httpsServer = createHttpsServer({
 // --- WebSocket ---
 
 const wss = new WebSocketServer({ noServer: true });
-const wsClients = new Map(); // clientId -> { ws, session, p2pPeer, p2pConnected }
+const wsClients = new Map(); // clientId -> { ws, session, sessionToken, credentialId, p2pPeer, p2pConnected }
 
 function handleUpgrade(req, socket, head) {
   log.info("WebSocket upgrade attempt", {
@@ -1201,7 +1212,7 @@ function handleUpgrade(req, socket, head) {
     host: req.headers.host
   });
 
-  // Validate session cookie on WebSocket upgrade
+  // Validate session cookie on WebSocket upgrade and extract session info
   if (!isAuthenticated(req)) {
     log.warn("WebSocket rejected: not authenticated", { ip: req.socket.remoteAddress });
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
@@ -1209,7 +1220,24 @@ function handleUpgrade(req, socket, head) {
     return;
   }
 
-  log.info("WebSocket authenticated", { ip: req.socket.remoteAddress });
+  // Extract session token and validate credential
+  const cookies = parseCookies(req.headers.cookie);
+  const sessionToken = cookies.get("katulong_session");
+  let credentialId = null;
+
+  if (sessionToken && !isLocalRequest(req)) {
+    const state = loadState();
+    const session = state.getSession(sessionToken);
+    if (!session || !state.isValidSession(sessionToken)) {
+      log.warn("WebSocket rejected: invalid session", { ip: req.socket.remoteAddress });
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    credentialId = session.credentialId;
+  }
+
+  log.info("WebSocket authenticated", { ip: req.socket.remoteAddress, credentialId });
 
   // Origin check to prevent Cross-Site WebSocket Hijacking (CSWSH)
   // Localhost bypasses this since browsers may omit Origin for local pages
@@ -1238,6 +1266,9 @@ function handleUpgrade(req, socket, head) {
   }
 
   wss.handleUpgrade(req, socket, head, (ws) => {
+    // Attach session info to WebSocket for tracking
+    ws.sessionToken = sessionToken;
+    ws.credentialId = credentialId;
     wss.emit("connection", ws, req);
   });
 }
@@ -1261,6 +1292,42 @@ function sendToSession(sessionName, payload, { preferP2P = false } = {}) {
     if (info.ws.readyState === 1) {
       info.ws.send(encoded);
     }
+  }
+}
+
+/**
+ * Close all WebSocket connections for a revoked credential
+ * SECURITY: This ensures that revoking a device/credential immediately
+ * disconnects all active sessions using that credential.
+ * @param {string} credentialId - Credential ID to revoke
+ */
+function closeWebSocketsForCredential(credentialId) {
+  let closedCount = 0;
+  for (const [clientId, info] of wsClients) {
+    if (info.credentialId === credentialId) {
+      log.info("Closing WebSocket for revoked credential", { clientId, credentialId });
+
+      // Close P2P connection if exists
+      if (info.p2pPeer) {
+        try {
+          info.p2pPeer.destroy();
+        } catch (err) {
+          log.warn("Error destroying P2P peer", { error: err.message });
+        }
+      }
+
+      // Close WebSocket with appropriate code
+      if (info.ws.readyState === 1) { // OPEN
+        info.ws.close(1008, "Credential revoked"); // 1008 = Policy Violation
+      }
+
+      wsClients.delete(clientId);
+      closedCount++;
+    }
+  }
+
+  if (closedCount > 0) {
+    log.info("Closed WebSocket connections for revoked credential", { credentialId, count: closedCount });
   }
 }
 
@@ -1303,11 +1370,30 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    // SECURITY: Validate session is still valid before processing message
+    // This catches cases where a credential was revoked after the WebSocket connected
+    if (ws.sessionToken) {
+      const state = loadState();
+      if (!state || !state.isValidSession(ws.sessionToken)) {
+        log.warn("WebSocket message rejected: session no longer valid", { clientId, credentialId: ws.credentialId });
+        ws.close(1008, "Session invalidated"); // 1008 = Policy Violation
+        wsClients.delete(clientId);
+        return;
+      }
+    }
+
     if (msg.type === "attach") {
       const name = msg.session || "default";
       try {
         const result = await daemonRPC({ type: "attach", clientId, session: name, cols: msg.cols, rows: msg.rows });
-        wsClients.set(clientId, { ws, session: name, p2pPeer: null, p2pConnected: false });
+        wsClients.set(clientId, {
+          ws,
+          session: name,
+          sessionToken: ws.sessionToken,
+          credentialId: ws.credentialId,
+          p2pPeer: null,
+          p2pConnected: false
+        });
         log.debug("Client attached", { clientId, session: name });
         ws.send(JSON.stringify({ type: "attached" }));
         if (result.buffer) ws.send(JSON.stringify({ type: "output", data: result.buffer }));
