@@ -66,16 +66,19 @@ Users need to access their terminal from multiple devices (laptop, phone, tablet
 **Flow**:
 1. User accesses `https://katulong.local:3002` or `https://192.168.1.x:3002`
 2. Browser shows "Your connection is not private" (self-signed cert)
-3. User must manually trust certificate OR use cert installation flow:
+3. ⚠️ **Unauthenticated users are redirected to `/connect/trust`** (certificate installation page)
+4. User must manually trust certificate using the `/connect/trust` flow:
    - Visit `http://katulong.local:3001/connect/trust` (HTTP allowed for this path only)
    - Download CA certificate or mobile config
    - Install on device
-4. After trusting cert, HTTPS works
+5. After trusting cert, HTTPS works
+6. User is redirected to `/login` for passkey setup
 
 **Security Rationale**:
 - Self-signed certs are necessary for LAN HTTPS without external CA
 - Explicit trust action prevents MITM attacks
 - HTTP access is restricted to cert installation path only
+- ⚠️ **This flow is LAN-only** - internet access (ngrok) skips certificate installation entirely
 
 #### 2.2.2 LAN Device Pairing (QR + PIN)
 
@@ -116,19 +119,26 @@ ngrok http 3001
 ```
 
 **Flow**:
-1. User visits `https://felix-katulong.ngrok.app/login`
-2. System detects ngrok domain (not LAN, not localhost)
-3. Shows passkey login page (no QR pairing option shown for internet access)
-4. **First-time setup**: User clicks "Register New Passkey"
-5. User enters `SETUP_TOKEN` from console
-6. **Browser shows platform authenticator prompt** (Touch ID, etc.)
-7. User authenticates → passkey registered, session created
+1. User visits `https://felix-katulong.ngrok.app` (any path)
+2. System detects ngrok domain (not LAN, not localhost) → classifies as "internet" access
+3. ⚠️ **Unauthenticated users are redirected directly to `/login`** (NOT `/connect/trust`)
+4. Login page shows passkey setup form (no QR pairing option for internet access)
+5. **First-time setup**: User clicks "Register New Passkey"
+6. User enters `SETUP_TOKEN` from console
+7. **Browser shows platform authenticator prompt** (Touch ID, Windows Hello, fingerprint)
+8. User authenticates → passkey registered, session created
+9. User is redirected to main UI
 
 **Expected Behavior**:
-- ✅ No cert trust flow (ngrok provides valid TLS)
+- ✅ **No cert trust flow** - ngrok provides valid TLS certificate (not self-signed)
+- ✅ **No `/connect/trust` page** - certificate installation is completely skipped
 - ✅ No QR pairing (internet access = not physically co-located)
-- ✅ Uses SETUP_TOKEN for first device
+- ✅ Uses SETUP_TOKEN for first device registration
 - ✅ Additional devices use QR pairing on LAN OR get their own SETUP_TOKEN
+
+**Critical Difference from LAN**:
+- **LAN**: First redirect → `/connect/trust` (must install cert first)
+- **Internet**: First redirect → `/login` (cert already valid via ngrok)
 
 **Security Rationale**:
 - QR + PIN assumes physical proximity (same room)
@@ -153,6 +163,34 @@ ngrok http 3001
 - ✅ No QR codes, no setup tokens, no PIN
 - ✅ One-click login with biometrics
 - ✅ Session persists for 30 days (sliding expiry)
+
+---
+
+### 2.5 Access Method Comparison
+
+**Critical Distinction**: The authentication flow varies significantly based on how users access Katulong.
+
+| Feature | Localhost | LAN | Internet (Ngrok) |
+|---------|-----------|-----|------------------|
+| **Example URL** | `http://localhost:3001` | `https://katulong.local:3002` | `https://felix-katulong.ngrok.app` |
+| **TLS/HTTPS** | Not required | Required (self-signed cert) | Required (ngrok provides valid cert) |
+| **Certificate Trust Flow** | ❌ Not needed | ✅ **Required first step** | ❌ Not needed |
+| **Initial Access** | Auto-authenticated | Redirects to `/connect/trust` | Redirects to `/login` |
+| **First Setup** | Passkey + SETUP_TOKEN | QR + PIN pairing | Passkey + SETUP_TOKEN |
+| **`/connect/trust` Shown** | No | **Yes** (must install cert) | **No** (ngrok has valid cert) |
+| **Platform Authenticator** | Touch ID/Windows Hello | Touch ID/Windows Hello | Touch ID/Windows Hello |
+| **Additional Devices** | Direct passkey login | QR + PIN pairing | Passkey + SETUP_TOKEN |
+| **Security Boundary** | Local machine only | Local network | Internet |
+
+**Key Insight**:
+- **LAN users** MUST go through `/connect/trust` first to install the self-signed certificate. This is a one-time setup per device.
+- **Internet users** (ngrok) NEVER see `/connect/trust` because ngrok provides a valid TLS certificate. They go directly to `/login` for passkey setup.
+- **Localhost users** bypass authentication entirely until a passkey is registered (developer convenience).
+
+**Why This Matters**:
+1. **LAN**: Self-signed certs require explicit trust. Without this step, browsers block HTTPS access entirely.
+2. **Internet**: Ngrok/Cloudflare Tunnel already provide valid certificates. Showing cert installation would confuse users.
+3. **Localhost**: Auto-authentication allows rapid development without security theater.
 
 ---
 

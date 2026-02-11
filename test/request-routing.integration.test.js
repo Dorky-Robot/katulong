@@ -183,6 +183,23 @@ describe('request-routing integration', () => {
       assert.strictEqual(redirect, '/login');
     });
 
+    it('NEVER redirects to /connect/trust (ngrok has valid cert)', () => {
+      // Critical: Internet users should NEVER see certificate installation
+      // because ngrok/cloudflare provide valid TLS certificates
+      const rootCheck = checkHttpsEnforcement(req, '/', isPublicPath);
+      const apiCheck = checkHttpsEnforcement(req, '/api/sessions', isPublicPath);
+      const settingsCheck = checkHttpsEnforcement(req, '/settings', isPublicPath);
+
+      // All protected paths should redirect to /login, NOT /connect/trust
+      assert.strictEqual(rootCheck?.redirect, '/login', 'Root should redirect to /login, not /connect/trust');
+      assert.strictEqual(apiCheck?.redirect, '/login', 'API should redirect to /login, not /connect/trust');
+      assert.strictEqual(settingsCheck?.redirect, '/login', 'Settings should redirect to /login, not /connect/trust');
+
+      // Unauthenticated redirect should also be /login
+      const unauthRedirect = getUnauthenticatedRedirect(req);
+      assert.strictEqual(unauthRedirect, '/login', 'Unauth redirect should be /login, not /connect/trust');
+    });
+
     it('serves static files correctly (login assets)', () => {
       const res = mockResponse();
       const served = serveStaticFile(res, publicDir, '/login.js');

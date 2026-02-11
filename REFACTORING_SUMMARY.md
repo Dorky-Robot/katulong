@@ -19,9 +19,38 @@ Completed comprehensive refactoring of Katulong's authentication and request rou
 
 **Results**:
 - **Code Quality**: 200+ lines of complex nested logic → Clean, testable modules
-- **Test Coverage**: Added 152 new tests (47+30+38+11+26)
+- **Test Coverage**: Added 153 new tests (47+30+38+11+27)
 - **Security**: Improved with path traversal prevention, hidden file blocking
 - **UX**: Clear error messages, platform authenticator works correctly
+- **Documentation**: Added comparison table showing LAN vs Internet access flows
+
+---
+
+## Critical Distinction: LAN vs Internet Access
+
+**Important**: The authentication flow differs significantly based on how users access Katulong:
+
+### LAN Access (192.168.x.x, katulong.local)
+- ✅ **First redirect**: `/connect/trust` (certificate installation)
+- ✅ Self-signed cert requires explicit trust
+- ✅ One-time setup per device
+- ✅ After cert trust: redirects to `/login` for passkey setup
+
+### Internet Access (ngrok, cloudflare)
+- ✅ **First redirect**: `/login` (passkey setup directly)
+- ✅ No certificate installation (ngrok provides valid TLS)
+- ✅ NEVER shows `/connect/trust` page
+- ✅ Users go straight to passkey registration
+
+**Why This Matters**:
+- LAN users need to trust self-signed certificates before they can use HTTPS
+- Internet users (ngrok) already have valid certificates from the reverse proxy
+- Showing cert installation to internet users would be confusing and unnecessary
+
+**Code Verification**:
+- `getUnauthenticatedRedirect()` returns `/connect/trust` for LAN, `/login` for internet
+- `checkHttpsEnforcement()` allows `/connect/trust` on HTTP for LAN only
+- Integration tests verify internet access NEVER redirects to `/connect/trust`
 
 ---
 
