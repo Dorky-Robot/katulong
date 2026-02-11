@@ -302,6 +302,9 @@ const routes = [
   { method: "GET", path: "/login", handler: (req, res) => {
     res.writeHead(200, {
       "Content-Type": "text/html",
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      "Pragma": "no-cache",
+      "Expires": "0",
       ...getCspHeaders()
     });
     res.end(readFileSync(join(__dirname, "public", "login.html"), "utf-8"));
@@ -522,7 +525,8 @@ const routes = [
       return json(res, 401, { error: "Authentication required" });
     }
     const state = loadState();
-    if (!validateCsrfToken(req, state)) {
+    // Skip CSRF validation for localhost (auto-authenticated, trusted environment)
+    if (!isLocalRequest(req) && !validateCsrfToken(req, state)) {
       return json(res, 403, { error: "Invalid or missing CSRF token" });
     }
     const challenge = pairingStore.create();
@@ -778,6 +782,9 @@ const routes = [
   { method: "GET", path: "/pair", handler: (req, res) => {
     res.writeHead(200, {
       "Content-Type": "text/html",
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      "Pragma": "no-cache",
+      "Expires": "0",
       ...getCspHeaders()
     });
     res.end(readFileSync(join(__dirname, "public", "pair.html"), "utf-8"));
@@ -884,9 +891,8 @@ const routes = [
     let currentCredentialId = null;
 
     if (isLocalRequest(req)) {
-      // On localhost (auto-authenticated), use the most recently used device
-      const sorted = [...devices].sort((a, b) => (b.lastUsedAt || 0) - (a.lastUsedAt || 0));
-      currentCredentialId = sorted[0]?.id || null;
+      // Localhost is auto-authenticated (not a paired device), so currentCredentialId stays null
+      currentCredentialId = null;
     } else {
       // For remote access, use the session's credential
       const cookies = parseCookies(req.headers.cookie);
@@ -955,16 +961,11 @@ const routes = [
       return json(res, 401, { error: "Authentication required" });
     }
     const state = loadState();
-    if (!validateCsrfToken(req, state)) {
+    // Skip CSRF validation for localhost (auto-authenticated, trusted environment)
+    if (!isLocalRequest(req) && !validateCsrfToken(req, state)) {
       return json(res, 403, { error: "Invalid or missing CSRF token" });
     }
-    // Prevent removing devices from localhost (the server machine)
-    // This prevents accidentally breaking the server
-    if (isLocalRequest(req)) {
-      return json(res, 403, {
-        error: "Cannot remove devices from the server machine (would break Katulong). Remove from a remote device instead."
-      });
-    }
+    // Localhost can remove paired devices (localhost itself is not a paired device)
 
     try {
       await withStateLock(async (state) => {
