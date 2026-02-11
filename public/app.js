@@ -1835,58 +1835,61 @@
           ? tokens.filter(token => token.id !== newTokenId)
           : tokens;
 
-        // Create renderer
-        const renderer = new ListRenderer(tokensList, {
-          itemTemplate: tokenItemTemplate,
-          emptyState: '<p class="tokens-empty">No setup tokens yet. Generate one to pair remote devices.</p>',
-          onAction: ({ action, id, element }) => {
-            if (action === 'rename') {
-              renameToken(id);
-            } else if (action === 'revoke') {
-              const tokenItem = element.closest('.token-item');
-              const hasCredential = tokenItem.dataset.hasCredential === 'true';
-              revokeToken(id, hasCredential);
-            }
-          },
-          afterRender: () => {
-            // Re-insert the cloned new token display at the top if it exists
-            if (clonedNewToken) {
-              tokensList.insertBefore(clonedNewToken, tokensList.firstChild);
-
-              // Re-attach event listeners (cloneNode doesn't copy listeners)
-              const copyBtn = clonedNewToken.querySelector(".token-copy-btn");
-              if (copyBtn) {
-                copyBtn.addEventListener("click", async () => {
-                  const token = newTokenValue;
-                  try {
-                    await navigator.clipboard.writeText(token);
-                    copyBtn.innerHTML = '<i class="ph ph-check"></i> Copied!';
-                    copyBtn.style.background = "var(--success)";
-                    setTimeout(() => {
-                      copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
-                      copyBtn.style.background = "";
-                    }, 2000);
-                  } catch (err) {
-                    copyBtn.innerHTML = '<i class="ph ph-x"></i> Failed';
-                    setTimeout(() => {
-                      copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
-                    }, 2000);
-                  }
-                });
-              }
-
-              const doneBtn = clonedNewToken.querySelector("#token-done-btn");
-              if (doneBtn) {
-                doneBtn.addEventListener("click", () => {
-                  clonedNewToken.remove();
-                  loadTokens(); // Reload normal token list
-                });
+        // Render the token list
+        if (filteredTokens.length === 0) {
+          tokensList.innerHTML = '<p class="tokens-empty">No setup tokens yet. Generate one to pair remote devices.</p>';
+        } else {
+          // Create renderer for existing tokens
+          const renderer = new ListRenderer(tokensList, {
+            itemTemplate: tokenItemTemplate,
+            emptyState: '<p class="tokens-empty">No setup tokens yet. Generate one to pair remote devices.</p>',
+            onAction: ({ action, id, element }) => {
+              if (action === 'rename') {
+                renameToken(id);
+              } else if (action === 'revoke') {
+                const tokenItem = element.closest('.token-item');
+                const hasCredential = tokenItem.dataset.hasCredential === 'true';
+                revokeToken(id, hasCredential);
               }
             }
+          });
+          renderer.render(filteredTokens);
+        }
+
+        // Insert the cloned new token at the top (after rendering the list)
+        if (clonedNewToken) {
+          tokensList.insertBefore(clonedNewToken, tokensList.firstChild);
+
+          // Re-attach event listeners (cloneNode doesn't copy listeners)
+          const copyBtn = clonedNewToken.querySelector(".token-copy-btn");
+          if (copyBtn) {
+            copyBtn.addEventListener("click", async () => {
+              const token = newTokenValue;
+              try {
+                await navigator.clipboard.writeText(token);
+                copyBtn.innerHTML = '<i class="ph ph-check"></i> Copied!';
+                copyBtn.style.background = "var(--success)";
+                setTimeout(() => {
+                  copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
+                  copyBtn.style.background = "";
+                }, 2000);
+              } catch (err) {
+                copyBtn.innerHTML = '<i class="ph ph-x"></i> Failed';
+                setTimeout(() => {
+                  copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
+                }, 2000);
+              }
+            });
           }
-        });
 
-        renderer.render(filteredTokens);
+          const doneBtn = clonedNewToken.querySelector("#token-done-btn");
+          if (doneBtn) {
+            doneBtn.addEventListener("click", () => {
+              clonedNewToken.remove();
+              loadTokens(); // Reload normal token list
+            });
+          }
+        }
       } catch (err) {
         tokensList.innerHTML = '<p class="tokens-loading">Failed to load tokens</p>';
         console.error("Failed to load tokens:", err);
