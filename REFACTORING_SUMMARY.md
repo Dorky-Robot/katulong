@@ -37,14 +37,19 @@ Completed comprehensive refactoring of Katulong's authentication and request rou
 - ✅ After cert trust: redirects to `/login` for passkey setup
 
 ### Internet Access (ngrok, cloudflare)
+- ✅ **Maps to HTTP port**: `ngrok http 3001` (not 3002) - ngrok terminates TLS
 - ✅ **First redirect**: `/login` (passkey setup directly)
 - ✅ No certificate installation (ngrok provides valid TLS)
 - ✅ NEVER shows `/connect/trust` page
 - ✅ Users go straight to passkey registration
 
 **Why This Matters**:
-- LAN users need to trust self-signed certificates before they can use HTTPS
-- Internet users (ngrok) already have valid certificates from the reverse proxy
+- **LAN users**: Need to trust self-signed certificates before they can use HTTPS (port 3002)
+- **Internet users (ngrok)**: Already have valid certificates from the reverse proxy
+- **Ngrok setup**: `ngrok http 3001` maps to the HTTP port because ngrok terminates TLS
+  - User → `https://ngrok-domain` (HTTPS)
+  - Ngrok → `http://localhost:3001` (HTTP tunnel)
+  - Server sees `req.socket.encrypted = false` but detects "internet" access via Host header
 - Showing cert installation to internet users would be confusing and unnecessary
 
 **Code Verification**:

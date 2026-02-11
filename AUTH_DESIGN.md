@@ -114,9 +114,15 @@ Users need to access their terminal from multiple devices (laptop, phone, tablet
 
 **Setup**:
 ```bash
-ngrok http 3001
+ngrok http 3001  # ⚠️ Maps to HTTP port (3001), NOT HTTPS port (3002)
 # Gives: https://felix-katulong.ngrok.app
 ```
+
+**Important**: Ngrok maps to `http://localhost:3001` because:
+- Ngrok terminates TLS at the ngrok edge
+- The connection from ngrok → localhost is HTTP
+- Users see `https://felix-katulong.ngrok.app` (HTTPS)
+- Server sees `req.socket.encrypted = false` (ngrok tunnel is HTTP)
 
 **Flow**:
 1. User visits `https://felix-katulong.ngrok.app` (any path)
@@ -173,6 +179,7 @@ ngrok http 3001
 | Feature | Localhost | LAN | Internet (Ngrok) |
 |---------|-----------|-----|------------------|
 | **Example URL** | `http://localhost:3001` | `https://katulong.local:3002` | `https://felix-katulong.ngrok.app` |
+| **Server Port** | 3001 (HTTP) | 3002 (HTTPS) | **3001 (HTTP)** - ngrok terminates TLS |
 | **TLS/HTTPS** | Not required | Required (self-signed cert) | Required (ngrok provides valid cert) |
 | **Certificate Trust Flow** | ❌ Not needed | ✅ **Required first step** | ❌ Not needed |
 | **Initial Access** | Auto-authenticated | Redirects to `/connect/trust` | Redirects to `/login` |
@@ -227,7 +234,43 @@ ngrok http 3001
 └─────────────────────────────────────────────────────┘
 ```
 
-### 3.2 WebAuthn Configuration
+### 3.2 Port Mapping & TLS Termination
+
+**Server Ports**:
+- **Port 3001** (HTTP): Localhost development, ngrok tunnels, cert installation
+- **Port 3002** (HTTPS): LAN access with self-signed certificates
+
+**Access Method → Port Mapping**:
+
+| Access Method | User Sees | Server Receives | TLS Termination |
+|---------------|-----------|-----------------|-----------------|
+| **Localhost** | `http://localhost:3001` | Port 3001, `encrypted=false` | N/A |
+| **LAN** | `https://katulong.local:3002` | Port 3002, `encrypted=true` | Self-signed cert |
+| **Ngrok** | `https://felix-katulong.ngrok.app` | Port 3001, `encrypted=false` | Ngrok edge |
+
+**Ngrok Architecture**:
+```
+User Browser                 Ngrok Edge              Katulong Server
+     │                            │                        │
+     │ HTTPS (TLS)                │                        │
+     ├───────────────────────────>│                        │
+     │ https://felix-katulong...  │                        │
+     │                            │ HTTP (no TLS)          │
+     │                            ├───────────────────────>│
+     │                            │ Host: felix-katulong...│
+     │                            │                        │
+     │                            │   req.socket.encrypted = false
+     │                            │   req.headers.host = "felix-katulong.ngrok.app"
+     │                            │   getAccessMethod(req) = "internet"
+```
+
+**Key Insight**:
+- Ngrok maps to **port 3001** (HTTP) because it terminates TLS at the edge
+- The server sees `req.socket.encrypted = false` but detects "internet" access via Host header
+- LAN uses **port 3002** (HTTPS) with self-signed certificates (no intermediary)
+- Localhost uses **port 3001** (HTTP) for developer convenience
+
+### 3.3 WebAuthn Configuration
 
 **Registration Options** (`lib/auth.js`):
 ```javascript
@@ -260,7 +303,7 @@ ngrok http 3001
 }
 ```
 
-### 3.3 Access Control Logic
+### 3.4 Access Control Logic
 
 #### 3.3.1 `isLocalRequest(req)`
 
@@ -345,7 +388,7 @@ function isPublicPath(pathname) {
 - Static assets allowed to load login page
 - Path traversal blocked (see: SECURITY_IMPROVEMENTS.md #3)
 
-### 3.4 HTTPS Enforcement
+### 3.5 HTTPS Enforcement
 
 **Goal**: Force HTTPS except for localhost and cert installation.
 
