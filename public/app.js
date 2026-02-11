@@ -1651,23 +1651,24 @@
       try {
         const res = await fetch("/auth/devices");
         if (!res.ok) throw new Error("Failed to load devices");
-        const { devices } = await res.json();
+        const { devices, currentCredentialId } = await res.json();
 
-        if (devices.length === 0) {
-          devicesList.innerHTML = '<p class="devices-loading">No devices registered</p>';
+        // LAN tab only shows devices paired via QR code + PIN (type: 'paired')
+        const lanDevices = devices.filter(d => d.type === 'paired');
+
+        if (lanDevices.length === 0) {
+          devicesList.innerHTML = '<p class="devices-loading">No LAN devices paired yet. Use "Pair Device on LAN" below to add one.</p>';
           return;
         }
 
         // Check if we're on localhost (server machine)
         const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '::1';
 
-        // Get current credential ID to mark "this device"
-        const currentCredentialId = localStorage.getItem('katulong_current_credential');
-
         // Separate devices into host (if on localhost) and remote
         if (isLocalhost) {
-          // Show server device in special section
-          const hostDevice = devices[0]; // On localhost, treat first device as host
+          // Find the actual current device (the one with the active session)
+          const hostDevice = lanDevices.find(d => d.id === currentCredentialId) || lanDevices[0];
+          const otherDevices = lanDevices.filter(d => d.id !== hostDevice.id);
           const isCurrent = currentCredentialId && hostDevice.id === currentCredentialId;
           const createdDate = hostDevice.createdAt ? new Date(hostDevice.createdAt).toLocaleDateString() : 'Unknown';
           const lastUsed = hostDevice.lastUsedAt ? formatRelativeTime(hostDevice.lastUsedAt) : 'Unknown';
@@ -1690,9 +1691,9 @@
           `;
 
           // Show other devices in remote section
-          if (devices.length > 1) {
+          if (otherDevices.length > 0) {
             devicesList.innerHTML += `<div class="device-section-header" style="margin-top: 1rem;">Remote Devices</div>`;
-            devicesList.innerHTML += devices.slice(1).map((device, index) => {
+            devicesList.innerHTML += otherDevices.map((device, index) => {
               const isCurrent = currentCredentialId && device.id === currentCredentialId;
               const createdDate = device.createdAt ? new Date(device.createdAt).toLocaleDateString() : 'Unknown';
               const lastUsed = device.lastUsedAt ? formatRelativeTime(device.lastUsedAt) : 'Unknown';
@@ -1716,8 +1717,8 @@
             }).join('');
           }
         } else {
-          // Remote view - show all devices with remove capability
-          devicesList.innerHTML = devices.map((device, index) => {
+          // Remote view - show LAN-paired devices with remove capability
+          devicesList.innerHTML = lanDevices.map((device, index) => {
             const isCurrent = currentCredentialId && device.id === currentCredentialId;
             const createdDate = device.createdAt ? new Date(device.createdAt).toLocaleDateString() : 'Unknown';
             const lastUsed = device.lastUsedAt ? formatRelativeTime(device.lastUsedAt) : 'Unknown';

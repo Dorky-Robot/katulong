@@ -879,7 +879,23 @@ const routes = [
     const state = loadState();
     if (!state) return json(res, 400, { error: "Not set up" });
     const devices = state.getCredentialsWithMetadata();
-    json(res, 200, { devices });
+
+    // Find current device
+    let currentCredentialId = null;
+
+    if (isLocalRequest(req)) {
+      // On localhost (auto-authenticated), use the most recently used device
+      const sorted = [...devices].sort((a, b) => (b.lastUsedAt || 0) - (a.lastUsedAt || 0));
+      currentCredentialId = sorted[0]?.id || null;
+    } else {
+      // For remote access, use the session's credential
+      const cookies = parseCookies(req.headers.cookie);
+      const token = cookies.get("katulong_session");
+      const session = token ? state.getSession(token) : null;
+      currentCredentialId = session?.credentialId || null;
+    }
+
+    json(res, 200, { devices, currentCredentialId });
   }},
 
   { method: "POST", prefix: "/auth/devices/", handler: async (req, res, param) => {
