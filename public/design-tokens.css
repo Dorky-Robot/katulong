@@ -1,0 +1,85 @@
+/**
+ * Design Tokens
+ *
+ * Centralized design values for spacing, sizing, colors, and other UI constants.
+ * These tokens should be used throughout the application for consistency.
+ */
+
+:root {
+  /* ===== Spacing Scale (2px baseline for finer control) ===== */
+  --space-xs: 0.25rem;    /* 4px */
+  --space-sm: 0.5rem;     /* 8px */
+  --space-md: 0.75rem;    /* 12px */
+  --space-lg: 1rem;       /* 16px */
+  --space-xl: 1.5rem;     /* 24px */
+  --space-2xl: 2rem;      /* 32px */
+  --space-3xl: 2.5rem;    /* 40px */
+  --space-4xl: 3rem;      /* 48px */
+  --space-5xl: 5rem;      /* 80px */
+
+  /* Additional spacing for existing UI values */
+  --space-1_5: 0.375rem;  /* 6px - used in bar padding */
+  --space-2_5: 0.625rem;  /* 10px - used in button padding */
+  --space-3_5: 0.875rem;  /* 14px - used in various padding */
+
+  /* ===== Heights (standardized components) ===== */
+  --height-btn-sm: 2rem;      /* 32px - small actions, secondary buttons */
+  --height-btn-md: 2.75rem;   /* 44px - primary buttons, iOS touch target */
+  --height-input: 2.75rem;    /* 44px - match primary buttons */
+  --height-bar: 2.75rem;      /* 44px - shortcut bar height (matches iOS touch target) */
+
+  /* ===== Border Radius (3 consistent values) ===== */
+  --radius-sm: 0.375rem;  /* 6px - tags, badges, small elements */
+  --radius-md: 0.5rem;    /* 8px - buttons, inputs, cards */
+  --radius-lg: 0.75rem;   /* 12px - modals, panels, large containers */
+
+  /* ===== Z-Index Scale (wider spacing for clarity) ===== */
+  --z-terminal: 1;          /* Base terminal layer */
+  --z-bar: 9000;            /* Shortcut bar (above terminal) */
+  --z-modal-bg: 10000;      /* Modal backdrop */
+  --z-modal-panel: 10001;   /* Modal panel content */
+  --z-modal-nested: 10002;  /* Nested modals (e.g., confirm dialog over settings) */
+  --z-toast: 11000;         /* Toast notifications (highest) */
+
+  /* ===== State Opacity (consistent interaction states) ===== */
+  --opacity-disabled: 0.4;  /* Disabled buttons, inputs */
+  --opacity-hover: 0.8;     /* Hover state for clickable elements */
+  --opacity-loading: 0.6;   /* Loading/processing state */
+
+  /* ===== Transitions (consistent animation durations) ===== */
+  --transition-fast: 100ms;     /* Instant feedback (hover, focus) */
+  --transition-normal: 200ms;   /* Standard transitions */
+  --transition-slow: 300ms;     /* Complex animations */
+
+  /* ===== Shadows (elevation system) ===== */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+
+  /* ===== Typography Scale ===== */
+  --text-xs: 0.75rem;    /* 12px */
+  --text-sm: 0.875rem;   /* 14px */
+  --text-base: 1rem;     /* 16px */
+  --text-lg: 1.125rem;   /* 18px */
+  --text-xl: 1.25rem;    /* 20px */
+  --text-2xl: 1.5rem;    /* 24px */
+
+  /* ===== Line Heights ===== */
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.75;
+
+  /* ===== Font Weights ===== */
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  /* ===== Layout Constraints ===== */
+  --max-width-prose: 65ch;      /* Readable text width */
+  --max-width-container: 80rem; /* 1280px - main container */
+  --modal-width-sm: 24rem;      /* 384px - small dialogs */
+  --modal-width-md: 32rem;      /* 512px - standard modals */
+  --modal-width-lg: 48rem;      /* 768px - wide modals */
+}
