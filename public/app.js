@@ -2259,6 +2259,8 @@
             clearInterval(wizardManager.state.timers.statusPoll);
             stopWizardPairing();
             switchSettingsView(viewSuccess);
+            // Refresh device list to show newly paired device
+            loadDevices();
           }
         }, 2000);
 
@@ -2324,10 +2326,15 @@
       switchSettingsView(viewTrust);
     });
 
-    // Event: Done → cleanup + close
+    // Event: Done → cleanup + show LAN tab with newly paired device
     document.getElementById("wizard-done").addEventListener("click", () => {
       cleanupWizard();
-      modals.close('settings');
+      // Switch to main view
+      switchSettingsView(viewMain);
+
+      // Switch to LAN tab to show newly paired device
+      const lanTab = document.querySelector('.settings-tab[data-tab="lan"]');
+      if (lanTab) lanTab.click();
     });
 
     // --- Dictation modal ---

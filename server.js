@@ -319,7 +319,11 @@ const routes = [
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Access-Control-Allow-Credentials", "true");
     }
-    json(res, 200, { setup: isSetup() });
+    const accessMethod = getAccessMethod(req);
+    json(res, 200, {
+      setup: isSetup(),
+      accessMethod  // "localhost", "lan", or "internet"
+    });
   }},
 
   { method: "POST", path: "/auth/register/options", handler: async (req, res) => {

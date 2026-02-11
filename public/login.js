@@ -23,17 +23,21 @@
 
     async function checkStatus() {
       const res = await fetch("/auth/status");
-      const { setup } = await res.json();
+      const { setup, accessMethod } = await res.json();
       loadingView.classList.add("hidden");
       if (setup) {
-        if (hasWebAuthn) {
-          // HTTPS (desktop or mobile) — passkey login/registration
+        // Decide which login flow based on access method
+        if (accessMethod === "lan") {
+          // LAN access → show QR pairing flow (even over HTTPS)
+          pairView.classList.remove("hidden");
+        } else if (hasWebAuthn) {
+          // localhost or internet with WebAuthn → passkey login/registration
           loginView.classList.remove("hidden");
 
           // Check if user has passkeys for this domain
           await checkForExistingPasskeys();
         } else {
-          // HTTP or no WebAuthn support — show QR pairing instructions
+          // HTTP without WebAuthn → show QR pairing instructions
           pairView.classList.remove("hidden");
         }
       } else {
