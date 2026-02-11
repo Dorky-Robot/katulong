@@ -2041,9 +2041,30 @@
     }
 
     // Event: Pair Device → step 1 (trust)
-    document.getElementById("settings-pair").addEventListener("click", async () => {
+    document.getElementById("settings-pair-lan").addEventListener("click", async () => {
       switchSettingsView(viewTrust);
       await renderTrustQR();
+    });
+
+    // Event: Generate Setup Token (for remote access)
+    document.getElementById("settings-setup-token").addEventListener("click", async () => {
+      try {
+        const res = await fetch("/api/setup-token");
+        const { token } = await res.json();
+
+        // Show token in a modal or alert
+        const message = `Setup Token (for remote access):\n\n${token}\n\nUse this token to register passkeys from:\n• ngrok (https://felix-katulong.ngrok.app)\n• Other internet-accessible devices`;
+
+        // Copy to clipboard
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(token);
+          alert(`${message}\n\n✓ Token copied to clipboard!`);
+        } else {
+          prompt("Setup Token (copy this):", token);
+        }
+      } catch (err) {
+        alert(`Failed to get setup token: ${err.message}`);
+      }
     });
 
     // Event: Next → step 2 (pair)
