@@ -15,6 +15,20 @@
     const hasWebAuthn = window.isSecureContext && !!window.PublicKeyCredential;
     const isMobile = /Android|iPad|iPhone|iPod/.test(navigator.userAgent);
 
+    // Check if user was redirected after session revocation
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('reason') === 'revoked') {
+      // Show info message about session being revoked
+      if (loginError) {
+        loginError.innerHTML = '<i class="ph ph-info"></i> Your access was revoked. Please register a new passkey to continue.';
+        loginError.style.color = '#6b9bd1'; // Info blue
+        loginError.style.textAlign = 'center';
+        loginError.style.marginBottom = '1rem';
+      }
+      // Clean up URL without reload
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
     // --- WebAuthn Support Checks ---
     // WebAuthn support and error functions imported from /lib/webauthn-errors.js
 
