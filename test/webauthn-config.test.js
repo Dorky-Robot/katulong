@@ -114,6 +114,38 @@ describe('WebAuthn configuration', () => {
     });
   });
 
+  describe('generateAuthOpts', () => {
+    it('restricts to platform authenticators via transports', async () => {
+      const { generateAuthOpts } = await import('../lib/auth.js');
+
+      // Credentials are stored with base64url-encoded IDs
+      const credentials = [
+        { id: 'cred1-base64url', publicKey: 'key1', counter: 0 },
+        { id: 'cred2-base64url', publicKey: 'key2', counter: 0 },
+      ];
+
+      const opts = await generateAuthOpts(credentials, 'localhost');
+
+      assert.ok(opts.allowCredentials);
+      assert.strictEqual(opts.allowCredentials.length, 2);
+
+      // Each credential should have transports: ["internal"] to force platform authenticators
+      for (const cred of opts.allowCredentials) {
+        assert.deepStrictEqual(
+          cred.transports,
+          ['internal'],
+          'Authentication should restrict to platform authenticators via transports'
+        );
+      }
+    });
+
+    it('sets userVerification to preferred', async () => {
+      const { generateAuthOpts } = await import('../lib/auth.js');
+      const opts = await generateAuthOpts([], 'localhost');
+      assert.strictEqual(opts.userVerification, 'preferred');
+    });
+  });
+
   describe('platform authenticator rationale', () => {
     it('documents why platform-only authentication is used', () => {
       /**
