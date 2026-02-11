@@ -13,6 +13,52 @@
     const hasWebAuthn = window.isSecureContext && !!window.PublicKeyCredential;
     const isMobile = /Android|iPad|iPhone|iPod/.test(navigator.userAgent);
 
+    // --- WebAuthn Support Checks ---
+
+    function checkWebAuthnSupport() {
+      if (!window.PublicKeyCredential) {
+        return {
+          supported: false,
+          error: "WebAuthn not supported. Please use a modern browser (Chrome, Safari, Firefox, Edge)."
+        };
+      }
+
+      if (!window.isSecureContext) {
+        return {
+          supported: false,
+          error: "Secure context required. Please use HTTPS or localhost."
+        };
+      }
+
+      return { supported: true };
+    }
+
+    function getWebAuthnErrorMessage(err) {
+      if (err.name === "NotAllowedError") {
+        // Check if we're in incognito mode (heuristic)
+        const isLikelyIncognito = !navigator.storage || !navigator.storage.estimate;
+        if (isLikelyIncognito) {
+          return "Passkey registration cancelled. Note: Private/Incognito mode may not support biometric authentication. Please use a regular browser window.";
+        }
+        return "Passkey registration cancelled. Please try again and approve the biometric prompt.";
+      }
+
+      if (err.name === "InvalidStateError") {
+        return "This passkey is already registered. Please use a different authenticator.";
+      }
+
+      if (err.name === "NotSupportedError") {
+        return "Passkey not supported on this device. Please try a different browser or device.";
+      }
+
+      if (err.name === "AbortError") {
+        return "Registration timed out. Please try again.";
+      }
+
+      // Generic error
+      return err.message || "An error occurred during passkey registration.";
+    }
+
     // --- Device ID Management (same as index.html) ---
 
     async function openDeviceDB() {
@@ -129,7 +175,15 @@
       const btn = document.getElementById("register-btn");
       const token = document.getElementById("setup-token").value.trim();
       setupError.textContent = "";
+
       if (!token) { setupError.textContent = "Setup token is required."; return; }
+
+      // Check WebAuthn support
+      const supportCheck = checkWebAuthnSupport();
+      if (!supportCheck.supported) {
+        setupError.textContent = supportCheck.error;
+        return;
+      }
 
       btn.disabled = true;
       try {
@@ -176,9 +230,7 @@
         // Success — redirect
         window.location.href = "/";
       } catch (err) {
-        setupError.textContent = err.name === "NotAllowedError"
-          ? "Passkey registration was cancelled."
-          : err.message;
+        setupError.textContent = getWebAuthnErrorMessage(err);
       } finally {
         btn.disabled = false;
       }
@@ -194,7 +246,15 @@
       const btn = document.getElementById("register-new-btn");
       const token = document.getElementById("register-token").value.trim();
       loginError.textContent = "";
+
       if (!token) { loginError.textContent = "Setup token is required."; return; }
+
+      // Check WebAuthn support
+      const supportCheck = checkWebAuthnSupport();
+      if (!supportCheck.supported) {
+        loginError.textContent = supportCheck.error;
+        return;
+      }
 
       btn.disabled = true;
       try {
@@ -236,9 +296,7 @@
 
         window.location.href = "/";
       } catch (err) {
-        loginError.textContent = err.name === "NotAllowedError"
-          ? "Passkey registration was cancelled."
-          : err.message;
+        loginError.textContent = getWebAuthnErrorMessage(err);
       } finally {
         btn.disabled = false;
       }
@@ -249,6 +307,14 @@
     document.getElementById("login-btn").addEventListener("click", async () => {
       const btn = document.getElementById("login-btn");
       loginError.textContent = "";
+
+      // Check WebAuthn support
+      const supportCheck = checkWebAuthnSupport();
+      if (!supportCheck.supported) {
+        loginError.textContent = supportCheck.error;
+        return;
+      }
+
       btn.disabled = true;
 
       try {
@@ -280,9 +346,7 @@
         // Success — redirect
         window.location.href = "/";
       } catch (err) {
-        loginError.textContent = err.name === "NotAllowedError"
-          ? "Passkey authentication was cancelled."
-          : err.message;
+        loginError.textContent = getWebAuthnErrorMessage(err);
       } finally {
         btn.disabled = false;
       }

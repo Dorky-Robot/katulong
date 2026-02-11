@@ -38,6 +38,14 @@ import { ensureCerts, generateMobileConfig } from "./lib/tls.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 import { validateMessage } from "./lib/websocket-validation.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
+import { isLocalRequest, getAccessMethod, getAccessDescription } from "./lib/access-method.js";
+import {
+  HTTP_ALLOWED_PATHS,
+  checkHttpsEnforcement,
+  getUnauthenticatedRedirect,
+  checkSessionHttpsRedirect
+} from "./lib/https-enforcement.js";
+import { serveStaticFile, MIME_TYPES } from "./lib/static-files.js";
 import mdns from "multicast-dns";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -111,36 +119,7 @@ function getLanIP() {
   return null;
 }
 
-function isLocalRequest(req) {
-  const addr = req.socket.remoteAddress || "";
-
-  // Check socket address
-  const isLoopback = addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
-  if (!isLoopback) return false;
-
-  // CRITICAL SECURITY: Even if socket is loopback, check Host/Origin headers
-  // to detect reverse proxies (ngrok, Cloudflare Tunnel, etc.)
-  // If Host/Origin indicates external domain, this is PROXIED traffic = NOT local
-  const host = (req.headers.host || "").toLowerCase();
-  const origin = (req.headers.origin || "").toLowerCase();
-
-  // Check if Host header indicates localhost
-  const hostIsLocal = host.startsWith("localhost:") ||
-                      host === "localhost" ||
-                      host.startsWith("127.0.0.1:") ||
-                      host === "127.0.0.1" ||
-                      host.startsWith("[::1]:") ||
-                      host === "[::1]";
-
-  // Check if Origin header indicates localhost (if present)
-  const originIsLocal = !origin ||
-                        origin.includes("://localhost") ||
-                        origin.includes("://127.0.0.1") ||
-                        origin.includes("://[::1]");
-
-  // Only treat as local if BOTH socket AND headers indicate localhost
-  return hostIsLocal && originIsLocal;
-}
+// isLocalRequest is now imported from lib/access-method.js
 
 function isAuthenticated(req) {
   if (process.env.KATULONG_NO_AUTH === "1") {
@@ -168,13 +147,7 @@ function isAuthenticated(req) {
   return valid;
 }
 
-// Paths that are explicitly allowed over HTTP (for certificate installation)
-// Everything else MUST use HTTPS (or localhost)
-const HTTP_ALLOWED_PATHS = [
-  "/connect/trust",
-  "/connect/trust/ca.crt",
-  "/connect/trust/ca.mobileconfig",
-];
+// HTTP_ALLOWED_PATHS is now imported from lib/https-enforcement.js
 
 // --- IPC client to daemon ---
 
@@ -278,12 +251,7 @@ async function parseJSON(req, maxSize = MAX_REQUEST_BODY_SIZE) {
 
 // --- HTTP routes ---
 
-const MIME = {
-  ".html": "text/html", ".js": "text/javascript", ".json": "application/json",
-  ".css": "text/css", ".png": "image/png", ".ico": "image/x-icon",
-  ".webp": "image/webp", ".svg": "image/svg+xml",
-  ".woff": "font/woff", ".woff2": "font/woff2",
-};
+// MIME_TYPES is now imported from lib/static-files.js
 
 function isLanHost(req) {
   const host = (req.headers.host || "").replace(/:\d+$/, "");
@@ -837,45 +805,36 @@ async function handleRequest(req, res) {
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   }
 
-  // HTTPS enforcement: only allow specific paths on HTTP for certificate installation
-  // Everything else requires HTTPS (or localhost)
-  if (!req.socket.encrypted && !isLocalRequest(req)) {
-    // Allow explicitly listed paths on HTTP (cert installation flow)
-    // Also allow public paths and their static resources through
-    if (!HTTP_ALLOWED_PATHS.includes(pathname) && !isPublicPath(pathname)) {
+  // HTTPS enforcement: Check if user with valid session should be redirected to HTTPS
+  const sessionRedirect = checkSessionHttpsRedirect(
+    req,
+    pathname,
+    isPublicPath,
+    (req) => {
       const cookies = parseCookies(req.headers.cookie);
       const token = cookies.get("katulong_session");
       const state = loadState();
-      if (token && state && validateSession(state, token)) {
-        // Has valid session (cert installed) → redirect to HTTPS
-        const host = (req.headers.host || "").replace(/:\d+$/, "");
-        res.writeHead(302, { Location: `https://${host}:${HTTPS_PORT}${req.url}` });
-        res.end();
-        return;
-      }
-      // No valid session → determine where to redirect based on access method
-      const host = (req.headers.host || "").split(":")[0];
-      const isLanAccess = host === "katulong.local" ||
-                         /^\d+\.\d+\.\d+\.\d+$/.test(host) ||  // IP address
-                         host === "localhost" ||
-                         host === "127.0.0.1";
-
-      // LAN access needs certificate trust flow, internet access goes directly to login
-      const redirectTo = isLanAccess ? "/connect/trust" : "/login";
-
-      // Prevent redirect loop - don't redirect if already on the target page
-      if (pathname !== redirectTo) {
-        res.writeHead(302, { Location: redirectTo });
-        res.end();
-        return;
-      }
-      // If already on target page, allow it through to be served
+      return token && state && validateSession(state, token);
     }
+  );
+  if (sessionRedirect) {
+    res.writeHead(302, { Location: sessionRedirect.redirect });
+    res.end();
+    return;
   }
 
-  // Auth middleware: redirect unauthenticated requests to /login
+  // HTTPS enforcement: Check if this request requires HTTPS
+  const httpsCheck = checkHttpsEnforcement(req, pathname, isPublicPath);
+  if (httpsCheck?.redirect) {
+    res.writeHead(302, { Location: httpsCheck.redirect });
+    res.end();
+    return;
+  }
+
+  // Auth middleware: redirect unauthenticated requests
   if (!isPublicPath(pathname) && !isAuthenticated(req)) {
-    res.writeHead(302, { Location: "/login" });
+    const redirectTo = getUnauthenticatedRedirect(req);
+    res.writeHead(302, { Location: redirectTo });
     res.end();
     return;
   }
@@ -933,22 +892,17 @@ async function handleRequest(req, res) {
   }
 
   // Static files
-  const publicDir = join(__dirname, "public");
-  const filePath = resolve(publicDir, pathname.slice(1));
-  if (req.method === "GET" && filePath.startsWith(publicDir) && existsSync(filePath)) {
-    try {
-      const ext = extname(filePath);
-      res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
-      res.end(readFileSync(filePath));
-    } catch (err) {
-      log.error("Static file read error", { path: pathname, error: err.message });
-      res.writeHead(500);
-      res.end("Internal server error");
+  if (req.method === "GET") {
+    const publicDir = join(__dirname, "public");
+    const served = serveStaticFile(res, publicDir, pathname);
+    if (served) {
+      return; // File was served successfully
     }
-  } else {
-    res.writeHead(404);
-    res.end("Not found");
   }
+
+  // 404 - Not found
+  res.writeHead(404);
+  res.end("Not found");
 }
 
 const server = createServer(handleRequest);
