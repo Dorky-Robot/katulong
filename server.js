@@ -389,6 +389,16 @@ const routes = [
     // Extract user-agent (prefer client-provided, fallback to header)
     const userAgent = clientUserAgent || req.headers['user-agent'] || 'Unknown';
 
+    // Find setup token ID (if provided)
+    let setupTokenId = null;
+    if (setupToken) {
+      const state = loadState();
+      const tokenData = state?.findSetupToken(setupToken);
+      if (tokenData) {
+        setupTokenId = tokenData.id;
+      }
+    }
+
     // Process registration inside lock to prevent race conditions
     const result = await withStateLock(async (currentState) => {
       const result = await processRegistration({
@@ -402,6 +412,7 @@ const routes = [
         deviceId,
         deviceName,
         userAgent,
+        setupTokenId, // Pass token ID to link credential to token
       });
 
       if (!result.success) {
@@ -409,8 +420,16 @@ const routes = [
         return { result };
       }
 
+      // Link credential to setup token
+      let updatedState = result.data.updatedState;
+      if (setupTokenId && result.data.credentialId) {
+        updatedState = updatedState.updateSetupToken(setupTokenId, {
+          credentialId: result.data.credentialId,
+        });
+      }
+
       // Return updated state and success result
-      return { state: result.data.updatedState, result };
+      return { state: updatedState, result };
     });
 
     // I/O: Handle result
@@ -594,13 +613,32 @@ const routes = [
       return json(res, 200, { tokens: [] });
     }
 
-    // Return token metadata (without the actual token values for security)
-    const tokens = state.setupTokens.map(t => ({
-      id: t.id,
-      name: t.name,
-      createdAt: t.createdAt,
-      lastUsedAt: t.lastUsedAt,
-    }));
+    // Return token metadata with linked credential info (without actual token values for security)
+    const tokens = state.setupTokens.map(t => {
+      const tokenData = {
+        id: t.id,
+        name: t.name,
+        createdAt: t.createdAt,
+        lastUsedAt: t.lastUsedAt,
+        credential: null, // Will be populated if token was used
+      };
+
+      // If token was used to register a credential, include credential info
+      if (t.credentialId) {
+        const credential = state.getCredential(t.credentialId);
+        if (credential) {
+          tokenData.credential = {
+            id: credential.id,
+            name: credential.name,
+            createdAt: credential.createdAt,
+            lastUsedAt: credential.lastUsedAt,
+            userAgent: credential.userAgent,
+          };
+        }
+      }
+
+      return tokenData;
+    });
 
     json(res, 200, { tokens });
   }},
@@ -653,21 +691,39 @@ const routes = [
       return json(res, 400, { error: "Token ID is required" });
     }
 
-    // Delete token inside lock to prevent race conditions
+    // Delete token (and its linked credential) inside lock to prevent race conditions
     const result = await withStateLock((state) => {
       if (!state) {
         // No state file exists, so token not found
         return { found: false };
       }
 
-      const tokenExists = state.setupTokens.some(t => t.id === id);
-      if (!tokenExists) {
+      const token = state.setupTokens.find(t => t.id === id);
+      if (!token) {
         // Token not found, state unchanged
         return { found: false };
       }
 
-      // Token found, remove it
-      return { state: state.removeSetupToken(id), found: true };
+      let updatedState = state;
+
+      // If token has a linked credential, remove it (and its sessions)
+      if (token.credentialId) {
+        const credential = state.getCredential(token.credentialId);
+        if (credential && state.credentials.length > 1) {
+          // Only remove if it's not the last credential (prevent lockout)
+          try {
+            updatedState = updatedState.removeCredential(token.credentialId);
+          } catch (err) {
+            // If removal fails (e.g., last credential), just remove the token
+            log.warn("Cannot remove last credential, removing token only", { tokenId: id });
+          }
+        }
+      }
+
+      // Remove the setup token
+      updatedState = updatedState.removeSetupToken(id);
+
+      return { state: updatedState, found: true };
     });
 
     if (!result.found) {

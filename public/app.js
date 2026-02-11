@@ -1631,6 +1631,12 @@
         if (targetTab === "lan") {
           loadDevices();
         } else if (targetTab === "remote") {
+          // Clear any lingering new token display before loading tokens
+          const tokensList = document.getElementById("tokens-list");
+          const staleNewToken = tokensList?.querySelector('.token-item-new');
+          if (staleNewToken) {
+            staleNewToken.remove();
+          }
           loadTokens();
         }
       });
@@ -1861,16 +1867,38 @@
 
         const tokensHTML = filteredTokens.map(token => {
           const createdDate = token.createdAt ? new Date(token.createdAt).toLocaleDateString() : 'Unknown';
-          const lastUsed = token.lastUsedAt ? formatRelativeTime(token.lastUsedAt) : 'Never';
+
+          // Check if token has been used to register a device
+          const hasCredential = token.credential !== null && token.credential !== undefined;
+
+          let icon, statusText, metaText;
+          if (hasCredential) {
+            // Token was used - show device info
+            icon = '📱'; // Device icon
+            const lastAuth = token.credential.lastUsedAt ? formatRelativeTime(token.credential.lastUsedAt) : 'Never';
+            statusText = `<span class="token-status-active">Active device</span>`;
+            metaText = `Registered: ${createdDate} · Last authenticated: ${lastAuth}`;
+
+            // Add user agent info if available
+            if (token.credential.userAgent && token.credential.userAgent !== 'Unknown') {
+              metaText += `<br><span class="token-device-info">${escapeHtml(token.credential.userAgent)}</span>`;
+            }
+          } else {
+            // Token not used yet - show as unused
+            icon = '🔑'; // Key icon
+            statusText = `<span class="token-status-unused">Unused</span>`;
+            metaText = `Created: ${createdDate}`;
+          }
 
           return `
-            <div class="token-item" data-token-id="${token.id}">
+            <div class="token-item ${hasCredential ? 'token-item-used' : ''}" data-token-id="${token.id}" data-has-credential="${hasCredential}">
               <div class="token-header">
-                <span class="token-icon">🔑</span>
+                <span class="token-icon">${icon}</span>
                 <span class="token-name">${escapeHtml(token.name)}</span>
+                ${statusText}
               </div>
               <div class="token-meta">
-                Created: ${createdDate} · Last used: ${lastUsed}
+                ${metaText}
               </div>
               <div class="token-actions">
                 <button class="token-btn" data-action="rename" data-id="${token.id}">Rename</button>
@@ -1892,7 +1920,9 @@
           btn.addEventListener("click", () => renameToken(btn.dataset.id));
         });
         tokensList.querySelectorAll('[data-action="revoke"]').forEach(btn => {
-          btn.addEventListener("click", () => revokeToken(btn.dataset.id));
+          const tokenItem = btn.closest('.token-item');
+          const hasCredential = tokenItem.dataset.hasCredential === 'true';
+          btn.addEventListener("click", () => revokeToken(btn.dataset.id, hasCredential));
         });
       } catch (err) {
         tokensList.innerHTML = '<p class="tokens-loading">Failed to load tokens</p>';
@@ -2020,6 +2050,9 @@
             <i class="ph ph-copy"></i> Copy
           </button>
         </div>
+        <div class="token-actions">
+          <button class="token-btn" id="token-done-btn">Done</button>
+        </div>
       `;
 
       // Insert at the top of the list
@@ -2045,6 +2078,13 @@
         }
       });
 
+      // Add done button handler
+      const doneBtn = newTokenEl.querySelector("#token-done-btn");
+      doneBtn.addEventListener("click", () => {
+        newTokenEl.remove();
+        loadTokens(); // Reload normal token list
+      });
+
       // Load the rest of the tokens below
       loadTokens();
     }
@@ -2066,8 +2106,12 @@
       }
     }
 
-    async function revokeToken(tokenId) {
-      if (!confirm("Are you sure you want to revoke this token? It will no longer work for device pairing.")) {
+    async function revokeToken(tokenId, hasCredential = false) {
+      const message = hasCredential
+        ? "Are you sure you want to revoke this device? The device will immediately lose access and need to re-register."
+        : "Are you sure you want to revoke this token? It will no longer work for device pairing.";
+
+      if (!confirm(message)) {
         return;
       }
 
@@ -2078,7 +2122,7 @@
         if (!res.ok) throw new Error("Failed to revoke token");
         loadTokens(); // Reload to show updated list
       } catch (err) {
-        alert("Failed to revoke token: " + err.message);
+        alert("Failed to revoke: " + err.message);
       }
     }
 
