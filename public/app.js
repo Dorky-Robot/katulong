@@ -1817,8 +1817,10 @@
     async function loadTokens() {
       const tokensList = document.getElementById("tokens-list");
 
-      // Preserve any newly created token display
+      // Preserve any newly created token display by cloning before DOM wipe
       const newTokenEl = tokensList.querySelector('.token-item-new');
+      const clonedNewToken = newTokenEl ? newTokenEl.cloneNode(true) : null;
+      const newTokenValue = clonedNewToken?.querySelector('.token-copy-btn')?.dataset?.token;
 
       try {
         tokensList.innerHTML = '<p class="tokens-loading">Loading tokens...</p>';
@@ -1847,9 +1849,39 @@
             }
           },
           afterRender: () => {
-            // Re-insert the new token display at the top if it exists
-            if (newTokenEl) {
-              tokensList.insertBefore(newTokenEl, tokensList.firstChild);
+            // Re-insert the cloned new token display at the top if it exists
+            if (clonedNewToken) {
+              tokensList.insertBefore(clonedNewToken, tokensList.firstChild);
+
+              // Re-attach event listeners (cloneNode doesn't copy listeners)
+              const copyBtn = clonedNewToken.querySelector(".token-copy-btn");
+              if (copyBtn) {
+                copyBtn.addEventListener("click", async () => {
+                  const token = newTokenValue;
+                  try {
+                    await navigator.clipboard.writeText(token);
+                    copyBtn.innerHTML = '<i class="ph ph-check"></i> Copied!';
+                    copyBtn.style.background = "var(--success)";
+                    setTimeout(() => {
+                      copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
+                      copyBtn.style.background = "";
+                    }, 2000);
+                  } catch (err) {
+                    copyBtn.innerHTML = '<i class="ph ph-x"></i> Failed';
+                    setTimeout(() => {
+                      copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
+                    }, 2000);
+                  }
+                });
+              }
+
+              const doneBtn = clonedNewToken.querySelector("#token-done-btn");
+              if (doneBtn) {
+                doneBtn.addEventListener("click", () => {
+                  clonedNewToken.remove();
+                  loadTokens(); // Reload normal token list
+                });
+              }
             }
           }
         });
