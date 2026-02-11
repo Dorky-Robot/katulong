@@ -179,10 +179,19 @@
         if (optsRes.ok) {
           const opts = await optsRes.json();
 
-          // If no credentials available, show helpful message
+          // If no credentials available, hide login button and show only register
           if (!opts.allowCredentials || opts.allowCredentials.length === 0) {
-            loginError.innerHTML = 'ℹ️ No passkey found for this device. Click <strong>"Register New Passkey"</strong> below to set one up.';
+            // Hide the login button
+            const loginBtn = document.getElementById("login-btn");
+            if (loginBtn) {
+              loginBtn.style.display = 'none';
+            }
+
+            // Show helpful message
+            loginError.innerHTML = 'ℹ️ No passkey registered yet. Please register your fingerprint/Touch ID below.';
             loginError.style.color = '#6b9bd1'; // Info blue instead of error red
+            loginError.style.textAlign = 'center';
+            loginError.style.marginBottom = '1rem';
           }
         }
       } catch (err) {
