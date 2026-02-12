@@ -13,6 +13,7 @@
     import { createSessionListComponent } from "/lib/session-list-component.js";
     import { createTokenStore, setNewToken, invalidateTokens } from "/lib/token-store.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
+    import { createTokenFormManager } from "/lib/token-form.js";
     import { createShortcutsStore } from "/lib/shortcuts-store.js";
     import { createShortcutsPopup, createShortcutsEditPanel, createAddShortcutModal } from "/lib/shortcuts-components.js";
     import { createDictationModal } from "/lib/dictation-modal.js";
@@ -985,146 +986,29 @@
     // --- Token management ---
 
     const tokenStore = createTokenStore();
+
+    // Create token form manager with callbacks
+    const tokenFormManager = createTokenFormManager({
+      onCreate: (data) => {
+        setNewToken(tokenStore, data);
+      },
+      onRename: () => {
+        invalidateTokens(tokenStore);
+      },
+      onRevoke: () => {
+        invalidateTokens(tokenStore);
+      }
+    });
+    tokenFormManager.init();
+
+    // Create token list component
     const tokenListComponent = createTokenListComponent(tokenStore, {
-      onRename: renameToken,
-      onRevoke: revokeToken
+      onRename: (tokenId) => tokenFormManager.renameToken(tokenId),
+      onRevoke: (tokenId, hasCredential) => tokenFormManager.revokeToken(tokenId, hasCredential)
     });
     const tokensList = document.getElementById("tokens-list");
     if (tokensList) {
       tokenListComponent.mount(tokensList);
-    }
-
-    // Token creation form handlers
-    const tokenCreateForm = document.getElementById("token-create-form");
-    const tokenNameInput = document.getElementById("token-name-input");
-    const tokenFormSubmit = document.getElementById("token-form-submit");
-    const tokenFormCancel = document.getElementById("token-form-cancel");
-    const createTokenBtn = document.getElementById("settings-create-token");
-
-    if (!tokenCreateForm || !tokenNameInput || !tokenFormSubmit || !tokenFormCancel || !createTokenBtn) {
-      console.error("Token form elements not found:", {
-        tokenCreateForm: !!tokenCreateForm,
-        tokenNameInput: !!tokenNameInput,
-        tokenFormSubmit: !!tokenFormSubmit,
-        tokenFormCancel: !!tokenFormCancel,
-        createTokenBtn: !!createTokenBtn
-      });
-    }
-
-    // Show form when "Generate New Token" is clicked
-    if (createTokenBtn) {
-      createTokenBtn.addEventListener("click", () => {
-        console.log("Generate New Token clicked");
-        tokenCreateForm.style.display = "block";
-        tokenNameInput.value = "";
-        tokenNameInput.focus();
-        createTokenBtn.style.display = "none";
-      });
-    }
-
-    // Hide form when "Cancel" is clicked
-    if (tokenFormCancel) {
-      tokenFormCancel.addEventListener("click", () => {
-        tokenCreateForm.style.display = "none";
-        createTokenBtn.style.display = "block";
-        tokenNameInput.value = "";
-      });
-    }
-
-    // Enable/disable submit button based on input
-    if (tokenNameInput && tokenFormSubmit) {
-      tokenNameInput.addEventListener("input", () => {
-        tokenFormSubmit.disabled = tokenNameInput.value.trim().length === 0;
-      });
-    }
-
-    // Submit form when "Generate token" is clicked
-    if (tokenFormSubmit) {
-      tokenFormSubmit.addEventListener("click", async () => {
-        console.log("Generate token button clicked, name:", tokenNameInput.value);
-        const name = tokenNameInput.value.trim();
-        if (!name) {
-          console.log("No name provided, aborting");
-          return;
-        }
-
-        console.log("Disabling submit button and creating token...");
-        tokenFormSubmit.disabled = true;
-        tokenFormSubmit.textContent = "Generating...";
-
-        try {
-          console.log("Fetching /api/tokens with name:", name);
-          const res = await fetch("/api/tokens", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name }),
-          });
-          console.log("Response status:", res.status);
-          if (!res.ok) throw new Error("Failed to create token");
-          const data = await res.json();
-          console.log("Token created successfully:", data);
-
-        // Hide form and reset
-        tokenCreateForm.style.display = "none";
-        tokenNameInput.value = "";
-        tokenFormSubmit.textContent = "Generate token";
-        createTokenBtn.style.display = "block";
-
-        // Display the token in the UI with copy button (1Password-style)
-        setNewToken(tokenStore, data);
-      } catch (err) {
-        alert("Failed to create token: " + err.message);
-        tokenFormSubmit.disabled = false;
-        tokenFormSubmit.textContent = "Generate token";
-      }
-      });
-    }
-
-    // Allow Enter key to submit form
-    if (tokenNameInput && tokenFormSubmit) {
-      tokenNameInput.addEventListener("keypress", (e) => {
-        if (e.key === "Enter" && tokenNameInput.value.trim().length > 0) {
-          tokenFormSubmit.click();
-        }
-      });
-    }
-
-
-    async function renameToken(tokenId) {
-      const newName = prompt("Enter new token name:");
-      if (!newName || newName.trim().length === 0) return;
-
-      try {
-        const res = await fetch(`/api/tokens/${tokenId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: newName.trim() }),
-        });
-        if (!res.ok) throw new Error("Failed to rename token");
-        invalidateTokens(tokenStore); // Reload to show updated name
-      } catch (err) {
-        alert("Failed to rename token: " + err.message);
-      }
-    }
-
-    async function revokeToken(tokenId, hasCredential = false) {
-      const message = hasCredential
-        ? "Are you sure you want to revoke this device? The device will immediately lose access and need to re-register."
-        : "Are you sure you want to revoke this token? It will no longer work for device pairing.";
-
-      if (!confirm(message)) {
-        return;
-      }
-
-      try {
-        const res = await fetch(`/api/tokens/${tokenId}`, {
-          method: "DELETE",
-        });
-        if (!res.ok) throw new Error("Failed to revoke token");
-        invalidateTokens(tokenStore); // Reload to show updated list
-      } catch (err) {
-        alert("Failed to revoke: " + err.message);
-      }
     }
 
     
