@@ -104,7 +104,15 @@ export function setNewToken(store, tokenData) {
     type: TOKEN_ACTIONS.SET_NEW_TOKEN,
     token: tokenData
   });
-  loadTokens(store);
+  // Immediately add to tokens list to avoid race condition with API
+  const currentState = store.getState();
+  store.dispatch({
+    type: TOKEN_ACTIONS.LOAD_SUCCESS,
+    tokens: [
+      ...currentState.tokens,
+      { id: tokenData.id, name: tokenData.name, createdAt: tokenData.createdAt, credential: null }
+    ]
+  });
 }
 
 /**
