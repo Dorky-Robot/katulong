@@ -241,49 +241,6 @@
     });
     pullToRefresh.init();
 
-
-    // Viewport manager (handles resize, scroll button, terminal gestures)
-    const viewportManager = createViewportManager({
-      term,
-      fit,
-      termContainer,
-      bar,
-      onWebSocketResize: (cols, rows) => {
-        if (state.connection.ws?.readyState === 1) {
-          state.connection.ws.send(JSON.stringify({ type: "resize", cols, rows }));
-        }
-      },
-      onDictationOpen: () => openDictationModal()
-    });
-    viewportManager.init();
-
-    // --- Shortcut bar (composable renderer) ---
-
-    const shortcutBar = createShortcutBar({
-      container: bar,
-      pinnedKeys: [
-        { label: "Esc", keys: "esc" },
-        { label: "Tab", keys: "tab" }
-      ],
-      onSessionClick: openSessionManager,
-      onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
-      onSettingsClick: () => modals.open('settings'),
-      sendFn: rawSend,
-      term,
-      updateP2PIndicator
-    });
-
-    const renderBar = (name) => shortcutBar.render(name);
-
-    // Subscribe to shortcuts changes to re-render bar
-    shortcutsStore.subscribe((shortcuts) => {
-      // Update legacy state object (for backward compatibility)
-      state.update('session.shortcuts', shortcuts);
-
-      // Re-render bar when shortcuts change
-      renderBar(state.session.name);
-    });
-
     // --- Shortcuts popup (reactive component) ---
 
     const shortcutsPopup = createShortcutsPopup({
@@ -504,7 +461,49 @@
       dictationModal.open();
     }
 
-    
+    // --- Viewport manager & Shortcut bar ---
+    // (Moved here after openSessionManager and openDictationModal are defined)
+
+    const viewportManager = createViewportManager({
+      term,
+      fit,
+      termContainer,
+      bar,
+      onWebSocketResize: (cols, rows) => {
+        if (state.connection.ws?.readyState === 1) {
+          state.connection.ws.send(JSON.stringify({ type: "resize", cols, rows }));
+        }
+      },
+      onDictationOpen: () => openDictationModal()
+    });
+    viewportManager.init();
+
+    const shortcutBar = createShortcutBar({
+      container: bar,
+      pinnedKeys: [
+        { label: "Esc", keys: "esc" },
+        { label: "Tab", keys: "tab" }
+      ],
+      onSessionClick: openSessionManager,
+      onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
+      onSettingsClick: () => modals.open('settings'),
+      sendFn: rawSend,
+      term,
+      updateP2PIndicator
+    });
+
+    const renderBar = (name) => shortcutBar.render(name);
+
+    // Subscribe to shortcuts changes to re-render bar
+    shortcutsStore.subscribe((shortcuts) => {
+      // Update legacy state object (for backward compatibility)
+      state.update('session.shortcuts', shortcuts);
+
+      // Re-render bar when shortcuts change
+      renderBar(state.session.name);
+    });
+
+
 
     // --- Image upload (using imported helpers) ---
     const uploadImageToTerminal = (file) => uploadImageToTerminalFn(file, {
