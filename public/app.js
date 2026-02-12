@@ -2179,40 +2179,54 @@
     }
 
     // Event: Pair Device → step 1 (trust)
-    document.getElementById("settings-pair-lan").addEventListener("click", async () => {
-      switchSettingsView(viewTrust);
-      await startTrustStep();
-    });
+    const pairLanBtn = document.getElementById("settings-pair-lan");
+    if (pairLanBtn) {
+      pairLanBtn.addEventListener("click", async () => {
+        switchSettingsView(viewTrust);
+        await startTrustStep();
+      });
+    }
 
     // Event: Next → step 2 (pair)
-    document.getElementById("wizard-next-pair").addEventListener("click", async () => {
-      switchSettingsView(viewPair);
-      await startPairingStep();
-    });
+    const wizardNextBtn = document.getElementById("wizard-next-pair");
+    if (wizardNextBtn) {
+      wizardNextBtn.addEventListener("click", async () => {
+        switchSettingsView(viewPair);
+        await startPairingStep();
+      });
+    }
 
     // Event: Back from trust → main
-    document.getElementById("wizard-back-trust").addEventListener("click", () => {
-      wizardStore.dispatch({ type: WIZARD_ACTIONS.RESET });
-      switchSettingsView(viewMain);
-    });
+    const wizardBackTrustBtn = document.getElementById("wizard-back-trust");
+    if (wizardBackTrustBtn) {
+      wizardBackTrustBtn.addEventListener("click", () => {
+        wizardStore.dispatch({ type: WIZARD_ACTIONS.RESET });
+        switchSettingsView(viewMain);
+      });
+    }
 
     // Event: Back from pair → trust
-    document.getElementById("wizard-back-pair").addEventListener("click", () => {
-      wizardStore.dispatch({ type: WIZARD_ACTIONS.RESET });
-      switchSettingsView(viewTrust);
-      startTrustStep();
-    });
+    const wizardBackPairBtn = document.getElementById("wizard-back-pair");
+    if (wizardBackPairBtn) {
+      wizardBackPairBtn.addEventListener("click", () => {
+        wizardStore.dispatch({ type: WIZARD_ACTIONS.RESET });
+        switchSettingsView(viewTrust);
+        startTrustStep();
+      });
+    }
 
     // Event: Done → cleanup + show LAN tab with newly paired device
-    document.getElementById("wizard-done").addEventListener("click", () => {
-      cleanupWizard();
-      // Switch to main view
-      switchSettingsView(viewMain);
+    const wizardDoneBtn = document.getElementById("wizard-done");
+    if (wizardDoneBtn) {
+      wizardDoneBtn.addEventListener("click", () => {
+        cleanupWizard();
+        switchSettingsView(viewMain);
 
-      // Switch to LAN tab to show newly paired device
-      const lanTab = document.querySelector('.settings-tab[data-tab="lan"]');
-      if (lanTab) lanTab.click();
-    });
+        // Switch to LAN tab to show newly paired device
+        const lanTab = document.querySelector('.settings-tab[data-tab="lan"]');
+        if (lanTab) lanTab.click();
+      });
+    }
 
     // --- Dictation modal ---
 
