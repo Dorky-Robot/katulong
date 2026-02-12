@@ -5,6 +5,7 @@
     import { ModalRegistry } from "/lib/modal.js";
     import { ListRenderer } from "/lib/list-renderer.js";
     import { createStore, createReducer } from "/lib/store.js";
+    import { createWizardStore, WIZARD_STATES, WIZARD_ACTIONS } from "/lib/wizard-state.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
