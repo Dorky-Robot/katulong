@@ -13,6 +13,8 @@
     import { createSessionListComponent } from "/lib/session-list-component.js";
     import { createTokenStore, setNewToken, invalidateTokens } from "/lib/token-store.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
+    import { createShortcutsStore } from "/lib/shortcuts-store.js";
+    import { createShortcutsPopup, createShortcutsEditPanel, createAddShortcutModal } from "/lib/shortcuts-components.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -202,36 +204,17 @@
 
     const state = createAppState();
 
-    // --- Shortcuts state management (centralized store) ---
-    const shortcutsReducer = createReducer([], {
-      'LOAD': (shortcuts, action) => {
-        return Array.isArray(action.items) ? action.items.filter(s => s.label && s.keys) : [];
-      },
-      'ADD': (shortcuts, action) => {
-        return [...shortcuts, action.item];
-      },
-      'REMOVE': (shortcuts, action) => {
-        return shortcuts.filter((_, idx) => idx !== action.index);
-      }
-    });
-
-    // Create store for shortcuts
-    const shortcutsStore = createStore([], shortcutsReducer, { debug: false });
+    // --- Shortcuts state management (reactive store) ---
+    const shortcutsStore = createShortcutsStore();
 
     // Subscribe to shortcuts changes for render side effects
-    shortcutsStore.subscribe((shortcuts, action) => {
+    shortcutsStore.subscribe((shortcuts) => {
       // Update legacy state object (for backward compatibility)
       state.update('session.shortcuts', shortcuts);
 
-      // Render effects
+      // Re-render bar when shortcuts change
       renderBar(state.session.name);
-      if (action.type === 'REMOVE' || action.type === 'ADD') {
-        renderEditList(shortcuts);
-      }
     });
-
-    // Convenience wrapper (maintains same API)
-    const dispatchShortcuts = (action) => shortcutsStore.dispatch(action);
 
     // --- P2P Manager (edge module) ---
     const createP2PManager = (config) => {
@@ -1247,178 +1230,59 @@
       bar.appendChild(setBtn);
     }
 
-    // --- Shortcuts popup (render takes data) ---
+    // --- Shortcuts popup (reactive component) ---
 
-    const shortcutsOverlay = document.getElementById("shortcuts-overlay");
-    const shortcutsGrid = document.getElementById("shortcuts-grid");
+    const shortcutsPopup = createShortcutsPopup({
+      onShortcutClick: (keys) => {
+        sendSequence(keysToSequence(keys));
+      },
+      modals
+    });
 
     function openShortcutsPopup(items) {
-      shortcutsGrid.innerHTML = "";
-      for (const s of items) {
-        const btn = document.createElement("button");
-        btn.className = "shortcut-btn";
-        btn.setAttribute("role", "listitem");
-        btn.textContent = s.label;
-        btn.addEventListener("click", () => {
-          sendSequence(keysToSequence(s.keys));
-          modals.close('shortcuts');
-        });
-        shortcutsGrid.appendChild(btn);
-      }
+      shortcutsPopup.render(document.getElementById("shortcuts-grid"), items);
       modals.open('shortcuts');
     }
 
     document.getElementById("shortcuts-edit-btn").addEventListener("click", () => {
       modals.close('shortcuts');
-      openEditPanel();
+      shortcutsEditPanel.open(shortcutsStore.getState());
     });
     
 
-    // --- Edit shortcuts (render takes data) ---
+    // --- Edit shortcuts (reactive component) ---
 
-    const editOverlay = document.getElementById("edit-overlay");
-    const editList = document.getElementById("edit-list");
+    const shortcutsEditPanel = createShortcutsEditPanel(shortcutsStore, { modals });
 
-    function renderEditList(items) {
-      editList.innerHTML = "";
-      items.forEach((s, i) => {
-        const row = document.createElement("div");
-        row.className = "edit-item";
-        row.setAttribute("role", "listitem");
-        const labelSpan = document.createElement("span");
-        labelSpan.className = "edit-item-label";
-        labelSpan.textContent = s.label;
-        row.appendChild(labelSpan);
-        const keysSpan = document.createElement("span");
-        keysSpan.className = "edit-item-keys";
-        keysSpan.textContent = s.keys;
-        row.appendChild(keysSpan);
-        const rm = document.createElement("button");
-        rm.className = "edit-item-remove";
-        rm.setAttribute("aria-label", `Remove ${s.label}`);
-        rm.innerHTML = '<i class="ph ph-x"></i>';
-        rm.addEventListener("click", () => {
-          dispatchShortcuts({ type: 'REMOVE', index: i });
-        });
-        row.appendChild(rm);
-        editList.appendChild(row);
-      });
-    }
-
-    function openEditPanel() {
-      renderEditList(state.session.shortcuts);
-      modals.open('edit');
-    }
-
-    function closeEditPanel() {
-      modals.close('edit');
-      saveShortcuts();
-    }
-
-    document.getElementById("edit-done").addEventListener("click", closeEditPanel);
-    document.getElementById("edit-add").addEventListener("click", openAddModal);
-    
-
-    async function loadShortcuts() {
-      try {
-        const res = await fetch("/shortcuts");
-        const data = await res.json();
-        dispatchShortcuts({ type: 'LOAD', items: data });
-      } catch {
-        dispatchShortcuts({ type: 'LOAD', items: [] });
-      }
-    }
-
-    async function saveShortcuts() {
-      try {
-        await fetch("/shortcuts", {
-          method: "PUT",
-          headers: addCsrfHeader({ "Content-Type": "application/json" }),
-          body: JSON.stringify(state.session.shortcuts),
-        });
-      } catch { /* ignore */ }
-    }
-
-    // --- Add shortcut modal (render takes data) ---
-
-    const addOverlay = document.getElementById("add-modal-overlay");
-    const keyComposer = document.getElementById("key-composer");
-    const keyInput = document.getElementById("key-composer-input");
-    const keyPreview = document.getElementById("key-preview-value");
-    const saveBtn = document.getElementById("modal-save");
-
-    // Local UI state for key composition
-    let composedKeys = [];
-
-    function renderComposerTags(keys) {
-      keyComposer.querySelectorAll(".key-tag, .key-comma").forEach(t => t.remove());
-      keys.forEach((k, i) => {
-        if (k === ",") {
-          const sep = document.createElement("span");
-          sep.className = "key-comma";
-          sep.textContent = ",";
-          sep.addEventListener("click", () => {
-            composedKeys = composedKeys.filter((_, idx) => idx !== i);
-            renderComposerTags(composedKeys);
-          });
-          keyComposer.insertBefore(sep, keyInput);
-          return;
-        }
-        const tag = document.createElement("span");
-        tag.className = "key-tag";
-        tag.appendChild(document.createTextNode(displayKey(k)));
-        const rmBtn = document.createElement("button");
-        rmBtn.className = "key-tag-remove";
-        rmBtn.setAttribute("aria-label", `Remove ${displayKey(k)}`);
-        rmBtn.innerHTML = '<i class="ph ph-x"></i>';
-        tag.appendChild(rmBtn);
-        rmBtn.addEventListener("click", () => {
-          composedKeys = composedKeys.filter((_, idx) => idx !== i);
-          renderComposerTags(composedKeys);
-        });
-        keyComposer.insertBefore(tag, keyInput);
-      });
-      keyPreview.textContent = keys.length > 0 ? keysLabel(keys) : "";
-      saveBtn.disabled = keys.length === 0;
-      keyInput.placeholder = keys.length ? "" : "type a key...";
-    }
-
-    function openAddModal() {
-      composedKeys = [];
-      keyInput.value = "";
-      renderComposerTags(composedKeys);
-      modals.open('add');
-      // Focus is handled by modal's onOpen callback
-    }
-
-    keyComposer.addEventListener("click", () => keyInput.focus());
-
-    keyInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        const val = keyInput.value.trim().toLowerCase();
-        if (!val) return;
-        if (VALID_KEYS.has(val)) {
-          composedKeys = [...composedKeys, normalizeKey(val)];
-          keyInput.value = "";
-          renderComposerTags(composedKeys);
-        } else {
-          keyComposer.classList.add("invalid");
-          setTimeout(() => keyComposer.classList.remove("invalid"), 350);
-        }
-      } else if (e.key === "Backspace" && keyInput.value === "" && composedKeys.length > 0) {
-        composedKeys = composedKeys.slice(0, -1);
-        renderComposerTags(composedKeys);
+    // Subscribe to shortcuts changes to re-render edit list
+    shortcutsStore.subscribe((shortcuts) => {
+      const editList = document.getElementById("edit-list");
+      if (editList && modals.isOpen && modals.isOpen('edit')) {
+        shortcutsEditPanel.render(editList, shortcuts);
       }
     });
 
-    document.getElementById("modal-cancel").addEventListener("click", () => modals.close('add'));
-
-    document.getElementById("modal-save").addEventListener("click", () => {
-      if (composedKeys.length === 0) return;
-      dispatchShortcuts({ type: 'ADD', item: { label: keysLabel(composedKeys), keys: keysString(composedKeys) } });
-      modals.close('add');
+    document.getElementById("edit-done").addEventListener("click", () => {
+      shortcutsEditPanel.close();
     });
+
+    document.getElementById("edit-add").addEventListener("click", () => {
+      addShortcutModal.open();
+    });
+
+    // --- Add shortcut modal (reactive component) ---
+
+    const addShortcutModal = createAddShortcutModal(shortcutsStore, {
+      modals,
+      keysLabel,
+      keysString,
+      displayKey,
+      normalizeKey,
+      VALID_KEYS
+    });
+
+    // Initialize the add modal event handlers
+    addShortcutModal.init();
 
     
 
