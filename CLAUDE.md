@@ -27,6 +27,25 @@ When encountering issues unrelated to your current task:
 
 Technical debt should be addressed opportunistically, not deferred indefinitely. If a fix takes less than 30 minutes and improves code quality or reliability, do it as part of your current work.
 
+### Testing and Git Workflow
+
+**NEVER use `git push --no-verify` or `git commit --no-verify`.** This defeats the entire purpose of having tests and pre-commit/pre-push hooks.
+
+If tests are failing or hooks are blocking your push:
+1. **Fix the actual problem** — don't bypass the safety check
+2. **Stop conflicting processes** — if e2e tests can't start the server, find and kill the process using the port
+3. **Fix flaky tests** — if tests fail intermittently, debug and fix them rather than skipping
+4. **Address test gaps** — if tests should catch a bug but don't, add the missing test coverage
+
+The pre-push hook runs the full test suite including e2e tests. This is your last line of defense against shipping broken code. Bypassing it means bugs reach production.
+
+**Common issues and fixes:**
+- **Port conflict (EADDRINUSE)**: Stop background servers before pushing: `lsof -ti:3002 | xargs kill -9`
+- **E2E timeout**: Ensure no dev servers are running on test ports (3001, 3002)
+- **Failing tests**: Fix the test or the code — never skip the test
+
+**Exception**: `--no-verify` is ONLY acceptable when committing non-code changes (documentation, README) that cannot possibly break functionality. Even then, prefer running tests anyway.
+
 ## Security model
 
 **This application provides direct terminal access to the host.** Every code change must be reviewed with this in mind.
