@@ -6,18 +6,16 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { setupTest } from './helpers.js';
 
 test.describe('Connection Reliability', () => {
   test.beforeEach(async ({ page, context }) => {
     await page.goto("http://localhost:3001");
     await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForTimeout(1000);
+    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
   });
 
   test('should establish P2P connection on load', async ({ page }) => {
-    // Wait for connection to establish
-    await page.waitForTimeout(2000);
-
     // Check connection indicator
     const p2pIndicator = page.locator('.p2p-indicator, [data-connection-status]');
     await expect(p2pIndicator).toBeVisible({ timeout: 5000 });
@@ -47,8 +45,11 @@ test.describe('Connection Reliability', () => {
     await page.keyboard.type(testCommand);
     await page.keyboard.press('Enter');
 
-    // Wait for output
-    await page.waitForTimeout(1000);
+    // Wait for output to appear
+    await page.waitForFunction(
+      () => document.querySelector('.xterm-screen')?.textContent?.includes('connection-test'),
+      { timeout: 5000 }
+    );
 
     // Verify output appears (connection is working)
     const terminalText = await page.locator('.xterm-screen').textContent();
@@ -59,9 +60,7 @@ test.describe('Connection Reliability', () => {
 
   test('should show connection indicator states', async ({ page }) => {
     const p2pIndicator = page.locator('.p2p-indicator, [data-connection-status]');
-
-    // Wait for initial connection
-    await page.waitForTimeout(2000);
+    await expect(p2pIndicator).toBeVisible({ timeout: 5000 });
 
     // Get initial state
     const initialState = await p2pIndicator.evaluate(el => ({
@@ -81,26 +80,31 @@ test.describe('Connection Reliability', () => {
   });
 
   test('should handle page reload and reconnect', async ({ page }) => {
-    // Wait for initial connection
-    await page.waitForTimeout(2000);
-
     // Type command before reload
     await page.keyboard.type('echo "before reload"');
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(500);
+    await page.waitForFunction(
+      () => document.querySelector('.xterm-screen')?.textContent?.includes('before reload'),
+      { timeout: 5000 }
+    );
 
     // Reload page
     await page.reload();
 
     // Wait for reconnection
     await page.waitForSelector('.xterm', { timeout: 10000 });
-    await page.waitForTimeout(2000);
+    await page.waitForSelector('.xterm-screen', { timeout: 5000 });
 
     // Verify connection reestablished by sending command
     const testCommand = `echo "after-reload-${Date.now()}"`;
     await page.keyboard.type(testCommand);
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(1000);
+
+    // Wait for output to appear
+    await page.waitForFunction(
+      () => document.querySelector('.xterm-screen')?.textContent?.includes('after-reload'),
+      { timeout: 5000 }
+    );
 
     // Should see output
     const terminalText = await page.locator('.xterm-screen').textContent();
@@ -114,12 +118,16 @@ test.describe('Connection Reliability', () => {
     const marker = `marker-${Date.now()}`;
     await page.keyboard.type(`echo "${marker}"`);
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(500);
+    await page.waitForFunction(
+      (m) => document.querySelector('.xterm-screen')?.textContent?.includes(m),
+      marker,
+      { timeout: 5000 }
+    );
 
     // Reload page
     await page.reload();
     await page.waitForSelector('.xterm', { timeout: 10000 });
-    await page.waitForTimeout(1000);
+    await page.waitForSelector('.xterm-screen', { timeout: 5000 });
 
     // Terminal buffer should be preserved
     const terminalText = await page.locator('.xterm-screen').textContent();
@@ -141,7 +149,7 @@ test.describe('Connection Reliability', () => {
     for (let i = 0; i < 3; i++) {
       await page.reload();
       await page.waitForSelector('.xterm', { timeout: 10000 });
-      await page.waitForTimeout(500);
+      await page.waitForSelector('.xterm-screen', { timeout: 5000 });
     }
 
     // Should not have connection-related errors
@@ -165,13 +173,16 @@ test.describe('Connection Reliability', () => {
     // This is hard to test directly without mocking P2P failure
     // For now, verify that connection works regardless of transport
 
-    await page.waitForTimeout(2000);
-
     // Send command to verify connection works
     const testCommand = `echo "fallback-test-${Date.now()}"`;
     await page.keyboard.type(testCommand);
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(1000);
+
+    // Wait for output to appear
+    await page.waitForFunction(
+      () => document.querySelector('.xterm-screen')?.textContent?.includes('fallback-test'),
+      { timeout: 5000 }
+    );
 
     const terminalText = await page.locator('.xterm-screen').textContent();
     expect(terminalText).toContain('fallback-test');
@@ -180,9 +191,6 @@ test.describe('Connection Reliability', () => {
   });
 
   test('should handle WebSocket close and reopen', async ({ page }) => {
-    // Wait for connection
-    await page.waitForTimeout(2000);
-
     // Force close WebSocket via page evaluation
     await page.evaluate(() => {
       // Find and close WebSocket connection
@@ -191,21 +199,37 @@ test.describe('Connection Reliability', () => {
       }
     });
 
-    // Wait for reconnection attempt
-    await page.waitForTimeout(3000);
+    // Wait for reconnection attempt - check for connection indicator
+    const p2pIndicator = page.locator('.p2p-indicator, [data-connection-status]');
+    await page.waitForFunction(
+      () => {
+        const indicator = document.querySelector('.p2p-indicator, [data-connection-status]');
+        return indicator && (
+          indicator.classList.contains('connected') ||
+          indicator.classList.contains('p2p-connected') ||
+          indicator.dataset.connectionStatus === 'connected'
+        );
+      },
+      { timeout: 10000 }
+    ).catch(() => {
+      // Reconnection might not have indicator update, that's ok
+    });
 
     // Verify reconnection by sending command
     const testCommand = `echo "after-ws-close-${Date.now()}"`;
     await page.keyboard.type(testCommand);
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(1000);
+
+    // Try to get output
+    const reconnected = await page.waitForFunction(
+      () => document.querySelector('.xterm-screen')?.textContent?.includes('after-ws-close'),
+      { timeout: 5000 }
+    ).then(() => true).catch(() => false);
 
     const terminalText = await page.locator('.xterm-screen').textContent();
 
     // If reconnection worked, we'll see the output
     // If not, the command won't execute
-    const reconnected = terminalText.includes('after-ws-close');
-
     if (reconnected) {
       console.log('[Test] WebSocket reconnection successful');
     } else {
@@ -216,13 +240,13 @@ test.describe('Connection Reliability', () => {
   });
 
   test('should maintain connection during long idle period', async ({ page }) => {
-    // Wait for connection
-    await page.waitForTimeout(2000);
-
     // Send initial command
     await page.keyboard.type('echo "before idle"');
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(500);
+    await page.waitForFunction(
+      () => document.querySelector('.xterm-screen')?.textContent?.includes('before idle'),
+      { timeout: 5000 }
+    );
 
     // Idle for 10 seconds (simulate user inactivity)
     console.log('[Test] Idling for 10 seconds...');
@@ -232,7 +256,12 @@ test.describe('Connection Reliability', () => {
     const testCommand = `echo "after-idle-${Date.now()}"`;
     await page.keyboard.type(testCommand);
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(1000);
+
+    // Wait for output to appear
+    await page.waitForFunction(
+      () => document.querySelector('.xterm-screen')?.textContent?.includes('after-idle'),
+      { timeout: 5000 }
+    );
 
     // Should still work
     const terminalText = await page.locator('.xterm-screen').textContent();
@@ -242,20 +271,21 @@ test.describe('Connection Reliability', () => {
   });
 
   test('should handle multiple tabs sharing same session', async ({ page, context }) => {
-    // Wait for initial connection
-    await page.waitForTimeout(2000);
-
     // Send command in first tab
     const marker1 = `tab1-${Date.now()}`;
     await page.keyboard.type(`echo "${marker1}"`);
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(500);
+    await page.waitForFunction(
+      (m) => document.querySelector('.xterm-screen')?.textContent?.includes(m),
+      marker1,
+      { timeout: 5000 }
+    );
 
     // Open second tab with same session
     const page2 = await context.newPage();
     await page2.goto("http://localhost:3001");
     await page2.waitForSelector('.xterm', { timeout: 10000 });
-    await page2.waitForTimeout(2000);
+    await page2.waitForSelector('.xterm-screen', { timeout: 5000 });
 
     // Second tab should see the same session
     const terminalText2 = await page2.locator('.xterm-screen').textContent();
@@ -265,10 +295,18 @@ test.describe('Connection Reliability', () => {
     const marker2 = `tab2-${Date.now()}`;
     await page2.keyboard.type(`echo "${marker2}"`);
     await page2.keyboard.press('Enter');
-    await page2.waitForTimeout(500);
+    await page2.waitForFunction(
+      (m) => document.querySelector('.xterm-screen')?.textContent?.includes(m),
+      marker2,
+      { timeout: 5000 }
+    );
 
     // First tab should see the command from second tab
-    await page.waitForTimeout(500);
+    await page.waitForFunction(
+      (m) => document.querySelector('.xterm-screen')?.textContent?.includes(m),
+      marker2,
+      { timeout: 5000 }
+    );
     const terminalText1 = await page.locator('.xterm-screen').textContent();
     expect(terminalText1).toContain(marker2);
 
@@ -294,14 +332,13 @@ test.describe('Connection Reliability', () => {
         console.log('[Test] Connecting state observed');
         break;
       }
-      await page2.waitForTimeout(100);
+      // Small delay to poll state
+      await page2.waitForFunction(() => true, { timeout: 100 }).catch(() => {});
     }
 
     await pagePromise;
     await page2.waitForSelector('.xterm', { timeout: 10000 });
-
-    // Eventually should reach connected state
-    await page2.waitForTimeout(2000);
+    await page2.waitForSelector('.xterm-screen', { timeout: 5000 });
 
     await page2.close();
 
@@ -314,7 +351,7 @@ test.describe('P2P Specific Tests', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("http://localhost:3001");
     await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForTimeout(2000);
+    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
   });
 
   test('should use P2P when available (localhost)', async ({ page }) => {

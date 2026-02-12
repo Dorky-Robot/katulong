@@ -6,20 +6,17 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { setupTest, openSettings, switchSettingsTab } from './helpers.js';
 
 test.describe('LAN Pairing Wizard Flow', () => {
   test.beforeEach(async ({ page, context }) => {
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page.goto("http://localhost:3001");
-    await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForTimeout(1000);
+    await setupTest({ page, context });
   });
 
   test('should complete full pairing flow - trust step', async ({ page }) => {
     // Step 1: Open Settings → LAN tab
-    await page.click('[data-shortcut-id="settings"]');
-    await expect(page.locator('.modal[data-modal-id="settings"]')).toBeVisible();
-    await page.click('.settings-tab[data-tab="lan"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
 
     // Step 2: Click "Pair Device on LAN"
     await page.click('button:has-text("Pair Device on LAN")');
@@ -47,8 +44,7 @@ test.describe('LAN Pairing Wizard Flow', () => {
     await expect(copyBtn).toContainText('Copied!');
 
     // Wait for it to revert
-    await page.waitForTimeout(2500);
-    await expect(copyBtn).not.toContainText('Copied!');
+    await expect(copyBtn).not.toContainText('Copied!', { timeout: 3000 });
 
     // Verify clipboard has URL
     const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
@@ -61,10 +57,14 @@ test.describe('LAN Pairing Wizard Flow', () => {
 
   test('should complete full pairing flow - pairing step', async ({ page }) => {
     // Navigate to pairing step
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="lan"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
     await page.click('button:has-text("Pair Device on LAN")');
-    await page.waitForTimeout(500);
+
+    // Wait for trust view to be active first
+    const trustView = page.locator('#settings-view-trust');
+    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
+
     await page.click('#wizard-next-pair');
 
     // Should be on Pair step
@@ -105,7 +105,14 @@ test.describe('LAN Pairing Wizard Flow', () => {
     expect(initialCountdown).toMatch(/\d+s/); // Should show "Xseconds"
 
     // Wait and verify countdown decreases
-    await page.waitForTimeout(1500);
+    await page.waitForFunction(
+      (initial) => {
+        const countdownEl = document.querySelector('#wizard-pair-countdown');
+        return countdownEl && countdownEl.textContent !== initial;
+      },
+      initialCountdown,
+      { timeout: 2000 }
+    );
     const newCountdown = await countdown.textContent();
     expect(newCountdown).not.toBe(initialCountdown);
 
@@ -120,10 +127,14 @@ test.describe('LAN Pairing Wizard Flow', () => {
 
   test('should show countdown and refresh pairing code', async ({ page }) => {
     // Navigate to pairing step
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="lan"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
     await page.click('button:has-text("Pair Device on LAN")');
-    await page.waitForTimeout(500);
+
+    // Wait for trust view first
+    const trustView = page.locator('#settings-view-trust');
+    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
+
     await page.click('#wizard-next-pair');
 
     const pairView = page.locator('#settings-view-pair');
@@ -149,8 +160,8 @@ test.describe('LAN Pairing Wizard Flow', () => {
 
   test('should handle back navigation in wizard', async ({ page }) => {
     // Navigate to pairing step
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="lan"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
     await page.click('button:has-text("Pair Device on LAN")');
 
     const trustView = page.locator('#settings-view-trust');
@@ -175,10 +186,14 @@ test.describe('LAN Pairing Wizard Flow', () => {
 
   test('should clean up timers when closing wizard', async ({ page }) => {
     // Navigate to pairing step
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="lan"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
     await page.click('button:has-text("Pair Device on LAN")');
-    await page.waitForTimeout(500);
+
+    // Wait for trust view first
+    const trustView = page.locator('#settings-view-trust');
+    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
+
     await page.click('#wizard-next-pair');
 
     const pairView = page.locator('#settings-view-pair');
@@ -194,12 +209,12 @@ test.describe('LAN Pairing Wizard Flow', () => {
     const closeBtn = modal.locator('.modal-close');
     await closeBtn.click();
 
-    // Wait a bit
-    await page.waitForTimeout(500);
+    // Wait for modal to close
+    await expect(modal).not.toBeVisible();
 
     // Reopen modal
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="lan"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
 
     // Should be back on main view, not pairing view
     const mainView = page.locator('#settings-view-main');
@@ -223,15 +238,29 @@ test.describe('LAN Pairing Wizard Flow', () => {
     });
 
     // Navigate to pairing step
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="lan"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
     await page.click('button:has-text("Pair Device on LAN")');
+
+    // Wait for trust view
+    const trustView = page.locator('#settings-view-trust');
+    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
+
     await page.click('#wizard-next-pair');
 
-    // Should show error message
-    // (This depends on error handling implementation)
-    // For now, just verify we don't crash
-    await page.waitForTimeout(1000);
+    // Should show error message or fail gracefully
+    // Wait for either error state or view to be active
+    const pairView = page.locator('#settings-view-pair');
+    await page.waitForFunction(
+      () => {
+        const view = document.querySelector('#settings-view-pair');
+        const error = document.querySelector('.error, .alert, [role="alert"]');
+        return view || error;
+      },
+      { timeout: 2000 }
+    ).catch(() => {
+      // Error handling may vary
+    });
   });
 
   test('should handle QR library loading failure gracefully', async ({ page }) => {
@@ -239,8 +268,8 @@ test.describe('LAN Pairing Wizard Flow', () => {
     await page.route('**/qrcode.min.js', route => route.abort());
 
     // Try to open wizard
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="lan"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
     await page.click('button:has-text("Pair Device on LAN")');
 
     // Should not crash, just not show QR
@@ -248,7 +277,6 @@ test.describe('LAN Pairing Wizard Flow', () => {
     await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
 
     // QR canvas won't be present, but view should still be visible
-    await page.waitForTimeout(1000);
     await expect(trustView).toBeVisible();
   });
 
@@ -292,21 +320,19 @@ test.describe('LAN Pairing Wizard Flow', () => {
 
 test.describe('Device List After Pairing', () => {
   test.beforeEach(async ({ page, context }) => {
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page.goto("http://localhost:3001");
-    await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForTimeout(1000);
+    await setupTest({ page, context });
   });
 
   test('should show device with correct format after pairing', async ({ page }) => {
     // This test assumes at least one device is already paired
     // In a real scenario, we'd complete the pairing first
 
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="lan"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
 
     // Wait for device list to load
-    await page.waitForTimeout(1000);
+    const deviceSection = page.locator('.device-section-header, .device-list');
+    await expect(deviceSection).toBeVisible({ timeout: 2000 });
 
     const deviceItems = page.locator('.device-item');
     const count = await deviceItems.count();
@@ -350,11 +376,14 @@ test.describe('Device List After Pairing', () => {
   });
 
   test('should update device list when new device pairs', async ({ page }) => {
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="lan"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
+
+    // Wait for device list to be visible
+    const deviceSection = page.locator('.device-section-header, .device-list');
+    await expect(deviceSection).toBeVisible({ timeout: 2000 });
 
     // Get initial device count
-    await page.waitForTimeout(500);
     const deviceItems = page.locator('.device-item');
     const initialCount = await deviceItems.count();
 

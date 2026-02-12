@@ -7,6 +7,7 @@ export default defineConfig({
   testMatch: "*.e2e.js",
   timeout: 30_000,
   retries: 2, // Retry flaky tests to handle resource contention
+  globalSetup: "./test/e2e/global-setup.js",
   use: {
     baseURL: `http://localhost:${PORT}`,
   },

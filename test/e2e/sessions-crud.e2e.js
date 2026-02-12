@@ -29,8 +29,8 @@ test.describe("Session CRUD", () => {
 
     // Verify terminal is functional in new tab
     await newPage.waitForSelector(".xterm-helper-textarea");
+    await newPage.waitForSelector(".xterm-screen", { timeout: 5000 });
     await newPage.locator(".xterm-helper-textarea").focus();
-    await newPage.waitForTimeout(1000);
     await expect(newPage.locator(".xterm-rows")).not.toHaveText("");
 
     // Cleanup
@@ -125,8 +125,8 @@ test.describe("Session CRUD", () => {
     // Navigate to that session
     await page.goto(`/?s=${encodeURIComponent(name)}`);
     await page.waitForSelector(".xterm-helper-textarea");
+    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
     await page.locator(".xterm-helper-textarea").focus();
-    await page.waitForTimeout(1000);
 
     // Verify session button shows the session name
     await expect(page.locator("#shortcut-bar .session-btn")).toContainText(
@@ -167,8 +167,8 @@ test.describe("Session CRUD", () => {
     // Type marker in session A
     await page.goto(`/?s=${encodeURIComponent(nameA)}`);
     await page.waitForSelector(".xterm-helper-textarea");
+    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
     await page.locator(".xterm-helper-textarea").focus();
-    await page.waitForTimeout(1000);
     await page.keyboard.type(`echo ${markerA}`);
     await page.keyboard.press("Enter");
     await expect(page.locator(".xterm-rows")).toContainText(markerA);
@@ -176,8 +176,8 @@ test.describe("Session CRUD", () => {
     // Type marker in session B
     await page.goto(`/?s=${encodeURIComponent(nameB)}`);
     await page.waitForSelector(".xterm-helper-textarea");
+    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
     await page.locator(".xterm-helper-textarea").focus();
-    await page.waitForTimeout(1000);
     await page.keyboard.type(`echo ${markerB}`);
     await page.keyboard.press("Enter");
     await expect(page.locator(".xterm-rows")).toContainText(markerB);
@@ -189,7 +189,7 @@ test.describe("Session CRUD", () => {
     // Go back to session A — buffer replay should show marker A but not B
     await page.goto(`/?s=${encodeURIComponent(nameA)}`);
     await page.waitForSelector(".xterm-helper-textarea");
-    await page.waitForTimeout(1000);
+    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
     await expect(page.locator(".xterm-rows")).toContainText(markerA);
     const textA = await page.locator(".xterm-rows").textContent();
     expect(textA).not.toContain(markerB);

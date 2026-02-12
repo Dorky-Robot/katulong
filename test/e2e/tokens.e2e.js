@@ -1,12 +1,9 @@
 import { test, expect } from "@playwright/test";
+import { setupTest, openSettings, switchSettingsTab } from './helpers.js';
 
 test.describe("Setup Tokens", () => {
   test.beforeEach(async ({ page, context }) => {
-    // Grant clipboard permissions
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page.goto("http://localhost:3001");
-    await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForTimeout(1000);
+    await setupTest({ page, context });
   });
 
   test("Create token - should appear in list immediately", async ({ page }) => {
@@ -17,7 +14,8 @@ test.describe("Setup Tokens", () => {
 
     // Switch to Remote tab
     await page.locator('.settings-tab[data-tab="remote"]').click();
-    await page.waitForTimeout(200);
+    // Wait for tab content to be visible
+    await page.waitForSelector('#settings-view-remote', { state: 'visible' });
 
     // Click "Generate New Token" button
     await page.locator("#settings-create-token").click();
@@ -55,8 +53,7 @@ test.describe("Setup Tokens", () => {
     const copyBtn = newTokenItem.locator(".token-copy-btn");
     await copyBtn.click();
     await expect(copyBtn).toContainText("Copied!");
-    await page.waitForTimeout(2500);
-    await expect(copyBtn).toContainText("Copy");
+    await expect(copyBtn).toContainText("Copy", { timeout: 3000 });
 
     // Click "Done" button
     await page.locator("#token-done-btn").click();
@@ -71,9 +68,10 @@ test.describe("Setup Tokens", () => {
     await expect(regularTokenItem).toContainText("Unused");
 
     // Clean up - revoke the token
-    await regularTokenItem.locator('button[data-action="revoke"]').click();
     page.on('dialog', dialog => dialog.accept());
-    await page.waitForTimeout(500);
+    await regularTokenItem.locator('button[data-action="revoke"]').click();
+    // Wait for token to be removed from list
+    await expect(regularTokenItem).not.toBeVisible({ timeout: 2000 });
   });
 
   test("Rename token", async ({ page }) => {
@@ -88,7 +86,7 @@ test.describe("Setup Tokens", () => {
 
     // Click done to dismiss new token display
     await page.locator("#token-done-btn").click();
-    await page.waitForTimeout(500);
+    await expect(page.locator('.token-item-new')).not.toBeVisible();
 
     // Find the token and click rename
     const tokenItem = page.locator(`.token-item:has-text("${originalName}")`);
@@ -101,18 +99,15 @@ test.describe("Setup Tokens", () => {
       await dialog.accept(newName);
     });
 
-    // Wait for rename to complete
-    await page.waitForTimeout(1000);
-
     // Should show new name
-    await expect(page.locator("#tokens-list")).toContainText(newName);
+    await expect(page.locator("#tokens-list")).toContainText(newName, { timeout: 2000 });
     await expect(page.locator("#tokens-list")).not.toContainText(originalName);
 
     // Clean up
     const renamedItem = page.locator(`.token-item:has-text("${newName}")`);
-    await renamedItem.locator('button[data-action="revoke"]').click();
     page.on('dialog', dialog => dialog.accept());
-    await page.waitForTimeout(500);
+    await renamedItem.locator('button[data-action="revoke"]').click();
+    await expect(renamedItem).not.toBeVisible({ timeout: 2000 });
   });
 
   test("Revoke unused token", async ({ page }) => {
@@ -125,7 +120,7 @@ test.describe("Setup Tokens", () => {
     await page.locator("#token-form-submit").click();
     await expect(page.locator("#token-create-form")).toBeHidden();
     await page.locator("#token-done-btn").click();
-    await page.waitForTimeout(500);
+    await expect(page.locator('.token-item-new')).not.toBeVisible();
 
     // Revoke it
     const tokenItem = page.locator(`.token-item:has-text("${tokenName}")`);
@@ -138,11 +133,8 @@ test.describe("Setup Tokens", () => {
       await dialog.accept();
     });
 
-    // Wait for revocation
-    await page.waitForTimeout(1000);
-
     // Token should be gone
-    await expect(page.locator("#tokens-list")).not.toContainText(tokenName);
+    await expect(page.locator("#tokens-list")).not.toContainText(tokenName, { timeout: 2000 });
   });
 
   test("Cancel token creation", async ({ page }) => {
@@ -209,9 +201,10 @@ test.describe("Setup Tokens", () => {
 
     // Clean up
     await page.locator("#token-done-btn").click();
-    await page.waitForTimeout(500);
+    await expect(page.locator('.token-item-new')).not.toBeVisible();
     const tokenItem = page.locator(`.token-item:has-text("${tokenName}")`);
-    await tokenItem.locator('button[data-action="revoke"]').click();
     page.on('dialog', dialog => dialog.accept());
+    await tokenItem.locator('button[data-action="revoke"]').click();
+    await expect(tokenItem).not.toBeVisible({ timeout: 2000 });
   });
 });

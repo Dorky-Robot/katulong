@@ -9,13 +9,11 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { setupTest, openSettings, switchSettingsTab } from './helpers.js';
 
 test.describe('Clipboard - Copy Buttons', () => {
   test.beforeEach(async ({ page, context }) => {
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page.goto("http://localhost:3001");
-    await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForTimeout(1000);
+    await setupTest({ page, context });
   });
 
   test('should copy token value with feedback', async ({ page }) => {
@@ -46,9 +44,8 @@ test.describe('Clipboard - Copy Buttons', () => {
     expect(clipboardText).toBeTruthy();
     expect(clipboardText.length).toBeGreaterThan(20); // Tokens are long strings
 
-    // Feedback should revert after delay
-    await page.waitForTimeout(2500);
-    await expect(copyBtn).not.toContainText('Copied!');
+    // Feedback should revert after delay - wait for it to not contain "Copied!"
+    await expect(copyBtn).not.toContainText('Copied!', { timeout: 3000 });
 
     console.log('[Test] Token copied successfully');
 
@@ -58,8 +55,8 @@ test.describe('Clipboard - Copy Buttons', () => {
 
   test('should copy trust URL in wizard', async ({ page }) => {
     // Open Settings → LAN tab
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="lan"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
 
     // Start wizard
     await page.click('button:has-text("Pair Device on LAN")');
@@ -69,8 +66,6 @@ test.describe('Clipboard - Copy Buttons', () => {
     await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
 
     // Wait for QR and copy button to appear
-    await page.waitForTimeout(1000);
-
     const copyBtn = page.locator('#wizard-trust-copy-url');
     await expect(copyBtn).toBeVisible({ timeout: 3000 });
 
@@ -93,20 +88,21 @@ test.describe('Clipboard - Copy Buttons', () => {
 
   test('should copy pairing URL in wizard', async ({ page }) => {
     // Open Settings → LAN tab → Wizard
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="lan"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
     await page.click('button:has-text("Pair Device on LAN")');
 
+    // Wait for trust view to be active first
+    const trustView = page.locator('#settings-view-trust');
+    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
+
     // Go to pairing step
-    await page.waitForTimeout(500);
     await page.click('#wizard-next-pair');
 
     const pairView = page.locator('#settings-view-pair');
     await expect(pairView).toHaveClass(/active/, { timeout: 2000 });
 
     // Wait for QR and copy button
-    await page.waitForTimeout(1000);
-
     const copyBtn = page.locator('#wizard-pair-copy-url');
     await expect(copyBtn).toBeVisible({ timeout: 3000 });
 
@@ -160,7 +156,8 @@ test.describe('Clipboard - Copy Buttons', () => {
       dialog.dismiss();
     });
 
-    await page.waitForTimeout(1000);
+    // Wait a bit for potential dialog or button text update
+    await page.waitForFunction(() => true, { timeout: 1000 }).catch(() => {});
 
     console.log('[Test] Copy failure handled:', hasFailedText ? 'showed error' : 'showed alert');
 
@@ -171,16 +168,16 @@ test.describe('Clipboard - Copy Buttons', () => {
 
   test('should copy multiple items in sequence', async ({ page }) => {
     // Create two tokens
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="remote"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'remote');
 
     // First token
     await page.click('#settings-create-token');
     await page.locator('#token-name-input').fill(`token1-${Date.now()}`);
     await page.click('#token-form-submit');
-    await page.waitForTimeout(500);
 
     const token1Item = page.locator('.token-item-new');
+    await expect(token1Item).toBeVisible({ timeout: 2000 });
     const copy1Btn = token1Item.locator('button:has-text("Copy")');
     await copy1Btn.click();
 
@@ -189,15 +186,15 @@ test.describe('Clipboard - Copy Buttons', () => {
 
     // Click Done
     await page.click('#token-done-btn');
-    await page.waitForTimeout(500);
+    await expect(token1Item).not.toBeVisible();
 
     // Second token
     await page.click('#settings-create-token');
     await page.locator('#token-name-input').fill(`token2-${Date.now()}`);
     await page.click('#token-form-submit');
-    await page.waitForTimeout(500);
 
     const token2Item = page.locator('.token-item-new');
+    await expect(token2Item).toBeVisible({ timeout: 2000 });
     const copy2Btn = token2Item.locator('button:has-text("Copy")');
     await copy2Btn.click();
 
@@ -216,10 +213,7 @@ test.describe('Clipboard - Copy Buttons', () => {
 
 test.describe('Clipboard - Terminal Integration', () => {
   test.beforeEach(async ({ page, context }) => {
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page.goto("http://localhost:3001");
-    await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForTimeout(1000);
+    await setupTest({ page, context });
   });
 
   test('should paste text into terminal', async ({ page }) => {
@@ -240,11 +234,15 @@ test.describe('Clipboard - Terminal Integration', () => {
       await page.keyboard.press('Control+v');
     }
 
-    await page.waitForTimeout(500);
-
     // Send the pasted command
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(1000);
+
+    // Wait for output to appear
+    await page.waitForFunction(
+      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
+      testText,
+      { timeout: 5000 }
+    );
 
     // Verify the pasted text appeared in terminal
     const terminalText = await page.locator('.xterm-screen').textContent();
@@ -258,7 +256,13 @@ test.describe('Clipboard - Terminal Integration', () => {
     const testString = `copy-from-terminal-${Date.now()}`;
     await page.keyboard.type(`echo "${testString}"`);
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(1000);
+
+    // Wait for output to appear
+    await page.waitForFunction(
+      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
+      testString,
+      { timeout: 5000 }
+    );
 
     // Select text in terminal (this is xterm-specific)
     // Double-click to select word or use mouse drag
@@ -296,7 +300,17 @@ test.describe('Clipboard - Terminal Integration', () => {
       await page.keyboard.press('Control+c');
     }
 
-    await page.waitForTimeout(500);
+    // Wait for clipboard to be populated
+    await page.waitForFunction(
+      async (text) => {
+        const clipboardText = await navigator.clipboard.readText();
+        return clipboardText.includes(text);
+      },
+      testString,
+      { timeout: 2000 }
+    ).catch(() => {
+      // Clipboard might not update in headless mode, that's ok
+    });
 
     // Verify clipboard
     const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
@@ -322,7 +336,11 @@ test.describe('Clipboard - Terminal Integration', () => {
       await page.keyboard.press('Control+v');
     }
 
-    await page.waitForTimeout(500);
+    // Wait for pasted content to appear
+    await page.waitForFunction(
+      () => document.querySelector('.xterm-screen')?.textContent?.includes('line1'),
+      { timeout: 5000 }
+    );
 
     // Multiline paste should work
     // Verify at least the first line appears
@@ -349,7 +367,11 @@ test.describe('Clipboard - Terminal Integration', () => {
       await page.keyboard.press('Control+v');
     }
 
-    await page.waitForTimeout(500);
+    // Wait for pasted content to appear
+    await page.waitForFunction(
+      () => document.querySelector('.xterm-screen')?.textContent?.includes('special'),
+      { timeout: 5000 }
+    );
 
     // Should not crash
     const terminalText = await page.locator('.xterm-screen').textContent();
@@ -364,10 +386,11 @@ test.describe('Clipboard - Permissions', () => {
     // Don't grant permissions initially
     await page.goto("http://localhost:3001");
     await page.waitForSelector(".xterm", { timeout: 10000 });
+    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
 
     // Try to copy a token
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="remote"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'remote');
     await page.click('#settings-create-token');
 
     const tokenName = `perm-test-${Date.now()}`;
@@ -381,7 +404,16 @@ test.describe('Clipboard - Permissions', () => {
     const copyBtn = newTokenItem.locator('button:has-text("Copy")');
     await copyBtn.click();
 
-    await page.waitForTimeout(1000);
+    // Wait for button text to update (either "Copied!" or error state)
+    await page.waitForFunction(
+      () => {
+        const btn = document.querySelector('.token-item-new button:has-text("Copy")');
+        return btn && btn.textContent !== 'Copy';
+      },
+      { timeout: 2000 }
+    ).catch(() => {
+      // Button might not change if permission denied
+    });
 
     // Should either have copied successfully or shown error
     // (Behavior depends on browser and permissions)

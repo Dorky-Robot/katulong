@@ -1,12 +1,11 @@
 import { test, expect } from "@playwright/test";
+import { waitForAppReady } from './helpers.js';
 
 test.describe("Terminal I/O", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector(".xterm-helper-textarea");
+    await waitForAppReady(page);
     await page.locator(".xterm-helper-textarea").focus();
-    // Wait for attach + P2P handshake to settle
-    await page.waitForTimeout(1000);
   });
 
   test("Shell prompt is visible after load", async ({ page }) => {
@@ -46,9 +45,7 @@ test.describe("Terminal I/O", () => {
     await expect(page.locator(".xterm-rows")).toContainText(marker);
 
     await page.reload();
-    await page.waitForSelector(".xterm-helper-textarea");
-    // Wait for attach + buffer replay
-    await page.waitForTimeout(1000);
+    await waitForAppReady(page);
 
     await expect(page.locator(".xterm-rows")).toContainText(marker);
   });

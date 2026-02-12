@@ -1,6 +1,5 @@
 echo "pre-push: running unit tests"
 npm test
 
-echo "⚠️  E2E tests temporarily disabled - fix waitForTimeout issues first"
-# TODO: Re-enable after removing all waitForTimeout from E2E tests
-# npm run test:e2e
+echo "pre-push: running E2E tests"
+npm run test:e2e

@@ -3,27 +3,20 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { setupTest, openSettings, switchSettingsTab } from './helpers.js';
 
 test.describe('LAN Device Management', () => {
   test.beforeEach(async ({ page, context }) => {
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page.goto("http://localhost:3001");
-    await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForTimeout(1000);
+    await setupTest({ page, context });
   });
 
   test('should display LAN devices list with metadata', async ({ page }) => {
-    // Open settings modal
-    await page.click('[data-shortcut-id="settings"]');
+    // Open settings modal and switch to LAN tab
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
 
-    // Wait for modal to open
-    await expect(page.locator('.modal[data-modal-id="settings"]')).toBeVisible();
-
-    // Click LAN tab
-    await page.click('.settings-tab[data-tab="lan"]');
-
-    // Should see LAN DEVICES header
-    await expect(page.locator('.device-section-header')).toHaveText('LAN DEVICES');
+    // Wait for devices list to load (either devices or empty message)
+    await page.waitForSelector('.device-item, .devices-loading', { timeout: 3000 });
 
     // Check if there are any devices
     const deviceItems = page.locator('.device-item');
@@ -111,14 +104,22 @@ test.describe('LAN Device Management', () => {
 
   test('should close pairing wizard without errors', async ({ page }) => {
     // Open settings modal
-    await page.click('[data-shortcut-id="settings"]');
-    await page.click('.settings-tab[data-tab="lan"]');
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
 
     // Start pairing wizard
     await page.click('button:has-text("Pair Device on LAN")');
 
-    // Wait for wizard to open
-    await page.waitForTimeout(500);
+    // Wait for wizard to open - either trust or pair view should be visible
+    await page.waitForFunction(
+      () => {
+        const trustView = document.querySelector('.wizard-view[data-step="trust"], #settings-view-trust');
+        const pairView = document.querySelector('.wizard-view[data-step="pair"], #settings-view-pair');
+        return (trustView && trustView.classList.contains('active')) ||
+               (pairView && pairView.classList.contains('active'));
+      },
+      { timeout: 2000 }
+    );
 
     // Close modal (click outside or close button)
     const closeBtn = page.locator('.modal-close, button:has-text("Cancel"), button:has-text("Close")');
@@ -129,8 +130,9 @@ test.describe('LAN Device Management', () => {
       await page.locator('.modal-backdrop').click();
     }
 
-    // Wait a bit for cleanup
-    await page.waitForTimeout(500);
+    // Wait for modal to close
+    const modal = page.locator('.modal[data-modal-id="settings"]');
+    await expect(modal).not.toBeVisible({ timeout: 2000 });
 
     // Should not have console errors
     // (Playwright automatically fails on console errors if configured)

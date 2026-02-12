@@ -25,15 +25,27 @@ test.describe("Keyboard handling", () => {
 
     await page.goto("/");
     await page.waitForSelector(".xterm-helper-textarea");
+    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
     await page.locator(".xterm-helper-textarea").focus();
     // Wait for attach + P2P handshake to settle
-    await page.waitForTimeout(1000);
+    await page.waitForFunction(() => {
+      // Wait for WebSocket or P2P to be ready
+      return window.ws?.readyState === WebSocket.OPEN ||
+             (window.pc?.connectionState === 'connected');
+    }, { timeout: 5000 }).catch(() => {
+      // Connection might already be established
+    });
     await page.evaluate(() => { window.__inputsSent = []; });
   });
 
   test("Shift+Enter sends quoted-insert + newline (\\x16\\x0a)", async ({ page }) => {
     await page.keyboard.press("Shift+Enter");
-    await page.waitForTimeout(300);
+
+    // Wait for input to be sent
+    await page.waitForFunction(
+      () => window.__inputsSent && window.__inputsSent.length > 0,
+      { timeout: 1000 }
+    );
 
     const inputs = await page.evaluate(() => window.__inputsSent);
     expect(inputs.length).toBeGreaterThan(0);
@@ -44,7 +56,12 @@ test.describe("Keyboard handling", () => {
 
   test("Plain Enter sends carriage return (\\r) without quoted-insert", async ({ page }) => {
     await page.keyboard.press("Enter");
-    await page.waitForTimeout(300);
+
+    // Wait for input to be sent
+    await page.waitForFunction(
+      () => window.__inputsSent && window.__inputsSent.length > 0,
+      { timeout: 1000 }
+    );
 
     const inputs = await page.evaluate(() => window.__inputsSent);
     expect(inputs.length).toBeGreaterThan(0);
@@ -56,7 +73,12 @@ test.describe("Keyboard handling", () => {
 
   test("Tab sends \\t to the terminal", async ({ page }) => {
     await page.keyboard.press("Tab");
-    await page.waitForTimeout(300);
+
+    // Wait for input to be sent
+    await page.waitForFunction(
+      () => window.__inputsSent && window.__inputsSent.length > 0,
+      { timeout: 1000 }
+    );
 
     const inputs = await page.evaluate(() => window.__inputsSent);
     expect(inputs.length).toBeGreaterThan(0);
