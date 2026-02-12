@@ -52,8 +52,8 @@ test.describe('LAN Device Management', () => {
 
   test('should open LAN pairing wizard', async ({ page }) => {
     // Open settings modal
-    await page.click('[data-shortcut-id="settings"]');
-    await expect(page.locator('.modal[data-modal-id="settings"]')).toBeVisible();
+    await page.click('button[aria-label="Settings"]');
+    await expect(page.locator('#settings-overlay')).toBeVisible();
 
     // Click LAN tab
     await page.click('.settings-tab[data-tab="lan"]');
@@ -131,7 +131,7 @@ test.describe('LAN Device Management', () => {
     }
 
     // Wait for modal to close
-    const modal = page.locator('.modal[data-modal-id="settings"]');
+    const modal = page.locator('#settings-overlay');
     await expect(modal).not.toBeVisible({ timeout: 2000 });
 
     // Should not have console errors
@@ -140,7 +140,7 @@ test.describe('LAN Device Management', () => {
 
   test('should display device count correctly', async ({ page }) => {
     // Open settings
-    await page.click('[data-shortcut-id="settings"]');
+    await page.click('button[aria-label="Settings"]');
     await page.click('.settings-tab[data-tab="lan"]');
 
     // Count devices in the list
@@ -158,7 +158,7 @@ test.describe('LAN Device Management', () => {
 
   test('should format dates correctly', async ({ page }) => {
     // Open settings
-    await page.click('[data-shortcut-id="settings"]');
+    await page.click('button[aria-label="Settings"]');
     await page.click('.settings-tab[data-tab="lan"]');
 
     const deviceItems = page.locator('.device-item');
@@ -176,7 +176,7 @@ test.describe('LAN Device Management', () => {
 
   test('should handle rename action', async ({ page }) => {
     // Open settings
-    await page.click('[data-shortcut-id="settings"]');
+    await page.click('button[aria-label="Settings"]');
     await page.click('.settings-tab[data-tab="lan"]');
 
     const deviceItems = page.locator('.device-item');
@@ -205,7 +205,7 @@ test.describe('LAN Device Management', () => {
 
   test('should handle remove action with confirmation', async ({ page }) => {
     // Open settings
-    await page.click('[data-shortcut-id="settings"]');
+    await page.click('button[aria-label="Settings"]');
     await page.click('.settings-tab[data-tab="lan"]');
 
     const deviceItems = page.locator('.device-item');
@@ -240,7 +240,7 @@ test.describe('LAN Device Management', () => {
     // For now, we'll just verify the logic exists
 
     // Open settings
-    await page.click('[data-shortcut-id="settings"]');
+    await page.click('button[aria-label="Settings"]');
     await page.click('.settings-tab[data-tab="lan"]');
 
     const deviceItems = page.locator('.device-item');

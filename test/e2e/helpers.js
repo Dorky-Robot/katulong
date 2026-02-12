@@ -11,7 +11,7 @@ import { expect } from '@playwright/test';
  */
 export async function setupTest({ page, context }) {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.goto("http://localhost:3001");
+  await page.goto("/");
   await waitForAppReady(page);
 }
 
@@ -28,8 +28,8 @@ export async function waitForAppReady(page) {
  * Open settings modal and wait for it to be ready
  */
 export async function openSettings(page) {
-  await page.click('[data-shortcut-id="settings"]');
-  const modal = page.locator('.modal[data-modal-id="settings"]');
+  await page.click('button[aria-label="Settings"]');
+  const modal = page.locator('#settings-overlay');
   await expect(modal).toBeVisible();
   return modal;
 }

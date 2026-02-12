@@ -205,7 +205,7 @@ test.describe('LAN Pairing Wizard Flow', () => {
     const initialText = await countdown.textContent();
 
     // Close modal
-    const modal = page.locator('.modal[data-modal-id="settings"]');
+    const modal = page.locator('#settings-overlay');
     const closeBtn = modal.locator('.modal-close');
     await closeBtn.click();
 
@@ -287,7 +287,7 @@ test.describe('LAN Pairing Wizard Flow', () => {
     await page.waitForSelector(".xterm", { timeout: 10000 });
 
     // Open wizard
-    await page.click('[data-shortcut-id="settings"]');
+    await page.click('button[aria-label="Settings"]');
     await page.click('.settings-tab[data-tab="lan"]');
     await page.click('button:has-text("Pair Device on LAN")');
 
