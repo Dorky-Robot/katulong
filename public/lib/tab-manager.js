@@ -20,7 +20,9 @@ export function createTabManager(options = {}) {
 
     // Update tab content
     document.querySelectorAll(contentSelector).forEach(content => {
+      // Match various ID patterns: "theme-content", "settings-tab-theme", etc.
       const active = content.id === `${targetTab}-content` ||
+                     content.id === `settings-tab-${targetTab}` ||
                      content.dataset.tab === targetTab ||
                      content.classList.contains(`${targetTab}-tab`);
       content.classList.toggle("active", active);
