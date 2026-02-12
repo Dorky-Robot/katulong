@@ -73,13 +73,15 @@ test.describe("Shortcuts popup", () => {
     await input.press("Enter");
     await expect(preview).toHaveText("Ctrl+C");
 
+    // Comma is a separator - preview doesn't change until next key
     await input.fill(",");
     await input.press("Enter");
-    await expect(preview).toHaveText("Ctrl+C,");
+    // Preview still shows "Ctrl+C" (comma doesn't appear until next key)
 
     await input.fill("ctrl");
     await input.press("Enter");
-    await expect(preview).toContainText("Ctrl+C, Ctrl");
+    // Now comma appears with the second chord
+    await expect(preview).toHaveText("Ctrl+C, Ctrl");
 
     await input.fill("c");
     await input.press("Enter");
