@@ -15,6 +15,9 @@
     import { createTokenListComponent } from "/lib/token-list-component.js";
     import { createShortcutsStore } from "/lib/shortcuts-store.js";
     import { createShortcutsPopup, createShortcutsEditPanel, createAddShortcutModal } from "/lib/shortcuts-components.js";
+    import { createDictationModal } from "/lib/dictation-modal.js";
+    import { createDragDropManager } from "/lib/drag-drop.js";
+    import { showToast, isImageFile, uploadImage } from "/lib/image-upload.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -1819,102 +1822,29 @@
       });
     }
 
-    // --- Dictation modal ---
+    // --- Dictation modal (reactive component) ---
 
-    const dictationOverlay = document.getElementById("dictation-overlay");
-    const dictationInput = document.getElementById("dictation-input");
-    const dictationThumbs = document.getElementById("dictation-thumbs");
-    const dictationFileInput = document.getElementById("dictation-file-input");
-
-    // --- Dictation state management (immutable reducer) ---
-    const dictationReducer = (images, action) => {
-      switch (action.type) {
-        case 'ADD_IMAGES':
-          return [...images, ...action.files];
-        case 'REMOVE_IMAGE':
-          return images.filter((_, idx) => idx !== action.index);
-        case 'CLEAR':
-          return [];
-        default:
-          return images;
+    const dictationModal = createDictationModal({
+      modals,
+      onSend: async (text, images) => {
+        if (text) rawSend(text);
+        for (const file of images) {
+          await uploadImageToTerminal(file);
+        }
       }
-    };
-
-    let dictationImages = [];
-
-    const dispatchDictation = (action) => {
-      dictationImages = dictationReducer(dictationImages, action);
-      renderDictationThumbs();
-    };
-
-    function renderDictationThumbs() {
-      dictationThumbs.innerHTML = "";
-      dictationImages.forEach((file, i) => {
-        const wrap = document.createElement("div");
-        wrap.className = "dictation-thumb";
-        const img = document.createElement("img");
-        img.src = URL.createObjectURL(file);
-        img.alt = file.name;
-        wrap.appendChild(img);
-        const rm = document.createElement("button");
-        rm.className = "dictation-thumb-remove";
-        rm.setAttribute("aria-label", `Remove ${file.name}`);
-        rm.innerHTML = '<i class="ph ph-x"></i>';
-        rm.addEventListener("click", () => {
-          URL.revokeObjectURL(img.src);
-          dispatchDictation({ type: 'REMOVE_IMAGE', index: i });
-        });
-        wrap.appendChild(rm);
-        dictationThumbs.appendChild(wrap);
-      });
-    }
-
-    dictationFileInput.addEventListener("change", () => {
-      const files = [...dictationFileInput.files].filter(f => f.type.startsWith("image/"));
-      dispatchDictation({ type: 'ADD_IMAGES', files });
-      dictationFileInput.value = "";
     });
+
+    dictationModal.init();
 
     function openDictationModal() {
-      dictationInput.value = "";
-      dispatchDictation({ type: 'CLEAR' });
-      modals.open('dictation');
-      dictationInput.focus();
+      dictationModal.open();
     }
-
-    function closeDictationModal() {
-      dictationInput.value = "";
-      dispatchDictation({ type: 'CLEAR' });
-      modals.close('dictation');
-    }
-
-    document.getElementById("dictation-send").addEventListener("click", async () => {
-      const text = dictationInput.value;
-      const images = [...dictationImages];
-      closeDictationModal();
-      if (text) rawSend(text);
-      for (const file of images) {
-        await uploadImage(file);
-      }
-    });
 
     
 
-    // --- Image upload helpers ---
-
-    function showToast(msg, isError) {
-      const el = document.createElement("div");
-      el.className = "upload-toast" + (isError ? " error" : "");
-      el.textContent = msg;
-      document.body.appendChild(el);
-      requestAnimationFrame(() => el.classList.add("visible"));
-      setTimeout(() => {
-        el.classList.remove("visible");
-        setTimeout(() => el.remove(), 300);
-      }, 2500);
-    }
-
-    async function uploadImage(file) {
+    // --- Image upload (using imported helpers) ---
+    // Upload function wrapper to send path to terminal
+    async function uploadImageToTerminal(file) {
       try {
         const res = await fetch("/upload", {
           method: "POST",
@@ -1933,87 +1863,20 @@
       }
     }
 
-    function isImageFile(file) {
-      return file.type.startsWith("image/");
-    }
+    // --- Drag-and-drop (reactive manager) ---
 
-    // --- Drag-and-drop state machine ---
-
-    const dropOverlay = document.getElementById("drop-overlay");
-
-    // Drag-and-drop state machine
-    const dragDropReducer = (state, action) => {
-      switch (action.type) {
-        case 'DRAG_ENTER':
-          return {
-            ...state,
-            dragCounter: state.dragCounter + 1,
-            isDragging: true
-          };
-        case 'DRAG_LEAVE':
-          const newCounter = state.dragCounter - 1;
-          return {
-            ...state,
-            dragCounter: Math.max(0, newCounter),
-            isDragging: newCounter > 0
-          };
-        case 'DROP':
-          return {
-            dragCounter: 0,
-            isDragging: false
-          };
-        default:
-          return state;
-      }
-    };
-
-    // Drag-and-drop manager (stateful edge module)
-    const createDragDropManager = () => {
-      let dragState = { dragCounter: 0, isDragging: false };
-
-      const dispatch = (action) => {
-        const prevState = dragState;
-        dragState = dragDropReducer(dragState, action);
-
-        // Side effect: Update overlay visibility
-        if (prevState.isDragging !== dragState.isDragging) {
-          if (dragState.isDragging) {
-            dropOverlay.classList.add("visible");
-          } else {
-            dropOverlay.classList.remove("visible");
-          }
+    const dragDropManager = createDragDropManager({
+      isImageFile,
+      onDrop: (imageFiles, totalFiles) => {
+        if (imageFiles.length === 0) {
+          if (totalFiles > 0) showToast("Not an image file", true);
+          return;
         }
-      };
-
-      return { dispatch, getState: () => dragState };
-    };
-
-    const dragDropManager = createDragDropManager();
-
-    document.addEventListener("dragenter", (e) => {
-      e.preventDefault();
-      dragDropManager.dispatch({ type: 'DRAG_ENTER' });
-    });
-
-    document.addEventListener("dragover", (e) => {
-      e.preventDefault();
-    });
-
-    document.addEventListener("dragleave", (e) => {
-      e.preventDefault();
-      dragDropManager.dispatch({ type: 'DRAG_LEAVE' });
-    });
-
-    document.addEventListener("drop", (e) => {
-      e.preventDefault();
-      dragDropManager.dispatch({ type: 'DROP' });
-      const files = [...(e.dataTransfer?.files || [])].filter(isImageFile);
-      if (files.length === 0) {
-        if (e.dataTransfer?.files?.length > 0) showToast("Not an image file", true);
-        return;
+        for (const file of imageFiles) uploadImageToTerminal(file);
       }
-      for (const file of files) uploadImage(file);
     });
+
+    dragDropManager.init();
 
     // --- Global paste ---
 
@@ -2022,7 +1885,7 @@
       const imageFiles = [...(e.clipboardData?.files || [])].filter(isImageFile);
       if (imageFiles.length > 0) {
         e.preventDefault();
-        for (const file of imageFiles) uploadImage(file);
+        for (const file of imageFiles) uploadImageToTerminal(file);
         return;
       }
       const text = e.clipboardData?.getData("text");
