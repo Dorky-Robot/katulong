@@ -436,8 +436,9 @@
       }
     });
 
-    // Mount wizard component to settings views container
-    wizardComponent.mount(settingsViews);
+    // DON'T mount wizard component - views are already in HTML
+    // Mounting wipes out all settings-view content including settings-view-main
+    // wizardComponent.mount(settingsViews);
 
     // Expose for WebSocket handler compatibility
     Object.defineProperty(window, 'wizardActivePairCode', {
