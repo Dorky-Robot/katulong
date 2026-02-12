@@ -135,13 +135,7 @@
     const shortcutsStore = createShortcutsStore();
 
     // Subscribe to shortcuts changes for render side effects
-    shortcutsStore.subscribe((shortcuts) => {
-      // Update legacy state object (for backward compatibility)
-      state.update('session.shortcuts', shortcuts);
-
-      // Re-render bar when shortcuts change
-      renderBar(state.session.name);
-    });
+    // Note: shortcuts store subscription moved after renderBar is defined (line ~640)
 
     // --- P2P Manager ---
 
@@ -184,7 +178,7 @@
     const term = new Terminal({
       fontSize: 14,
       fontFamily: "'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace",
-      theme: getEffectiveTheme() === "light" ? LIGHT_THEME : DARK_THEME,
+      theme: themeManager.getEffective() === "light" ? LIGHT_THEME : DARK_THEME,
       cursorBlink: true,
       scrollback: 10000,
       convertEol: true,
@@ -632,6 +626,15 @@
     });
 
     const renderBar = (name) => shortcutBar.render(name);
+
+    // Subscribe to shortcuts changes to re-render bar
+    shortcutsStore.subscribe((shortcuts) => {
+      // Update legacy state object (for backward compatibility)
+      state.update('session.shortcuts', shortcuts);
+
+      // Re-render bar when shortcuts change
+      renderBar(state.session.name);
+    });
 
     // --- Shortcuts popup (reactive component) ---
 
