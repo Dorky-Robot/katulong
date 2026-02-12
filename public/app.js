@@ -543,6 +543,11 @@
       'session-renamed': (msg) => ({
         stateUpdates: { 'session.name': msg.name },
         effects: [{ type: 'updateSessionUI', name: msg.name }]
+      }),
+
+      'credential-registered': () => ({
+        stateUpdates: {},
+        effects: [{ type: 'refreshTokensAfterRegistration' }]
       })
     };
 
@@ -588,6 +593,15 @@
           url.searchParams.set("s", effect.name);
           history.replaceState(null, "", url);
           renderBar(effect.name);
+          break;
+        case 'refreshTokensAfterRegistration':
+          // Refresh token list to show newly used token
+          loadTokens();
+          // Hide token creation form and show "Generate New Token" button
+          const tokenCreateForm = document.getElementById("token-create-form");
+          const createTokenBtn = document.getElementById("settings-create-token");
+          if (tokenCreateForm) tokenCreateForm.style.display = "none";
+          if (createTokenBtn) createTokenBtn.style.display = "block";
           break;
       }
     }
@@ -1812,8 +1826,10 @@
     async function loadTokens() {
       const tokensList = document.getElementById("tokens-list");
 
-      // Preserve any newly created token display
+      // Preserve any newly created token display by cloning before DOM wipe
       const newTokenEl = tokensList.querySelector('.token-item-new');
+      const clonedNewToken = newTokenEl ? newTokenEl.cloneNode(true) : null;
+      const newTokenValue = clonedNewToken?.querySelector('.token-copy-btn')?.dataset?.token;
 
       try {
         tokensList.innerHTML = '<p class="tokens-loading">Loading tokens...</p>';
@@ -1828,28 +1844,61 @@
           ? tokens.filter(token => token.id !== newTokenId)
           : tokens;
 
-        // Create renderer
-        const renderer = new ListRenderer(tokensList, {
-          itemTemplate: tokenItemTemplate,
-          emptyState: '<p class="tokens-empty">No setup tokens yet. Generate one to pair remote devices.</p>',
-          onAction: ({ action, id, element }) => {
-            if (action === 'rename') {
-              renameToken(id);
-            } else if (action === 'revoke') {
-              const tokenItem = element.closest('.token-item');
-              const hasCredential = tokenItem.dataset.hasCredential === 'true';
-              revokeToken(id, hasCredential);
+        // Render the token list
+        if (filteredTokens.length === 0) {
+          tokensList.innerHTML = '<p class="tokens-empty">No setup tokens yet. Generate one to pair remote devices.</p>';
+        } else {
+          // Create renderer for existing tokens
+          const renderer = new ListRenderer(tokensList, {
+            itemTemplate: tokenItemTemplate,
+            emptyState: '<p class="tokens-empty">No setup tokens yet. Generate one to pair remote devices.</p>',
+            onAction: ({ action, id, element }) => {
+              if (action === 'rename') {
+                renameToken(id);
+              } else if (action === 'revoke') {
+                const tokenItem = element.closest('.token-item');
+                const hasCredential = tokenItem.dataset.hasCredential === 'true';
+                revokeToken(id, hasCredential);
+              }
             }
-          },
-          afterRender: () => {
-            // Re-insert the new token display at the top if it exists
-            if (newTokenEl) {
-              tokensList.insertBefore(newTokenEl, tokensList.firstChild);
-            }
-          }
-        });
+          });
+          renderer.render(filteredTokens);
+        }
 
-        renderer.render(filteredTokens);
+        // Insert the cloned new token at the top (after rendering the list)
+        if (clonedNewToken) {
+          tokensList.insertBefore(clonedNewToken, tokensList.firstChild);
+
+          // Re-attach event listeners (cloneNode doesn't copy listeners)
+          const copyBtn = clonedNewToken.querySelector(".token-copy-btn");
+          if (copyBtn) {
+            copyBtn.addEventListener("click", async () => {
+              const token = newTokenValue;
+              try {
+                await navigator.clipboard.writeText(token);
+                copyBtn.innerHTML = '<i class="ph ph-check"></i> Copied!';
+                copyBtn.style.background = "var(--success)";
+                setTimeout(() => {
+                  copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
+                  copyBtn.style.background = "";
+                }, 2000);
+              } catch (err) {
+                copyBtn.innerHTML = '<i class="ph ph-x"></i> Failed';
+                setTimeout(() => {
+                  copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
+                }, 2000);
+              }
+            });
+          }
+
+          const doneBtn = clonedNewToken.querySelector("#token-done-btn");
+          if (doneBtn) {
+            doneBtn.addEventListener("click", () => {
+              clonedNewToken.remove();
+              loadTokens(); // Reload normal token list
+            });
+          }
+        }
       } catch (err) {
         tokensList.innerHTML = '<p class="tokens-loading">Failed to load tokens</p>';
         console.error("Failed to load tokens:", err);
@@ -2268,6 +2317,8 @@
             clearInterval(wizardManager.state.timers.statusPoll);
             stopWizardPairing();
             switchSettingsView(viewSuccess);
+            // Refresh device list to show newly paired device
+            loadDevices();
           }
         }, 2000);
 
@@ -2333,10 +2384,15 @@
       switchSettingsView(viewTrust);
     });
 
-    // Event: Done → cleanup + close
+    // Event: Done → cleanup + show LAN tab with newly paired device
     document.getElementById("wizard-done").addEventListener("click", () => {
       cleanupWizard();
-      modals.close('settings');
+      // Switch to main view
+      switchSettingsView(viewMain);
+
+      // Switch to LAN tab to show newly paired device
+      const lanTab = document.querySelector('.settings-tab[data-tab="lan"]');
+      if (lanTab) lanTab.click();
     });
 
     // --- Dictation modal ---
