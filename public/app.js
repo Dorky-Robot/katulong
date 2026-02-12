@@ -39,6 +39,7 @@
     import { createP2PIndicator } from "/lib/p2p-ui.js";
     import { loadQRLib, getConnectInfo, checkPairingStatus } from "/lib/wizard-utils.js";
     import { initModals } from "/lib/modal-init.js";
+    import { createViewportManager } from "/lib/viewport-manager.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -474,55 +475,20 @@
     pullToRefresh.init();
 
 
-    // Focus terminal on tap
-    termContainer.addEventListener("touchstart", () => term.focus(), { passive: true });
-
-    // Long-press: native contextmenu event (fired by OS on long-press)
-    termContainer.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      openDictationModal();
-    });
-
-    const ro = new ResizeObserver(() => {
-      withPreservedScroll(term, () => fit.fit());
-      if (state.connection.ws?.readyState === 1) state.connection.ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-    });
-    ro.observe(termContainer);
-
-    function resizeToViewport() {
-      withPreservedScroll(term, () => {
-        const vv = window.visualViewport;
-        const h = vv ? vv.height : window.innerHeight;
-        const top = vv ? vv.offsetTop : 0;
-        bar.style.top = top + "px";
-        termContainer.style.height = (h - 44) + "px";
-        const s = document.documentElement.style;
-        s.setProperty("--viewport-h", h + "px");
-        s.setProperty("--viewport-top", top + "px");
-      });
-    }
-    resizeToViewport();
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", resizeToViewport);
-      window.visualViewport.addEventListener("scroll", resizeToViewport);
-    }
-    window.addEventListener("resize", resizeToViewport);
-
-    const scrollBtn = document.getElementById("scroll-bottom");
-    const viewport = document.querySelector(".xterm-viewport");
-    if (viewport) {
-      let scrollRaf = 0;
-      viewport.addEventListener("scroll", () => {
-        if (!scrollRaf) {
-          scrollRaf = requestAnimationFrame(() => {
-            scrollRaf = 0;
-            const atBottom = viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 10;
-            scrollBtn.style.display = atBottom ? "none" : "flex";
-          });
+    // Viewport manager (handles resize, scroll button, terminal gestures)
+    const viewportManager = createViewportManager({
+      term,
+      fit,
+      termContainer,
+      bar,
+      onWebSocketResize: (cols, rows) => {
+        if (state.connection.ws?.readyState === 1) {
+          state.connection.ws.send(JSON.stringify({ type: "resize", cols, rows }));
         }
-      }, { passive: true });
-    }
-    scrollBtn.addEventListener("click", () => { term.scrollToBottom(term); scrollBtn.style.display = "none"; });
+      },
+      onDictationOpen: () => openDictationModal()
+    });
+    viewportManager.init();
 
     // --- Shortcut bar (composable renderer) ---
 
