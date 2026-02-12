@@ -1,7 +1,9 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("Setup Tokens", () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
+    // Grant clipboard permissions
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await page.goto("http://localhost:3001");
     await page.waitForSelector(".xterm", { timeout: 10000 });
     await page.waitForTimeout(1000);
