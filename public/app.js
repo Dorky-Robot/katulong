@@ -24,6 +24,7 @@
     import { createTabManager } from "/lib/tab-manager.js";
     import { getCsrfToken, addCsrfHeader } from "/lib/csrf.js";
     import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll } from "/lib/scroll-utils.js";
+    import { keysToSequence, sendSequence, displayKey, keysLabel, keysString, VALID_KEYS, normalizeKey } from "/lib/key-mapping.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -699,117 +700,6 @@
     }
     scrollBtn.addEventListener("click", () => { term.scrollToBottom(term); scrollBtn.style.display = "none"; });
 
-    // --- Pure: key sequence mapping ---
-
-    function singleComboToSequence(combo) {
-      const parts = combo.toLowerCase().trim().split("+");
-      const mods = new Set();
-      let base = null;
-
-      for (const p of parts) {
-        if (["ctrl", "cmd", "alt", "shift"].includes(p)) mods.add(p);
-        else base = p;
-      }
-
-      const named = {
-        esc: "\x1b", tab: "\t", enter: "\r", space: " ",
-        backspace: "\x7f", delete: "\x1b[3~",
-        up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D",
-      };
-
-      if (!base && mods.size > 0) return "";
-      if (mods.has("ctrl") && base?.length === 1 && base >= "a" && base <= "z")
-        return String.fromCharCode(base.charCodeAt(0) - 96);
-      if (mods.has("ctrl")) { const m = { backspace: "\x08", space: "\x00" }; if (m[base]) return m[base]; }
-      if (mods.has("cmd"))  { const m = { backspace: "\x15", left: "\x01", right: "\x05", k: "\x0b" }; if (m[base]) return m[base]; }
-      if (mods.has("alt"))  {
-        const m = { backspace: "\x1b\x7f", left: "\x1bb", right: "\x1bf" };
-        if (m[base]) return m[base];
-        if (base?.length === 1) return "\x1b" + base;
-      }
-      if (mods.has("shift") && base?.length === 1) return base.toUpperCase();
-      if (named[base]) return named[base];
-      if (base?.length === 1) return base;
-      return combo;
-    }
-
-    function keysToSequence(keys) {
-      return keys.split(",").map(part => singleComboToSequence(part.trim()));
-    }
-
-    function sendSequence(parts) {
-      if (typeof parts === "string") { rawSend(parts); return; }
-      parts.forEach((p, i) => {
-        if (i === 0) rawSend(p);
-        else setTimeout(() => rawSend(p), i * 100);
-      });
-    }
-
-    // --- Key transformation pipeline (composable) ---
-
-    // Pure: Composition helper
-    const pipe = (...fns) => (x) => fns.reduce((v, f) => f(v), x);
-
-    // Pure: Group keys by comma separator
-    const groupKeysBySeparator = (keys) => {
-      const groups = [];
-      let current = [];
-      for (const k of keys) {
-        if (k === ",") {
-          if (current.length > 0) groups.push(current);
-          current = [];
-        } else {
-          current.push(k);
-        }
-      }
-      if (current.length > 0) groups.push(current);
-      return groups;
-    };
-
-    // Pure: Transform groups with mapper function
-    const mapGroups = (groupMapper) => (groups) => groups.map(groupMapper);
-
-    // Pure: Join groups with separators
-    const joinGroups = (innerSep, outerSep) => (groups) =>
-      groups.map(g => g.join(innerSep)).join(outerSep);
-
-    // Pure: Key display mapping
-    const KEY_DISPLAY = {
-      ctrl: "Ctrl", cmd: "Cmd", alt: "Alt", option: "Option", shift: "Shift",
-      esc: "Esc", escape: "Esc", tab: "Tab", enter: "Enter", return: "Enter",
-      space: "Space", backspace: "Bksp", delete: "Del",
-      up: "Up", down: "Down", left: "Left", right: "Right",
-    };
-
-    const displayKey = (k) => KEY_DISPLAY[k] || k.toUpperCase();
-
-    // Composable pipelines
-    const keysLabel = pipe(
-      groupKeysBySeparator,
-      mapGroups(group => group.map(displayKey)),
-      joinGroups("+", ", ")
-    );
-
-    const keysString = pipe(
-      groupKeysBySeparator,
-      joinGroups("+", ",")
-    );
-
-    const VALID_KEYS = new Set([
-      "ctrl", "cmd", "alt", "option", "shift",
-      ..."abcdefghijklmnopqrstuvwxyz".split(""),
-      ..."0123456789".split(""),
-      "esc", "escape", "tab", "enter", "return", "space", "backspace", "delete",
-      "up", "down", "left", "right",
-      "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
-      ",",
-    ]);
-
-    function normalizeKey(val) {
-      const aliases = { option: "alt", escape: "esc", return: "enter" };
-      return aliases[val] || val;
-    }
-
     // --- Shortcut bar (render takes data) ---
 
     const pinnedKeys = [
@@ -845,7 +735,7 @@
         btn.tabIndex = -1;
         btn.textContent = s.label;
         btn.setAttribute("aria-label", `Send ${s.label}`);
-        btn.addEventListener("click", () => { sendSequence(keysToSequence(s.keys)); term.focus(); });
+        btn.addEventListener("click", () => { sendSequence(keysToSequence(s.keys), rawSend); term.focus(); });
         bar.appendChild(btn);
       }
 
@@ -870,7 +760,7 @@
 
     const shortcutsPopup = createShortcutsPopup({
       onShortcutClick: (keys) => {
-        sendSequence(keysToSequence(keys));
+        sendSequence(keysToSequence(keys), rawSend);
       },
       modals
     });
@@ -1015,38 +905,21 @@
       location.href = "/login";
     });
 
-    // --- Settings tabs ---
-
-    document.querySelectorAll(".settings-tab").forEach(tab => {
-      tab.addEventListener("click", () => {
-        const targetTab = tab.dataset.tab;
-
-        // Update tab buttons
-        document.querySelectorAll(".settings-tab").forEach(t => {
-          const active = t.dataset.tab === targetTab;
-          t.classList.toggle("active", active);
-          t.setAttribute("aria-selected", active);
-        });
-
-        // Update tab content
-        document.querySelectorAll(".settings-tab-content").forEach(content => {
-          content.classList.toggle("active", content.id === `settings-tab-${targetTab}`);
-        });
-
-        // Load data when switching tabs
-        if (targetTab === "lan") {
-          // Device list auto-updates via reactive component
-        } else if (targetTab === "remote") {
+    // --- Settings tabs (using generic tab manager) ---
+    const settingsTabManager = createTabManager({
+      tabSelector: '.settings-tab',
+      contentSelector: '.settings-tab-content',
+      onTabChange: (targetTab) => {
+        if (targetTab === "remote") {
           // Clear any lingering new token display before loading tokens
           const tokensList = document.getElementById("tokens-list");
           const staleNewToken = tokensList?.querySelector('.token-item-new');
-          if (staleNewToken) {
-            staleNewToken.remove();
-          }
+          if (staleNewToken) staleNewToken.remove();
           loadTokens();
         }
-      });
+      }
     });
+    settingsTabManager.init();
 
     // --- Device management (reactive component) ---
 
