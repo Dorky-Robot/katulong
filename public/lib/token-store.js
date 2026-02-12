@@ -64,7 +64,7 @@ const tokenReducer = createReducer(initialState, {
  * Create token store
  */
 export function createTokenStore() {
-  const store = createStore(initialState, tokenReducer, { debug: false });
+  const store = createStore(initialState, tokenReducer, { debug: true });
 
   // Auto-load on creation
   loadTokens(store);
