@@ -14,6 +14,19 @@ Katulong is a self-hosted web terminal that gives remote shell access to the hos
 - `lib/ssh.js` — SSH server bridging native terminals to daemon PTY sessions
 - `lib/ndjson.js` — Newline-delimited JSON encode/decode for daemon IPC
 
+## Development principles
+
+### Boy Scout Rule
+**Always leave the codebase better than you found it.**
+
+When encountering issues unrelated to your current task:
+- Fix flaky tests rather than skipping them
+- Add missing error handling instead of ignoring failures
+- Improve documentation when you notice gaps
+- Refactor confusing code when you touch it
+
+Technical debt should be addressed opportunistically, not deferred indefinitely. If a fix takes less than 30 minutes and improves code quality or reliability, do it as part of your current work.
+
 ## Security model
 
 **This application provides direct terminal access to the host.** Every code change must be reviewed with this in mind.
