@@ -8,6 +8,7 @@
     import { createWizardStore, WIZARD_STATES, WIZARD_ACTIONS } from "/lib/wizard-state.js";
     import { createDeviceStore, loadDevices as reloadDevices, invalidateDevices } from "/lib/device-store.js";
     import { createDeviceListComponent } from "/lib/device-list-component.js";
+    import { createDeviceActions } from "/lib/device-actions.js";
     import { createWizardComponent } from "/lib/wizard-component.js";
     import { createSessionStore, invalidateSessions } from "/lib/session-store.js";
     import { createSessionListComponent } from "/lib/session-list-component.js";
@@ -924,64 +925,21 @@
 
     // --- Device management (reactive component) ---
 
-    // Create device store and component
     const deviceStore = createDeviceStore();
-    const deviceListComponent = createDeviceListComponent(deviceStore, {
-      onRename: renameDevice,
-      onRemove: removeDevice
+
+    // Create device actions with callbacks
+    const deviceActions = createDeviceActions({
+      onRename: () => invalidateDevices(deviceStore),
+      onRemove: () => invalidateDevices(deviceStore)
     });
 
-    // Mount device list component
+    // Create and mount device list component
+    const deviceListComponent = createDeviceListComponent(deviceStore, {
+      onRename: (deviceId) => deviceActions.renameDevice(deviceId),
+      onRemove: (deviceId, isCurrent) => deviceActions.removeDevice(deviceId, isCurrent)
+    });
     const devicesList = document.getElementById("devices-list");
     deviceListComponent.mount(devicesList);
-
-    async function renameDevice(deviceId) {
-      const newName = prompt("Enter new device name:");
-      if (!newName || newName.trim().length === 0) return;
-
-      try {
-        const res = await fetch(`/auth/devices/${deviceId}/name`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: newName.trim() }),
-        });
-        if (!res.ok) throw new Error("Failed to rename device");
-        invalidateDevices(deviceStore); // Auto-reload via store
-      } catch (err) {
-        alert("Failed to rename device: " + err.message);
-      }
-    }
-
-    async function removeDevice(deviceId, isCurrent) {
-      // Different warning messages based on whether it's the current device
-      const message = isCurrent
-        ? "WARNING: You are about to remove THIS DEVICE (the one you're using right now).\n\nYou will be LOGGED OUT IMMEDIATELY and will need to re-register this device to access Katulong again.\n\nAre you sure you want to continue?"
-        : "Are you sure you want to remove this device? It will need to be re-registered to access Katulong again.";
-
-      if (!confirm(message)) {
-        return;
-      }
-
-      try {
-        const res = await fetch(`/auth/devices/${deviceId}`, {
-          method: "DELETE",
-          headers: addCsrfHeader()
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || "Failed to remove device");
-        }
-
-        // If we removed the current device, we'll be logged out - redirect to login
-        if (isCurrent) {
-          window.location.href = "/login";
-        } else {
-          invalidateDevices(deviceStore); // Auto-reload via store
-        }
-      } catch (err) {
-        alert("Failed to remove device: " + err.message);
-      }
-    }
 
     // --- Token management ---
 
