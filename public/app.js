@@ -6,6 +6,7 @@
     import { ListRenderer } from "/lib/list-renderer.js";
     import { createStore, createReducer } from "/lib/store.js";
     import { createWizardStore, WIZARD_STATES, WIZARD_ACTIONS } from "/lib/wizard-state.js";
+    import { createWizardController } from "/lib/wizard-controller.js";
     import { createDeviceStore, loadDevices as reloadDevices, invalidateDevices } from "/lib/device-store.js";
     import { createDeviceListComponent } from "/lib/device-list-component.js";
     import { createDeviceActions } from "/lib/device-actions.js";
@@ -931,6 +932,24 @@
       }
     }
 
+    // Create wizard controller
+    const wizardController = createWizardController({
+      wizardStore,
+      settingsViews,
+      viewMain,
+      viewTrust,
+      viewPair,
+      viewSuccess,
+      deviceStore,
+      modals,
+      onDeviceInvalidate: () => invalidateDevices(deviceStore)
+    });
+    wizardController.init();
+
+    // Extract functions for external use
+    const switchSettingsView = (view) => wizardController.switchSettingsView(view);
+    const stopWizardPairing = () => wizardController.cleanupWizard();
+
     // Create wizard component (handles all rendering automatically)
     const wizardComponent = createWizardComponent(wizardStore, {
       loadQRLib,
@@ -950,134 +969,6 @@
     Object.defineProperty(window, 'wizardActivePairCode', {
       get: () => wizardStore.getState().pairCode
     });
-
-    function switchSettingsView(toView) {
-      const current = settingsViews.querySelector(".settings-view.active");
-      if (current === toView) return;
-
-      // Measure target height
-      toView.style.position = "relative";
-      toView.style.visibility = "hidden";
-      toView.style.opacity = "0";
-      toView.classList.add("active");
-      const targetHeight = toView.scrollHeight;
-      toView.classList.remove("active");
-      toView.style.position = "";
-      toView.style.visibility = "";
-      toView.style.opacity = "";
-
-      // Animate wrapper height
-      settingsViews.style.height = (current ? current.scrollHeight : 0) + "px";
-      requestAnimationFrame(() => {
-        settingsViews.style.height = targetHeight + "px";
-      });
-
-      // Cross-fade
-      if (current) current.classList.remove("active");
-      toView.classList.add("active");
-
-      // Clear explicit height after transition
-      const onEnd = () => {
-        settingsViews.style.height = "";
-        settingsViews.removeEventListener("transitionend", onEnd);
-      };
-      settingsViews.addEventListener("transitionend", onEnd);
-    }
-
-    // Wizard control functions (component handles rendering)
-    async function startTrustStep() {
-      wizardStore.dispatch({ type: WIZARD_ACTIONS.START_TRUST });
-    }
-
-    async function startPairingStep() {
-      try {
-        const res = await fetch("/auth/pair/start", {
-          method: "POST",
-          headers: addCsrfHeader()
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-
-        wizardStore.dispatch({
-          type: WIZARD_ACTIONS.START_PAIRING,
-          code: data.code,
-          pin: data.pin,
-          url: data.url,
-          expiresAt: data.expiresAt
-        });
-      } catch (err) {
-        console.error('[Wizard] Failed to start pairing:', err);
-        wizardStore.dispatch({
-          type: WIZARD_ACTIONS.PAIRING_ERROR,
-          error: "Failed to generate pairing code"
-        });
-      }
-    }
-
-    function cleanupWizard() {
-      wizardStore.dispatch({ type: WIZARD_ACTIONS.RESET });
-      switchSettingsView(viewMain);
-    }
-
-    // Update settings modal to include cleanup on close
-    const settingsModal = modals.get('settings');
-    if (settingsModal) {
-      const originalOnClose = settingsModal.options.onClose;
-      settingsModal.options.onClose = () => {
-        cleanupWizard();
-        if (originalOnClose) originalOnClose();
-      };
-    }
-
-    // Event: Pair Device → step 1 (trust)
-    const pairLanBtn = document.getElementById("settings-pair-lan");
-    if (pairLanBtn) {
-      pairLanBtn.addEventListener("click", async () => {
-        switchSettingsView(viewTrust);
-        await startTrustStep();
-      });
-    }
-
-    // Event: Next → step 2 (pair)
-    const wizardNextBtn = document.getElementById("wizard-next-pair");
-    if (wizardNextBtn) {
-      wizardNextBtn.addEventListener("click", async () => {
-        switchSettingsView(viewPair);
-        await startPairingStep();
-      });
-    }
-
-    // Event: Back from trust → main
-    const wizardBackTrustBtn = document.getElementById("wizard-back-trust");
-    if (wizardBackTrustBtn) {
-      wizardBackTrustBtn.addEventListener("click", () => {
-        wizardStore.dispatch({ type: WIZARD_ACTIONS.RESET });
-        switchSettingsView(viewMain);
-      });
-    }
-
-    // Event: Back from pair → trust
-    const wizardBackPairBtn = document.getElementById("wizard-back-pair");
-    if (wizardBackPairBtn) {
-      wizardBackPairBtn.addEventListener("click", () => {
-        wizardStore.dispatch({ type: WIZARD_ACTIONS.RESET });
-        switchSettingsView(viewTrust);
-        startTrustStep();
-      });
-    }
-
-    // Event: Done → cleanup + show LAN tab with newly paired device
-    const wizardDoneBtn = document.getElementById("wizard-done");
-    if (wizardDoneBtn) {
-      wizardDoneBtn.addEventListener("click", () => {
-        cleanupWizard();
-        switchSettingsView(viewMain);
-
-        // Switch to LAN tab to show newly paired device
-        const lanTab = document.querySelector('.settings-tab[data-tab="lan"]');
-        if (lanTab) lanTab.click();
-      });
-    }
 
     // --- Dictation modal (reactive component) ---
 
