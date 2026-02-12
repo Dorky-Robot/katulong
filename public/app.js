@@ -33,6 +33,7 @@
     import { createPasteHandler } from "/lib/paste-handler.js";
     import { createNetworkMonitor } from "/lib/network-monitor.js";
     import { createP2PManager } from "/lib/p2p-manager.js";
+    import { createSettingsHandlers } from "/lib/settings-handlers.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -717,18 +718,10 @@
 
     // --- Settings ---
 
-    const settingsOverlay = document.getElementById("settings-overlay");
-
-    document.querySelectorAll(".theme-toggle button").forEach(btn => {
-      btn.addEventListener("click", () => applyTheme(btn.dataset.themeVal));
+    const settingsHandlers = createSettingsHandlers({
+      onThemeChange: (theme) => applyTheme(theme)
     });
-    document.getElementById("settings-logout").addEventListener("click", async () => {
-      await fetch("/auth/logout", {
-        method: "POST",
-        headers: addCsrfHeader()
-      });
-      location.href = "/login";
-    });
+    settingsHandlers.init();
 
     // --- Settings tabs (using generic tab manager) ---
     const settingsTabManager = createTabManager({
