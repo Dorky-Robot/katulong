@@ -8,6 +8,7 @@
     import { createWizardStore, WIZARD_STATES, WIZARD_ACTIONS } from "/lib/wizard-state.js";
     import { createDeviceStore, loadDevices as reloadDevices, invalidateDevices } from "/lib/device-store.js";
     import { createDeviceListComponent } from "/lib/device-list-component.js";
+    import { createWizardComponent } from "/lib/wizard-component.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -2036,10 +2037,10 @@
     const viewPair = document.getElementById("settings-view-pair");
     const viewSuccess = document.getElementById("settings-view-success");
 
-    // --- Wizard state management with formal state machine ---
+    // --- Wizard state management with reactive component ---
     const wizardStore = createWizardStore();
 
-    // Utility state (not part of state machine)
+    // Utility functions for wizard component
     let connectInfoCache = null;
     let qrLibLoaded = false;
 
@@ -2068,20 +2069,31 @@
       return connectInfoCache;
     };
 
-    // Cleanup timers on state changes
-    const cleanupTimers = (timers) => {
-      if (timers.refresh) clearTimeout(timers.refresh);
-      if (timers.countdown) clearInterval(timers.countdown);
-      if (timers.statusPoll) clearInterval(timers.statusPoll);
-    };
+    async function checkPairingStatus(code) {
+      try {
+        const res = await fetch(`/auth/pair/status/${code}`);
+        if (!res.ok) return false;
+        const data = await res.json();
+        return data.consumed;
+      } catch {
+        return false;
+      }
+    }
 
-    // Subscribe to wizard state changes
-    wizardStore.subscribe((state, action, prevState) => {
-      // Cleanup timers when resetting or changing states
-      if (action.type === WIZARD_ACTIONS.RESET || action.type === WIZARD_ACTIONS.CLEAR_TIMERS) {
-        cleanupTimers(prevState.timers);
+    // Create wizard component (handles all rendering automatically)
+    const wizardComponent = createWizardComponent(wizardStore, {
+      loadQRLib,
+      getConnectInfo,
+      checkPairingStatus,
+      onSuccess: () => {
+        wizardStore.dispatch({ type: WIZARD_ACTIONS.PAIRING_SUCCESS });
+        switchSettingsView(viewSuccess);
+        invalidateDevices(deviceStore);
       }
     });
+
+    // Mount wizard component to settings views container
+    wizardComponent.mount(settingsViews);
 
     // Expose for WebSocket handler compatibility
     Object.defineProperty(window, 'wizardActivePairCode', {
@@ -2121,64 +2133,13 @@
       settingsViews.addEventListener("transitionend", onEnd);
     }
 
-    async function renderTrustQR() {
-      const container = document.getElementById("wizard-trust-qr");
-      const copyBtn = document.getElementById("wizard-trust-copy-url");
-      container.innerHTML = "";
-      copyBtn.style.display = "none";
-      try {
-        await loadQRLib();
-        const info = await getConnectInfo();
-        if (info.trustUrl) {
-          const isDark = getEffectiveTheme() === "dark";
-          QRCode.toCanvas(info.trustUrl, {
-            width: 200, margin: 2,
-            color: { dark: isDark ? "#cdd6f4" : "#4c4f69", light: isDark ? "#1e1e2e" : "#eff1f5" },
-          }, (err, canvas) => {
-            if (!err) {
-              container.appendChild(canvas);
-              // Show copy button
-              copyBtn.style.display = "flex";
-              copyBtn.onclick = async () => {
-                try {
-                  await navigator.clipboard.writeText(info.trustUrl);
-                  const originalText = copyBtn.innerHTML;
-                  copyBtn.innerHTML = '<i class="ph ph-check"></i> Copied!';
-                  setTimeout(() => { copyBtn.innerHTML = originalText; }, 2000);
-                } catch {
-                  alert("Failed to copy URL");
-                }
-              };
-            }
-          });
-        }
-      } catch { /* ignore */ }
+    // Wizard control functions (component handles rendering)
+    async function startTrustStep() {
+      wizardStore.dispatch({ type: WIZARD_ACTIONS.START_TRUST });
     }
 
-    function stopWizardPairing() {
-      wizardStore.dispatch({ type: WIZARD_ACTIONS.CLEAR_TIMERS });
-    }
-
-    async function checkPairingStatus(code) {
+    async function startPairingStep() {
       try {
-        const res = await fetch(`/auth/pair/status/${code}`);
-        if (!res.ok) return false;
-        const data = await res.json();
-        return data.consumed;
-      } catch {
-        return false;
-      }
-    }
-
-    async function refreshWizardPairCode() {
-      try {
-        // Clear any previous error
-        const errorEl = document.getElementById("wizard-error");
-        if (errorEl) {
-          errorEl.style.display = "none";
-          errorEl.textContent = "";
-        }
-
         const res = await fetch("/auth/pair/start", {
           method: "POST",
           headers: addCsrfHeader()
@@ -2186,135 +2147,25 @@
         if (!res.ok) return;
         const data = await res.json();
 
-        // Update wizard state
         wizardStore.dispatch({
-          type: WIZARD_ACTIONS.UPDATE_CODE,
+          type: WIZARD_ACTIONS.START_PAIRING,
           code: data.code,
           pin: data.pin,
           url: data.url,
           expiresAt: data.expiresAt
         });
-
-        // Render QR
-        const qrContainer = document.getElementById("wizard-pair-qr");
-        const copyBtn = document.getElementById("wizard-pair-copy-url");
-        qrContainer.innerHTML = "";
-        copyBtn.style.display = "none";
-        if (data.url) {
-          await loadQRLib();
-          const isDark = getEffectiveTheme() === "dark";
-          QRCode.toCanvas(data.url, {
-            width: 200, margin: 2,
-            color: { dark: isDark ? "#cdd6f4" : "#4c4f69", light: isDark ? "#1e1e2e" : "#eff1f5" },
-          }, (err, canvas) => {
-            if (!err) {
-              qrContainer.appendChild(canvas);
-              // Show copy button
-              copyBtn.style.display = "flex";
-              copyBtn.onclick = async () => {
-                try {
-                  await navigator.clipboard.writeText(data.url);
-                  const originalText = copyBtn.innerHTML;
-                  copyBtn.innerHTML = '<i class="ph ph-check"></i> Copied!';
-                  setTimeout(() => { copyBtn.innerHTML = originalText; }, 2000);
-                } catch {
-                  alert("Failed to copy URL");
-                }
-              };
-            }
-          });
-        }
-
-        // Show PIN
-        document.getElementById("wizard-pair-pin").textContent = data.pin;
-
-        // Countdown
-        const state = wizardStore.getState();
-        if (state.timers.countdown) clearInterval(state.timers.countdown);
-        const countdownEl = document.getElementById("wizard-pair-countdown");
-        function updateCountdown() {
-          const left = Math.max(0, Math.ceil((data.expiresAt - Date.now()) / 1000));
-          countdownEl.textContent = left > 0 ? `Refreshing in ${left}s` : "Refreshing\u2026";
-        }
-        updateCountdown();
-        const countdownTimer = setInterval(updateCountdown, 1000);
+      } catch (err) {
+        console.error('[Wizard] Failed to start pairing:', err);
         wizardStore.dispatch({
-          type: WIZARD_ACTIONS.SET_TIMER,
-          timerName: 'countdown',
-          timerId: countdownTimer
+          type: WIZARD_ACTIONS.PAIRING_ERROR,
+          error: "Failed to generate pairing code"
         });
-
-        // Poll for pairing success every 2 seconds
-        if (state.timers.statusPoll) clearInterval(state.timers.statusPoll);
-        const statusPollTimer = setInterval(async () => {
-          if (!viewPair.classList.contains("active")) {
-            const currentState = wizardStore.getState();
-            if (currentState.timers.statusPoll) {
-              clearInterval(currentState.timers.statusPoll);
-            }
-            return;
-          }
-          try {
-            const consumed = await checkPairingStatus(data.code);
-            if (consumed) {
-              stopWizardPairing();
-              switchSettingsView(viewSuccess);
-              // Refresh device list to show newly paired device
-              invalidateDevices(deviceStore);
-            }
-          } catch (err) {
-            console.error('[Wizard] Status check failed:', err);
-            const errorEl = document.getElementById("wizard-error");
-            if (errorEl) {
-              errorEl.textContent = "Connection lost. Please try again.";
-              errorEl.style.display = "block";
-            }
-            const currentState = wizardStore.getState();
-            if (currentState.timers.statusPoll) {
-              clearInterval(currentState.timers.statusPoll);
-            }
-          }
-        }, 2000);
-        wizardStore.dispatch({
-          type: WIZARD_ACTIONS.SET_TIMER,
-          timerName: 'statusPoll',
-          timerId: statusPollTimer
-        });
-
-        // Schedule refresh ~25s (5s before expiry)
-        const refreshIn = Math.max(1000, (data.expiresAt - Date.now()) - 5000);
-        const refreshTimer = setTimeout(() => {
-          if (viewPair.classList.contains("active")) refreshWizardPairCode();
-        }, refreshIn);
-        wizardStore.dispatch({
-          type: WIZARD_ACTIONS.SET_TIMER,
-          timerName: 'refresh',
-          timerId: refreshTimer
-        });
-      } catch { /* ignore */ }
-    }
-
-    async function startWizardPairing() {
-      stopWizardPairing();
-      await refreshWizardPairCode();
+      }
     }
 
     function cleanupWizard() {
-      // Reset wizard state (clears timers via subscriber)
       wizardStore.dispatch({ type: WIZARD_ACTIONS.RESET });
-
-      // Reset to main view instantly (no transition)
-      settingsViews.querySelectorAll(".settings-view").forEach(v => v.classList.remove("active"));
-      viewMain.classList.add("active");
-      settingsViews.style.height = "";
-      // Clear wizard QR containers
-      document.getElementById("wizard-trust-qr").innerHTML = "";
-      document.getElementById("wizard-pair-qr").innerHTML = "";
-      document.getElementById("wizard-pair-pin").textContent = "";
-      document.getElementById("wizard-pair-countdown").textContent = "";
-      // Hide copy buttons
-      document.getElementById("wizard-trust-copy-url").style.display = "none";
-      document.getElementById("wizard-pair-copy-url").style.display = "none";
+      switchSettingsView(viewMain);
     }
 
     // Update settings modal to include cleanup on close
@@ -2330,24 +2181,26 @@
     // Event: Pair Device → step 1 (trust)
     document.getElementById("settings-pair-lan").addEventListener("click", async () => {
       switchSettingsView(viewTrust);
-      await renderTrustQR();
+      await startTrustStep();
     });
 
     // Event: Next → step 2 (pair)
-    document.getElementById("wizard-next-pair").addEventListener("click", () => {
+    document.getElementById("wizard-next-pair").addEventListener("click", async () => {
       switchSettingsView(viewPair);
-      startWizardPairing();
+      await startPairingStep();
     });
 
     // Event: Back from trust → main
     document.getElementById("wizard-back-trust").addEventListener("click", () => {
+      wizardStore.dispatch({ type: WIZARD_ACTIONS.RESET });
       switchSettingsView(viewMain);
     });
 
     // Event: Back from pair → trust
     document.getElementById("wizard-back-pair").addEventListener("click", () => {
-      stopWizardPairing();
+      wizardStore.dispatch({ type: WIZARD_ACTIONS.RESET });
       switchSettingsView(viewTrust);
+      startTrustStep();
     });
 
     // Event: Done → cleanup + show LAN tab with newly paired device
