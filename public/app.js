@@ -14,7 +14,7 @@
     import { createSessionStore, invalidateSessions } from "/lib/session-store.js";
     import { createSessionListComponent } from "/lib/session-list-component.js";
     import { createSessionManager } from "/lib/session-manager.js";
-    import { createTokenStore, setNewToken, invalidateTokens, loadTokens as reloadTokens } from "/lib/token-store.js";
+    import { createTokenStore, setNewToken, invalidateTokens, removeToken, loadTokens as reloadTokens } from "/lib/token-store.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
     import { createTokenFormManager } from "/lib/token-form.js";
     import { createShortcutsStore, loadShortcuts as reloadShortcuts } from "/lib/shortcuts-store.js";
@@ -375,8 +375,8 @@
       onRename: () => {
         invalidateTokens(tokenStore);
       },
-      onRevoke: () => {
-        invalidateTokens(tokenStore);
+      onRevoke: (tokenId) => {
+        removeToken(tokenStore, tokenId);
       }
     });
     tokenFormManager.init();
@@ -439,6 +439,12 @@
     // DON'T mount wizard component - views are already in HTML
     // Mounting wipes out all settings-view content including settings-view-main
     // wizardComponent.mount(settingsViews);
+
+    // Manually trigger wizard rendering on state changes
+    wizardStore.subscribe(() => {
+      // Trigger the component to handle QR codes and timers
+      wizardComponent.trigger();
+    });
 
     // Expose for WebSocket handler compatibility
     Object.defineProperty(window, 'wizardActivePairCode', {

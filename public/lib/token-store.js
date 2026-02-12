@@ -131,4 +131,15 @@ export function invalidateTokens(store) {
   loadTokens(store);
 }
 
+/**
+ * Remove a token from the list (optimistic update for revoke)
+ */
+export function removeToken(store, tokenId) {
+  const currentState = store.getState();
+  store.dispatch({
+    type: TOKEN_ACTIONS.LOAD_SUCCESS,
+    tokens: currentState.tokens.filter(t => t.id !== tokenId)
+  });
+}
+
 export { TOKEN_ACTIONS };

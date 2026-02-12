@@ -238,5 +238,12 @@ export function createWizardComponent(wizardStore, options) {
     originalUnmount.call(this);
   };
 
+  // Add manual trigger method for when component is not mounted
+  // This allows afterRender to be called without mounting the component
+  component.trigger = function() {
+    const state = wizardStore.getState();
+    afterRender(null, state);
+  };
+
   return component;
 }

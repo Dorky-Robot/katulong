@@ -12,6 +12,7 @@ import { ListRenderer } from '/lib/list-renderer.js';
  * Format timestamp as relative time
  */
 function formatRelativeTime(timestamp) {
+  if (!timestamp) return 'Never';
   const now = Date.now();
   const diff = now - timestamp;
   const seconds = Math.floor(diff / 1000);
@@ -27,38 +28,51 @@ function formatRelativeTime(timestamp) {
 }
 
 /**
+ * Format timestamp as full date
+ */
+function formatFullDate(timestamp) {
+  if (!timestamp) return 'Unknown';
+  const date = new Date(timestamp);
+  return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
+}
+
+/**
  * Device item template
  */
 function deviceItemTemplate(device, context) {
-  const isCurrent = device.credentialId === context.currentCredentialId;
+  const isCurrent = device.id === context.currentCredentialId;
   const canRemove = !(context.deviceCount === 1 && !context.isLocalhost);
 
+  const addedDate = formatFullDate(device.createdAt);
+  const lastUsed = formatRelativeTime(device.lastUsedAt);
+
   return `
-    <div class="device-item" data-device-id="${device.credentialId}" data-is-current="${isCurrent}">
-      <div class="device-info">
+    <div class="device-item" data-device-id="${device.id}" data-is-current="${isCurrent}">
+      <div class="device-header">
+        <i class="ph ph-monitor"></i>
         <div class="device-name">${escapeHtml(device.name)}</div>
-        <div class="device-meta">
-          <span class="device-date">Paired ${formatRelativeTime(device.createdAt)}</span>
-          ${isCurrent ? '<span class="device-current">(current)</span>' : ''}
-        </div>
+      </div>
+      <div class="device-meta">
+        Added: ${addedDate} • Last used: ${lastUsed}
+        ${isCurrent ? ' • <span class="device-current">(current)</span>' : ''}
       </div>
       <div class="device-actions">
         <button
-          class="device-action-btn"
+          class="device-btn"
           data-action="rename"
-          data-id="${device.credentialId}"
+          data-id="${device.id}"
           aria-label="Rename device"
         >
-          <i class="ph ph-pencil-simple"></i>
+          Rename
         </button>
         ${canRemove ? `
           <button
-            class="device-action-btn device-action-remove"
+            class="device-btn device-btn-danger"
             data-action="remove"
-            data-id="${device.credentialId}"
+            data-id="${device.id}"
             aria-label="Remove device"
           >
-            <i class="ph ph-trash"></i>
+            Remove
           </button>
         ` : ''}
       </div>
@@ -127,7 +141,7 @@ export function createDeviceListComponent(store, options = {}) {
       beforeRender: () => {
         // Add header for localhost view
         if (isLocalhost) {
-          listContainer.innerHTML = '<div class="device-section-header">LAN Devices</div>';
+          listContainer.innerHTML = '<div class="device-section-header">LAN DEVICES</div>';
         }
       },
       afterRender: () => {
