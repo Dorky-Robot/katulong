@@ -61,21 +61,28 @@ test.describe("Shortcuts popup", () => {
     await expect(page.locator("#add-modal-overlay")).toHaveClass(/visible/);
 
     const input = page.locator("#key-composer-input");
+    const preview = page.locator("#key-preview-value");
 
-    // Type "ctrl" + Enter, "c" + Enter, "," + Enter, "ctrl" + Enter, "c" + Enter
+    // Build sequence: Ctrl+C, Ctrl+C
+    // Wait for preview to update after each step
     await input.fill("ctrl");
     await input.press("Enter");
+    await expect(preview).toContainText("Ctrl");
+
     await input.fill("c");
     await input.press("Enter");
+    await expect(preview).toHaveText("Ctrl+C");
+
     await input.fill(",");
     await input.press("Enter");
+    await expect(preview).toHaveText("Ctrl+C,");
+
     await input.fill("ctrl");
     await input.press("Enter");
+    await expect(preview).toContainText("Ctrl+C, Ctrl");
+
     await input.fill("c");
     await input.press("Enter");
-
-    // Preview should show "Ctrl+C, Ctrl+C"
-    const preview = page.locator("#key-preview-value");
     await expect(preview).toHaveText("Ctrl+C, Ctrl+C");
 
     // Save the shortcut

@@ -35,10 +35,15 @@ test.describe("Font consistency", () => {
   });
 
   test("Shortcut bar buttons use mono font", async ({ page }) => {
-    const escBtn = page.locator("#shortcut-bar .shortcut-btn", { hasText: "Esc" });
-    const fontFamily = await escBtn.evaluate((el) =>
-      getComputedStyle(el).fontFamily
-    );
-    expect(fontFamily.toLowerCase()).toContain("jetbrains mono");
+    // Wait for terminal and shortcut bar to be fully loaded
+    await page.waitForSelector(".xterm", { timeout: 10000 });
+
+    const escBtn = page.locator("#shortcut-bar .shortcut-btn").filter({ hasText: "Esc" });
+
+    // Wait for button to be visible and stable
+    await expect(escBtn).toBeVisible();
+
+    // Wait for font to be loaded by checking that it's not a fallback font
+    await expect(escBtn).toHaveCSS("font-family", /jetbrains mono/i);
   });
 });
