@@ -2148,62 +2148,56 @@
     const viewPair = document.getElementById("settings-view-pair");
     const viewSuccess = document.getElementById("settings-view-success");
 
-    // --- Wizard lifecycle manager (edge module) ---
-    const createWizardManager = () => {
-      let state = {
-        activePairCode: null,
-        connectInfoCache: null,
-        qrLibLoaded: false,
-        timers: {
-          refresh: 0,
-          countdown: 0,
-          statusPoll: 0
-        }
-      };
+    // --- Wizard state management with formal state machine ---
+    const wizardStore = createWizardStore();
 
-      const cleanup = () => {
-        if (state.timers.refresh) clearTimeout(state.timers.refresh);
-        if (state.timers.countdown) clearInterval(state.timers.countdown);
-        if (state.timers.statusPoll) clearInterval(state.timers.statusPoll);
-        state.timers = { refresh: 0, countdown: 0, statusPoll: 0 };
-        state.activePairCode = null;
-      };
+    // Utility state (not part of state machine)
+    let connectInfoCache = null;
+    let qrLibLoaded = false;
 
-      const loadQRLib = async () => {
-        if (state.qrLibLoaded) return;
-        if (typeof QRCode !== "undefined") {
-          state.qrLibLoaded = true;
-          return;
-        }
-        await new Promise((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = "/vendor/qrcode/qrcode.min.js";
-          s.onload = () => {
-            state.qrLibLoaded = true;
-            resolve();
-          };
-          s.onerror = reject;
-          document.head.appendChild(s);
-        });
-      };
-
-      const getConnectInfo = async () => {
-        if (state.connectInfoCache) return state.connectInfoCache;
-        const res = await fetch("/connect/info");
-        state.connectInfoCache = await res.json();
-        return state.connectInfoCache;
-      };
-
-      const getActivePairCode = () => state.activePairCode;
-
-      return { cleanup, loadQRLib, getConnectInfo, getActivePairCode, state };
+    const loadQRLib = async () => {
+      if (qrLibLoaded) return;
+      if (typeof QRCode !== "undefined") {
+        qrLibLoaded = true;
+        return;
+      }
+      await new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = "/vendor/qrcode/qrcode.min.js";
+        s.onload = () => {
+          qrLibLoaded = true;
+          resolve();
+        };
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
     };
 
-    const wizardManager = createWizardManager();
+    const getConnectInfo = async () => {
+      if (connectInfoCache) return connectInfoCache;
+      const res = await fetch("/connect/info");
+      connectInfoCache = await res.json();
+      return connectInfoCache;
+    };
+
+    // Cleanup timers on state changes
+    const cleanupTimers = (timers) => {
+      if (timers.refresh) clearTimeout(timers.refresh);
+      if (timers.countdown) clearInterval(timers.countdown);
+      if (timers.statusPoll) clearInterval(timers.statusPoll);
+    };
+
+    // Subscribe to wizard state changes
+    wizardStore.subscribe((state, action, prevState) => {
+      // Cleanup timers when resetting or changing states
+      if (action.type === WIZARD_ACTIONS.RESET || action.type === WIZARD_ACTIONS.CLEAR_TIMERS) {
+        cleanupTimers(prevState.timers);
+      }
+    });
+
     // Expose for WebSocket handler compatibility
-    let wizardActivePairCode = null;
     Object.defineProperty(window, 'wizardActivePairCode', {
-      get: () => wizardManager.getActivePairCode()
+      get: () => wizardStore.getState().pairCode
     });
 
     function switchSettingsView(toView) {
@@ -2245,8 +2239,8 @@
       container.innerHTML = "";
       copyBtn.style.display = "none";
       try {
-        await wizardManager.loadQRLib();
-        const info = await wizardManager.getConnectInfo();
+        await loadQRLib();
+        const info = await getConnectInfo();
         if (info.trustUrl) {
           const isDark = getEffectiveTheme() === "dark";
           QRCode.toCanvas(info.trustUrl, {
@@ -2274,7 +2268,7 @@
     }
 
     function stopWizardPairing() {
-      wizardManager.cleanup();
+      wizardStore.dispatch({ type: WIZARD_ACTIONS.CLEAR_TIMERS });
     }
 
     async function checkPairingStatus(code) {
@@ -2304,7 +2298,14 @@
         if (!res.ok) return;
         const data = await res.json();
 
-        wizardManager.state.activePairCode = data.code;
+        // Update wizard state
+        wizardStore.dispatch({
+          type: WIZARD_ACTIONS.UPDATE_CODE,
+          code: data.code,
+          pin: data.pin,
+          url: data.url,
+          expiresAt: data.expiresAt
+        });
 
         // Render QR
         const qrContainer = document.getElementById("wizard-pair-qr");
@@ -2312,7 +2313,7 @@
         qrContainer.innerHTML = "";
         copyBtn.style.display = "none";
         if (data.url) {
-          await wizardManager.loadQRLib();
+          await loadQRLib();
           const isDark = getEffectiveTheme() === "dark";
           QRCode.toCanvas(data.url, {
             width: 200, margin: 2,
@@ -2340,26 +2341,34 @@
         document.getElementById("wizard-pair-pin").textContent = data.pin;
 
         // Countdown
-        clearInterval(wizardManager.state.timers.countdown);
+        const state = wizardStore.getState();
+        if (state.timers.countdown) clearInterval(state.timers.countdown);
         const countdownEl = document.getElementById("wizard-pair-countdown");
         function updateCountdown() {
           const left = Math.max(0, Math.ceil((data.expiresAt - Date.now()) / 1000));
           countdownEl.textContent = left > 0 ? `Refreshing in ${left}s` : "Refreshing\u2026";
         }
         updateCountdown();
-        wizardManager.state.timers.countdown = setInterval(updateCountdown, 1000);
+        const countdownTimer = setInterval(updateCountdown, 1000);
+        wizardStore.dispatch({
+          type: WIZARD_ACTIONS.SET_TIMER,
+          timerName: 'countdown',
+          timerId: countdownTimer
+        });
 
         // Poll for pairing success every 2 seconds
-        clearInterval(wizardManager.state.timers.statusPoll);
-        wizardManager.state.timers.statusPoll = setInterval(async () => {
+        if (state.timers.statusPoll) clearInterval(state.timers.statusPoll);
+        const statusPollTimer = setInterval(async () => {
           if (!viewPair.classList.contains("active")) {
-            clearInterval(wizardManager.state.timers.statusPoll);
+            const currentState = wizardStore.getState();
+            if (currentState.timers.statusPoll) {
+              clearInterval(currentState.timers.statusPoll);
+            }
             return;
           }
           try {
             const consumed = await checkPairingStatus(data.code);
             if (consumed) {
-              clearInterval(wizardManager.state.timers.statusPoll);
               stopWizardPairing();
               switchSettingsView(viewSuccess);
               // Refresh device list to show newly paired device
@@ -2372,15 +2381,28 @@
               errorEl.textContent = "Connection lost. Please try again.";
               errorEl.style.display = "block";
             }
-            clearInterval(wizardManager.state.timers.statusPoll);
+            const currentState = wizardStore.getState();
+            if (currentState.timers.statusPoll) {
+              clearInterval(currentState.timers.statusPoll);
+            }
           }
         }, 2000);
+        wizardStore.dispatch({
+          type: WIZARD_ACTIONS.SET_TIMER,
+          timerName: 'statusPoll',
+          timerId: statusPollTimer
+        });
 
         // Schedule refresh ~25s (5s before expiry)
         const refreshIn = Math.max(1000, (data.expiresAt - Date.now()) - 5000);
-        wizardManager.state.timers.refresh = setTimeout(() => {
+        const refreshTimer = setTimeout(() => {
           if (viewPair.classList.contains("active")) refreshWizardPairCode();
         }, refreshIn);
+        wizardStore.dispatch({
+          type: WIZARD_ACTIONS.SET_TIMER,
+          timerName: 'refresh',
+          timerId: refreshTimer
+        });
       } catch { /* ignore */ }
     }
 
@@ -2390,7 +2412,9 @@
     }
 
     function cleanupWizard() {
-      stopWizardPairing();
+      // Reset wizard state (clears timers via subscriber)
+      wizardStore.dispatch({ type: WIZARD_ACTIONS.RESET });
+
       // Reset to main view instantly (no transition)
       settingsViews.querySelectorAll(".settings-view").forEach(v => v.classList.remove("active"));
       viewMain.classList.add("active");
