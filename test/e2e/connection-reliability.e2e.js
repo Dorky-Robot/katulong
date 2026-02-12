@@ -10,9 +10,7 @@ import { setupTest } from './helpers.js';
 
 test.describe('Connection Reliability', () => {
   test.beforeEach(async ({ page, context }) => {
-    await page.goto("http://localhost:3001");
-    await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+    await setupTest({ page, context });
   });
 
   test('should establish P2P connection on load', async ({ page }) => {
