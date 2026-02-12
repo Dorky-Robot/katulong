@@ -35,6 +35,7 @@
     import { createP2PManager } from "/lib/p2p-manager.js";
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
+    import { createInputSender } from "/lib/input-sender.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -225,25 +226,13 @@
 
     // --- WebSocket ---
 
-    let sendBuf = "";
-    let sendTimer = 0;
-    function rawSend(data) {
-      sendBuf += data;
-      if (!sendTimer) {
-        sendTimer = requestAnimationFrame(() => {
-          sendTimer = 0;
-          if (!sendBuf) return;
-          const payload = JSON.stringify({ type: "input", data: sendBuf });
-          // Try P2P first, fall back to WebSocket
-          if (!p2pManager.send(payload)) {
-            if (state.connection.ws?.readyState === 1) {
-              state.connection.ws.send(payload);
-            }
-          }
-          sendBuf = "";
-        });
-      }
-    }
+    // Create buffered input sender
+    const inputSender = createInputSender({
+      p2pManager,
+      getWebSocket: () => state.connection.ws
+    });
+
+    const rawSend = (data) => inputSender.send(data);
 
     // Initialize terminal keyboard handlers
     const terminalKeyboard = createTerminalKeyboard({
