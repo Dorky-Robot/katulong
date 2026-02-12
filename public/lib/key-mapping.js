@@ -130,6 +130,7 @@ export const VALID_KEYS = new Set([
   "esc", "escape", "tab", "enter", "return",
   "space", "backspace", "delete",
   "up", "down", "left", "right",
+  ",",  // Comma separator for chord sequences
   ...Array.from({ length: 26 }, (_, i) => String.fromCharCode(97 + i)),  // a-z
   ...Array.from({ length: 10 }, (_, i) => String(i)),  // 0-9
   ...Array.from({ length: 12 }, (_, i) => `f${i + 1}`),  // f1-f12
