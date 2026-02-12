@@ -6,6 +6,8 @@
     import { ListRenderer } from "/lib/list-renderer.js";
     import { createStore, createReducer } from "/lib/store.js";
     import { createWizardStore, WIZARD_STATES, WIZARD_ACTIONS } from "/lib/wizard-state.js";
+    import { createDeviceStore, loadDevices as reloadDevices, invalidateDevices } from "/lib/device-store.js";
+    import { createDeviceListComponent } from "/lib/device-list-component.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -1622,7 +1624,7 @@
 
         // Load data when switching tabs
         if (targetTab === "lan") {
-          loadDevices();
+          // Device list auto-updates via reactive component
         } else if (targetTab === "remote") {
           // Clear any lingering new token display before loading tokens
           const tokensList = document.getElementById("tokens-list");
@@ -1635,132 +1637,18 @@
       });
     });
 
-    // --- Device management ---
+    // --- Device management (reactive component) ---
 
-    /**
-     * Creates device item HTML
-     * @param {Object} device - Device data
-     * @param {Object} context - Rendering context
-     * @returns {string} Device item HTML
-     */
-    function deviceItemTemplate(device, context) {
-      const { currentCredentialId, isLocalhost, deviceCount } = context;
-      const isCurrent = currentCredentialId && device.id === currentCredentialId;
-      const createdDate = device.createdAt ? new Date(device.createdAt).toLocaleDateString() : 'Unknown';
-      const lastUsed = device.lastUsedAt ? formatRelativeTime(device.lastUsedAt) : 'Unknown';
-      const canRemove = deviceCount > 1;
+    // Create device store and component
+    const deviceStore = createDeviceStore();
+    const deviceListComponent = createDeviceListComponent(deviceStore, {
+      onRename: renameDevice,
+      onRemove: removeDevice
+    });
 
-      // Choose icon based on view type and device name
-      let iconClass;
-      if (isLocalhost) {
-        iconClass = device.name.includes('Android') || device.name.includes('iPhone') ? 'ph-device-mobile' : 'ph-desktop';
-      } else {
-        iconClass = 'ph-key';
-      }
-
-      return `
-        <div class="device-item ${isCurrent ? 'current-device' : ''}" data-device-id="${device.id}">
-          <div class="device-header">
-            <i class="device-icon ph ${iconClass}"></i>
-            <span class="device-name">${escapeHtml(device.name)}</span>
-            ${isCurrent ? '<span class="device-current-badge">This device</span>' : ''}
-          </div>
-          <div class="device-meta">
-            Added: ${createdDate} · Last used: ${lastUsed}
-          </div>
-          <div class="device-actions">
-            <button class="device-btn" data-action="rename" data-id="${device.id}">Rename</button>
-            <button class="device-btn device-btn-danger" data-action="remove" data-id="${device.id}" data-is-current="${isCurrent}" ${!canRemove ? 'disabled' : ''}>Remove</button>
-          </div>
-        </div>
-      `;
-    }
-
-    async function loadDevices() {
-      const devicesList = document.getElementById("devices-list");
-
-      try {
-        devicesList.innerHTML = '<p class="devices-loading">Loading devices...</p>';
-
-        const res = await fetch("/auth/devices");
-        if (!res.ok) throw new Error("Failed to load devices");
-        const { devices, currentCredentialId } = await res.json();
-
-        // LAN tab only shows devices paired via QR code + PIN (type: 'paired')
-        const lanDevices = devices.filter(d => d.type === 'paired');
-
-        if (lanDevices.length === 0) {
-          devicesList.innerHTML = '<p class="devices-loading">No LAN devices paired yet. Use "Pair Device on LAN" below to add one.</p>';
-          return;
-        }
-
-        // Check if we're on localhost (server machine)
-        const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '::1';
-
-        // Prepare context for rendering
-        const context = {
-          currentCredentialId,
-          isLocalhost,
-          deviceCount: devices.length
-        };
-
-        // Create renderer with context-aware template
-        const renderer = new ListRenderer(devicesList, {
-          itemTemplate: (device) => deviceItemTemplate(device, context),
-          onAction: ({ action, id, element }) => {
-            if (action === 'rename') {
-              renameDevice(id);
-            } else if (action === 'remove') {
-              const isCurrent = element.dataset.isCurrent === 'true';
-              removeDevice(id, isCurrent);
-            }
-          },
-          beforeRender: () => {
-            // Add header for localhost view
-            if (isLocalhost) {
-              devicesList.innerHTML = '<div class="device-section-header">LAN Devices</div>';
-            }
-          },
-          afterRender: () => {
-            // Show warning if last device (remote view only)
-            if (!isLocalhost && devices.length === 1) {
-              devicesList.insertAdjacentHTML('beforeend', `
-                <div class="devices-warning">
-                  <i class="ph ph-warning"></i>
-                  <span>You cannot remove the last device (would lock you out)</span>
-                </div>
-              `);
-            }
-          }
-        });
-
-        renderer.render(lanDevices);
-      } catch (err) {
-        devicesList.innerHTML = '<p class="devices-loading">Failed to load devices</p>';
-        console.error("Failed to load devices:", err);
-      }
-    }
-
-    function formatRelativeTime(timestamp) {
-      const now = Date.now();
-      const diff = now - timestamp;
-      const seconds = Math.floor(diff / 1000);
-      const minutes = Math.floor(seconds / 60);
-      const hours = Math.floor(minutes / 60);
-      const days = Math.floor(hours / 24);
-
-      if (seconds < 60) return 'Just now';
-      if (minutes < 60) return `${minutes}m ago`;
-      if (hours < 24) return `${hours}h ago`;
-      if (days < 7) return `${days}d ago`;
-      return new Date(timestamp).toLocaleDateString();
-    }
-
-    function escapeHtml(str) {
-      const div = document.createElement('div');
-      div.textContent = str;
-      return div.innerHTML;
-    }
+    // Mount device list component
+    const devicesList = document.getElementById("devices-list");
+    deviceListComponent.mount(devicesList);
 
     async function renameDevice(deviceId) {
       const newName = prompt("Enter new device name:");
@@ -1773,7 +1661,7 @@
           body: JSON.stringify({ name: newName.trim() }),
         });
         if (!res.ok) throw new Error("Failed to rename device");
-        loadDevices(); // Reload to show updated name
+        invalidateDevices(deviceStore); // Auto-reload via store
       } catch (err) {
         alert("Failed to rename device: " + err.message);
       }
@@ -1803,7 +1691,7 @@
         if (isCurrent) {
           window.location.href = "/login";
         } else {
-          loadDevices(); // Reload to show updated list
+          invalidateDevices(deviceStore); // Auto-reload via store
         }
       } catch (err) {
         alert("Failed to remove device: " + err.message);
@@ -2372,7 +2260,7 @@
               stopWizardPairing();
               switchSettingsView(viewSuccess);
               // Refresh device list to show newly paired device
-              loadDevices();
+              invalidateDevices(deviceStore);
             }
           } catch (err) {
             console.error('[Wizard] Status check failed:', err);
