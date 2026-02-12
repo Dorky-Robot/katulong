@@ -12,6 +12,7 @@
     import { createWizardComponent } from "/lib/wizard-component.js";
     import { createSessionStore, invalidateSessions } from "/lib/session-store.js";
     import { createSessionListComponent } from "/lib/session-list-component.js";
+    import { createSessionManager } from "/lib/session-manager.js";
     import { createTokenStore, setNewToken, invalidateTokens } from "/lib/token-store.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
     import { createTokenFormManager } from "/lib/token-form.js";
@@ -816,80 +817,25 @@
 
     // --- Session manager (render takes data) ---
 
-    const sessionOverlay = document.getElementById("session-overlay");
     const sessionStore = createSessionStore(state.session.name);
+
+    // Create session list component
     const sessionListComponent = createSessionListComponent(sessionStore);
     const sessionListEl = document.getElementById("session-list");
     if (sessionListEl) {
       sessionListComponent.mount(sessionListEl);
     }
-    const sessionNewName = document.getElementById("session-new-name");
 
-    async function openSessionManager() {
-      modals.open('session');
-      invalidateSessions(sessionStore, state.session.name);
-      // Fetch and populate SSH password
-      try {
-        const res = await fetch("/ssh/password");
-        if (res.ok) {
-          const { password } = await res.json();
-          const pwInput = document.getElementById("ssh-password-value");
-          pwInput.value = password;
-        }
-      } catch { /* ignore */ }
-    }
-
-    // SSH password reveal toggle
-    document.getElementById("ssh-password-reveal").addEventListener("click", () => {
-      const pwInput = document.getElementById("ssh-password-value");
-      const icon = document.querySelector("#ssh-password-reveal i");
-      if (pwInput.type === "password") {
-        pwInput.type = "text";
-        icon.className = "ph ph-eye-slash";
-      } else {
-        pwInput.type = "password";
-        icon.className = "ph ph-eye";
-      }
+    // Create session manager with callbacks
+    const sessionManager = createSessionManager({
+      modals,
+      sessionStore,
+      onSessionCreate: () => invalidateSessions(sessionStore, state.session.name)
     });
+    sessionManager.init();
 
-    // SSH password copy
-    document.getElementById("ssh-password-copy").addEventListener("click", async () => {
-      const pwInput = document.getElementById("ssh-password-value");
-      const btn = document.getElementById("ssh-password-copy");
-      try {
-        await navigator.clipboard.writeText(pwInput.value);
-        btn.innerHTML = '<i class="ph ph-check"></i>';
-        btn.style.color = "var(--success)";
-        setTimeout(() => { btn.innerHTML = '<i class="ph ph-copy"></i>'; btn.style.color = ""; }, 1500);
-      } catch { /* clipboard not available */ }
-    });
-
-
-    document.getElementById("session-new-create").addEventListener("click", async () => {
-      const name = sessionNewName.value.trim();
-      if (!name) return;
-      try {
-        const res = await fetch("/sessions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          sessionNewName.value = "";
-          window.open(`/?s=${encodeURIComponent(data.name)}`, "_blank");
-          invalidateSessions(sessionStore, state.session.name);
-        } else {
-          console.error(`[Session] Create failed: ${res.status} ${res.statusText}`);
-        }
-      } catch (err) {
-        console.error("[Session] Create error:", err);
-      }
-    });
-
-    sessionNewName.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") document.getElementById("session-new-create").click();
-    });
+    // Expose openSessionManager for external use
+    const openSessionManager = () => sessionManager.openSessionManager(state.session.name);
     
 
     // --- Settings ---
