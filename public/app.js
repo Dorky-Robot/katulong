@@ -9,6 +9,10 @@
     import { createDeviceStore, loadDevices as reloadDevices, invalidateDevices } from "/lib/device-store.js";
     import { createDeviceListComponent } from "/lib/device-list-component.js";
     import { createWizardComponent } from "/lib/wizard-component.js";
+    import { createSessionStore, invalidateSessions } from "/lib/session-store.js";
+    import { createSessionListComponent } from "/lib/session-list-component.js";
+    import { createTokenStore, setNewToken, invalidateTokens } from "/lib/token-store.js";
+    import { createTokenListComponent } from "/lib/token-list-component.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -1421,12 +1425,17 @@
     // --- Session manager (render takes data) ---
 
     const sessionOverlay = document.getElementById("session-overlay");
+    const sessionStore = createSessionStore(state.session.name);
+    const sessionListComponent = createSessionListComponent(sessionStore);
     const sessionListEl = document.getElementById("session-list");
+    if (sessionListEl) {
+      sessionListComponent.mount(sessionListEl);
+    }
     const sessionNewName = document.getElementById("session-new-name");
 
     async function openSessionManager() {
       modals.open('session');
-      await renderSessionList(state.session.name);
+      invalidateSessions(sessionStore, state.session.name);
       // Fetch and populate SSH password
       try {
         const res = await fetch("/ssh/password");
@@ -1463,105 +1472,6 @@
       } catch { /* clipboard not available */ }
     });
 
-    async function renderSessionList(currentSession) {
-      let sessions = [];
-      let sshInfo = { sshPort: 2222, sshHost: "localhost" };
-      try {
-        const [sessRes, infoRes] = await Promise.all([fetch("/sessions"), fetch("/connect/info")]);
-        sessions = await sessRes.json();
-        if (infoRes.ok) Object.assign(sshInfo, await infoRes.json());
-      } catch { /* ignore */ }
-
-      sessionListEl.innerHTML = "";
-      for (const s of sessions) {
-        const row = document.createElement("div");
-        row.className = "session-item";
-        row.setAttribute("role", "listitem");
-
-        const dot = document.createElement("span");
-        dot.className = `session-status ${s.alive ? "alive" : "dead"}`;
-        dot.setAttribute("aria-label", s.alive ? "Running" : "Exited");
-        row.appendChild(dot);
-
-        const nameInput = document.createElement("input");
-        nameInput.type = "text";
-        nameInput.className = "session-name-input";
-        nameInput.value = s.name;
-        nameInput.setAttribute("aria-label", `Session name: ${s.name}`);
-        nameInput.setAttribute("autocorrect", "off");
-        nameInput.setAttribute("autocapitalize", "off");
-        nameInput.setAttribute("spellcheck", "false");
-        const originalName = s.name;
-
-        async function commitRename() {
-          const newName = nameInput.value.trim();
-          if (!newName || newName === originalName) { nameInput.value = originalName; return; }
-          try {
-            const res = await fetch(`/sessions/${encodeURIComponent(originalName)}`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ name: newName }),
-            });
-            if (!res.ok) { nameInput.value = originalName; return; }
-          } catch { nameInput.value = originalName; return; }
-          await renderSessionList(currentSession);
-        }
-
-        nameInput.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") { e.preventDefault(); nameInput.blur(); }
-          if (e.key === "Escape") { nameInput.value = originalName; nameInput.blur(); }
-        });
-        nameInput.addEventListener("blur", commitRename);
-        row.appendChild(nameInput);
-
-        if (s.name === currentSession) {
-          const cur = document.createElement("span");
-          cur.className = "session-current-tag";
-          cur.textContent = "(current)";
-          row.appendChild(cur);
-        } else {
-          const openBtn = document.createElement("button");
-          openBtn.className = "session-icon-btn open";
-          openBtn.setAttribute("aria-label", `Switch to ${s.name}`);
-          openBtn.innerHTML = '<i class="ph ph-arrow-right"></i>';
-          openBtn.addEventListener("click", () => { location.href = `/?s=${encodeURIComponent(s.name)}`; });
-          row.appendChild(openBtn);
-        }
-
-        const sshBtn = document.createElement("button");
-        sshBtn.className = "session-icon-btn ssh";
-        sshBtn.setAttribute("aria-label", `Copy SSH command for ${s.name}`);
-        sshBtn.innerHTML = '<i class="ph ph-terminal"></i>';
-        sshBtn.addEventListener("click", async () => {
-          const cmd = `ssh ${s.name}@${sshInfo.sshHost} -p ${sshInfo.sshPort}`;
-          try {
-            await navigator.clipboard.writeText(cmd);
-            sshBtn.innerHTML = '<i class="ph ph-check"></i>';
-            sshBtn.style.color = "var(--success)";
-            setTimeout(() => { sshBtn.innerHTML = '<i class="ph ph-terminal"></i>'; sshBtn.style.color = ""; }, 1500);
-          } catch { /* clipboard not available */ }
-        });
-        row.appendChild(sshBtn);
-
-        const delBtn = document.createElement("button");
-        delBtn.className = "session-icon-btn delete";
-        delBtn.setAttribute("aria-label", `Delete session ${s.name}`);
-        delBtn.innerHTML = '<i class="ph ph-trash"></i>';
-        delBtn.addEventListener("click", async () => {
-          // Check if session has running processes or important content
-          if (s.hasChildProcesses) {
-            const confirmed = confirm(
-              `Session "${s.name}" contains running processes or important content (like Claude Code history). Deleting it will lose this data.\n\nAre you sure you want to delete this session?`
-            );
-            if (!confirmed) return;
-          }
-          try { await fetch(`/sessions/${encodeURIComponent(s.name)}`, { method: "DELETE" }); } catch {}
-          await renderSessionList(currentSession);
-        });
-        row.appendChild(delBtn);
-        sessionListEl.appendChild(row);
-      }
-    }
 
     document.getElementById("session-new-create").addEventListener("click", async () => {
       const name = sessionNewName.value.trim();
@@ -1576,7 +1486,7 @@
           const data = await res.json();
           sessionNewName.value = "";
           window.open(`/?s=${encodeURIComponent(data.name)}`, "_blank");
-          await renderSessionList(state.session.name);
+          invalidateSessions(sessionStore, state.session.name);
         } else {
           console.error(`[Session] Create failed: ${res.status} ${res.statusText}`);
         }
@@ -1701,134 +1611,14 @@
 
     // --- Token management ---
 
-    /**
-     * Creates token item HTML
-     * @param {Object} token - Token data
-     * @returns {string} Token item HTML
-     */
-    function tokenItemTemplate(token) {
-      const createdDate = token.createdAt ? new Date(token.createdAt).toLocaleDateString() : 'Unknown';
-
-      // Check if token has been used to register a device
-      const hasCredential = token.credential !== null && token.credential !== undefined;
-
-      let iconClass, statusText, metaText;
-      if (hasCredential) {
-        // Token was used - show device info
-        iconClass = 'ph-device-mobile'; // Device icon
-        const lastAuth = token.credential.lastUsedAt ? formatRelativeTime(token.credential.lastUsedAt) : 'Never';
-        statusText = `<span class="token-status-active">Active device</span>`;
-        metaText = `Registered: ${createdDate} · Last authenticated: ${lastAuth}`;
-
-        // Add user agent info if available
-        if (token.credential.userAgent && token.credential.userAgent !== 'Unknown') {
-          metaText += `<br><span class="token-device-info">${escapeHtml(token.credential.userAgent)}</span>`;
-        }
-      } else {
-        // Token not used yet - show as unused
-        iconClass = 'ph-key'; // Key icon
-        statusText = `<span class="token-status-unused">Unused</span>`;
-        metaText = `Created: ${createdDate}`;
-      }
-
-      return `
-        <div class="token-item ${hasCredential ? 'token-item-used' : ''}" data-token-id="${token.id}" data-has-credential="${hasCredential}">
-          <div class="token-header">
-            <i class="token-icon ph ${iconClass}"></i>
-            <span class="token-name">${escapeHtml(token.name)}</span>
-            ${statusText}
-          </div>
-          <div class="token-meta">
-            ${metaText}
-          </div>
-          <div class="token-actions">
-            <button class="token-btn" data-action="rename" data-id="${token.id}">Rename</button>
-            <button class="token-btn token-btn-danger" data-action="revoke" data-id="${token.id}">Revoke</button>
-          </div>
-        </div>
-      `;
-    }
-
-    async function loadTokens() {
-      const tokensList = document.getElementById("tokens-list");
-
-      // Preserve any newly created token display by cloning before DOM wipe
-      const newTokenEl = tokensList.querySelector('.token-item-new');
-      const clonedNewToken = newTokenEl ? newTokenEl.cloneNode(true) : null;
-      const newTokenValue = clonedNewToken?.querySelector('.token-copy-btn')?.dataset?.token;
-
-      try {
-        tokensList.innerHTML = '<p class="tokens-loading">Loading tokens...</p>';
-
-        const res = await fetch("/api/tokens");
-        if (!res.ok) throw new Error("Failed to load tokens");
-        const { tokens } = await res.json();
-
-        // Filter out the newly created token if it's being displayed separately
-        const newTokenId = newTokenEl?.dataset?.tokenId;
-        const filteredTokens = newTokenId
-          ? tokens.filter(token => token.id !== newTokenId)
-          : tokens;
-
-        // Render the token list
-        if (filteredTokens.length === 0) {
-          tokensList.innerHTML = '<p class="tokens-empty">No setup tokens yet. Generate one to pair remote devices.</p>';
-        } else {
-          // Create renderer for existing tokens
-          const renderer = new ListRenderer(tokensList, {
-            itemTemplate: tokenItemTemplate,
-            emptyState: '<p class="tokens-empty">No setup tokens yet. Generate one to pair remote devices.</p>',
-            onAction: ({ action, id, element }) => {
-              if (action === 'rename') {
-                renameToken(id);
-              } else if (action === 'revoke') {
-                const tokenItem = element.closest('.token-item');
-                const hasCredential = tokenItem.dataset.hasCredential === 'true';
-                revokeToken(id, hasCredential);
-              }
-            }
-          });
-          renderer.render(filteredTokens);
-        }
-
-        // Insert the cloned new token at the top (after rendering the list)
-        if (clonedNewToken) {
-          tokensList.insertBefore(clonedNewToken, tokensList.firstChild);
-
-          // Re-attach event listeners (cloneNode doesn't copy listeners)
-          const copyBtn = clonedNewToken.querySelector(".token-copy-btn");
-          if (copyBtn) {
-            copyBtn.addEventListener("click", async () => {
-              const token = newTokenValue;
-              try {
-                await navigator.clipboard.writeText(token);
-                copyBtn.innerHTML = '<i class="ph ph-check"></i> Copied!';
-                copyBtn.style.background = "var(--success)";
-                setTimeout(() => {
-                  copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
-                  copyBtn.style.background = "";
-                }, 2000);
-              } catch (err) {
-                copyBtn.innerHTML = '<i class="ph ph-x"></i> Failed';
-                setTimeout(() => {
-                  copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
-                }, 2000);
-              }
-            });
-          }
-
-          const doneBtn = clonedNewToken.querySelector("#token-done-btn");
-          if (doneBtn) {
-            doneBtn.addEventListener("click", () => {
-              clonedNewToken.remove();
-              loadTokens(); // Reload normal token list
-            });
-          }
-        }
-      } catch (err) {
-        tokensList.innerHTML = '<p class="tokens-loading">Failed to load tokens</p>';
-        console.error("Failed to load tokens:", err);
-      }
+    const tokenStore = createTokenStore();
+    const tokenListComponent = createTokenListComponent(tokenStore, {
+      onRename: renameToken,
+      onRevoke: revokeToken
+    });
+    const tokensList = document.getElementById("tokens-list");
+    if (tokensList) {
+      tokenListComponent.mount(tokensList);
     }
 
     // Token creation form handlers
@@ -1908,7 +1698,7 @@
         createTokenBtn.style.display = "block";
 
         // Display the token in the UI with copy button (1Password-style)
-        showNewTokenInList(data);
+        setNewToken(tokenStore, data);
       } catch (err) {
         alert("Failed to create token: " + err.message);
         tokenFormSubmit.disabled = false;
@@ -1926,69 +1716,6 @@
       });
     }
 
-    function showNewTokenInList(tokenData) {
-      console.log("showNewTokenInList called with:", tokenData);
-      const tokensList = document.getElementById("tokens-list");
-      console.log("tokens-list element:", tokensList);
-
-      // Create a special UI element for the newly created token
-      const newTokenEl = document.createElement("div");
-      newTokenEl.className = "token-item token-item-new";
-      newTokenEl.dataset.tokenId = tokenData.id; // Store token ID to filter out duplicates
-      console.log("Created new token element");
-      newTokenEl.innerHTML = `
-        <div class="token-header">
-          <i class="token-icon ph ph-key"></i>
-          <span class="token-name">${escapeHtml(tokenData.name)}</span>
-          <span class="token-new-badge">New</span>
-        </div>
-        <div class="token-reveal-warning">
-          <i class="ph ph-warning"></i> Save this token now - you won't see it again!
-        </div>
-        <div class="token-value-container">
-          <input type="text" class="token-value-field" value="${escapeHtml(tokenData.token)}" readonly />
-          <button class="token-copy-btn" data-token="${escapeHtml(tokenData.token)}">
-            <i class="ph ph-copy"></i> Copy
-          </button>
-        </div>
-        <div class="token-actions">
-          <button class="token-btn" id="token-done-btn">Done</button>
-        </div>
-      `;
-
-      // Insert at the top of the list
-      tokensList.insertBefore(newTokenEl, tokensList.firstChild);
-
-      // Add copy button handler
-      const copyBtn = newTokenEl.querySelector(".token-copy-btn");
-      copyBtn.addEventListener("click", async () => {
-        const token = copyBtn.dataset.token;
-        try {
-          await navigator.clipboard.writeText(token);
-          copyBtn.innerHTML = '<i class="ph ph-check"></i> Copied!';
-          copyBtn.style.background = "var(--success)";
-          setTimeout(() => {
-            copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
-            copyBtn.style.background = "";
-          }, 2000);
-        } catch (err) {
-          copyBtn.innerHTML = '<i class="ph ph-x"></i> Failed';
-          setTimeout(() => {
-            copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
-          }, 2000);
-        }
-      });
-
-      // Add done button handler
-      const doneBtn = newTokenEl.querySelector("#token-done-btn");
-      doneBtn.addEventListener("click", () => {
-        newTokenEl.remove();
-        loadTokens(); // Reload normal token list
-      });
-
-      // Load the rest of the tokens below
-      loadTokens();
-    }
 
     async function renameToken(tokenId) {
       const newName = prompt("Enter new token name:");
@@ -2001,7 +1728,7 @@
           body: JSON.stringify({ name: newName.trim() }),
         });
         if (!res.ok) throw new Error("Failed to rename token");
-        loadTokens(); // Reload to show updated name
+        invalidateTokens(tokenStore); // Reload to show updated name
       } catch (err) {
         alert("Failed to rename token: " + err.message);
       }
@@ -2021,7 +1748,7 @@
           method: "DELETE",
         });
         if (!res.ok) throw new Error("Failed to revoke token");
-        loadTokens(); // Reload to show updated list
+        invalidateTokens(tokenStore); // Reload to show updated list
       } catch (err) {
         alert("Failed to revoke: " + err.message);
       }
