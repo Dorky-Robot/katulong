@@ -38,42 +38,12 @@
     import { createInputSender } from "/lib/input-sender.js";
     import { createP2PIndicator } from "/lib/p2p-ui.js";
     import { loadQRLib, getConnectInfo, checkPairingStatus } from "/lib/wizard-utils.js";
+    import { initModals } from "/lib/modal-init.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
 
-    // Register modals (will be called after terminal is created)
-    function initModals(terminal) {
-      modals.register('shortcuts', 'shortcuts-overlay', {
-        returnFocus: terminal,
-        onClose: () => terminal.focus()
-      });
-      modals.register('edit', 'edit-overlay', {
-        returnFocus: terminal,
-        onClose: () => terminal.focus()
-      });
-      modals.register('add', 'add-modal', {
-        returnFocus: terminal,
-        onOpen: () => {
-          // Focus the key composer input after modal opens
-          const keyInput = document.getElementById("key-composer-input");
-          if (keyInput) keyInput.focus();
-        },
-        onClose: () => terminal.focus()
-      });
-      modals.register('session', 'session-overlay', {
-        returnFocus: terminal,
-        onClose: () => terminal.focus()
-      });
-      modals.register('dictation', 'dictation-overlay', {
-        returnFocus: terminal,
-        onClose: () => terminal.focus()
-      });
-      modals.register('settings', 'settings-overlay', {
-        returnFocus: terminal,
-        onClose: () => terminal.focus()
-      });
-    }
+    // Modal registration imported from /lib/modal-init.js
 
     // --- Theme (using composable theme manager) ---
     const themeManager = createThemeManager({
@@ -189,7 +159,7 @@
     term.open(document.getElementById("terminal-container"));
 
     // Initialize modals with terminal reference
-    initModals(term);
+    initModals(modals, term);
 
     // Disable mobile autocorrect/suggestions on xterm's hidden textarea
     function patchTextarea() {
