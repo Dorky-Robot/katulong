@@ -28,6 +28,7 @@
     import { getCsrfToken, addCsrfHeader } from "/lib/csrf.js";
     import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll } from "/lib/scroll-utils.js";
     import { keysToSequence, sendSequence, displayKey, keysLabel, keysString, VALID_KEYS, normalizeKey } from "/lib/key-mapping.js";
+    import { createShortcutBar } from "/lib/shortcut-bar.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -703,61 +704,23 @@
     }
     scrollBtn.addEventListener("click", () => { term.scrollToBottom(term); scrollBtn.style.display = "none"; });
 
-    // --- Shortcut bar (render takes data) ---
+    // --- Shortcut bar (composable renderer) ---
 
-    const pinnedKeys = [
-      { label: "Esc", keys: "esc" },
-      { label: "Tab", keys: "tab" },
-    ];
+    const shortcutBar = createShortcutBar({
+      container: bar,
+      pinnedKeys: [
+        { label: "Esc", keys: "esc" },
+        { label: "Tab", keys: "tab" }
+      ],
+      onSessionClick: openSessionManager,
+      onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
+      onSettingsClick: () => modals.open('settings'),
+      sendFn: rawSend,
+      term,
+      updateP2PIndicator
+    });
 
-    function renderBar(name) {
-      bar.innerHTML = "";
-
-      const p2pDot = document.createElement("span");
-      p2pDot.id = "p2p-indicator";
-      p2pDot.title = "P2P: connecting...";
-      bar.appendChild(p2pDot);
-      updateP2PIndicator();
-
-      const sessBtn = document.createElement("button");
-      sessBtn.className = "session-btn";
-      sessBtn.tabIndex = -1;
-      sessBtn.setAttribute("aria-label", `Session: ${name}`);
-      sessBtn.innerHTML = '<i class="ph ph-terminal-window"></i> ';
-      sessBtn.appendChild(document.createTextNode(name));
-      sessBtn.addEventListener("click", openSessionManager);
-      bar.appendChild(sessBtn);
-
-      const spacer = document.createElement("span");
-      spacer.className = "bar-spacer";
-      bar.appendChild(spacer);
-
-      for (const s of pinnedKeys) {
-        const btn = document.createElement("button");
-        btn.className = "shortcut-btn";
-        btn.tabIndex = -1;
-        btn.textContent = s.label;
-        btn.setAttribute("aria-label", `Send ${s.label}`);
-        btn.addEventListener("click", () => { sendSequence(keysToSequence(s.keys), rawSend); term.focus(); });
-        bar.appendChild(btn);
-      }
-
-      const kbBtn = document.createElement("button");
-      kbBtn.className = "bar-icon-btn";
-      kbBtn.tabIndex = -1;
-      kbBtn.setAttribute("aria-label", "Open shortcuts");
-      kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
-      kbBtn.addEventListener("click", () => openShortcutsPopup(state.session.shortcuts));
-      bar.appendChild(kbBtn);
-
-      const setBtn = document.createElement("button");
-      setBtn.className = "bar-icon-btn";
-      setBtn.tabIndex = -1;
-      setBtn.setAttribute("aria-label", "Settings");
-      setBtn.innerHTML = '<i class="ph ph-gear"></i>';
-      setBtn.addEventListener("click", () => modals.open('settings'));
-      bar.appendChild(setBtn);
-    }
+    const renderBar = (name) => shortcutBar.render(name);
 
     // --- Shortcuts popup (reactive component) ---
 
