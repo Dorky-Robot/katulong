@@ -2157,9 +2157,9 @@
       };
 
       const cleanup = () => {
-        clearTimeout(state.timers.refresh);
-        clearInterval(state.timers.countdown);
-        clearInterval(state.timers.statusPoll);
+        if (state.timers.refresh) clearTimeout(state.timers.refresh);
+        if (state.timers.countdown) clearInterval(state.timers.countdown);
+        if (state.timers.statusPoll) clearInterval(state.timers.statusPoll);
         state.timers = { refresh: 0, countdown: 0, statusPoll: 0 };
         state.activePairCode = null;
       };
@@ -2285,6 +2285,13 @@
 
     async function refreshWizardPairCode() {
       try {
+        // Clear any previous error
+        const errorEl = document.getElementById("wizard-error");
+        if (errorEl) {
+          errorEl.style.display = "none";
+          errorEl.textContent = "";
+        }
+
         const res = await fetch("/auth/pair/start", {
           method: "POST",
           headers: addCsrfHeader()
@@ -2344,13 +2351,23 @@
             clearInterval(wizardManager.state.timers.statusPoll);
             return;
           }
-          const consumed = await checkPairingStatus(data.code);
-          if (consumed) {
+          try {
+            const consumed = await checkPairingStatus(data.code);
+            if (consumed) {
+              clearInterval(wizardManager.state.timers.statusPoll);
+              stopWizardPairing();
+              switchSettingsView(viewSuccess);
+              // Refresh device list to show newly paired device
+              loadDevices();
+            }
+          } catch (err) {
+            console.error('[Wizard] Status check failed:', err);
+            const errorEl = document.getElementById("wizard-error");
+            if (errorEl) {
+              errorEl.textContent = "Connection lost. Please try again.";
+              errorEl.style.display = "block";
+            }
             clearInterval(wizardManager.state.timers.statusPoll);
-            stopWizardPairing();
-            switchSettingsView(viewSuccess);
-            // Refresh device list to show newly paired device
-            loadDevices();
           }
         }, 2000);
 

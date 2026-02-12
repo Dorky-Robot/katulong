@@ -258,7 +258,7 @@ describe("processPairing", () => {
 
     assert.ok(result instanceof AuthFailure);
     assert.equal(result.reason, "invalid-format");
-    assert.equal(result.message, "PIN must be exactly 6 digits");
+    assert.equal(result.message, "PIN must be exactly 8 digits");
     assert.equal(result.statusCode, 400);
   });
 
