@@ -37,6 +37,7 @@
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
     import { createP2PIndicator } from "/lib/p2p-ui.js";
+    import { loadQRLib, getConnectInfo, checkPairingStatus } from "/lib/wizard-utils.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -741,45 +742,7 @@
     // --- Wizard state management with reactive component ---
     const wizardStore = createWizardStore();
 
-    // Utility functions for wizard component
-    let connectInfoCache = null;
-    let qrLibLoaded = false;
-
-    const loadQRLib = async () => {
-      if (qrLibLoaded) return;
-      if (typeof QRCode !== "undefined") {
-        qrLibLoaded = true;
-        return;
-      }
-      await new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = "/vendor/qrcode/qrcode.min.js";
-        s.onload = () => {
-          qrLibLoaded = true;
-          resolve();
-        };
-        s.onerror = reject;
-        document.head.appendChild(s);
-      });
-    };
-
-    const getConnectInfo = async () => {
-      if (connectInfoCache) return connectInfoCache;
-      const res = await fetch("/connect/info");
-      connectInfoCache = await res.json();
-      return connectInfoCache;
-    };
-
-    async function checkPairingStatus(code) {
-      try {
-        const res = await fetch(`/auth/pair/status/${code}`);
-        if (!res.ok) return false;
-        const data = await res.json();
-        return data.consumed;
-      } catch {
-        return false;
-      }
-    }
+    // Wizard utilities imported from /lib/wizard-utils.js
 
     // Create wizard controller
     const wizardController = createWizardController({
