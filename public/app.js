@@ -36,6 +36,7 @@
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
+    import { createP2PIndicator } from "/lib/p2p-ui.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -162,17 +163,12 @@
       getWS: () => state.connection.ws
     });
 
-    // P2P UI indicator (pure effect)
-    function updateP2PIndicator() {
-      const dot = document.getElementById("p2p-indicator");
-      if (!dot) return;
-      const p2pState = p2pManager.getState();
-      dot.classList.toggle("p2p-active", p2pState.connected);
-      dot.classList.toggle("p2p-relay", state.connection.attached && !p2pState.connected);
-      dot.title = p2pState.connected ? "Connected (direct)"
-        : state.connection.attached ? "Connected (relay)"
-        : "Disconnected";
-    }
+    // P2P UI indicator
+    const p2pIndicator = createP2PIndicator({
+      p2pManager,
+      getConnectionState: () => ({ attached: state.connection.attached })
+    });
+    const updateP2PIndicator = () => p2pIndicator.update();
 
     document.title = state.session.name;
 
