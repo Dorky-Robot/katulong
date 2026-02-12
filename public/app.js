@@ -22,6 +22,8 @@
     import { createPullToRefreshManager } from "/lib/pull-to-refresh.js";
     import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
     import { createTabManager } from "/lib/tab-manager.js";
+    import { getCsrfToken, addCsrfHeader } from "/lib/csrf.js";
+    import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll } from "/lib/scroll-utils.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -59,61 +61,10 @@
       });
     }
 
-    // --- CSRF Protection ---
-
-    function getCsrfToken() {
-      const meta = document.querySelector('meta[name="csrf-token"]');
-      return meta ? meta.content : null;
-    }
-
-    function addCsrfHeader(headers = {}) {
-      const token = getCsrfToken();
-      if (token) {
-        headers['X-CSRF-Token'] = token;
-      }
-      return headers;
-    }
-
     // --- Theme (using composable theme manager) ---
-
-    // --- Scroll state management (composable effects) ---
-
-    // Pure: Check if viewport is at bottom
-    function isAtBottom(viewport = document.querySelector(".xterm-viewport")) {
-      if (!viewport) return true;
-      // Dynamic threshold: 10px minimum or 2% of viewport height (better for high-DPI)
-      const threshold = Math.max(10, viewport.clientHeight * 0.02);
-      return viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - threshold;
-    }
-
-    // Effect: Scroll to bottom with double RAF for layout settling
-    const scrollToBottom = () => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => term.scrollToBottom());
-      });
-    };
-
-    // Composable: Preserve scroll position during operation
-    const withPreservedScroll = (operation) => {
-      const viewport = document.querySelector(".xterm-viewport");
-      const wasAtBottom = isAtBottom(viewport);
-      operation();
-      if (wasAtBottom) scrollToBottom();
-    };
-
-    // Composable: Terminal write with preserved scroll
-    const terminalWriteWithScroll = (data, onComplete) => {
-      const viewport = document.querySelector(".xterm-viewport");
-      const wasAtBottom = isAtBottom(viewport);
-      term.write(data, () => {
-        if (wasAtBottom) scrollToBottom();
-        if (onComplete) onComplete();
-      });
-    };
-
     const themeManager = createThemeManager({
       onThemeChange: (themeData) => {
-        withPreservedScroll(() => {
+        withPreservedScroll(term, () => {
           term.options.theme = themeData;
         });
       }
@@ -289,10 +240,10 @@
         try {
           const msg = JSON.parse(str);
           if (msg.type === "output") {
-            terminalWriteWithScroll(msg.data);
+            terminalWriteWithScroll(term, msg.data);
           }
         } catch {
-          terminalWriteWithScroll(str);
+          terminalWriteWithScroll(term, str);
         }
       },
       getWS: () => state.connection.ws
@@ -350,9 +301,9 @@
       { childList: true, subtree: true }
     );
     document.fonts.ready.then(() => {
-      withPreservedScroll(() => fit.fit());
+      withPreservedScroll(term, () => fit.fit());
       // Ensure we start at bottom on initial page load
-      scrollToBottom();
+      scrollToBottom(term);
     });
 
     applyTheme(localStorage.getItem("theme") || "auto");
@@ -520,12 +471,12 @@
           break;
         case 'scrollToBottomIfNeeded':
           if (effect.condition) {
-            scrollToBottom();
+            scrollToBottom(term);
           }
           break;
         case 'terminalWrite':
           if (effect.preserveScroll) {
-            terminalWriteWithScroll(effect.data);
+            terminalWriteWithScroll(term, effect.data);
           } else {
             term.write(effect.data);
           }
@@ -708,13 +659,13 @@
     });
 
     const ro = new ResizeObserver(() => {
-      withPreservedScroll(() => fit.fit());
+      withPreservedScroll(term, () => fit.fit());
       if (state.connection.ws?.readyState === 1) state.connection.ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
     });
     ro.observe(termContainer);
 
     function resizeToViewport() {
-      withPreservedScroll(() => {
+      withPreservedScroll(term, () => {
         const vv = window.visualViewport;
         const h = vv ? vv.height : window.innerHeight;
         const top = vv ? vv.offsetTop : 0;
@@ -746,7 +697,7 @@
         }
       }, { passive: true });
     }
-    scrollBtn.addEventListener("click", () => { term.scrollToBottom(); scrollBtn.style.display = "none"; });
+    scrollBtn.addEventListener("click", () => { term.scrollToBottom(term); scrollBtn.style.display = "none"; });
 
     // --- Pure: key sequence mapping ---
 
