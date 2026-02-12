@@ -81,6 +81,9 @@ test.describe("Shortcuts popup", () => {
     // Save the shortcut
     await page.locator("#modal-save").click();
 
+    // Wait for modal to close
+    await expect(page.locator("#add-modal-overlay")).not.toHaveClass(/visible/);
+
     // The edit list should contain an item with the label
     const editList = page.locator("#edit-list");
     await expect(editList).toContainText("Ctrl+C, Ctrl+C");
