@@ -73,3 +73,32 @@ export async function uploadImage(file, options = {}) {
     throw err;
   }
 }
+
+/**
+ * Upload image to terminal (sends path to terminal after upload)
+ */
+export async function uploadImageToTerminal(file, options = {}) {
+  const { onSend, toast = showToast } = options;
+
+  try {
+    const res = await fetch("/upload", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Filename": file.name
+      },
+      body: file,
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Upload failed" }));
+      if (toast) toast(err.error || "Upload failed", true);
+      return;
+    }
+
+    const { path } = await res.json();
+    if (onSend) onSend(path + " ");
+  } catch (err) {
+    if (toast) toast("Upload failed", true);
+  }
+}
