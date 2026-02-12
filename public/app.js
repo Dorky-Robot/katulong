@@ -21,7 +21,7 @@
     import { createShortcutsPopup, createShortcutsEditPanel, createAddShortcutModal } from "/lib/shortcuts-components.js";
     import { createDictationModal } from "/lib/dictation-modal.js";
     import { createDragDropManager } from "/lib/drag-drop.js";
-    import { showToast, isImageFile, uploadImage } from "/lib/image-upload.js";
+    import { showToast, isImageFile, uploadImage, uploadImageToTerminal as uploadImageToTerminalFn } from "/lib/image-upload.js";
     import { createJoystickManager } from "/lib/joystick.js";
     import { createPullToRefreshManager } from "/lib/pull-to-refresh.js";
     import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
@@ -803,25 +803,10 @@
     
 
     // --- Image upload (using imported helpers) ---
-    // Upload function wrapper to send path to terminal
-    async function uploadImageToTerminal(file) {
-      try {
-        const res = await fetch("/upload", {
-          method: "POST",
-          headers: { "Content-Type": "application/octet-stream", "X-Filename": file.name },
-          body: file,
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: "Upload failed" }));
-          showToast(err.error || "Upload failed", true);
-          return;
-        }
-        const { path } = await res.json();
-        rawSend(path + " ");
-      } catch {
-        showToast("Upload failed", true);
-      }
-    }
+    const uploadImageToTerminal = (file) => uploadImageToTerminalFn(file, {
+      onSend: rawSend,
+      toast: showToast
+    });
 
     // --- Drag-and-drop (reactive manager) ---
 
