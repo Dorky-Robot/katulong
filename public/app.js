@@ -606,11 +606,28 @@
       }
     }
 
+    let isConnecting = false;
+    let reconnectTimeout = null;
+
     function connect() {
+      // Prevent multiple simultaneous connection attempts
+      if (isConnecting) {
+        console.log('[WS] Already connecting, skipping duplicate attempt');
+        return;
+      }
+
+      // Clear any pending reconnection timeout
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+      }
+
+      isConnecting = true;
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       state.connection.ws = new WebSocket(`${proto}//${location.host}`);
 
       state.connection.ws.onopen = () => {
+        isConnecting = false;
         state.connection.reconnectDelay = 1000;
         state.connection.ws.send(JSON.stringify({ type: "attach", session: state.session.name, cols: term.cols, rows: term.rows }));
         state.connection.ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
@@ -634,6 +651,8 @@
       };
 
       state.connection.ws.onclose = (event) => {
+        isConnecting = false;
+
         // Check if connection was closed due to revoked credentials
         if (event.code === 1008) { // 1008 = Policy Violation
           console.log('[Auth] Session invalidated, redirecting to login');
@@ -642,15 +661,22 @@
           return;
         }
 
-        // Normal disconnect - attempt reconnection
+        // Normal disconnect - attempt reconnection with exponential backoff
         const viewport = document.querySelector(".xterm-viewport");
         state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
         state.connection.attached = false;
         p2pManager.destroy();
-        setTimeout(connect, state.connection.reconnectDelay);
+
+        console.log(`[WS] Reconnecting in ${state.connection.reconnectDelay}ms`);
+        reconnectTimeout = setTimeout(connect, state.connection.reconnectDelay);
         state.connection.reconnectDelay = Math.min(state.connection.reconnectDelay * 2, 10000);
       };
-      state.connection.ws.onerror = () => state.connection.ws.close();
+
+      state.connection.ws.onerror = (err) => {
+        console.log('[WS] Connection error:', err.message || 'Unknown error');
+        isConnecting = false;
+        state.connection.ws.close();
+      };
     }
 
     // Force reconnect when returning to PWA after being backgrounded
@@ -662,8 +688,14 @@
         // Coming back to foreground
         const hiddenDuration = Date.now() - hiddenAt;
 
+        // Skip if already connecting
+        if (isConnecting) {
+          console.log('[Reconnect] Already connecting, skipping visibility reconnect');
+          return;
+        }
+
         // If was hidden for more than 5 seconds, force reconnect
-        if (hiddenDuration > 5000 && state.connection.ws) {
+        if (hiddenDuration > 5000 && state.connection.ws && !isConnecting) {
           console.log(`[Reconnect] Was hidden for ${Math.round(hiddenDuration/1000)}s, forcing reconnect`);
           state.connection.ws.close();
         } else if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
@@ -2610,7 +2642,7 @@
     function onNetworkChange() {
       if (!state.connection.ws || state.connection.ws.readyState !== 1) return;
       console.log("[P2P] Network change detected, re-establishing");
-      initP2P();
+      p2pManager.create();
     }
 
     window.addEventListener("online", onNetworkChange);
