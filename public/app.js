@@ -34,6 +34,7 @@
     import { createNetworkMonitor } from "/lib/network-monitor.js";
     import { createP2PManager } from "/lib/p2p-manager.js";
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
+    import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -244,55 +245,12 @@
       }
     }
 
-    // Intercept Tab at document level (capture phase) to prevent browser
-    // focus navigation and send \t to the PTY.
-    document.addEventListener("keydown", (ev) => {
-      if (ev.key !== "Tab" || ev.ctrlKey || ev.altKey || ev.metaKey) return;
-      const active = document.activeElement;
-      const inTerminal = active && (
-        active.classList.contains("xterm-helper-textarea") ||
-        active.closest("#terminal-container")
-      );
-      if (!inTerminal) return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      rawSend(ev.shiftKey ? "\x1b[Z" : "\t");
-    }, true);
-
-    term.attachCustomKeyEventHandler((ev) => {
-      if (ev.metaKey && ev.key === "c" && term.hasSelection()) return false;
-      if ((ev.metaKey || ev.ctrlKey) && ev.key === "v") return false;
-      if (ev.ctrlKey && ev.key === "c" && !term.hasSelection()) return true;
-
-      // Tab handled by capture-phase listener above
-      if (ev.key === "Tab") return false;
-
-      // Shift+Enter: quoted-insert (\x16) + newline (\x0a) — inserts a literal
-      // newline without executing, works in zsh/bash with no shell config needed
-      if (ev.shiftKey && ev.key === "Enter" && ev.type === "keydown") {
-        rawSend("\x16\x0a");
-        return false;
-      }
-
-      if (ev.metaKey && ev.type === "keydown") {
-        if (ev.key === "k") { term.clear(); return false; }
-        const seq = { Backspace: "\x15", ArrowLeft: "\x01", ArrowRight: "\x05" }[ev.key];
-        if (seq) { rawSend(seq); return false; }
-      }
-      if (ev.altKey && ev.type === "keydown") {
-        const seq = { Backspace: "\x1b\x7f", ArrowLeft: "\x1bb", ArrowRight: "\x1bf" }[ev.key];
-        if (seq) { rawSend(seq); return false; }
-      }
-      return true;
+    // Initialize terminal keyboard handlers
+    const terminalKeyboard = createTerminalKeyboard({
+      term,
+      onSend: rawSend
     });
-
-    term.onData((data) => {
-      // Filter focus-reporting sequences (CSI I / CSI O) that xterm.js
-      // emits when the browser tab gains/loses focus. These leak into
-      // CLI apps like Claude Code as garbage input (issue #10375).
-      const filtered = data.replace(/\x1b\[I/g, "").replace(/\x1b\[O/g, "");
-      if (filtered) rawSend(filtered);
-    });
+    terminalKeyboard.init();
 
     // --- Pure WebSocket message handlers (functional core) ---
     const wsMessageHandlers = {
