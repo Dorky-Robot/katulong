@@ -1,7 +1,8 @@
 import { test, expect } from "@playwright/test";
+import { setupTest } from "./helpers.js";
 
 test.describe("Keyboard handling", () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
     // Capture outgoing input messages from both WebSocket and P2P DataChannel
     await page.addInitScript(() => {
       window.__inputsSent = [];
@@ -23,18 +24,13 @@ test.describe("Keyboard handling", () => {
       };
     });
 
-    await page.goto("/");
-    await page.waitForSelector(".xterm-helper-textarea");
-    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
-    await page.locator(".xterm-helper-textarea").focus();
-    // Wait for attach + P2P handshake to settle
-    await page.waitForFunction(() => {
-      // Wait for WebSocket or P2P to be ready
-      return window.ws?.readyState === WebSocket.OPEN ||
-             (window.pc?.connectionState === 'connected');
-    }, { timeout: 5000 }).catch(() => {
-      // Connection might already be established
-    });
+    // Use standard setup
+    await setupTest({ page, context });
+
+    // Focus terminal for keyboard input
+    await page.click(".xterm");
+
+    // Clear inputs array after setup
     await page.evaluate(() => { window.__inputsSent = []; });
   });
 
