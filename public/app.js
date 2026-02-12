@@ -30,6 +30,8 @@
     import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll } from "/lib/scroll-utils.js";
     import { keysToSequence, sendSequence, displayKey, keysLabel, keysString, VALID_KEYS, normalizeKey } from "/lib/key-mapping.js";
     import { createShortcutBar } from "/lib/shortcut-bar.js";
+    import { createPasteHandler } from "/lib/paste-handler.js";
+    import { createNetworkMonitor } from "/lib/network-monitor.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -1028,30 +1030,22 @@
 
     // --- Global paste ---
 
-    document.addEventListener("paste", (e) => {
-      // Check for pasted images first (e.g., screenshots)
-      const imageFiles = [...(e.clipboardData?.files || [])].filter(isImageFile);
-      if (imageFiles.length > 0) {
-        e.preventDefault();
-        for (const file of imageFiles) uploadImageToTerminal(file);
-        return;
-      }
-      const text = e.clipboardData?.getData("text");
-      if (text) { rawSend(text); e.preventDefault(); }
+    const pasteHandler = createPasteHandler({
+      onText: (text) => rawSend(text),
+      onImage: (file) => uploadImageToTerminal(file)
     });
+    pasteHandler.init();
 
     // --- Network change: re-establish P2P ---
 
-    function onNetworkChange() {
-      if (!state.connection.ws || state.connection.ws.readyState !== 1) return;
-      console.log("[P2P] Network change detected, re-establishing");
-      p2pManager.create();
-    }
-
-    window.addEventListener("online", onNetworkChange);
-    if (navigator.connection) {
-      navigator.connection.addEventListener("change", onNetworkChange);
-    }
+    const networkMonitor = createNetworkMonitor({
+      onNetworkChange: () => {
+        if (!state.connection.ws || state.connection.ws.readyState !== 1) return;
+        console.log("[P2P] Network change detected, re-establishing");
+        p2pManager.create();
+      }
+    });
+    networkMonitor.init();
 
     // --- Boot ---
 
