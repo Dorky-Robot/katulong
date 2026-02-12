@@ -71,10 +71,14 @@
           let errorMsg = "Pairing failed";
           try {
             const err = await res.json();
-            errorMsg = err.error || errorMsg;
+            if (err.retryAfter) {
+              errorMsg = `Too many attempts. Wait ${err.retryAfter}s before retrying.`;
+            } else if (err.error) {
+              errorMsg = err.error;
+            }
             logDebug(`ERROR: ${errorMsg}`, true);
           } catch {
-            errorMsg = `Server error (${res.status} ${res.statusText})`;
+            errorMsg = `Server error (${res.status})`;
             logDebug(`ERROR: ${errorMsg}`, true);
           }
           throw new Error(errorMsg);

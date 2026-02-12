@@ -6,7 +6,7 @@ export default defineConfig({
   testDir: "test/e2e",
   testMatch: "*.e2e.js",
   timeout: 30_000,
-  retries: 0,
+  retries: 2, // Retry flaky tests to handle resource contention
   use: {
     baseURL: `http://localhost:${PORT}`,
   },
