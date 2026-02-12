@@ -32,6 +32,7 @@
     import { createShortcutBar } from "/lib/shortcut-bar.js";
     import { createPasteHandler } from "/lib/paste-handler.js";
     import { createNetworkMonitor } from "/lib/network-monitor.js";
+    import { createP2PManager } from "/lib/p2p-manager.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -142,100 +143,7 @@
       renderBar(state.session.name);
     });
 
-    // --- P2P Manager (edge module) ---
-    const createP2PManager = (config) => {
-      let peer = null;
-      let connected = false;
-      let retryTimer = 0;
-      const RETRY_MS = 3000;
-
-      const { onStateChange, onData, getWS } = config;
-
-      const destroy = () => {
-        clearTimeout(retryTimer);
-        retryTimer = 0;
-        if (peer) {
-          try { peer.destroy(); } catch {}
-          peer = null;
-        }
-        if (connected) {
-          connected = false;
-          onStateChange({ connected: false, peer: null });
-        }
-      };
-
-      const scheduleRetry = () => {
-        clearTimeout(retryTimer);
-        retryTimer = setTimeout(() => {
-          const ws = getWS();
-          if (!connected && state.connection.ws?.readyState === 1) {
-            create();
-          }
-        }, RETRY_MS);
-      };
-
-      const create = () => {
-        if (typeof SimplePeer === "undefined") return;
-        destroy();
-
-        const ws = getWS();
-        const newPeer = new SimplePeer({ initiator: true, trickle: true, config: { iceServers: [] } });
-
-        newPeer.on("signal", (data) => {
-          if (state.connection.ws?.readyState === 1) {
-            state.connection.ws.send(JSON.stringify({ type: "p2p-signal", data }));
-          }
-        });
-
-        newPeer.on("connect", () => {
-          connected = true;
-          console.log("[P2P] DataChannel connected");
-          onStateChange({ connected: true, peer: newPeer });
-        });
-
-        newPeer.on("data", (chunk) => {
-          const str = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
-          onData(str);
-        });
-
-        newPeer.on("close", () => {
-          console.log("[P2P] DataChannel closed, using WS");
-          connected = false;
-          peer = null;
-          onStateChange({ connected: false, peer: null });
-          scheduleRetry();
-        });
-
-        newPeer.on("error", (err) => {
-          console.warn("[P2P] error:", err.message);
-          connected = false;
-          peer = null;
-          onStateChange({ connected: false, peer: null });
-          scheduleRetry();
-        });
-
-        peer = newPeer;
-        onStateChange({ connected: false, peer: newPeer });
-      };
-
-      const signal = (data) => {
-        if (peer) peer.signal(data);
-      };
-
-      const send = (data) => {
-        if (!connected || !peer) return false;
-        try {
-          peer.send(data);
-          return true;
-        } catch {
-          return false;
-        }
-      };
-
-      const getState = () => ({ connected, peer });
-
-      return { create, destroy, signal, send, getState, scheduleRetry };
-    };
+    // --- P2P Manager ---
 
     // Initialize P2P manager
     const p2pManager = createP2PManager({
