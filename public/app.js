@@ -17,7 +17,7 @@
     import { createTokenStore, setNewToken, invalidateTokens, loadTokens as reloadTokens } from "/lib/token-store.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
     import { createTokenFormManager } from "/lib/token-form.js";
-    import { createShortcutsStore } from "/lib/shortcuts-store.js";
+    import { createShortcutsStore, loadShortcuts as reloadShortcuts } from "/lib/shortcuts-store.js";
     import { createShortcutsPopup, createShortcutsEditPanel, createAddShortcutModal } from "/lib/shortcuts-components.js";
     import { createDictationModal } from "/lib/dictation-modal.js";
     import { createDragDropManager } from "/lib/drag-drop.js";
@@ -110,6 +110,7 @@
 
     // --- Shortcuts state management (reactive store) ---
     const shortcutsStore = createShortcutsStore();
+    const loadShortcuts = () => reloadShortcuts(shortcutsStore);
 
     // Subscribe to shortcuts changes for render side effects
     // Note: shortcuts store subscription moved after renderBar is defined (line ~640)
