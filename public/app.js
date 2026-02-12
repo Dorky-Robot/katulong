@@ -1573,8 +1573,12 @@
           sessionNewName.value = "";
           window.open(`/?s=${encodeURIComponent(data.name)}`, "_blank");
           await renderSessionList(state.session.name);
+        } else {
+          console.error(`[Session] Create failed: ${res.status} ${res.statusText}`);
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.error("[Session] Create error:", err);
+      }
     });
 
     sessionNewName.addEventListener("keydown", (e) => {
