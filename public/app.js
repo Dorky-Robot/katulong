@@ -18,6 +18,10 @@
     import { createDictationModal } from "/lib/dictation-modal.js";
     import { createDragDropManager } from "/lib/drag-drop.js";
     import { showToast, isImageFile, uploadImage } from "/lib/image-upload.js";
+    import { createJoystickManager } from "/lib/joystick.js";
+    import { createPullToRefreshManager } from "/lib/pull-to-refresh.js";
+    import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
+    import { createTabManager } from "/lib/tab-manager.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -70,32 +74,7 @@
       return headers;
     }
 
-    // --- Theme ---
-
-    const DARK_THEME = {
-      background: "#1e1e2e", foreground: "#cdd6f4", cursor: "#f5e0dc",
-      selectionBackground: "rgba(137,180,250,0.3)",
-      black: "#45475a", brightBlack: "#585b70",
-      red: "#f38ba8", brightRed: "#f38ba8",
-      green: "#a6e3a1", brightGreen: "#a6e3a1",
-      yellow: "#f9e2af", brightYellow: "#f9e2af",
-      blue: "#89b4fa", brightBlue: "#89b4fa",
-      magenta: "#f5c2e7", brightMagenta: "#f5c2e7",
-      cyan: "#94e2d5", brightCyan: "#94e2d5",
-      white: "#bac2de", brightWhite: "#a6adc8",
-    };
-    const LIGHT_THEME = {
-      background: "#eff1f5", foreground: "#4c4f69", cursor: "#dc8a78",
-      selectionBackground: "rgba(30,102,245,0.2)",
-      black: "#5c5f77", brightBlack: "#6c6f85",
-      red: "#d20f39", brightRed: "#d20f39",
-      green: "#40a02b", brightGreen: "#40a02b",
-      yellow: "#df8e1d", brightYellow: "#df8e1d",
-      blue: "#1e66f5", brightBlue: "#1e66f5",
-      magenta: "#ea76cb", brightMagenta: "#ea76cb",
-      cyan: "#179299", brightCyan: "#179299",
-      white: "#acb0be", brightWhite: "#bcc0cc",
-    };
+    // --- Theme (using composable theme manager) ---
 
     // --- Scroll state management (composable effects) ---
 
@@ -132,30 +111,15 @@
       });
     };
 
-    function getEffectiveTheme() {
-      const pref = localStorage.getItem("theme") || "auto";
-      return pref === "auto"
-        ? (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
-        : pref;
-    }
+    const themeManager = createThemeManager({
+      onThemeChange: (themeData) => {
+        withPreservedScroll(() => {
+          term.options.theme = themeData;
+        });
+      }
+    });
 
-    function applyTheme(pref) {
-      localStorage.setItem("theme", pref);
-      document.documentElement.setAttribute("data-theme", pref);
-      const effective = getEffectiveTheme();
-
-      withPreservedScroll(() => {
-        term.options.theme = effective === "light" ? LIGHT_THEME : DARK_THEME;
-      });
-
-      const metaTheme = document.querySelector('meta[name="theme-color"]');
-      if (metaTheme) metaTheme.content = effective === "light" ? "#eff1f5" : "#1e1e2e";
-      document.querySelectorAll(".theme-toggle button").forEach(btn => {
-        const active = btn.dataset.themeVal === pref;
-        btn.classList.toggle("active", active);
-        btn.setAttribute("aria-checked", active);
-      });
-    }
+    const applyTheme = themeManager.apply;
 
     // --- Device ID Management ---
     // Device management functions imported from /lib/device.js
@@ -709,312 +673,30 @@
     const termContainer = document.getElementById("terminal-container");
     const bar = document.getElementById("shortcut-bar");
 
-    // --- Joystick: hold left/right, flick up/down, long-press center for Enter ---
-    // --- Joystick state machine ---
-    const joystick = document.getElementById("joystick");
-    const enterRing = document.getElementById("enter-progress-ring");
-    const enterCircle = enterRing.querySelector("circle");
-
-    const ARROWS = {
-      up: "\x1b[A",
-      down: "\x1b[B",
-      right: "\x1b[C",
-      left: "\x1b[D",
-    };
-
-    const JOYSTICK_CONFIG = {
-      CENTER_THRESHOLD: 0.4,
-      LONG_PRESS_DURATION: 600,
-      RING_CIRCUMFERENCE: 2 * Math.PI * 36,
-      MOVEMENT_THRESHOLD: 10,
-      REPEAT_INTERVAL: 50
-    };
-
-    // Pure: Determine zone from touch position
-    const getZone = (touch, rect) => {
-      const x = touch.clientX - rect.left - rect.width / 2;
-      const y = touch.clientY - rect.top - rect.height / 2;
-      const distance = Math.sqrt(x * x + y * y);
-      const radius = Math.min(rect.width, rect.height) / 2;
-
-      if (distance < radius * JOYSTICK_CONFIG.CENTER_THRESHOLD) {
-        return 'center';
-      }
-
-      return Math.abs(x) > Math.abs(y)
-        ? (x > 0 ? 'right' : 'left')
-        : (y > 0 ? 'down' : 'up');
-    };
-
-    // Joystick state reducer
-    const joystickReducer = (state, action) => {
-      switch (action.type) {
-        case 'TOUCH_START':
-          return {
-            mode: action.zone === 'center' ? 'long-press'
-              : (action.zone === 'left' || action.zone === 'right') ? 'hold'
-              : 'flick-wait',
-            zone: action.zone,
-            startX: action.x,
-            startY: action.y,
-            hasMoved: false,
-            enterSent: false
-          };
-
-        case 'TOUCH_MOVE':
-          const moved = Math.sqrt(action.dx * action.dx + action.dy * action.dy) > JOYSTICK_CONFIG.MOVEMENT_THRESHOLD;
-          return {
-            ...state,
-            hasMoved: state.hasMoved || moved,
-            zone: action.newZone || state.zone
-          };
-
-        case 'TOUCH_END':
-          return {
-            mode: 'idle',
-            zone: null,
-            startX: 0,
-            startY: 0,
-            hasMoved: false,
-            enterSent: false
-          };
-
-        case 'LONG_PRESS_COMPLETE':
-          return { ...state, enterSent: true };
-
-        case 'TOUCH_CANCEL':
-          return {
-            mode: 'idle',
-            zone: null,
-            startX: 0,
-            startY: 0,
-            hasMoved: false,
-            enterSent: false
-          };
-
-        default:
-          return state;
-      }
-    };
-
-    // Joystick effects (side effects at edges)
-    const joystickEffects = {
-      showRing: () => {
-        enterRing.classList.add("active");
-        enterCircle.style.strokeDasharray = JOYSTICK_CONFIG.RING_CIRCUMFERENCE;
-        enterCircle.style.strokeDashoffset = JOYSTICK_CONFIG.RING_CIRCUMFERENCE;
-        enterCircle.style.transition = `stroke-dashoffset ${JOYSTICK_CONFIG.LONG_PRESS_DURATION}ms linear`;
-        requestAnimationFrame(() => {
-          enterCircle.style.strokeDashoffset = 0;
-        });
-      },
-
-      hideRing: () => {
-        enterRing.classList.remove("active");
-        enterCircle.style.transition = "none";
-        enterCircle.style.strokeDashoffset = JOYSTICK_CONFIG.RING_CIRCUMFERENCE;
-      },
-
-      sendSequence: (sequence) => {
-        rawSend(sequence);
-        joystickEffects.showFeedback();
-      },
-
-      showFeedback: () => {
-        const rect = joystick.getBoundingClientRect();
-        const x = rect.left + rect.width / 2;
-        const y = rect.top + rect.height / 2;
-        const el = document.createElement("div");
-        el.className = "swipe-feedback";
-        el.style.left = x + "px";
-        el.style.top = y + "px";
-        document.body.appendChild(el);
-        el.addEventListener("animationend", () => el.remove(), { once: true });
-      }
-    };
-
-    // Joystick manager (stateful edge module)
-    const createJoystickManager = () => {
-      let joyState = {
-        mode: 'idle',
-        zone: null,
-        startX: 0,
-        startY: 0,
-        hasMoved: false,
-        enterSent: false
-      };
-
-      let repeatTimer = null;
-      let longPressTimer = null;
-
-      const dispatch = (action) => {
-        const prevState = joyState;
-        joyState = joystickReducer(joyState, action);
-
-        // Handle side effects based on state transitions
-        if (prevState.mode !== joyState.mode) {
-          if (joyState.mode === 'long-press') {
-            joystickEffects.showRing();
-            longPressTimer = setTimeout(() => {
-              if (!joyState.hasMoved) {
-                joystickEffects.sendSequence("\r");
-                dispatch({ type: 'LONG_PRESS_COMPLETE' });
-                joystickEffects.hideRing();
-              }
-            }, JOYSTICK_CONFIG.LONG_PRESS_DURATION);
-          } else if (joyState.mode === 'hold' && (joyState.zone === 'left' || joyState.zone === 'right')) {
-            const seq = ARROWS[joyState.zone];
-            joystickEffects.sendSequence(seq);
-            repeatTimer = setInterval(() => {
-              rawSend(seq);
-            }, JOYSTICK_CONFIG.REPEAT_INTERVAL);
-          } else if (joyState.mode === 'idle' || joyState.mode === 'flick-wait') {
-            if (repeatTimer) {
-              clearInterval(repeatTimer);
-              repeatTimer = null;
-            }
-            if (longPressTimer) {
-              clearTimeout(longPressTimer);
-              longPressTimer = null;
-            }
-            joystickEffects.hideRing();
-          }
-        }
-
-        // Handle zone changes in hold mode
-        if (joyState.mode === 'hold' && prevState.zone !== joyState.zone && (joyState.zone === 'left' || joyState.zone === 'right')) {
-          if (repeatTimer) {
-            clearInterval(repeatTimer);
-          }
-          const seq = ARROWS[joyState.zone];
-          joystickEffects.sendSequence(seq);
-          repeatTimer = setInterval(() => {
-            rawSend(seq);
-          }, JOYSTICK_CONFIG.REPEAT_INTERVAL);
-        }
-
-        // Handle movement canceling long-press
-        if (joyState.mode === 'long-press' && joyState.hasMoved && !prevState.hasMoved) {
-          if (longPressTimer) {
-            clearTimeout(longPressTimer);
-            longPressTimer = null;
-          }
-          joystickEffects.hideRing();
-        }
-      };
-
-      return { dispatch, getState: () => joyState };
-    };
-
-    const joyManager = createJoystickManager();
-
-    joystick.addEventListener("touchstart", (e) => {
-      e.preventDefault();
-      const t = e.touches[0];
-      const rect = joystick.getBoundingClientRect();
-      const zone = getZone(t, rect);
-      joyManager.dispatch({ type: 'TOUCH_START', zone, x: t.clientX, y: t.clientY });
+    // --- Joystick (composable state machine) ---
+    const joystickManager = createJoystickManager({
+      onSend: (sequence) => rawSend(sequence)
     });
+    joystickManager.init();
 
-    joystick.addEventListener("touchmove", (e) => {
-      e.preventDefault();
-      const t = e.touches[0];
-      const state = joyManager.getState();
-      const dx = t.clientX - state.startX;
-      const dy = t.clientY - state.startY;
-      const rect = joystick.getBoundingClientRect();
-      const newZone = (state.mode === 'hold') ? getZone(t, rect) : null;
-      joyManager.dispatch({ type: 'TOUCH_MOVE', dx, dy, newZone });
-    });
 
-    joystick.addEventListener("touchend", (e) => {
-      e.preventDefault();
-      const state = joyManager.getState();
 
-      if (!state.enterSent && state.mode === 'flick-wait') {
-        const t = e.changedTouches[0];
-        const dx = t.clientX - state.startX;
-        const dy = t.clientY - state.startY;
-        const moved = Math.max(Math.abs(dx), Math.abs(dy));
-
-        if (moved >= JOYSTICK_CONFIG.MOVEMENT_THRESHOLD && Math.abs(dy) > Math.abs(dx)) {
-          const seq = dy > 0 ? ARROWS.down : ARROWS.up;
-          joystickEffects.sendSequence(seq);
-        }
-      }
-
-      joyManager.dispatch({ type: 'TOUCH_END' });
-    });
-
-    joystick.addEventListener("touchcancel", (e) => {
-      e.preventDefault();
-      joyManager.dispatch({ type: 'TOUCH_CANCEL' });
-    });
-
-    // --- Pull-up to refresh (force reconnect) ---
-    {
-      const indicator = document.getElementById("pull-refresh-indicator");
-      let pullStartY = 0;
-      let isPulling = false;
-      const PULL_THRESHOLD = 80; // pixels to pull before triggering
-
-      termContainer.addEventListener("touchstart", (e) => {
-        const viewport = document.querySelector(".xterm-viewport");
-        // Only allow pull-up if at bottom of scrollback
-        if (isAtBottom(viewport)) {
-          pullStartY = e.touches[0].clientY;
-          isPulling = false;
-        }
-      });
-
-      termContainer.addEventListener("touchmove", (e) => {
-        if (pullStartY === 0) return;
-
-        const currentY = e.touches[0].clientY;
-        const pullDistance = pullStartY - currentY; // Negative = pulling down, Positive = pulling up
-
-        if (pullDistance > 20) {
-          isPulling = true;
-          const progress = Math.min(pullDistance / PULL_THRESHOLD, 1);
-          indicator.style.transform = `translateX(-50%) translateY(${100 - progress * 100}%)`;
-          indicator.classList.add("visible");
+    // --- Pull-to-refresh (composable gesture handler) ---
+    const pullToRefresh = createPullToRefreshManager({
+      container: termContainer,
+      isAtBottom,
+      onRefresh: () => {
+        if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN && state.connection.attached) {
+          console.log("[Pull-refresh] Connected - sending Ctrl-L");
+          rawSend("\x0C"); // Ctrl-L: refresh screen
         } else {
-          indicator.classList.remove("visible");
-          indicator.style.transform = "translateX(-50%) translateY(100%)";
+          console.log("[Pull-refresh] Disconnected - forcing reconnect");
+          if (state.connection.ws) state.connection.ws.close();
         }
-      });
+      }
+    });
+    pullToRefresh.init();
 
-      termContainer.addEventListener("touchend", (e) => {
-        if (isPulling && pullStartY > 0) {
-          const lastY = e.changedTouches[0].clientY;
-          const pullDistance = pullStartY - lastY;
-
-          if (pullDistance >= PULL_THRESHOLD) {
-            // If connected, send Ctrl-L to refresh. If disconnected, reconnect.
-            if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN && state.connection.attached) {
-              console.log("[Pull-refresh] Connected - sending Ctrl-L");
-              rawSend("\x0C"); // Ctrl-L: refresh screen
-            } else {
-              console.log("[Pull-refresh] Disconnected - forcing reconnect");
-              if (state.connection.ws) state.connection.ws.close();
-            }
-          }
-        }
-
-        // Reset
-        pullStartY = 0;
-        isPulling = false;
-        indicator.classList.remove("visible");
-        indicator.style.transform = "translateX(-50%) translateY(100%)";
-      });
-
-      termContainer.addEventListener("touchcancel", () => {
-        pullStartY = 0;
-        isPulling = false;
-        indicator.classList.remove("visible");
-        indicator.style.transform = "translateX(-50%) translateY(100%)";
-      });
-    }
 
     // Focus terminal on tap
     termContainer.addEventListener("touchstart", () => term.focus(), { passive: true });
