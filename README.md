@@ -38,7 +38,7 @@ Your terminal, everywhere. Access your shell sessions from any device—desktop 
 ## Features
 
 ### Mobile-First Terminal
-- **Dictation mode** — Full-screen composition area for writing commit messages, documentation, or any long-form text. Supports voice dictation and image attachments.
+- **Full-screen text input** — Dedicated textarea for writing commit messages, documentation, or long-form text. Works with your phone's built-in speech-to-text.
 - **Swipe navigation** — Dedicated touch zone for arrow keys. Swipe left/right/up/down to navigate without obscuring the terminal.
 - **Smart keyboard handling** — Autocorrect, autocomplete, and autocapitalize disabled to prevent interference. Virtual keyboard detection keeps the terminal in view.
 - **PWA-ready** — Install as a full-screen app. Works offline, no app store needed.
