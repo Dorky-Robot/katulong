@@ -676,6 +676,9 @@
                   <button class="btn-small btn-regenerate" data-network-id="${net.networkId}">
                     Regenerate
                   </button>
+                  <button class="btn-small btn-danger btn-revoke" data-network-id="${net.networkId}">
+                    Revoke
+                  </button>
                 ` : `
                   <button class="btn-small btn-danger btn-revoke" data-network-id="${net.networkId}">
                     Revoke
