@@ -46,6 +46,25 @@ The pre-push hook runs the full test suite including e2e tests. This is your las
 
 **Exception**: `--no-verify` is ONLY acceptable when committing non-code changes (documentation, README) that cannot possibly break functionality. Even then, prefer running tests anyway.
 
+### Pull Request Workflow
+
+**ALWAYS create a pull request instead of pushing directly to `main`.**
+
+When implementing features or fixes:
+1. Create a feature branch: `git checkout -b feature/descriptive-name`
+2. Make your changes and commit
+3. Push the branch: `git push -u origin feature/descriptive-name`
+4. Create a pull request for review
+5. Wait for approval before merging to main
+
+This ensures:
+- Code review before merging
+- Clear history of what changed and why
+- Ability to discuss implementation decisions
+- Easy rollback if issues are discovered
+
+**Exception**: Only push directly to main for urgent hotfixes that are already tested and reviewed.
+
 ## Security model
 
 **This application provides direct terminal access to the host.** Every code change must be reviewed with this in mind.
