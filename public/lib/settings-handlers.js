@@ -32,20 +32,31 @@ export function createSettingsHandlers(options = {}) {
    */
   function initLogout() {
     const logoutBtn = document.getElementById("settings-logout");
-    if (logoutBtn) {
-      logoutBtn.addEventListener("click", async () => {
-        await fetch("/auth/logout", {
-          method: "POST",
-          headers: addCsrfHeader()
-        });
+    if (!logoutBtn) return;
 
-        if (onLogout) {
-          onLogout();
-        } else {
-          location.href = "/login";
-        }
-      });
+    // Hide logout button on localhost - localhost is root/admin access
+    const isLocalhost = location.hostname === 'localhost' ||
+                       location.hostname === '127.0.0.1' ||
+                       location.hostname === '::1';
+
+    if (isLocalhost) {
+      logoutBtn.style.display = 'none';
+      return;
     }
+
+    // Remote access - show logout button
+    logoutBtn.addEventListener("click", async () => {
+      await fetch("/auth/logout", {
+        method: "POST",
+        headers: addCsrfHeader()
+      });
+
+      if (onLogout) {
+        onLogout();
+      } else {
+        location.href = "/login";
+      }
+    });
   }
 
   /**
