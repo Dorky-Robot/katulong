@@ -7,6 +7,8 @@ node test/e2e/pre-server-setup.js
 
 # Start the server with test configuration
 PORT=3099 \
+HTTPS_PORT=3100 \
+SSH_PORT=2223 \
 KATULONG_NO_AUTH=1 \
 KATULONG_SOCK=/tmp/katulong-test.sock \
 KATULONG_DATA_DIR=/tmp/katulong-e2e-data \

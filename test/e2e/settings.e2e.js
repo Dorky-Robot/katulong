@@ -31,10 +31,10 @@ test.describe("Settings modal", () => {
     await expect(page.locator("button[data-theme-val='auto']")).not.toHaveClass(/active/);
   });
 
-  test("Logout button is visible", async ({ page }) => {
+  test("End Session button is visible", async ({ page }) => {
     const logout = page.locator("#settings-logout");
     await expect(logout).toBeVisible();
-    await expect(logout).toHaveText("Log Out");
+    await expect(logout).toHaveText("End Session");
   });
 
   test("No Done button exists", async ({ page }) => {
@@ -47,7 +47,7 @@ test.describe("Settings modal", () => {
     await expect(page.locator("#settings-overlay")).not.toHaveClass(/visible/);
   });
 
-  test("Logout button redirects to /login", async ({ page }) => {
+  test("End Session button redirects to /login", async ({ page }) => {
     await page.locator("#settings-logout").click();
     await page.waitForURL("**/login");
     expect(page.url()).toContain("/login");
