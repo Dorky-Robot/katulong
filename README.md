@@ -2,7 +2,7 @@
 
 > _Katulong_ (kah-too-LONG) means "helper" in Tagalog—your always-ready terminal assistant.
 
-A self-hosted web terminal designed for mobile-first development. Built for the modern workflow where writing commit messages, documentation, and code reviews is as critical as writing code itself.
+Your terminal, everywhere. Access your shell sessions from any device—desktop browser, phone, tablet—over LAN or the internet. Need a raw terminal? SSH directly into your sessions. Your work follows you.
 
 ## Screenshots
 
@@ -27,7 +27,13 @@ A self-hosted web terminal designed for mobile-first development. Built for the 
 
 ## Why Katulong?
 
-Modern development isn't just coding—it's communicating. You write commit messages, pull request descriptions, code reviews, documentation, and chat messages. Most mobile terminals treat prose as an afterthought. Katulong makes long-form writing on mobile a first-class experience.
+**Take your terminal anywhere.** Start a build on your laptop, check progress from your phone on the couch, finish debugging via SSH from your desktop. Same sessions, any device.
+
+- **Browser-based** — Works on desktop, mobile, any device with a browser. No app store needed.
+- **LAN + Internet** — Access over your local network or expose securely over the internet.
+- **SSH access** — Prefer a raw terminal? SSH directly into any session.
+- **Secure device pairing** — WebAuthn + QR code pairing. Your sessions, your devices only.
+- **Sessions persist** — Daemon owns PTYs. Restart the server, your sessions survive.
 
 ## Features
 
