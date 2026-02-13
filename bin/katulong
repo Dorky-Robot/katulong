@@ -18,6 +18,7 @@ const COMMANDS = {
   logs: "Stream logs (daemon, server, or both)",
   open: "Open Katulong in your browser",
   info: "Show system information and configuration",
+  certs: "Manage TLS certificates",
 };
 
 function showHelp() {

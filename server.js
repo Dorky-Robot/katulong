@@ -34,7 +34,7 @@ import {
 import { SessionName } from "./lib/session-name.js";
 import { PairingChallengeStore } from "./lib/pairing-challenge.js";
 import { AuthState } from "./lib/auth-state.js";
-import { ensureCerts, generateMobileConfig } from "./lib/tls.js";
+import { ensureCerts, generateMobileConfig, needsRegeneration } from "./lib/tls.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 import { validateMessage } from "./lib/websocket-validation.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
@@ -69,6 +69,16 @@ function isHttpsConnection(req) {
 
 const tlsPaths = ensureCerts(DATA_DIR, "Katulong");
 log.info("TLS certificates ready", { dir: join(DATA_DIR, "tls") });
+
+// Check if certificate needs regeneration
+const certStatus = needsRegeneration(DATA_DIR);
+if (certStatus.needed) {
+  log.warn("⚠️  TLS certificate may need regeneration");
+  log.warn(`   Current IP(s) ${certStatus.missingIps.join(", ")} not in certificate SANs`);
+  log.warn(`   Browser certificate errors may occur when accessing by IP`);
+  log.warn(`   Run 'katulong certs check' for details`);
+  log.warn(`   Run 'katulong certs regenerate' to fix`);
+}
 
 const sshHostKey = ensureHostKey(DATA_DIR);
 
