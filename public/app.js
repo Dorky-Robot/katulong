@@ -671,11 +671,11 @@
             </div>
             ${!net.noCert ? `
               <div class="cert-network-actions">
-                <button class="btn-small" onclick="window.regenerateNetwork('${net.networkId}')">
+                <button class="btn-small btn-regenerate" data-network-id="${net.networkId}">
                   Regenerate
                 </button>
                 ${net.networkId !== 'default' ? `
-                  <button class="btn-small btn-danger" onclick="window.revokeNetwork('${net.networkId}')">
+                  <button class="btn-small btn-danger btn-revoke" data-network-id="${net.networkId}">
                     Revoke
                   </button>
                 ` : ''}
@@ -691,6 +691,22 @@
           const networkId = e.target.dataset.networkId;
           const label = e.target.value;
           await updateNetworkLabel(networkId, label);
+        });
+      });
+
+      // Attach regenerate button handlers
+      document.querySelectorAll('.btn-regenerate').forEach(button => {
+        button.addEventListener('click', async (e) => {
+          const networkId = e.target.dataset.networkId;
+          await regenerateNetwork(networkId);
+        });
+      });
+
+      // Attach revoke button handlers
+      document.querySelectorAll('.btn-revoke').forEach(button => {
+        button.addEventListener('click', async (e) => {
+          const networkId = e.target.dataset.networkId;
+          await revokeNetwork(networkId);
         });
       });
     }
@@ -711,7 +727,7 @@
       }
     }
 
-    window.revokeNetwork = async function(networkId) {
+    async function revokeNetwork(networkId) {
       if (!confirm(`Revoke certificate for this network?\n\nThis will delete the certificate and prevent future connections from this network until a new certificate is generated.`)) {
         return;
       }
@@ -728,9 +744,9 @@
         console.error("Failed to revoke network:", error);
         alert(`Failed to revoke network: ${error.message}`);
       }
-    };
+    }
 
-    window.regenerateNetwork = async function(networkId) {
+    async function regenerateNetwork(networkId) {
       if (!confirm(`Regenerate certificate for this network?\n\nThis will create a new certificate. No restart needed.`)) {
         return;
       }
@@ -749,7 +765,7 @@
         console.error("Failed to regenerate network:", error);
         alert(`Failed to regenerate network: ${error.message}`);
       }
-    };
+    }
 
     // Generate certificate for current network
     document.getElementById('cert-generate-current')?.addEventListener('click', async () => {
