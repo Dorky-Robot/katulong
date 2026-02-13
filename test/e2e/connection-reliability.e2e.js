@@ -276,7 +276,7 @@ test.describe('Connection Reliability', () => {
 
     // Open second tab with same session
     const page2 = await context.newPage();
-    await page2.goto("http://localhost:3001");
+    await page2.goto("/");
     await page2.waitForSelector('.xterm', { timeout: 10000 });
     await page2.waitForSelector('.xterm-screen', { timeout: 5000 });
 
@@ -311,7 +311,7 @@ test.describe('Connection Reliability', () => {
   test('should show connecting state during connection establishment', async ({ page, context }) => {
     // Open page but don't wait for full load
     const page2 = await context.newPage();
-    const pagePromise = page2.goto("http://localhost:3001");
+    const pagePromise = page2.goto("/");
 
     // Try to catch the connecting state
     const p2pIndicator = page2.locator('#p2p-indicator');
@@ -342,7 +342,7 @@ test.describe('Connection Reliability', () => {
 
 test.describe('P2P Specific Tests', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("http://localhost:3001");
+    await page.goto("/");
     await page.waitForSelector(".xterm", { timeout: 10000 });
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
   });
