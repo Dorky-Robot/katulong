@@ -204,10 +204,12 @@ test.describe('LAN Pairing Wizard Flow', () => {
     await expect(countdown).toBeVisible();
     const initialText = await countdown.textContent();
 
-    // Close modal by pressing Escape (no close button exists)
+    // Close modal by clicking outside (backdrop click)
     const modal = page.locator('#settings-overlay');
     await expect(modal).toBeVisible(); // Make sure modal is visible first
-    await page.keyboard.press('Escape');
+
+    // Click on the overlay backdrop (outside the modal panel)
+    await modal.click({ position: { x: 10, y: 10 } });
 
     // Wait for modal to close
     await expect(modal).not.toBeVisible({ timeout: 3000 });
