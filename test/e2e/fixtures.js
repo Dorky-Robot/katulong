@@ -15,10 +15,9 @@ export async function createTestTokens(page) {
 
   try {
     // Create a test token
-    const response = await page.request.post(`${BASE_URL}/auth/tokens`, {
+    const response = await page.request.post(`${BASE_URL}/api/tokens`, {
       data: {
-        name: 'E2E Test Token',
-        ttl: 0 // Never expires
+        name: 'E2E Test Token'
       }
     });
 
@@ -81,13 +80,13 @@ export async function setupTestFixtures(page) {
 export async function cleanupTestFixtures(page) {
   // Delete test tokens
   try {
-    const response = await page.request.get(`${BASE_URL}/auth/tokens`);
+    const response = await page.request.get(`${BASE_URL}/api/tokens`);
     if (response.ok()) {
       const data = await response.json();
       const testTokens = data.tokens.filter(t => t.name && t.name.includes('E2E Test'));
 
       for (const token of testTokens) {
-        await page.request.delete(`${BASE_URL}/auth/tokens/${token.id}`);
+        await page.request.delete(`${BASE_URL}/api/tokens/${token.id}`);
         console.log('[Fixtures] Deleted test token:', token.name);
       }
     }

@@ -136,6 +136,8 @@ export function invalidateTokens(store) {
  */
 export function removeToken(store, tokenId) {
   const currentState = store.getState();
+  // Optimistic update - remove immediately from UI
+  // Note: This is called AFTER the server DELETE completes (see revokeToken in token-form.js)
   store.dispatch({
     type: TOKEN_ACTIONS.LOAD_SUCCESS,
     tokens: currentState.tokens.filter(t => t.id !== tokenId)

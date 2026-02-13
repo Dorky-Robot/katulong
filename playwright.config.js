@@ -13,7 +13,7 @@ export default defineConfig({
     permissions: ['clipboard-read', 'clipboard-write'],
   },
   webServer: {
-    command: `KATULONG_NO_AUTH=1 PORT=${PORT} KATULONG_SOCK=/tmp/katulong-test.sock node entrypoint.js`,
+    command: `KATULONG_NO_AUTH=1 PORT=${PORT} KATULONG_SOCK=/tmp/katulong-test.sock KATULONG_DATA_DIR=/tmp/katulong-e2e-data node entrypoint.js`,
     port: PORT,
     reuseExistingServer: !process.env.CI,
     timeout: 15_000,
