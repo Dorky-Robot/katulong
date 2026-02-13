@@ -82,8 +82,8 @@ test.describe('LAN Device Management', () => {
     expect(isTrustVisible || isPairVisible).toBeTruthy();
 
     if (isTrustVisible) {
-      // Should show trust instructions
-      await expect(trustView).toContainText('Trust');
+      // Should show trust instructions (actual text is "Install Certificate")
+      await expect(trustView).toContainText('Install Certificate');
 
       // Should have QR code canvas
       const qrCanvas = trustView.locator('canvas');
@@ -124,15 +124,8 @@ test.describe('LAN Device Management', () => {
       { timeout: 2000 }
     );
 
-    // Close modal by clicking X button in top right
-    const closeBtn = page.locator('#settings-overlay .modal-close');
-    if (await closeBtn.isVisible()) {
-      await closeBtn.click();
-    } else {
-      // Try clicking backdrop
-
-      await page.locator('.modal-backdrop').click();
-    }
+    // Close modal by pressing Escape (no close button exists)
+    await page.keyboard.press('Escape');
 
     // Wait for modal to close
     const modal = page.locator('#settings-overlay');

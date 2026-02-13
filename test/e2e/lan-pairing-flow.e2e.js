@@ -95,7 +95,7 @@ test.describe('LAN Pairing Wizard Flow', () => {
 
     const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
     expect(clipboardText).toMatch(/^https?:\/\//);
-    expect(clipboardText).toContain('/auth/pair');
+    expect(clipboardText).toContain('/pair'); // Actual URL is /pair not /auth/pair
 
     // Step 4: Verify countdown timer is present and counting
     const countdown = pairView.locator('#wizard-pair-countdown');
@@ -204,12 +204,11 @@ test.describe('LAN Pairing Wizard Flow', () => {
     await expect(countdown).toBeVisible();
     const initialText = await countdown.textContent();
 
-    // Close modal
-    const modal = page.locator('#settings-overlay');
-    const closeBtn = modal.locator('.modal-close');
-    await closeBtn.click();
+    // Close modal by pressing Escape (no close button exists)
+    await page.keyboard.press('Escape');
 
     // Wait for modal to close
+    const modal = page.locator('#settings-overlay');
     await expect(modal).not.toBeVisible();
 
     // Reopen modal
