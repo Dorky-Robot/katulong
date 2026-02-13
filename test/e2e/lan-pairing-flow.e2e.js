@@ -205,11 +205,12 @@ test.describe('LAN Pairing Wizard Flow', () => {
     const initialText = await countdown.textContent();
 
     // Close modal by pressing Escape (no close button exists)
+    const modal = page.locator('#settings-overlay');
+    await expect(modal).toBeVisible(); // Make sure modal is visible first
     await page.keyboard.press('Escape');
 
     // Wait for modal to close
-    const modal = page.locator('#settings-overlay');
-    await expect(modal).not.toBeVisible();
+    await expect(modal).not.toBeVisible({ timeout: 3000 });
 
     // Reopen modal
     await openSettings(page);
@@ -330,8 +331,8 @@ test.describe('Device List After Pairing', () => {
     await switchSettingsTab(page, 'lan');
 
     // Wait for device list to load
-    const deviceSection = page.locator('.device-section-header, .device-list');
-    await expect(deviceSection).toBeVisible({ timeout: 2000 });
+    const devicesList = page.locator('#devices-list');
+    await expect(devicesList).toBeVisible({ timeout: 2000 });
 
     const deviceItems = page.locator('.device-item');
     const count = await deviceItems.count();
@@ -374,13 +375,14 @@ test.describe('Device List After Pairing', () => {
     }
   });
 
-  test('should update device list when new device pairs', async ({ page }) => {
+  test.skip('should update device list when new device pairs', async ({ page }) => {
+    // SKIPPED: Test not implemented - has TODO for simulating device pairing
     await openSettings(page);
     await switchSettingsTab(page, 'lan');
 
     // Wait for device list to be visible
-    const deviceSection = page.locator('.device-section-header, .device-list');
-    await expect(deviceSection).toBeVisible({ timeout: 2000 });
+    const devicesList = page.locator('#devices-list');
+    await expect(devicesList).toBeVisible({ timeout: 2000 });
 
     // Get initial device count
     const deviceItems = page.locator('.device-item');

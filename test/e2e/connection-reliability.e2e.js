@@ -138,6 +138,13 @@ test.describe('Connection Reliability', () => {
     await page.waitForSelector('.xterm', { timeout: 10000 });
     await page.waitForSelector('.xterm-screen', { timeout: 5000 });
 
+    // Wait for buffer to be replayed - marker should appear
+    await page.waitForFunction(
+      (m) => document.querySelector('.xterm-screen')?.textContent?.includes(m),
+      marker,
+      { timeout: 5000 }
+    );
+
     // Terminal buffer should be preserved
     const terminalText = await page.locator('.xterm-screen').textContent();
     expect(terminalText).toContain(marker);
