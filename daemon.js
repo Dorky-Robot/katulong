@@ -13,8 +13,12 @@ const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
 const SHELL = process.env.SHELL || "/bin/zsh";
 const DATA_DIR = process.env.KATULONG_DATA_DIR || __dirname;
 const SHORTCUTS_PATH = join(DATA_DIR, "shortcuts.json");
+const PID_PATH = join(DATA_DIR, "daemon.pid");
 const MAX_BUFFER = 5000;
 const MAX_BUFFER_BYTES = 5 * 1024 * 1024; // 5 MB
+
+// Set process title for safe process management (pkill katulong-daemon)
+process.title = "katulong-daemon";
 
 // --- State (boundary) ---
 
@@ -215,6 +219,10 @@ async function start() {
     unlinkSync(SOCKET_PATH);
     log.info("Removed stale socket file");
   }
+  if (existsSync(PID_PATH)) {
+    unlinkSync(PID_PATH);
+    log.info("Removed stale PID file");
+  }
 
   const server = createServer((socket) => {
     log.info("UI server connected");
@@ -236,6 +244,7 @@ async function start() {
       if (session.alive) session.pty.kill();
     }
     try { unlinkSync(SOCKET_PATH); } catch {}
+    try { unlinkSync(PID_PATH); } catch {}
     process.exit(0);
   }
 
@@ -253,7 +262,9 @@ async function start() {
     process.umask(oldUmask);
     // Double-check permissions (defense-in-depth)
     try { chmodSync(SOCKET_PATH, 0o600); } catch { /* best-effort */ }
-    log.info("Katulong daemon listening", { socket: SOCKET_PATH });
+    // Write PID file for safe process management
+    try { writeFileSync(PID_PATH, String(process.pid), { mode: 0o600 }); } catch {}
+    log.info("Katulong daemon listening", { socket: SOCKET_PATH, pid: process.pid });
   });
 }
 
