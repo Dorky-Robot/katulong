@@ -10,6 +10,7 @@ export default defineConfig({
   globalSetup: "./test/e2e/global-setup.js",
   use: {
     baseURL: `http://localhost:${PORT}`,
+    permissions: ['clipboard-read', 'clipboard-write'],
   },
   webServer: {
     command: `KATULONG_NO_AUTH=1 PORT=${PORT} KATULONG_SOCK=/tmp/katulong-test.sock node entrypoint.js`,

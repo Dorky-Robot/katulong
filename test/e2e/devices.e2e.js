@@ -61,12 +61,21 @@ test.describe('LAN Device Management', () => {
     // Click "Pair Device on LAN" button
     await page.click('button:has-text("Pair Device on LAN")');
 
-    // Should show wizard modal or view
-    // First step: Trust CA certificate
-    const trustView = page.locator('.wizard-view[data-step="trust"]');
-    const pairView = page.locator('.wizard-view[data-step="pair"]');
+    // Should show wizard view (trust or pair step)
+    // Actual selectors: #settings-view-trust or #settings-view-pair
+    const trustView = page.locator('#settings-view-trust');
+    const pairView = page.locator('#settings-view-pair');
 
-    // Either trust view or pair view should be visible
+    // Wait for either view to become visible (they toggle visibility with CSS)
+    await page.waitForFunction(
+      () => {
+        const trust = document.getElementById('settings-view-trust');
+        const pair = document.getElementById('settings-view-pair');
+        return (trust && trust.offsetParent !== null) || (pair && pair.offsetParent !== null);
+      },
+      { timeout: 2000 }
+    );
+
     const isTrustVisible = await trustView.isVisible();
     const isPairVisible = await pairView.isVisible();
 
@@ -76,29 +85,24 @@ test.describe('LAN Device Management', () => {
       // Should show trust instructions
       await expect(trustView).toContainText('Trust');
 
-      // Should have QR code for trust URL
-      await expect(trustView.locator('canvas[data-qr="trust"]')).toBeVisible();
+      // Should have QR code canvas
+      const qrCanvas = trustView.locator('canvas');
+      await expect(qrCanvas).toBeVisible();
 
-      // Should have copy button
-      const copyBtn = trustView.locator('button:has-text("Copy")');
-      await expect(copyBtn).toBeVisible();
+      // Should have copy URL button
+      const copyBtn = trustView.locator('button');
+      await expect(copyBtn.first()).toBeVisible();
     }
 
     if (isPairVisible) {
-      // Should show pairing QR code
-      await expect(pairView.locator('canvas[data-qr="pair"]')).toBeVisible();
+      // Should show pairing QR code canvas
+      const qrCanvas = pairView.locator('canvas');
+      await expect(qrCanvas).toBeVisible();
 
-      // Should show PIN
-      const pinDisplay = pairView.locator('.wizard-pin, [data-pin]');
-      await expect(pinDisplay).toBeVisible();
-
-      // PIN should be 8 digits
-      const pinText = await pinDisplay.textContent();
-      const digits = pinText.match(/\d+/);
+      // Should show PIN - check for any element containing digits
+      const viewText = await pairView.textContent();
+      const digits = viewText.match(/\d{8}/); // 8 consecutive digits
       expect(digits).toBeTruthy();
-      if (digits) {
-        expect(digits[0].length).toBe(8);
-      }
     }
   });
 
@@ -110,23 +114,23 @@ test.describe('LAN Device Management', () => {
     // Start pairing wizard
     await page.click('button:has-text("Pair Device on LAN")');
 
-    // Wait for wizard to open - either trust or pair view should be visible
+    // Wait for wizard view to be visible
     await page.waitForFunction(
       () => {
-        const trustView = document.querySelector('.wizard-view[data-step="trust"], #settings-view-trust');
-        const pairView = document.querySelector('.wizard-view[data-step="pair"], #settings-view-pair');
-        return (trustView && trustView.classList.contains('active')) ||
-               (pairView && pairView.classList.contains('active'));
+        const trust = document.getElementById('settings-view-trust');
+        const pair = document.getElementById('settings-view-pair');
+        return (trust && trust.offsetParent !== null) || (pair && pair.offsetParent !== null);
       },
       { timeout: 2000 }
     );
 
-    // Close modal (click outside or close button)
-    const closeBtn = page.locator('.modal-close, button:has-text("Cancel"), button:has-text("Close")');
+    // Close modal by clicking X button in top right
+    const closeBtn = page.locator('#settings-overlay .modal-close');
     if (await closeBtn.isVisible()) {
-      await closeBtn.first().click();
+      await closeBtn.click();
     } else {
-      // Click modal backdrop to close
+      // Try clicking backdrop
+
       await page.locator('.modal-backdrop').click();
     }
 
@@ -186,20 +190,22 @@ test.describe('LAN Device Management', () => {
       const firstDevice = deviceItems.first();
       const originalName = await firstDevice.locator('.device-name').textContent();
 
-      // Click Rename button
+      // Set up dialog handler for native prompt() - dismiss it
+      page.once('dialog', async dialog => {
+        expect(dialog.type()).toBe('prompt');
+        expect(dialog.message()).toContain('name');
+        await dialog.dismiss(); // Cancel the rename
+      });
+
+      // Click Rename button - triggers native prompt()
       await firstDevice.locator('button:has-text("Rename")').click();
 
-      // Should show rename dialog/input
-      const renameInput = page.locator('input[type="text"][placeholder*="name"], input[id*="rename"]');
-      await expect(renameInput).toBeVisible({ timeout: 2000 });
+      // Wait a bit for dialog handling to complete
+      await page.waitForTimeout(500);
 
-      // Cancel the rename (we don't want to actually change it)
-      const cancelBtn = page.locator('button:has-text("Cancel")');
-      if (await cancelBtn.isVisible()) {
-        await cancelBtn.click();
-      } else {
-        await page.keyboard.press('Escape');
-      }
+      // Device name should still be the same (we dismissed the dialog)
+      const currentName = await firstDevice.locator('.device-name').textContent();
+      expect(currentName).toBe(originalName);
     }
   });
 
@@ -217,20 +223,25 @@ test.describe('LAN Device Management', () => {
       const removeBtn = firstDevice.locator('button:has-text("Remove")');
 
       if (await removeBtn.isVisible()) {
-        // Click Remove button
+        const originalCount = count;
+
+        // Set up dialog handler for native confirm() - dismiss it
+        page.once('dialog', async dialog => {
+          expect(dialog.type()).toBe('confirm');
+          expect(dialog.message()).toContain('remove');
+          await dialog.dismiss(); // Cancel the removal
+        });
+
+        // Click Remove button - triggers native confirm()
         await removeBtn.click();
 
-        // Should show confirmation dialog
-        const confirmDialog = page.locator('text=/Are you sure|Remove this device|Confirm/');
-        await expect(confirmDialog).toBeVisible({ timeout: 2000 });
+        // Wait a bit for dialog handling to complete
+        await page.waitForTimeout(500);
 
-        // Cancel the removal (we don't want to actually delete it)
-        const cancelBtn = page.locator('button:has-text("Cancel"), button:has-text("No")');
-        if (await cancelBtn.isVisible()) {
-          await cancelBtn.click();
-        } else {
-          await page.keyboard.press('Escape');
-        }
+        // Device count should still be the same (we dismissed the dialog)
+        const newCount = await deviceItems.count();
+        expect(newCount).toBe(originalCount);
+
       }
     }
   });

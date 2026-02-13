@@ -18,17 +18,30 @@ test.describe('Connection Reliability', () => {
     const p2pIndicator = page.locator('#p2p-indicator');
     await expect(p2pIndicator).toBeVisible({ timeout: 5000 });
 
-    // Should show connected state - either p2p-active (green) or p2p-relay (orange)
+    // Wait for connection to be established - indicator should get a class
+    await page.waitForFunction(
+      () => {
+        const indicator = document.getElementById('p2p-indicator');
+        return indicator && (
+          indicator.classList.contains('p2p-active') ||
+          indicator.classList.contains('p2p-relay') ||
+          indicator.classList.contains('ws-connected')
+        );
+      },
+      { timeout: 10000 }
+    );
+
+    // Should show connected state - either p2p-active (green), p2p-relay (orange), or ws-connected
     const hasConnectedClass = await p2pIndicator.evaluate(el => {
       return el.classList.contains('p2p-active') ||
-             el.classList.contains('p2p-relay');
+             el.classList.contains('p2p-relay') ||
+             el.classList.contains('ws-connected');
     });
 
     // Log connection state for debugging
     const classes = await p2pIndicator.evaluate(el => el.className);
     console.log('[Test] P2P indicator classes:', classes);
 
-    // May be WebSocket fallback instead of P2P - either is acceptable
     expect(hasConnectedClass).toBeTruthy();
   });
 
@@ -195,44 +208,28 @@ test.describe('Connection Reliability', () => {
       }
     });
 
-    // Wait for reconnection attempt - check for connection indicator
-    const p2pIndicator = page.locator('#p2p-indicator');
-    await page.waitForFunction(
-      () => {
-        const indicator = document.querySelector('#p2p-indicator');
-        return indicator && (
-          indicator.classList.contains('connected') ||
-          indicator.classList.contains('p2p-connected') ||
-          indicator.dataset.connectionStatus === 'connected'
-        );
-      },
-      { timeout: 10000 }
-    ).catch(() => {
-      // Reconnection might not have indicator update, that's ok
-    });
+    // Wait a moment for reconnection to be initiated
+    await page.waitForTimeout(1000);
 
-    // Verify reconnection by sending command
+    // Verify reconnection by sending command (WebSocket or P2P should reconnect)
     const testCommand = `echo "after-ws-close-${Date.now()}"`;
     await page.keyboard.type(testCommand);
     await page.keyboard.press('Enter');
 
-    // Try to get output
+    // Try to get output - if connection is restored, command will execute
     const reconnected = await page.waitForFunction(
       () => document.querySelector('.xterm-screen')?.textContent?.includes('after-ws-close'),
       { timeout: 5000 }
     ).then(() => true).catch(() => false);
 
-    const terminalText = await page.locator('.xterm-screen').textContent();
-
-    // If reconnection worked, we'll see the output
-    // If not, the command won't execute
     if (reconnected) {
       console.log('[Test] WebSocket reconnection successful');
+      const terminalText = await page.locator('.xterm-screen').textContent();
+      expect(terminalText).toContain('after-ws-close');
     } else {
       console.log('[Test] WebSocket did not reconnect automatically');
+      // This is acceptable - auto-reconnection is optional
     }
-
-    // Note: Auto-reconnection behavior depends on implementation
   });
 
   test('should maintain connection during long idle period', async ({ page }) => {

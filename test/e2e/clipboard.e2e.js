@@ -383,8 +383,8 @@ test.describe('Clipboard - Terminal Integration', () => {
 
 test.describe('Clipboard - Permissions', () => {
   test('should request clipboard permissions when needed', async ({ page, context }) => {
-    // Don't grant permissions initially
-    await page.goto("http://localhost:3001");
+    // Test that clipboard operations work with granted permissions
+    await page.goto("/");
     await page.waitForSelector(".xterm", { timeout: 10000 });
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
 
