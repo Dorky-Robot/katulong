@@ -14,24 +14,22 @@ test.describe('Connection Reliability', () => {
   });
 
   test('should establish P2P connection on load', async ({ page }) => {
-    // Check connection indicator
-    const p2pIndicator = page.locator('.p2p-indicator, [data-connection-status]');
+    // Check connection indicator (ID not class)
+    const p2pIndicator = page.locator('#p2p-indicator');
     await expect(p2pIndicator).toBeVisible({ timeout: 5000 });
 
-    // Should show connected state (green dot or similar)
-    // The exact class/attribute depends on implementation
+    // Should show connected state - either p2p-active (green) or p2p-relay (orange)
     const hasConnectedClass = await p2pIndicator.evaluate(el => {
-      return el.classList.contains('connected') ||
-             el.classList.contains('p2p-connected') ||
-             el.dataset.connectionStatus === 'connected';
+      return el.classList.contains('p2p-active') ||
+             el.classList.contains('p2p-relay');
     });
 
     // Log connection state for debugging
     const classes = await p2pIndicator.evaluate(el => el.className);
     console.log('[Test] P2P indicator classes:', classes);
 
-    // May be WebSocket fallback instead of P2P
-    // Either is acceptable as long as we're connected
+    // May be WebSocket fallback instead of P2P - either is acceptable
+    expect(hasConnectedClass).toBeTruthy();
   });
 
   test('should send and receive terminal data over connection', async ({ page }) => {
@@ -57,7 +55,7 @@ test.describe('Connection Reliability', () => {
   });
 
   test('should show connection indicator states', async ({ page }) => {
-    const p2pIndicator = page.locator('.p2p-indicator, [data-connection-status]');
+    const p2pIndicator = page.locator('#p2p-indicator');
     await expect(p2pIndicator).toBeVisible({ timeout: 5000 });
 
     // Get initial state
@@ -198,10 +196,10 @@ test.describe('Connection Reliability', () => {
     });
 
     // Wait for reconnection attempt - check for connection indicator
-    const p2pIndicator = page.locator('.p2p-indicator, [data-connection-status]');
+    const p2pIndicator = page.locator('#p2p-indicator');
     await page.waitForFunction(
       () => {
-        const indicator = document.querySelector('.p2p-indicator, [data-connection-status]');
+        const indicator = document.querySelector('#p2p-indicator');
         return indicator && (
           indicator.classList.contains('connected') ||
           indicator.classList.contains('p2p-connected') ||
@@ -319,7 +317,7 @@ test.describe('Connection Reliability', () => {
     const pagePromise = page2.goto("http://localhost:3001");
 
     // Try to catch the connecting state
-    const p2pIndicator = page2.locator('.p2p-indicator, [data-connection-status]');
+    const p2pIndicator = page2.locator('#p2p-indicator');
 
     // Check if we can see a connecting/intermediate state
     let connectingStateSeen = false;
