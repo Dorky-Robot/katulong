@@ -640,11 +640,12 @@
       // If current network has no cert, add it to the list as a placeholder
       let networksToRender = sortedNetworks;
       if (!currentNetwork.hasCertificate && sortedNetworks.length > 0) {
+        const subnet = currentNetwork.ips[0]?.split('.').slice(0, 3).join('.') || 'Unknown';
         networksToRender = [
           {
             networkId: currentNetworkId,
             ips: currentNetwork.ips,
-            label: `Network ${currentNetwork.ips[0]?.split('.').slice(0, 3).join('.')}.*`,
+            label: `Network ${subnet}.*`,
             lastUsedAt: new Date().toISOString(),
             noCert: true
           },
