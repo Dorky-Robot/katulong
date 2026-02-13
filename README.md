@@ -2,9 +2,28 @@
 
 > _Katulong_ (kah-too-LONG) means "helper" in Tagalog—your always-ready terminal assistant.
 
-> **Warning:** This project is highly experimental. Expect breaking changes, rough edges, and missing features.
-
 A self-hosted web terminal designed for mobile-first development. Built for the modern workflow where writing commit messages, documentation, and code reviews is as critical as writing code itself.
+
+## Screenshots
+
+<div align="center">
+
+### Terminal Interface
+
+<img src="docs/assets/images/terminal-main.png" alt="Main terminal interface" width="45%">
+<img src="docs/assets/images/terminal-mobile.png" alt="Mobile terminal with touch controls" width="45%">
+
+### Device Management & Security
+
+<img src="docs/assets/images/settings.png" alt="Settings panel" width="30%">
+<img src="docs/assets/images/devices.png" alt="Device management" width="30%">
+<img src="docs/assets/images/pairing-flow.png" alt="Secure device pairing" width="30%">
+
+### Customization
+
+<img src="docs/assets/images/shortcuts-editor.png" alt="Shortcuts editor" width="60%">
+
+</div>
 
 ## Why Katulong?
 
