@@ -1,5 +1,7 @@
 # katulong
 
+> _Katulong_ (kah-too-LONG) means "helper" in Tagalog—your always-ready terminal assistant.
+
 > **Warning:** This project is highly experimental. Expect breaking changes, rough edges, and missing features.
 
 A self-hosted web terminal designed for mobile-first development. Built for the modern workflow where writing commit messages, documentation, and code reviews is as critical as writing code itself.
