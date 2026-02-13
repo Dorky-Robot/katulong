@@ -42,6 +42,7 @@ const SENSITIVE_ENV_VARS = new Set([
   "SSH_PASSWORD",
   "SETUP_TOKEN",
   "KATULONG_NO_AUTH",
+  "CLAUDECODE", // Prevent nested Claude Code sessions
 ]);
 
 function getSafeEnv() {
