@@ -663,7 +663,8 @@
               ${isCurrent ? '<span class="badge">Current</span>' : ''}
             </div>
             <div class="cert-network-details">
-              <p>IPs: ${net.ips.join(", ")}</p>
+              <p>LAN: ${net.ips.join(", ")}</p>
+              ${net.publicIp ? `<p>Public: ${net.publicIp}</p>` : ''}
               ${net.noCert ?
                 '<p style="color: var(--warning)">⚠️ No certificate</p>' :
                 `<p>Last used: ${timeAgo(net.lastUsedAt)}</p>`
