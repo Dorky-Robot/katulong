@@ -110,6 +110,51 @@ Priority 4: Tests all copy/paste functionality.
 
 ---
 
+#### **credential-revoke-security.e2e.js** - Credential Revocation Security
+Priority: CRITICAL - Tests the security requirement that revoked credentials immediately block access.
+
+**Coverage:**
+- ✅ Token removal from UI after credential revocation
+- ✅ WebSocket connection closure on credential revoke
+- ✅ Session invalidation when credential removed
+- ✅ API access blocking after revocation (remote only)
+- ✅ User cannot reconnect with revoked session
+- ✅ Endpoint access control verification
+
+**Key Tests:**
+- `should immediately block access when credential is revoked` - Main security flow
+- `should close WebSocket when session becomes invalid` - Connection handling
+- `should prevent access from revoked credential across all endpoints` - Comprehensive blocking
+
+**Special Requirements:**
+This test uses fixture data created before server startup. Run with:
+```bash
+# Clean ONLY test processes (doesn't touch dev server!)
+bash test/e2e/cleanup-test-server.sh
+CI=1 npm run test:e2e -- credential-revoke-security --workers=1
+```
+
+**Why CI=1 and --workers=1?**
+- `CI=1`: Forces fresh server startup with fixture data (doesn't reuse existing server)
+- `--workers=1`: Prevents parallel test conflicts (test deletes credentials, destructive)
+
+**Test Infrastructure:**
+- `pre-server-setup.js` - Creates fixture auth state before server starts
+- `start-test-server.sh` - Runs pre-setup then starts server
+- Fixture includes: User, Credential ("E2E Test Device"), Token, and Session
+
+**Security Validation:**
+- Unit tests (11/11 passing) verify core session/credential logic
+- E2E tests verify full flow with UI, WebSocket, and API interactions
+- Tests properly log when localhost auth bypass is active (`KATULONG_NO_AUTH=1`)
+
+**Related Files:**
+- `../credential-revoke-security.test.js` - Unit tests (11 tests)
+- `fixtures.js` - Test fixture utilities
+- `helpers.js` - Common test helpers
+
+---
+
 ## Running Tests
 
 ### Run all E2E tests:

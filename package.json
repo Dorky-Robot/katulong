@@ -6,14 +6,17 @@
   "scripts": {
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
     "daemon": "node daemon.js",
+    "daemon:dev": "nodemon daemon.js",
     "start": "node server.js",
-    "dev": "node daemon.js & node server.js",
+    "start:dev": "nodemon server.js",
+    "dev": "nodemon entrypoint.js",
     "start:all": "node --env-file=.env.local entrypoint.js",
     "test": "node --test test/*.test.js test/*.integration.js",
     "test:all": "npm test && npm run test:e2e",
     "test:unit": "node --test test/*.test.js",
     "test:integration": "node --test test/*.integration.js",
     "test:e2e": "npx playwright test",
+    "test:e2e:clean": "bash test/e2e/cleanup-test-server.sh",
     "prepare": "husky"
   },
   "dependencies": {
@@ -29,6 +32,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.58.1",
-    "husky": "^9.1.7"
+    "husky": "^9.1.7",
+    "nodemon": "^3.1.11"
   }
 }

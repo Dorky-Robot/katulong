@@ -16,7 +16,8 @@ export default defineConfig({
   webServer: {
     // IMPORTANT: Test server uses isolated data directory (/tmp/katulong-e2e-data)
     // This ensures dev database remains clean and test data is wiped between runs
-    command: `KATULONG_NO_AUTH=1 PORT=${PORT} KATULONG_SOCK=/tmp/katulong-test.sock KATULONG_DATA_DIR=/tmp/katulong-e2e-data node entrypoint.js`,
+    // start-test-server.sh creates fixture auth state BEFORE server starts and caches it
+    command: `bash test/e2e/start-test-server.sh`,
     port: PORT,
     reuseExistingServer: !process.env.CI,
     timeout: 15_000,
