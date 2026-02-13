@@ -114,3 +114,41 @@ document.querySelectorAll('.code-block').forEach(block => {
 
 console.log('%cKatulong 🖥️', 'font-size: 24px; font-weight: bold; color: #6366f1;');
 console.log('Check out the source code: https://github.com/Dorky-Robot/katulong');
+
+// Image modal functionality
+const modal = document.getElementById('imageModal');
+const modalImg = document.getElementById('modalImage');
+const modalCaption = document.getElementById('modalCaption');
+const closeBtn = document.querySelector('.modal-close');
+
+// Add click handlers to all screenshot images
+document.querySelectorAll('.screenshot-item img').forEach(img => {
+  img.addEventListener('click', function() {
+    modal.style.display = 'block';
+    modalImg.src = this.src;
+    modalCaption.textContent = this.alt;
+    document.body.style.overflow = 'hidden'; // Prevent background scrolling
+  });
+});
+
+// Close modal on X click
+closeBtn.addEventListener('click', function() {
+  modal.style.display = 'none';
+  document.body.style.overflow = 'auto';
+});
+
+// Close modal on background click
+modal.addEventListener('click', function(e) {
+  if (e.target === modal) {
+    modal.style.display = 'none';
+    document.body.style.overflow = 'auto';
+  }
+});
+
+// Close modal on Escape key
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && modal.style.display === 'block') {
+    modal.style.display = 'none';
+    document.body.style.overflow = 'auto';
+  }
+});

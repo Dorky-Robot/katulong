@@ -623,3 +623,88 @@ html {
   background: var(--primary);
   color: white;
 }
+
+/* Image Modal */
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgba(0, 0, 0, 0.95);
+  animation: fadeIn 0.3s;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-content {
+  margin: auto;
+  display: block;
+  max-width: 90%;
+  max-height: 90vh;
+  object-fit: contain;
+  animation: zoomIn 0.3s;
+  border-radius: 0.5rem;
+}
+
+@keyframes zoomIn {
+  from { transform: scale(0.7); }
+  to { transform: scale(1); }
+}
+
+.modal-close {
+  position: absolute;
+  top: 2rem;
+  right: 3rem;
+  color: #f1f1f1;
+  font-size: 3rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: color 0.2s;
+  z-index: 1001;
+}
+
+.modal-close:hover,
+.modal-close:focus {
+  color: var(--primary);
+}
+
+#modalCaption {
+  margin: auto;
+  display: block;
+  width: 80%;
+  max-width: 700px;
+  text-align: center;
+  color: #ccc;
+  padding: 1rem 0 2rem;
+  font-size: 1.125rem;
+}
+
+.screenshot-item img {
+  cursor: pointer;
+}
+
+@media (max-width: 768px) {
+  .modal-content {
+    max-width: 95%;
+    max-height: 80vh;
+  }
+
+  .modal-close {
+    top: 1rem;
+    right: 1.5rem;
+    font-size: 2.5rem;
+  }
+
+  #modalCaption {
+    width: 90%;
+    font-size: 1rem;
+    padding: 0.75rem 0 1.5rem;
+  }
+}
