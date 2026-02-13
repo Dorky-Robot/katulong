@@ -339,6 +339,8 @@
           const staleNewToken = tokensList?.querySelector('.token-item-new');
           if (staleNewToken) staleNewToken.remove();
           loadTokens();
+        } else if (targetTab === "certificates") {
+          loadCertificateStatus();
         }
       }
     });
@@ -570,6 +572,214 @@
       renderBar
     });
     wsConnection.initVisibilityReconnect();
+
+    // --- Certificate management ---
+
+    async function loadCertificateStatus() {
+      const certNetworksContainer = document.getElementById("cert-networks-container");
+      const certGenerateBtn = document.getElementById("cert-generate-current");
+
+      try {
+        const response = await fetch("/api/certificates/status");
+        if (!response.ok) throw new Error("Failed to load certificate status");
+
+        const data = await response.json();
+
+        // Show generate button if current network has no cert
+        if (!data.currentNetwork.hasCertificate) {
+          certGenerateBtn.style.display = "block";
+        } else {
+          certGenerateBtn.style.display = "none";
+        }
+
+        // Render all networks (current network will be at the top)
+        renderAllNetworks(data.allNetworks, data.currentNetwork);
+      } catch (error) {
+        certNetworksContainer.innerHTML = `<p style="color: var(--danger)">Failed to load certificate status</p>`;
+        console.error("Failed to load certificate status:", error);
+      }
+    }
+
+    function timeAgo(dateString) {
+      const date = new Date(dateString);
+      const now = new Date();
+      const seconds = Math.floor((now - date) / 1000);
+
+      if (seconds < 60) return "just now";
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return `${minutes}m ago`;
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return `${hours}h ago`;
+      const days = Math.floor(hours / 24);
+      if (days < 30) return `${days}d ago`;
+      const months = Math.floor(days / 30);
+      if (months < 12) return `${months}mo ago`;
+      const years = Math.floor(months / 12);
+      return `${years}y ago`;
+    }
+
+    function renderAllNetworks(networks, currentNetwork) {
+      const container = document.getElementById("cert-networks-container");
+      const currentNetworkId = currentNetwork.networkId;
+
+      // Sort networks: current first, then by lastUsedAt
+      const sortedNetworks = [...networks].sort((a, b) => {
+        if (a.networkId === currentNetworkId) return -1;
+        if (b.networkId === currentNetworkId) return 1;
+        return new Date(b.lastUsedAt) - new Date(a.lastUsedAt);
+      });
+
+      if (sortedNetworks.length === 0 && !currentNetwork.hasCertificate) {
+        container.innerHTML = `
+          <p style="color: var(--text-muted)">No networks configured</p>
+          <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.5rem;">Current IPs: ${currentNetwork.ips.join(", ")}</p>
+        `;
+        return;
+      }
+
+      // If current network has no cert, add it to the list as a placeholder
+      let networksToRender = sortedNetworks;
+      if (!currentNetwork.hasCertificate && sortedNetworks.length > 0) {
+        networksToRender = [
+          {
+            networkId: currentNetworkId,
+            ips: currentNetwork.ips,
+            label: `Network ${currentNetwork.ips[0]?.split('.').slice(0, 3).join('.')}.*`,
+            lastUsedAt: new Date().toISOString(),
+            noCert: true
+          },
+          ...sortedNetworks
+        ];
+      }
+
+      container.innerHTML = networksToRender.map(net => {
+        const isCurrent = net.networkId === currentNetworkId;
+        return `
+          <div class="cert-network-item ${isCurrent ? 'current' : ''}" data-network-id="${net.networkId}">
+            <div class="cert-network-header">
+              <input type="text" class="cert-network-label" value="${net.label}"
+                     data-network-id="${net.networkId}" ${net.noCert ? 'disabled' : ''} />
+              ${isCurrent ? '<span class="badge">Current</span>' : ''}
+            </div>
+            <div class="cert-network-details">
+              <p>IPs: ${net.ips.join(", ")}</p>
+              ${net.noCert ?
+                '<p style="color: var(--warning)">⚠️ No certificate</p>' :
+                `<p>Last used: ${timeAgo(net.lastUsedAt)}</p>`
+              }
+            </div>
+            ${!net.noCert ? `
+              <div class="cert-network-actions">
+                <button class="btn-small" onclick="window.regenerateNetwork('${net.networkId}')">
+                  Regenerate
+                </button>
+                ${net.networkId !== 'default' ? `
+                  <button class="btn-small btn-danger" onclick="window.revokeNetwork('${net.networkId}')">
+                    Revoke
+                  </button>
+                ` : ''}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+
+      // Attach label edit handlers
+      document.querySelectorAll('.cert-network-label:not([disabled])').forEach(input => {
+        input.addEventListener('blur', async (e) => {
+          const networkId = e.target.dataset.networkId;
+          const label = e.target.value;
+          await updateNetworkLabel(networkId, label);
+        });
+      });
+    }
+
+    async function updateNetworkLabel(networkId, label) {
+      try {
+        const response = await fetch(`/api/certificates/networks/${networkId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label })
+        });
+
+        if (!response.ok) throw new Error("Failed to update network label");
+      } catch (error) {
+        console.error("Failed to update network label:", error);
+        alert(`Failed to update network label: ${error.message}`);
+        loadCertificateStatus(); // Reload to reset
+      }
+    }
+
+    window.revokeNetwork = async function(networkId) {
+      if (!confirm(`Revoke certificate for this network?\n\nThis will delete the certificate and prevent future connections from this network until a new certificate is generated.`)) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/certificates/networks/${networkId}`, {
+          method: 'DELETE'
+        });
+
+        if (!response.ok) throw new Error("Failed to revoke network");
+
+        await loadCertificateStatus();
+      } catch (error) {
+        console.error("Failed to revoke network:", error);
+        alert(`Failed to revoke network: ${error.message}`);
+      }
+    };
+
+    window.regenerateNetwork = async function(networkId) {
+      if (!confirm(`Regenerate certificate for this network?\n\nThis will create a new certificate. No restart needed.`)) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/certificates/networks/${networkId}/regenerate`, {
+          method: 'POST'
+        });
+
+        if (!response.ok) throw new Error("Failed to regenerate network");
+
+        const data = await response.json();
+        alert(data.message || 'Certificate regenerated successfully!');
+        await loadCertificateStatus();
+      } catch (error) {
+        console.error("Failed to regenerate network:", error);
+        alert(`Failed to regenerate network: ${error.message}`);
+      }
+    };
+
+    // Generate certificate for current network
+    document.getElementById('cert-generate-current')?.addEventListener('click', async () => {
+      try {
+        // Get current network info from the status
+        const response = await fetch("/api/certificates/status");
+        if (!response.ok) throw new Error("Failed to get current network");
+
+        const data = await response.json();
+        const currentIp = data.currentNetwork.ips[0];
+
+        if (!currentIp) {
+          alert("No network IP detected");
+          return;
+        }
+
+        const genResponse = await fetch('/api/certificates/networks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ip: currentIp })
+        });
+
+        if (!genResponse.ok) throw new Error("Failed to generate certificate");
+
+        alert('Certificate generated successfully!');
+        await loadCertificateStatus();
+      } catch (error) {
+        console.error("Failed to generate certificate:", error);
+        alert(`Failed to generate certificate: ${error.message}`);
+      }
+    });
 
     // --- Boot ---
 

@@ -1146,6 +1146,88 @@
     .upload-toast.visible { opacity: 1; }
     .upload-toast.error { border-color: var(--danger); color: var(--danger); }
 
+    /* --- Certificate management --- */
+    .cert-networks-list {
+      margin-bottom: var(--space-lg);
+    }
+    .cert-network-item {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-lg);
+      margin-bottom: var(--space-md);
+    }
+    .cert-network-item.current {
+      border-color: var(--success);
+      border-width: 2px;
+    }
+    .cert-network-header {
+      display: flex;
+      align-items: center;
+      gap: var(--space-md);
+      margin-bottom: var(--space-sm);
+    }
+    .cert-network-label {
+      flex: 1;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: var(--space-sm) var(--space-md);
+      color: var(--text);
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+    .cert-network-label:focus {
+      outline: none;
+      border-color: var(--accent-active);
+    }
+    .cert-network-details {
+      margin: var(--space-sm) 0;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+    .cert-network-details p {
+      margin: 0.25rem 0;
+    }
+    .cert-network-actions {
+      display: flex;
+      gap: var(--space-sm);
+      margin-top: var(--space-md);
+    }
+    .btn-small {
+      padding: var(--space-sm) var(--space-md);
+      background: var(--accent);
+      color: var(--text);
+      border: none;
+      border-radius: var(--radius-sm);
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-small:hover {
+      background: var(--accent-active);
+      color: var(--bg);
+    }
+    .btn-danger {
+      background: var(--danger);
+      color: white;
+    }
+    .btn-danger:hover {
+      background: #c82333;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      background: var(--accent-active);
+      color: var(--bg);
+      border-radius: var(--radius-sm);
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .warning {
+      color: var(--warning);
+    }
+
   </style>
 </head>
 <body>
@@ -1279,6 +1361,7 @@
             <button class="settings-tab active" data-tab="theme" role="tab" aria-selected="true">Theme</button>
             <button class="settings-tab" data-tab="lan" role="tab" aria-selected="false">LAN</button>
             <button class="settings-tab" data-tab="remote" role="tab" aria-selected="false">Remote</button>
+            <button class="settings-tab" data-tab="certificates" role="tab" aria-selected="false">Certificates</button>
           </div>
 
           <!-- Theme tab content -->
@@ -1335,6 +1418,23 @@
             </div>
             <button class="settings-pair-btn" id="settings-create-token">
               <i class="ph ph-plus"></i> Generate New Token
+            </button>
+          </div>
+
+          <!-- Certificates tab content -->
+          <div class="settings-tab-content" id="settings-tab-certificates">
+            <p class="tab-description">Manage TLS certificates for each network.</p>
+
+            <!-- Networks List -->
+            <div class="cert-networks-list">
+              <div id="cert-networks-container">
+                <p style="color: var(--text-muted)">Loading networks...</p>
+              </div>
+            </div>
+
+            <!-- Generate for Current Network -->
+            <button class="settings-pair-btn" id="cert-generate-current" style="display: none;">
+              <i class="ph ph-plus"></i> Generate Certificate for Current Network
             </button>
           </div>
 

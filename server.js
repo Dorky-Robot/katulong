@@ -34,7 +34,8 @@ import {
 import { SessionName } from "./lib/session-name.js";
 import { PairingChallengeStore } from "./lib/pairing-challenge.js";
 import { AuthState } from "./lib/auth-state.js";
-import { ensureCerts, generateMobileConfig, needsRegeneration } from "./lib/tls.js";
+import { ensureCerts, generateMobileConfig, needsRegeneration, inspectCert, regenerateServerCert, getLanIPs } from "./lib/tls.js";
+import { CertificateManager } from "./lib/certificate-manager.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 import { validateMessage } from "./lib/websocket-validation.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
@@ -67,18 +68,26 @@ function isHttpsConnection(req) {
 
 // --- TLS certificates (auto-generated) ---
 
-const tlsPaths = ensureCerts(DATA_DIR, "Katulong");
-log.info("TLS certificates ready", { dir: join(DATA_DIR, "tls") });
+// Ensure CA exists (needed by CertificateManager)
+ensureCerts(DATA_DIR, "Katulong");
 
-// Check if certificate needs regeneration
-const certStatus = needsRegeneration(DATA_DIR);
-if (certStatus.needed) {
-  log.warn("⚠️  TLS certificate may need regeneration");
-  log.warn(`   Current IP(s) ${certStatus.missingIps.join(", ")} not in certificate SANs`);
-  log.warn(`   Browser certificate errors may occur when accessing by IP`);
-  log.warn(`   Run 'katulong certs check' for details`);
-  log.warn(`   Run 'katulong certs regenerate' to fix`);
+// Initialize multi-certificate manager with SNI
+const certManager = new CertificateManager(DATA_DIR, "Katulong");
+await certManager.initialize();
+
+// Auto-generate certificate for current network
+const currentIps = getLanIPs();
+if (currentIps.length > 0) {
+  try {
+    await certManager.ensureNetworkCert(currentIps[0]);
+    log.info("Certificate ready for current network", { ips: currentIps });
+  } catch (error) {
+    log.warn("Failed to auto-generate certificate for current network", { error: error.message });
+  }
 }
+
+const networks = await certManager.listNetworks();
+log.info("TLS certificates ready", { dir: join(DATA_DIR, "tls"), networks: networks.length });
 
 const sshHostKey = ensureHostKey(DATA_DIR);
 
@@ -1107,6 +1116,125 @@ const routes = [
     const result = await daemonRPC({ type: "rename-session", oldName: name, newName: sessionName.toString() });
     json(res, result.error ? 404 : 200, result.error ? { error: result.error } : { name: result.name });
   }},
+
+  // --- Certificate API ---
+  { method: "GET", path: "/api/certificates/status", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const networks = await certManager.listNetworks();
+    const currentIps = getLanIPs();
+    const currentNetworkId = currentIps.length > 0 ? certManager.getNetworkIdForIp(currentIps[0]) : "default";
+    const currentNetwork = networks.find(n => n.networkId === currentNetworkId);
+
+    json(res, 200, {
+      currentNetwork: {
+        networkId: currentNetworkId,
+        ips: currentIps,
+        hasCertificate: !!currentNetwork,
+        metadata: currentNetwork || null,
+      },
+      allNetworks: networks,
+    });
+  }},
+
+  { method: "GET", path: "/api/certificates/networks", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const networks = await certManager.listNetworks();
+    json(res, 200, { networks });
+  }},
+
+  { method: "POST", path: "/api/certificates/networks", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    try {
+      const { ip } = await parseJSON(req);
+      if (!ip) {
+        return json(res, 400, { error: "IP address required" });
+      }
+
+      const networkId = await certManager.ensureNetworkCert(ip);
+      json(res, 200, { success: true, networkId });
+    } catch (error) {
+      log.error("Failed to generate network certificate", { error: error.message });
+      json(res, 500, { success: false, error: error.message });
+    }
+  }},
+
+  { method: "PUT", prefix: "/api/certificates/networks/", handler: async (req, res, path) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    try {
+      // Extract networkId from path (e.g., "net-192-168-1-0" or "net-192-168-1-0/regenerate")
+      const parts = path.split('/');
+      const networkId = parts[0];
+
+      // Check if this is a regenerate action
+      if (parts.length > 1 && parts[1] === 'regenerate') {
+        return; // Handled by POST route below
+      }
+
+      const { label } = await parseJSON(req);
+      if (!label) {
+        return json(res, 400, { error: "Label required" });
+      }
+
+      await certManager.updateNetworkLabel(networkId, label);
+      json(res, 200, { success: true });
+    } catch (error) {
+      log.error("Failed to update network label", { error: error.message });
+      json(res, 500, { success: false, error: error.message });
+    }
+  }},
+
+  { method: "POST", prefix: "/api/certificates/networks/", handler: async (req, res, path) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    try {
+      const parts = path.split('/');
+      const networkId = parts[0];
+      const action = parts[1];
+
+      if (action === 'regenerate') {
+        await certManager.regenerateNetwork(networkId);
+        await certManager.reloadCertificate(networkId);
+        json(res, 200, { success: true, message: 'Certificate regenerated (no restart needed)' });
+      } else {
+        json(res, 404, { error: 'Not found' });
+      }
+    } catch (error) {
+      log.error("Failed to regenerate network certificate", { error: error.message });
+      json(res, 500, { success: false, error: error.message });
+    }
+  }},
+
+  { method: "DELETE", prefix: "/api/certificates/networks/", handler: async (req, res, networkId) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    try {
+      if (networkId === 'default') {
+        return json(res, 400, { error: "Cannot delete default network" });
+      }
+
+      await certManager.revokeNetwork(networkId);
+      json(res, 200, { success: true });
+    } catch (error) {
+      log.error("Failed to revoke network certificate", { error: error.message });
+      json(res, 500, { success: false, error: error.message });
+    }
+  }},
 ];
 
 function matchRoute(method, pathname) {
@@ -1230,8 +1358,7 @@ async function handleRequest(req, res) {
 
 const server = createServer(handleRequest);
 const httpsServer = createHttpsServer({
-  cert: readFileSync(tlsPaths.serverCert),
-  key: readFileSync(tlsPaths.serverKey),
+  SNICallback: certManager.getSNICallback()
 }, handleRequest);
 
 // --- WebSocket ---
