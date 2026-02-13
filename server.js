@@ -1228,10 +1228,6 @@ const routes = [
     }
 
     try {
-      if (networkId === 'default') {
-        return json(res, 400, { error: "Cannot delete default network" });
-      }
-
       await certManager.revokeNetwork(networkId);
       json(res, 200, { success: true });
     } catch (error) {

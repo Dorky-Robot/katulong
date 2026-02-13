@@ -131,25 +131,19 @@ test.describe("Certificates UI - Multi-Network", () => {
     // Note: Can't easily test alert content, but the function should complete without errors
   });
 
-  test("should not show revoke button for default network", async ({ page }) => {
+  test("should only show regenerate button for current network", async ({ page }) => {
     await openSettings(page);
     await switchSettingsTab(page, "certificates");
 
-    // Find default network (should have "Default Network" label or similar)
-    const networkItems = page.locator('.cert-network-item');
-    const count = await networkItems.count();
+    // Current network should have regenerate button, not revoke
+    const currentNetwork = page.locator('.cert-network-item.current').first();
+    await expect(currentNetwork).toBeVisible();
 
-    for (let i = 0; i < count; i++) {
-      const item = networkItems.nth(i);
-      const label = await item.locator('.cert-network-label').inputValue();
+    const regenerateBtn = currentNetwork.locator('button:has-text("Regenerate")');
+    const revokeBtn = currentNetwork.locator('button:has-text("Revoke")');
 
-      if (label.includes("Default")) {
-        // Should not have revoke button
-        const revokeBtn = item.locator('button:has-text("Revoke")');
-        await expect(revokeBtn).not.toBeVisible();
-        break;
-      }
-    }
+    await expect(regenerateBtn).toBeVisible();
+    await expect(revokeBtn).not.toBeVisible();
   });
 
   test("should show current network badge", async ({ page }) => {

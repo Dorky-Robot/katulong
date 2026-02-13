@@ -290,7 +290,7 @@ describe("CertificateManager", () => {
       }
     });
 
-    it("prevents revoking default network", async () => {
+    it("allows revoking any network", async () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
         await ensureCerts(testDir, "Test");
@@ -298,11 +298,13 @@ describe("CertificateManager", () => {
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
 
-        await assert.rejects(
-          async () => await mgr.revokeNetwork("default"),
-          /Cannot revoke default network/,
-          "Should reject revoking default network"
-        );
+        // Should be able to revoke default network
+        const defaultDir = join(testDir, "tls", "networks", "default");
+        assert.ok(existsSync(defaultDir), "Default network should exist");
+
+        await mgr.revokeNetwork("default");
+
+        assert.ok(!existsSync(defaultDir), "Default network should be deleted");
       } finally {
         rmSync(testDir, { recursive: true, force: true });
       }

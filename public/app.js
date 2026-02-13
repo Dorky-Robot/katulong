@@ -672,14 +672,15 @@
             </div>
             ${!net.noCert ? `
               <div class="cert-network-actions">
-                <button class="btn-small btn-regenerate" data-network-id="${net.networkId}">
-                  Regenerate
-                </button>
-                ${net.networkId !== 'default' ? `
+                ${isCurrent ? `
+                  <button class="btn-small btn-regenerate" data-network-id="${net.networkId}">
+                    Regenerate
+                  </button>
+                ` : `
                   <button class="btn-small btn-danger btn-revoke" data-network-id="${net.networkId}">
                     Revoke
                   </button>
-                ` : ''}
+                `}
               </div>
             ` : ''}
           </div>
