@@ -35,6 +35,54 @@ Your terminal, everywhere. Access your shell sessions from any device—desktop 
 - **Secure device pairing** — WebAuthn + QR code pairing. Your sessions, your devices only.
 - **Sessions persist** — Daemon owns PTYs. Restart the server, your sessions survive.
 
+## Installation
+
+### Homebrew (macOS)
+
+```bash
+# Add the tap
+brew tap dorky-robot/katulong
+
+# Install
+brew install katulong
+
+# Start Katulong
+katulong start
+
+# Or use brew services for auto-start on login
+brew services start katulong
+```
+
+### Manual Installation
+
+```bash
+git clone https://github.com/dorky-robot/katulong.git
+cd katulong
+npm install
+npm link  # Makes 'katulong' command available globally
+```
+
+## Quick Start
+
+```bash
+# Start Katulong
+katulong start
+
+# Check status
+katulong status
+
+# Open in browser
+katulong open
+
+# View logs
+katulong logs
+
+# Stop Katulong
+katulong stop
+```
+
+For detailed CLI usage, run `katulong --help`.
+
 ## Features
 
 ### Mobile-First Terminal
@@ -54,31 +102,23 @@ Your terminal, everywhere. Access your shell sessions from any device—desktop 
 - **Cmd/Option key support** — Cmd+Backspace (kill line), Option+Backspace (delete word), etc.
 - **Touch-optimized toolbar** — Essential keys always accessible, no hunting for special characters
 
-## Setup
+## Development
 
-```
+```bash
+# Install dependencies
 npm install
-```
 
-Start the daemon (owns PTY sessions):
-
-```
-npm run daemon
-```
-
-In another terminal, start the UI server:
-
-```
-npm start
-```
-
-Or run both together:
-
-```
+# Run both daemon and server with auto-reload
 npm run dev
+
+# Or run separately:
+npm run daemon  # Terminal 1
+npm start       # Terminal 2
 ```
 
 Open `http://localhost:3001` in a browser.
+
+For production deployment, use the `katulong` CLI (see Installation above).
 
 ## Usage
 

@@ -34,8 +34,8 @@
       <div class="hero-content">
         <h1 class="hero-title">Your Terminal, Everywhere</h1>
         <p class="hero-subtitle">
-          A secure, self-hosted web terminal with passwordless authentication.
-          Access your development environment from any device.
+          Self-hosted web terminal with passwordless authentication.
+          Access your shell from any device—desktop browser, phone, SSH—over LAN or internet.
         </p>
         <p class="hero-note">
           <em>Katulong</em> (kah-too-LONG) means "helper" in Tagalog—your always-ready terminal assistant.
@@ -237,39 +237,82 @@
   <section id="installation" class="section section-dark">
     <div class="container">
       <h2 class="section-title">Get Started in Minutes</h2>
-      <p class="section-subtitle">Simple installation, powerful features</p>
+      <p class="section-subtitle">Simple installation with Homebrew or npm</p>
+
+      <div class="install-tabs">
+        <div class="install-method">
+          <h3>🍺 Homebrew (macOS)</h3>
+          <div class="code-block">
+            <code># Add the tap
+brew tap dorky-robot/katulong
+
+# Install
+brew install katulong
+
+# Start
+katulong start
+
+# Or use brew services for auto-start
+brew services start katulong</code>
+          </div>
+          <p class="step-note">
+            Installs to <code>~/.config/katulong</code> with system service integration
+          </p>
+        </div>
+
+        <div class="install-method">
+          <h3>📦 Manual Installation</h3>
+          <div class="code-block">
+            <code>git clone https://github.com/Dorky-Robot/katulong.git
+cd katulong
+npm install
+npm link  # Makes 'katulong' command available</code>
+          </div>
+          <p class="step-note">
+            For development or if Homebrew isn't available
+          </p>
+        </div>
+      </div>
 
       <div class="install-steps">
+        <h3 style="margin-top: 3rem; margin-bottom: 1.5rem;">Quick Start with CLI</h3>
+
         <div class="install-step">
           <div class="step-number">1</div>
           <div class="step-content">
-            <h3>Clone & Install</h3>
+            <h3>Start Katulong</h3>
             <div class="code-block">
-              <code>git clone https://github.com/Dorky-Robot/katulong.git
-cd katulong
-npm install</code>
+              <code>katulong start</code>
             </div>
+            <p class="step-note">Starts daemon and server on ports 3001 (HTTP) and 3002 (HTTPS)</p>
           </div>
         </div>
 
         <div class="install-step">
           <div class="step-number">2</div>
           <div class="step-content">
-            <h3>Start the Server</h3>
+            <h3>Open in Browser</h3>
             <div class="code-block">
-              <code>npm start</code>
+              <code>katulong open</code>
             </div>
-            <p class="step-note">Server starts on ports 3001 (HTTP) and 3002 (HTTPS)</p>
+            <p class="step-note">
+              Or visit <strong>http://localhost:3001</strong> manually.
+              Follow the WebAuthn registration flow to create your first passkey.
+            </p>
           </div>
         </div>
 
         <div class="install-step">
           <div class="step-number">3</div>
           <div class="step-content">
-            <h3>Register Your Device</h3>
+            <h3>Manage Services</h3>
+            <div class="code-block">
+              <code>katulong status  # Check if running
+katulong logs    # View output
+katulong stop    # Stop services</code>
+            </div>
             <p class="step-note">
-              Open <strong>http://localhost:3001</strong> in your browser.
-              Follow the WebAuthn registration flow to create your first passkey.
+              Run <code>katulong --help</code> to see all available commands
             </p>
           </div>
         </div>

@@ -1,0 +1,94 @@
+#!/usr/bin/env node
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(__dirname, "..");
+
+// Read version from package.json
+const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf-8"));
+const VERSION = pkg.version;
+
+const COMMANDS = {
+  start: "Start Katulong daemon and/or server",
+  stop: "Stop Katulong daemon and/or server",
+  restart: "Restart daemon and/or server",
+  status: "Check if Katulong is running",
+  logs: "Stream logs (daemon, server, or both)",
+  open: "Open Katulong in your browser",
+  info: "Show system information and configuration",
+};
+
+function showHelp() {
+  console.log(`
+katulong v${VERSION} - Your terminal, everywhere
+
+USAGE:
+  katulong <command> [options]
+
+COMMANDS:
+${Object.entries(COMMANDS)
+  .map(([cmd, desc]) => `  ${cmd.padEnd(12)} ${desc}`)
+  .join("\n")}
+
+OPTIONS:
+  --help, -h    Show this help message
+  --version, -v Show version number
+
+EXAMPLES:
+  katulong start              Start both daemon and server
+  katulong start server       Start only the server
+  katulong restart daemon     Restart only the daemon
+  katulong stop server        Stop only the server
+  katulong status             Check if running
+  katulong logs daemon        Stream daemon logs
+  katulong open               Open in browser
+
+For more information, visit: https://github.com/dorky-robot/katulong
+`);
+}
+
+function showVersion() {
+  console.log(`katulong v${VERSION}`);
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const command = args[0];
+
+  // Handle flags
+  if (!command || command === "--help" || command === "-h") {
+    showHelp();
+    process.exit(0);
+  }
+
+  if (command === "--version" || command === "-v") {
+    showVersion();
+    process.exit(0);
+  }
+
+  // Dispatch to command handler
+  if (!COMMANDS[command]) {
+    console.error(`Error: Unknown command '${command}'`);
+    console.error(`Run 'katulong --help' for usage information`);
+    process.exit(1);
+  }
+
+  try {
+    const handler = await import(`../lib/cli/commands/${command}.js`);
+    await handler.default(args.slice(1));
+  } catch (err) {
+    if (err.code === "ERR_MODULE_NOT_FOUND") {
+      console.error(`Error: Command '${command}' not yet implemented`);
+    } else {
+      console.error(`Error: ${err.message}`);
+      if (process.env.DEBUG) {
+        console.error(err.stack);
+      }
+    }
+    process.exit(1);
+  }
+}
+
+main();

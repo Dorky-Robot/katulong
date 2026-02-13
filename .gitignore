@@ -6,3 +6,6 @@ dist/
 *.log
 katulong-auth.json
 test-results/
+daemon.pid
+ssh/
+tls/
