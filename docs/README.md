@@ -97,8 +97,10 @@ Edit `docs/index.html` directly. Sections:
 - Features (feature cards)
 - Security (security highlights)
 - Screenshots (gallery)
-- Installation (getting started guide)
+- Installation (getting started guide) - **Updated with Homebrew as primary method**
 - Use Cases (who is this for)
+
+**Note:** Installation section now shows Homebrew as the primary installation method, with CLI commands for managing Katulong services.
 
 ### JavaScript
 
