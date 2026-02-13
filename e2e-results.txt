@@ -1,0 +1,33 @@
+
+> katulong@0.1.0 test:e2e
+> npx playwright test
+
+[2m[WebServer] [22m{"time":"2026-02-12T23:05:37.599Z","level":"warn","msg":"WARNING: KATULONG_NO_AUTH=1 — authentication is DISABLED. All requests are treated as authenticated. Do NOT use this in production or on untrusted networks."}
+
+[Global Setup] Preparing test environment...
+
+[Fixtures] Setting up test data...
+[Global Setup] Failed: apiRequestContext.get: connect ECONNREFUSED ::1:3001
+Call log:
+[2m  - → GET http://localhost:3001/auth/devices[22m
+[2m    - user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/145.0.7632.6 Safari/537.36[22m
+[2m    - accept: */*[22m
+[2m    - accept-encoding: gzip,deflate,br[22m
+
+    at createTestDevice (/Users/felixflores/Projects/dorky_robot/katulong/test/e2e/fixtures.js:38:39)
+    at setupTestFixtures (/Users/felixflores/Projects/dorky_robot/katulong/test/e2e/fixtures.js:60:25)
+    at globalSetup (/Users/felixflores/Projects/dorky_robot/katulong/test/e2e/global-setup.js:21:11) {
+  name: 'Error'
+}
+Error: apiRequestContext.get: connect ECONNREFUSED ::1:3001
+Call log:
+[2m  - → GET http://localhost:3001/auth/devices[22m
+[2m    - user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/145.0.7632.6 Safari/537.36[22m
+[2m    - accept: */*[22m
+[2m    - accept-encoding: gzip,deflate,br[22m
+
+    at apiRequestContext.get: connect ECONNREFUSED ::1:3001
+    at createTestDevice (/Users/felixflores/Projects/dorky_robot/katulong/test/e2e/fixtures.js:38:39)
+    at setupTestFixtures (/Users/felixflores/Projects/dorky_robot/katulong/test/e2e/fixtures.js:60:25)
+    at globalSetup (/Users/felixflores/Projects/dorky_robot/katulong/test/e2e/global-setup.js:21:11)
+
