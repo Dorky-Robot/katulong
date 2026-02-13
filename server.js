@@ -867,13 +867,27 @@ const routes = [
     const cookies = parseCookies(req.headers.cookie);
     const token = cookies.get("katulong_session");
     if (token) {
-      // Use withStateLock for atomic state modification
-      await withStateLock(async (state) => {
-        if (state && state.isValidSession(token)) {
-          return state.removeSession(token);
+      try {
+        // Use withStateLock for atomic state modification
+        // endSession() permanently removes the credential and all its sessions
+        const newState = await withStateLock(async (state) => {
+          if (state && state.isValidSession(token)) {
+            return state.endSession(token);
+          }
+          return state;
+        });
+
+        // Notify all connected clients if a credential was removed
+        if (newState && newState.removedCredentialId) {
+          broadcast({ type: 'credential-removed', credentialId: newState.removedCredentialId });
         }
-        return state;
-      });
+      } catch (err) {
+        // Handle "last credential" protection
+        if (err.message && err.message.includes('last credential')) {
+          return json(res, 403, { error: "Cannot end session for the last credential" });
+        }
+        throw err; // Re-throw unexpected errors
+      }
     }
     let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
     if (req.socket.encrypted) clearCookie += "; Secure";

@@ -564,6 +564,7 @@
       switchSettingsView,
       viewSuccess,
       loadTokens,
+      loadDevices: () => invalidateDevices(deviceStore),
       getWizardActivePairCode: () => window.wizardActivePairCode,
       isAtBottom,
       renderBar
