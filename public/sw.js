@@ -1,4 +1,4 @@
-const CACHE_NAME = "katulong-v3";
+const CACHE_NAME = "katulong-v4";
 const PRECACHE = [
   "/",
   "/icon-192.png",
@@ -33,7 +33,8 @@ self.addEventListener("fetch", (e) => {
     url.pathname.startsWith("/shortcuts") ||
     url.pathname === "/login" ||
     url.pathname === "/manifest.json" ||
-    url.pathname.startsWith("/auth/")
+    url.pathname.startsWith("/auth/") ||
+    url.pathname.startsWith("/api/")
   ) {
     return;
   }

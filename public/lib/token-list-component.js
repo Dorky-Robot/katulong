@@ -148,7 +148,7 @@ export function createTokenListComponent(store, options = {}) {
       container.appendChild(newTokenEl);
     }
 
-    // Filter out new token from regular list
+    // Filter out new token from regular list (only while it's being displayed as new)
     const filteredTokens = state.newToken
       ? state.tokens.filter(t => t.id !== state.newToken.id)
       : state.tokens;

@@ -11,15 +11,18 @@ const TEST_PORT = 3099;
 export default async function globalSetup() {
   console.log('\n[Global Setup] Preparing test environment...\n');
 
+  // Note: Test data directory and fixture auth state are created by pre-server-setup.js
+  // which runs BEFORE the webServer starts (via playwright.config.js command chain)
+
   const browser = await chromium.launch();
   const page = await browser.newPage();
 
   try {
-    // Navigate to app
+    // Navigate to app - server has already loaded the fixture auth.json created by pre-server-setup
     await page.goto(`http://localhost:${TEST_PORT}`);
     await page.waitForSelector('.xterm', { timeout: 10000 });
 
-    // Setup test fixtures
+    // Setup additional test fixtures (check devices, create extra tokens, etc.)
     await setupTestFixtures(page);
 
     console.log('\n[Global Setup] Test environment ready\n');

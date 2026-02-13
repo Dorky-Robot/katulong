@@ -70,9 +70,9 @@ function deviceItemTemplate(device, context) {
             class="device-btn device-btn-danger"
             data-action="remove"
             data-id="${device.id}"
-            aria-label="Remove device"
+            aria-label="End session"
           >
-            Remove
+            End Session
           </button>
         ` : ''}
       </div>
@@ -150,7 +150,7 @@ export function createDeviceListComponent(store, options = {}) {
           listContainer.insertAdjacentHTML('beforeend', `
             <div class="devices-warning">
               <i class="ph ph-warning"></i>
-              <span>You cannot remove the last device (would lock you out)</span>
+              <span>You cannot end session for the last device (would lock you out)</span>
             </div>
           `);
         }
