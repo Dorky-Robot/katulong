@@ -53,7 +53,11 @@ katulong start
 brew services start katulong
 ```
 
-**Note:** If you're on **macOS 26.x beta** and see "Xcode 26.0 required" error, use the [automated installer](https://github.com/dorky-robot/homebrew-katulong#%EF%B8%8F-known-issue-macos-26x-beta-sequoia-rc) instead.
+**⚠️ macOS 26.x beta users:** If you see "Xcode 26.0 required" error, use this instead:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dorky-robot/homebrew-katulong/master/install.sh | bash
+```
 
 ### Manual Installation
 
@@ -62,12 +66,6 @@ git clone https://github.com/dorky-robot/katulong.git
 cd katulong
 npm install
 npm link  # Makes 'katulong' command available globally
-```
-
-Or use the one-liner installer:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/dorky-robot/homebrew-katulong/master/install.sh | bash
 ```
 
 ## Quick Start
