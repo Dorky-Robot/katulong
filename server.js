@@ -67,13 +67,20 @@ function isHttpsConnection(req) {
   return req.socket?.encrypted || isHttpsTunnel;
 }
 
-// --- TLS certificates (auto-generated) ---
+// --- Configuration (load instance name first) ---
+
+const configManager = new ConfigManager(DATA_DIR);
+configManager.initialize();
+const instanceName = configManager.getInstanceName();
+log.info("Configuration loaded", { instanceName });
+
+// --- TLS certificates (auto-generated with instance name) ---
 
 // Ensure CA exists (needed by CertificateManager)
-ensureCerts(DATA_DIR, "Katulong");
+ensureCerts(DATA_DIR, instanceName);
 
 // Initialize multi-certificate manager with SNI
-const certManager = new CertificateManager(DATA_DIR, "Katulong");
+const certManager = new CertificateManager(DATA_DIR, instanceName);
 await certManager.initialize();
 
 // Auto-generate certificate for current network
@@ -96,11 +103,6 @@ if (networks.length === 0) {
 }
 
 log.info("TLS certificates ready", { dir: join(DATA_DIR, "tls"), networks: networks.length });
-
-// Initialize configuration manager
-const configManager = new ConfigManager(DATA_DIR);
-configManager.initialize();
-log.info("Configuration loaded", { instanceName: configManager.getInstanceName() });
 
 await initP2P();
 
