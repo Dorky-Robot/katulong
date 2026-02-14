@@ -57,10 +57,10 @@ test.describe("Certificates UI - Multi-Network", () => {
     const label = networkItem.locator('.cert-network-label');
     await expect(label).toBeVisible();
 
-    // Should show network details (IPs, last used)
+    // Should show network details (LAN IPs, last used)
     const details = networkItem.locator('.cert-network-details');
     await expect(details).toBeVisible();
-    await expect(details).toContainText(/IPs:/);
+    await expect(details).toContainText(/LAN:/);
     await expect(details).toContainText(/Last used:/);
 
     // Should show actions
@@ -114,7 +114,7 @@ test.describe("Certificates UI - Multi-Network", () => {
 
     // Set up dialog handler
     page.on('dialog', async dialog => {
-      expect(dialog.message()).toContain('Regenerate certificate');
+      expect(dialog.message()).toContain('Certificate regenerated');
       await dialog.accept();
     });
 
