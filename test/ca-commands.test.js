@@ -62,8 +62,8 @@ describe("CA Commands", () => {
     writeFileSync(join(tlsDir, "ca.crt"), ca.cert);
     writeFileSync(join(tlsDir, "ca.key"), ca.key);
 
-    // Execute export
-    const output = execSync(`DATA_DIR=${testDir} node bin/katulong ca export`, {
+    // Execute export (use KATULONG_DATA_DIR, not DATA_DIR)
+    const output = execSync(`KATULONG_DATA_DIR=${testDir} node bin/katulong ca export`, {
       cwd: process.cwd(),
       encoding: 'utf-8'
     });
@@ -95,13 +95,13 @@ describe("CA Commands", () => {
     writeFileSync(join(tlsDir, "ca.crt"), ca.cert);
     writeFileSync(join(tlsDir, "ca.key"), ca.key);
 
-    const bundle = execSync(`DATA_DIR=${testDir} node bin/katulong ca export`, {
+    const bundle = execSync(`KATULONG_DATA_DIR=${testDir} node bin/katulong ca export`, {
       cwd: process.cwd(),
       encoding: 'utf-8'
     });
 
     // Try to import the same CA
-    const output = execSync(`echo '${bundle}' | DATA_DIR=${testDir} node bin/katulong ca import`, {
+    const output = execSync(`echo '${bundle}' | KATULONG_DATA_DIR=${testDir} node bin/katulong ca import`, {
       cwd: process.cwd(),
       encoding: 'utf-8'
     });
@@ -126,7 +126,7 @@ describe("CA Commands", () => {
 
     // Try to import invalid bundle
     try {
-      execSync(`echo '${invalidBundle}' | DATA_DIR=${testDir} node bin/katulong ca import`, {
+      execSync(`echo '${invalidBundle}' | KATULONG_DATA_DIR=${testDir} node bin/katulong ca import`, {
         cwd: process.cwd(),
         encoding: 'utf-8'
       });
@@ -162,7 +162,7 @@ describe("CA Commands", () => {
     const bundleB64 = Buffer.from(JSON.stringify(newBundle)).toString('base64');
 
     // Import with --yes flag (skip confirmation)
-    execSync(`echo '${bundleB64}' | DATA_DIR=${testDir} node bin/katulong ca import --yes`, {
+    execSync(`echo '${bundleB64}' | KATULONG_DATA_DIR=${testDir} node bin/katulong ca import --yes`, {
       cwd: process.cwd(),
       encoding: 'utf-8'
     });
