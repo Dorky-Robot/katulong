@@ -57,10 +57,10 @@ test.describe("Certificates UI - Multi-Network", () => {
     const label = networkItem.locator('.cert-network-label');
     await expect(label).toBeVisible();
 
-    // Should show network details (IPs, last used)
+    // Should show network details (LAN IPs, last used)
     const details = networkItem.locator('.cert-network-details');
     await expect(details).toBeVisible();
-    await expect(details).toContainText(/IPs:/);
+    await expect(details).toContainText(/LAN:/);
     await expect(details).toContainText(/Last used:/);
 
     // Should show actions
@@ -112,10 +112,19 @@ test.describe("Certificates UI - Multi-Network", () => {
     await openSettings(page);
     await switchSettingsTab(page, "certificates");
 
-    // Set up dialog handler
+    // Set up dialog handlers for both confirm and alert
+    let dialogCount = 0;
     page.on('dialog', async dialog => {
-      expect(dialog.message()).toContain('Regenerate certificate');
-      await dialog.accept();
+      dialogCount++;
+      if (dialog.type() === 'confirm') {
+        // First dialog: confirm regeneration
+        expect(dialog.message()).toContain('Regenerate certificate');
+        await dialog.accept();
+      } else if (dialog.type() === 'alert') {
+        // Second dialog: success message
+        expect(dialog.message()).toContain('Certificate regenerated');
+        await dialog.accept();
+      }
     });
 
     const networkItem = page.locator('.cert-network-item').first();
@@ -124,32 +133,26 @@ test.describe("Certificates UI - Multi-Network", () => {
     // Click regenerate
     await regenerateBtn.click();
 
-    // Wait for alert
-    await page.waitForTimeout(500);
+    // Wait for both dialogs to appear
+    await page.waitForTimeout(1000);
 
-    // Should show success alert
-    // Note: Can't easily test alert content, but the function should complete without errors
+    // Should have seen both confirm and alert
+    expect(dialogCount).toBeGreaterThanOrEqual(1);
   });
 
-  test("should not show revoke button for default network", async ({ page }) => {
+  test("should show both regenerate and revoke buttons for current network", async ({ page }) => {
     await openSettings(page);
     await switchSettingsTab(page, "certificates");
 
-    // Find default network (should have "Default Network" label or similar)
-    const networkItems = page.locator('.cert-network-item');
-    const count = await networkItems.count();
+    // Current network should have both regenerate and revoke buttons
+    const currentNetwork = page.locator('.cert-network-item.current').first();
+    await expect(currentNetwork).toBeVisible();
 
-    for (let i = 0; i < count; i++) {
-      const item = networkItems.nth(i);
-      const label = await item.locator('.cert-network-label').inputValue();
+    const regenerateBtn = currentNetwork.locator('button:has-text("Regenerate")');
+    const revokeBtn = currentNetwork.locator('button:has-text("Revoke")');
 
-      if (label.includes("Default")) {
-        // Should not have revoke button
-        const revokeBtn = item.locator('button:has-text("Revoke")');
-        await expect(revokeBtn).not.toBeVisible();
-        break;
-      }
-    }
+    await expect(regenerateBtn).toBeVisible();
+    await expect(revokeBtn).toBeVisible();
   });
 
   test("should show current network badge", async ({ page }) => {

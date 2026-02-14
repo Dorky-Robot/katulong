@@ -640,11 +640,12 @@
       // If current network has no cert, add it to the list as a placeholder
       let networksToRender = sortedNetworks;
       if (!currentNetwork.hasCertificate && sortedNetworks.length > 0) {
+        const subnet = currentNetwork.ips[0]?.split('.').slice(0, 3).join('.') || 'Unknown';
         networksToRender = [
           {
             networkId: currentNetworkId,
             ips: currentNetwork.ips,
-            label: `Network ${currentNetwork.ips[0]?.split('.').slice(0, 3).join('.')}.*`,
+            label: `Network ${subnet}.*`,
             lastUsedAt: new Date().toISOString(),
             noCert: true
           },
@@ -662,7 +663,8 @@
               ${isCurrent ? '<span class="badge">Current</span>' : ''}
             </div>
             <div class="cert-network-details">
-              <p>IPs: ${net.ips.join(", ")}</p>
+              <p>LAN: ${net.ips.join(", ")}</p>
+              ${net.publicIp ? `<p>Public: ${net.publicIp}</p>` : ''}
               ${net.noCert ?
                 '<p style="color: var(--warning)">⚠️ No certificate</p>' :
                 `<p>Last used: ${timeAgo(net.lastUsedAt)}</p>`
@@ -670,14 +672,18 @@
             </div>
             ${!net.noCert ? `
               <div class="cert-network-actions">
-                <button class="btn-small" onclick="window.regenerateNetwork('${net.networkId}')">
-                  Regenerate
-                </button>
-                ${net.networkId !== 'default' ? `
-                  <button class="btn-small btn-danger" onclick="window.revokeNetwork('${net.networkId}')">
+                ${isCurrent ? `
+                  <button class="btn-small btn-regenerate" data-network-id="${net.networkId}">
+                    Regenerate
+                  </button>
+                  <button class="btn-small btn-danger btn-revoke" data-network-id="${net.networkId}">
                     Revoke
                   </button>
-                ` : ''}
+                ` : `
+                  <button class="btn-small btn-danger btn-revoke" data-network-id="${net.networkId}">
+                    Revoke
+                  </button>
+                `}
               </div>
             ` : ''}
           </div>
@@ -690,6 +696,22 @@
           const networkId = e.target.dataset.networkId;
           const label = e.target.value;
           await updateNetworkLabel(networkId, label);
+        });
+      });
+
+      // Attach regenerate button handlers
+      document.querySelectorAll('.btn-regenerate').forEach(button => {
+        button.addEventListener('click', async (e) => {
+          const networkId = e.target.dataset.networkId;
+          await regenerateNetwork(networkId);
+        });
+      });
+
+      // Attach revoke button handlers
+      document.querySelectorAll('.btn-revoke').forEach(button => {
+        button.addEventListener('click', async (e) => {
+          const networkId = e.target.dataset.networkId;
+          await revokeNetwork(networkId);
         });
       });
     }
@@ -710,7 +732,7 @@
       }
     }
 
-    window.revokeNetwork = async function(networkId) {
+    async function revokeNetwork(networkId) {
       if (!confirm(`Revoke certificate for this network?\n\nThis will delete the certificate and prevent future connections from this network until a new certificate is generated.`)) {
         return;
       }
@@ -727,9 +749,9 @@
         console.error("Failed to revoke network:", error);
         alert(`Failed to revoke network: ${error.message}`);
       }
-    };
+    }
 
-    window.regenerateNetwork = async function(networkId) {
+    async function regenerateNetwork(networkId) {
       if (!confirm(`Regenerate certificate for this network?\n\nThis will create a new certificate. No restart needed.`)) {
         return;
       }
@@ -748,7 +770,7 @@
         console.error("Failed to regenerate network:", error);
         alert(`Failed to regenerate network: ${error.message}`);
       }
-    };
+    }
 
     // Generate certificate for current network
     document.getElementById('cert-generate-current')?.addEventListener('click', async () => {
