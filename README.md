@@ -53,10 +53,17 @@ katulong start
 brew services start katulong
 ```
 
-**⚠️ macOS 26.x beta users:** If you see "Xcode 26.0 required" error, use this instead:
+**⚠️ macOS 26.x users:** If you see "Xcode too outdated" error after updating Xcode, run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dorky-robot/homebrew-katulong/master/install.sh | bash
+# Point xcode-select to the new Xcode
+sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+
+# Accept the license
+sudo xcodebuild -license accept
+
+# Then retry installation
+brew install katulong
 ```
 
 ### Manual Installation
