@@ -6,55 +6,37 @@
   <meta name="theme-color" content="#1e1e2e">
   <title>Katulong — Trust Certificate</title>
   <link rel="icon" href="/favicon.ico" sizes="32x32">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     :root {
-      --font-mono: 'JetBrains Mono', monospace;
+      --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Monaco, monospace;
       --bg: #1e1e2e;
       --bg-surface: #313244;
-      --bg-input: #1e1e2e;
       --border: #45475a;
       --text: #cdd6f4;
       --text-muted: #a6adc8;
       --text-dim: #6c7086;
-      --accent: #45475a;
       --accent-active: #cba6f7;
-      --success: #a6e3a1;
-      --danger: #f38ba8;
-      --focus-ring: rgba(137,180,250,0.5);
     }
 
     [data-theme="light"] {
       --bg: #eff1f5;
       --bg-surface: #ffffff;
-      --bg-input: #e6e9ef;
       --border: #ccd0da;
       --text: #4c4f69;
       --text-muted: #6c6f85;
       --text-dim: #9ca0b0;
-      --accent: #ccd0da;
       --accent-active: #8839ef;
-      --success: #40a02b;
-      --danger: #d20f39;
-      --focus-ring: rgba(30,102,245,0.4);
     }
 
     @media (prefers-color-scheme: light) {
       [data-theme="auto"] {
         --bg: #eff1f5;
         --bg-surface: #ffffff;
-        --bg-input: #e6e9ef;
         --border: #ccd0da;
         --text: #4c4f69;
         --text-muted: #6c6f85;
         --text-dim: #9ca0b0;
-        --accent: #ccd0da;
         --accent-active: #8839ef;
-        --success: #40a02b;
-        --danger: #d20f39;
-        --focus-ring: rgba(30,102,245,0.4);
       }
     }
 
@@ -75,6 +57,7 @@
     }
 
     h1 { font-size: 1.25rem; font-weight: 500; margin-bottom: 0.25rem; }
+    h2 { font-size: 0.875rem; font-weight: 500; margin-bottom: 0.5rem; }
 
     .subtitle {
       color: var(--text-muted); font-size: 0.8125rem; margin-bottom: 1.5rem;
@@ -90,7 +73,7 @@
     .download-btn:active { opacity: 0.8; }
 
     .steps {
-      list-style: none; padding: 0; margin: 0 0 1.5rem;
+      list-style: none; padding: 0; margin: 0 0 1rem;
       color: var(--text-muted); font-size: 0.8125rem; line-height: 1.7;
     }
     .steps li { padding: 0.2rem 0; }
@@ -100,45 +83,21 @@
     }
     .steps strong { color: var(--text); font-weight: 500; }
 
-    .platform-section { display: none; }
-    .platform-section.active { display: block; }
+    .section { margin-bottom: 1.5rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+    .section:last-of-type { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
 
-    .success-banner {
-      display: none; padding: 0.75rem 1rem; border-radius: 0.5rem;
-      background: rgba(166, 227, 161, 0.15); border: 1px solid var(--success);
-      color: var(--success); font-size: 0.8125rem; margin-bottom: 1rem;
-      text-align: center;
+    details { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    summary {
+      color: var(--text-muted); font-size: 0.8125rem; cursor: pointer;
+      text-decoration: underline; text-underline-offset: 2px;
     }
-    .success-banner.visible { display: block; }
-
-    .next-step {
-      display: none; padding: 1rem; border-radius: 0.5rem;
-      background: var(--bg-input); border: 1px solid var(--border);
-      margin-bottom: 1rem;
-    }
-    .next-step.visible { display: block; }
-    .next-step p {
-      color: var(--text-muted); font-size: 0.8125rem; line-height: 1.6;
-    }
-    .next-step strong { color: var(--text); }
+    summary:active { color: var(--text); }
+    details .steps { margin-top: 0.75rem; }
 
     .note {
       color: var(--text-dim); font-size: 0.75rem; line-height: 1.5;
       margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);
     }
-
-    .uninstall-section {
-      margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);
-    }
-    .uninstall-toggle {
-      background: none; border: none; color: var(--text-muted);
-      font-size: 0.8125rem; font-family: var(--font-mono); cursor: pointer;
-      padding: 0; text-decoration: underline; text-underline-offset: 2px;
-      width: auto; height: auto; display: inline;
-    }
-    .uninstall-toggle:active { color: var(--text); }
-    .uninstall-content { display: none; margin-top: 0.75rem; }
-    .uninstall-content.visible { display: block; }
   </style>
 </head>
 <body>
@@ -146,90 +105,63 @@
     <h1>Trust Certificate</h1>
     <p class="subtitle">Install the Katulong CA certificate to enable secure HTTPS access on your local network.</p>
 
-    <div class="success-banner" id="success-banner">
-      Certificate installed.
+    <div class="section">
+      <a class="download-btn" href="/connect/trust/ca.crt">Download Certificate</a>
     </div>
 
-    <div class="next-step" id="next-step">
-      <p>Now go back to your computer and tap <strong>Next</strong> to scan the pairing QR code.</p>
-    </div>
-
-    <!-- iOS install -->
-    <div class="platform-section" id="ios-section">
-      <a class="download-btn" href="/connect/trust/ca.mobileconfig">Download Profile</a>
+    <div class="section">
+      <h2>iOS</h2>
       <ol class="steps">
-        <li data-step="1">Tap <strong>Download Profile</strong> above</li>
-        <li data-step="2">Open <strong>Settings</strong> > <strong>General</strong> > <strong>VPN & Device Management</strong></li>
+        <li data-step="1">Download the <a href="/connect/trust/ca.mobileconfig">iOS profile</a> instead</li>
+        <li data-step="2">Open <strong>Settings</strong> &gt; <strong>General</strong> &gt; <strong>VPN &amp; Device Management</strong></li>
         <li data-step="3">Tap the <strong>Katulong Local CA</strong> profile and install it</li>
-        <li data-step="4">Go to <strong>Settings</strong> > <strong>General</strong> > <strong>About</strong> > <strong>Certificate Trust Settings</strong></li>
+        <li data-step="4">Go to <strong>Settings</strong> &gt; <strong>General</strong> &gt; <strong>About</strong> &gt; <strong>Certificate Trust Settings</strong></li>
         <li data-step="5">Enable full trust for <strong>Katulong Local CA</strong></li>
       </ol>
     </div>
 
-    <!-- Android install -->
-    <div class="platform-section" id="android-section">
-      <a class="download-btn" href="/connect/trust/ca.crt">Download Certificate</a>
+    <div class="section">
+      <h2>Android</h2>
       <ol class="steps">
-        <li data-step="1">Tap <strong>Download Certificate</strong> above</li>
-        <li data-step="2">Open <strong>Settings</strong> > <strong>Security</strong> > <strong>Encryption & credentials</strong></li>
-        <li data-step="3">Tap <strong>Install a certificate</strong> > <strong>CA certificate</strong></li>
-        <li data-step="4">Select the downloaded <strong>ca.crt</strong> file</li>
+        <li data-step="1">Open <strong>Settings</strong> &gt; <strong>Security</strong> &gt; <strong>Encryption &amp; credentials</strong></li>
+        <li data-step="2">Tap <strong>Install a certificate</strong> &gt; <strong>CA certificate</strong></li>
+        <li data-step="3">Select the downloaded <strong>ca.crt</strong> file</li>
       </ol>
     </div>
 
-    <!-- Desktop install -->
-    <div class="platform-section" id="desktop-section">
-      <a class="download-btn" href="/connect/trust/ca.crt">Download CA Certificate</a>
-      <ol class="steps" id="desktop-steps-mac">
-        <li data-step="1">Download the certificate above</li>
-        <li data-step="2">Double-click <strong>ca.crt</strong> to open in Keychain Access</li>
-        <li data-step="3">Double-click the certificate, expand <strong>Trust</strong>, set to <strong>Always Trust</strong></li>
-      </ol>
-      <ol class="steps" id="desktop-steps-other" style="display:none">
-        <li data-step="1">Download the certificate above</li>
-        <li data-step="2">Add it to your system's trusted certificate store</li>
+    <div class="section">
+      <h2>macOS</h2>
+      <ol class="steps">
+        <li data-step="1">Double-click <strong>katulong-ca.crt</strong> to open in Keychain Access</li>
+        <li data-step="2">Double-click the certificate, expand <strong>Trust</strong>, set to <strong>Always Trust</strong></li>
       </ol>
     </div>
 
-    <!-- Uninstall -->
-    <div class="uninstall-section">
-      <button class="uninstall-toggle" id="uninstall-toggle">Uninstall instructions</button>
-      <div class="uninstall-content" id="uninstall-content">
-        <!-- iOS uninstall -->
-        <div class="platform-section" id="ios-uninstall">
-          <ol class="steps">
-            <li data-step="1">Open <strong>Settings</strong> > <strong>General</strong> > <strong>VPN & Device Management</strong></li>
-            <li data-step="2">Tap the <strong>Katulong Local CA</strong> profile</li>
-            <li data-step="3">Tap <strong>Remove Profile</strong></li>
-          </ol>
-        </div>
-        <!-- Android uninstall -->
-        <div class="platform-section" id="android-uninstall">
-          <ol class="steps">
-            <li data-step="1">Open <strong>Settings</strong> > <strong>Security</strong> > <strong>Encryption & credentials</strong></li>
-            <li data-step="2">Tap <strong>Trusted credentials</strong> > <strong>User</strong> tab</li>
-            <li data-step="3">Find <strong>Katulong Local CA</strong> and remove it</li>
-          </ol>
-        </div>
-        <!-- Desktop uninstall -->
-        <div class="platform-section" id="desktop-uninstall">
-          <ol class="steps" id="desktop-uninstall-mac">
-            <li data-step="1">Open <strong>Keychain Access</strong></li>
-            <li data-step="2">Find <strong>Katulong Local CA</strong> in the System keychain</li>
-            <li data-step="3">Right-click and <strong>Delete</strong></li>
-          </ol>
-          <ol class="steps" id="desktop-uninstall-other" style="display:none">
-            <li data-step="1">Remove <strong>katulong-ca.crt</strong> from your system's trusted certificate store</li>
-          </ol>
-        </div>
-      </div>
-    </div>
+    <details>
+      <summary>Uninstall instructions</summary>
+      <h2>iOS</h2>
+      <ol class="steps">
+        <li data-step="1">Open <strong>Settings</strong> &gt; <strong>General</strong> &gt; <strong>VPN &amp; Device Management</strong></li>
+        <li data-step="2">Tap the <strong>Katulong Local CA</strong> profile</li>
+        <li data-step="3">Tap <strong>Remove Profile</strong></li>
+      </ol>
+      <h2>Android</h2>
+      <ol class="steps">
+        <li data-step="1">Open <strong>Settings</strong> &gt; <strong>Security</strong> &gt; <strong>Encryption &amp; credentials</strong></li>
+        <li data-step="2">Tap <strong>Trusted credentials</strong> &gt; <strong>User</strong> tab</li>
+        <li data-step="3">Find <strong>Katulong Local CA</strong> and remove it</li>
+      </ol>
+      <h2>macOS</h2>
+      <ol class="steps">
+        <li data-step="1">Open <strong>Keychain Access</strong></li>
+        <li data-step="2">Find <strong>Katulong Local CA</strong> in the System keychain</li>
+        <li data-step="3">Right-click and <strong>Delete</strong></li>
+      </ol>
+    </details>
 
     <p class="note">
       This is a private certificate generated by your Katulong instance. It only secures connections on your local network.
     </p>
   </div>
-
-  <script src="/trust.js"></script>
 </body>
 </html>
