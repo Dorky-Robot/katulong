@@ -40,10 +40,9 @@ test.describe("Certificates UI - Multi-Network", () => {
     const networksContainer = page.locator('#cert-networks-container');
     await expect(networksContainer).toBeVisible();
 
-    // Should have at least one network (default)
-    const networkItems = page.locator('.cert-network-item');
-    const count = await networkItems.count();
-    expect(count).toBeGreaterThanOrEqual(1);
+    // Wait for at least one network item to appear (loaded asynchronously)
+    const firstItem = page.locator('.cert-network-item').first();
+    await expect(firstItem).toBeVisible();
   });
 
   test("should display network details", async ({ page }) => {

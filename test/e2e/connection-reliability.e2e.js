@@ -287,9 +287,12 @@ test.describe('Connection Reliability', () => {
     await page2.waitForSelector('.xterm', { timeout: 10000 });
     await page2.waitForSelector('.xterm-screen', { timeout: 5000 });
 
-    // Second tab should see the same session
-    const terminalText2 = await page2.locator('.xterm-screen').textContent();
-    expect(terminalText2).toContain(marker1);
+    // Second tab should see the same session (wait for terminal buffer replay)
+    await page2.waitForFunction(
+      (m) => document.querySelector('.xterm-screen')?.textContent?.includes(m),
+      marker1,
+      { timeout: 10000 }
+    );
 
     // Send command in second tab
     const marker2 = `tab2-${Date.now()}`;
