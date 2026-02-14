@@ -379,26 +379,46 @@ test.describe('Device List After Pairing', () => {
     }
   });
 
-  test.skip('should update device list when new device pairs', async ({ page }) => {
-    // SKIPPED: Test not implemented - has TODO for simulating device pairing
+  test('should update device list in real-time when new device pairs', async ({ page, request }) => {
     await openSettings(page);
     await switchSettingsTab(page, 'lan');
-
-    // Wait for device list to be visible
-    const devicesList = page.locator('#devices-list');
-    await expect(devicesList).toBeVisible({ timeout: 2000 });
 
     // Get initial device count
     const deviceItems = page.locator('.device-item');
     const initialCount = await deviceItems.count();
 
-    // TODO: Simulate pairing a new device
-    // This would require either:
-    // 1. Using a second browser context
-    // 2. Making direct API calls
-    // 3. Mocking WebSocket messages
+    // Start pairing wizard to get a pairing code and PIN
+    await page.click('button:has-text("Pair Device on LAN")');
+    const trustView = page.locator('#settings-view-trust');
+    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
+    await page.click('#wizard-next-pair');
 
-    // For now, we verify the structure is correct
-    console.log('[Test] Initial device count:', initialCount);
+    const pairView = page.locator('#settings-view-pair');
+    await expect(pairView).toHaveClass(/active/, { timeout: 2000 });
+
+    // Get pairing code from the copy URL button
+    const copyBtn = pairView.locator('#wizard-pair-copy-url');
+    await expect(copyBtn).toBeVisible();
+    await copyBtn.click();
+    const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+    const pairUrl = new URL(clipboardText);
+    const pairCode = pairUrl.searchParams.get('code');
+
+    // Get PIN
+    const pinDisplay = pairView.locator('#wizard-pair-pin');
+    const pin = await pinDisplay.textContent();
+
+    // Simulate remote device pairing via direct API call
+    const verifyResponse = await request.post('/auth/pair/verify', {
+      data: { code: pairCode, pin },
+      headers: { 'Content-Type': 'application/json' }
+    });
+    expect(verifyResponse.ok()).toBeTruthy();
+
+    // Device list should update in real-time (within 5s) without page refresh
+    // The pair-complete WebSocket message should trigger refreshDeviceList
+    await expect(deviceItems).toHaveCount(initialCount + 1, { timeout: 5000 });
+
+    console.log('[Test] Device list updated in real-time after pairing');
   });
 });

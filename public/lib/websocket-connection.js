@@ -74,8 +74,8 @@ export function createWebSocketConnection(deps = {}) {
     'pair-complete': (msg, currentState, wizardActivePairCode) => ({
       stateUpdates: {},
       effects: (wizardActivePairCode && msg.code === wizardActivePairCode)
-        ? [{ type: 'stopWizardPairing' }, { type: 'switchSettingsView', view: 'success' }]
-        : []
+        ? [{ type: 'stopWizardPairing' }, { type: 'switchSettingsView', view: 'success' }, { type: 'refreshDeviceList' }]
+        : [{ type: 'refreshDeviceList' }]
     }),
 
     reload: () => ({
