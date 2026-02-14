@@ -86,13 +86,20 @@ export function createCertificateStore() {
  * Load certificates from API
  */
 export async function loadCertificates(store) {
+  console.log('[CertStore] Loading certificates...');
   store.dispatch({ type: CERT_ACTIONS.LOAD_START });
 
   try {
     const res = await fetch("/api/certificates/status");
+    console.log('[CertStore] API response status:', res.status, res.ok);
+
     if (!res.ok) throw new Error("Failed to load certificates");
 
     const data = await res.json();
+    console.log('[CertStore] Loaded data:', {
+      networksCount: data.allNetworks?.length,
+      currentNetwork: data.currentNetwork?.networkId
+    });
 
     store.dispatch({
       type: CERT_ACTIONS.LOAD_SUCCESS,
@@ -100,11 +107,11 @@ export async function loadCertificates(store) {
       currentNetwork: data.currentNetwork
     });
   } catch (err) {
+    console.error('[CertStore] Load failed:', err);
     store.dispatch({
       type: CERT_ACTIONS.LOAD_ERROR,
       error: err.message
     });
-    console.error("Failed to load certificates:", err);
   }
 }
 

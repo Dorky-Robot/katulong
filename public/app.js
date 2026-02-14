@@ -594,7 +594,17 @@
       const container = document.getElementById("cert-networks-container");
       const generateBtn = document.getElementById("cert-generate-current");
 
-      if (!container) return;
+      if (!container) {
+        console.log('[Certificates] Container not found, skipping render');
+        return;
+      }
+
+      console.log('[Certificates] Rendering state:', {
+        loading: state.loading,
+        error: state.error,
+        networksCount: state.networks?.length,
+        hasCurrentNetwork: !!state.currentNetwork
+      });
 
       // Show/hide generate button
       if (generateBtn) {
