@@ -600,6 +600,26 @@
       }
     }
 
+    async function loadCADetails() {
+      const certCaDetails = document.getElementById("cert-ca-details");
+
+      try {
+        const configResponse = await fetch("/api/config");
+        if (!configResponse.ok) throw new Error("Failed to load config");
+
+        const configData = await configResponse.json();
+        const instanceName = configData.config.instanceName;
+
+        certCaDetails.innerHTML = `
+          <p><strong>Instance:</strong> ${instanceName}</p>
+          <p><strong>CA Name:</strong> ${instanceName} Local CA</p>
+        `;
+      } catch (error) {
+        certCaDetails.innerHTML = `<p style="color: var(--danger)">Failed to load CA details</p>`;
+        console.error("Failed to load CA details:", error);
+      }
+    }
+
     function timeAgo(dateString) {
       const date = new Date(dateString);
       const now = new Date();
@@ -701,17 +721,17 @@
 
       // Attach regenerate button handlers
       document.querySelectorAll('.btn-regenerate').forEach(button => {
-        button.addEventListener('click', async (e) => {
+        button.addEventListener('click', (e) => {
           const networkId = e.target.dataset.networkId;
-          await regenerateNetwork(networkId);
+          setConfirmState(`network-${networkId}`, () => regenerateNetwork(networkId));
         });
       });
 
       // Attach revoke button handlers
       document.querySelectorAll('.btn-revoke').forEach(button => {
-        button.addEventListener('click', async (e) => {
+        button.addEventListener('click', (e) => {
           const networkId = e.target.dataset.networkId;
-          await revokeNetwork(networkId);
+          setConfirmState(`revoke-${networkId}`, () => revokeNetwork(networkId));
         });
       });
     }
@@ -727,16 +747,12 @@
         if (!response.ok) throw new Error("Failed to update network label");
       } catch (error) {
         console.error("Failed to update network label:", error);
-        alert(`Failed to update network label: ${error.message}`);
+        showToast(`Failed to update network label: ${error.message}`, true);
         loadCertificateStatus(); // Reload to reset
       }
     }
 
     async function revokeNetwork(networkId) {
-      if (!confirm(`Revoke certificate for this network?\n\nThis will delete the certificate and prevent future connections from this network until a new certificate is generated.`)) {
-        return;
-      }
-
       try {
         const response = await fetch(`/api/certificates/networks/${networkId}`, {
           method: 'DELETE'
@@ -744,18 +760,16 @@
 
         if (!response.ok) throw new Error("Failed to revoke network");
 
+        showToast('Network certificate revoked');
+        resetConfirmState(`revoke-${networkId}`);
         await loadCertificateStatus();
       } catch (error) {
         console.error("Failed to revoke network:", error);
-        alert(`Failed to revoke network: ${error.message}`);
+        showToast(`Failed to revoke network: ${error.message}`, true);
       }
     }
 
     async function regenerateNetwork(networkId) {
-      if (!confirm(`Regenerate certificate for this network?\n\nThis will create a new certificate. No restart needed.`)) {
-        return;
-      }
-
       try {
         const response = await fetch(`/api/certificates/networks/${networkId}/regenerate`, {
           method: 'POST'
@@ -764,11 +778,12 @@
         if (!response.ok) throw new Error("Failed to regenerate network");
 
         const data = await response.json();
-        alert(data.message || 'Certificate regenerated successfully!');
+        showToast(data.message || 'Certificate regenerated successfully!');
+        resetConfirmState(`network-${networkId}`);
         await loadCertificateStatus();
       } catch (error) {
         console.error("Failed to regenerate network:", error);
-        alert(`Failed to regenerate network: ${error.message}`);
+        showToast(`Failed to regenerate network: ${error.message}`, true);
       }
     }
 
@@ -783,7 +798,7 @@
         const currentIp = data.currentNetwork.ips[0];
 
         if (!currentIp) {
-          alert("No network IP detected");
+          showToast("No network IP detected", true);
           return;
         }
 
@@ -795,11 +810,113 @@
 
         if (!genResponse.ok) throw new Error("Failed to generate certificate");
 
-        alert('Certificate generated successfully!');
+        showToast('Certificate generated successfully!');
         await loadCertificateStatus();
       } catch (error) {
         console.error("Failed to generate certificate:", error);
-        alert(`Failed to generate certificate: ${error.message}`);
+        showToast(`Failed to generate certificate: ${error.message}`, true);
+      }
+    });
+
+    // CA Certificate Management - Double-press pattern
+    let confirmState = {}; // Track which buttons are in confirm state
+    let confirmTimeout = null;
+
+    function resetConfirmState(key) {
+      delete confirmState[key];
+      if (confirmTimeout) {
+        clearTimeout(confirmTimeout);
+        confirmTimeout = null;
+      }
+    }
+
+    function setConfirmState(key, callback) {
+      if (confirmState[key]) {
+        // Second press - execute action
+        resetConfirmState(key);
+        callback();
+      } else {
+        // First press - enter confirm state
+        confirmState[key] = true;
+
+        // Auto-reset after 3 seconds
+        if (confirmTimeout) clearTimeout(confirmTimeout);
+        confirmTimeout = setTimeout(() => {
+          resetConfirmState(key);
+          updateButtonStates();
+        }, 3000);
+
+        updateButtonStates();
+      }
+    }
+
+    function updateButtonStates() {
+      // Update CA regenerate button
+      const caBtn = document.getElementById('cert-regenerate-ca');
+      if (caBtn) {
+        if (confirmState['ca-regenerate']) {
+          caBtn.textContent = 'Confirm';
+          caBtn.classList.add('btn-confirm');
+        } else {
+          caBtn.textContent = 'Regenerate CA Certificate';
+          caBtn.classList.remove('btn-confirm');
+        }
+      }
+
+      // Update network button states
+      document.querySelectorAll('.btn-regenerate').forEach(btn => {
+        const networkId = btn.dataset.networkId;
+        if (confirmState[`network-${networkId}`]) {
+          btn.textContent = 'Confirm';
+          btn.classList.add('btn-confirm');
+        } else {
+          btn.textContent = 'Regenerate';
+          btn.classList.remove('btn-confirm');
+        }
+      });
+
+      document.querySelectorAll('.btn-revoke').forEach(btn => {
+        const networkId = btn.dataset.networkId;
+        if (confirmState[`revoke-${networkId}`]) {
+          btn.textContent = 'Confirm';
+          btn.classList.add('btn-confirm');
+        } else {
+          btn.textContent = 'Revoke';
+          btn.classList.remove('btn-confirm');
+        }
+      });
+    }
+
+    async function regenerateCA() {
+      try {
+        const response = await fetch('/api/certificates/ca/regenerate', {
+          method: 'POST'
+        });
+
+        if (!response.ok) throw new Error("Failed to regenerate CA");
+
+        showToast('CA certificate regenerated');
+        resetConfirmState('ca-regenerate');
+        updateButtonStates();
+        await loadCertificateStatus();
+      } catch (error) {
+        console.error("Failed to regenerate CA:", error);
+        showToast(`Failed to regenerate CA: ${error.message}`, true);
+      }
+    }
+
+    // Reset confirm state when clicking outside
+    document.addEventListener('click', (e) => {
+      const isButton = e.target.classList.contains('btn-small') ||
+                       e.target.id === 'cert-regenerate-ca' ||
+                       e.target.classList.contains('btn-confirm');
+      if (!isButton && Object.keys(confirmState).length > 0) {
+        confirmState = {};
+        if (confirmTimeout) {
+          clearTimeout(confirmTimeout);
+          confirmTimeout = null;
+        }
+        updateButtonStates();
       }
     });
 

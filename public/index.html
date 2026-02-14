@@ -1143,7 +1143,21 @@
     }
     .drop-overlay.visible { display: grid; }
 
-    /* --- Upload toast --- */
+    /* --- Toast notifications --- */
+    .toast {
+      position: fixed; bottom: 3rem; left: 50%; transform: translateX(-50%);
+      z-index: 20001; padding: var(--space-sm) var(--space-lg); border-radius: var(--radius-md);
+      font-size: 0.8125rem; font-family: var(--font-mono);
+      background: var(--bg-surface); color: var(--text); border: 1px solid var(--success);
+      opacity: 0; transition: opacity 0.2s;
+      pointer-events: none;
+      max-width: 400px;
+      text-align: center;
+    }
+    .toast.visible { opacity: 1; }
+    .toast.toast-error { border-color: var(--danger); color: var(--danger); }
+
+    /* Legacy upload toast */
     .upload-toast {
       position: fixed; bottom: 3rem; left: 50%; transform: translateX(-50%);
       z-index: 20001; padding: var(--space-sm) var(--space-lg); border-radius: var(--radius-md);
@@ -1156,6 +1170,37 @@
     .upload-toast.error { border-color: var(--danger); color: var(--danger); }
 
     /* --- Certificate management --- */
+    .cert-ca-section {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-lg);
+      margin-bottom: var(--space-xl);
+    }
+    .cert-ca-section h4 {
+      margin: 0 0 var(--space-sm) 0;
+      font-size: 0.95rem;
+      color: var(--text);
+    }
+    .cert-ca-details {
+      margin: var(--space-sm) 0;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+    .cert-ca-details p {
+      margin: 0.25rem 0;
+    }
+    .cert-ca-actions {
+      margin-top: var(--space-md);
+    }
+    .btn-confirm {
+      background: var(--warning) !important;
+      color: var(--bg) !important;
+    }
+    .btn-confirm:hover {
+      background: var(--warning) !important;
+      opacity: 0.9;
+    }
     .cert-networks-list {
       margin-bottom: var(--space-lg);
     }

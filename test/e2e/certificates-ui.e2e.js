@@ -112,32 +112,25 @@ test.describe("Certificates UI - Multi-Network", () => {
     await openSettings(page);
     await switchSettingsTab(page, "certificates");
 
-    // Set up dialog handlers for both confirm and alert
-    let dialogCount = 0;
-    page.on('dialog', async dialog => {
-      dialogCount++;
-      if (dialog.type() === 'confirm') {
-        // First dialog: confirm regeneration
-        expect(dialog.message()).toContain('Regenerate certificate');
-        await dialog.accept();
-      } else if (dialog.type() === 'alert') {
-        // Second dialog: success message
-        expect(dialog.message()).toContain('Certificate regenerated');
-        await dialog.accept();
-      }
-    });
-
     const networkItem = page.locator('.cert-network-item').first();
-    const regenerateBtn = networkItem.locator('button:has-text("Regenerate")');
 
-    // Click regenerate
-    await regenerateBtn.click();
+    // First click - should change to "Confirm"
+    await networkItem.locator('button:has-text("Regenerate")').click();
 
-    // Wait for both dialogs to appear
-    await page.waitForTimeout(1000);
+    // Wait for button to change to "Confirm"
+    const confirmBtn = networkItem.locator('button:has-text("Confirm")');
+    await expect(confirmBtn).toBeVisible({ timeout: 1000 });
+    await expect(confirmBtn).toHaveClass(/btn-confirm/);
 
-    // Should have seen both confirm and alert
-    expect(dialogCount).toBeGreaterThanOrEqual(1);
+    // Second click - should actually regenerate
+    await confirmBtn.click();
+
+    // Wait for toast notification
+    await expect(page.locator('.toast')).toBeVisible({ timeout: 2000 });
+    await expect(page.locator('.toast')).toContainText('regenerated');
+
+    // Button should reset back to "Regenerate"
+    await expect(networkItem.locator('button:has-text("Regenerate")')).toBeVisible({ timeout: 2000 });
   });
 
   test("should show both regenerate and revoke buttons for current network", async ({ page }) => {
