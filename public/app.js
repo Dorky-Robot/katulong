@@ -725,17 +725,17 @@
 
       // Attach regenerate button handlers
       document.querySelectorAll('.btn-regenerate').forEach(button => {
-        button.addEventListener('click', async (e) => {
+        button.addEventListener('click', (e) => {
           const networkId = e.target.dataset.networkId;
-          await regenerateNetwork(networkId);
+          setConfirmState(`network-${networkId}`, () => regenerateNetwork(networkId));
         });
       });
 
       // Attach revoke button handlers
       document.querySelectorAll('.btn-revoke').forEach(button => {
-        button.addEventListener('click', async (e) => {
+        button.addEventListener('click', (e) => {
           const networkId = e.target.dataset.networkId;
-          await revokeNetwork(networkId);
+          setConfirmState(`revoke-${networkId}`, () => revokeNetwork(networkId));
         });
       });
     }
@@ -765,6 +765,7 @@
         if (!response.ok) throw new Error("Failed to revoke network");
 
         showToast('Network certificate revoked');
+        resetConfirmState(`revoke-${networkId}`);
         await loadCertificateStatus();
       } catch (error) {
         console.error("Failed to revoke network:", error);
@@ -782,6 +783,7 @@
 
         const data = await response.json();
         showToast(data.message || 'Certificate regenerated successfully!');
+        resetConfirmState(`network-${networkId}`);
         await loadCertificateStatus();
       } catch (error) {
         console.error("Failed to regenerate network:", error);
@@ -820,8 +822,74 @@
       }
     });
 
-    // CA Certificate Management
-    let lastCABackupId = null;
+    // CA Certificate Management - Double-press pattern
+    let confirmState = {}; // Track which buttons are in confirm state
+    let confirmTimeout = null;
+
+    function resetConfirmState(key) {
+      delete confirmState[key];
+      if (confirmTimeout) {
+        clearTimeout(confirmTimeout);
+        confirmTimeout = null;
+      }
+    }
+
+    function setConfirmState(key, callback) {
+      if (confirmState[key]) {
+        // Second press - execute action
+        resetConfirmState(key);
+        callback();
+      } else {
+        // First press - enter confirm state
+        confirmState[key] = true;
+
+        // Auto-reset after 3 seconds
+        if (confirmTimeout) clearTimeout(confirmTimeout);
+        confirmTimeout = setTimeout(() => {
+          resetConfirmState(key);
+          updateButtonStates();
+        }, 3000);
+
+        updateButtonStates();
+      }
+    }
+
+    function updateButtonStates() {
+      // Update CA regenerate button
+      const caBtn = document.getElementById('cert-regenerate-ca');
+      if (caBtn) {
+        if (confirmState['ca-regenerate']) {
+          caBtn.textContent = 'Confirm';
+          caBtn.classList.add('btn-confirm');
+        } else {
+          caBtn.textContent = 'Regenerate CA Certificate';
+          caBtn.classList.remove('btn-confirm');
+        }
+      }
+
+      // Update network button states
+      document.querySelectorAll('.btn-regenerate').forEach(btn => {
+        const networkId = btn.dataset.networkId;
+        if (confirmState[`network-${networkId}`]) {
+          btn.textContent = 'Confirm';
+          btn.classList.add('btn-confirm');
+        } else {
+          btn.textContent = 'Regenerate';
+          btn.classList.remove('btn-confirm');
+        }
+      });
+
+      document.querySelectorAll('.btn-revoke').forEach(btn => {
+        const networkId = btn.dataset.networkId;
+        if (confirmState[`revoke-${networkId}`]) {
+          btn.textContent = 'Confirm';
+          btn.classList.add('btn-confirm');
+        } else {
+          btn.textContent = 'Revoke';
+          btn.classList.remove('btn-confirm');
+        }
+      });
+    }
 
     async function regenerateCA() {
       try {
@@ -831,13 +899,6 @@
 
         if (!response.ok) throw new Error("Failed to regenerate CA");
 
-        const data = await response.json();
-        lastCABackupId = data.backupId;
-
-        // Show undo banner
-        const undoBanner = document.getElementById('cert-undo-banner');
-        undoBanner.style.display = 'flex';
-
         showToast('CA certificate regenerated');
         await loadCertificateStatus();
       } catch (error) {
@@ -846,38 +907,26 @@
       }
     }
 
-    async function undoCARegeneration() {
-      if (!lastCABackupId) {
-        showToast("No backup available to restore", true);
-        return;
-      }
-
-      try {
-        const response = await fetch(`/api/certificates/ca/restore/${lastCABackupId}`, {
-          method: 'POST'
-        });
-
-        if (!response.ok) throw new Error("Failed to restore CA");
-
-        showToast('CA certificate restored');
-        hideUndoBanner();
-        await loadCertificateStatus();
-      } catch (error) {
-        console.error("Failed to restore CA:", error);
-        showToast(`Failed to restore CA: ${error.message}`, true);
-      }
-    }
-
-    function hideUndoBanner() {
-      const undoBanner = document.getElementById('cert-undo-banner');
-      undoBanner.style.display = 'none';
-      lastCABackupId = null;
-    }
-
     // Event listeners for CA management
-    document.getElementById('cert-regenerate-ca')?.addEventListener('click', regenerateCA);
-    document.getElementById('cert-undo-btn')?.addEventListener('click', undoCARegeneration);
-    document.getElementById('cert-undo-dismiss')?.addEventListener('click', hideUndoBanner);
+    document.getElementById('cert-regenerate-ca')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setConfirmState('ca-regenerate', regenerateCA);
+    });
+
+    // Reset confirm state when clicking outside
+    document.addEventListener('click', (e) => {
+      const isButton = e.target.classList.contains('btn-small') ||
+                       e.target.id === 'cert-regenerate-ca' ||
+                       e.target.classList.contains('btn-confirm');
+      if (!isButton && Object.keys(confirmState).length > 0) {
+        confirmState = {};
+        if (confirmTimeout) {
+          clearTimeout(confirmTimeout);
+          confirmTimeout = null;
+        }
+        updateButtonStates();
+      }
+    });
 
     // --- Boot ---
 
