@@ -10,7 +10,7 @@ import { WebSocketServer } from "ws";
 import { randomUUID, randomBytes } from "node:crypto";
 import { encode, decoder } from "./lib/ndjson.js";
 import { log } from "./lib/log.js";
-import { createServerPeer, destroyPeer } from "./lib/p2p.js";
+import { createServerPeer, destroyPeer, initP2P, p2pAvailable } from "./lib/p2p.js";
 import { detectImage, readRawBody, MAX_UPLOAD_BYTES } from "./lib/upload.js";
 import {
   loadState, saveState, isSetup,
@@ -88,6 +88,8 @@ if (currentIps.length > 0) {
 
 const networks = await certManager.listNetworks();
 log.info("TLS certificates ready", { dir: join(DATA_DIR, "tls"), networks: networks.length });
+
+await initP2P();
 
 const sshHostKey = ensureHostKey(DATA_DIR);
 
@@ -1580,6 +1582,11 @@ wss.on("connection", (ws) => {
     } else if (msg.type === "p2p-signal") {
       const info = wsClients.get(clientId);
       if (!info) return;
+
+      if (!p2pAvailable) {
+        ws.send(JSON.stringify({ type: "p2p-unavailable" }));
+        return;
+      }
 
       // If this is a new SDP offer, tear down the old peer and start fresh
       if (msg.data?.type === "offer" && info.p2pPeer) {
