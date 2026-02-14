@@ -136,8 +136,14 @@
       <h2>macOS</h2>
       <ol class="steps">
         <li data-step="1">Double-click <strong>katulong-ca.crt</strong> to open in Keychain Access</li>
-        <li data-step="2">Double-click the certificate, expand <strong>Trust</strong>, set to <strong>Always Trust</strong></li>
+        <li data-step="2">Double-click the certificate, expand <strong>Trust</strong></li>
+        <li data-step="3">Set <strong>When using this certificate</strong> to <strong>Always Trust</strong></li>
+        <li data-step="4">Set <strong>Secure Sockets Layer (SSL)</strong> to <strong>Always Trust</strong></li>
+        <li data-step="5">Close the window and enter your password when prompted</li>
       </ol>
+      <p class="steps" style="margin-top: 0.75rem; color: var(--text-dim); font-size: 0.75rem;">
+        <strong style="color: var(--text-muted);">Note:</strong> The red ⓧ icon will disappear once you explicitly set SSL to "Always Trust" in step 4.
+      </p>
     </div>
 
     <details>
@@ -157,8 +163,8 @@
       <h2>macOS</h2>
       <ol class="steps">
         <li data-step="1">Open <strong>Keychain Access</strong></li>
-        <li data-step="2">Find <strong>Katulong Local CA</strong> in the System keychain</li>
-        <li data-step="3">Right-click and <strong>Delete</strong></li>
+        <li data-step="2">Find <strong>Katulong Local CA</strong> in the login keychain (or System keychain if you moved it)</li>
+        <li data-step="3">Right-click and select <strong>Delete "Katulong Local CA"</strong></li>
       </ol>
     </details>
 
