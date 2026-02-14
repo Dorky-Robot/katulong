@@ -936,7 +936,7 @@ const routes = [
       return json(res, 401, { error: "Authentication required" });
     }
     const state = loadState();
-    if (!state) return json(res, 400, { error: "Not set up" });
+    if (!state) return json(res, 200, { devices: [], currentCredentialId: null });
     const devices = state.getCredentialsWithMetadata();
 
     // Find current device
