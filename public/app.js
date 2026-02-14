@@ -116,6 +116,8 @@
     // Subscribe to shortcuts changes for render side effects
     // Note: shortcuts store subscription moved after renderBar is defined (line ~640)
 
+    console.log('[App] About to create certificate store...');
+
     // --- Certificate Store ---
 
     console.log('[App] Creating certificate store...');
