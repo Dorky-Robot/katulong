@@ -19,6 +19,7 @@
     import { createTokenFormManager } from "/lib/token-form.js";
     import { createShortcutsStore, loadShortcuts as reloadShortcuts } from "/lib/shortcuts-store.js";
     import { createShortcutsPopup, createShortcutsEditPanel, createAddShortcutModal } from "/lib/shortcuts-components.js";
+    import { createCertificateStore, setConfirmState, clearConfirmState, clearAllConfirmStates, regenerateNetwork as regenerateNetworkAction, revokeNetwork as revokeNetworkAction, updateNetworkLabel as updateNetworkLabelAction } from "/lib/certificate-store.js";
     import { createDictationModal } from "/lib/dictation-modal.js";
     import { createDragDropManager } from "/lib/drag-drop.js";
     import { showToast, isImageFile, uploadImage, uploadImageToTerminal as uploadImageToTerminalFn } from "/lib/image-upload.js";
@@ -114,6 +115,10 @@
 
     // Subscribe to shortcuts changes for render side effects
     // Note: shortcuts store subscription moved after renderBar is defined (line ~640)
+
+    // --- Certificate Store ---
+
+    const certificateStore = createCertificateStore();
 
     // --- P2P Manager ---
 
