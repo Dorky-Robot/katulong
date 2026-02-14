@@ -895,7 +895,7 @@ const routes = [
         // endSession() permanently removes the credential and all its sessions
         const newState = await withStateLock(async (state) => {
           if (state && state.isValidSession(token)) {
-            return state.endSession(token);
+            return state.endSession(token, { allowRemoveLast: isLocalRequest(req) });
           }
           return state;
         });
@@ -1026,7 +1026,7 @@ const routes = [
         if (!state) throw new Error("Not set up");
         const credential = state.getCredential(id);
         if (!credential) throw new Error("Device not found");
-        return state.removeCredential(id);
+        return state.removeCredential(id, { allowRemoveLast: isLocalRequest(req) });
       });
 
       // SECURITY: Close all active WebSocket connections for this credential

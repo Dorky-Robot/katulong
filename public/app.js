@@ -269,7 +269,7 @@
     // Subscribe to shortcuts changes to re-render edit list
     shortcutsStore.subscribe((shortcuts) => {
       const editList = document.getElementById("edit-list");
-      if (editList && modals.isOpen && modals.isOpen('edit')) {
+      if (editList && modals.get('edit')?.isOpen) {
         shortcutsEditPanel.render(editList, shortcuts);
       }
     });

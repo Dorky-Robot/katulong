@@ -180,6 +180,29 @@ describe('Credential Revocation Security', () => {
       );
     });
 
+    it('should allow removing last credential with allowRemoveLast', () => {
+      // Remove credential2 first
+      const stateWithOneCred = testState.removeCredential('cred-2');
+
+      // With allowRemoveLast, removing the last credential should succeed
+      const newState = stateWithOneCred.removeCredential('cred-1', { allowRemoveLast: true });
+
+      assert.strictEqual(newState.credentials.length, 0,
+        'All credentials should be removed');
+      assert.strictEqual(Object.keys(newState.sessions).length, 0,
+        'All sessions should be removed');
+    });
+
+    it('should still throw on last credential without allowRemoveLast', () => {
+      const stateWithOneCred = testState.removeCredential('cred-2');
+
+      assert.throws(
+        () => stateWithOneCred.removeCredential('cred-1'),
+        /Cannot remove the last credential/i,
+        'Should prevent removing last credential by default'
+      );
+    });
+
     it('should handle removal of non-existent credential gracefully', () => {
       const newState = testState.removeCredential('non-existent-id');
 

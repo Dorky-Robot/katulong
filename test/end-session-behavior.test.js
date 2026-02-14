@@ -140,6 +140,31 @@ describe('End Session Behavior', () => {
       );
     });
 
+    it('should allow ending session for last credential with allowRemoveLast', () => {
+      // Remove credential2 first
+      const stateWithOneCred = testState.removeCredential('cred-2');
+
+      // With allowRemoveLast, ending session for the last credential should succeed
+      const newState = stateWithOneCred.endSession('session-token-1', { allowRemoveLast: true });
+
+      assert.strictEqual(newState.credentials.length, 0,
+        'All credentials should be removed');
+      assert.strictEqual(Object.keys(newState.sessions).length, 0,
+        'All sessions should be removed');
+      assert.strictEqual(newState.removedCredentialId, 'cred-1',
+        'Should report which credential was removed');
+    });
+
+    it('should still throw on last credential without allowRemoveLast', () => {
+      const stateWithOneCred = testState.removeCredential('cred-2');
+
+      assert.throws(
+        () => stateWithOneCred.endSession('session-token-1'),
+        /Cannot end session.*last credential/i,
+        'Should prevent ending session for last credential by default'
+      );
+    });
+
     it('should handle invalid session token gracefully', () => {
       const newState = testState.endSession('non-existent-session');
       

@@ -267,4 +267,60 @@ test.describe('LAN Device Management', () => {
       }
     }
   });
+
+  test('should allow removing last device from localhost', async ({ page }) => {
+    // Verify we're on localhost (e2e tests run on localhost)
+    const isLocalhost = page.url().includes('localhost') || page.url().includes('127.0.0.1');
+    expect(isLocalhost).toBeTruthy();
+
+    // Open settings
+    await openSettings(page);
+    await switchSettingsTab(page, 'lan');
+
+    const deviceItems = page.locator('.device-item');
+    const count = await deviceItems.count();
+
+    if (count === 0) {
+      // No devices to remove - skip test
+      return;
+    }
+
+    // Remove all devices except the last one (if more than 1)
+    // We want to test the "last device" scenario
+    while (await deviceItems.count() > 1) {
+      const removeBtn = deviceItems.first().locator('button:has-text("End Session")');
+      if (!await removeBtn.isVisible()) break;
+
+      page.once('dialog', async dialog => {
+        await dialog.accept();
+      });
+      await removeBtn.click();
+      // Wait for device to be removed from the list
+      await page.waitForTimeout(500);
+    }
+
+    // Now we should have exactly 1 device
+    const remaining = await deviceItems.count();
+    if (remaining !== 1) return;
+
+    // On localhost, the End Session button should still be visible for the last device
+    const lastDevice = deviceItems.first();
+    const removeBtn = lastDevice.locator('button:has-text("End Session")');
+    await expect(removeBtn).toBeVisible();
+
+    // Accept the confirmation dialog
+    page.once('dialog', async dialog => {
+      await dialog.accept();
+    });
+
+    // Click End Session on the last device - should succeed from localhost
+    await removeBtn.click();
+
+    // Wait for the device to be removed
+    await page.waitForTimeout(1000);
+
+    // The device list should now be empty
+    const finalCount = await deviceItems.count();
+    expect(finalCount).toBe(0);
+  });
 });

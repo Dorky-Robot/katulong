@@ -48,9 +48,73 @@ test.describe("Shortcuts popup", () => {
     await expect(focused).toBeFocused();
   });
 
-  test.skip("Comma-separated sequence shortcut shows correct label", async ({ page }) => {
-    // TODO: This test is flaky - the shortcut doesn't always appear in the edit list
-    // after saving. Needs investigation of the shortcuts save/load mechanism.
+  test("Added shortcut appears in edit list immediately", async ({ page }) => {
+    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
+    await kbBtn.click();
+    await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
+
+    await page.locator("#shortcuts-edit-btn").click();
+    await expect(page.locator("#edit-overlay")).toHaveClass(/visible/);
+
+    await page.locator("#edit-add").click();
+    await expect(page.locator("#add-modal-overlay")).toHaveClass(/visible/);
+
+    const input = page.locator("#key-composer-input");
+    const preview = page.locator("#key-preview-value");
+
+    await input.fill("ctrl");
+    await input.press("Enter");
+    await expect(preview).toContainText("Ctrl");
+
+    await input.fill("d");
+    await input.press("Enter");
+    await expect(preview).toHaveText("Ctrl+D");
+
+    await page.locator("#modal-save").click();
+    await expect(page.locator("#add-modal-overlay")).not.toHaveClass(/visible/);
+
+    const editList = page.locator("#edit-list");
+    await expect(editList).toContainText("Ctrl+D");
+  });
+
+  test("Added shortcut appears in shortcuts popup after closing edit", async ({ page }) => {
+    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
+    await kbBtn.click();
+    await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
+
+    await page.locator("#shortcuts-edit-btn").click();
+    await expect(page.locator("#edit-overlay")).toHaveClass(/visible/);
+
+    await page.locator("#edit-add").click();
+    await expect(page.locator("#add-modal-overlay")).toHaveClass(/visible/);
+
+    const input = page.locator("#key-composer-input");
+    const preview = page.locator("#key-preview-value");
+
+    await input.fill("ctrl");
+    await input.press("Enter");
+    await expect(preview).toContainText("Ctrl");
+
+    await input.fill("d");
+    await input.press("Enter");
+    await expect(preview).toHaveText("Ctrl+D");
+
+    await page.locator("#modal-save").click();
+    await expect(page.locator("#add-modal-overlay")).not.toHaveClass(/visible/);
+
+    // Close edit panel
+    await page.locator("#edit-done").click();
+    await expect(page.locator("#edit-overlay")).not.toHaveClass(/visible/);
+
+    // Reopen shortcuts popup
+    await kbBtn.click();
+    await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
+
+    const grid = page.locator("#shortcuts-grid");
+    await expect(grid).toContainText("Ctrl+D");
+  });
+
+  test("Comma-separated sequence shortcut shows correct label", async ({ page }) => {
     // Open shortcuts popup → Edit → Add
     const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
     await kbBtn.click();
@@ -98,6 +162,60 @@ test.describe("Shortcuts popup", () => {
     // The edit list should contain an item with the label
     const editList = page.locator("#edit-list");
     await expect(editList).toContainText("Ctrl+C, Ctrl+C");
+  });
+
+  test("Chord shortcut sends correct sequence when clicked", async ({ page }) => {
+    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
+    await kbBtn.click();
+    await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
+
+    await page.locator("#shortcuts-edit-btn").click();
+    await expect(page.locator("#edit-overlay")).toHaveClass(/visible/);
+
+    await page.locator("#edit-add").click();
+    await expect(page.locator("#add-modal-overlay")).toHaveClass(/visible/);
+
+    const input = page.locator("#key-composer-input");
+    const preview = page.locator("#key-preview-value");
+
+    // Build chord: Ctrl+C, Ctrl+C
+    await input.fill("ctrl");
+    await input.press("Enter");
+    await expect(preview).toContainText("Ctrl");
+
+    await input.fill("c");
+    await input.press("Enter");
+    await expect(preview).toHaveText("Ctrl+C");
+
+    await input.fill(",");
+    await input.press("Enter");
+
+    await input.fill("ctrl");
+    await input.press("Enter");
+    await expect(preview).toHaveText("Ctrl+C, Ctrl");
+
+    await input.fill("c");
+    await input.press("Enter");
+    await expect(preview).toHaveText("Ctrl+C, Ctrl+C");
+
+    await page.locator("#modal-save").click();
+    await expect(page.locator("#add-modal-overlay")).not.toHaveClass(/visible/);
+
+    // Close edit panel
+    await page.locator("#edit-done").click();
+    await expect(page.locator("#edit-overlay")).not.toHaveClass(/visible/);
+
+    // Reopen shortcuts popup
+    await kbBtn.click();
+    await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
+
+    // Click the chord shortcut button
+    const chordBtn = page.locator("#shortcuts-grid .shortcut-btn", { hasText: "Ctrl+C, Ctrl+C" });
+    await expect(chordBtn).toBeVisible();
+    await chordBtn.click();
+
+    // Clicking a shortcut dismisses the popup and sends to terminal
+    await expect(page.locator("#shortcuts-overlay")).not.toHaveClass(/visible/);
   });
 });
 
