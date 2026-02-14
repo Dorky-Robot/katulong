@@ -72,13 +72,12 @@ const certificateReducer = createReducer(initialState, {
 
 /**
  * Create certificate store
+ *
+ * Note: Does NOT auto-load certificates on creation to prevent race conditions
+ * with subscription setup. Caller must explicitly call loadCertificates() when ready.
  */
 export function createCertificateStore() {
   const store = createStore(initialState, certificateReducer, { debug: false });
-
-  // Auto-load on creation
-  loadCertificates(store);
-
   return store;
 }
 
@@ -86,20 +85,14 @@ export function createCertificateStore() {
  * Load certificates from API
  */
 export async function loadCertificates(store) {
-  console.log('[CertStore] Loading certificates...');
   store.dispatch({ type: CERT_ACTIONS.LOAD_START });
 
   try {
     const res = await fetch("/api/certificates/status");
-    console.log('[CertStore] API response status:', res.status, res.ok);
 
     if (!res.ok) throw new Error("Failed to load certificates");
 
     const data = await res.json();
-    console.log('[CertStore] Loaded data:', {
-      networksCount: data.allNetworks?.length,
-      currentNetwork: data.currentNetwork?.networkId
-    });
 
     store.dispatch({
       type: CERT_ACTIONS.LOAD_SUCCESS,

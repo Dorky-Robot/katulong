@@ -49,7 +49,7 @@ describe("Certificate Store", () => {
       assert.deepStrictEqual(state.confirmState, {});
     });
 
-    it("should auto-load certificates on creation", () => {
+    it("should not auto-load certificates on creation", () => {
       mockFetch.mock.mockImplementation(() =>
         Promise.resolve({
           ok: true,
@@ -61,7 +61,8 @@ describe("Certificate Store", () => {
       );
 
       createCertificateStore();
-      assert.strictEqual(mockFetch.mock.callCount() > 0, true);
+      // Should NOT auto-load to prevent race conditions with subscription setup
+      assert.strictEqual(mockFetch.mock.callCount(), 0);
     });
   });
 

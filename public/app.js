@@ -116,13 +116,18 @@
     // Subscribe to shortcuts changes for render side effects
     // Note: shortcuts store subscription moved after renderBar is defined (line ~640)
 
-    console.log('[App] About to create certificate store...');
-
     // --- Certificate Store ---
 
-    console.log('[App] Creating certificate store...');
     const certificateStore = createCertificateStore();
-    console.log('[App] Certificate store created:', certificateStore);
+
+    // Subscribe immediately to catch all updates
+    // This prevents race conditions where load completes before subscription setup
+    certificateStore.subscribe((state) => {
+      // Render function will be defined later, so check if it exists
+      if (typeof renderCertificates !== 'undefined') {
+        renderCertificates(state);
+      }
+    });
 
     // --- P2P Manager ---
 
@@ -584,12 +589,8 @@
 
     // --- Certificate management (Store-based) ---
 
-    // Subscribe to certificate store and render
-    console.log('[App] Setting up certificate subscription...');
-    certificateStore.subscribe((state) => {
-      console.log('[App] Certificate subscription fired');
-      renderCertificates(state);
-    });
+    // Note: Subscription already set up at line ~129 immediately after store creation
+    // This ensures we catch all state updates even if load completes before this code runs
 
     // Trigger load when switching to certificates tab
     function loadCertificateStatus() {
@@ -600,17 +601,7 @@
       const container = document.getElementById("cert-networks-container");
       const generateBtn = document.getElementById("cert-generate-current");
 
-      if (!container) {
-        console.log('[Certificates] Container not found, skipping render');
-        return;
-      }
-
-      console.log('[Certificates] Rendering state:', {
-        loading: state.loading,
-        error: state.error,
-        networksCount: state.networks?.length,
-        hasCurrentNetwork: !!state.currentNetwork
-      });
+      if (!container) return;
 
       // Show/hide generate button
       if (generateBtn) {
