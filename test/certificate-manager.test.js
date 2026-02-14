@@ -425,4 +425,24 @@ describe("CertificateManager", () => {
       }
     });
   });
+
+  describe("getDefaultCertKey", () => {
+    it("returns default cert and key buffers", async () => {
+      const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
+      try {
+        await ensureCerts(testDir, "Test");
+
+        const mgr = new CertificateManager(testDir, "Test");
+        await mgr.initialize();
+
+        const { cert, key } = mgr.getDefaultCertKey();
+        assert.ok(Buffer.isBuffer(cert), "cert should be a Buffer");
+        assert.ok(Buffer.isBuffer(key), "key should be a Buffer");
+        assert.ok(cert.toString().includes("BEGIN CERTIFICATE"), "cert should contain PEM data");
+        assert.ok(key.toString().includes("BEGIN"), "key should contain PEM data");
+      } finally {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+  });
 });

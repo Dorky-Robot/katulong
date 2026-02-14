@@ -1361,7 +1361,10 @@ async function handleRequest(req, res) {
 }
 
 const server = createServer(handleRequest);
+const { cert: defaultCert, key: defaultKey } = certManager.getDefaultCertKey();
 const httpsServer = createHttpsServer({
+  cert: defaultCert,
+  key: defaultKey,
   SNICallback: certManager.getSNICallback()
 }, handleRequest);
 
