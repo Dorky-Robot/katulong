@@ -578,16 +578,12 @@
     async function loadCertificateStatus() {
       const certNetworksContainer = document.getElementById("cert-networks-container");
       const certGenerateBtn = document.getElementById("cert-generate-current");
-      const certCaDetails = document.getElementById("cert-ca-details");
 
       try {
         const response = await fetch("/api/certificates/status");
         if (!response.ok) throw new Error("Failed to load certificate status");
 
         const data = await response.json();
-
-        // Load CA details
-        await loadCADetails();
 
         // Show generate button if current network has no cert
         if (!data.currentNetwork.hasCertificate) {
@@ -908,12 +904,6 @@
         showToast(`Failed to regenerate CA: ${error.message}`, true);
       }
     }
-
-    // Event listeners for CA management
-    document.getElementById('cert-regenerate-ca')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      setConfirmState('ca-regenerate', regenerateCA);
-    });
 
     // Reset confirm state when clicking outside
     document.addEventListener('click', (e) => {
