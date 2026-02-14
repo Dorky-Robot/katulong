@@ -112,10 +112,19 @@ test.describe("Certificates UI - Multi-Network", () => {
     await openSettings(page);
     await switchSettingsTab(page, "certificates");
 
-    // Set up dialog handler
+    // Set up dialog handlers for both confirm and alert
+    let dialogCount = 0;
     page.on('dialog', async dialog => {
-      expect(dialog.message()).toContain('Certificate regenerated');
-      await dialog.accept();
+      dialogCount++;
+      if (dialog.type() === 'confirm') {
+        // First dialog: confirm regeneration
+        expect(dialog.message()).toContain('Regenerate certificate');
+        await dialog.accept();
+      } else if (dialog.type() === 'alert') {
+        // Second dialog: success message
+        expect(dialog.message()).toContain('Certificate regenerated');
+        await dialog.accept();
+      }
     });
 
     const networkItem = page.locator('.cert-network-item').first();
@@ -124,11 +133,11 @@ test.describe("Certificates UI - Multi-Network", () => {
     // Click regenerate
     await regenerateBtn.click();
 
-    // Wait for alert
-    await page.waitForTimeout(500);
+    // Wait for both dialogs to appear
+    await page.waitForTimeout(1000);
 
-    // Should show success alert
-    // Note: Can't easily test alert content, but the function should complete without errors
+    // Should have seen both confirm and alert
+    expect(dialogCount).toBeGreaterThanOrEqual(1);
   });
 
   test("should show both regenerate and revoke buttons for current network", async ({ page }) => {
