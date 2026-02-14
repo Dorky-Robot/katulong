@@ -844,7 +844,8 @@ const routes = [
   }},
 
   { method: "GET", path: "/connect/trust/ca.crt", handler: (req, res) => {
-    const cert = readFileSync(tlsPaths.caCert);
+    const caCertPath = join(certManager.tlsDir, "ca.crt");
+    const cert = readFileSync(caCertPath);
     res.writeHead(200, {
       "Content-Type": "application/x-x509-ca-cert",
       "Content-Disposition": "attachment; filename=katulong-ca.crt",
@@ -853,7 +854,8 @@ const routes = [
   }},
 
   { method: "GET", path: "/connect/trust/ca.mobileconfig", handler: (req, res) => {
-    const caCertPem = readFileSync(tlsPaths.caCert, "utf-8");
+    const caCertPath = join(certManager.tlsDir, "ca.crt");
+    const caCertPem = readFileSync(caCertPath, "utf-8");
     const mobileconfig = generateMobileConfig(caCertPem, "Katulong");
     res.writeHead(200, {
       "Content-Type": "application/x-apple-aspen-config",
