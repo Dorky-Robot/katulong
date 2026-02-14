@@ -79,8 +79,8 @@ log.info("Configuration loaded", { instanceName });
 // Ensure CA exists (needed by CertificateManager)
 ensureCerts(DATA_DIR, instanceName);
 
-// Initialize multi-certificate manager with SNI
-const certManager = new CertificateManager(DATA_DIR, instanceName);
+// Initialize multi-certificate manager with SNI (pass ConfigManager for dynamic instance name)
+const certManager = new CertificateManager(DATA_DIR, configManager);
 await certManager.initialize();
 
 // Auto-generate certificate for current network
@@ -1273,6 +1273,51 @@ const routes = [
       json(res, 200, { success: true });
     } catch (error) {
       log.error("Failed to revoke network certificate", { error: error.message });
+      json(res, 500, { success: false, error: error.message });
+    }
+  }},
+
+  // CA Certificate Management
+  { method: "POST", path: "/api/certificates/ca/regenerate", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    try {
+      const backupId = await certManager.regenerateCA();
+      log.info("CA certificate regenerated via API", { backupId });
+      json(res, 200, { success: true, backupId, message: 'CA certificate regenerated with current instance name' });
+    } catch (error) {
+      log.error("Failed to regenerate CA certificate", { error: error.message });
+      json(res, 500, { success: false, error: error.message });
+    }
+  }},
+
+  { method: "GET", path: "/api/certificates/ca/backups", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    try {
+      const backups = await certManager.listCABackups();
+      json(res, 200, { backups });
+    } catch (error) {
+      log.error("Failed to list CA backups", { error: error.message });
+      json(res, 500, { success: false, error: error.message });
+    }
+  }},
+
+  { method: "POST", prefix: "/api/certificates/ca/restore/", handler: async (req, res, backupId) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    try {
+      await certManager.restoreCABackup(backupId);
+      log.info("CA certificate restored from backup via API", { backupId });
+      json(res, 200, { success: true, message: 'CA certificate restored from backup' });
+    } catch (error) {
+      log.error("Failed to restore CA backup", { error: error.message });
       json(res, 500, { success: false, error: error.message });
     }
   }},
