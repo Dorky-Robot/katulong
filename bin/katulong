@@ -19,6 +19,7 @@ const COMMANDS = {
   open: "Open Katulong in your browser",
   info: "Show system information and configuration",
   certs: "Manage TLS certificates",
+  ca: "Manage Certificate Authority (export/import CA)",
 };
 
 function showHelp() {
@@ -45,6 +46,8 @@ EXAMPLES:
   katulong status             Check if running
   katulong logs daemon        Stream daemon logs
   katulong open               Open in browser
+  katulong ca export          Export CA certificate
+  katulong ca import          Import CA certificate
 
 For more information, visit: https://github.com/dorky-robot/katulong
 `);
