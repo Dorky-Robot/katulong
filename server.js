@@ -36,6 +36,7 @@ import { PairingChallengeStore } from "./lib/pairing-challenge.js";
 import { AuthState } from "./lib/auth-state.js";
 import { ensureCerts, generateMobileConfig, needsRegeneration, inspectCert, regenerateServerCert, getLanIPs } from "./lib/tls.js";
 import { CertificateManager } from "./lib/certificate-manager.js";
+import { ConfigManager } from "./lib/config.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 import { validateMessage } from "./lib/websocket-validation.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
@@ -95,6 +96,11 @@ if (networks.length === 0) {
 }
 
 log.info("TLS certificates ready", { dir: join(DATA_DIR, "tls"), networks: networks.length });
+
+// Initialize configuration manager
+const configManager = new ConfigManager(DATA_DIR);
+configManager.initialize();
+log.info("Configuration loaded", { instanceName: configManager.getInstanceName() });
 
 await initP2P();
 
@@ -1126,6 +1132,32 @@ const routes = [
     if (!sessionName) return json(res, 400, { error: "Invalid name" });
     const result = await daemonRPC({ type: "rename-session", oldName: name, newName: sessionName.toString() });
     json(res, result.error ? 404 : 200, result.error ? { error: result.error } : { name: result.name });
+  }},
+
+  // --- Config API ---
+  { method: "GET", path: "/api/config", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const config = configManager.getConfig();
+    json(res, 200, { config });
+  }},
+
+  { method: "PUT", path: "/api/config/instance-name", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const { instanceName } = await parseJSON(req);
+
+    try {
+      configManager.setInstanceName(instanceName);
+      log.info("Instance name updated", { instanceName });
+      json(res, 200, { success: true, instanceName: configManager.getInstanceName() });
+    } catch (error) {
+      json(res, 400, { error: error.message });
+    }
   }},
 
   // --- Certificate API ---

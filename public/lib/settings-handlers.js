@@ -12,8 +12,78 @@ import { addCsrfHeader } from "/lib/csrf.js";
 export function createSettingsHandlers(options = {}) {
   const {
     onThemeChange,
-    onLogout
+    onLogout,
+    onInstanceNameChange
   } = options;
+
+  /**
+   * Initialize instance name input
+   */
+  async function initInstanceName() {
+    const input = document.getElementById("instance-name-input");
+    if (!input) return;
+
+    try {
+      // Load current instance name
+      const response = await fetch("/api/config");
+      const data = await response.json();
+
+      if (data.config && data.config.instanceName) {
+        input.value = data.config.instanceName;
+
+        // Update document title
+        document.title = `Katulong — ${data.config.instanceName}`;
+      }
+    } catch (error) {
+      console.error("Failed to load instance name:", error);
+    }
+
+    // Save on blur
+    input.addEventListener("blur", async () => {
+      const instanceName = input.value.trim();
+      if (!instanceName) {
+        // Don't allow empty name
+        input.value = input.dataset.previousValue || "Katulong";
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/config/instance-name", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            ...addCsrfHeader()
+          },
+          body: JSON.stringify({ instanceName })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          input.dataset.previousValue = data.instanceName;
+
+          // Update document title
+          document.title = `Katulong — ${data.instanceName}`;
+
+          if (onInstanceNameChange) {
+            onInstanceNameChange(data.instanceName);
+          }
+        } else {
+          const error = await response.json();
+          alert(`Failed to update instance name: ${error.error}`);
+          input.value = input.dataset.previousValue || "Katulong";
+        }
+      } catch (error) {
+        console.error("Failed to save instance name:", error);
+        alert("Failed to save instance name");
+        input.value = input.dataset.previousValue || "Katulong";
+      }
+    });
+
+    // Store current value on focus
+    input.addEventListener("focus", () => {
+      input.dataset.previousValue = input.value;
+    });
+  }
 
   /**
    * Initialize theme toggle buttons
@@ -63,12 +133,14 @@ export function createSettingsHandlers(options = {}) {
    * Initialize all settings handlers
    */
   function init() {
+    initInstanceName();
     initThemeToggle();
     initLogout();
   }
 
   return {
     init,
+    initInstanceName,
     initThemeToggle,
     initLogout
   };

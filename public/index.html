@@ -575,6 +575,15 @@
     .settings-label {
       color: var(--text); font-size: 0.875rem; font-family: var(--font-mono);
     }
+    .instance-name-input {
+      flex: 1; max-width: 300px; height: var(--height-btn-sm); padding: 0 var(--space-md);
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg-input); color: var(--text); font-size: 0.875rem;
+      font-family: var(--font-mono);
+    }
+    .instance-name-input:focus {
+      outline: none; border-color: var(--accent);
+    }
     .theme-toggle {
       display: flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden;
     }
@@ -1366,6 +1375,14 @@
 
           <!-- Theme tab content -->
           <div class="settings-tab-content active" id="settings-tab-theme">
+            <div class="settings-row">
+              <span class="settings-label">Instance Name</span>
+              <input type="text" id="instance-name-input" class="instance-name-input" placeholder="My Katulong" maxlength="100" />
+            </div>
+            <p class="tab-description" style="margin-top: 0.5rem; margin-bottom: 1.5rem;">
+              This name helps you identify this Katulong instance when you have multiple devices.
+            </p>
+
             <div class="settings-row">
               <span class="settings-label">Theme</span>
               <div class="theme-toggle" role="radiogroup" aria-label="Theme selection">
