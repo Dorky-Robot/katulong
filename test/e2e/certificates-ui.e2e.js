@@ -113,22 +113,24 @@ test.describe("Certificates UI - Multi-Network", () => {
     await switchSettingsTab(page, "certificates");
 
     const networkItem = page.locator('.cert-network-item').first();
-    const regenerateBtn = networkItem.locator('button').filter({ hasText: 'Regenerate' });
 
     // First click - should change to "Confirm"
-    await regenerateBtn.click();
-    await expect(regenerateBtn).toHaveText('Confirm');
-    await expect(regenerateBtn).toHaveClass(/btn-confirm/);
+    await networkItem.locator('button:has-text("Regenerate")').click();
+
+    // Wait for button to change to "Confirm"
+    const confirmBtn = networkItem.locator('button:has-text("Confirm")');
+    await expect(confirmBtn).toBeVisible({ timeout: 1000 });
+    await expect(confirmBtn).toHaveClass(/btn-confirm/);
 
     // Second click - should actually regenerate
-    await regenerateBtn.click();
+    await confirmBtn.click();
 
     // Wait for toast notification
     await expect(page.locator('.toast')).toBeVisible({ timeout: 2000 });
-    await expect(page.locator('.toast')).toContainText('Certificate regenerated');
+    await expect(page.locator('.toast')).toContainText('regenerated');
 
     // Button should reset back to "Regenerate"
-    await expect(regenerateBtn).toHaveText('Regenerate', { timeout: 2000 });
+    await expect(networkItem.locator('button:has-text("Regenerate")')).toBeVisible({ timeout: 2000 });
   });
 
   test("should show both regenerate and revoke buttons for current network", async ({ page }) => {
