@@ -900,6 +900,8 @@
         if (!response.ok) throw new Error("Failed to regenerate CA");
 
         showToast('CA certificate regenerated');
+        resetConfirmState('ca-regenerate');
+        updateButtonStates();
         await loadCertificateStatus();
       } catch (error) {
         console.error("Failed to regenerate CA:", error);
