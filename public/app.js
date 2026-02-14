@@ -118,7 +118,9 @@
 
     // --- Certificate Store ---
 
+    console.log('[App] Creating certificate store...');
     const certificateStore = createCertificateStore();
+    console.log('[App] Certificate store created:', certificateStore);
 
     // --- P2P Manager ---
 
@@ -581,7 +583,9 @@
     // --- Certificate management (Store-based) ---
 
     // Subscribe to certificate store and render
+    console.log('[App] Setting up certificate subscription...');
     certificateStore.subscribe((state) => {
+      console.log('[App] Certificate subscription fired');
       renderCertificates(state);
     });
 
