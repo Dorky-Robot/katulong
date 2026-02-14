@@ -86,7 +86,14 @@ if (currentIps.length > 0) {
   }
 }
 
-const networks = await certManager.listNetworks();
+// Ensure at least one network cert exists (fallback to localhost if needed)
+let networks = await certManager.listNetworks();
+if (networks.length === 0) {
+  log.warn("No network certificates found, generating localhost fallback");
+  await certManager.ensureNetworkCert("127.0.0.1");
+  networks = await certManager.listNetworks();
+}
+
 log.info("TLS certificates ready", { dir: join(DATA_DIR, "tls"), networks: networks.length });
 
 await initP2P();
