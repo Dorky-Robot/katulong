@@ -1143,7 +1143,21 @@
     }
     .drop-overlay.visible { display: grid; }
 
-    /* --- Upload toast --- */
+    /* --- Toast notifications --- */
+    .toast {
+      position: fixed; bottom: 3rem; left: 50%; transform: translateX(-50%);
+      z-index: 20001; padding: var(--space-sm) var(--space-lg); border-radius: var(--radius-md);
+      font-size: 0.8125rem; font-family: var(--font-mono);
+      background: var(--bg-surface); color: var(--text); border: 1px solid var(--success);
+      opacity: 0; transition: opacity 0.2s;
+      pointer-events: none;
+      max-width: 400px;
+      text-align: center;
+    }
+    .toast.visible { opacity: 1; }
+    .toast.toast-error { border-color: var(--danger); color: var(--danger); }
+
+    /* Legacy upload toast */
     .upload-toast {
       position: fixed; bottom: 3rem; left: 50%; transform: translateX(-50%);
       z-index: 20001; padding: var(--space-sm) var(--space-lg); border-radius: var(--radius-md);
@@ -1156,6 +1170,74 @@
     .upload-toast.error { border-color: var(--danger); color: var(--danger); }
 
     /* --- Certificate management --- */
+    .cert-ca-section {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-lg);
+      margin-bottom: var(--space-xl);
+    }
+    .cert-ca-section h4 {
+      margin: 0 0 var(--space-sm) 0;
+      font-size: 0.95rem;
+      color: var(--text);
+    }
+    .cert-ca-details {
+      margin: var(--space-sm) 0;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+    .cert-ca-details p {
+      margin: 0.25rem 0;
+    }
+    .cert-ca-actions {
+      margin-top: var(--space-md);
+    }
+    .cert-undo-banner {
+      background: var(--warning);
+      color: var(--bg);
+      border-radius: var(--radius-md);
+      padding: var(--space-md);
+      margin-bottom: var(--space-lg);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-md);
+    }
+    .cert-undo-banner-text {
+      flex: 1;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+    .cert-undo-banner-actions {
+      display: flex;
+      gap: var(--space-sm);
+    }
+    .btn-undo {
+      padding: var(--space-sm) var(--space-md);
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 0.875rem;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .btn-undo:hover {
+      background: var(--bg-surface);
+    }
+    .btn-dismiss {
+      padding: var(--space-sm) var(--space-md);
+      background: transparent;
+      color: var(--bg);
+      border: 1px solid var(--bg);
+      border-radius: var(--radius-sm);
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .btn-dismiss:hover {
+      background: rgba(0, 0, 0, 0.1);
+    }
     .cert-networks-list {
       margin-bottom: var(--space-lg);
     }
@@ -1441,6 +1523,30 @@
           <!-- Certificates tab content -->
           <div class="settings-tab-content" id="settings-tab-certificates">
             <p class="tab-description">Manage TLS certificates for each network.</p>
+
+            <!-- Undo Banner (hidden by default) -->
+            <div id="cert-undo-banner" style="display: none;" class="cert-undo-banner">
+              <div class="cert-undo-banner-text">
+                <strong>CA certificate regenerated.</strong> Your devices may need to reinstall the certificate.
+              </div>
+              <div class="cert-undo-banner-actions">
+                <button class="btn-undo" id="cert-undo-btn">Undo</button>
+                <button class="btn-dismiss" id="cert-undo-dismiss">Dismiss</button>
+              </div>
+            </div>
+
+            <!-- CA Certificate Section -->
+            <div class="cert-ca-section">
+              <h4>Certificate Authority (CA)</h4>
+              <div class="cert-ca-details" id="cert-ca-details">
+                <p>Loading...</p>
+              </div>
+              <div class="cert-ca-actions">
+                <button class="btn-small" id="cert-regenerate-ca">
+                  Regenerate CA Certificate
+                </button>
+              </div>
+            </div>
 
             <!-- Networks List -->
             <div class="cert-networks-list">

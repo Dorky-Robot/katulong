@@ -578,12 +578,16 @@
     async function loadCertificateStatus() {
       const certNetworksContainer = document.getElementById("cert-networks-container");
       const certGenerateBtn = document.getElementById("cert-generate-current");
+      const certCaDetails = document.getElementById("cert-ca-details");
 
       try {
         const response = await fetch("/api/certificates/status");
         if (!response.ok) throw new Error("Failed to load certificate status");
 
         const data = await response.json();
+
+        // Load CA details
+        await loadCADetails();
 
         // Show generate button if current network has no cert
         if (!data.currentNetwork.hasCertificate) {
@@ -597,6 +601,26 @@
       } catch (error) {
         certNetworksContainer.innerHTML = `<p style="color: var(--danger)">Failed to load certificate status</p>`;
         console.error("Failed to load certificate status:", error);
+      }
+    }
+
+    async function loadCADetails() {
+      const certCaDetails = document.getElementById("cert-ca-details");
+
+      try {
+        const configResponse = await fetch("/api/config");
+        if (!configResponse.ok) throw new Error("Failed to load config");
+
+        const configData = await configResponse.json();
+        const instanceName = configData.config.instanceName;
+
+        certCaDetails.innerHTML = `
+          <p><strong>Instance:</strong> ${instanceName}</p>
+          <p><strong>CA Name:</strong> ${instanceName} Local CA</p>
+        `;
+      } catch (error) {
+        certCaDetails.innerHTML = `<p style="color: var(--danger)">Failed to load CA details</p>`;
+        console.error("Failed to load CA details:", error);
       }
     }
 
@@ -727,16 +751,12 @@
         if (!response.ok) throw new Error("Failed to update network label");
       } catch (error) {
         console.error("Failed to update network label:", error);
-        alert(`Failed to update network label: ${error.message}`);
+        showToast(`Failed to update network label: ${error.message}`, true);
         loadCertificateStatus(); // Reload to reset
       }
     }
 
     async function revokeNetwork(networkId) {
-      if (!confirm(`Revoke certificate for this network?\n\nThis will delete the certificate and prevent future connections from this network until a new certificate is generated.`)) {
-        return;
-      }
-
       try {
         const response = await fetch(`/api/certificates/networks/${networkId}`, {
           method: 'DELETE'
@@ -744,18 +764,15 @@
 
         if (!response.ok) throw new Error("Failed to revoke network");
 
+        showToast('Network certificate revoked');
         await loadCertificateStatus();
       } catch (error) {
         console.error("Failed to revoke network:", error);
-        alert(`Failed to revoke network: ${error.message}`);
+        showToast(`Failed to revoke network: ${error.message}`, true);
       }
     }
 
     async function regenerateNetwork(networkId) {
-      if (!confirm(`Regenerate certificate for this network?\n\nThis will create a new certificate. No restart needed.`)) {
-        return;
-      }
-
       try {
         const response = await fetch(`/api/certificates/networks/${networkId}/regenerate`, {
           method: 'POST'
@@ -764,11 +781,11 @@
         if (!response.ok) throw new Error("Failed to regenerate network");
 
         const data = await response.json();
-        alert(data.message || 'Certificate regenerated successfully!');
+        showToast(data.message || 'Certificate regenerated successfully!');
         await loadCertificateStatus();
       } catch (error) {
         console.error("Failed to regenerate network:", error);
-        alert(`Failed to regenerate network: ${error.message}`);
+        showToast(`Failed to regenerate network: ${error.message}`, true);
       }
     }
 
@@ -783,7 +800,7 @@
         const currentIp = data.currentNetwork.ips[0];
 
         if (!currentIp) {
-          alert("No network IP detected");
+          showToast("No network IP detected", true);
           return;
         }
 
@@ -795,13 +812,72 @@
 
         if (!genResponse.ok) throw new Error("Failed to generate certificate");
 
-        alert('Certificate generated successfully!');
+        showToast('Certificate generated successfully!');
         await loadCertificateStatus();
       } catch (error) {
         console.error("Failed to generate certificate:", error);
-        alert(`Failed to generate certificate: ${error.message}`);
+        showToast(`Failed to generate certificate: ${error.message}`, true);
       }
     });
+
+    // CA Certificate Management
+    let lastCABackupId = null;
+
+    async function regenerateCA() {
+      try {
+        const response = await fetch('/api/certificates/ca/regenerate', {
+          method: 'POST'
+        });
+
+        if (!response.ok) throw new Error("Failed to regenerate CA");
+
+        const data = await response.json();
+        lastCABackupId = data.backupId;
+
+        // Show undo banner
+        const undoBanner = document.getElementById('cert-undo-banner');
+        undoBanner.style.display = 'flex';
+
+        showToast('CA certificate regenerated');
+        await loadCertificateStatus();
+      } catch (error) {
+        console.error("Failed to regenerate CA:", error);
+        showToast(`Failed to regenerate CA: ${error.message}`, true);
+      }
+    }
+
+    async function undoCARegeneration() {
+      if (!lastCABackupId) {
+        showToast("No backup available to restore", true);
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/certificates/ca/restore/${lastCABackupId}`, {
+          method: 'POST'
+        });
+
+        if (!response.ok) throw new Error("Failed to restore CA");
+
+        showToast('CA certificate restored');
+        hideUndoBanner();
+        await loadCertificateStatus();
+      } catch (error) {
+        console.error("Failed to restore CA:", error);
+        showToast(`Failed to restore CA: ${error.message}`, true);
+      }
+    }
+
+    function hideUndoBanner() {
+      const undoBanner = document.getElementById('cert-undo-banner');
+      undoBanner.style.display = 'none';
+      lastCABackupId = null;
+    }
+
+    // Event listeners for CA management
+    document.getElementById('cert-regenerate-ca')?.addEventListener('click', regenerateCA);
+    document.getElementById('cert-undo-btn')?.addEventListener('click', undoCARegeneration);
+    document.getElementById('cert-undo-dismiss')?.addEventListener('click', hideUndoBanner);
 
     // --- Boot ---
 
