@@ -109,6 +109,18 @@
 
     const state = createAppState();
 
+    // --- Instance Icon ---
+    let instanceIcon = "terminal-window";
+    let shortcutBarInstance = null;
+    const getInstanceIcon = () => instanceIcon;
+    const setInstanceIcon = (icon) => {
+      instanceIcon = icon;
+      // Re-render shortcut bar to show new icon
+      if (shortcutBarInstance) {
+        shortcutBarInstance.render(state.session.name);
+      }
+    };
+
     // --- Shortcuts state management (reactive store) ---
     const shortcutsStore = createShortcutsStore();
     const loadShortcuts = () => reloadShortcuts(shortcutsStore);
@@ -338,7 +350,14 @@
     // --- Settings ---
 
     const settingsHandlers = createSettingsHandlers({
-      onThemeChange: (theme) => applyTheme(theme)
+      onThemeChange: (theme) => applyTheme(theme),
+      onInstanceIconChange: setInstanceIcon,
+      onToolbarColorChange: (color) => {
+        const bar = document.getElementById("shortcut-bar");
+        if (bar) {
+          bar.setAttribute("data-toolbar-color", color);
+        }
+      }
     });
     settingsHandlers.init();
 
@@ -502,7 +521,7 @@
     });
     viewportManager.init();
 
-    const shortcutBar = createShortcutBar({
+    shortcutBarInstance = createShortcutBar({
       container: bar,
       pinnedKeys: [
         { label: "Esc", keys: "esc" },
@@ -513,10 +532,11 @@
       onSettingsClick: () => modals.open('settings'),
       sendFn: rawSend,
       term,
-      updateP2PIndicator
+      updateP2PIndicator,
+      getInstanceIcon
     });
 
-    const renderBar = (name) => shortcutBar.render(name);
+    const renderBar = (name) => shortcutBarInstance.render(name);
 
     // Subscribe to shortcuts changes to re-render bar
     shortcutsStore.subscribe((shortcuts) => {
