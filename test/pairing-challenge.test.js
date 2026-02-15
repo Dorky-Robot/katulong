@@ -27,13 +27,13 @@ describe("PairingChallenge", () => {
       assert.ok(challenge.expiresAt <= afterGen + 5000);
     });
 
-    it("uses default TTL of 30 seconds", () => {
+    it("uses default TTL of 5 minutes", () => {
       const beforeGen = Date.now();
       const challenge = PairingChallenge.generate();
       const afterGen = Date.now();
 
-      assert.ok(challenge.expiresAt >= beforeGen + 30000);
-      assert.ok(challenge.expiresAt <= afterGen + 30000);
+      assert.ok(challenge.expiresAt >= beforeGen + 300000);
+      assert.ok(challenge.expiresAt <= afterGen + 300000);
     });
 
     it("generates unique codes and PINs", () => {
@@ -161,14 +161,14 @@ describe("PairingChallengeStore", () => {
       assert.ok(store.challenges.has(challenge.code));
     });
 
-    it("uses default TTL of 30 seconds", () => {
+    it("uses default TTL of 5 minutes", () => {
       const store = new PairingChallengeStore();
       const beforeCreate = Date.now();
       const challenge = store.create();
       const afterCreate = Date.now();
 
-      assert.ok(challenge.expiresAt >= beforeCreate + 30000);
-      assert.ok(challenge.expiresAt <= afterCreate + 30000);
+      assert.ok(challenge.expiresAt >= beforeCreate + 300000);
+      assert.ok(challenge.expiresAt <= afterCreate + 300000);
     });
 
     it("uses custom TTL when provided", () => {
