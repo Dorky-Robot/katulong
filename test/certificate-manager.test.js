@@ -40,7 +40,7 @@ describe("CertificateManager", () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
         // Ensure CA exists
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -56,7 +56,7 @@ describe("CertificateManager", () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
         // Create old-style cert structure
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const oldCertPath = join(testDir, "tls", "server.crt");
         const oldKeyPath = join(testDir, "tls", "server.key");
@@ -97,7 +97,7 @@ describe("CertificateManager", () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
         // Create CA
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -123,7 +123,7 @@ describe("CertificateManager", () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
         // Create CA
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         // Manually create old-style "default" network directory
         const networksDir = join(testDir, "tls", "networks");
@@ -178,7 +178,7 @@ describe("CertificateManager", () => {
     it("removes duplicate default network if target already exists", async () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -225,7 +225,7 @@ describe("CertificateManager", () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
         // Create CA
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -254,7 +254,7 @@ describe("CertificateManager", () => {
     it("does not regenerate if cert already exists", async () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -283,7 +283,7 @@ describe("CertificateManager", () => {
     it("enforces maximum networks limit", async () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -311,7 +311,7 @@ describe("CertificateManager", () => {
     it("regenerates certificate for existing network", async () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -342,7 +342,7 @@ describe("CertificateManager", () => {
     it("hot-reloads certificate after regeneration", async () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -374,7 +374,7 @@ describe("CertificateManager", () => {
     it("deletes network certificate", async () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -401,7 +401,7 @@ describe("CertificateManager", () => {
     it("allows revoking any network", async () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -428,7 +428,7 @@ describe("CertificateManager", () => {
     it("updates network label", async () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -453,7 +453,7 @@ describe("CertificateManager", () => {
     it("returns all networks sorted by lastUsedAt", async () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -485,7 +485,7 @@ describe("CertificateManager", () => {
     it("returns certificate context for network", async () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -513,7 +513,7 @@ describe("CertificateManager", () => {
     it("auto-generates cert for new network on first access", async () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();
@@ -545,7 +545,7 @@ describe("CertificateManager", () => {
     it("returns default cert and key buffers", async () => {
       const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
       try {
-        await ensureCerts(testDir, "Test");
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
 
         const mgr = new CertificateManager(testDir, "Test");
         await mgr.initialize();

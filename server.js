@@ -72,12 +72,13 @@ function isHttpsConnection(req) {
 const configManager = new ConfigManager(DATA_DIR);
 configManager.initialize();
 const instanceName = configManager.getInstanceName();
-log.info("Configuration loaded", { instanceName });
+const instanceId = configManager.getInstanceId();
+log.info("Configuration loaded", { instanceName, instanceId });
 
 // --- TLS certificates (auto-generated with instance name) ---
 
 // Ensure CA exists (needed by CertificateManager)
-ensureCerts(DATA_DIR, instanceName);
+ensureCerts(DATA_DIR, instanceName, instanceId);
 
 // Initialize multi-certificate manager with SNI (pass ConfigManager for dynamic instance name)
 const certManager = new CertificateManager(DATA_DIR, configManager);
@@ -871,7 +872,7 @@ const routes = [
   { method: "GET", path: "/connect/trust/ca.mobileconfig", handler: (req, res) => {
     const caCertPath = join(certManager.tlsDir, "ca.crt");
     const caCertPem = readFileSync(caCertPath, "utf-8");
-    const mobileconfig = generateMobileConfig(caCertPem, "Katulong");
+    const mobileconfig = generateMobileConfig(caCertPem, instanceName, instanceId);
     res.writeHead(200, {
       "Content-Type": "application/x-apple-aspen-config",
       "Content-Disposition": "attachment; filename=katulong.mobileconfig",

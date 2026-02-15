@@ -4,12 +4,13 @@ import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureCerts, inspectCert, needsRegeneration, regenerateServerCert } from "../lib/tls.js";
+import forge from "node-forge";
 
 describe("ensureCerts", () => {
   it("generates CA and server certificates on first call", async () => {
     const testDir = mkdtempSync(join(tmpdir(), "katulong-tls-test-"));
     try {
-      const paths = await ensureCerts(testDir, "test-instance");
+      const paths = await ensureCerts(testDir, "test-instance", "test-uuid-1234");
       
       assert.ok(existsSync(paths.caCert), "CA cert should exist");
       assert.ok(existsSync(paths.caKey), "CA key should exist");
@@ -29,8 +30,8 @@ describe("ensureCerts", () => {
   it("reuses existing certificates on subsequent calls", async () => {
     const testDir = mkdtempSync(join(tmpdir(), "katulong-tls-test-"));
     try {
-      const paths1 = await ensureCerts(testDir, "test-instance");
-      const paths2 = await ensureCerts(testDir, "test-instance");
+      const paths1 = await ensureCerts(testDir, "test-instance", "test-uuid-1234");
+      const paths2 = await ensureCerts(testDir, "test-instance", "test-uuid-1234");
       
       // Should return same paths
       assert.deepEqual(paths1, paths2);
@@ -44,7 +45,7 @@ describe("ensureCerts", () => {
     try {
       assert.ok(!existsSync(testDir), "Test dir should not exist initially");
 
-      await ensureCerts(testDir, "test-instance");
+      await ensureCerts(testDir, "test-instance", "test-uuid-1234");
 
       assert.ok(existsSync(testDir), "Test dir should be created");
     } finally {
@@ -56,20 +57,23 @@ describe("ensureCerts", () => {
     const testDir = mkdtempSync(join(tmpdir(), "katulong-tls-test-"));
     try {
       // Generate initial certificates
-      const paths1 = await ensureCerts(testDir, "test-instance");
+      const paths1 = await ensureCerts(testDir, "test-instance", "test-uuid-1234");
       const caCert1 = readFileSync(paths1.caCert, "utf-8");
+      const caKey1 = readFileSync(paths1.caKey, "utf-8");
       const serverCert1 = readFileSync(paths1.serverCert, "utf-8");
 
       // Wait a bit to ensure different timestamps
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // Force regeneration
-      const paths2 = await ensureCerts(testDir, "test-instance", { force: true });
+      // Force regeneration with same instance ID
+      const paths2 = await ensureCerts(testDir, "test-instance", "test-uuid-1234", { force: true });
       const caCert2 = readFileSync(paths2.caCert, "utf-8");
+      const caKey2 = readFileSync(paths2.caKey, "utf-8");
       const serverCert2 = readFileSync(paths2.serverCert, "utf-8");
 
-      // Certificates should be different
+      // Certificates and keys should be different (different keys generated)
       assert.notEqual(caCert1, caCert2, "CA cert should be regenerated");
+      assert.notEqual(caKey1, caKey2, "CA key should be regenerated");
       assert.notEqual(serverCert1, serverCert2, "Server cert should be regenerated");
     } finally {
       rmSync(testDir, { recursive: true, force: true });
@@ -91,7 +95,7 @@ describe("inspectCert", () => {
   it("returns certificate details when certificate exists", async () => {
     const testDir = mkdtempSync(join(tmpdir(), "katulong-tls-test-"));
     try {
-      await ensureCerts(testDir, "test-instance");
+      await ensureCerts(testDir, "test-instance", "test-uuid-1234");
 
       const result = inspectCert(testDir);
       assert.equal(result.exists, true);
@@ -125,7 +129,7 @@ describe("needsRegeneration", () => {
   it("returns needed: false when certificate includes all current IPs", async () => {
     const testDir = mkdtempSync(join(tmpdir(), "katulong-tls-test-"));
     try {
-      await ensureCerts(testDir, "test-instance");
+      await ensureCerts(testDir, "test-instance", "test-uuid-1234");
 
       const result = needsRegeneration(testDir);
       assert.equal(result.needed, false);
@@ -154,7 +158,7 @@ describe("regenerateServerCert", () => {
     const testDir = mkdtempSync(join(tmpdir(), "katulong-tls-test-"));
     try {
       // Generate initial certificates
-      const paths = await ensureCerts(testDir, "test-instance");
+      const paths = await ensureCerts(testDir, "test-instance", "test-uuid-1234");
       const caCert1 = readFileSync(paths.caCert, "utf-8");
       const serverCert1 = readFileSync(paths.serverCert, "utf-8");
 
@@ -180,7 +184,7 @@ describe("regenerateServerCert", () => {
     const testDir = mkdtempSync(join(tmpdir(), "katulong-tls-test-"));
     try {
       // Generate initial certificates
-      await ensureCerts(testDir, "test-instance");
+      await ensureCerts(testDir, "test-instance", "test-uuid-1234");
 
       // Regenerate server cert
       regenerateServerCert(testDir, "test-instance");
@@ -193,6 +197,67 @@ describe("regenerateServerCert", () => {
       assert.ok(certInfo.sans.ips.includes("127.0.0.1"));
     } finally {
       rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it("includes instance ID in CA certificate", async () => {
+    const testDir = mkdtempSync(join(tmpdir(), "katulong-tls-test-"));
+    try {
+      const instanceId = "12345678-1234-1234-1234-123456789012";
+      await ensureCerts(testDir, "test-instance", instanceId);
+
+      // Read and parse the CA certificate
+      const caCertPath = join(testDir, "tls", "ca.crt");
+      const caCertPem = readFileSync(caCertPath, "utf-8");
+      const caCert = forge.pki.certificateFromPem(caCertPem);
+
+      // Get the organization name
+      const orgName = caCert.subject.getField("O").value;
+
+      // The organization should contain the first 8 chars of the instance ID
+      const shortId = instanceId.substring(0, 8);
+      assert.ok(orgName.includes(shortId), `Organization name "${orgName}" should contain instance ID prefix ${shortId}`);
+      assert.strictEqual(orgName, `test-instance (ID: ${shortId})`, "Organization name should match expected format");
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it("generates unique CA certs for different instance IDs", async () => {
+    const testDir1 = mkdtempSync(join(tmpdir(), "katulong-tls-test-"));
+    const testDir2 = mkdtempSync(join(tmpdir(), "katulong-tls-test-"));
+    try {
+      // Generate certs for two instances with same name but different IDs
+      await ensureCerts(testDir1, "test-instance", "11111111-1111-1111-1111-111111111111");
+      await ensureCerts(testDir2, "test-instance", "22222222-2222-2222-2222-222222222222");
+
+      // Parse the CA certificates
+      const caCertPem1 = readFileSync(join(testDir1, "tls", "ca.crt"), "utf-8");
+      const caCertPem2 = readFileSync(join(testDir2, "tls", "ca.crt"), "utf-8");
+      const caCert1 = forge.pki.certificateFromPem(caCertPem1);
+      const caCert2 = forge.pki.certificateFromPem(caCertPem2);
+
+      // Certificates should be different
+      assert.notEqual(caCertPem1, caCertPem2, "CA certs with different instance IDs should be different");
+
+      // Get organization names
+      const orgName1 = caCert1.subject.getField("O").value;
+      const orgName2 = caCert2.subject.getField("O").value;
+
+      // First should contain its ID prefix
+      assert.ok(orgName1.includes("11111111"), `First org name "${orgName1}" should contain its instance ID prefix`);
+      assert.ok(!orgName1.includes("22222222"), `First org name "${orgName1}" should not contain second instance ID prefix`);
+
+      // Second should contain its ID prefix
+      assert.ok(orgName2.includes("22222222"), `Second org name "${orgName2}" should contain its instance ID prefix`);
+      assert.ok(!orgName2.includes("11111111"), `Second org name "${orgName2}" should not contain first instance ID prefix`);
+
+      // Verify expected format
+      assert.strictEqual(orgName1, "test-instance (ID: 11111111)", "First organization name should match expected format");
+      assert.strictEqual(orgName2, "test-instance (ID: 22222222)", "Second organization name should match expected format");
+    } finally {
+      rmSync(testDir1, { recursive: true, force: true });
+      rmSync(testDir2, { recursive: true, force: true });
     }
   });
 });
