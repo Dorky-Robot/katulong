@@ -212,6 +212,56 @@ describe("getOriginAndRpID", () => {
     assert.equal(origin, "http://localhost");
     assert.equal(rpID, "localhost");
   });
+
+  it("uses https for Cloudflare Tunnel with CF-Visitor header", () => {
+    const req = {
+      headers: {
+        host: "katulong.example.com",
+        "cf-visitor": '{"scheme":"https"}'
+      }
+    };
+    const { origin, rpID } = getOriginAndRpID(req);
+    assert.equal(origin, "https://katulong.example.com");
+    assert.equal(rpID, "katulong.example.com");
+  });
+
+  it("uses http when CF-Visitor scheme is http", () => {
+    const req = {
+      headers: {
+        host: "katulong.example.com",
+        "cf-visitor": '{"scheme":"http"}'
+      }
+    };
+    const { origin, rpID } = getOriginAndRpID(req);
+    assert.equal(origin, "http://katulong.example.com");
+    assert.equal(rpID, "katulong.example.com");
+  });
+
+  it("ignores invalid CF-Visitor JSON", () => {
+    const req = {
+      headers: {
+        host: "example.com",
+        "cf-visitor": 'invalid json'
+      }
+    };
+    const { origin, rpID } = getOriginAndRpID(req);
+    assert.equal(origin, "http://example.com");
+    assert.equal(rpID, "example.com");
+  });
+
+  it("uses https for temporary Cloudflare tunnels (.trycloudflare.com)", () => {
+    const req = { headers: { host: "test.trycloudflare.com" } };
+    const { origin, rpID } = getOriginAndRpID(req);
+    assert.equal(origin, "https://test.trycloudflare.com");
+    assert.equal(rpID, "test.trycloudflare.com");
+  });
+
+  it("uses https for ngrok tunnels", () => {
+    const req = { headers: { host: "test.ngrok.app" } };
+    const { origin, rpID } = getOriginAndRpID(req);
+    assert.equal(origin, "https://test.ngrok.app");
+    assert.equal(rpID, "test.ngrok.app");
+  });
 });
 
 describe("setSessionCookie", () => {
