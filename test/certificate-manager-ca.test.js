@@ -46,7 +46,7 @@ describe("CertificateManager - CA Regeneration", () => {
     const initialInstanceName = configManager.getInstanceName();
     const initialInstanceId = configManager.getInstanceId();
     const initialShortId = initialInstanceId.substring(0, 8);
-    assert.strictEqual(initialCaCert, `${initialInstanceName} Local CA (${initialShortId})`);
+    assert.strictEqual(initialCaCert, `Katulong - ${initialInstanceName} (${initialShortId})`);
 
     // Change instance name
     configManager.setInstanceName("New Instance");
@@ -58,7 +58,7 @@ describe("CertificateManager - CA Regeneration", () => {
     const newCaCert = readCACommonName(testDataDir);
     const newInstanceId = configManager.getInstanceId();
     const newShortId = newInstanceId.substring(0, 8);
-    assert.strictEqual(newCaCert, `New Instance Local CA (${newShortId})`);
+    assert.strictEqual(newCaCert, `Katulong - New Instance (${newShortId})`);
   });
 
   it("should backup old CA before regenerating", async () => {

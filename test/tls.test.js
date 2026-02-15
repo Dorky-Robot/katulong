@@ -215,10 +215,11 @@ describe("regenerateServerCert", () => {
       const cnField = caCert.subject.getField("CN");
       const commonName = cnField.value;
 
-      // The common name should contain the first 8 chars of the instance ID
+      // The common name should contain "Katulong" and the first 8 chars of the instance ID
       const shortId = instanceId.substring(0, 8);
+      assert.ok(commonName.includes("Katulong"), `Common name "${commonName}" should contain "Katulong"`);
       assert.ok(commonName.includes(shortId), `Common name "${commonName}" should contain instance ID prefix ${shortId}`);
-      assert.strictEqual(commonName, `test-instance Local CA (${shortId})`, "Common name should match expected format");
+      assert.strictEqual(commonName, `Katulong - test-instance (${shortId})`, "Common name should match expected format");
     } finally {
       rmSync(testDir, { recursive: true, force: true });
     }
@@ -253,9 +254,9 @@ describe("regenerateServerCert", () => {
       assert.ok(commonName2.includes("22222222"), `Second common name "${commonName2}" should contain its instance ID prefix`);
       assert.ok(!commonName2.includes("11111111"), `Second common name "${commonName2}" should not contain first instance ID prefix`);
 
-      // Verify expected format
-      assert.strictEqual(commonName1, "test-instance Local CA (11111111)", "First common name should match expected format");
-      assert.strictEqual(commonName2, "test-instance Local CA (22222222)", "Second common name should match expected format");
+      // Verify expected format with "Katulong" prefix
+      assert.strictEqual(commonName1, "Katulong - test-instance (11111111)", "First common name should match expected format");
+      assert.strictEqual(commonName2, "Katulong - test-instance (22222222)", "Second common name should match expected format");
     } finally {
       rmSync(testDir1, { recursive: true, force: true });
       rmSync(testDir2, { recursive: true, force: true });
