@@ -456,4 +456,27 @@ describe("getCspHeaders", () => {
     const policy = headers["Content-Security-Policy"];
     assert.match(policy, /form-action 'self'/);
   });
+
+  it("allows Cloudflare Insights when request comes through Cloudflare", () => {
+    const req = {
+      headers: {
+        'cf-ray': '1234567890abc-SJC',
+        'host': 'example.com'
+      }
+    };
+    const headers = getCspHeaders(false, req);
+    const policy = headers["Content-Security-Policy"];
+    assert.match(policy, /script-src 'self' https:\/\/static\.cloudflareinsights\.com/);
+  });
+
+  it("does not allow Cloudflare Insights for non-Cloudflare requests", () => {
+    const req = {
+      headers: {
+        'host': 'example.com'
+      }
+    };
+    const headers = getCspHeaders(false, req);
+    const policy = headers["Content-Security-Policy"];
+    assert.doesNotMatch(policy, /cloudflareinsights/);
+  });
 });

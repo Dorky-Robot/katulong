@@ -321,7 +321,7 @@ const routes = [
 
     res.writeHead(200, {
       "Content-Type": "text/html",
-      ...getCspHeaders()
+      ...getCspHeaders(false, req)
     });
     res.end(html);
   }},
@@ -342,7 +342,7 @@ const routes = [
       "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
       "Pragma": "no-cache",
       "Expires": "0",
-      ...getCspHeaders()
+      ...getCspHeaders(false, req)
     });
     res.end(readFileSync(join(__dirname, "public", "login.html"), "utf-8"));
   }},
@@ -839,7 +839,7 @@ const routes = [
       "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
       "Pragma": "no-cache",
       "Expires": "0",
-      ...getCspHeaders()
+      ...getCspHeaders(false, req)
     });
     res.end(readFileSync(join(__dirname, "public", "pair.html"), "utf-8"));
   }},
@@ -854,7 +854,7 @@ const routes = [
 
     res.writeHead(200, {
       "Content-Type": "text/html",
-      ...getCspHeaders()
+      ...getCspHeaders(false, req)
     });
     res.end(html);
   }},
@@ -893,7 +893,7 @@ const routes = [
     html = html.replace("<body>", `<body data-trust-url="${escapeAttr(trustUrl)}" data-https-port="${escapeAttr(HTTPS_PORT)}">`);
     res.writeHead(200, {
       "Content-Type": "text/html",
-      ...getCspHeaders()
+      ...getCspHeaders(false, req)
     });
     res.end(html);
   }},
