@@ -1162,6 +1162,38 @@ const routes = [
     }
   }},
 
+  { method: "PUT", path: "/api/config/instance-icon", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const { instanceIcon } = await parseJSON(req);
+
+    try {
+      configManager.setInstanceIcon(instanceIcon);
+      log.info("Instance icon updated", { instanceIcon });
+      json(res, 200, { success: true, instanceIcon: configManager.getInstanceIcon() });
+    } catch (error) {
+      json(res, 400, { error: error.message });
+    }
+  }},
+
+  { method: "PUT", path: "/api/config/toolbar-color", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const { toolbarColor } = await parseJSON(req);
+
+    try {
+      configManager.setToolbarColor(toolbarColor);
+      log.info("Toolbar color updated", { toolbarColor });
+      json(res, 200, { success: true, toolbarColor: configManager.getToolbarColor() });
+    } catch (error) {
+      json(res, 400, { error: error.message });
+    }
+  }},
+
   // --- Certificate API ---
   { method: "GET", path: "/api/certificates/status", handler: async (req, res) => {
     if (!isAuthenticated(req)) {
