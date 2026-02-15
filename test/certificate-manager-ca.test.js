@@ -27,7 +27,8 @@ describe("CertificateManager - CA Regeneration", () => {
 
     // Ensure initial CA exists
     const instanceName = configManager.getInstanceName();
-    ensureCerts(testDataDir, instanceName);
+    const instanceId = configManager.getInstanceId();
+    ensureCerts(testDataDir, instanceName, instanceId);
 
     // Initialize certificate manager
     certManager = new CertificateManager(testDataDir, configManager);

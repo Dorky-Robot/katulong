@@ -80,6 +80,51 @@ describe("ConfigManager", () => {
     });
   });
 
+  describe("getInstanceId", () => {
+    it("should return a UUID instance ID", () => {
+      configManager.initialize();
+      const id = configManager.getInstanceId();
+      assert.ok(id, "Instance ID should exist");
+      // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+      assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "Should be a valid UUID");
+    });
+
+    it("should persist instance ID across restarts", () => {
+      configManager.initialize();
+      const id1 = configManager.getInstanceId();
+
+      // Create a new instance and reinitialize
+      const configManager2 = new ConfigManager(testDir);
+      configManager2.initialize();
+      const id2 = configManager2.getInstanceId();
+
+      assert.strictEqual(id1, id2, "Instance ID should persist across restarts");
+    });
+
+    it("should generate instance ID for legacy configs without it", () => {
+      // Create a config without instanceId (legacy format)
+      const legacyConfig = {
+        instanceName: "Legacy Instance",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      };
+
+      writeFileSync(
+        join(testDir, "config.json"),
+        JSON.stringify(legacyConfig),
+        "utf-8"
+      );
+
+      const config = configManager.initialize();
+      assert.ok(config.instanceId, "Should generate instance ID for legacy config");
+      assert.match(config.instanceId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "Should be a valid UUID");
+
+      // Verify it was saved
+      const savedConfig = JSON.parse(readFileSync(join(testDir, "config.json"), "utf-8"));
+      assert.strictEqual(savedConfig.instanceId, config.instanceId, "Instance ID should be saved to file");
+    });
+  });
+
   describe("setInstanceName", () => {
     beforeEach(() => {
       configManager.initialize();
