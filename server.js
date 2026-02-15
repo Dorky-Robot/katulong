@@ -116,10 +116,10 @@ const SSH_PASSWORD = process.env.SSH_PASSWORD || randomBytes(16).toString("hex")
 const RP_NAME = "Katulong";
 
 // --- Rate limiting ---
-// 50 attempts per minute for auth endpoints (increased for debugging)
-const authRateLimit = rateLimit(50, 60000);
-// Stricter limit for pairing (50 attempts per 30 seconds)
-const pairingRateLimit = rateLimit(50, 30000);
+// 10 attempts per minute for auth endpoints
+const authRateLimit = rateLimit(10, 60000);
+// Stricter limit for pairing (10 attempts per 30 seconds)
+const pairingRateLimit = rateLimit(10, 30000);
 
 if (!process.env.SSH_PASSWORD) {
   log.info("SSH password generated", { password: SSH_PASSWORD });
