@@ -1,8 +1,8 @@
 class Katulong < Formula
   desc "Self-hosted web terminal with remote shell access"
   homepage "https://github.com/dorky-robot/katulong"
-  url "https://github.com/dorky-robot/katulong/archive/refs/tags/v0.4.6.tar.gz"
-  sha256 "6820b2ebc5a0f18b6eeb448882608b774f7184db4a752549574334ca824bd6d9"
+  url "https://github.com/dorky-robot/katulong/archive/refs/tags/v0.4.7.tar.gz"
+  sha256 "8481bd0096c7a405750d7158231ef85194f6334824dfcf0eb17fced9a04885b6"
   license "MIT"
 
   depends_on "node"
