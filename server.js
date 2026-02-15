@@ -59,12 +59,20 @@ const SSH_PORT = parseInt(process.env.SSH_PORT || "2222", 10);
 
 // Helper: Determine if connection is HTTPS (for setting Secure cookie flag)
 function isHttpsConnection(req) {
+  if (req.socket?.encrypted) return true;
   const hostname = (req.headers.host || 'localhost').split(':')[0];
-  const isHttpsTunnel = hostname.endsWith('.ngrok.app') ||
-                        hostname.endsWith('.ngrok.io') ||
-                        hostname.endsWith('.trycloudflare.com') ||
-                        hostname.endsWith('.loca.lt');
-  return req.socket?.encrypted || isHttpsTunnel;
+  // Known HTTPS-only tunnel services
+  if (hostname.endsWith('.ngrok.app') ||
+      hostname.endsWith('.ngrok.io') ||
+      hostname.endsWith('.trycloudflare.com') ||
+      hostname.endsWith('.loca.lt')) return true;
+  // Cloudflare Tunnel with custom domain: socket is loopback (from cloudflared)
+  // and CF-Connecting-IP header present (added by Cloudflare edge, not forgeable
+  // since the connection is local)
+  const addr = req.socket?.remoteAddress || "";
+  const isLoopback = addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+  if (isLoopback && req.headers["cf-connecting-ip"]) return true;
+  return false;
 }
 
 // --- Configuration (load instance name first) ---

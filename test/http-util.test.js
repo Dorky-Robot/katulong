@@ -262,6 +262,34 @@ describe("getOriginAndRpID", () => {
     assert.equal(origin, "https://test.ngrok.app");
     assert.equal(rpID, "test.ngrok.app");
   });
+
+  it("uses https for Cloudflare Tunnel with custom domain (loopback + CF header)", () => {
+    const req = {
+      headers: { host: "katulong-mini.felixflor.es", "cf-connecting-ip": "203.0.113.1" },
+      socket: { remoteAddress: "127.0.0.1" },
+    };
+    const { origin, rpID } = getOriginAndRpID(req);
+    assert.equal(origin, "https://katulong-mini.felixflor.es");
+    assert.equal(rpID, "katulong-mini.felixflor.es");
+  });
+
+  it("does NOT trust CF header when socket is not loopback", () => {
+    const req = {
+      headers: { host: "katulong-mini.felixflor.es", "cf-connecting-ip": "203.0.113.1" },
+      socket: { remoteAddress: "192.168.1.100" },
+    };
+    const { origin, rpID } = getOriginAndRpID(req);
+    assert.equal(origin, "http://katulong-mini.felixflor.es");
+  });
+
+  it("uses https for Cloudflare Tunnel with IPv6 loopback", () => {
+    const req = {
+      headers: { host: "app.example.com", "cf-connecting-ip": "203.0.113.1" },
+      socket: { remoteAddress: "::1" },
+    };
+    const { origin, rpID } = getOriginAndRpID(req);
+    assert.equal(origin, "https://app.example.com");
+  });
 });
 
 describe("setSessionCookie", () => {
