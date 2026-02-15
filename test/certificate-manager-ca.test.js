@@ -44,7 +44,9 @@ describe("CertificateManager - CA Regeneration", () => {
     // Get initial CA common name
     const initialCaCert = readCACommonName(testDataDir);
     const initialInstanceName = configManager.getInstanceName();
-    assert.strictEqual(initialCaCert, `${initialInstanceName} Local CA`);
+    const initialInstanceId = configManager.getInstanceId();
+    const initialShortId = initialInstanceId.substring(0, 8);
+    assert.strictEqual(initialCaCert, `${initialInstanceName} Local CA (${initialShortId})`);
 
     // Change instance name
     configManager.setInstanceName("New Instance");
@@ -52,9 +54,11 @@ describe("CertificateManager - CA Regeneration", () => {
     // Regenerate CA
     await certManager.regenerateCA();
 
-    // Verify CA has new instance name
+    // Verify CA has new instance name (with same instance ID)
     const newCaCert = readCACommonName(testDataDir);
-    assert.strictEqual(newCaCert, "New Instance Local CA");
+    const newInstanceId = configManager.getInstanceId();
+    const newShortId = newInstanceId.substring(0, 8);
+    assert.strictEqual(newCaCert, `New Instance Local CA (${newShortId})`);
   });
 
   it("should backup old CA before regenerating", async () => {

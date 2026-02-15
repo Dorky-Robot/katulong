@@ -211,13 +211,14 @@ describe("regenerateServerCert", () => {
       const caCertPem = readFileSync(caCertPath, "utf-8");
       const caCert = forge.pki.certificateFromPem(caCertPem);
 
-      // Get the organization name
-      const orgName = caCert.subject.getField("O").value;
+      // Get the common name (which now includes instance ID)
+      const cnField = caCert.subject.getField("CN");
+      const commonName = cnField.value;
 
-      // The organization should contain the first 8 chars of the instance ID
+      // The common name should contain the first 8 chars of the instance ID
       const shortId = instanceId.substring(0, 8);
-      assert.ok(orgName.includes(shortId), `Organization name "${orgName}" should contain instance ID prefix ${shortId}`);
-      assert.strictEqual(orgName, `test-instance (ID: ${shortId})`, "Organization name should match expected format");
+      assert.ok(commonName.includes(shortId), `Common name "${commonName}" should contain instance ID prefix ${shortId}`);
+      assert.strictEqual(commonName, `test-instance Local CA (${shortId})`, "Common name should match expected format");
     } finally {
       rmSync(testDir, { recursive: true, force: true });
     }
@@ -240,21 +241,21 @@ describe("regenerateServerCert", () => {
       // Certificates should be different
       assert.notEqual(caCertPem1, caCertPem2, "CA certs with different instance IDs should be different");
 
-      // Get organization names
-      const orgName1 = caCert1.subject.getField("O").value;
-      const orgName2 = caCert2.subject.getField("O").value;
+      // Get common names (which now includes instance ID)
+      const commonName1 = caCert1.subject.getField("CN").value;
+      const commonName2 = caCert2.subject.getField("CN").value;
 
       // First should contain its ID prefix
-      assert.ok(orgName1.includes("11111111"), `First org name "${orgName1}" should contain its instance ID prefix`);
-      assert.ok(!orgName1.includes("22222222"), `First org name "${orgName1}" should not contain second instance ID prefix`);
+      assert.ok(commonName1.includes("11111111"), `First common name "${commonName1}" should contain its instance ID prefix`);
+      assert.ok(!commonName1.includes("22222222"), `First common name "${commonName1}" should not contain second instance ID prefix`);
 
       // Second should contain its ID prefix
-      assert.ok(orgName2.includes("22222222"), `Second org name "${orgName2}" should contain its instance ID prefix`);
-      assert.ok(!orgName2.includes("11111111"), `Second org name "${orgName2}" should not contain first instance ID prefix`);
+      assert.ok(commonName2.includes("22222222"), `Second common name "${commonName2}" should contain its instance ID prefix`);
+      assert.ok(!commonName2.includes("11111111"), `Second common name "${commonName2}" should not contain first instance ID prefix`);
 
       // Verify expected format
-      assert.strictEqual(orgName1, "test-instance (ID: 11111111)", "First organization name should match expected format");
-      assert.strictEqual(orgName2, "test-instance (ID: 22222222)", "Second organization name should match expected format");
+      assert.strictEqual(commonName1, "test-instance Local CA (11111111)", "First common name should match expected format");
+      assert.strictEqual(commonName2, "test-instance Local CA (22222222)", "Second common name should match expected format");
     } finally {
       rmSync(testDir1, { recursive: true, force: true });
       rmSync(testDir2, { recursive: true, force: true });
