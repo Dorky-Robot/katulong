@@ -127,6 +127,131 @@ describe("CertificateManager - CA Regeneration", () => {
   });
 });
 
+describe("CertificateManager - CA/Network Cert Chain Integrity", () => {
+  it("regenerateCA followed by initialize re-signs orphaned network certs", async () => {
+    // Simulates: user upgrades katulong, CA gets regenerated (new format),
+    // but network certs are still signed by old CA. On next startup,
+    // validateNetworkCerts() should detect and fix the mismatch.
+    const testDir = mkdtempSync(join(tmpdir(), "katulong-ca-chain-test-"));
+    try {
+      const config = new ConfigManager(testDir);
+      config.initialize();
+      ensureCerts(testDir, config.getInstanceName(), config.getInstanceId());
+
+      // Create cert manager, initialize, and generate a network cert
+      const mgr1 = new CertificateManager(testDir, config);
+      await mgr1.initialize();
+      const networkId = await mgr1.ensureNetworkCert("192.168.70.1");
+      const networkDir = join(testDir, "tls", "networks", networkId);
+
+      // Save the original network cert for comparison
+      const origNetworkCert = readFileSync(join(networkDir, "server.crt"), "utf-8");
+
+      // Regenerate the CA (this changes the CA but does NOT re-sign network certs
+      // because regenerateCA() is just the CA operation)
+      await mgr1.regenerateCA();
+
+      // Verify the network cert is now orphaned (signed by old CA, not new)
+      const newCACertPem = readFileSync(join(testDir, "tls", "ca.crt"), "utf-8");
+      const newCACert = forge.pki.certificateFromPem(newCACertPem);
+      const orphanedCert = forge.pki.certificateFromPem(origNetworkCert);
+      assert.throws(() => newCACert.verify(orphanedCert),
+        "Network cert should NOT verify against new CA (it's orphaned)");
+
+      // Now simulate a fresh startup — this should auto-fix the mismatch
+      const mgr2 = new CertificateManager(testDir, config);
+      await mgr2.initialize();
+
+      // The network cert should now be re-signed by the new CA
+      const fixedCert = readFileSync(join(networkDir, "server.crt"), "utf-8");
+      assert.notEqual(origNetworkCert, fixedCert, "Network cert should have been regenerated");
+
+      const fixedServerCert = forge.pki.certificateFromPem(fixedCert);
+      assert.doesNotThrow(() => newCACert.verify(fixedServerCert),
+        "Re-signed network cert should verify against new CA");
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it("old-format CA migration regenerates network certs from disk (not empty cache)", async () => {
+    // Simulates: user had old katulong with "Katulong Local CA" format.
+    // On upgrade, migrateOldCA() should regenerate CA AND re-sign all
+    // network certs by reading from disk (since metadataCache is empty).
+    const testDir = mkdtempSync(join(tmpdir(), "katulong-ca-chain-test-"));
+    try {
+      const config = new ConfigManager(testDir);
+      config.initialize();
+      ensureCerts(testDir, config.getInstanceName(), config.getInstanceId());
+
+      // Set up a network cert signed by the current (new-format) CA
+      const mgr1 = new CertificateManager(testDir, config);
+      await mgr1.initialize();
+      const networkId = await mgr1.ensureNetworkCert("192.168.80.1");
+      const networkDir = join(testDir, "tls", "networks", networkId);
+
+      // Now replace the CA with an old-format CA to simulate upgrade scenario
+      const oldKeys = forge.pki.rsa.generateKeyPair(2048);
+      const oldCA = forge.pki.createCertificate();
+      oldCA.publicKey = oldKeys.publicKey;
+      oldCA.serialNumber = "01";
+      oldCA.validity.notBefore = new Date();
+      oldCA.validity.notAfter = new Date();
+      oldCA.validity.notAfter.setFullYear(oldCA.validity.notBefore.getFullYear() + 10);
+      const oldAttrs = [
+        { name: "organizationName", value: "Katulong" },
+        { name: "commonName", value: "Katulong Local CA" },
+      ];
+      oldCA.setSubject(oldAttrs);
+      oldCA.setIssuer(oldAttrs);
+      oldCA.setExtensions([
+        { name: "basicConstraints", cA: true },
+        { name: "keyUsage", keyCertSign: true, cRLSign: true },
+      ]);
+      oldCA.sign(oldKeys.privateKey, forge.md.sha256.create());
+
+      // Also re-sign the network cert with the old CA so the state is consistent
+      // (simulating what the old version would have produced)
+      const oldServerCert = mgr1.generateNetworkCert(oldCA, oldKeys.privateKey, ["192.168.80.1"]);
+      const { writeFileSync: wfs } = await import("node:fs");
+      wfs(join(testDir, "tls", "ca.crt"), forge.pki.certificateToPem(oldCA));
+      wfs(join(testDir, "tls", "ca.key"), forge.pki.privateKeyToPem(oldKeys.privateKey), { mode: 0o600 });
+      wfs(join(networkDir, "server.crt"), oldServerCert.certPem);
+      wfs(join(networkDir, "server.key"), oldServerCert.keyPem, { mode: 0o600 });
+
+      // Verify the setup: network cert IS signed by old CA
+      const oldCACert = forge.pki.certificateFromPem(forge.pki.certificateToPem(oldCA));
+      const oldNetworkCert = forge.pki.certificateFromPem(oldServerCert.certPem);
+      assert.doesNotThrow(() => oldCACert.verify(oldNetworkCert),
+        "Setup check: network cert should verify against old CA");
+
+      // Fresh startup — migrateOldCA() detects old format, regenerates CA,
+      // then re-signs network certs. validateNetworkCerts() provides safety net.
+      const mgr2 = new CertificateManager(testDir, config);
+      await mgr2.initialize();
+
+      // Read the new CA (should have new format with shortid)
+      const newCAPem = readFileSync(join(testDir, "tls", "ca.crt"), "utf-8");
+      const newCACert = forge.pki.certificateFromPem(newCAPem);
+      const cnAttr = newCACert.subject.attributes.find(a => a.name === "commonName");
+      assert.ok(cnAttr.value.includes("("), "New CA should have (shortid) in CN");
+      assert.notEqual(cnAttr.value, "Katulong Local CA");
+
+      // Verify the network cert was re-signed by the new CA
+      const fixedCertPem = readFileSync(join(networkDir, "server.crt"), "utf-8");
+      const fixedCert = forge.pki.certificateFromPem(fixedCertPem);
+      assert.doesNotThrow(() => newCACert.verify(fixedCert),
+        "Network cert should verify against new CA after migration");
+
+      // Double-check: the network cert should NOT verify against the old CA
+      assert.throws(() => oldCACert.verify(fixedCert),
+        "Network cert should NOT verify against old CA anymore");
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+});
+
 /**
  * Helper function to read CA certificate common name
  */

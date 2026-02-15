@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import forge from "node-forge";
 import { CertificateManager } from "../lib/certificate-manager.js";
-import { ensureCerts } from "../lib/tls.js";
+import { ensureCerts, generateCA } from "../lib/tls.js";
 
 describe("CertificateManager", () => {
   describe("getNetworkIdForIp", () => {
@@ -594,6 +595,130 @@ describe("CertificateManager", () => {
         assert.ok(Buffer.isBuffer(key), "key should be a Buffer");
         assert.ok(cert.toString().includes("BEGIN CERTIFICATE"), "cert should contain PEM data");
         assert.ok(key.toString().includes("BEGIN"), "key should contain PEM data");
+      } finally {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("validateNetworkCerts", () => {
+    it("detects and re-signs network certs signed by a different CA", async () => {
+      const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
+      try {
+        // Set up initial CA and network cert
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
+
+        const mgr = new CertificateManager(testDir, "Test");
+        await mgr.initialize();
+
+        // Generate a network cert signed by the current CA
+        const networkId = await mgr.ensureNetworkCert("192.168.50.1");
+        const networkDir = join(testDir, "tls", "networks", networkId);
+        const origCert = readFileSync(join(networkDir, "server.crt"), "utf-8");
+
+        // Now replace the CA with a completely different one
+        const newCA = generateCA("DifferentCA", "different-uuid-1234");
+        writeFileSync(join(testDir, "tls", "ca.crt"), newCA.certPem);
+        writeFileSync(join(testDir, "tls", "ca.key"), newCA.keyPem, { mode: 0o600 });
+
+        // Re-initialize — validateNetworkCerts should detect the mismatch
+        // and regenerate the network cert with the new CA
+        const mgr2 = new CertificateManager(testDir, "Test");
+        await mgr2.initialize();
+
+        // The network cert should have been regenerated
+        const newCert = readFileSync(join(networkDir, "server.crt"), "utf-8");
+        assert.notEqual(origCert, newCert, "Network cert should be regenerated");
+
+        // Verify the new cert is signed by the new CA
+        const caCert = forge.pki.certificateFromPem(newCA.certPem);
+        const serverCert = forge.pki.certificateFromPem(newCert);
+        assert.doesNotThrow(() => caCert.verify(serverCert), "New cert should be verified by new CA");
+      } finally {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+
+    it("does not regenerate certs that are already signed by current CA", async () => {
+      const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
+      try {
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
+
+        const mgr = new CertificateManager(testDir, "Test");
+        await mgr.initialize();
+
+        const networkId = await mgr.ensureNetworkCert("192.168.51.1");
+        const networkDir = join(testDir, "tls", "networks", networkId);
+        const origCert = readFileSync(join(networkDir, "server.crt"), "utf-8");
+
+        // Re-initialize without changing CA — cert should NOT be regenerated
+        const mgr2 = new CertificateManager(testDir, "Test");
+        await mgr2.initialize();
+
+        const sameCert = readFileSync(join(networkDir, "server.crt"), "utf-8");
+        assert.equal(origCert, sameCert, "Cert should not be regenerated when CA matches");
+      } finally {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("migrateOldCA", () => {
+    it("regenerates network certs when CA has old format (reads from disk, not cache)", async () => {
+      const testDir = mkdtempSync(join(tmpdir(), "katulong-cert-mgr-test-"));
+      try {
+        // Create initial certs with new-format CA
+        await ensureCerts(testDir, "Test", "test-cert-manager-uuid");
+
+        // Initialize and create a network cert
+        const mgr = new CertificateManager(testDir, "Test");
+        await mgr.initialize();
+        await mgr.ensureNetworkCert("192.168.60.1");
+
+        const networkDir = join(testDir, "tls", "networks", "net-192-168-60-0");
+        const origCert = readFileSync(join(networkDir, "server.crt"), "utf-8");
+
+        // Replace CA with an old-format CA (CN without "(shortid)")
+        const oldKeys = forge.pki.rsa.generateKeyPair(2048);
+        const oldCACert = forge.pki.createCertificate();
+        oldCACert.publicKey = oldKeys.publicKey;
+        oldCACert.serialNumber = "01";
+        oldCACert.validity.notBefore = new Date();
+        oldCACert.validity.notAfter = new Date();
+        oldCACert.validity.notAfter.setFullYear(oldCACert.validity.notBefore.getFullYear() + 10);
+        const oldAttrs = [
+          { name: "organizationName", value: "Katulong" },
+          { name: "commonName", value: "Katulong Local CA" },
+        ];
+        oldCACert.setSubject(oldAttrs);
+        oldCACert.setIssuer(oldAttrs);
+        oldCACert.setExtensions([
+          { name: "basicConstraints", cA: true },
+          { name: "keyUsage", keyCertSign: true, cRLSign: true },
+        ]);
+        oldCACert.sign(oldKeys.privateKey, forge.md.sha256.create());
+
+        writeFileSync(join(testDir, "tls", "ca.crt"), forge.pki.certificateToPem(oldCACert));
+        writeFileSync(join(testDir, "tls", "ca.key"), forge.pki.privateKeyToPem(oldKeys.privateKey), { mode: 0o600 });
+
+        // Re-initialize — migrateOldCA should detect old format, regenerate CA,
+        // and then regenerate network certs from disk (not empty cache)
+        const mgr2 = new CertificateManager(testDir, "Test");
+        await mgr2.initialize();
+
+        // Network cert should have been regenerated
+        const newCert = readFileSync(join(networkDir, "server.crt"), "utf-8");
+        assert.notEqual(origCert, newCert, "Network cert should be regenerated after CA migration");
+
+        // The new CA should have the new format
+        const newCACertPem = readFileSync(join(testDir, "tls", "ca.crt"), "utf-8");
+        const newCACert = forge.pki.certificateFromPem(newCACertPem);
+        const cnAttr = newCACert.subject.attributes.find(a => a.name === "commonName");
+        assert.ok(cnAttr.value.includes("("), "New CA should have (shortid) format");
+
+        // Verify the new network cert is signed by the new CA
+        const serverCert = forge.pki.certificateFromPem(newCert);
+        assert.doesNotThrow(() => newCACert.verify(serverCert), "Network cert should verify against new CA");
       } finally {
         rmSync(testDir, { recursive: true, force: true });
       }

@@ -1327,6 +1327,15 @@ const routes = [
     try {
       const backupId = await certManager.regenerateCA();
       log.info("CA certificate regenerated via API", { backupId });
+
+      // Re-sign all network certs with the new CA
+      const networks = await certManager.listNetworks();
+      for (const network of networks) {
+        await certManager.regenerateNetwork(network.networkId);
+        await certManager.reloadCertificate(network.networkId);
+      }
+      log.info("Re-signed network certificates with new CA", { count: networks.length });
+
       json(res, 200, { success: true, backupId, message: 'CA certificate regenerated with current instance name' });
     } catch (error) {
       log.error("Failed to regenerate CA certificate", { error: error.message });
@@ -1356,6 +1365,15 @@ const routes = [
     try {
       await certManager.restoreCABackup(backupId);
       log.info("CA certificate restored from backup via API", { backupId });
+
+      // Re-sign all network certs with the restored CA
+      const networks = await certManager.listNetworks();
+      for (const network of networks) {
+        await certManager.regenerateNetwork(network.networkId);
+        await certManager.reloadCertificate(network.networkId);
+      }
+      log.info("Re-signed network certificates with restored CA", { count: networks.length });
+
       json(res, 200, { success: true, message: 'CA certificate restored from backup' });
     } catch (error) {
       log.error("Failed to restore CA backup", { error: error.message });
