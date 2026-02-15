@@ -20,7 +20,7 @@
     "test:integration": "node --test test/*.integration.js",
     "test:e2e": "npx playwright test",
     "test:e2e:clean": "bash test/e2e/cleanup-test-server.sh",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.0.0",
