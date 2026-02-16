@@ -1,3 +1,11 @@
+# Run Claude Code review on staged changes
+echo "pre-commit: running Claude Code review"
+if ! claude --prompt "Review the staged changes for security vulnerabilities, code quality issues, and adherence to the code review checklist in CLAUDE.md. Focus on: auth changes, input validation, error handling, path traversal risks, and any security-critical modifications. If there are any critical issues, fail with exit code 1. If the changes look good or only have minor suggestions, exit with code 0." 2>&1 | tee /tmp/claude-review.log; then
+  echo "❌ Claude Code review found critical issues. Please address them before committing."
+  echo "Review output saved to /tmp/claude-review.log"
+  exit 1
+fi
+
 # Run only the tests relevant to staged files
 
 map_to_test() {
