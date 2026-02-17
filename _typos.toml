@@ -1,0 +1,7 @@
+[default.extend-words]
+katulong = "katulong"
+xterm = "xterm"
+loca = "loca"
+
+[files]
+extend-exclude = ["public/vendor/", "node_modules/", "*.min.js"]

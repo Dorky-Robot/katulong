@@ -1,5 +1,69 @@
-echo "pre-push: running unit tests"
-npm test
+# --- Save stdin before anything else consumes it ---
+# Git pre-push hook receives ref info on stdin. npm/node may consume it.
+PUSH_INPUT=$(cat)
+
+echo "pre-push: running unit and integration tests"
+if ! npm test; then
+  echo "pre-push: tests failed, push blocked."
+  exit 1
+fi
 
 echo "pre-push: running E2E tests"
-npm run test:e2e
+if ! npm run test:e2e; then
+  echo "pre-push: E2E tests failed, push blocked."
+  exit 1
+fi
+
+# --- Determine what commits are being pushed ---
+
+# Detect default branch dynamically
+DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+
+ZERO="0000000000000000000000000000000000000000"
+PUSH_DIFF=""
+CHANGED_FILES=""
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Guard against empty reads
+  [ -z "$local_ref" ] && continue
+
+  if [ "$local_sha" = "$ZERO" ]; then
+    # Deleting a branch, nothing to review
+    continue
+  fi
+
+  if [ "$remote_sha" = "$ZERO" ]; then
+    # New branch — diff against where it diverged from default branch
+    MERGE_BASE=$(git merge-base "$DEFAULT_BRANCH" "$local_sha" 2>/dev/null || echo "")
+    if [ -n "$MERGE_BASE" ]; then
+      PUSH_DIFF+=$(git diff "$MERGE_BASE".."$local_sha")
+      CHANGED_FILES+=$(git diff --name-only "$MERGE_BASE".."$local_sha")
+    fi
+  else
+    PUSH_DIFF+=$(git diff "$remote_sha".."$local_sha")
+    CHANGED_FILES+=$(git diff --name-only "$remote_sha".."$local_sha")
+  fi
+done <<< "$PUSH_INPUT"
+
+if [ -z "$PUSH_DIFF" ]; then
+  echo "pre-push: no diff to review"
+  exit 0
+fi
+
+# --- Security scan: block secrets before they leave the machine ---
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/../scripts" && pwd)"
+source "$SCRIPT_DIR/secrets-scan.sh"
+scan_secrets "pre-push" || exit 1
+
+# --- Parallel multi-agent review ---
+
+TMPDIR_REVIEW=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_REVIEW"' EXIT
+printf '%s\n' "$PUSH_DIFF" > "$TMPDIR_REVIEW/diff.txt"
+printf '%s\n' "$CHANGED_FILES" > "$TMPDIR_REVIEW/files.txt"
+
+"$SCRIPT_DIR/review.sh" --hook pre-push \
+  --diff-file "$TMPDIR_REVIEW/diff.txt" \
+  --files-file "$TMPDIR_REVIEW/files.txt"
+exit $?
