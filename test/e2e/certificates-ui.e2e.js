@@ -180,21 +180,4 @@ test.describe("Certificates UI - Multi-Network", () => {
     }
   });
 
-  test("should show generate button when no cert for current network", async ({ page }) => {
-    // This test would require being on a network without a cert
-    // Skip for now as it requires specific network conditions
-    test.skip();
-  });
-
-  test("should handle network generation", async ({ page }) => {
-    // This test would require being on a network without a cert
-    // Skip for now as it requires specific network conditions
-    test.skip();
-  });
-
-  test("should handle revoke network", async ({ page }) => {
-    // This test would require a non-default network that can be revoked
-    // Skip for now as it would modify the test environment
-    test.skip();
-  });
 });

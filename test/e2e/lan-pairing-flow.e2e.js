@@ -184,15 +184,12 @@ test.describe('LAN Pairing Wizard Flow', () => {
     await expect(trustQR).toBeVisible({ timeout: 3000 });
   });
 
-  test.skip('should clean up timers when closing wizard', async ({ page }) => {
-    // SKIPPED: Modal closing behavior is inconsistent in headless mode
-    // Timer cleanup works in practice but is difficult to verify in automated tests
-    // Navigate to pairing step
+  test('should clean up timers when closing wizard', async ({ page }) => {
+    // Navigate to pairing step (which starts countdown and status poll intervals)
     await openSettings(page);
     await switchSettingsTab(page, 'lan');
     await page.click('button:has-text("Pair Device on LAN")');
 
-    // Wait for trust view first
     const trustView = page.locator('#settings-view-trust');
     await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
 
@@ -201,35 +198,26 @@ test.describe('LAN Pairing Wizard Flow', () => {
     const pairView = page.locator('#settings-view-pair');
     await expect(pairView).toHaveClass(/active/);
 
-    // Verify countdown is running
+    // Verify countdown is running by capturing its text
     const countdown = pairView.locator('#wizard-pair-countdown');
     await expect(countdown).toBeVisible();
-    const initialText = await countdown.textContent();
+    const textBefore = await countdown.textContent();
 
-    // Close modal by clicking outside (backdrop click)
+    // Close modal via Escape (triggers modal.close() → onClose → cleanupWizard)
+    await page.keyboard.press('Escape');
     const modal = page.locator('#settings-overlay');
-    await expect(modal).toBeVisible(); // Make sure modal is visible first
+    await expect(modal).not.toHaveClass(/visible/, { timeout: 3000 });
 
-    // Click on the overlay backdrop (outside the modal panel)
-    await modal.click({ position: { x: 10, y: 10 } });
-
-    // Wait for modal to close
-    await expect(modal).not.toBeVisible({ timeout: 3000 });
-
-    // Reopen modal
-    await openSettings(page);
-    await switchSettingsTab(page, 'lan');
-
-    // Should be back on main view, not pairing view
-    const mainView = page.locator('#settings-view-main');
-    await expect(mainView).toHaveClass(/active/);
-
-    // No countdown should be visible
-    const anyCountdown = page.locator('#wizard-pair-countdown');
-    await expect(anyCountdown).not.toBeVisible();
-
-    // Check for console errors (timers not cleaned up would cause errors)
-    // Playwright automatically fails tests on console errors if configured
+    // Verify timers stopped: capture countdown text, wait, check it didn't change
+    // If intervals were cleared, the text freezes; if still running, it decrements
+    const textSnapshot = await page.evaluate(() =>
+      document.getElementById('wizard-pair-countdown')?.textContent ?? ''
+    );
+    await page.waitForTimeout(1500);
+    const textLater = await page.evaluate(() =>
+      document.getElementById('wizard-pair-countdown')?.textContent ?? ''
+    );
+    expect(textSnapshot).toBe(textLater);
   });
 
   test('should display error if pairing code generation fails', async ({ page }) => {

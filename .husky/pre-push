@@ -1,5 +1,84 @@
-echo "pre-push: running unit tests"
-npm test
+# --- Save stdin before anything else consumes it ---
+# Git pre-push hook receives ref info on stdin. npm/node may consume it.
+PUSH_INPUT=$(cat)
+
+# --- Determine what commits are being pushed ---
+
+# Detect default branch dynamically
+DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+
+ZERO="0000000000000000000000000000000000000000"
+PUSH_DIFF=""
+CHANGED_FILES=""
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Guard against empty reads
+  [ -z "$local_ref" ] && continue
+
+  if [ "$local_sha" = "$ZERO" ]; then
+    # Deleting a branch, nothing to review
+    continue
+  fi
+
+  if [ "$remote_sha" = "$ZERO" ]; then
+    # New branch — diff against where it diverged from default branch
+    MERGE_BASE=$(git merge-base "$DEFAULT_BRANCH" "$local_sha" 2>/dev/null || echo "")
+    if [ -n "$MERGE_BASE" ]; then
+      PUSH_DIFF+=$(git diff "$MERGE_BASE".."$local_sha")
+      CHANGED_FILES+=$(git diff --name-only "$MERGE_BASE".."$local_sha")
+    fi
+  else
+    PUSH_DIFF+=$(git diff "$remote_sha".."$local_sha")
+    CHANGED_FILES+=$(git diff --name-only "$remote_sha".."$local_sha")
+  fi
+done <<< "$PUSH_INPUT"
+
+if [ -z "$PUSH_DIFF" ]; then
+  echo "pre-push: no diff to review"
+  exit 0
+fi
+
+# --- Step 1: Start agent review in background (takes ~2-3 min) ---
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/../scripts" && pwd)"
+TMPDIR_REVIEW=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_REVIEW"' EXIT
+printf '%s\n' "$PUSH_DIFF" > "$TMPDIR_REVIEW/diff.txt"
+printf '%s\n' "$CHANGED_FILES" > "$TMPDIR_REVIEW/files.txt"
+
+"$SCRIPT_DIR/review.sh" --hook pre-push \
+  --diff-file "$TMPDIR_REVIEW/diff.txt" \
+  --files-file "$TMPDIR_REVIEW/files.txt" &
+REVIEW_PID=$!
+
+# --- Step 2: Run unit tests (fast — fail early if broken) ---
+
+echo "pre-push: running unit and integration tests"
+if ! npm test; then
+  echo "pre-push: tests failed, push blocked."
+  kill "$REVIEW_PID" 2>/dev/null; wait "$REVIEW_PID" 2>/dev/null
+  exit 1
+fi
+
+# --- Step 3: Run E2E tests ---
 
 echo "pre-push: running E2E tests"
-npm run test:e2e
+if ! npm run test:e2e; then
+  echo "pre-push: E2E tests failed, push blocked."
+  kill "$REVIEW_PID" 2>/dev/null; wait "$REVIEW_PID" 2>/dev/null
+  exit 1
+fi
+
+# --- Step 4: Security scan ---
+
+source "$SCRIPT_DIR/secrets-scan.sh"
+if ! scan_secrets "pre-push"; then
+  kill "$REVIEW_PID" 2>/dev/null; wait "$REVIEW_PID" 2>/dev/null
+  exit 1
+fi
+
+# --- Step 5: Wait for agent review results ---
+
+echo "pre-push: waiting for review agents..."
+wait "$REVIEW_PID"
+exit $?

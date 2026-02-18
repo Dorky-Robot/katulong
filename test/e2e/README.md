@@ -13,8 +13,6 @@ Comprehensive end-to-end tests for Katulong terminal application.
 - **tokens.e2e.js** - Token CRUD with optimistic updates (✅ fixed today)
 - **devices.e2e.js** - Basic device list display (partially complete)
 - **keyboard.e2e.js** - Special key handling (Enter, Shift+Enter, Tab)
-- **fonts.e2e.js** - Font consistency across UI
-- **toolbar.e2e.js** - Toolbar layout and button order
 
 ### 🆕 New Tests (Added Today)
 
