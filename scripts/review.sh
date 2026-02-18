@@ -105,9 +105,14 @@ AGENT_TIMEOUT=180  # 3 minutes per agent (typically finish in 1-2 min)
 
 # Portable timeout using background process + sleep + kill.
 # Works on macOS without coreutils (no timeout/gtimeout needed).
+# Takes an input file as second arg because POSIX shells redirect
+# stdin to /dev/null for background processes (&) in non-interactive mode.
+# An explicit < redirect on the inner & overrides that default.
 run_with_timeout() {
-  local secs=$1; shift
-  "$@" &
+  local secs=$1
+  local input_file=$2
+  shift 2
+  "$@" < "$input_file" &
   local pid=$!
   ( sleep "$secs" && kill "$pid" 2>/dev/null ) &
   local watchdog=$!
@@ -124,7 +129,7 @@ trap 'rm -rf "$TMPDIR_AGENTS"' EXIT
 
 echo "$HOOK: launching ${#AGENTS[@]} review agents in parallel..."
 
-# Write context to a temp file and pipe via stdin to avoid ARG_MAX limits
+# Write context to a temp file to avoid ARG_MAX limits on command-line args
 CONTEXT_FILE="$TMPDIR_AGENTS/context.txt"
 printf '%s\n' "$CONTEXT" > "$CONTEXT_FILE"
 
@@ -132,8 +137,8 @@ PIDS=()
 for agent in "${AGENTS[@]}"; do
   outfile="$TMPDIR_AGENTS/$agent.out"
   errfile="$TMPDIR_AGENTS/$agent.err"
-  run_with_timeout "$AGENT_TIMEOUT" \
-    claude -p --agent "$agent" --no-session-persistence < "$CONTEXT_FILE" > "$outfile" 2>"$errfile" &
+  run_with_timeout "$AGENT_TIMEOUT" "$CONTEXT_FILE" \
+    claude -p --agent "$agent" --no-session-persistence > "$outfile" 2>"$errfile" &
   PIDS+=($!)
 done
 
