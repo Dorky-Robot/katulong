@@ -11,6 +11,17 @@
 
 set -euo pipefail
 
+# Strip --shard from extra args — this script manages sharding itself
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --shard=*) shift ;;          # --shard=1/2 — value is part of the arg
+    --shard) shift; shift 2>/dev/null || true ;; # --shard 1/2 — skip the next arg too
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
 NCPUS=${E2E_CPUS:-$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)}
 
 # Shard count: max(1, min(NCPUS / 4, 4))
@@ -70,7 +81,9 @@ for idx in $(seq 0 $(( NUM_SHARDS - 1 ))); do
     cat "${LOGS[$idx]}"
     FAILED=1
   else
-    echo "e2e-sharded: shard $idx passed"
+    # Show summary line (passed/flaky/failed counts) from passing shards
+    SUMMARY=$(grep -E '^\s+\d+ (passed|failed|flaky|skipped)' "${LOGS[$idx]}" | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g' | xargs)
+    echo "e2e-sharded: shard $idx passed ($SUMMARY)"
   fi
 done
 
