@@ -51,25 +51,54 @@ printf '%s\n' "$CHANGED_FILES" > "$TMPDIR_REVIEW/files.txt"
   --files-file "$TMPDIR_REVIEW/files.txt" &
 REVIEW_PID=$!
 
-# --- Step 2: Run unit tests (fast — fail early if broken) ---
+# --- Step 2: Run unit+integration tests and E2E tests in parallel ---
+# Both test suites use separate ports and data dirs, so no conflicts.
+# Running in parallel overlaps E2E server startup with unit test execution.
 
-echo "pre-push: running unit and integration tests"
-if ! npm test; then
+NCPUS=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+echo "pre-push: running unit/integration + E2E tests in parallel ($NCPUS cores)"
+
+UNIT_LOG=$(mktemp)
+E2E_LOG=$(mktemp)
+
+npm test > "$UNIT_LOG" 2>&1 &
+UNIT_PID=$!
+
+npm run test:e2e > "$E2E_LOG" 2>&1 &
+E2E_PID=$!
+
+# Wait for both, collect exit codes
+UNIT_RC=0; E2E_RC=0
+wait "$UNIT_PID" || UNIT_RC=$?
+wait "$E2E_PID" || E2E_RC=$?
+
+# Report results
+if [ "$UNIT_RC" -ne 0 ]; then
+  echo "pre-push: unit/integration tests FAILED (exit $UNIT_RC):"
+  cat "$UNIT_LOG"
+fi
+if [ "$E2E_RC" -ne 0 ]; then
+  echo "pre-push: E2E tests FAILED (exit $E2E_RC):"
+  cat "$E2E_LOG"
+fi
+
+# Print summary on success
+if [ "$UNIT_RC" -eq 0 ]; then
+  echo "pre-push: unit/integration tests passed"
+fi
+if [ "$E2E_RC" -eq 0 ]; then
+  echo "pre-push: E2E tests passed"
+fi
+
+rm -f "$UNIT_LOG" "$E2E_LOG"
+
+if [ "$UNIT_RC" -ne 0 ] || [ "$E2E_RC" -ne 0 ]; then
   echo "pre-push: tests failed, push blocked."
   kill "$REVIEW_PID" 2>/dev/null; wait "$REVIEW_PID" 2>/dev/null
   exit 1
 fi
 
-# --- Step 3: Run E2E tests ---
-
-echo "pre-push: running E2E tests"
-if ! npm run test:e2e; then
-  echo "pre-push: E2E tests failed, push blocked."
-  kill "$REVIEW_PID" 2>/dev/null; wait "$REVIEW_PID" 2>/dev/null
-  exit 1
-fi
-
-# --- Step 4: Security scan ---
+# --- Step 3: Security scan ---
 
 source "$SCRIPT_DIR/secrets-scan.sh"
 if ! scan_secrets "pre-push"; then

@@ -5,6 +5,8 @@ const PORT = 3099;
 export default defineConfig({
   testDir: "test/e2e",
   testMatch: "*.e2e.js",
+  fullyParallel: true, // Distribute individual tests across workers, not just files
+  workers: "100%", // Use all CPU cores instead of default 50%
   timeout: 30_000,
   retries: 2, // Retry flaky tests to handle resource contention
   globalSetup: "./test/e2e/global-setup.js",
