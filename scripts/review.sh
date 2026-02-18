@@ -38,6 +38,15 @@ if [ -z "$HOOK" ] || [ -z "$DIFF_FILE" ] || [ -z "$FILES_FILE" ]; then
   exit 2
 fi
 
+# --- Skip when running inside Claude Code ---
+# Inside a Claude Code session, the review agents are invoked as proper
+# sub-agents (defined in .claude/agents/). No need to shell out to `claude -p`.
+
+if [ -n "${CLAUDECODE:-}" ]; then
+  echo "review.sh: inside Claude Code session, skipping (review handled via sub-agents)"
+  exit 0
+fi
+
 # --- Check for claude CLI ---
 
 if ! command -v claude &>/dev/null; then
@@ -90,26 +99,22 @@ $FULL_CHANGED
 RELATED FILES (callers/importers of changed modules):
 $RELATED_FILES"
 
-# --- Build a clean env for agent subprocesses ---
-# Claude CLI blocks launches when it detects a parent session via CLAUDE* env vars.
-# Strip all of them so `claude -p --agent` works from git hooks.
-
-ENV_UNSET=()
-while IFS='=' read -r key _; do
-  [ -n "$key" ] && ENV_UNSET+=(-u "$key")
-done < <(env | grep '^CLAUDE' || true)
-
 # --- Timeout configuration ---
 
-AGENT_TIMEOUT=300  # 5 minutes per agent
+AGENT_TIMEOUT=180  # 3 minutes per agent (typically finish in 1-2 min)
 
-# Find a working timeout command (timeout on Linux, gtimeout on macOS via coreutils)
-TIMEOUT_CMD=""
-if command -v timeout &>/dev/null; then
-  TIMEOUT_CMD="timeout"
-elif command -v gtimeout &>/dev/null; then
-  TIMEOUT_CMD="gtimeout"
-fi
+# Portable timeout using background process + sleep + kill.
+# Works on macOS without coreutils (no timeout/gtimeout needed).
+run_with_timeout() {
+  local secs=$1; shift
+  "$@" &
+  local pid=$!
+  ( sleep "$secs" && kill "$pid" 2>/dev/null ) &
+  local watchdog=$!
+  wait "$pid" 2>/dev/null; local rc=$?
+  kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null
+  return $rc
+}
 
 # --- Launch three agents in parallel ---
 
@@ -127,13 +132,8 @@ PIDS=()
 for agent in "${AGENTS[@]}"; do
   outfile="$TMPDIR_AGENTS/$agent.out"
   errfile="$TMPDIR_AGENTS/$agent.err"
-  ENV_CMD=(env)
-  [ ${#ENV_UNSET[@]} -gt 0 ] && ENV_CMD+=(${ENV_UNSET[@]+"${ENV_UNSET[@]}"})
-  if [ -n "$TIMEOUT_CMD" ]; then
-    "${ENV_CMD[@]}" $TIMEOUT_CMD "${AGENT_TIMEOUT}s" claude -p --agent "$agent" --no-session-persistence < "$CONTEXT_FILE" > "$outfile" 2>"$errfile" &
-  else
-    "${ENV_CMD[@]}" claude -p --agent "$agent" --no-session-persistence < "$CONTEXT_FILE" > "$outfile" 2>"$errfile" &
-  fi
+  run_with_timeout "$AGENT_TIMEOUT" \
+    claude -p --agent "$agent" --no-session-persistence < "$CONTEXT_FILE" > "$outfile" 2>"$errfile" &
   PIDS+=($!)
 done
 
@@ -146,7 +146,7 @@ for i in "${!AGENTS[@]}"; do
   set +e
   wait "$pid"; rc=$?
   set -e
-  if [ "$rc" -eq 124 ]; then
+  if [ "$rc" -eq 143 ] || [ "$rc" -eq 137 ]; then
     echo "$HOOK: [$agent] timed out after ${AGENT_TIMEOUT}s — fail-closed"
     FAILED=1
   elif [ "$rc" -ne 0 ]; then

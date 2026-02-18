@@ -44,7 +44,7 @@ The pre-push hook runs the full test suite including e2e tests. This is your las
 - **E2E timeout**: Ensure no dev servers are running on test ports (3001, 3002)
 - **Failing tests**: Fix the test or the code — never skip the test
 
-**Exception**: `--no-verify` is ONLY acceptable when committing non-code changes (documentation, README) that cannot possibly break functionality. Even then, prefer running tests anyway.
+**There are NO exceptions.** Never use `--no-verify`, `SKIP_REVIEW=1`, or any other mechanism to bypass hooks. If hooks are slow, fix the hooks. If tests are flaky, fix the tests. If agents timeout, optimize the pipeline. The solution is never to skip the safety check.
 
 ### Pull Request Workflow
 
