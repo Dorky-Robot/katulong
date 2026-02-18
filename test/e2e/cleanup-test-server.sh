@@ -1,25 +1,34 @@
 #!/bin/bash
-# Cleanup ONLY test server processes
+# Cleanup test server processes for all shards (0-3)
 # Does NOT touch dev server (port 3001/3002)
 
 echo "Cleaning up test server processes..."
 
-# Kill only processes on test port 3099
-if lsof -ti:3099 >/dev/null 2>&1; then
-  echo "  Killing process on test port 3099..."
-  lsof -ti:3099 | xargs kill -9 2>/dev/null
-fi
+for SHARD in 0 1 2 3; do
+  HTTP_PORT=$(( 3099 + SHARD * 10 ))
 
-# Remove test socket (not dev socket)
-if [ -f /tmp/katulong-test.sock ]; then
-  echo "  Removing test socket..."
-  rm -f /tmp/katulong-test.sock
-fi
+  if lsof -ti:$HTTP_PORT >/dev/null 2>&1; then
+    echo "  Killing process on test port $HTTP_PORT (shard $SHARD)..."
+    lsof -ti:$HTTP_PORT | xargs kill -9 2>/dev/null
+  fi
 
-# Clean test data directory
-if [ -d /tmp/katulong-e2e-data ]; then
-  echo "  Cleaning test data directory..."
-  rm -rf /tmp/katulong-e2e-data
-fi
+  if [ "$SHARD" -eq 0 ]; then
+    SOCK_PATH="/tmp/katulong-test.sock"
+    DATA_DIR="/tmp/katulong-e2e-data"
+  else
+    SOCK_PATH="/tmp/katulong-test-${SHARD}.sock"
+    DATA_DIR="/tmp/katulong-e2e-data-${SHARD}"
+  fi
+
+  if [ -f "$SOCK_PATH" ]; then
+    echo "  Removing test socket $SOCK_PATH..."
+    rm -f "$SOCK_PATH"
+  fi
+
+  if [ -d "$DATA_DIR" ]; then
+    echo "  Cleaning test data directory $DATA_DIR..."
+    rm -rf "$DATA_DIR"
+  fi
+done
 
 echo "✓ Test cleanup complete (dev server untouched)"

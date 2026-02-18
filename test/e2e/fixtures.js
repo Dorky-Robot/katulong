@@ -6,10 +6,7 @@
 
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-
-const TEST_PORT = 3099;
-const BASE_URL = `http://localhost:${TEST_PORT}`;
-const TEST_DATA_DIR = '/tmp/katulong-e2e-data';
+import { BASE_URL, TEST_DATA_DIR } from './test-config.js';
 
 /**
  * Create a fixture auth state with a real credential

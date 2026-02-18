@@ -21,8 +21,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
 
   if [ "$remote_sha" = "$ZERO" ]; then
-    # New branch — diff against where it diverged from default branch
-    MERGE_BASE=$(git merge-base "$DEFAULT_BRANCH" "$local_sha" 2>/dev/null || echo "")
+    # New branch — diff against remote default branch, not local.
+    # Using local branch would produce an empty diff when commits exist
+    # on local main but haven't been pushed yet (commit on main → branch → push).
+    MERGE_BASE=$(git merge-base "origin/$DEFAULT_BRANCH" "$local_sha" 2>/dev/null || echo "")
     if [ -n "$MERGE_BASE" ]; then
       PUSH_DIFF+=$(git diff "$MERGE_BASE".."$local_sha")
       CHANGED_FILES+=$(git diff --name-only "$MERGE_BASE".."$local_sha")
@@ -33,52 +35,92 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
 done <<< "$PUSH_INPUT"
 
-if [ -z "$PUSH_DIFF" ]; then
-  echo "pre-push: no diff to review"
-  exit 0
-fi
+SCRIPT_DIR="$(cd "$(dirname "$0")/../scripts" && pwd)"
 
 # --- Step 1: Start agent review in background (takes ~2-3 min) ---
+# Only launch review agents if there's a diff to review.
 
-SCRIPT_DIR="$(cd "$(dirname "$0")/../scripts" && pwd)"
-TMPDIR_REVIEW=$(mktemp -d)
-trap 'rm -rf "$TMPDIR_REVIEW"' EXIT
-printf '%s\n' "$PUSH_DIFF" > "$TMPDIR_REVIEW/diff.txt"
-printf '%s\n' "$CHANGED_FILES" > "$TMPDIR_REVIEW/files.txt"
+REVIEW_PID=""
+if [ -z "$PUSH_DIFF" ]; then
+  echo "pre-push: no diff to review, skipping agents (tests still run)"
+else
+  TMPDIR_REVIEW=$(mktemp -d)
+  trap 'rm -rf "$TMPDIR_REVIEW"' EXIT
+  printf '%s\n' "$PUSH_DIFF" > "$TMPDIR_REVIEW/diff.txt"
+  printf '%s\n' "$CHANGED_FILES" > "$TMPDIR_REVIEW/files.txt"
 
-"$SCRIPT_DIR/review.sh" --hook pre-push \
-  --diff-file "$TMPDIR_REVIEW/diff.txt" \
-  --files-file "$TMPDIR_REVIEW/files.txt" &
-REVIEW_PID=$!
+  "$SCRIPT_DIR/review.sh" --hook pre-push \
+    --diff-file "$TMPDIR_REVIEW/diff.txt" \
+    --files-file "$TMPDIR_REVIEW/files.txt" &
+  REVIEW_PID=$!
+fi
 
-# --- Step 2: Run unit tests (fast — fail early if broken) ---
+# --- Step 2: Run unit+integration tests and E2E tests in parallel ---
+# Both test suites use separate ports and data dirs, so no conflicts.
+# Running in parallel overlaps E2E server startup with unit test execution.
 
-echo "pre-push: running unit and integration tests"
-if ! npm test; then
+NCPUS=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+HALF_CPUS=$(( NCPUS / 2 ))
+[ "$HALF_CPUS" -lt 1 ] && HALF_CPUS=1
+echo "pre-push: running unit/integration + E2E tests in parallel ($NCPUS cores, $HALF_CPUS each)"
+
+UNIT_LOG=$(mktemp)
+E2E_LOG=$(mktemp)
+
+# Split cores evenly: half for unit tests, half for E2E browsers.
+# Running both at full concurrency starves the test server daemon.
+node --test --test-concurrency="$HALF_CPUS" test/*.test.js test/*.integration.js > "$UNIT_LOG" 2>&1 &
+UNIT_PID=$!
+
+E2E_CPUS=$HALF_CPUS bash scripts/run-e2e-sharded.sh > "$E2E_LOG" 2>&1 &
+E2E_PID=$!
+
+# Wait for both, collect exit codes
+UNIT_RC=0; E2E_RC=0
+wait "$UNIT_PID" || UNIT_RC=$?
+wait "$E2E_PID" || E2E_RC=$?
+
+# Report results
+if [ "$UNIT_RC" -ne 0 ]; then
+  echo "pre-push: unit/integration tests FAILED (exit $UNIT_RC):"
+  cat "$UNIT_LOG"
+fi
+if [ "$E2E_RC" -ne 0 ]; then
+  echo "pre-push: E2E tests FAILED (exit $E2E_RC):"
+  cat "$E2E_LOG"
+fi
+
+# Print summary on success
+if [ "$UNIT_RC" -eq 0 ]; then
+  echo "pre-push: unit/integration tests passed"
+fi
+if [ "$E2E_RC" -eq 0 ]; then
+  echo "pre-push: E2E tests passed"
+fi
+
+rm -f "$UNIT_LOG" "$E2E_LOG"
+
+if [ "$UNIT_RC" -ne 0 ] || [ "$E2E_RC" -ne 0 ]; then
   echo "pre-push: tests failed, push blocked."
-  kill "$REVIEW_PID" 2>/dev/null; wait "$REVIEW_PID" 2>/dev/null
+  [ -n "$REVIEW_PID" ] && { kill "$REVIEW_PID" 2>/dev/null; wait "$REVIEW_PID" 2>/dev/null; }
   exit 1
 fi
 
-# --- Step 3: Run E2E tests ---
-
-echo "pre-push: running E2E tests"
-if ! npm run test:e2e; then
-  echo "pre-push: E2E tests failed, push blocked."
-  kill "$REVIEW_PID" 2>/dev/null; wait "$REVIEW_PID" 2>/dev/null
-  exit 1
-fi
-
-# --- Step 4: Security scan ---
+# --- Step 3: Security scan ---
 
 source "$SCRIPT_DIR/secrets-scan.sh"
 if ! scan_secrets "pre-push"; then
-  kill "$REVIEW_PID" 2>/dev/null; wait "$REVIEW_PID" 2>/dev/null
+  [ -n "$REVIEW_PID" ] && { kill "$REVIEW_PID" 2>/dev/null; wait "$REVIEW_PID" 2>/dev/null; }
   exit 1
 fi
 
-# --- Step 5: Wait for agent review results ---
+# --- Step 4: Wait for agent review results ---
 
-echo "pre-push: waiting for review agents..."
-wait "$REVIEW_PID"
-exit $?
+if [ -n "$REVIEW_PID" ]; then
+  echo "pre-push: waiting for review agents..."
+  wait "$REVIEW_PID"
+  exit $?
+fi
+
+echo "pre-push: all checks passed"
+exit 0

@@ -60,7 +60,7 @@ TO_RUN=$(echo "$TO_RUN" | sed 's/^ //')
 
 if [ -n "$TO_RUN" ]; then
   echo "pre-commit: running $TO_RUN"
-  node --test $TO_RUN
+  node --test --test-concurrency=0 $TO_RUN
 fi
 
 echo "pre-commit: all checks passed"
