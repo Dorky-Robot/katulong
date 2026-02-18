@@ -6,8 +6,7 @@
 
 import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
-
-const TEST_DATA_DIR = '/tmp/katulong-e2e-data';
+import { TEST_DATA_DIR } from './test-config.js';
 
 function setupFixtureAuthState() {
   console.log('[Pre-Server Setup] Creating fixture auth state...');

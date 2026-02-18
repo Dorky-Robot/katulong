@@ -72,7 +72,7 @@ E2E_LOG=$(mktemp)
 node --test --test-concurrency="$HALF_CPUS" test/*.test.js test/*.integration.js > "$UNIT_LOG" 2>&1 &
 UNIT_PID=$!
 
-npm run test:e2e -- --workers="$HALF_CPUS" > "$E2E_LOG" 2>&1 &
+E2E_CPUS=$HALF_CPUS bash scripts/run-e2e-sharded.sh > "$E2E_LOG" 2>&1 &
 E2E_PID=$!
 
 # Wait for both, collect exit codes

@@ -19,6 +19,7 @@
     "test:unit": "node --test --test-concurrency=0 test/*.test.js",
     "test:integration": "node --test --test-concurrency=0 test/*.integration.js",
     "test:e2e": "npx playwright test",
+    "test:e2e:sharded": "bash scripts/run-e2e-sharded.sh",
     "test:e2e:clean": "bash test/e2e/cleanup-test-server.sh",
     "prepare": "husky || true"
   },

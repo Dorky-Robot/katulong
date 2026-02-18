@@ -3,9 +3,10 @@ import https from "node:https";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import forge from "node-forge";
+import { TEST_HTTPS_PORT, TEST_DATA_DIR } from "./test-config.js";
 
-const HTTPS_PORT = 3100;
-const DATA_DIR = "/tmp/katulong-e2e-data";
+const HTTPS_PORT = TEST_HTTPS_PORT;
+const DATA_DIR = TEST_DATA_DIR;
 
 function httpsGet(options) {
   return new Promise((resolve, reject) => {

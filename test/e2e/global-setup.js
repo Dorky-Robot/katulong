@@ -5,8 +5,7 @@
 
 import { chromium } from '@playwright/test';
 import { setupTestFixtures } from './fixtures.js';
-
-const TEST_PORT = 3099;
+import { TEST_PORT } from './test-config.js';
 
 export default async function globalSetup() {
   console.log('\n[Global Setup] Preparing test environment...\n');

@@ -4,8 +4,7 @@
  */
 
 import { rmSync } from 'fs';
-
-const TEST_DATA_DIR = '/tmp/katulong-e2e-data';
+import { TEST_DATA_DIR } from './test-config.js';
 
 export default async function globalTeardown() {
   console.log('\n[Global Teardown] Cleaning up test environment...\n');
