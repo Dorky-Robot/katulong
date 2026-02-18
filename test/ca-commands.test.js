@@ -136,7 +136,7 @@ describe("CA Commands", () => {
     }
   });
 
-  it.skip("should backup existing CA before import", () => {
+  it("should backup existing CA before import", () => {
     // Setup: Create initial CA
     mkdirSync(tlsDir, { recursive: true });
     const oldCA = generateTestCA();

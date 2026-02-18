@@ -49,14 +49,6 @@ test.describe("Settings modal", () => {
     await expect(page.locator("#settings-overlay")).not.toHaveClass(/visible/);
   });
 
-  test.skip("End Session button redirects to /login", async ({ page }) => {
-    // Skip: E2E tests run on localhost where logout button is hidden
-    // This test would only work on remote/LAN access
-    await page.locator("#settings-logout").click();
-    await page.waitForURL("**/login");
-    expect(page.url()).toContain("/login");
-  });
-
   test("Theme persists after reload", async ({ page }) => {
     // Switch to light theme
     await page.locator("button[data-theme-val='light']").click();
