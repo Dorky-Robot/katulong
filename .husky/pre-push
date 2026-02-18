@@ -60,15 +60,19 @@ fi
 # Running in parallel overlaps E2E server startup with unit test execution.
 
 NCPUS=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
-echo "pre-push: running unit/integration + E2E tests in parallel ($NCPUS cores)"
+HALF_CPUS=$(( NCPUS / 2 ))
+[ "$HALF_CPUS" -lt 1 ] && HALF_CPUS=1
+echo "pre-push: running unit/integration + E2E tests in parallel ($NCPUS cores, $HALF_CPUS each)"
 
 UNIT_LOG=$(mktemp)
 E2E_LOG=$(mktemp)
 
-npm test > "$UNIT_LOG" 2>&1 &
+# Split cores evenly: half for unit tests, half for E2E browsers.
+# Running both at full concurrency starves the test server daemon.
+node --test --test-concurrency="$HALF_CPUS" test/*.test.js test/*.integration.js > "$UNIT_LOG" 2>&1 &
 UNIT_PID=$!
 
-npm run test:e2e > "$E2E_LOG" 2>&1 &
+npm run test:e2e -- --workers="$HALF_CPUS" > "$E2E_LOG" 2>&1 &
 E2E_PID=$!
 
 # Wait for both, collect exit codes
