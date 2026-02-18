@@ -2,10 +2,29 @@ import { test, expect } from "@playwright/test";
 import { waitForAppReady } from './helpers.js';
 
 test.describe("Terminal I/O", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/");
+  // Each test uses its own session to avoid cross-test interference
+  // when parallel workers type into the same default PTY session.
+  let sessionName;
+
+  test.beforeEach(async ({ page }, testInfo) => {
+    sessionName = `term-io-${testInfo.testId}-${Date.now()}`;
+    await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
     await waitForAppReady(page);
     await page.locator(".xterm-helper-textarea").focus();
+    // Wait for shell prompt before typing — the shell runs init scripts
+    // (e.g. .zshrc, clear) and keystrokes typed before the prompt appears
+    // get swallowed, causing flaky failures.
+    await page.waitForFunction(
+      () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
+      { timeout: 10000 },
+    );
+  });
+
+  test.afterEach(async ({ page }) => {
+    await page.evaluate(
+      (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: "DELETE" }),
+      sessionName,
+    );
   });
 
   test("Shell prompt is visible after load", async ({ page }) => {
