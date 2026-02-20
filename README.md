@@ -1,72 +1,82 @@
 # katulong
 
-> _Katulong_ (kah-too-LONG) means "helper" in Tagalog—your always-ready terminal assistant.
-
-Your terminal, everywhere. Access your shell sessions from any device—desktop browser, phone, tablet—over LAN or the internet. Need a raw terminal? SSH directly into your sessions. Your work follows you.
-
-## Screenshots
-
 <div align="center">
 
-### Terminal Interface
-
-<img src="docs/assets/images/terminal-main.png" alt="Main terminal interface" width="45%">
-<img src="docs/assets/images/terminal-mobile.png" alt="Mobile terminal with touch controls" width="45%">
-
-### Device Management & Security
-
-<img src="docs/assets/images/settings.png" alt="Settings panel" width="30%">
-<img src="docs/assets/images/devices.png" alt="Device management" width="30%">
-<img src="docs/assets/images/pairing-flow.png" alt="Secure device pairing" width="30%">
-
-### Customization
-
-<img src="docs/assets/images/shortcuts-editor.png" alt="Shortcuts editor" width="60%">
+<img src="katulong.jpg" alt="Katulong mascot" width="300">
 
 </div>
 
-## Why Katulong?
+A self-hosted web terminal that gives you shell access from any device over HTTP/HTTPS + WebSocket.
 
-**Take your terminal anywhere.** Start a build on your laptop, check progress from your phone on the couch, finish debugging via SSH from your desktop. Same sessions, any device.
+## Why "katulong"?
 
-- **Browser-based** — Works on desktop, mobile, any device with a browser. No app store needed.
-- **LAN + Internet** — Access over your local network or expose securely over the internet.
-- **SSH access** — Prefer a raw terminal? SSH directly into any session.
-- **Secure device pairing** — WebAuthn + QR code pairing. Your sessions, your devices only.
-- **Sessions persist** — Daemon owns PTYs. Restart the server, your sessions survive.
+*Katulong* (kah-too-LONG) is Tagalog for *helper*.
 
-## Installation
+Not assistant, not agent, not copilot — helper. The word carries a specific weight in Filipino culture: a katulong is someone who shows up, does the work alongside you, and makes the hard parts easier. They don't take over. They don't need to be managed. They're just there when you need them.
+
+That's what this project is. You're already doing the work — building, deploying, debugging. Katulong just makes sure your terminal is there when you reach for it, whether you're at your desk, on the couch with your phone, or SSH'd in from across the house.
+
+The name is a reminder of the intent: serve the person doing the work, don't get in their way.
+
+## The problem
+
+Your terminal is trapped on your laptop.
+
+You start a long build. You go make coffee. You want to check if it's done from your phone — but you can't, because your terminal doesn't leave the machine it's running on.
+
+You SSH into a server, start debugging, realize you need to context-switch to your desktop for the bigger screen. You open a new SSH session, re-navigate to the directory, try to remember where you were. The flow is broken.
+
+Every solution involves tradeoffs: tmux requires SSH, which requires port forwarding, which requires a static IP or a VPN or a tunnel service. Cloud terminals require trusting a third party with shell access to your machine. Screen sharing works but it's slow and coarse.
+
+The core issue: there's no simple way to access your shell sessions from wherever you happen to be, on whatever device you happen to have.
+
+## The idea
+
+Katulong takes a different approach. Your terminal sessions live in a daemon process on your machine. A web server sits in front of them, serving an xterm.js terminal over HTTP and WebSocket. Open a browser — any browser, any device — and you're connected.
+
+```bash
+katulong start
+```
+
+That's it. Your terminal is now available at `https://your-machine:3001` from any device on your network. Phone, tablet, another laptop — if it has a browser, it's a terminal.
+
+```
+Phone browser  ──WebSocket──┐
+                             ├── UI Server (server.js) ──Unix Socket──  Daemon (daemon.js)
+Desktop browser ──WebSocket──┘                                          PTY sessions
+                                                                        Output buffers
+SSH client ─────────────────────SSH server──────────────────────────────┘
+```
+
+The daemon owns the PTY sessions. The web server is stateless — restart it freely, your sessions survive. The browser reconnects and the daemon replays the output buffer. You pick up exactly where you left off.
+
+Sessions are named. `/?s=deploy` connects to a session called "deploy". Open the same URL in two windows and you're sharing the session in real-time. Close all windows, come back tomorrow — the session is still there.
+
+Prefer a raw terminal? SSH directly into any session. Same daemon, same PTYs, different transport.
+
+### Security
+
+This application provides direct terminal access to your machine. Security isn't optional.
+
+First device registers via WebAuthn passkey. Subsequent devices pair via QR code + 6-digit PIN. Localhost bypasses auth. LAN and remote connections require a valid session cookie. Sessions are 30-day tokens, server-side, pruned on expiry.
+
+No passwords to manage. No tokens in URLs. No `X-Forwarded-*` header trust. The only thing that proves identity is a cryptographic passkey or a physically-proximate pairing flow.
+
+## Install
 
 ### Homebrew (macOS)
 
 ```bash
-# Add the tap
 brew tap dorky-robot/katulong
-
-# Install
 brew install katulong
 
-# Start Katulong
 katulong start
 
-# Or use brew services for auto-start on login
+# Or auto-start on login
 brew services start katulong
 ```
 
-**⚠️ macOS 26.x users:** If you see "Xcode too outdated" error after updating Xcode, run:
-
-```bash
-# Point xcode-select to the new Xcode
-sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
-
-# Accept the license
-sudo xcodebuild -license accept
-
-# Then retry installation
-brew install katulong
-```
-
-### Manual Installation
+### Manual
 
 ```bash
 git clone https://github.com/dorky-robot/katulong.git
@@ -75,70 +85,96 @@ npm install
 npm link  # Makes 'katulong' command available globally
 ```
 
-## Quick Start
+## Quick start
 
 ```bash
-# Start Katulong
-katulong start
-
-# Check status
-katulong status
-
-# Open in browser
-katulong open
-
-# View logs
-katulong logs
-
-# Stop Katulong
-katulong stop
+katulong start        # Start the daemon + web server
+katulong status       # Check if it's running
+katulong open         # Open in your default browser
+katulong logs         # View logs
+katulong stop         # Stop everything
 ```
+
+Visit `/` for the default session. Visit `/?s=myproject` for a named session. That's the whole interface.
 
 For detailed CLI usage, run `katulong --help`.
 
-## Features
+## A walkthrough: your terminal follows you
 
-### Mobile-First Terminal
-- **Full-screen text input** — Dedicated textarea for writing commit messages, documentation, or long-form text. Works with your phone's built-in speech-to-text.
-- **Swipe navigation** — Dedicated touch zone for arrow keys. Swipe left/right/up/down to navigate without obscuring the terminal.
-- **Smart keyboard handling** — Autocorrect, autocomplete, and autocapitalize disabled to prevent interference. Virtual keyboard detection keeps the terminal in view.
-- **PWA-ready** — Install as a full-screen app. Works offline, no app store needed.
-
-### Session Management
-- **Named sessions** via URL — `/?s=myproject` connects to a session called "myproject"
-- **Sessions survive restarts** — daemon owns PTYs, so restarting the web server preserves all sessions
-- **Shared sessions** — open the same URL in multiple windows to share a terminal
-- **Session manager** — create, rename, delete sessions from a modal UI
-
-### Power User Features
-- **Configurable shortcuts** — pinned keys in the toolbar, full list in a popup
-- **Cmd/Option key support** — Cmd+Backspace (kill line), Option+Backspace (delete word), etc.
-- **Touch-optimized toolbar** — Essential keys always accessible, no hunting for special characters
-
-## Development
+You're at your desk. You start a deploy:
 
 ```bash
-# Install dependencies
-npm install
-
-# Run both daemon and server with auto-reload
-npm run dev
-
-# Or run separately:
-npm run daemon  # Terminal 1
-npm start       # Terminal 2
+# Open a browser to your katulong instance
+# Navigate to /?s=deploy
+$ git push origin main && ./scripts/deploy.sh
 ```
 
-Open `http://localhost:3001` in a browser.
+The deploy is running. You grab your phone, walk to the kitchen, open `https://your-machine:3001/?s=deploy` in mobile Safari. The terminal is there — same session, same output, scrollback intact. The deploy finishes. You see it on your phone.
 
-For production deployment, use the `katulong` CLI (see Installation above).
+Back at your desk, you notice a bug in staging. You open `/?s=debug` on your desktop's bigger monitor. You start digging. Your laptop still has `/?s=deploy` open — two sessions, two devices, no conflict.
 
-## Usage
+Later that night, you're on the couch. You SSH in from your iPad:
 
-- Visit `/` to connect to the "default" session
-- Visit `/?s=name` to connect to a named session (created automatically)
-- Click the session button in the toolbar to manage sessions
-- Click the keyboard icon to access shortcuts
+```bash
+ssh -p 2222 debug@your-machine
+# Password: your setup token
+# You're in the "debug" session — same PTY, same scrollback
+```
+
+One daemon. Multiple transports. Your work follows you.
+
+## Features
+
+### Mobile-first terminal
+- **Full-screen text input** — Dedicated textarea for commit messages, docs, or long-form text. Works with your phone's speech-to-text.
+- **Swipe navigation** — Touch zone for arrow keys. Swipe to navigate without obscuring the terminal.
+- **Smart keyboard handling** — Autocorrect and autocapitalize disabled. Virtual keyboard detection keeps the terminal in view.
+- **PWA-ready** — Install as a full-screen app. No app store needed.
+
+### Session management
+- **Named sessions via URL** — `/?s=myproject` connects to a session called "myproject"
+- **Sessions survive restarts** — Daemon owns PTYs. Restart the server, your sessions are still there.
+- **Shared sessions** — Same URL in multiple windows = shared terminal
+- **Session manager** — Create, rename, delete sessions from the UI
+
+### Power user features
+- **Configurable shortcuts** — Pinned keys in the toolbar, full list in a popup
+- **Cmd/Option key support** — Cmd+Backspace (kill line), Option+Backspace (delete word)
+- **Touch-optimized toolbar** — Essential keys always accessible
+
+### Screenshots
+
+<div align="center">
+
+<img src="docs/assets/images/terminal-main.png" alt="Main terminal interface" width="45%">
+<img src="docs/assets/images/terminal-mobile.png" alt="Mobile terminal with touch controls" width="45%">
+
+<img src="docs/assets/images/settings.png" alt="Settings panel" width="30%">
+<img src="docs/assets/images/devices.png" alt="Device management" width="30%">
+<img src="docs/assets/images/pairing-flow.png" alt="Secure device pairing" width="30%">
+
+<img src="docs/assets/images/shortcuts-editor.png" alt="Shortcuts editor" width="60%">
+
+</div>
+
+## Architecture
+
+```
+Browser  <──WebSocket──>  UI Server (server.js)  <──Unix Socket──>  Daemon (daemon.js)
+                          HTTP + static files                        PTY sessions
+                          Auth middleware                             Output buffers
+                          Device pairing                             Shortcuts I/O
+```
+
+- **`daemon.js`** — Long-lived process that owns PTY sessions. Communicates over a Unix domain socket via newline-delimited JSON.
+- **`server.js`** — HTTP/HTTPS + WebSocket server. Routes, auth middleware, daemon IPC, device pairing.
+- **`public/index.html`** — SPA frontend. xterm.js terminal, shortcut bar, settings, inline pairing wizard.
+- **`lib/auth.js`** — WebAuthn registration/login, session token management, passkey storage.
+- **`lib/tls.js`** — Auto-generated CA + server certificates for LAN HTTPS.
+- **`lib/p2p.js`** — WebRTC DataChannel for low-latency terminal I/O.
+- **`lib/ssh.js`** — SSH server bridging native terminals to daemon PTY sessions.
+
+The daemon owns all PTY processes. The UI server is stateless — restart it freely without losing terminal sessions. On restart, the browser's reconnect logic kicks in and the daemon replays the output buffer.
 
 ### REST API
 
@@ -151,7 +187,7 @@ For production deployment, use the `katulong` CLI (see Installation above).
 | GET | `/shortcuts` | Get shortcut config |
 | PUT | `/shortcuts` | Update shortcut config |
 
-## Environment
+### Environment
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -159,21 +195,19 @@ For production deployment, use the `katulong` CLI (see Installation above).
 | `SHELL` | `/bin/zsh` | Shell to spawn in sessions |
 | `KATULONG_SOCK` | `/tmp/katulong-daemon.sock` | Unix socket path for daemon IPC |
 
-## Architecture
+## Development
 
+```bash
+npm install           # Install dependencies
+npm run dev           # Run daemon + server with auto-reload
+npm test              # All tests
+npm run test:unit     # Unit tests only
+npm run test:e2e      # End-to-end tests (Playwright)
 ```
-Browser  <--WebSocket-->  UI Server (server.js)  <--Unix Socket-->  Daemon (daemon.js)
-                          HTTP + static files                       PTY sessions
-                          Live-reload watcher                       Output buffers
-                                                                    Shortcuts I/O
-```
 
-- **`daemon.js`** — Manages PTY sessions, reads/writes shortcuts, communicates over a Unix domain socket using newline-delimited JSON
-- **`server.js`** — HTTP + WebSocket server that proxies all session/shortcut operations to the daemon
-- **`public/index.html`** — xterm.js terminal, session manager UI, shortcut bar
-- **`shortcuts.json`** — User-configured keyboard shortcuts
+Open `http://localhost:3001` in a browser.
 
-The daemon owns all PTY processes. The UI server is stateless — you can restart it freely without losing terminal sessions. On restart, the browser's reconnect logic kicks in and the daemon replays the output buffer.
+For production deployment, use the `katulong` CLI (see Install above).
 
 ## License
 
