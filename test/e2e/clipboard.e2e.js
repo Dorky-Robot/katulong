@@ -177,7 +177,9 @@ test.describe('Clipboard - Terminal Integration', () => {
     await setupTest({ page, context });
   });
 
-  test('should paste text into terminal', async ({ page }) => {
+  test('should paste text into terminal', async ({ page, isMobile }) => {
+    // Terminal paste via keyboard shortcut is not testable in mobile browser emulation
+    test.skip(isMobile, "Terminal paste not testable in mobile emulation");
     // Set clipboard content
     const testText = `paste-test-${Date.now()}`;
     await page.evaluate(text => {
@@ -212,7 +214,8 @@ test.describe('Clipboard - Terminal Integration', () => {
     console.log('[Test] Paste into terminal successful');
   });
 
-  test('should handle paste of multiline text', async ({ page }) => {
+  test('should handle paste of multiline text', async ({ page, isMobile }) => {
+    test.skip(isMobile, "Terminal paste not testable in mobile emulation");
     const multilineText = `line1-${Date.now()}\nline2\nline3`;
 
     await page.evaluate(text => {
@@ -243,7 +246,8 @@ test.describe('Clipboard - Terminal Integration', () => {
     console.log('[Test] Multiline paste handled');
   });
 
-  test('should handle paste of special characters', async ({ page }) => {
+  test('should handle paste of special characters', async ({ page, isMobile }) => {
+    test.skip(isMobile, "Terminal paste not testable in mobile emulation");
     const specialChars = `special-$@!#%^&*()-=+{}[]|\\:;"'<>?,./~\`${Date.now()}`;
 
     await page.evaluate(text => {
