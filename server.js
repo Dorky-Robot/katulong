@@ -806,20 +806,6 @@ const routes = [
     res.end(readFileSync(join(__dirname, "public", "pair.html"), "utf-8"));
   }},
 
-  { method: "GET", path: "/connect/info", handler: (req, res) => {
-    const lanIP = getLanIP();
-    json(res, 200, { sshPort: SSH_PORT, sshHost: lanIP || "localhost" });
-  }},
-
-  { method: "GET", path: "/connect", handler: (req, res) => {
-    let html = readFileSync(join(__dirname, "public", "connect.html"), "utf-8");
-    res.writeHead(200, {
-      "Content-Type": "text/html",
-      ...getCspHeaders(false, req)
-    });
-    res.end(html);
-  }},
-
   { method: "POST", path: "/auth/logout", handler: async (req, res) => {
     const state = loadState();
     if (!validateCsrfToken(req, state)) {
