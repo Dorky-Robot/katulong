@@ -5,12 +5,9 @@
     import { ModalRegistry } from "/lib/modal.js";
     import { ListRenderer } from "/lib/list-renderer.js";
     import { createStore, createReducer } from "/lib/store.js";
-    import { createWizardStore, WIZARD_STATES, WIZARD_ACTIONS } from "/lib/wizard-state.js";
-    import { createWizardController } from "/lib/wizard-controller.js";
     import { createDeviceStore, loadDevices as reloadDevices, invalidateDevices } from "/lib/device-store.js";
     import { createDeviceListComponent } from "/lib/device-list-component.js";
     import { createDeviceActions } from "/lib/device-actions.js";
-    import { createWizardComponent } from "/lib/wizard-component.js";
     import { createSessionStore, invalidateSessions } from "/lib/session-store.js";
     import { createSessionListComponent } from "/lib/session-list-component.js";
     import { createSessionManager } from "/lib/session-manager.js";
@@ -35,7 +32,6 @@
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
-    import { loadQRLib, checkPairingStatus } from "/lib/wizard-utils.js";
     import { initModals } from "/lib/modal-init.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
     import { createWebSocketConnection } from "/lib/websocket-connection.js";
@@ -374,61 +370,6 @@
 
     
 
-    // --- Inline pairing wizard ---
-
-    const settingsViews = document.getElementById("settings-views");
-    const viewMain = document.getElementById("settings-view-main");
-    const viewPair = document.getElementById("settings-view-pair");
-    const viewSuccess = document.getElementById("settings-view-success");
-
-    // --- Wizard state management with reactive component ---
-    const wizardStore = createWizardStore();
-
-    // Wizard utilities imported from /lib/wizard-utils.js
-
-    // Create wizard controller
-    const wizardController = createWizardController({
-      wizardStore,
-      settingsViews,
-      viewMain,
-      viewPair,
-      viewSuccess,
-      deviceStore,
-      modals,
-      onDeviceInvalidate: () => invalidateDevices(deviceStore)
-    });
-    wizardController.init();
-
-    // Extract functions for external use
-    const switchSettingsView = (view) => wizardController.switchSettingsView(view);
-    const stopWizardPairing = () => wizardController.cleanupWizard();
-
-    // Create wizard component (handles all rendering automatically)
-    const wizardComponent = createWizardComponent(wizardStore, {
-      loadQRLib,
-      checkPairingStatus,
-      onSuccess: () => {
-        wizardStore.dispatch({ type: WIZARD_ACTIONS.PAIRING_SUCCESS });
-        switchSettingsView(viewSuccess);
-        invalidateDevices(deviceStore);
-      }
-    });
-
-    // DON'T mount wizard component - views are already in HTML
-    // Mounting wipes out all settings-view content including settings-view-main
-    // wizardComponent.mount(settingsViews);
-
-    // Manually trigger wizard rendering on state changes
-    wizardStore.subscribe(() => {
-      // Trigger the component to handle QR codes and timers
-      wizardComponent.trigger();
-    });
-
-    // Expose for WebSocket handler compatibility
-    Object.defineProperty(window, 'wizardActivePairCode', {
-      get: () => wizardStore.getState().pairCode
-    });
-
     // --- Dictation modal (reactive component) ---
 
     const dictationModal = createDictationModal({
@@ -534,12 +475,8 @@
     const wsConnection = createWebSocketConnection({
       term,
       state,
-      stopWizardPairing,
-      switchSettingsView,
-      viewSuccess,
       loadTokens,
       loadDevices: () => invalidateDevices(deviceStore),
-      getWizardActivePairCode: () => window.wizardActivePairCode,
       isAtBottom,
       renderBar
     });

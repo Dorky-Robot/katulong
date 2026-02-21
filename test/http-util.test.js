@@ -166,33 +166,10 @@ describe("isPublicPath", () => {
     assert.ok(isPublicPath("/auth/logout"));
   });
 
-  it("allows /pair", () => {
-    assert.ok(isPublicPath("/pair"));
-  });
-
-  it("allows /auth/pair/verify", () => {
-    assert.ok(isPublicPath("/auth/pair/verify"));
-  });
-
-  it("rejects /auth/pair/start (protected)", () => {
-    assert.ok(!isPublicPath("/auth/pair/start"));
-  });
-
   it("rejects unknown /auth/ paths", () => {
     assert.ok(!isPublicPath("/auth/admin"));
     assert.ok(!isPublicPath("/auth/secret"));
     assert.ok(!isPublicPath("/auth/"));
-  });
-
-  it("allows /connect/trust paths", () => {
-    assert.ok(isPublicPath("/connect/trust"));
-    assert.ok(isPublicPath("/connect/trust/ca.crt"));
-    assert.ok(isPublicPath("/connect/trust/ca.mobileconfig"));
-  });
-
-  it("rejects install and uninstall scripts (removed — MITM risk)", () => {
-    assert.ok(!isPublicPath("/connect/install.sh"));
-    assert.ok(!isPublicPath("/connect/uninstall.sh"));
   });
 
   it("allows static extensions", () => {

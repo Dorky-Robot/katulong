@@ -26,11 +26,9 @@ import { rateLimit } from "./lib/rate-limit.js";
 import {
   processRegistration,
   processAuthentication,
-  processPairing,
   extractChallenge,
 } from "./lib/auth-handlers.js";
 import { SessionName } from "./lib/session-name.js";
-import { PairingChallengeStore } from "./lib/pairing-challenge.js";
 import { AuthState } from "./lib/auth-state.js";
 import { ConfigManager } from "./lib/config.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
@@ -83,8 +81,6 @@ const RP_NAME = "Katulong";
 // --- Rate limiting ---
 // 10 attempts per minute for auth endpoints
 const authRateLimit = rateLimit(10, 60000);
-// Stricter limit for pairing (10 attempts per 30 seconds)
-const pairingRateLimit = rateLimit(10, 30000);
 
 if (!process.env.SSH_PASSWORD) {
   log.info("SSH password generated", { password: SSH_PASSWORD });
@@ -98,17 +94,12 @@ if (process.env.KATULONG_NO_AUTH === "1") {
 
 const MAX_REQUEST_BODY_SIZE = 1024 * 1024; // 1MB limit for request bodies
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const PAIR_TTL_MS = 30 * 1000; // 30 seconds
 const DAEMON_RECONNECT_INITIAL_MS = 1000; // 1 second
 const DAEMON_RECONNECT_MAX_MS = 30000; // 30 seconds
 
 // --- Challenge storage (in-memory, 5-min expiry) ---
 
 const { store: storeChallenge, consume: consumeChallenge, _challenges: challenges } = createChallengeStore(CHALLENGE_TTL_MS);
-
-// --- Device pairing (in-memory, 30s expiry) ---
-
-const pairingStore = new PairingChallengeStore(PAIR_TTL_MS);
 
 // --- Credential lockout (in-memory, 15 min window) ---
 
@@ -527,93 +518,6 @@ const routes = [
     json(res, 200, { ok: true });
   }},
 
-  // --- Pairing routes ---
-
-  { method: "POST", path: "/auth/pair/start", handler: (req, res) => {
-    // Only authenticated users (e.g. localhost auto-auth) can start pairing
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-    const state = loadState();
-    // Skip CSRF validation for localhost (auto-authenticated, trusted environment)
-    if (!isLocalRequest(req) && !validateCsrfToken(req, state)) {
-      return json(res, 403, { error: "Invalid or missing CSRF token" });
-    }
-    const challenge = pairingStore.create();
-    const lanIP = getLanIP();
-    const url = lanIP ? `http://${lanIP}:${PORT}/pair?code=${challenge.code}` : null;
-    json(res, 200, { ...challenge.toJSON(), url });
-  }},
-
-  { method: "POST", path: "/auth/pair/verify", handler: async (req, res) => {
-    // I/O: Parse request and consume pairing challenge
-    const { code, pin, deviceId, deviceName, userAgent: clientUserAgent } = await parseJSON(req);
-    const pairingResult = pairingStore.consume(code, pin);
-
-    // Handle rate limiting (exponential backoff)
-    if (pairingResult.reason === "rate-limited" && pairingResult.retryAfter) {
-      res.writeHead(429, {
-        "Content-Type": "application/json",
-        "Retry-After": String(pairingResult.retryAfter),
-      });
-      res.end(JSON.stringify({
-        error: "Too many failed attempts. Please wait before trying again.",
-        retryAfter: pairingResult.retryAfter,
-      }));
-      return;
-    }
-
-    // Extract user-agent (prefer client-provided, fallback to header)
-    const userAgent = clientUserAgent || req.headers['user-agent'] || 'Unknown';
-
-    // Process pairing inside lock to prevent race conditions
-    const result = await withStateLock(async (currentState) => {
-      const result = processPairing({
-        pairingResult,
-        currentState,
-        deviceId,
-        deviceName,
-        userAgent,
-      });
-
-      if (!result.success) {
-        // Return error info without saving (state unchanged)
-        return { result };
-      }
-
-      // Return updated state and success result
-      return { state: result.data.updatedState, result };
-    });
-
-    // I/O: Handle result
-    if (!result.result.success) {
-      log.warn("Pair verify failed", { reason: result.result.reason, code, storeSize: pairingStore.size() });
-      return json(res, result.result.statusCode, { error: result.result.message });
-    }
-
-    // I/O: Set cookie
-    const { session } = result.result.data;
-    setSessionCookie(res, session.token, session.expiry, { secure: isHttpsConnection(req) });
-
-    // I/O: Notify WebSocket clients
-    for (const client of wss.clients) {
-      if (client.readyState === 1) {
-        client.send(JSON.stringify({ type: "pair-complete", code }));
-      }
-    }
-
-    json(res, 200, { ok: true });
-  }},
-
-  { method: "GET", prefix: "/auth/pair/status/", handler: (req, res, code) => {
-    // Only authenticated users can check pairing status
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-    const consumed = pairingStore.wasConsumed(code);
-    json(res, 200, { consumed });
-  }},
-
   // --- Setup token API (GitHub-style token management) ---
 
   { method: "GET", path: "/api/tokens", handler: (req, res) => {
@@ -794,31 +698,6 @@ const routes = [
 
     log.info("Setup token updated", { id, name: name.trim() });
     json(res, 200, { ok: true });
-  }},
-
-  { method: "GET", path: "/pair", handler: (req, res) => {
-    res.writeHead(200, {
-      "Content-Type": "text/html",
-      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-      "Pragma": "no-cache",
-      "Expires": "0",
-      ...getCspHeaders(false, req)
-    });
-    res.end(readFileSync(join(__dirname, "public", "pair.html"), "utf-8"));
-  }},
-
-  { method: "GET", path: "/connect/info", handler: (req, res) => {
-    const lanIP = getLanIP();
-    json(res, 200, { sshPort: SSH_PORT, sshHost: lanIP || "localhost" });
-  }},
-
-  { method: "GET", path: "/connect", handler: (req, res) => {
-    let html = readFileSync(join(__dirname, "public", "connect.html"), "utf-8");
-    res.writeHead(200, {
-      "Content-Type": "text/html",
-      ...getCspHeaders(false, req)
-    });
-    res.end(html);
   }},
 
   { method: "POST", path: "/auth/logout", handler: async (req, res) => {
@@ -1164,15 +1043,8 @@ async function handleRequest(req, res) {
   if (match) {
     // Apply rate limiting to auth endpoints
     const authPaths = ["/auth/register/options", "/auth/register/verify", "/auth/login/options", "/auth/login/verify"];
-    const pairingPaths = ["/auth/pair/verify"];
 
-    if (pairingPaths.includes(pathname)) {
-      // Check pairing rate limit (stricter)
-      const rateLimitResult = await new Promise((resolve) => {
-        pairingRateLimit(req, res, () => resolve(true));
-      });
-      if (!rateLimitResult) return; // Rate limit exceeded, response already sent
-    } else if (authPaths.includes(pathname)) {
+    if (authPaths.includes(pathname)) {
       // Check auth rate limit
       const rateLimitResult = await new Promise((resolve) => {
         authRateLimit(req, res, () => resolve(true));
