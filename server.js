@@ -2,10 +2,10 @@ import "dotenv/config";
 import { createServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { createConnection } from "node:net";
-import { readFileSync, realpathSync, existsSync, watch, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, watch, mkdirSync, writeFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname, join, extname, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { WebSocketServer } from "ws";
 import { randomUUID, randomBytes } from "node:crypto";
 import { encode, decoder } from "./lib/ndjson.js";
@@ -33,20 +33,20 @@ import {
 import { SessionName } from "./lib/session-name.js";
 import { PairingChallengeStore } from "./lib/pairing-challenge.js";
 import { AuthState } from "./lib/auth-state.js";
-import { ensureCerts, generateMobileConfig, needsRegeneration, inspectCert, regenerateServerCert, getLanIPs } from "./lib/tls.js";
+import { ensureCerts, generateMobileConfig, getLanIPs } from "./lib/tls.js";
 import { CertificateManager } from "./lib/certificate-manager.js";
 import { ConfigManager } from "./lib/config.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 import { validateMessage } from "./lib/websocket-validation.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
-import { isLocalRequest, getAccessMethod, getAccessDescription } from "./lib/access-method.js";
+import { isLocalRequest, getAccessMethod } from "./lib/access-method.js";
 import {
   HTTP_ALLOWED_PATHS,
   checkHttpsEnforcement,
   getUnauthenticatedRedirect,
   checkSessionHttpsRedirect
 } from "./lib/https-enforcement.js";
-import { serveStaticFile, MIME_TYPES } from "./lib/static-files.js";
+import { serveStaticFile } from "./lib/static-files.js";
 import mdns from "multicast-dns";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -299,8 +299,6 @@ async function parseJSON(req, maxSize = MAX_REQUEST_BODY_SIZE) {
 }
 
 // --- HTTP routes ---
-
-// MIME_TYPES is now imported from lib/static-files.js
 
 function isLanHost(req) {
   const host = (req.headers.host || "").replace(/:\d+$/, "");
