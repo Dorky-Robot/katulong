@@ -6,11 +6,47 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { setupTest } from './helpers.js';
+import { waitForAppReady, waitForTerminalOutput, termSend } from './helpers.js';
 
 test.describe('Connection Reliability', () => {
-  test.beforeEach(async ({ page, context }) => {
-    await setupTest({ page, context });
+  // Run serially to avoid cross-test PTY contamination when tests share a
+  // session. Parallel workers typing into the same default session cause
+  // output from one test to appear in another's terminal.
+  test.describe.configure({ mode: 'serial' });
+
+  // Each test uses its own session to avoid cross-test interference.
+  let sessionName;
+
+  test.beforeEach(async ({ page, context }, testInfo) => {
+    sessionName = `conn-rel-${testInfo.testId}-${Date.now()}`;
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
+    await waitForAppReady(page);
+    // Wait for shell prompt before typing — the shell runs init scripts
+    // (e.g. .zshrc, clear) and keystrokes typed before the prompt appears
+    // get swallowed or mangled, causing flaky failures.
+    await page.waitForFunction(
+      () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
+      { timeout: 10000 },
+    );
+    // The daemon sends 'clear\n' to new sessions 100ms after creation to erase
+    // shell init artifacts. If a test sends commands before this timer fires,
+    // the ring buffer ends up with the order [commands] → [clear]. On page
+    // reload or second-tab attach, replaying this buffer re-runs the clear
+    // AFTER the commands, making them invisible (clear erases in-place, does
+    // NOT push content to scrollback).
+    //
+    // Waiting 200ms here guarantees the 100ms clear timer has fired and its
+    // output has been processed by xterm. Test commands sent after this wait
+    // will appear in the ring buffer AFTER the clear, so replay preserves them.
+    await page.waitForTimeout(200);
+  });
+
+  test.afterEach(async ({ page }) => {
+    await page.evaluate(
+      (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: 'DELETE' }),
+      sessionName,
+    );
   });
 
   test('should establish P2P connection on load', async ({ page }) => {
@@ -49,20 +85,17 @@ test.describe('Connection Reliability', () => {
     // Wait for terminal to be ready
     await page.waitForSelector('.xterm-screen');
 
-    // Type a command
-    const testCommand = `echo "connection-test-${Date.now()}"`;
-    await page.keyboard.type(testCommand);
-    await page.keyboard.press('Enter');
+    // Use termSend (window.__termSend) instead of page.keyboard.type().
+    // keyboard.type() is unreliable under parallel load and fails on mobile
+    // due to IME autocorrect injection. termSend bypasses keyboard events
+    // entirely, sending directly to the PTY.
+    const marker = `connection-test-${Date.now()}`;
+    await termSend(page, `echo "${marker}"\r`);
 
-    // Wait for output to appear
-    await page.waitForFunction(
-      () => document.querySelector('.xterm-screen')?.textContent?.includes('connection-test'),
-      { timeout: 5000 }
-    );
-
-    // Verify output appears (connection is working)
-    const terminalText = await page.locator('.xterm-screen').textContent();
-    expect(terminalText).toContain('connection-test');
+    // Use buffer.active (window.__xterm) instead of .xterm-screen.textContent.
+    // The canvas renderer's accessibility layer only exposes the current cursor
+    // row; previous output rows disappear once the shell returns to a prompt.
+    await waitForTerminalOutput(page, marker, { timeout: 5000 });
 
     console.log('[Test] Terminal communication working');
   });
@@ -90,12 +123,8 @@ test.describe('Connection Reliability', () => {
 
   test('should handle page reload and reconnect', async ({ page }) => {
     // Type command before reload
-    await page.keyboard.type('echo "before reload"');
-    await page.keyboard.press('Enter');
-    await page.waitForFunction(
-      () => document.querySelector('.xterm-screen')?.textContent?.includes('before reload'),
-      { timeout: 5000 }
-    );
+    await termSend(page, 'echo "before reload"\r');
+    await waitForTerminalOutput(page, 'before reload', { timeout: 5000 });
 
     // Reload page
     await page.reload();
@@ -105,19 +134,10 @@ test.describe('Connection Reliability', () => {
     await page.waitForSelector('.xterm-screen', { timeout: 5000 });
 
     // Verify connection reestablished by sending command
-    const testCommand = `echo "after-reload-${Date.now()}"`;
-    await page.keyboard.type(testCommand);
-    await page.keyboard.press('Enter');
+    const marker = `after-reload-${Date.now()}`;
+    await termSend(page, `echo "${marker}"\r`);
 
-    // Wait for output to appear
-    await page.waitForFunction(
-      () => document.querySelector('.xterm-screen')?.textContent?.includes('after-reload'),
-      { timeout: 5000 }
-    );
-
-    // Should see output
-    const terminalText = await page.locator('.xterm-screen').textContent();
-    expect(terminalText).toContain('after-reload');
+    await waitForTerminalOutput(page, marker, { timeout: 5000 });
 
     console.log('[Test] Reconnection after reload successful');
   });
@@ -125,29 +145,29 @@ test.describe('Connection Reliability', () => {
   test('should preserve terminal buffer across reconnection', async ({ page }) => {
     // Type unique marker
     const marker = `marker-${Date.now()}`;
-    await page.keyboard.type(`echo "${marker}"`);
-    await page.keyboard.press('Enter');
-    await page.waitForFunction(
-      (m) => document.querySelector('.xterm-screen')?.textContent?.includes(m),
-      marker,
-      { timeout: 5000 }
-    );
+    await termSend(page, `echo "${marker}"\r`);
+    await waitForTerminalOutput(page, marker, { timeout: 5000 });
+
+    // Send a sentinel after the marker. Waiting for the sentinel after reload
+    // guarantees that the full ring buffer replay (including the marker) has
+    // been committed to buffer.active before we check for the marker.
+    // Without this, waitForTerminalOutput can return on the echo of the marker
+    // command before the actual output hits buffer.active, creating a race
+    // where page.reload() runs too early.
+    const sentinel = `s${Date.now()}`;
+    await termSend(page, `echo "${sentinel}"\r`);
+    await waitForTerminalOutput(page, sentinel, { timeout: 5000 });
 
     // Reload page
     await page.reload();
     await page.waitForSelector('.xterm', { timeout: 10000 });
     await page.waitForSelector('.xterm-screen', { timeout: 5000 });
 
-    // Wait for buffer to be replayed - marker should appear
-    await page.waitForFunction(
-      (m) => document.querySelector('.xterm-screen')?.textContent?.includes(m),
-      marker,
-      { timeout: 5000 }
-    );
-
-    // Terminal buffer should be preserved
-    const terminalText = await page.locator('.xterm-screen').textContent();
-    expect(terminalText).toContain(marker);
+    // Wait for sentinel in buffer.active first — it appears after the marker
+    // in the ring buffer replay, so finding it guarantees the full replay has
+    // been committed to buffer.active.
+    await waitForTerminalOutput(page, sentinel, { timeout: 10000 });
+    await waitForTerminalOutput(page, marker, { timeout: 5000 });
 
     console.log('[Test] Buffer preserved across reconnection');
   });
@@ -190,18 +210,9 @@ test.describe('Connection Reliability', () => {
     // For now, verify that connection works regardless of transport
 
     // Send command to verify connection works
-    const testCommand = `echo "fallback-test-${Date.now()}"`;
-    await page.keyboard.type(testCommand);
-    await page.keyboard.press('Enter');
-
-    // Wait for output to appear
-    await page.waitForFunction(
-      () => document.querySelector('.xterm-screen')?.textContent?.includes('fallback-test'),
-      { timeout: 5000 }
-    );
-
-    const terminalText = await page.locator('.xterm-screen').textContent();
-    expect(terminalText).toContain('fallback-test');
+    const marker = `fallback-test-${Date.now()}`;
+    await termSend(page, `echo "${marker}"\r`);
+    await waitForTerminalOutput(page, marker, { timeout: 5000 });
 
     console.log('[Test] Connection working (P2P or WebSocket)');
   });
@@ -219,20 +230,15 @@ test.describe('Connection Reliability', () => {
     await page.waitForTimeout(1000);
 
     // Verify reconnection by sending command (WebSocket or P2P should reconnect)
-    const testCommand = `echo "after-ws-close-${Date.now()}"`;
-    await page.keyboard.type(testCommand);
-    await page.keyboard.press('Enter');
+    const marker = `after-ws-close-${Date.now()}`;
+    await termSend(page, `echo "${marker}"\r`);
 
     // Try to get output - if connection is restored, command will execute
-    const reconnected = await page.waitForFunction(
-      () => document.querySelector('.xterm-screen')?.textContent?.includes('after-ws-close'),
-      { timeout: 5000 }
-    ).then(() => true).catch(() => false);
+    const reconnected = await waitForTerminalOutput(page, marker, { timeout: 5000 })
+      .then(() => true).catch(() => false);
 
     if (reconnected) {
       console.log('[Test] WebSocket reconnection successful');
-      const terminalText = await page.locator('.xterm-screen').textContent();
-      expect(terminalText).toContain('after-ws-close');
     } else {
       console.log('[Test] WebSocket did not reconnect automatically');
       // This is acceptable - auto-reconnection is optional
@@ -241,31 +247,17 @@ test.describe('Connection Reliability', () => {
 
   test('should maintain connection during long idle period', async ({ page }) => {
     // Send initial command
-    await page.keyboard.type('echo "before idle"');
-    await page.keyboard.press('Enter');
-    await page.waitForFunction(
-      () => document.querySelector('.xterm-screen')?.textContent?.includes('before idle'),
-      { timeout: 5000 }
-    );
+    await termSend(page, 'echo "before idle"\r');
+    await waitForTerminalOutput(page, 'before idle', { timeout: 5000 });
 
     // Idle for 10 seconds (simulate user inactivity)
     console.log('[Test] Idling for 10 seconds...');
     await page.waitForTimeout(10000);
 
     // Send command after idle
-    const testCommand = `echo "after-idle-${Date.now()}"`;
-    await page.keyboard.type(testCommand);
-    await page.keyboard.press('Enter');
-
-    // Wait for output to appear
-    await page.waitForFunction(
-      () => document.querySelector('.xterm-screen')?.textContent?.includes('after-idle'),
-      { timeout: 5000 }
-    );
-
-    // Should still work
-    const terminalText = await page.locator('.xterm-screen').textContent();
-    expect(terminalText).toContain('after-idle');
+    const marker = `after-idle-${Date.now()}`;
+    await termSend(page, `echo "${marker}"\r`);
+    await waitForTerminalOutput(page, marker, { timeout: 5000 });
 
     console.log('[Test] Connection survived idle period');
   });
@@ -273,45 +265,29 @@ test.describe('Connection Reliability', () => {
   test('should handle multiple tabs sharing same session', async ({ page, context }) => {
     // Send command in first tab
     const marker1 = `tab1-${Date.now()}`;
-    await page.keyboard.type(`echo "${marker1}"`);
-    await page.keyboard.press('Enter');
-    await page.waitForFunction(
-      (m) => document.querySelector('.xterm-screen')?.textContent?.includes(m),
-      marker1,
-      { timeout: 5000 }
-    );
+    await termSend(page, `echo "${marker1}"\r`);
+    await waitForTerminalOutput(page, marker1, { timeout: 5000 });
 
-    // Open second tab with same session
+    // Open second tab with the SAME session URL so both share the PTY.
+    // The 200ms beforeEach wait guarantees that by the time we send marker1,
+    // the ring buffer is [clear] → [marker1...]. When page2 attaches and the
+    // server replays the ring buffer, clear runs first (harmlessly on a fresh
+    // xterm instance) and marker1 is preserved in buffer.active.
     const page2 = await context.newPage();
-    await page2.goto("/");
+    await page2.goto(`/?s=${encodeURIComponent(sessionName)}`);
     await page2.waitForSelector('.xterm', { timeout: 10000 });
     await page2.waitForSelector('.xterm-screen', { timeout: 5000 });
 
     // Second tab should see the same session (wait for terminal buffer replay)
-    await page2.waitForFunction(
-      (m) => document.querySelector('.xterm-screen')?.textContent?.includes(m),
-      marker1,
-      { timeout: 10000 }
-    );
+    await waitForTerminalOutput(page2, marker1, { timeout: 10000 });
 
     // Send command in second tab
     const marker2 = `tab2-${Date.now()}`;
-    await page2.keyboard.type(`echo "${marker2}"`);
-    await page2.keyboard.press('Enter');
-    await page2.waitForFunction(
-      (m) => document.querySelector('.xterm-screen')?.textContent?.includes(m),
-      marker2,
-      { timeout: 5000 }
-    );
+    await termSend(page2, `echo "${marker2}"\r`);
+    await waitForTerminalOutput(page2, marker2, { timeout: 5000 });
 
     // First tab should see the command from second tab
-    await page.waitForFunction(
-      (m) => document.querySelector('.xterm-screen')?.textContent?.includes(m),
-      marker2,
-      { timeout: 5000 }
-    );
-    const terminalText1 = await page.locator('.xterm-screen').textContent();
-    expect(terminalText1).toContain(marker2);
+    await waitForTerminalOutput(page, marker2, { timeout: 5000 });
 
     console.log('[Test] Multiple tabs sharing session successfully');
 
@@ -321,7 +297,7 @@ test.describe('Connection Reliability', () => {
   test('should show connecting state during connection establishment', async ({ page, context }) => {
     // Open page but don't wait for full load
     const page2 = await context.newPage();
-    const pagePromise = page2.goto("/");
+    const pagePromise = page2.goto(`/?s=${encodeURIComponent(sessionName)}`);
 
     // Try to catch the connecting state
     const p2pIndicator = page2.locator('#p2p-indicator');
@@ -351,10 +327,30 @@ test.describe('Connection Reliability', () => {
 });
 
 test.describe('P2P Specific Tests', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+  // Run serially to avoid cross-test PTY contamination
+  test.describe.configure({ mode: 'serial' });
+
+  let sessionName;
+
+  test.beforeEach(async ({ page }, testInfo) => {
+    sessionName = `p2p-${testInfo.testId}-${Date.now()}`;
+    await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
+    await page.waitForSelector('.xterm', { timeout: 10000 });
+    await page.waitForSelector('.xterm-screen', { timeout: 5000 });
+    // Wait for shell prompt and 200ms for daemon clear timer (see Connection
+    // Reliability beforeEach for detailed explanation of why this is needed).
+    await page.waitForFunction(
+      () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
+      { timeout: 10000 },
+    );
+    await page.waitForTimeout(200);
+  });
+
+  test.afterEach(async ({ page }) => {
+    await page.evaluate(
+      (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: 'DELETE' }),
+      sessionName,
+    );
   });
 
   test('should use P2P when available (localhost)', async ({ page }) => {
@@ -375,14 +371,9 @@ test.describe('P2P Specific Tests', () => {
     // Measure round-trip time for a command
     const startTime = Date.now();
 
-    await page.keyboard.type('echo "latency-test"');
-    await page.keyboard.press('Enter');
-
-    // Wait for output to appear
-    await page.waitForFunction(
-      () => document.querySelector('.xterm-screen')?.textContent?.includes('latency-test'),
-      { timeout: 5000 }
-    );
+    const marker = `latency-test-${Date.now()}`;
+    await termSend(page, `echo "${marker}"\r`);
+    await waitForTerminalOutput(page, marker, { timeout: 5000 });
 
     const latency = Date.now() - startTime;
     console.log('[Test] Command latency:', latency, 'ms');
