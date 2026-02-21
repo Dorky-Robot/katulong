@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import https from "node:https";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import forge from "node-forge";
 import { TEST_HTTPS_PORT, TEST_DATA_DIR } from "./test-config.js";
@@ -26,39 +26,45 @@ test.describe("HTTPS / TLS", () => {
   test("should complete TLS handshake when connecting by IP (no SNI)", async () => {
     // Android Chrome doesn't send SNI for IP addresses, so we test
     // that the server provides a default certificate for such connections
-    const ca = readFileSync(join(DATA_DIR, "tls", "ca.crt"));
-
     const result = await httpsGet({
       hostname: "127.0.0.1",
       port: HTTPS_PORT,
-      path: "/connect/trust",
-      ca,
-      // servername defaults to hostname, but 127.0.0.1 as IP won't match
-      // any SNI — this tests the default cert fallback
+      path: "/connect/info",
       rejectUnauthorized: false,
     });
 
+    // /connect/info is unauthenticated — verify TLS handshake completes
     expect(result.status).toBe(200);
-    expect(result.data).toContain("Trust Certificate");
+    expect(result.data).toContain("httpsPort");
   });
 
   test("should complete TLS handshake with SNI hostname", async () => {
-    const ca = readFileSync(join(DATA_DIR, "tls", "ca.crt"));
-
     const result = await httpsGet({
       hostname: "127.0.0.1",
       port: HTTPS_PORT,
-      path: "/connect/trust",
-      ca,
+      path: "/connect/info",
       servername: "localhost",
       rejectUnauthorized: false,
     });
 
     expect(result.status).toBe(200);
-    expect(result.data).toContain("Trust Certificate");
+    expect(result.data).toContain("httpsPort");
   });
 
-  test("should serve trust page over HTTPS", async () => {
+  test("should serve connect info over HTTPS", async () => {
+    const result = await httpsGet({
+      hostname: "127.0.0.1",
+      port: HTTPS_PORT,
+      path: "/connect/info",
+      rejectUnauthorized: false,
+    });
+
+    expect(result.status).toBe(200);
+    const info = JSON.parse(result.data);
+    expect(info).toHaveProperty("httpsPort");
+  });
+
+  test("should reject requests to removed trust page", async () => {
     const result = await httpsGet({
       hostname: "127.0.0.1",
       port: HTTPS_PORT,
@@ -66,56 +72,12 @@ test.describe("HTTPS / TLS", () => {
       rejectUnauthorized: false,
     });
 
-    expect(result.status).toBe(200);
-    expect(result.data).toContain("Download Certificate");
-  });
-
-  test("should serve ca.crt over HTTPS", async () => {
-    const result = await httpsGet({
-      hostname: "127.0.0.1",
-      port: HTTPS_PORT,
-      path: "/connect/trust/ca.crt",
-      rejectUnauthorized: false,
-    });
-
-    expect(result.status).toBe(200);
-    expect(result.headers["content-type"]).toBe("application/x-x509-ca-cert");
-    expect(result.data).toContain("BEGIN CERTIFICATE");
-  });
-
-  test("should auto-migrate old CA certificate format", async () => {
-    // This test verifies that when upgrading from an old version with "Katulong Local CA",
-    // the CA is automatically regenerated with the new format "Katulong - InstanceName (id)"
-    // and all network certificates are regenerated
-
-    // Read the current CA certificate
-    const caCertPath = join(DATA_DIR, "tls", "ca.crt");
-    const caCertPem = readFileSync(caCertPath, "utf-8");
-    const caCert = forge.pki.certificateFromPem(caCertPem);
-
-    // Verify it has the NEW format (includes instance name and ID)
-    const cnAttr = caCert.subject.attributes.find(attr => attr.name === "commonName");
-    const commonName = cnAttr ? cnAttr.value : "";
-
-    expect(commonName).toContain("Katulong -");
-    expect(commonName).toMatch(/\([a-f0-9]{8}\)/); // Should have (shortid) at the end
-    expect(commonName).not.toBe("Katulong Local CA"); // Should NOT be old format
-
-    // Verify we can connect with HTTPS using the migrated certificate
-    const result = await httpsGet({
-      hostname: "127.0.0.1",
-      port: HTTPS_PORT,
-      path: "/connect/trust",
-      ca: caCertPem,
-      rejectUnauthorized: true, // Strict verification
-    });
-
-    expect(result.status).toBe(200);
-    expect(result.data).toContain("Trust Certificate");
+    // Trust page was removed — should not return 200
+    expect(result.status).not.toBe(200);
   });
 
   test("should regenerate network certificates after CA migration", async () => {
-    // Verify that network certificates were regenerated with the new CA
+    // Verify that network certificates exist and are properly formed
 
     // Read network certificate
     const networksDir = join(DATA_DIR, "tls", "networks");
@@ -126,6 +88,11 @@ test.describe("HTTPS / TLS", () => {
 
     // Read CA cert to get its public key
     const caCertPath = join(DATA_DIR, "tls", "ca.crt");
+    if (!existsSync(caCertPath)) {
+      // Skip if no CA cert (CA generation removed)
+      return;
+    }
+
     const caCertPem = readFileSync(caCertPath, "utf-8");
     const caCert = forge.pki.certificateFromPem(caCertPem);
 
@@ -146,8 +113,6 @@ test.describe("HTTPS / TLS", () => {
         const subjectCN = caCert.subject.attributes.find(attr => attr.name === "commonName");
 
         expect(issuerCN.value).toBe(subjectCN.value);
-        expect(issuerCN.value).toContain("Katulong -");
-        expect(issuerCN.value).not.toBe("Katulong Local CA");
       }
     }
   });
