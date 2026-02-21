@@ -2,7 +2,6 @@ import "dotenv/config";
 import { createServer } from "node:http";
 import { createConnection } from "node:net";
 import { readFileSync, realpathSync, existsSync, watch, mkdirSync, writeFileSync } from "node:fs";
-import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname, resolve } from "node:path";
 import { WebSocketServer } from "ws";
@@ -38,7 +37,6 @@ import { validateMessage } from "./lib/websocket-validation.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest, getAccessMethod, getAccessDescription } from "./lib/access-method.js";
 import { serveStaticFile, MIME_TYPES } from "./lib/static-files.js";
-import mdns from "multicast-dns";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -117,18 +115,6 @@ const credentialLockout = new CredentialLockout({
   windowMs: 15 * 60 * 1000,  // within 15 minutes
   lockoutMs: 15 * 60 * 1000, // locks for 15 minutes
 });
-
-function getLanIP() {
-  const nets = networkInterfaces();
-  for (const ifaces of Object.values(nets)) {
-    for (const iface of ifaces) {
-      if (!iface.internal && iface.family === "IPv4") return iface.address;
-    }
-  }
-  return null;
-}
-
-// isLocalRequest is now imported from lib/access-method.js
 
 function isAuthenticated(req) {
   if (process.env.KATULONG_NO_AUTH === "1") {
@@ -322,7 +308,7 @@ const routes = [
     const accessMethod = getAccessMethod(req);
     json(res, 200, {
       setup: isSetup(),
-      accessMethod  // "localhost", "lan", or "internet"
+      accessMethod  // "localhost" or "internet"
     });
   }},
 
@@ -540,9 +526,7 @@ const routes = [
       return json(res, 403, { error: "Invalid or missing CSRF token" });
     }
     const challenge = pairingStore.create();
-    const lanIP = getLanIP();
-    const url = lanIP ? `http://${lanIP}:${PORT}/pair?code=${challenge.code}` : null;
-    json(res, 200, { ...challenge.toJSON(), url });
+    json(res, 200, { ...challenge.toJSON(), url: null });
   }},
 
   { method: "POST", path: "/auth/pair/verify", handler: async (req, res) => {
@@ -808,8 +792,7 @@ const routes = [
   }},
 
   { method: "GET", path: "/connect/info", handler: (req, res) => {
-    const lanIP = getLanIP();
-    json(res, 200, { sshPort: SSH_PORT, sshHost: lanIP || "localhost" });
+    json(res, 200, { sshPort: SSH_PORT, sshHost: "localhost" });
   }},
 
   { method: "GET", path: "/connect", handler: (req, res) => {
@@ -1445,32 +1428,6 @@ process.on("unhandledRejection", (err) => {
 server.listen(PORT, "0.0.0.0", () => {
   log.info("Katulong HTTP started", { port: PORT });
 });
-
-// --- mDNS: advertise katulong.local on the LAN ---
-{
-  const mdnsIP = getLanIP();
-  if (mdnsIP) {
-    try {
-      const mdnsServer = mdns();
-      mdnsServer.on("query", (query) => {
-        for (const q of query.questions) {
-          if (q.name === "katulong.local" && (q.type === "A" || q.type === "ANY")) {
-            mdnsServer.respond({
-              answers: [{ name: "katulong.local", type: "A", ttl: 120, data: mdnsIP }],
-            });
-            break;
-          }
-        }
-      });
-      mdnsServer.on("error", (err) => {
-        log.warn("mDNS error", { error: err.message });
-      });
-      log.info("mDNS advertising katulong.local", { ip: mdnsIP });
-    } catch (err) {
-      log.warn("Failed to start mDNS", { error: err.message });
-    }
-  }
-}
 
 sshRelay = startSSHServer({
   port: SSH_PORT,
