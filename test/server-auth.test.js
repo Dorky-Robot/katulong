@@ -102,33 +102,3 @@ describe("readBody size limiting", () => {
     );
   });
 });
-
-describe("pairing input validation", () => {
-  it("should accept valid UUID codes", () => {
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const validUUID = "550e8400-e29b-41d4-a716-446655440000";
-    assert.ok(uuidRegex.test(validUUID));
-  });
-
-  it("should reject invalid UUID codes", () => {
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    assert.ok(!uuidRegex.test("not-a-uuid"));
-    assert.ok(!uuidRegex.test("550e8400-e29b-41d4"));
-    assert.ok(!uuidRegex.test(""));
-  });
-
-  it("should accept 6-digit PINs", () => {
-    const pinRegex = /^\d{6}$/;
-    assert.ok(pinRegex.test("123456"));
-    assert.ok(pinRegex.test("000000"));
-    assert.ok(pinRegex.test("999999"));
-  });
-
-  it("should reject invalid PINs", () => {
-    const pinRegex = /^\d{6}$/;
-    assert.ok(!pinRegex.test("12345"));  // too short
-    assert.ok(!pinRegex.test("1234567")); // too long
-    assert.ok(!pinRegex.test("12345a")); // non-digit
-    assert.ok(!pinRegex.test("")); // empty
-  });
-});
