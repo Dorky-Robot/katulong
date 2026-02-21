@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import {
   HTTP_ALLOWED_PATHS,
@@ -61,7 +61,7 @@ describe('https-enforcement', () => {
       it('allows all HTTPS requests (no enforcement needed)', () => {
         const req = mockRequest({
           remoteAddress: '192.168.1.100',
-          host: 'katulong.local:3002',
+          host: 'katulong.example.com',
           encrypted: true
         });
         const result = checkHttpsEnforcement(req, '/any/path', mockIsPublicPath, mockIsHttpsConnection);
@@ -90,10 +90,10 @@ describe('https-enforcement', () => {
     });
 
     describe('certificate installation paths', () => {
-      it('allows /connect/trust over HTTP on LAN', () => {
+      it('allows /connect/trust over HTTP', () => {
         const req = mockRequest({
-          remoteAddress: '192.168.1.100',
-          host: 'katulong.local:3001'
+          remoteAddress: '127.0.0.1',
+          host: 'my-tunnel.trycloudflare.com'
         });
         const result = checkHttpsEnforcement(req, '/connect/trust', mockIsPublicPath, mockIsHttpsConnection);
         assert.strictEqual(result, null);
@@ -101,64 +101,20 @@ describe('https-enforcement', () => {
 
       it('allows /connect/trust/ca.crt over HTTP', () => {
         const req = mockRequest({
-          remoteAddress: '192.168.1.100',
-          host: '192.168.1.50:3001'
+          remoteAddress: '127.0.0.1',
+          host: 'my-tunnel.trycloudflare.com'
         });
         const result = checkHttpsEnforcement(req, '/connect/trust/ca.crt', mockIsPublicPath, mockIsHttpsConnection);
         assert.strictEqual(result, null);
       });
 
-      it('allows cert paths over HTTP even on internet access', () => {
+      it('allows cert paths over HTTP on internet access', () => {
         const req = mockRequest({
           remoteAddress: '127.0.0.1',
           host: 'felix-katulong.ngrok.app'
         });
         const result = checkHttpsEnforcement(req, '/connect/trust/ca.mobileconfig', mockIsPublicPath, mockIsHttpsConnection);
         assert.strictEqual(result, null);
-      });
-    });
-
-    describe('LAN access', () => {
-      it('allows public paths over HTTP at /connect/trust', () => {
-        const req = mockRequest({
-          remoteAddress: '192.168.1.100',
-          host: 'katulong.local:3001'
-        });
-        const result = checkHttpsEnforcement(req, '/connect/trust/index.html', mockIsPublicPath, mockIsHttpsConnection);
-        assert.strictEqual(result, null);
-      });
-
-      it('redirects public paths to HTTPS (not /connect/trust)', () => {
-        const req = mockRequest({
-          remoteAddress: '192.168.1.100',
-          host: 'katulong.local:3001',
-          url: '/login'
-        });
-        const result = checkHttpsEnforcement(req, '/login', mockIsPublicPath, mockIsHttpsConnection);
-        assert.ok(result?.redirect);
-        assert.ok(result.redirect.startsWith('https://'));
-        assert.ok(result.redirect.includes('katulong.local'));
-      });
-
-      it('redirects protected paths to /connect/trust', () => {
-        const req = mockRequest({
-          remoteAddress: '192.168.1.100',
-          host: '192.168.1.50:3001',
-          url: '/api/sessions'
-        });
-        const result = checkHttpsEnforcement(req, '/api/sessions', mockIsPublicPath, mockIsHttpsConnection);
-        assert.deepStrictEqual(result, { redirect: '/connect/trust' });
-      });
-
-      it('strips port from redirect URL', () => {
-        const req = mockRequest({
-          remoteAddress: '192.168.1.100',
-          host: 'katulong.local:3001',
-          url: '/login'
-        });
-        const result = checkHttpsEnforcement(req, '/login', mockIsPublicPath, mockIsHttpsConnection);
-        assert.ok(result.redirect.includes('katulong.local:3002')); // HTTPS port
-        assert.ok(!result.redirect.includes(':3001')); // Not HTTP port
       });
     });
 
@@ -191,6 +147,16 @@ describe('https-enforcement', () => {
         // ngrok is treated as HTTPS, so no redirect required
         assert.strictEqual(result, null);
       });
+
+      it('redirects protected paths to /login over plain HTTP', () => {
+        const req = mockRequest({
+          remoteAddress: '127.0.0.1',
+          host: 'katulong.example.com',
+          url: '/api/sessions'
+        });
+        const result = checkHttpsEnforcement(req, '/api/sessions', mockIsPublicPath, mockIsHttpsConnection);
+        assert.deepStrictEqual(result, { redirect: '/login' });
+      });
     });
   });
 
@@ -203,28 +169,18 @@ describe('https-enforcement', () => {
       assert.strictEqual(getUnauthenticatedRedirect(req), '/login');
     });
 
-    it('returns /connect/trust for LAN over HTTP', () => {
-      const req = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3001',
-        encrypted: false
-      });
-      assert.strictEqual(getUnauthenticatedRedirect(req), '/connect/trust');
-    });
-
-    it('returns /login for LAN over HTTPS', () => {
-      const req = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3002',
-        encrypted: true
-      });
-      assert.strictEqual(getUnauthenticatedRedirect(req), '/login');
-    });
-
     it('returns /login for internet access', () => {
       const req = mockRequest({
         remoteAddress: '127.0.0.1',
         host: 'felix-katulong.ngrok.app'
+      });
+      assert.strictEqual(getUnauthenticatedRedirect(req), '/login');
+    });
+
+    it('returns /login for any non-localhost request', () => {
+      const req = mockRequest({
+        remoteAddress: '192.168.1.100',
+        host: 'katulong.example.com'
       });
       assert.strictEqual(getUnauthenticatedRedirect(req), '/login');
     });
@@ -233,8 +189,8 @@ describe('https-enforcement', () => {
   describe('checkSessionHttpsRedirect', () => {
     it('returns null for HTTPS requests', () => {
       const req = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3002',
+        remoteAddress: '127.0.0.1',
+        host: 'katulong.example.com',
         encrypted: true,
         url: '/api/sessions'
       });
@@ -252,92 +208,28 @@ describe('https-enforcement', () => {
       assert.strictEqual(result, null);
     });
 
-    it('returns null for public paths', () => {
+    it('returns null for internet access (tunnel handles HTTPS at edge)', () => {
       const req = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3001',
-        url: '/login'
-      });
-      const result = checkSessionHttpsRedirect(req, '/login', mockIsPublicPath, mockValidateSession);
-      assert.strictEqual(result, null);
-    });
-
-    it('returns null for cert installation paths', () => {
-      const req = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3001',
-        url: '/connect/trust'
-      });
-      const result = checkSessionHttpsRedirect(req, '/connect/trust', mockIsPublicPath, mockValidateSession);
-      assert.strictEqual(result, null);
-    });
-
-    it('returns null for users without valid session', () => {
-      const req = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3001',
+        remoteAddress: '127.0.0.1',
+        host: 'felix-katulong.ngrok.app',
         url: '/api/sessions'
       });
       const result = checkSessionHttpsRedirect(req, '/api/sessions', mockIsPublicPath, mockValidateSession);
       assert.strictEqual(result, null);
     });
 
-    it('redirects to HTTPS for users with valid session', () => {
+    it('returns null regardless of session validity', () => {
       const req = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3001',
+        remoteAddress: '127.0.0.1',
+        host: 'katulong.example.com',
         url: '/api/sessions?session=valid'
       });
       const result = checkSessionHttpsRedirect(req, '/api/sessions', mockIsPublicPath, mockValidateSession);
-      assert.ok(result?.redirect);
-      assert.ok(result.redirect.startsWith('https://'));
-      assert.ok(result.redirect.includes('katulong.local:3002'));
-      assert.ok(result.redirect.includes('/api/sessions'));
-    });
-
-    it('preserves query string in redirect', () => {
-      const req = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3001',
-        url: '/api/sessions?session=valid&foo=bar'
-      });
-      const result = checkSessionHttpsRedirect(req, '/api/sessions', mockIsPublicPath, mockValidateSession);
-      assert.ok(result.redirect.includes('?session=valid&foo=bar'));
+      assert.strictEqual(result, null);
     });
   });
 
   describe('integration scenarios', () => {
-    it('handles first-time LAN access flow', () => {
-      // User visits LAN over HTTP for first time
-      const req = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3001',
-        url: '/'
-      });
-
-      // HTTPS enforcement: Should redirect to /connect/trust
-      const httpsCheck = checkHttpsEnforcement(req, '/', mockIsPublicPath, mockIsHttpsConnection);
-      assert.deepStrictEqual(httpsCheck, { redirect: '/connect/trust' });
-
-      // After redirect, user is on /connect/trust
-      const trustReq = { ...req, url: '/connect/trust' };
-      const trustCheck = checkHttpsEnforcement(trustReq, '/connect/trust', mockIsPublicPath, mockIsHttpsConnection);
-      assert.strictEqual(trustCheck, null); // Allowed
-    });
-
-    it('handles returning LAN user with session', () => {
-      // User visits LAN over HTTP with valid session (cert already installed)
-      const req = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3001',
-        url: '/?session=valid'
-      });
-
-      // Session-based HTTPS redirect: Should redirect to HTTPS
-      const sessionCheck = checkSessionHttpsRedirect(req, '/', mockIsPublicPath, mockValidateSession);
-      assert.ok(sessionCheck.redirect.startsWith('https://'));
-    });
-
     it('handles ngrok access to login page', () => {
       // User visits ngrok /login over HTTP (ngrok terminates TLS upstream)
       const req = mockRequest({

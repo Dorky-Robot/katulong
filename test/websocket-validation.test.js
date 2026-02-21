@@ -5,6 +5,7 @@ import {
   validateInput,
   validateResize,
   validateMessage,
+  validateOrigin,
 } from "../lib/websocket-validation.js";
 
 describe("validateAttach", () => {
@@ -235,5 +236,51 @@ describe("validateMessage", () => {
     const result = validateMessage(null);
     assert.strictEqual(result.valid, false);
     assert.match(result.error, /object/i);
+  });
+});
+
+describe("validateOrigin", () => {
+  it("accepts matching origin and host", () => {
+    const result = validateOrigin("https://example.ngrok.app", "example.ngrok.app");
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("accepts localhost origin with localhost host", () => {
+    const result = validateOrigin("http://localhost:3001", "localhost:3001");
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("accepts 127.0.0.1 origin with matching host", () => {
+    const result = validateOrigin("http://127.0.0.1:3001", "127.0.0.1:3001");
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("rejects missing origin", () => {
+    const result = validateOrigin(undefined, "localhost:3001");
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /missing/i);
+  });
+
+  it("rejects origin that does not match host", () => {
+    const result = validateOrigin("https://evil.com", "localhost:3001");
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /mismatch/i);
+  });
+
+  it("rejects malformed origin URL", () => {
+    const result = validateOrigin("not-a-url", "localhost:3001");
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /invalid/i);
+  });
+
+  it("rejects cross-origin WebSocket hijacking attempt", () => {
+    const result = validateOrigin("https://attacker.com", "my-tunnel.ngrok.app");
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /mismatch/i);
+  });
+
+  it("accepts tunnel domain matching host", () => {
+    const result = validateOrigin("https://my-katulong.trycloudflare.com", "my-katulong.trycloudflare.com");
+    assert.strictEqual(result.valid, true);
   });
 });

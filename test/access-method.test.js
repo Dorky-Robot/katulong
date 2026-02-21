@@ -2,7 +2,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import {
   isLocalRequest,
-  isLanRequest,
   getAccessMethod,
   getAccessDescription
 } from '../lib/access-method.js';
@@ -127,77 +126,6 @@ describe('access-method', () => {
     });
   });
 
-  describe('isLanRequest', () => {
-    it('returns true for .local mDNS domain', () => {
-      const req = mockRequest({ host: 'katulong.local:3002' });
-      assert.strictEqual(isLanRequest(req), true);
-    });
-
-    it('returns true for .local without port', () => {
-      const req = mockRequest({ host: 'katulong.local' });
-      assert.strictEqual(isLanRequest(req), true);
-    });
-
-    it('returns true for 192.168.x.x (RFC 1918)', () => {
-      const req = mockRequest({ host: '192.168.1.50:3001' });
-      assert.strictEqual(isLanRequest(req), true);
-    });
-
-    it('returns true for 10.x.x.x (RFC 1918)', () => {
-      const req = mockRequest({ host: '10.0.0.5:3001' });
-      assert.strictEqual(isLanRequest(req), true);
-    });
-
-    it('returns true for 172.16-31.x.x (RFC 1918)', () => {
-      assert.strictEqual(isLanRequest(mockRequest({ host: '172.16.0.1' })), true);
-      assert.strictEqual(isLanRequest(mockRequest({ host: '172.20.5.10' })), true);
-      assert.strictEqual(isLanRequest(mockRequest({ host: '172.31.255.255' })), true);
-    });
-
-    it('returns false for 172.15.x.x (not in private range)', () => {
-      const req = mockRequest({ host: '172.15.0.1' });
-      assert.strictEqual(isLanRequest(req), false);
-    });
-
-    it('returns false for 172.32.x.x (not in private range)', () => {
-      const req = mockRequest({ host: '172.32.0.1' });
-      assert.strictEqual(isLanRequest(req), false);
-    });
-
-    it('returns true for 169.254.x.x (link-local)', () => {
-      const req = mockRequest({ host: '169.254.100.1' });
-      assert.strictEqual(isLanRequest(req), true);
-    });
-
-    it('returns false for localhost hosts (should be handled by isLocalRequest)', () => {
-      // Localhost hosts without loopback socket should NOT be treated as LAN
-      // This prevents bypass where attacker uses "localhost" host header from remote IP
-      assert.strictEqual(isLanRequest(mockRequest({ host: 'localhost' })), false);
-      assert.strictEqual(isLanRequest(mockRequest({ host: '127.0.0.1' })), false);
-      assert.strictEqual(isLanRequest(mockRequest({ host: '[::1]' })), false);
-    });
-
-    it('returns false for public domain', () => {
-      const req = mockRequest({ host: 'example.com' });
-      assert.strictEqual(isLanRequest(req), false);
-    });
-
-    it('returns false for ngrok domain', () => {
-      const req = mockRequest({ host: 'felix-katulong.ngrok.app' });
-      assert.strictEqual(isLanRequest(req), false);
-    });
-
-    it('returns false for public IP', () => {
-      const req = mockRequest({ host: '8.8.8.8' });
-      assert.strictEqual(isLanRequest(req), false);
-    });
-
-    it('handles missing host header gracefully', () => {
-      const req = { headers: {} };
-      assert.strictEqual(isLanRequest(req), false);
-    });
-  });
-
   describe('getAccessMethod', () => {
     it('returns "localhost" for localhost requests', () => {
       const req = mockRequest({
@@ -205,22 +133,6 @@ describe('access-method', () => {
         host: 'localhost:3001'
       });
       assert.strictEqual(getAccessMethod(req), 'localhost');
-    });
-
-    it('returns "lan" for .local domain', () => {
-      const req = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3002'
-      });
-      assert.strictEqual(getAccessMethod(req), 'lan');
-    });
-
-    it('returns "lan" for private IP', () => {
-      const req = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: '192.168.1.50:3001'
-      });
-      assert.strictEqual(getAccessMethod(req), 'lan');
     });
 
     it('returns "internet" for ngrok', () => {
@@ -247,8 +159,15 @@ describe('access-method', () => {
       assert.strictEqual(getAccessMethod(req), 'internet');
     });
 
-    it('prioritizes localhost over lan', () => {
-      // localhost host should return "localhost" even though it's also considered LAN
+    it('returns "internet" for LAN IP address', () => {
+      const req = mockRequest({
+        remoteAddress: '192.168.1.100',
+        host: '192.168.1.50:3001'
+      });
+      assert.strictEqual(getAccessMethod(req), 'internet');
+    });
+
+    it('prioritizes localhost over internet', () => {
       const req = mockRequest({
         remoteAddress: '127.0.0.1',
         host: '127.0.0.1:3001'
@@ -266,16 +185,6 @@ describe('access-method', () => {
       const desc = getAccessDescription(req);
       assert.ok(desc.includes('localhost'));
       assert.ok(desc.includes('127.0.0.1'));
-    });
-
-    it('returns descriptive string for LAN', () => {
-      const req = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3002'
-      });
-      const desc = getAccessDescription(req);
-      assert.ok(desc.includes('lan'));
-      assert.ok(desc.includes('katulong.local'));
     });
 
     it('returns descriptive string for internet', () => {
@@ -303,11 +212,6 @@ describe('access-method', () => {
         host: 'LOCALHOST:3001'
       });
       assert.strictEqual(isLocalRequest(req), true);
-    });
-
-    it('handles case-insensitive .local domains', () => {
-      const req = mockRequest({ host: 'Katulong.LOCAL:3002' });
-      assert.strictEqual(isLanRequest(req), true);
     });
 
     it('handles IPv6 format variations', () => {

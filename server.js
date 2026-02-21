@@ -37,7 +37,7 @@ import { ensureCerts, generateMobileConfig, needsRegeneration, inspectCert, rege
 import { CertificateManager } from "./lib/certificate-manager.js";
 import { ConfigManager } from "./lib/config.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
-import { validateMessage } from "./lib/websocket-validation.js";
+import { validateMessage, validateOrigin } from "./lib/websocket-validation.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest, getAccessMethod, getAccessDescription } from "./lib/access-method.js";
 import {
@@ -47,7 +47,6 @@ import {
   checkSessionHttpsRedirect
 } from "./lib/https-enforcement.js";
 import { serveStaticFile, MIME_TYPES } from "./lib/static-files.js";
-import mdns from "multicast-dns";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -302,12 +301,6 @@ async function parseJSON(req, maxSize = MAX_REQUEST_BODY_SIZE) {
 
 // MIME_TYPES is now imported from lib/static-files.js
 
-function isLanHost(req) {
-  const host = (req.headers.host || "").replace(/:\d+$/, "");
-  return host === "localhost" || host === "127.0.0.1" || host === "::1"
-    || /^(10|172\.(1[6-9]|2\d|3[01])|192\.168)\./.test(host);
-}
-
 const routes = [
   { method: "GET", path: "/", handler: (req, res) => {
     let html = readFileSync(join(__dirname, "public", "index.html"), "utf-8");
@@ -333,10 +326,6 @@ const routes = [
 
   { method: "GET", path: "/manifest.json", handler: (req, res) => {
     const manifest = JSON.parse(readFileSync(join(__dirname, "public", "manifest.json"), "utf-8"));
-    if (isLanHost(req)) {
-      manifest.name = "Katulong (LAN)";
-      manifest.short_name = "Katulong LAN";
-    }
     res.writeHead(200, { "Content-Type": "application/manifest+json" });
     res.end(JSON.stringify(manifest));
   }},
@@ -1548,23 +1537,9 @@ function handleUpgrade(req, socket, head) {
   // Origin check to prevent Cross-Site WebSocket Hijacking (CSWSH)
   // Localhost bypasses this since browsers may omit Origin for local pages
   if (!isLocalRequest(req)) {
-    const origin = req.headers.origin;
-    const host = req.headers.host;
-    if (!origin) {
-      log.warn("WebSocket rejected: missing Origin header");
-      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-    try {
-      const originHost = new URL(origin).host;
-      if (originHost !== host) {
-        log.warn("WebSocket origin mismatch", { origin, host });
-        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-    } catch {
+    const result = validateOrigin(req.headers.origin, req.headers.host);
+    if (!result.valid) {
+      log.warn("WebSocket rejected: origin validation failed", { error: result.error, origin: req.headers.origin, host: req.headers.host });
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
       return;
@@ -1737,32 +1712,6 @@ httpsServer.listen(HTTPS_PORT, "0.0.0.0", () => {
     trustUrl: lanIP ? `http://${lanIP}:${PORT}/connect/trust` : null,
   });
 });
-
-// --- mDNS: advertise katulong.local on the LAN ---
-{
-  const mdnsIP = getLanIP();
-  if (mdnsIP) {
-    try {
-      const mdnsServer = mdns();
-      mdnsServer.on("query", (query) => {
-        for (const q of query.questions) {
-          if (q.name === "katulong.local" && (q.type === "A" || q.type === "ANY")) {
-            mdnsServer.respond({
-              answers: [{ name: "katulong.local", type: "A", ttl: 120, data: mdnsIP }],
-            });
-            break;
-          }
-        }
-      });
-      mdnsServer.on("error", (err) => {
-        log.warn("mDNS error", { error: err.message });
-      });
-      log.info("mDNS advertising katulong.local", { ip: mdnsIP });
-    } catch (err) {
-      log.warn("Failed to start mDNS", { error: err.message });
-    }
-  }
-}
 
 sshRelay = startSSHServer({
   port: SSH_PORT,

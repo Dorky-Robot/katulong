@@ -97,77 +97,6 @@ describe('request-routing integration', () => {
     });
   });
 
-  describe('LAN access over HTTP', () => {
-    const req = mockRequest({
-      remoteAddress: '192.168.1.100',
-      host: 'katulong.local:3001',
-      encrypted: false
-    });
-
-    it('detects access method as lan', () => {
-      assert.strictEqual(getAccessMethod(req), 'lan');
-    });
-
-    it('allows /connect/trust over HTTP', () => {
-      const check = checkHttpsEnforcement(req, '/connect/trust', isPublicPath, mockIsHttpsConnection);
-      assert.strictEqual(check, null);
-    });
-
-    it('allows cert installation files over HTTP', () => {
-      assert.strictEqual(checkHttpsEnforcement(req, '/connect/trust/ca.crt', isPublicPath, mockIsHttpsConnection), null);
-      assert.strictEqual(checkHttpsEnforcement(req, '/connect/trust/ca.mobileconfig', isPublicPath, mockIsHttpsConnection), null);
-    });
-
-    it('redirects protected paths to /connect/trust', () => {
-      const check = checkHttpsEnforcement(req, '/api/sessions', isPublicPath, mockIsHttpsConnection);
-      assert.deepStrictEqual(check, { redirect: '/connect/trust' });
-    });
-
-    it('redirects unauthenticated users to /connect/trust', () => {
-      const redirect = getUnauthenticatedRedirect(req);
-      assert.strictEqual(redirect, '/connect/trust');
-    });
-
-    it('serves static files from /connect/trust pages', () => {
-      const res = mockResponse();
-      const served = serveStaticFile(res, publicDir, '/login.css');
-
-      assert.strictEqual(served, true);
-      assert.strictEqual(res.getHeader('Content-Type'), 'text/css; charset=utf-8');
-    });
-  });
-
-  describe('LAN access over HTTPS', () => {
-    const req = mockRequest({
-      remoteAddress: '192.168.1.100',
-      host: 'katulong.local:3002',
-      encrypted: true
-    });
-
-    it('detects access method as lan', () => {
-      assert.strictEqual(getAccessMethod(req), 'lan');
-    });
-
-    it('allows all paths (HTTPS enforcement satisfied)', () => {
-      assert.strictEqual(checkHttpsEnforcement(req, '/', isPublicPath, mockIsHttpsConnection), null);
-      assert.strictEqual(checkHttpsEnforcement(req, '/api/sessions', isPublicPath, mockIsHttpsConnection), null);
-      assert.strictEqual(checkHttpsEnforcement(req, '/login', isPublicPath, mockIsHttpsConnection), null);
-    });
-
-    it('redirects unauthenticated users to /login', () => {
-      const redirect = getUnauthenticatedRedirect(req);
-      assert.strictEqual(redirect, '/login');
-    });
-
-    it('serves static files correctly', () => {
-      const res = mockResponse();
-      const served = serveStaticFile(res, publicDir, '/login.js');
-
-      assert.strictEqual(served, true);
-      assert.strictEqual(res.getHeader('Content-Type'), 'application/javascript; charset=utf-8');
-    });
-  });
-
   describe('Internet access (ngrok)', () => {
     const req = mockRequest({
       remoteAddress: '127.0.0.1',
@@ -253,45 +182,6 @@ describe('request-routing integration', () => {
   });
 
   describe('complete request flows', () => {
-    it('handles first-time LAN user journey', () => {
-      // User visits katulong.local:3001/ (HTTP)
-      const req1 = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3001',
-        url: '/'
-      });
-
-      // Should detect LAN
-      assert.strictEqual(getAccessMethod(req1), 'lan');
-
-      // Should redirect to /connect/trust
-      const check1 = checkHttpsEnforcement(req1, '/', isPublicPath, mockIsHttpsConnection);
-      assert.strictEqual(check1.redirect, '/connect/trust');
-
-      // User follows redirect to /connect/trust
-      const req2 = { ...req1, url: '/connect/trust' };
-      const check2 = checkHttpsEnforcement(req2, '/connect/trust', isPublicPath, mockIsHttpsConnection);
-      assert.strictEqual(check2, null); // Allowed
-
-      // User downloads cert and accesses via HTTPS
-      const req3 = mockRequest({
-        remoteAddress: '192.168.1.100',
-        host: 'katulong.local:3002',
-        encrypted: true,
-        url: '/login'
-      });
-
-      // Should allow HTTPS access
-      const check3 = checkHttpsEnforcement(req3, '/login', isPublicPath, mockIsHttpsConnection);
-      assert.strictEqual(check3, null);
-
-      // Static files should work
-      const res = mockResponse();
-      const served = serveStaticFile(res, publicDir, '/login.js');
-      assert.strictEqual(served, true);
-      assert.strictEqual(res.getHeader('Content-Type'), 'application/javascript; charset=utf-8');
-    });
-
     it('handles ngrok user accessing login page', () => {
       // User visits felix-katulong.ngrok.app/login
       const req = mockRequest({
