@@ -37,8 +37,8 @@ test.describe("Terminal I/O", () => {
     test.skip(isMobile, "Terminal keyboard input not testable in mobile emulation");
 
     const marker = `marker_${Date.now()}`;
-    await page.locator(".xterm-helper-textarea").pressSequentially(`echo ${marker}`);
-    await page.locator(".xterm-helper-textarea").press("Enter");
+    await page.keyboard.type(`echo ${marker}`);
+    await page.keyboard.press("Enter");
 
     const rows = page.locator(".xterm-rows");
     await expect(rows).toContainText(marker);
@@ -49,14 +49,13 @@ test.describe("Terminal I/O", () => {
 
     const marker1 = `first_${Date.now()}`;
     const marker2 = `second_${Date.now()}`;
-    const textarea = page.locator(".xterm-helper-textarea");
 
-    await textarea.pressSequentially(`echo ${marker1}`);
-    await textarea.press("Enter");
+    await page.keyboard.type(`echo ${marker1}`);
+    await page.keyboard.press("Enter");
     await expect(page.locator(".xterm-rows")).toContainText(marker1);
 
-    await textarea.pressSequentially(`echo ${marker2}`);
-    await textarea.press("Enter");
+    await page.keyboard.type(`echo ${marker2}`);
+    await page.keyboard.press("Enter");
 
     const rows = page.locator(".xterm-rows");
     await expect(rows).toContainText(marker1);
@@ -67,9 +66,8 @@ test.describe("Terminal I/O", () => {
     test.skip(isMobile, "Terminal keyboard input not testable in mobile emulation");
 
     const marker = `reload_${Date.now()}`;
-    const textarea = page.locator(".xterm-helper-textarea");
-    await textarea.pressSequentially(`echo ${marker}`);
-    await textarea.press("Enter");
+    await page.keyboard.type(`echo ${marker}`);
+    await page.keyboard.press("Enter");
     await expect(page.locator(".xterm-rows")).toContainText(marker);
 
     await page.reload();
