@@ -44,12 +44,12 @@ test.describe("Terminal I/O", () => {
 
   test("Typed command produces visible output", async ({ page }) => {
     const marker = `marker_${Date.now()}`;
-    // Use termSend (window.__termSend) instead of page.keyboard.type().
-    // In serial mode the accumulated mobile IME state across multiple test
-    // navigations causes keyboard.type() to inject spurious "clear" mid-string.
-    // termSend bypasses keyboard events entirely, sending directly to the PTY.
-    await termSend(page, `echo ${marker}`);
-    await page.keyboard.press("Enter");
+    // Use termSend (window.__termSend) instead of page.keyboard.type() and
+    // keyboard.press("Enter"). In serial mode, accumulated mobile IME state and
+    // Playwright keyboard-routing drift across multiple page.goto() navigations
+    // cause keyboard events to be lost or mangled. termSend bypasses keyboard
+    // events entirely, sending directly to the PTY via the app's input sender.
+    await termSend(page, `echo ${marker}\r`);
     await waitForTerminalOutput(page, marker);
   });
 
@@ -57,12 +57,10 @@ test.describe("Terminal I/O", () => {
     const marker1 = `first_${Date.now()}`;
     const marker2 = `second_${Date.now()}`;
 
-    await termSend(page, `echo ${marker1}`);
-    await page.keyboard.press("Enter");
+    await termSend(page, `echo ${marker1}\r`);
     await waitForTerminalOutput(page, marker1);
 
-    await termSend(page, `echo ${marker2}`);
-    await page.keyboard.press("Enter");
+    await termSend(page, `echo ${marker2}\r`);
     await waitForTerminalOutput(page, marker2);
   });
 
@@ -72,8 +70,9 @@ test.describe("Terminal I/O", () => {
     // autocorrect injection and the Playwright keyboard-routing drift that
     // occurs after multiple serial page.goto() navigations (where the
     // auto-focused xterm textarea is no longer tracked by the input system).
-    await termSend(page, `echo ${marker}`);
-    await page.keyboard.press("Enter");
+    // The \r (carriage return) is sent together with the command text so the
+    // animation-frame batch in inputSender always delivers both in one send.
+    await termSend(page, `echo ${marker}\r`);
     await waitForTerminalOutput(page, marker);
 
     await page.reload();

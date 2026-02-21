@@ -117,8 +117,7 @@ export async function termSend(page, text) {
  * Type command and wait for output
  */
 export async function typeCommand(page, command) {
-  await termSend(page, command);
-  await page.keyboard.press('Enter');
+  await termSend(page, command + '\r');
   await waitForTerminalOutput(page, command);
 }
 
