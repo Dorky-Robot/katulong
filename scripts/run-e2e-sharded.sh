@@ -90,7 +90,7 @@ for idx in $(seq 0 $(( NUM_SHARDS - 1 ))); do
     FAILED=1
   else
     # Show summary line (passed/flaky/failed counts) from passing shards
-    SUMMARY=$(grep -E '^\s+\d+ (passed|failed|flaky|skipped)' "${LOGS[$idx]}" | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g' | xargs)
+    SUMMARY=$(grep -E '^[[:space:]]+[[:digit:]]+ (passed|failed|flaky|skipped)' "${LOGS[$idx]}" | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g' | xargs)
     echo "e2e-sharded: shard $idx passed ($SUMMARY)"
   fi
 done
