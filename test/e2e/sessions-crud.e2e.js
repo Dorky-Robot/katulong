@@ -164,15 +164,23 @@ test.describe("Session CRUD", () => {
       );
     }
 
+    // Helper: wait for shell prompt before typing to avoid init-script interference
+    const waitForPrompt = () =>
+      page.waitForFunction(
+        () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
+        { timeout: 10000 },
+      );
+
     // Type marker in session A
     await page.goto(`/?s=${encodeURIComponent(nameA)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+    await waitForPrompt();
     await page.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type(`echo ${markerA}`);
     await page.keyboard.press("Enter");
-    // .xterm-rows only reflects the current prompt line; use .xterm-screen
-    // which contains the full terminal viewport including command output.
+    // .xterm-rows only reflects the current prompt line on canvas renderers.
+    // Use .xterm-screen which contains the full terminal viewport.
     await page.waitForFunction(
       (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
       markerA,
@@ -183,6 +191,7 @@ test.describe("Session CRUD", () => {
     await page.goto(`/?s=${encodeURIComponent(nameB)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+    await waitForPrompt();
     await page.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type(`echo ${markerB}`);
     await page.keyboard.press("Enter");

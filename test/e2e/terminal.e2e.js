@@ -16,7 +16,7 @@ test.describe("Terminal I/O", () => {
     await waitForAppReady(page);
     // Wait for shell prompt before typing — the shell runs init scripts
     // (e.g. .zshrc, clear) and keystrokes typed before the prompt appears
-    // get swallowed, causing flaky failures.
+    // get swallowed or mangled, causing flaky failures.
     await page.waitForFunction(
       () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
       { timeout: 10000 },
@@ -43,8 +43,8 @@ test.describe("Terminal I/O", () => {
     await page.keyboard.type(`echo ${marker}`);
     await page.keyboard.press("Enter");
 
-    // .xterm-rows only reflects the current prompt line; use .xterm-screen
-    // which contains the full terminal viewport including command output.
+    // .xterm-rows only reflects the current prompt line on canvas renderers.
+    // Use .xterm-screen which includes the full terminal viewport content.
     await page.waitForFunction(
       (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
       marker,
@@ -60,6 +60,10 @@ test.describe("Terminal I/O", () => {
 
     await page.keyboard.type(`echo ${marker1}`);
     await page.keyboard.press("Enter");
+    // waitForFunction itself is the assertion that marker1 appeared in output.
+    // On narrow viewports marker1 may scroll off once marker2 is typed,
+    // so we check each marker immediately after it appears rather than
+    // asserting both at the same time at the end.
     await page.waitForFunction(
       (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
       marker1,
@@ -73,10 +77,6 @@ test.describe("Terminal I/O", () => {
       marker2,
       { timeout: 5000 },
     );
-
-    const termText = await page.locator('.xterm-screen').textContent();
-    expect(termText).toContain(marker1);
-    expect(termText).toContain(marker2);
   });
 
   test("Buffer replays on page reload", async ({ page }) => {
