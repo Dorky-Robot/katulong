@@ -21,12 +21,18 @@ test.describe("Terminal I/O", () => {
       () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
       { timeout: 10000 },
     );
-    // Do NOT explicitly focus the xterm-helper-textarea here.
-    // xterm auto-focuses it on page load; explicitly calling .focus() again
-    // on mobile emulation activates IME autocorrect behaviors that inject
-    // spurious characters ("clear"), and on desktop it switches the
-    // accessibility layer to single-row mode, breaking .xterm-screen reads.
-    // Keyboard events are routed to the auto-focused textarea automatically.
+    // On desktop: explicitly focus the xterm textarea so Playwright's keyboard
+    // routing correctly targets it. In serial mode, after multiple page.goto()
+    // navigations the auto-focus from term.focus() (app.js) may not be
+    // registered with Playwright's input system, causing keyboard.type() to
+    // silently discard keystrokes.
+    //
+    // On mobile: do NOT focus — explicitly calling .focus() on mobile emulation
+    // activates IME autocorrect that injects spurious characters ("clear").
+    // xterm auto-focuses on page load and that is sufficient for mobile.
+    if (testInfo.project.name !== 'mobile') {
+      await page.locator('.xterm-helper-textarea').focus();
+    }
   });
 
   test.afterEach(async ({ page }) => {
@@ -60,14 +66,6 @@ test.describe("Terminal I/O", () => {
     await page.keyboard.type(`echo ${marker1}`);
     await page.keyboard.press("Enter");
     await waitForTerminalOutput(page, marker1);
-
-    // Wait for the shell to return to the prompt before typing the next command.
-    // On mobile, keyboard.type() during shell processing can trigger IME
-    // autocorrect that injects spurious characters (e.g. "clear").
-    await page.waitForFunction(
-      () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
-      { timeout: 10000 },
-    );
 
     await page.keyboard.type(`echo ${marker2}`);
     await page.keyboard.press("Enter");

@@ -54,24 +54,16 @@ export async function waitForModalClose(page, modalId) {
 /**
  * Wait for the xterm buffer to contain text.
  *
- * Uses a two-path strategy for reliability:
- * 1. DOM check (.xterm-rows.textContent): fast path while the output is the
- *    current cursor row (the canvas renderer's accessibility layer exposes
- *    only the current row, so this window is brief but catches fresh output).
- * 2. Buffer check (window.__xterm.buffer.active): reliable path that retains
- *    all scrollback lines permanently, even after the shell returns to the
- *    prompt and the output row is no longer the current row.
+ * Reads window.__xterm.buffer.active rather than .xterm-screen.textContent
+ * because the canvas renderer's accessibility layer only exposes the current
+ * cursor row; output on previous rows disappears from the DOM once the shell
+ * returns to a prompt. The internal xterm buffer retains all scrollback lines.
  *
  * Requires window.__xterm to be set in the app (set by app.js after term.open()).
  */
 export async function waitForTerminalOutput(page, text, { timeout = 10000 } = {}) {
   await page.waitForFunction(
     (searchText) => {
-      // Fast path: check DOM accessibility layer while output is current row.
-      if (document.querySelector('.xterm-rows')?.textContent.includes(searchText)) {
-        return true;
-      }
-      // Reliable path: check xterm buffer (retains all lines including scrollback).
       const term = window.__xterm;
       if (!term) return false;
       const buf = term.buffer.active;
