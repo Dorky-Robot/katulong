@@ -21,6 +21,17 @@ test.describe("Terminal I/O", () => {
       () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
       { timeout: 10000 },
     );
+    // The daemon sends 'clear\n' to new sessions 100ms after creation to erase
+    // shell init artifacts. If a test sends commands before this timer fires,
+    // the ring buffer ends up with the order [commands] → [clear]. On page
+    // reload, replaying this buffer re-runs the clear AFTER the commands,
+    // making the commands invisible in xterm's buffer (the clear erases the
+    // visible area in-place; content is NOT pushed to scrollback).
+    //
+    // Waiting 200ms here guarantees the 100ms clear timer has fired and its
+    // output has been processed by xterm. Test commands sent after this wait
+    // will appear in the ring buffer AFTER the clear, so replay preserves them.
+    await page.waitForTimeout(200);
     // Do NOT explicitly focus the xterm-helper-textarea here.
     // xterm auto-focuses it via term.focus() in app.js on page load; explicitly
     // calling .focus() again on mobile emulation activates IME autocorrect
