@@ -1413,6 +1413,12 @@ wss.on("connection", (ws) => {
     }
   });
 
+  ws.on("error", (err) => {
+    log.error("WebSocket client error", { clientId, error: err.message });
+    wsClients.delete(clientId);
+    daemonSend({ type: "detach", clientId });
+  });
+
   ws.on("close", () => {
     log.debug("Client disconnected", { clientId });
     wsClients.delete(clientId);
@@ -1422,10 +1428,13 @@ wss.on("connection", (ws) => {
 
 // Live-reload (dev only)
 if (process.env.NODE_ENV !== "production") {
-  watch(join(__dirname, "public"), { recursive: true }, () => {
+  const watcher = watch(join(__dirname, "public"), { recursive: true }, () => {
     for (const client of wss.clients) {
       if (client.readyState === 1) client.send(JSON.stringify({ type: "reload" }));
     }
+  });
+  watcher.on("error", (err) => {
+    log.warn("Live-reload watcher error", { error: err.message });
   });
 }
 
