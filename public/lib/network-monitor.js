@@ -1,7 +1,7 @@
 /**
  * Network Monitor
  *
- * Composable network change detection for P2P reconnection.
+ * Composable network change detection.
  */
 
 /**

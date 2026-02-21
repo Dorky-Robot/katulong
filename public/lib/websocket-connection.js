@@ -14,8 +14,6 @@ export function createWebSocketConnection(deps = {}) {
   const {
     term,
     state,
-    p2pManager,
-    updateP2PIndicator,
     stopWizardPairing,
     switchSettingsView,
     viewSuccess,
@@ -35,8 +33,6 @@ export function createWebSocketConnection(deps = {}) {
         'scroll.userScrolledUpBeforeDisconnect': false
       },
       effects: [
-        { type: 'updateP2PIndicator' },
-        { type: 'initP2P' },
         { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect }
       ]
     }),
@@ -45,29 +41,6 @@ export function createWebSocketConnection(deps = {}) {
       stateUpdates: {},
       effects: [
         { type: 'terminalWrite', data: msg.data, preserveScroll: true }
-      ]
-    }),
-
-    'p2p-signal': (msg, currentState) => ({
-      stateUpdates: {},
-      effects: currentState.p2p.peer
-        ? [{ type: 'p2pSignal', data: msg.data }]
-        : []
-    }),
-
-    'p2p-ready': () => ({
-      stateUpdates: {},
-      effects: [
-        { type: 'log', message: '[P2P] Server confirmed DataChannel ready' },
-        { type: 'updateP2PIndicator' }
-      ]
-    }),
-
-    'p2p-closed': () => ({
-      stateUpdates: { 'p2p.connected': false },
-      effects: [
-        { type: 'log', message: '[P2P] Server reports DataChannel closed' },
-        { type: 'updateP2PIndicator' }
       ]
     }),
 
@@ -112,12 +85,6 @@ export function createWebSocketConnection(deps = {}) {
   // Effect executor (side effects at edges)
   function executeEffect(effect) {
     switch (effect.type) {
-      case 'updateP2PIndicator':
-        updateP2PIndicator();
-        break;
-      case 'initP2P':
-        p2pManager.create();
-        break;
       case 'scrollToBottomIfNeeded':
         if (effect.condition) {
           scrollToBottom(term);
@@ -129,9 +96,6 @@ export function createWebSocketConnection(deps = {}) {
         } else {
           term.write(effect.data);
         }
-        break;
-      case 'p2pSignal':
-        p2pManager.signal(effect.data);
         break;
       case 'log':
         console.log(effect.message);
@@ -229,7 +193,6 @@ export function createWebSocketConnection(deps = {}) {
       const viewport = document.querySelector(".xterm-viewport");
       state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
       state.connection.attached = false;
-      p2pManager.destroy();
 
       console.log(`[WS] Reconnecting in ${state.connection.reconnectDelay}ms`);
       reconnectTimeout = setTimeout(connect, state.connection.reconnectDelay);

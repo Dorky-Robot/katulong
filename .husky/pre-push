@@ -1,3 +1,4 @@
+#!/bin/sh
 # --- Save stdin before anything else consumes it ---
 # Git pre-push hook receives ref info on stdin. npm/node may consume it.
 PUSH_INPUT=$(cat)
@@ -26,14 +27,16 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     # on local main but haven't been pushed yet (commit on main → branch → push).
     MERGE_BASE=$(git merge-base "origin/$DEFAULT_BRANCH" "$local_sha" 2>/dev/null || echo "")
     if [ -n "$MERGE_BASE" ]; then
-      PUSH_DIFF+=$(git diff "$MERGE_BASE".."$local_sha")
-      CHANGED_FILES+=$(git diff --name-only "$MERGE_BASE".."$local_sha")
+      PUSH_DIFF="${PUSH_DIFF}$(git diff "$MERGE_BASE".."$local_sha")"
+      CHANGED_FILES="${CHANGED_FILES}$(git diff --name-only "$MERGE_BASE".."$local_sha")"
     fi
   else
-    PUSH_DIFF+=$(git diff "$remote_sha".."$local_sha")
-    CHANGED_FILES+=$(git diff --name-only "$remote_sha".."$local_sha")
+    PUSH_DIFF="${PUSH_DIFF}$(git diff "$remote_sha".."$local_sha")"
+    CHANGED_FILES="${CHANGED_FILES}$(git diff --name-only "$remote_sha".."$local_sha")"
   fi
-done <<< "$PUSH_INPUT"
+done << PUSH_INPUT_HEREDOC
+$PUSH_INPUT
+PUSH_INPUT_HEREDOC
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/../scripts" && pwd)"
 
@@ -55,50 +58,64 @@ else
   REVIEW_PID=$!
 fi
 
-# --- Step 2: Run unit+integration tests and E2E tests in parallel ---
+# --- Step 2: Check if Playwright E2E tests can run ---
+# E2E tests require Playwright browser + system libraries.
+# Skip gracefully when the environment doesn't support it.
+
+E2E_AVAILABLE=0
+if node -e "const { chromium } = require('@playwright/test'); chromium.launch().then(b => b.close()).catch(() => process.exit(1))" >/dev/null 2>&1; then
+  E2E_AVAILABLE=1
+fi
+
+# --- Step 3: Run unit+integration tests (and E2E if available) ---
 # Both test suites use separate ports and data dirs, so no conflicts.
 # Running in parallel overlaps E2E server startup with unit test execution.
 
 NCPUS=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 HALF_CPUS=$(( NCPUS / 2 ))
 [ "$HALF_CPUS" -lt 1 ] && HALF_CPUS=1
-echo "pre-push: running unit/integration + E2E tests in parallel ($NCPUS cores, $HALF_CPUS each)"
 
 UNIT_LOG=$(mktemp)
-E2E_LOG=$(mktemp)
-
-# Split cores evenly: half for unit tests, half for E2E browsers.
-# Running both at full concurrency starves the test server daemon.
-node --test --test-concurrency="$HALF_CPUS" test/*.test.js test/*.integration.js > "$UNIT_LOG" 2>&1 &
-UNIT_PID=$!
-
-E2E_CPUS=$HALF_CPUS bash scripts/run-e2e-sharded.sh > "$E2E_LOG" 2>&1 &
-E2E_PID=$!
-
-# Wait for both, collect exit codes
 UNIT_RC=0; E2E_RC=0
-wait "$UNIT_PID" || UNIT_RC=$?
-wait "$E2E_PID" || E2E_RC=$?
 
-# Report results
+if [ "$E2E_AVAILABLE" -eq 1 ]; then
+  echo "pre-push: running unit/integration + E2E tests in parallel ($NCPUS cores, $HALF_CPUS each)"
+  E2E_LOG=$(mktemp)
+
+  # Split cores evenly: half for unit tests, half for E2E browsers.
+  # Running both at full concurrency starves the test server daemon.
+  node --test --test-concurrency="$HALF_CPUS" test/*.test.js test/*.integration.js > "$UNIT_LOG" 2>&1 &
+  UNIT_PID=$!
+
+  E2E_CPUS=$HALF_CPUS bash scripts/run-e2e-sharded.sh > "$E2E_LOG" 2>&1 &
+  E2E_PID=$!
+
+  wait "$UNIT_PID" || UNIT_RC=$?
+  wait "$E2E_PID" || E2E_RC=$?
+
+  if [ "$E2E_RC" -ne 0 ]; then
+    echo "pre-push: E2E tests FAILED (exit $E2E_RC):"
+    cat "$E2E_LOG"
+  else
+    echo "pre-push: E2E tests passed"
+  fi
+  rm -f "$E2E_LOG"
+else
+  echo "pre-push: Playwright browser unavailable — skipping E2E tests (install system deps to enable)"
+  node --test --test-concurrency="$HALF_CPUS" test/*.test.js test/*.integration.js > "$UNIT_LOG" 2>&1 &
+  UNIT_PID=$!
+  wait "$UNIT_PID" || UNIT_RC=$?
+fi
+
+# Report unit test results
 if [ "$UNIT_RC" -ne 0 ]; then
   echo "pre-push: unit/integration tests FAILED (exit $UNIT_RC):"
   cat "$UNIT_LOG"
-fi
-if [ "$E2E_RC" -ne 0 ]; then
-  echo "pre-push: E2E tests FAILED (exit $E2E_RC):"
-  cat "$E2E_LOG"
-fi
-
-# Print summary on success
-if [ "$UNIT_RC" -eq 0 ]; then
+else
   echo "pre-push: unit/integration tests passed"
 fi
-if [ "$E2E_RC" -eq 0 ]; then
-  echo "pre-push: E2E tests passed"
-fi
 
-rm -f "$UNIT_LOG" "$E2E_LOG"
+rm -f "$UNIT_LOG"
 
 if [ "$UNIT_RC" -ne 0 ] || [ "$E2E_RC" -ne 0 ]; then
   echo "pre-push: tests failed, push blocked."
@@ -108,7 +125,7 @@ fi
 
 # --- Step 3: Security scan ---
 
-source "$SCRIPT_DIR/secrets-scan.sh"
+. "$SCRIPT_DIR/secrets-scan.sh"
 if ! scan_secrets "pre-push"; then
   [ -n "$REVIEW_PID" ] && { kill "$REVIEW_PID" 2>/dev/null; wait "$REVIEW_PID" 2>/dev/null; }
   exit 1
