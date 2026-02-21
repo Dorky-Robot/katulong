@@ -1306,115 +1306,6 @@
     .upload-toast.visible { opacity: 1; }
     .upload-toast.error { border-color: var(--danger); color: var(--danger); }
 
-    /* --- Certificate management --- */
-    .cert-ca-section {
-      background: var(--bg-surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      padding: var(--space-lg);
-      margin-bottom: var(--space-xl);
-    }
-    .cert-ca-section h4 {
-      margin: 0 0 var(--space-sm) 0;
-      font-size: 0.95rem;
-      color: var(--text);
-    }
-    .cert-ca-details {
-      margin: var(--space-sm) 0;
-      font-size: 0.875rem;
-      color: var(--text-muted);
-    }
-    .cert-ca-details p {
-      margin: 0.25rem 0;
-    }
-    .cert-ca-actions {
-      margin-top: var(--space-md);
-    }
-    .btn-confirm {
-      background: var(--warning) !important;
-      color: var(--bg) !important;
-    }
-    .btn-confirm:hover {
-      background: var(--warning) !important;
-      opacity: 0.9;
-    }
-    .cert-networks-list {
-      margin-bottom: var(--space-lg);
-    }
-    .cert-network-item {
-      background: var(--bg-surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      padding: var(--space-lg);
-      margin-bottom: var(--space-md);
-    }
-    .cert-network-item.current {
-      border-color: var(--success);
-      border-width: 2px;
-    }
-    .cert-network-header {
-      display: flex;
-      align-items: center;
-      gap: var(--space-md);
-      margin-bottom: var(--space-sm);
-    }
-    .cert-network-label {
-      flex: 1;
-      background: var(--bg-input);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      padding: var(--space-sm) var(--space-md);
-      color: var(--text);
-      font-size: 0.95rem;
-      font-weight: 500;
-    }
-    .cert-network-label:focus {
-      outline: none;
-      border-color: var(--accent-active);
-    }
-    .cert-network-details {
-      margin: var(--space-sm) 0;
-      font-size: 0.875rem;
-      color: var(--text-muted);
-    }
-    .cert-network-details p {
-      margin: 0.25rem 0;
-    }
-    .cert-network-actions {
-      display: flex;
-      gap: var(--space-sm);
-      margin-top: var(--space-md);
-    }
-    .btn-small {
-      padding: var(--space-sm) var(--space-md);
-      background: var(--accent);
-      color: var(--text);
-      border: none;
-      border-radius: var(--radius-sm);
-      font-size: 0.875rem;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    .btn-small:hover {
-      background: var(--accent-active);
-      color: var(--bg);
-    }
-    .btn-danger {
-      background: var(--danger);
-      color: white;
-    }
-    .btn-danger:hover {
-      background: #c82333;
-    }
-    .badge {
-      display: inline-block;
-      padding: 0.25rem 0.5rem;
-      background: var(--accent-active);
-      color: var(--bg);
-      border-radius: var(--radius-sm);
-      font-size: 0.75rem;
-      font-weight: 600;
-    }
     .warning {
       color: var(--warning);
     }
@@ -1554,7 +1445,6 @@
             <button class="settings-tab active" data-tab="theme" role="tab" aria-selected="true">Theme</button>
             <button class="settings-tab" data-tab="lan" role="tab" aria-selected="false">LAN</button>
             <button class="settings-tab" data-tab="remote" role="tab" aria-selected="false">Remote</button>
-            <button class="settings-tab" data-tab="certificates" role="tab" aria-selected="false">Certificates</button>
           </div>
 
           <!-- Theme tab content -->
@@ -1641,59 +1531,20 @@
             </button>
           </div>
 
-          <!-- Certificates tab content -->
-          <div class="settings-tab-content" id="settings-tab-certificates">
-            <p class="tab-description">Manage TLS certificates for each network.</p>
-
-            <!-- Networks List -->
-            <div class="cert-networks-list">
-              <div id="cert-networks-container">
-                <p style="color: var(--text-muted)">Loading networks...</p>
-              </div>
-            </div>
-
-            <!-- Generate for Current Network -->
-            <button class="settings-pair-btn" id="cert-generate-current" style="display: none;">
-              <i class="ph ph-plus"></i> Generate Certificate for Current Network
-            </button>
-          </div>
-
           <div class="settings-footer">
             <button class="settings-logout-btn" id="settings-logout">End Session</button>
           </div>
         </div>
 
-        <!-- View 1: Trust / install certificate -->
-        <div class="settings-view" id="settings-view-trust">
-          <div class="wizard-header">
-            <button class="settings-back-btn" id="wizard-back-trust" aria-label="Back to settings">
-              <i class="ph ph-arrow-left"></i>
-            </button>
-            <h3>Install Certificate</h3>
-          </div>
-          <div class="wizard-step-dots">
-            <span class="step-dot active"></span>
-            <span class="step-dot"></span>
-            <span class="step-dot"></span>
-          </div>
-          <p class="wizard-subtitle">Scan this QR code with your phone to install the trust certificate.</p>
-          <div class="wizard-qr-container" id="wizard-trust-qr"></div>
-          <button class="wizard-copy-url-btn" id="wizard-trust-copy-url" style="display:none;">
-            <i class="ph ph-copy"></i> Copy URL
-          </button>
-          <button class="wizard-btn wizard-btn-primary" id="wizard-next-pair">Next</button>
-        </div>
-
-        <!-- View 2: Pair / rotating QR + PIN -->
+        <!-- View 1: Pair / rotating QR + PIN -->
         <div class="settings-view" id="settings-view-pair">
           <div class="wizard-header">
-            <button class="settings-back-btn" id="wizard-back-pair" aria-label="Back to certificate step">
+            <button class="settings-back-btn" id="wizard-back-pair" aria-label="Back to settings">
               <i class="ph ph-arrow-left"></i>
             </button>
             <h3>Pair Device</h3>
           </div>
           <div class="wizard-step-dots">
-            <span class="step-dot done"></span>
             <span class="step-dot active"></span>
             <span class="step-dot"></span>
           </div>
@@ -1707,10 +1558,9 @@
           <div class="wizard-countdown" id="wizard-pair-countdown"></div>
         </div>
 
-        <!-- View 3: Success -->
+        <!-- View 2: Success -->
         <div class="settings-view" id="settings-view-success">
           <div class="wizard-step-dots" style="margin-top:1rem">
-            <span class="step-dot done"></span>
             <span class="step-dot done"></span>
             <span class="step-dot active"></span>
           </div>

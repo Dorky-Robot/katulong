@@ -19,7 +19,6 @@
     import { createTokenFormManager } from "/lib/token-form.js";
     import { createShortcutsStore, loadShortcuts as reloadShortcuts } from "/lib/shortcuts-store.js";
     import { createShortcutsPopup, createShortcutsEditPanel, createAddShortcutModal } from "/lib/shortcuts-components.js";
-    import { createCertificateStore, loadCertificates, setConfirmState, clearConfirmState, clearAllConfirmStates, regenerateNetwork as regenerateNetworkAction, revokeNetwork as revokeNetworkAction, updateNetworkLabel as updateNetworkLabelAction } from "/lib/certificate-store.js";
     import { createDictationModal } from "/lib/dictation-modal.js";
     import { createDragDropManager } from "/lib/drag-drop.js";
     import { showToast, isImageFile, uploadImage, uploadImageToTerminal as uploadImageToTerminalFn } from "/lib/image-upload.js";
@@ -36,7 +35,7 @@
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
-    import { loadQRLib, getConnectInfo, checkPairingStatus } from "/lib/wizard-utils.js";
+    import { loadQRLib, checkPairingStatus } from "/lib/wizard-utils.js";
     import { initModals } from "/lib/modal-init.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
     import { createWebSocketConnection } from "/lib/websocket-connection.js";
@@ -119,19 +118,6 @@
 
     // Subscribe to shortcuts changes for render side effects
     // Note: shortcuts store subscription moved after renderBar is defined (line ~640)
-
-    // --- Certificate Store ---
-
-    const certificateStore = createCertificateStore();
-
-    // Subscribe immediately to catch all updates
-    // This prevents race conditions where load completes before subscription setup
-    certificateStore.subscribe((state) => {
-      // Render function will be defined later, so check if it exists
-      if (typeof renderCertificates !== 'undefined') {
-        renderCertificates(state);
-      }
-    });
 
     document.title = state.session.name;
 
@@ -334,8 +320,6 @@
           const staleNewToken = tokensList?.querySelector('.token-item-new');
           if (staleNewToken) staleNewToken.remove();
           loadTokens();
-        } else if (targetTab === "certificates") {
-          loadCertificateStatus();
         }
       }
     });
@@ -394,7 +378,6 @@
 
     const settingsViews = document.getElementById("settings-views");
     const viewMain = document.getElementById("settings-view-main");
-    const viewTrust = document.getElementById("settings-view-trust");
     const viewPair = document.getElementById("settings-view-pair");
     const viewSuccess = document.getElementById("settings-view-success");
 
@@ -408,7 +391,6 @@
       wizardStore,
       settingsViews,
       viewMain,
-      viewTrust,
       viewPair,
       viewSuccess,
       deviceStore,
@@ -424,7 +406,6 @@
     // Create wizard component (handles all rendering automatically)
     const wizardComponent = createWizardComponent(wizardStore, {
       loadQRLib,
-      getConnectInfo,
       checkPairingStatus,
       onSuccess: () => {
         wizardStore.dispatch({ type: WIZARD_ACTIONS.PAIRING_SUCCESS });
@@ -564,205 +545,6 @@
     });
     wsConnection.initVisibilityReconnect();
 
-    // --- Certificate management (Store-based) ---
-
-    // Note: Subscription already set up at line ~129 immediately after store creation
-    // This ensures we catch all state updates even if load completes before this code runs
-
-    // Trigger load when switching to certificates tab
-    function loadCertificateStatus() {
-      loadCertificates(certificateStore);
-    }
-
-    function renderCertificates(state) {
-      const container = document.getElementById("cert-networks-container");
-      const generateBtn = document.getElementById("cert-generate-current");
-
-      if (!container) return;
-
-      // Show/hide generate button
-      if (generateBtn) {
-        generateBtn.style.display = state.currentNetwork?.hasCertificate ? "none" : "block";
-      }
-
-      // Handle loading/error states
-      if (state.loading && !state.lastUpdated) {
-        container.innerHTML = '<p style="color: var(--text-muted)">Loading certificates...</p>';
-        return;
-      }
-
-      if (state.error) {
-        container.innerHTML = `<p style="color: var(--danger)">Failed to load: ${state.error}</p>`;
-        return;
-      }
-
-      // Render networks
-      const { networks, currentNetwork, confirmState } = state;
-      const currentNetworkId = currentNetwork?.networkId;
-
-      if (networks.length === 0 && !currentNetwork?.hasCertificate) {
-        container.innerHTML = `
-          <p style="color: var(--text-muted)">No networks configured</p>
-          <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.5rem;">
-            Current IPs: ${currentNetwork?.ips?.join(", ") || "None"}
-          </p>
-        `;
-        return;
-      }
-
-      // Sort: current first, then by lastUsedAt
-      const sorted = [...networks].sort((a, b) => {
-        if (a.networkId === currentNetworkId) return -1;
-        if (b.networkId === currentNetworkId) return 1;
-        return new Date(b.lastUsedAt) - new Date(a.lastUsedAt);
-      });
-
-      container.innerHTML = sorted.map(net => {
-        const isCurrent = net.networkId === currentNetworkId;
-        const regenerateKey = `network-${net.networkId}`;
-        const revokeKey = `revoke-${net.networkId}`;
-
-        return `
-          <div class="cert-network-item ${isCurrent ? 'current' : ''}" data-network-id="${net.networkId}">
-            <div class="cert-network-header">
-              <input type="text" class="cert-network-label" value="${net.label}" data-network-id="${net.networkId}" />
-              ${isCurrent ? '<span class="badge">Current</span>' : ''}
-            </div>
-            <div class="cert-network-details">
-              <p>LAN: ${net.ips.join(", ")}</p>
-              ${net.publicIp ? `<p>Public: ${net.publicIp}</p>` : ''}
-              <p>Last used: ${timeAgo(net.lastUsedAt)}</p>
-            </div>
-            <div class="cert-network-actions">
-              ${isCurrent ? `
-                <button class="btn-small btn-regenerate ${confirmState[regenerateKey] ? 'btn-confirm' : ''}" data-network-id="${net.networkId}">
-                  ${confirmState[regenerateKey] ? 'Confirm' : 'Regenerate'}
-                </button>
-              ` : ''}
-              <button class="btn-small btn-danger btn-revoke ${confirmState[revokeKey] ? 'btn-confirm' : ''}" data-network-id="${net.networkId}">
-                ${confirmState[revokeKey] ? 'Confirm' : 'Revoke'}
-              </button>
-            </div>
-          </div>
-        `;
-      }).join('');
-
-      // Attach event handlers
-      attachCertificateHandlers();
-    }
-
-    function attachCertificateHandlers() {
-      // Label editing
-      document.querySelectorAll('.cert-network-label').forEach(input => {
-        input.addEventListener('blur', async (e) => {
-          const networkId = e.target.dataset.networkId;
-          const label = e.target.value;
-          const result = await updateNetworkLabelAction(certificateStore, networkId, label);
-          if (!result.success) {
-            showToast(`Failed to update: ${result.error}`, true);
-          }
-        });
-      });
-
-      // Regenerate buttons
-      document.querySelectorAll('.btn-regenerate').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-          const networkId = e.target.dataset.networkId;
-          const key = `network-${networkId}`;
-
-          if (certificateStore.getState().confirmState[key]) {
-            // Second press - execute
-            const result = await regenerateNetworkAction(certificateStore, networkId);
-            if (result.success) {
-              showToast(result.message || 'Certificate regenerated!');
-            } else {
-              showToast(`Failed: ${result.error}`, true);
-            }
-          } else {
-            // First press - set confirm
-            setConfirmState(certificateStore, key);
-            // Auto-clear after 3 seconds
-            setTimeout(() => clearConfirmState(certificateStore, key), 3000);
-          }
-        });
-      });
-
-      // Revoke buttons
-      document.querySelectorAll('.btn-revoke').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-          const networkId = e.target.dataset.networkId;
-          const key = `revoke-${networkId}`;
-
-          if (certificateStore.getState().confirmState[key]) {
-            // Second press - execute
-            const result = await revokeNetworkAction(certificateStore, networkId);
-            if (result.success) {
-              showToast('Network certificate revoked');
-            } else {
-              showToast(`Failed: ${result.error}`, true);
-            }
-          } else {
-            // First press - set confirm
-            setConfirmState(certificateStore, key);
-            setTimeout(() => clearConfirmState(certificateStore, key), 3000);
-          }
-        });
-      });
-    }
-
-    function timeAgo(dateString) {
-      const date = new Date(dateString);
-      const now = new Date();
-      const seconds = Math.floor((now - date) / 1000);
-
-      if (seconds < 60) return "just now";
-      const minutes = Math.floor(seconds / 60);
-      if (minutes < 60) return `${minutes}m ago`;
-      const hours = Math.floor(minutes / 60);
-      if (hours < 24) return `${hours}h ago`;
-      const days = Math.floor(hours / 24);
-      if (days < 30) return `${days}d ago`;
-      const months = Math.floor(days / 30);
-      if (months < 12) return `${months}mo ago`;
-      const years = Math.floor(months / 12);
-      return `${years}y ago`;
-    }
-
-    // Clear confirm states when clicking outside
-    document.addEventListener('click', (e) => {
-      const isButton = e.target.classList.contains('btn-small') || 
-                       e.target.classList.contains('btn-confirm');
-      if (!isButton && Object.keys(certificateStore.getState().confirmState).length > 0) {
-        clearAllConfirmStates(certificateStore);
-      }
-    });
-
-    // Generate certificate for current network
-    document.getElementById('cert-generate-current')?.addEventListener('click', async () => {
-      try {
-        const state = certificateStore.getState();
-        const currentIp = state.currentNetwork?.ips?.[0];
-
-        if (!currentIp) {
-          showToast("No network IP detected", true);
-          return;
-        }
-
-        const res = await fetch('/api/certificates/networks', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ip: currentIp })
-        });
-
-        if (!res.ok) throw new Error("Failed to generate certificate");
-
-        showToast('Certificate generated successfully!');
-        await loadCertificates(certificateStore);
-      } catch (error) {
-        console.error("Failed to generate certificate:", error);
-        showToast(`Failed: ${error.message}`, true);
-      }
-    });
     // --- Boot ---
 
     renderBar(state.session.name);  // Initial render

@@ -12,9 +12,8 @@ import { createStore, createReducer } from '/lib/store.js';
  */
 export const WIZARD_STATES = {
   IDLE: 'idle',           // Wizard not active
-  TRUST: 'trust',         // Step 1: Trust CA certificate
-  PAIRING: 'pairing',     // Step 2: Show QR + PIN for pairing
-  SUCCESS: 'success',     // Step 3: Pairing completed
+  PAIRING: 'pairing',     // Step 1: Show QR + PIN for pairing
+  SUCCESS: 'success',     // Step 2: Pairing completed
   ERROR: 'error'          // Error state with message
 };
 
@@ -22,7 +21,6 @@ export const WIZARD_STATES = {
  * Wizard action types
  */
 export const WIZARD_ACTIONS = {
-  START_TRUST: 'wizard/start-trust',
   START_PAIRING: 'wizard/start-pairing',
   UPDATE_CODE: 'wizard/update-code',
   PAIRING_SUCCESS: 'wizard/pairing-success',
@@ -53,12 +51,6 @@ const initialState = {
  * Wizard state reducer
  */
 const wizardReducer = createReducer(initialState, {
-  [WIZARD_ACTIONS.START_TRUST]: (state) => ({
-    ...state,
-    currentState: WIZARD_STATES.TRUST,
-    errorMessage: null
-  }),
-
   [WIZARD_ACTIONS.START_PAIRING]: (state, action) => ({
     ...state,
     currentState: WIZARD_STATES.PAIRING,
