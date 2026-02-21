@@ -21,18 +21,14 @@ test.describe("Terminal I/O", () => {
       () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
       { timeout: 10000 },
     );
-    // On desktop: explicitly focus the xterm textarea so Playwright's keyboard
-    // routing correctly targets it. In serial mode, after multiple page.goto()
-    // navigations the auto-focus from term.focus() (app.js) may not be
-    // registered with Playwright's input system, causing keyboard.type() to
-    // silently discard keystrokes.
-    //
-    // On mobile: do NOT focus — explicitly calling .focus() on mobile emulation
-    // activates IME autocorrect that injects spurious characters ("clear").
-    // xterm auto-focuses on page load and that is sufficient for mobile.
-    if (testInfo.project.name !== 'mobile') {
-      await page.locator('.xterm-helper-textarea').focus();
-    }
+    // Do NOT explicitly focus the xterm-helper-textarea here.
+    // xterm auto-focuses it via term.focus() in app.js on page load; explicitly
+    // calling .focus() again on mobile emulation activates IME autocorrect
+    // behaviors that inject spurious characters ("clear"), and repeated focus
+    // calls in serial mode can disrupt Playwright's keyboard routing.
+    // Keyboard events from page.keyboard.type() are routed to the auto-focused
+    // textarea. Tests that need to ensure focus (e.g. after multiple serial
+    // navigations) call window.__xterm.focus() directly before typing.
   });
 
   test.afterEach(async ({ page }) => {
@@ -49,7 +45,7 @@ test.describe("Terminal I/O", () => {
 
   test("Typed command produces visible output", async ({ page }) => {
     const marker = `marker_${Date.now()}`;
-    await page.keyboard.type(`echo ${marker}`);
+    await page.keyboard.type(`echo ${marker}`, { delay: 50 });
     await page.keyboard.press("Enter");
 
     // Use xterm's internal buffer (window.__xterm.buffer.active) rather than
@@ -63,18 +59,24 @@ test.describe("Terminal I/O", () => {
     const marker1 = `first_${Date.now()}`;
     const marker2 = `second_${Date.now()}`;
 
-    await page.keyboard.type(`echo ${marker1}`);
+    await page.keyboard.type(`echo ${marker1}`, { delay: 50 });
     await page.keyboard.press("Enter");
     await waitForTerminalOutput(page, marker1);
 
-    await page.keyboard.type(`echo ${marker2}`);
+    await page.keyboard.type(`echo ${marker2}`, { delay: 50 });
     await page.keyboard.press("Enter");
     await waitForTerminalOutput(page, marker2);
   });
 
   test("Buffer replays on page reload", async ({ page }) => {
     const marker = `reload_${Date.now()}`;
-    await page.keyboard.type(`echo ${marker}`);
+    // In serial mode, after multiple page.goto() navigations Playwright's
+    // keyboard routing may not target the xterm textarea even though app.js
+    // calls term.focus() at boot. Calling term.focus() via page.evaluate()
+    // (identical to the app boot call) re-registers focus without activating
+    // the mobile IME autocorrect that explicit .focus() calls trigger.
+    await page.evaluate(() => window.__xterm?.focus());
+    await page.keyboard.type(`echo ${marker}`, { delay: 50 });
     await page.keyboard.press("Enter");
     await waitForTerminalOutput(page, marker);
 
