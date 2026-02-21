@@ -61,6 +61,14 @@ test.describe("Terminal I/O", () => {
     await page.keyboard.press("Enter");
     await waitForTerminalOutput(page, marker1);
 
+    // Wait for the shell to return to the prompt before typing the next command.
+    // On mobile, keyboard.type() during shell processing can trigger IME
+    // autocorrect that injects spurious characters (e.g. "clear").
+    await page.waitForFunction(
+      () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
+      { timeout: 10000 },
+    );
+
     await page.keyboard.type(`echo ${marker2}`);
     await page.keyboard.press("Enter");
     await waitForTerminalOutput(page, marker2);
