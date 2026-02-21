@@ -99,10 +99,25 @@ export async function readTerminalBuffer(page) {
 }
 
 /**
+ * Send text directly to the PTY via the app's input sender (window.__termSend),
+ * bypassing keyboard events and mobile IME autocorrect.
+ *
+ * Use this instead of page.keyboard.type() in serial-mode tests where
+ * accumulated IME state across multiple page navigations causes spurious
+ * "clear" injections mid-typing.
+ *
+ * Requires window.__termSend to be set in the app (set by app.js after
+ * the input sender is created, i.e. available once the terminal boots).
+ */
+export async function termSend(page, text) {
+  await page.evaluate((t) => window.__termSend?.(t), text);
+}
+
+/**
  * Type command and wait for output
  */
 export async function typeCommand(page, command) {
-  await page.keyboard.type(command);
+  await termSend(page, command);
   await page.keyboard.press('Enter');
   await waitForTerminalOutput(page, command);
 }

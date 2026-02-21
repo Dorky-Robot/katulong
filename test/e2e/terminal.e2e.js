@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { waitForAppReady, waitForTerminalOutput } from './helpers.js';
+import { waitForAppReady, waitForTerminalOutput, termSend } from './helpers.js';
 
 test.describe("Terminal I/O", () => {
   // Run serially in one worker to avoid resource contention between PTY sessions.
@@ -26,9 +26,8 @@ test.describe("Terminal I/O", () => {
     // calling .focus() again on mobile emulation activates IME autocorrect
     // behaviors that inject spurious characters ("clear"), and repeated focus
     // calls in serial mode can disrupt Playwright's keyboard routing.
-    // Keyboard events from page.keyboard.type() are routed to the auto-focused
-    // textarea. Tests that need to ensure focus (e.g. after multiple serial
-    // navigations) call window.__xterm.focus() directly before typing.
+    // Test bodies use termSend() (window.__termSend) instead of keyboard.type()
+    // to bypass IME and keyboard-routing drift entirely.
   });
 
   test.afterEach(async ({ page }) => {
@@ -45,13 +44,12 @@ test.describe("Terminal I/O", () => {
 
   test("Typed command produces visible output", async ({ page }) => {
     const marker = `marker_${Date.now()}`;
-    await page.keyboard.type(`echo ${marker}`, { delay: 50 });
+    // Use termSend (window.__termSend) instead of page.keyboard.type().
+    // In serial mode the accumulated mobile IME state across multiple test
+    // navigations causes keyboard.type() to inject spurious "clear" mid-string.
+    // termSend bypasses keyboard events entirely, sending directly to the PTY.
+    await termSend(page, `echo ${marker}`);
     await page.keyboard.press("Enter");
-
-    // Use xterm's internal buffer (window.__xterm.buffer.active) rather than
-    // .xterm-screen.textContent. The canvas renderer's accessibility layer only
-    // exposes the current cursor row; the output row disappears once the shell
-    // returns to the prompt. The buffer retains all lines permanently.
     await waitForTerminalOutput(page, marker);
   });
 
@@ -59,24 +57,22 @@ test.describe("Terminal I/O", () => {
     const marker1 = `first_${Date.now()}`;
     const marker2 = `second_${Date.now()}`;
 
-    await page.keyboard.type(`echo ${marker1}`, { delay: 50 });
+    await termSend(page, `echo ${marker1}`);
     await page.keyboard.press("Enter");
     await waitForTerminalOutput(page, marker1);
 
-    await page.keyboard.type(`echo ${marker2}`, { delay: 50 });
+    await termSend(page, `echo ${marker2}`);
     await page.keyboard.press("Enter");
     await waitForTerminalOutput(page, marker2);
   });
 
   test("Buffer replays on page reload", async ({ page }) => {
     const marker = `reload_${Date.now()}`;
-    // In serial mode, after multiple page.goto() navigations Playwright's
-    // keyboard routing may not target the xterm textarea even though app.js
-    // calls term.focus() at boot. Calling term.focus() via page.evaluate()
-    // (identical to the app boot call) re-registers focus without activating
-    // the mobile IME autocorrect that explicit .focus() calls trigger.
-    await page.evaluate(() => window.__xterm?.focus());
-    await page.keyboard.type(`echo ${marker}`, { delay: 50 });
+    // termSend bypasses keyboard events entirely, avoiding both mobile IME
+    // autocorrect injection and the Playwright keyboard-routing drift that
+    // occurs after multiple serial page.goto() navigations (where the
+    // auto-focused xterm textarea is no longer tracked by the input system).
+    await termSend(page, `echo ${marker}`);
     await page.keyboard.press("Enter");
     await waitForTerminalOutput(page, marker);
 

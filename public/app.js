@@ -233,6 +233,10 @@
     });
 
     const rawSend = (data) => inputSender.send(data);
+    // Expose input sender for E2E tests. Tests use this to send text to the
+    // PTY without going through keyboard events, bypassing mobile IME
+    // autocorrect that injects spurious characters in serial test mode.
+    window.__termSend = rawSend;
 
     // Initialize terminal keyboard handlers
     const terminalKeyboard = createTerminalKeyboard({
