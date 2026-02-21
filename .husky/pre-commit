@@ -1,3 +1,6 @@
+#!/bin/sh
+# Re-exec with bash to support bash-specific syntax (source, <<<, etc.)
+[ -z "$BASH_VERSION" ] && exec bash "$0" "$@"
 # Get the staged diff (only what's being committed)
 DIFF=$(git diff --cached --diff-filter=ACMR)
 

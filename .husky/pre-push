@@ -1,6 +1,16 @@
+#!/bin/sh
+# Re-exec with bash to support bash-specific syntax (source, <<<, etc.)
+# Note: stdin must be read BEFORE re-execing, so we save it first in POSIX sh
+if [ -z "$BASH_VERSION" ]; then
+  PUSH_INPUT=$(cat)
+  export PUSH_INPUT
+  exec bash "$0" "$@"
+fi
+
 # --- Save stdin before anything else consumes it ---
 # Git pre-push hook receives ref info on stdin. npm/node may consume it.
-PUSH_INPUT=$(cat)
+# When re-exec'd from sh, PUSH_INPUT is already set via export.
+[ -z "${PUSH_INPUT+x}" ] && PUSH_INPUT=$(cat)
 
 # --- Determine what commits are being pushed ---
 

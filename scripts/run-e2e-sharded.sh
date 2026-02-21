@@ -22,6 +22,14 @@ while [ $# -gt 0 ]; do
 done
 set -- "${ARGS[@]+"${ARGS[@]}"}"
 
+# If Playwright browser deps are pre-installed to /tmp/playwright-libs,
+# add them to LD_LIBRARY_PATH so the browser can find shared libraries.
+# This supports running e2e tests in Docker/CI without root access.
+_PW_LIB_DIR="/tmp/playwright-libs/usr/lib/$(uname -m)-linux-gnu"
+if [ -d "$_PW_LIB_DIR" ]; then
+  export LD_LIBRARY_PATH="$_PW_LIB_DIR:${LD_LIBRARY_PATH:-}"
+fi
+
 NCPUS=${E2E_CPUS:-$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)}
 
 # Shard count: max(1, min(NCPUS / 4, 4))
