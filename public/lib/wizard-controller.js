@@ -15,7 +15,6 @@ export function createWizardController(options = {}) {
     wizardStore,
     settingsViews,
     viewMain,
-    viewTrust,
     viewPair,
     viewSuccess,
     deviceStore,
@@ -59,14 +58,6 @@ export function createWizardController(options = {}) {
       settingsViews.removeEventListener("transitionend", onEnd);
     };
     settingsViews.addEventListener("transitionend", onEnd);
-  }
-
-  /**
-   * Start trust step
-   */
-  async function startTrustStep() {
-    if (!wizardStore) return;
-    wizardStore.dispatch({ type: WIZARD_ACTIONS.START_TRUST });
   }
 
   /**
@@ -116,46 +107,25 @@ export function createWizardController(options = {}) {
   function init(elementIds = {}) {
     const {
       pairLanBtnId = "settings-pair-lan",
-      wizardNextBtnId = "wizard-next-pair",
-      wizardBackTrustBtnId = "wizard-back-trust",
       wizardBackPairBtnId = "wizard-back-pair",
       wizardDoneBtnId = "wizard-done"
     } = elementIds;
 
-    // Event: Pair Device → step 1 (trust)
+    // Event: Pair Device → pair step (no trust step needed)
     const pairLanBtn = document.getElementById(pairLanBtnId);
     if (pairLanBtn) {
       pairLanBtn.addEventListener("click", async () => {
-        switchSettingsView(viewTrust);
-        await startTrustStep();
-      });
-    }
-
-    // Event: Next → step 2 (pair)
-    const wizardNextBtn = document.getElementById(wizardNextBtnId);
-    if (wizardNextBtn) {
-      wizardNextBtn.addEventListener("click", async () => {
         switchSettingsView(viewPair);
         await startPairingStep();
       });
     }
 
-    // Event: Back from trust → main
-    const wizardBackTrustBtn = document.getElementById(wizardBackTrustBtnId);
-    if (wizardBackTrustBtn) {
-      wizardBackTrustBtn.addEventListener("click", () => {
-        if (wizardStore) wizardStore.dispatch({ type: WIZARD_ACTIONS.RESET });
-        switchSettingsView(viewMain);
-      });
-    }
-
-    // Event: Back from pair → trust
+    // Event: Back from pair → main
     const wizardBackPairBtn = document.getElementById(wizardBackPairBtnId);
     if (wizardBackPairBtn) {
       wizardBackPairBtn.addEventListener("click", () => {
         if (wizardStore) wizardStore.dispatch({ type: WIZARD_ACTIONS.RESET });
-        switchSettingsView(viewTrust);
-        startTrustStep();
+        switchSettingsView(viewMain);
       });
     }
 
@@ -188,7 +158,6 @@ export function createWizardController(options = {}) {
   return {
     init,
     switchSettingsView,
-    startTrustStep,
     startPairingStep,
     cleanupWizard
   };

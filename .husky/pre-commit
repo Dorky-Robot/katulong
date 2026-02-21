@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Get the staged diff (only what's being committed)
 DIFF=$(git diff --cached --diff-filter=ACMR)
 
@@ -10,13 +11,13 @@ STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
 # --- Security scan: block secrets before they reach any reviewer ---
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/../scripts" && pwd)"
-source "$SCRIPT_DIR/secrets-scan.sh"
+. "$SCRIPT_DIR/secrets-scan.sh"
 scan_secrets "pre-commit" || exit 1
 
 # --- Deterministic quality checks ---
 
 echo "pre-commit: checking for typos..."
-if command -v typos &>/dev/null; then
+if command -v typos >/dev/null 2>&1; then
   if ! typos --format brief; then
     echo ""
     echo "pre-commit: BLOCKED — typos found. Fix them or add to _typos.toml to ignore."
@@ -53,7 +54,9 @@ while IFS= read -r file; do
       *) TO_RUN="$TO_RUN $test_file" ;;
     esac
   fi
-done <<< "$STAGED_FILES"
+done << _EOFILES
+$STAGED_FILES
+_EOFILES
 
 # Trim leading space
 TO_RUN=$(echo "$TO_RUN" | sed 's/^ //')

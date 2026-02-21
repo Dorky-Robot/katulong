@@ -138,10 +138,9 @@ describe("isPublicPath", () => {
     assert.ok(!isPublicPath("/auth/"));
   });
 
-  it("allows /connect/trust paths", () => {
-    assert.ok(isPublicPath("/connect/trust"));
-    assert.ok(isPublicPath("/connect/trust/ca.crt"));
-    assert.ok(isPublicPath("/connect/trust/ca.mobileconfig"));
+  it("rejects /connect/trust paths (trust page removed)", () => {
+    assert.ok(!isPublicPath("/connect/trust"));
+    assert.ok(!isPublicPath("/connect/trust/ca.crt"));
   });
 
   it("rejects install and uninstall scripts (removed — MITM risk)", () => {

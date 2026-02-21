@@ -14,7 +14,7 @@
 scan_secrets() {
   local hook_name="$1"
 
-  if ! command -v gitleaks &>/dev/null; then
+  if ! command -v gitleaks >/dev/null 2>&1; then
     echo "$hook_name: gitleaks not found — install with: brew install gitleaks"
     return 1
   fi

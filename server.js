@@ -34,7 +34,7 @@ import {
 import { SessionName } from "./lib/session-name.js";
 import { PairingChallengeStore } from "./lib/pairing-challenge.js";
 import { AuthState } from "./lib/auth-state.js";
-import { ensureCerts, generateMobileConfig, needsRegeneration, inspectCert, regenerateServerCert, getLanIPs } from "./lib/tls.js";
+import { ensureCerts, getLanIPs } from "./lib/tls.js";
 import { CertificateManager } from "./lib/certificate-manager.js";
 import { ConfigManager } from "./lib/config.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
@@ -852,53 +852,14 @@ const routes = [
     res.end(readFileSync(join(__dirname, "public", "pair.html"), "utf-8"));
   }},
 
-  // --- Trust / certificate routes ---
-
-  { method: "GET", path: "/connect/trust", handler: (req, res) => {
-    const lanIP = getLanIP();
-    const targetUrl = lanIP ? `https://katulong.local` : `https://localhost:${HTTPS_PORT}`;
-    let html = readFileSync(join(__dirname, "public", "trust.html"), "utf-8");
-    html = html.replace("<body>", `<body data-https-url="${escapeAttr(targetUrl)}" data-lan-ip="${escapeAttr(lanIP || "")}" data-https-port="${escapeAttr(HTTPS_PORT)}">`);
-
-    res.writeHead(200, {
-      "Content-Type": "text/html",
-      ...getCspHeaders(false, req)
-    });
-    res.end(html);
-  }},
-
-  { method: "GET", path: "/connect/trust/ca.crt", handler: (req, res) => {
-    const caCertPath = join(certManager.tlsDir, "ca.crt");
-    const cert = readFileSync(caCertPath);
-    res.writeHead(200, {
-      "Content-Type": "application/x-x509-ca-cert",
-      "Content-Disposition": "attachment; filename=katulong-ca.crt",
-    });
-    res.end(cert);
-  }},
-
-  { method: "GET", path: "/connect/trust/ca.mobileconfig", handler: (req, res) => {
-    const caCertPath = join(certManager.tlsDir, "ca.crt");
-    const caCertPem = readFileSync(caCertPath, "utf-8");
-    const mobileconfig = generateMobileConfig(caCertPem, instanceName, instanceId);
-    res.writeHead(200, {
-      "Content-Type": "application/x-apple-aspen-config",
-      "Content-Disposition": "attachment; filename=katulong.mobileconfig",
-    });
-    res.end(mobileconfig);
-  }},
-
   { method: "GET", path: "/connect/info", handler: (req, res) => {
     const lanIP = getLanIP();
-    const trustUrl = lanIP ? `http://${lanIP}:${PORT}/connect/trust` : `/connect/trust`;
-    json(res, 200, { trustUrl, httpsPort: HTTPS_PORT, sshPort: SSH_PORT, sshHost: lanIP || "localhost" });
+    json(res, 200, { httpsPort: HTTPS_PORT, sshPort: SSH_PORT, sshHost: lanIP || "localhost" });
   }},
 
   { method: "GET", path: "/connect", handler: (req, res) => {
-    const lanIP = getLanIP();
-    const trustUrl = lanIP ? `http://${lanIP}:${PORT}/connect/trust` : `/connect/trust`;
     let html = readFileSync(join(__dirname, "public", "connect.html"), "utf-8");
-    html = html.replace("<body>", `<body data-trust-url="${escapeAttr(trustUrl)}" data-https-port="${escapeAttr(HTTPS_PORT)}">`);
+    html = html.replace("<body>", `<body data-https-port="${escapeAttr(HTTPS_PORT)}">`);
     res.writeHead(200, {
       "Content-Type": "text/html",
       ...getCspHeaders(false, req)
@@ -1318,68 +1279,6 @@ const routes = [
     }
   }},
 
-  // CA Certificate Management
-  { method: "POST", path: "/api/certificates/ca/regenerate", handler: async (req, res) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-
-    try {
-      const backupId = await certManager.regenerateCA();
-      log.info("CA certificate regenerated via API", { backupId });
-
-      // Re-sign all network certs with the new CA
-      const networks = await certManager.listNetworks();
-      for (const network of networks) {
-        await certManager.regenerateNetwork(network.networkId);
-        await certManager.reloadCertificate(network.networkId);
-      }
-      log.info("Re-signed network certificates with new CA", { count: networks.length });
-
-      json(res, 200, { success: true, backupId, message: 'CA certificate regenerated with current instance name' });
-    } catch (error) {
-      log.error("Failed to regenerate CA certificate", { error: error.message });
-      json(res, 500, { success: false, error: error.message });
-    }
-  }},
-
-  { method: "GET", path: "/api/certificates/ca/backups", handler: async (req, res) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-
-    try {
-      const backups = await certManager.listCABackups();
-      json(res, 200, { backups });
-    } catch (error) {
-      log.error("Failed to list CA backups", { error: error.message });
-      json(res, 500, { success: false, error: error.message });
-    }
-  }},
-
-  { method: "POST", prefix: "/api/certificates/ca/restore/", handler: async (req, res, backupId) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-
-    try {
-      await certManager.restoreCABackup(backupId);
-      log.info("CA certificate restored from backup via API", { backupId });
-
-      // Re-sign all network certs with the restored CA
-      const networks = await certManager.listNetworks();
-      for (const network of networks) {
-        await certManager.regenerateNetwork(network.networkId);
-        await certManager.reloadCertificate(network.networkId);
-      }
-      log.info("Re-signed network certificates with restored CA", { count: networks.length });
-
-      json(res, 200, { success: true, message: 'CA certificate restored from backup' });
-    } catch (error) {
-      log.error("Failed to restore CA backup", { error: error.message });
-      json(res, 500, { success: false, error: error.message });
-    }
-  }},
 ];
 
 function matchRoute(method, pathname) {
@@ -1815,11 +1714,7 @@ server.listen(PORT, "0.0.0.0", () => {
 });
 
 httpsServer.listen(HTTPS_PORT, "0.0.0.0", () => {
-  const lanIP = getLanIP();
-  log.info("Katulong HTTPS started", {
-    port: HTTPS_PORT,
-    trustUrl: lanIP ? `http://${lanIP}:${PORT}/connect/trust` : null,
-  });
+  log.info("Katulong HTTPS started", { port: HTTPS_PORT });
 });
 
 // --- mDNS: advertise katulong.local on the LAN ---
