@@ -2,6 +2,10 @@ import { test, expect } from "@playwright/test";
 import { waitForAppReady } from './helpers.js';
 
 test.describe("Terminal I/O", () => {
+  // Run serially in one worker to avoid resource contention between PTY sessions.
+  // Parallel workers competing for PTY I/O under CPU load causes timeout failures.
+  test.describe.configure({ mode: 'serial' });
+
   // Each test uses its own session to avoid cross-test interference
   // when parallel workers type into the same default PTY session.
   let sessionName;
@@ -17,10 +21,9 @@ test.describe("Terminal I/O", () => {
       () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
       { timeout: 10000 },
     );
-    // Click the terminal to ensure xterm has keyboard focus. Using click
-    // instead of .focus() on the off-screen textarea because click triggers
-    // xterm's internal focus handler which properly sets up keyboard capture.
-    await page.locator(".xterm").click();
+    // Focus the textarea AFTER the prompt appears so focus is held when
+    // the test starts typing.
+    await page.locator(".xterm-helper-textarea").focus();
   });
 
   test.afterEach(async ({ page }) => {
