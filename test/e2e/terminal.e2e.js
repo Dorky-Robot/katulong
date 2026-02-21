@@ -10,6 +10,7 @@ test.describe("Terminal I/O", () => {
     sessionName = `term-io-${testInfo.testId}-${Date.now()}`;
     await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
     await waitForAppReady(page);
+    await page.locator(".xterm-helper-textarea").focus();
     // Wait for shell prompt before typing — the shell runs init scripts
     // (e.g. .zshrc, clear) and keystrokes typed before the prompt appears
     // get swallowed, causing flaky failures.
