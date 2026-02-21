@@ -3,7 +3,6 @@
  *
  * Centralizes device state to eliminate manual loadDevices() calls.
  * Devices auto-refresh when:
- * - Pairing completes (WebSocket event)
  * - Device renamed/removed
  * - Page loads
  */

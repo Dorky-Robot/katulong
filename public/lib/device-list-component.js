@@ -97,12 +97,9 @@ export function createDeviceListComponent(store, options = {}) {
       return '<p class="devices-loading">Failed to load devices</p>';
     }
 
-    // Filter for LAN devices only
-    const lanDevices = state.devices.filter(d => d.type === 'paired');
-
     // Empty state
-    if (lanDevices.length === 0) {
-      return '<p class="devices-loading">No LAN devices paired yet. Use "Pair Device on LAN" below to add one.</p>';
+    if (state.devices.length === 0) {
+      return '<p class="devices-loading">No devices registered yet.</p>';
     }
 
     // We'll render list via ListRenderer in afterRender
@@ -110,8 +107,7 @@ export function createDeviceListComponent(store, options = {}) {
   };
 
   const afterRender = (container, state) => {
-    const lanDevices = state.devices.filter(d => d.type === 'paired');
-    if (lanDevices.length === 0) return;
+    if (state.devices.length === 0) return;
 
     // Check if we're on localhost
     const isLocalhost = location.hostname === 'localhost' ||
@@ -138,12 +134,6 @@ export function createDeviceListComponent(store, options = {}) {
           onRemove(id, isCurrent);
         }
       },
-      beforeRender: () => {
-        // Add header for localhost view
-        if (isLocalhost) {
-          listContainer.innerHTML = '<div class="device-section-header">LAN DEVICES</div>';
-        }
-      },
       afterRender: () => {
         // Show warning if last device (remote view only)
         if (!isLocalhost && state.devices.length === 1) {
@@ -157,7 +147,7 @@ export function createDeviceListComponent(store, options = {}) {
       }
     });
 
-    renderer.render(lanDevices);
+    renderer.render(state.devices);
   };
 
   return createComponent(store, render, { afterRender });

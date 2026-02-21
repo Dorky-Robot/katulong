@@ -4,9 +4,9 @@ Katulong is a self-hosted web terminal that gives remote shell access to the hos
 
 ## Architecture
 
-- `server.js` — HTTP + WebSocket server (routes, auth middleware, daemon IPC, device pairing)
+- `server.js` — HTTP + WebSocket server (routes, auth middleware, daemon IPC)
 - `daemon.js` — Long-lived process that owns PTY sessions, communicates over a Unix socket via NDJSON
-- `public/index.html` — SPA frontend (xterm.js terminal, shortcut bar, settings, inline pairing wizard)
+- `public/index.html` — SPA frontend (xterm.js terminal, shortcut bar, settings)
 - `lib/auth.js` — WebAuthn registration/login, session token management, passkey storage
 - `lib/http-util.js` — Cookie parsing, public path allowlist, session cookies, challenge store
 - `lib/ssh.js` — SSH server bridging native terminals to daemon PTY sessions
@@ -70,7 +70,7 @@ This ensures:
 **This application provides direct terminal access to the host.** Every code change must be reviewed with this in mind.
 
 ### Authentication
-- First device registers via WebAuthn (passkey). Subsequent devices pair via QR code + 6-digit PIN.
+- First device registers via WebAuthn (passkey). Subsequent devices register via setup token + WebAuthn.
 - Localhost requests (`127.0.0.1`, `::1`) bypass auth (auto-authenticated).
 - Remote requests via tunnel require a valid `katulong_session` cookie.
 - Sessions are 30-day tokens stored server-side. Expired sessions are pruned.
@@ -86,7 +86,7 @@ This ensures:
 - **Session hijacking**: Cookie flags (HttpOnly, SameSite=Lax) must be maintained. No session tokens in URLs or localStorage. Auth state files use atomic writes (temp + rename) to prevent corruption. All session state mutations must use `withStateLock()` to prevent race conditions.
 - **Command injection**: Terminal input goes directly to a PTY. The server must never interpolate user data into shell commands on the server side. Sensitive env vars (SSH_PASSWORD, SETUP_TOKEN) are filtered from PTY environments.
 - **Path traversal**: Static file serving resolves paths against `public/` and checks the prefix. `isPublicPath()` rejects paths with `..`, `//`, or leading dots to prevent traversal. Changes to static file handling must maintain these checks.
-- **Pairing flow**: Pairing codes are short-lived (30s), single-use, and validated (UUID format for code, exactly 6 digits for PIN). PIN brute-force is mitigated by expiry. The pairing endpoint (`POST /auth/pair/start`) requires authentication.
+- **WebAuthn registration**: First device registers via passkey. Additional devices register via setup token (remote access flow).
 - **XSS**: The frontend is a single HTML file with no templating. Any server-side HTML injection (e.g., `data-` attribute interpolation) must escape user-controlled values via `escapeAttr()`.
 - **SSH access**: Password compared via `timingSafeEqual`. Host key persisted to `DATA_DIR/ssh/`. SSH port should be firewalled on untrusted networks.
 - **WebSocket origin**: Origin header validated on WS upgrade. For localhost connections, both socket address and Host/Origin headers are checked — a loopback socket address alone is not sufficient (tunnels like ngrok forward traffic from loopback). Rejects missing or mismatched origins on non-localhost requests.
@@ -101,12 +101,12 @@ When reviewing PRs, pay close attention to:
 1. **Auth changes**: Any modification to `isAuthenticated()`, `isPublicPath()`, `isLocalRequest()`, session validation, or cookie handling
 2. **New routes**: Every new HTTP route must either be in `isPublicPath()` (with justification) or protected by the auth middleware
 3. **WebSocket handling**: Origin validation must be maintained. New message types must not allow unauthenticated actions. Localhost detection must check both socket address and Host/Origin headers — a loopback socket alone is not sufficient (tunnel traffic arrives on loopback).
-4. **Input handling**: Server-side code must never pass unsanitized input to `child_process`, `exec`, or similar. Validate all input formats (UUIDs, PINs, etc.).
+4. **Input handling**: Server-side code must never pass unsanitized input to `child_process`, `exec`, or similar. Validate all input formats (UUIDs, tokens, etc.).
 5. **Static file serving**: The `filePath.startsWith(publicDir)` guard must not be weakened. Path traversal checks in `isPublicPath()` must remain strict.
 6. **Request body handling**: All public endpoints must use `readBody()` with size limits (max 1MB for auth endpoints).
 7. **Dependency changes**: New dependencies increase attack surface — flag additions for review. Prefer self-hosting in `public/vendor/` over CDN imports.
 8. **Frontend security**: No `innerHTML` with user-controlled data, no eval, no dynamic script injection from user input. Use `escapeAttr()` for HTML attribute injection.
-9. **Pairing flow**: Pairing challenges must remain time-limited, single-use, and format-validated.
+9. **WebAuthn flow**: Registration challenges must remain time-limited, single-use, and format-validated.
 10. **Error handling**: Error responses must not leak internal paths, stack traces, or secrets.
 11. **File I/O**: Auth state writes must be atomic (temp + rename). Add error handling for corrupt JSON.
 12. **Environment variables**: Never expose sensitive env vars (SSH_PASSWORD, SETUP_TOKEN, KATULONG_NO_AUTH) to PTY processes.
