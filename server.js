@@ -1,9 +1,7 @@
 import "dotenv/config";
 import { createServer } from "node:http";
-import { createServer as createHttpsServer } from "node:https";
 import { createConnection } from "node:net";
 import { readFileSync, realpathSync, existsSync, watch, mkdirSync, writeFileSync } from "node:fs";
-import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname, resolve } from "node:path";
 import { WebSocketServer } from "ws";
@@ -27,31 +25,19 @@ import { rateLimit } from "./lib/rate-limit.js";
 import {
   processRegistration,
   processAuthentication,
-  processPairing,
   extractChallenge,
 } from "./lib/auth-handlers.js";
 import { SessionName } from "./lib/session-name.js";
-import { PairingChallengeStore } from "./lib/pairing-challenge.js";
 import { AuthState } from "./lib/auth-state.js";
-import { ensureCerts, generateMobileConfig, needsRegeneration, inspectCert, regenerateServerCert, getLanIPs } from "./lib/tls.js";
-import { CertificateManager } from "./lib/certificate-manager.js";
 import { ConfigManager } from "./lib/config.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 import { validateMessage } from "./lib/websocket-validation.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest, getAccessMethod, getAccessDescription } from "./lib/access-method.js";
-import {
-  HTTP_ALLOWED_PATHS,
-  checkHttpsEnforcement,
-  getUnauthenticatedRedirect,
-  checkSessionHttpsRedirect
-} from "./lib/https-enforcement.js";
 import { serveStaticFile, MIME_TYPES } from "./lib/static-files.js";
-import mdns from "multicast-dns";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3001", 10);
-const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || "3002", 10);
 const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
 const DATA_DIR = process.env.KATULONG_DATA_DIR || __dirname;
 const SSH_PORT = parseInt(process.env.SSH_PORT || "2222", 10);
@@ -82,36 +68,6 @@ const instanceName = configManager.getInstanceName();
 const instanceId = configManager.getInstanceId();
 log.info("Configuration loaded", { instanceName, instanceId });
 
-// --- TLS certificates (auto-generated with instance name) ---
-
-// Ensure CA exists (needed by CertificateManager)
-ensureCerts(DATA_DIR, instanceName, instanceId);
-
-// Initialize multi-certificate manager with SNI (pass ConfigManager for dynamic instance name)
-const certManager = new CertificateManager(DATA_DIR, configManager);
-await certManager.initialize();
-
-// Auto-generate certificate for current network
-const currentIps = getLanIPs();
-if (currentIps.length > 0) {
-  try {
-    await certManager.ensureNetworkCert(currentIps[0]);
-    log.info("Certificate ready for current network", { ips: currentIps });
-  } catch (error) {
-    log.warn("Failed to auto-generate certificate for current network", { error: error.message });
-  }
-}
-
-// Ensure at least one network cert exists (fallback to localhost if needed)
-let networks = await certManager.listNetworks();
-if (networks.length === 0) {
-  log.warn("No network certificates found, generating localhost fallback");
-  await certManager.ensureNetworkCert("127.0.0.1");
-  networks = await certManager.listNetworks();
-}
-
-log.info("TLS certificates ready", { dir: join(DATA_DIR, "tls"), networks: networks.length });
-
 const sshHostKey = ensureHostKey(DATA_DIR);
 
 // --- Authentication tokens ---
@@ -123,8 +79,6 @@ const RP_NAME = "Katulong";
 // --- Rate limiting ---
 // 10 attempts per minute for auth endpoints
 const authRateLimit = rateLimit(10, 60000);
-// Stricter limit for pairing (10 attempts per 30 seconds)
-const pairingRateLimit = rateLimit(10, 30000);
 
 if (!process.env.SSH_PASSWORD) {
   log.info("SSH password generated", { password: SSH_PASSWORD });
@@ -138,17 +92,12 @@ if (process.env.KATULONG_NO_AUTH === "1") {
 
 const MAX_REQUEST_BODY_SIZE = 1024 * 1024; // 1MB limit for request bodies
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const PAIR_TTL_MS = 30 * 1000; // 30 seconds
 const DAEMON_RECONNECT_INITIAL_MS = 1000; // 1 second
 const DAEMON_RECONNECT_MAX_MS = 30000; // 30 seconds
 
 // --- Challenge storage (in-memory, 5-min expiry) ---
 
 const { store: storeChallenge, consume: consumeChallenge, _challenges: challenges } = createChallengeStore(CHALLENGE_TTL_MS);
-
-// --- Device pairing (in-memory, 30s expiry) ---
-
-const pairingStore = new PairingChallengeStore(PAIR_TTL_MS);
 
 // --- Credential lockout (in-memory, 15 min window) ---
 
@@ -157,18 +106,6 @@ const credentialLockout = new CredentialLockout({
   windowMs: 15 * 60 * 1000,  // within 15 minutes
   lockoutMs: 15 * 60 * 1000, // locks for 15 minutes
 });
-
-function getLanIP() {
-  const nets = networkInterfaces();
-  for (const ifaces of Object.values(nets)) {
-    for (const iface of ifaces) {
-      if (!iface.internal && iface.family === "IPv4") return iface.address;
-    }
-  }
-  return null;
-}
-
-// isLocalRequest is now imported from lib/access-method.js
 
 function isAuthenticated(req) {
   if (process.env.KATULONG_NO_AUTH === "1") {
@@ -196,7 +133,6 @@ function isAuthenticated(req) {
   return valid;
 }
 
-// HTTP_ALLOWED_PATHS is now imported from lib/https-enforcement.js
 
 // --- IPC client to daemon ---
 
@@ -300,14 +236,6 @@ async function parseJSON(req, maxSize = MAX_REQUEST_BODY_SIZE) {
 
 // --- HTTP routes ---
 
-// MIME_TYPES is now imported from lib/static-files.js
-
-function isLanHost(req) {
-  const host = (req.headers.host || "").replace(/:\d+$/, "");
-  return host === "localhost" || host === "127.0.0.1" || host === "::1"
-    || /^(10|172\.(1[6-9]|2\d|3[01])|192\.168)\./.test(host);
-}
-
 const routes = [
   { method: "GET", path: "/", handler: (req, res) => {
     let html = readFileSync(join(__dirname, "public", "index.html"), "utf-8");
@@ -333,10 +261,6 @@ const routes = [
 
   { method: "GET", path: "/manifest.json", handler: (req, res) => {
     const manifest = JSON.parse(readFileSync(join(__dirname, "public", "manifest.json"), "utf-8"));
-    if (isLanHost(req)) {
-      manifest.name = "Katulong (LAN)";
-      manifest.short_name = "Katulong LAN";
-    }
     res.writeHead(200, { "Content-Type": "application/manifest+json" });
     res.end(JSON.stringify(manifest));
   }},
@@ -569,93 +493,6 @@ const routes = [
     json(res, 200, { ok: true });
   }},
 
-  // --- Pairing routes ---
-
-  { method: "POST", path: "/auth/pair/start", handler: (req, res) => {
-    // Only authenticated users (e.g. localhost auto-auth) can start pairing
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-    const state = loadState();
-    // Skip CSRF validation for localhost (auto-authenticated, trusted environment)
-    if (!isLocalRequest(req) && !validateCsrfToken(req, state)) {
-      return json(res, 403, { error: "Invalid or missing CSRF token" });
-    }
-    const challenge = pairingStore.create();
-    const lanIP = getLanIP();
-    const url = lanIP ? `https://${lanIP}:${HTTPS_PORT}/pair?code=${challenge.code}` : null;
-    json(res, 200, { ...challenge.toJSON(), url });
-  }},
-
-  { method: "POST", path: "/auth/pair/verify", handler: async (req, res) => {
-    // I/O: Parse request and consume pairing challenge
-    const { code, pin, deviceId, deviceName, userAgent: clientUserAgent } = await parseJSON(req);
-    const pairingResult = pairingStore.consume(code, pin);
-
-    // Handle rate limiting (exponential backoff)
-    if (pairingResult.reason === "rate-limited" && pairingResult.retryAfter) {
-      res.writeHead(429, {
-        "Content-Type": "application/json",
-        "Retry-After": String(pairingResult.retryAfter),
-      });
-      res.end(JSON.stringify({
-        error: "Too many failed attempts. Please wait before trying again.",
-        retryAfter: pairingResult.retryAfter,
-      }));
-      return;
-    }
-
-    // Extract user-agent (prefer client-provided, fallback to header)
-    const userAgent = clientUserAgent || req.headers['user-agent'] || 'Unknown';
-
-    // Process pairing inside lock to prevent race conditions
-    const result = await withStateLock(async (currentState) => {
-      const result = processPairing({
-        pairingResult,
-        currentState,
-        deviceId,
-        deviceName,
-        userAgent,
-      });
-
-      if (!result.success) {
-        // Return error info without saving (state unchanged)
-        return { result };
-      }
-
-      // Return updated state and success result
-      return { state: result.data.updatedState, result };
-    });
-
-    // I/O: Handle result
-    if (!result.result.success) {
-      log.warn("Pair verify failed", { reason: result.result.reason, code, storeSize: pairingStore.size() });
-      return json(res, result.result.statusCode, { error: result.result.message });
-    }
-
-    // I/O: Set cookie
-    const { session } = result.result.data;
-    setSessionCookie(res, session.token, session.expiry, { secure: isHttpsConnection(req) });
-
-    // I/O: Notify WebSocket clients
-    for (const client of wss.clients) {
-      if (client.readyState === 1) {
-        client.send(JSON.stringify({ type: "pair-complete", code }));
-      }
-    }
-
-    json(res, 200, { ok: true });
-  }},
-
-  { method: "GET", prefix: "/auth/pair/status/", handler: (req, res, code) => {
-    // Only authenticated users can check pairing status
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-    const consumed = pairingStore.wasConsumed(code);
-    json(res, 200, { consumed });
-  }},
-
   // --- Setup token API (GitHub-style token management) ---
 
   { method: "GET", path: "/api/tokens", handler: (req, res) => {
@@ -836,71 +673,6 @@ const routes = [
 
     log.info("Setup token updated", { id, name: name.trim() });
     json(res, 200, { ok: true });
-  }},
-
-  { method: "GET", path: "/pair", handler: (req, res) => {
-    res.writeHead(200, {
-      "Content-Type": "text/html",
-      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-      "Pragma": "no-cache",
-      "Expires": "0",
-      ...getCspHeaders(false, req)
-    });
-    res.end(readFileSync(join(__dirname, "public", "pair.html"), "utf-8"));
-  }},
-
-  // --- Trust / certificate routes ---
-
-  { method: "GET", path: "/connect/trust", handler: (req, res) => {
-    const lanIP = getLanIP();
-    const targetUrl = lanIP ? `https://katulong.local` : `https://localhost:${HTTPS_PORT}`;
-    let html = readFileSync(join(__dirname, "public", "trust.html"), "utf-8");
-    html = html.replace("<body>", `<body data-https-url="${escapeAttr(targetUrl)}" data-lan-ip="${escapeAttr(lanIP || "")}" data-https-port="${escapeAttr(HTTPS_PORT)}">`);
-
-    res.writeHead(200, {
-      "Content-Type": "text/html",
-      ...getCspHeaders(false, req)
-    });
-    res.end(html);
-  }},
-
-  { method: "GET", path: "/connect/trust/ca.crt", handler: (req, res) => {
-    const caCertPath = join(certManager.tlsDir, "ca.crt");
-    const cert = readFileSync(caCertPath);
-    res.writeHead(200, {
-      "Content-Type": "application/x-x509-ca-cert",
-      "Content-Disposition": "attachment; filename=katulong-ca.crt",
-    });
-    res.end(cert);
-  }},
-
-  { method: "GET", path: "/connect/trust/ca.mobileconfig", handler: (req, res) => {
-    const caCertPath = join(certManager.tlsDir, "ca.crt");
-    const caCertPem = readFileSync(caCertPath, "utf-8");
-    const mobileconfig = generateMobileConfig(caCertPem, instanceName, instanceId);
-    res.writeHead(200, {
-      "Content-Type": "application/x-apple-aspen-config",
-      "Content-Disposition": "attachment; filename=katulong.mobileconfig",
-    });
-    res.end(mobileconfig);
-  }},
-
-  { method: "GET", path: "/connect/info", handler: (req, res) => {
-    const lanIP = getLanIP();
-    const trustUrl = lanIP ? `http://${lanIP}:${PORT}/connect/trust` : `/connect/trust`;
-    json(res, 200, { trustUrl, httpsPort: HTTPS_PORT, sshPort: SSH_PORT, sshHost: lanIP || "localhost" });
-  }},
-
-  { method: "GET", path: "/connect", handler: (req, res) => {
-    const lanIP = getLanIP();
-    const trustUrl = lanIP ? `http://${lanIP}:${PORT}/connect/trust` : `/connect/trust`;
-    let html = readFileSync(join(__dirname, "public", "connect.html"), "utf-8");
-    html = html.replace("<body>", `<body data-trust-url="${escapeAttr(trustUrl)}" data-https-port="${escapeAttr(HTTPS_PORT)}">`);
-    res.writeHead(200, {
-      "Content-Type": "text/html",
-      ...getCspHeaders(false, req)
-    });
-    res.end(html);
   }},
 
   { method: "POST", path: "/auth/logout", handler: async (req, res) => {
@@ -1200,183 +972,8 @@ const routes = [
     }
   }},
 
-  // --- Certificate API ---
-  { method: "GET", path: "/api/certificates/status", handler: async (req, res) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
 
-    const networks = await certManager.listNetworks();
-    const currentIps = getLanIPs();
-    const currentNetworkId = currentIps.length > 0 ? certManager.getNetworkIdForIp(currentIps[0]) : "default";
-    const currentNetwork = networks.find(n => n.networkId === currentNetworkId);
 
-    json(res, 200, {
-      currentNetwork: {
-        networkId: currentNetworkId,
-        ips: currentIps,
-        hasCertificate: !!currentNetwork,
-        metadata: currentNetwork || null,
-      },
-      allNetworks: networks,
-    });
-  }},
-
-  { method: "GET", path: "/api/certificates/networks", handler: async (req, res) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-
-    const networks = await certManager.listNetworks();
-    json(res, 200, { networks });
-  }},
-
-  { method: "POST", path: "/api/certificates/networks", handler: async (req, res) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-
-    try {
-      const { ip } = await parseJSON(req);
-      if (!ip) {
-        return json(res, 400, { error: "IP address required" });
-      }
-
-      const networkId = await certManager.ensureNetworkCert(ip);
-      json(res, 200, { success: true, networkId });
-    } catch (error) {
-      log.error("Failed to generate network certificate", { error: error.message });
-      json(res, 500, { success: false, error: error.message });
-    }
-  }},
-
-  { method: "PUT", prefix: "/api/certificates/networks/", handler: async (req, res, path) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-
-    try {
-      // Extract networkId from path (e.g., "net-192-168-1-0" or "net-192-168-1-0/regenerate")
-      const parts = path.split('/');
-      const networkId = parts[0];
-
-      // Check if this is a regenerate action
-      if (parts.length > 1 && parts[1] === 'regenerate') {
-        return; // Handled by POST route below
-      }
-
-      const { label } = await parseJSON(req);
-      if (!label) {
-        return json(res, 400, { error: "Label required" });
-      }
-
-      await certManager.updateNetworkLabel(networkId, label);
-      json(res, 200, { success: true });
-    } catch (error) {
-      log.error("Failed to update network label", { error: error.message });
-      json(res, 500, { success: false, error: error.message });
-    }
-  }},
-
-  { method: "POST", prefix: "/api/certificates/networks/", handler: async (req, res, path) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-
-    try {
-      const parts = path.split('/');
-      const networkId = parts[0];
-      const action = parts[1];
-
-      if (action === 'regenerate') {
-        await certManager.regenerateNetwork(networkId);
-        await certManager.reloadCertificate(networkId);
-        json(res, 200, { success: true, message: 'Certificate regenerated (no restart needed)' });
-      } else {
-        json(res, 404, { error: 'Not found' });
-      }
-    } catch (error) {
-      log.error("Failed to regenerate network certificate", { error: error.message });
-      json(res, 500, { success: false, error: error.message });
-    }
-  }},
-
-  { method: "DELETE", prefix: "/api/certificates/networks/", handler: async (req, res, networkId) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-
-    try {
-      await certManager.revokeNetwork(networkId);
-      json(res, 200, { success: true });
-    } catch (error) {
-      log.error("Failed to revoke network certificate", { error: error.message });
-      json(res, 500, { success: false, error: error.message });
-    }
-  }},
-
-  // CA Certificate Management
-  { method: "POST", path: "/api/certificates/ca/regenerate", handler: async (req, res) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-
-    try {
-      const backupId = await certManager.regenerateCA();
-      log.info("CA certificate regenerated via API", { backupId });
-
-      // Re-sign all network certs with the new CA
-      const networks = await certManager.listNetworks();
-      for (const network of networks) {
-        await certManager.regenerateNetwork(network.networkId);
-        await certManager.reloadCertificate(network.networkId);
-      }
-      log.info("Re-signed network certificates with new CA", { count: networks.length });
-
-      json(res, 200, { success: true, backupId, message: 'CA certificate regenerated with current instance name' });
-    } catch (error) {
-      log.error("Failed to regenerate CA certificate", { error: error.message });
-      json(res, 500, { success: false, error: error.message });
-    }
-  }},
-
-  { method: "GET", path: "/api/certificates/ca/backups", handler: async (req, res) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-
-    try {
-      const backups = await certManager.listCABackups();
-      json(res, 200, { backups });
-    } catch (error) {
-      log.error("Failed to list CA backups", { error: error.message });
-      json(res, 500, { success: false, error: error.message });
-    }
-  }},
-
-  { method: "POST", prefix: "/api/certificates/ca/restore/", handler: async (req, res, backupId) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-
-    try {
-      await certManager.restoreCABackup(backupId);
-      log.info("CA certificate restored from backup via API", { backupId });
-
-      // Re-sign all network certs with the restored CA
-      const networks = await certManager.listNetworks();
-      for (const network of networks) {
-        await certManager.regenerateNetwork(network.networkId);
-        await certManager.reloadCertificate(network.networkId);
-      }
-      log.info("Re-signed network certificates with restored CA", { count: networks.length });
-
-      json(res, 200, { success: true, message: 'CA certificate restored from backup' });
-    } catch (error) {
-      log.error("Failed to restore CA backup", { error: error.message });
-      json(res, 500, { success: false, error: error.message });
-    }
-  }},
 ];
 
 function matchRoute(method, pathname) {
@@ -1393,41 +990,9 @@ function matchRoute(method, pathname) {
 async function handleRequest(req, res) {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
 
-  // Add HSTS header for HTTPS requests
-  if (req.socket.encrypted) {
-    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-  }
-
-  // HTTPS enforcement: Check if user with valid session should be redirected to HTTPS
-  const sessionRedirect = checkSessionHttpsRedirect(
-    req,
-    pathname,
-    isPublicPath,
-    (req) => {
-      const cookies = parseCookies(req.headers.cookie);
-      const token = cookies.get("katulong_session");
-      const state = loadState();
-      return token && state && validateSession(state, token);
-    }
-  );
-  if (sessionRedirect) {
-    res.writeHead(302, { Location: sessionRedirect.redirect });
-    res.end();
-    return;
-  }
-
-  // HTTPS enforcement: Check if this request requires HTTPS
-  const httpsCheck = checkHttpsEnforcement(req, pathname, isPublicPath, isHttpsConnection);
-  if (httpsCheck?.redirect) {
-    res.writeHead(302, { Location: httpsCheck.redirect });
-    res.end();
-    return;
-  }
-
   // Auth middleware: redirect unauthenticated requests
   if (!isPublicPath(pathname) && !isAuthenticated(req)) {
-    const redirectTo = getUnauthenticatedRedirect(req);
-    res.writeHead(302, { Location: redirectTo });
+    res.writeHead(302, { Location: "/login" });
     res.end();
     return;
   }
@@ -1450,15 +1015,8 @@ async function handleRequest(req, res) {
   if (match) {
     // Apply rate limiting to auth endpoints
     const authPaths = ["/auth/register/options", "/auth/register/verify", "/auth/login/options", "/auth/login/verify"];
-    const pairingPaths = ["/auth/pair/verify"];
 
-    if (pairingPaths.includes(pathname)) {
-      // Check pairing rate limit (stricter)
-      const rateLimitResult = await new Promise((resolve) => {
-        pairingRateLimit(req, res, () => resolve(true));
-      });
-      if (!rateLimitResult) return; // Rate limit exceeded, response already sent
-    } else if (authPaths.includes(pathname)) {
+    if (authPaths.includes(pathname)) {
       // Check auth rate limit
       const rateLimitResult = await new Promise((resolve) => {
         authRateLimit(req, res, () => resolve(true));
@@ -1499,12 +1057,6 @@ async function handleRequest(req, res) {
 }
 
 const server = createServer(handleRequest);
-const { cert: defaultCert, key: defaultKey } = certManager.getDefaultCertKey();
-const httpsServer = createHttpsServer({
-  cert: defaultCert,
-  key: defaultKey,
-  SNICallback: certManager.getSNICallback()
-}, handleRequest);
 
 // --- WebSocket ---
 
@@ -1580,7 +1132,6 @@ function handleUpgrade(req, socket, head) {
 }
 
 server.on("upgrade", handleUpgrade);
-httpsServer.on("upgrade", handleUpgrade);
 
 // Relay daemon broadcasts to matching browser clients
 function sendToSession(sessionName, payload) {
@@ -1726,43 +1277,9 @@ process.on("unhandledRejection", (err) => {
   log.error("Unhandled rejection", { error: err?.message || String(err) });
 });
 
-server.listen(PORT, "0.0.0.0", () => {
-  log.info("Katulong HTTP started", { port: PORT });
+server.listen(PORT, "127.0.0.1", () => {
+  log.info("Katulong started", { port: PORT });
 });
-
-httpsServer.listen(HTTPS_PORT, "0.0.0.0", () => {
-  const lanIP = getLanIP();
-  log.info("Katulong HTTPS started", {
-    port: HTTPS_PORT,
-    trustUrl: lanIP ? `http://${lanIP}:${PORT}/connect/trust` : null,
-  });
-});
-
-// --- mDNS: advertise katulong.local on the LAN ---
-{
-  const mdnsIP = getLanIP();
-  if (mdnsIP) {
-    try {
-      const mdnsServer = mdns();
-      mdnsServer.on("query", (query) => {
-        for (const q of query.questions) {
-          if (q.name === "katulong.local" && (q.type === "A" || q.type === "ANY")) {
-            mdnsServer.respond({
-              answers: [{ name: "katulong.local", type: "A", ttl: 120, data: mdnsIP }],
-            });
-            break;
-          }
-        }
-      });
-      mdnsServer.on("error", (err) => {
-        log.warn("mDNS error", { error: err.message });
-      });
-      log.info("mDNS advertising katulong.local", { ip: mdnsIP });
-    } catch (err) {
-      log.warn("Failed to start mDNS", { error: err.message });
-    }
-  }
-}
 
 sshRelay = startSSHServer({
   port: SSH_PORT,

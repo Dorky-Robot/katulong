@@ -120,15 +120,12 @@ describe("isPublicPath", () => {
     assert.ok(isPublicPath("/auth/logout"));
   });
 
-  it("allows /pair", () => {
-    assert.ok(isPublicPath("/pair"));
+  it("rejects /pair (removed with LAN pairing)", () => {
+    assert.ok(!isPublicPath("/pair"));
   });
 
-  it("allows /auth/pair/verify", () => {
-    assert.ok(isPublicPath("/auth/pair/verify"));
-  });
-
-  it("rejects /auth/pair/start (protected)", () => {
+  it("rejects /auth/pair/* (pairing removed)", () => {
+    assert.ok(!isPublicPath("/auth/pair/verify"));
     assert.ok(!isPublicPath("/auth/pair/start"));
   });
 
@@ -138,15 +135,10 @@ describe("isPublicPath", () => {
     assert.ok(!isPublicPath("/auth/"));
   });
 
-  it("allows /connect/trust paths", () => {
-    assert.ok(isPublicPath("/connect/trust"));
-    assert.ok(isPublicPath("/connect/trust/ca.crt"));
-    assert.ok(isPublicPath("/connect/trust/ca.mobileconfig"));
-  });
-
-  it("rejects install and uninstall scripts (removed — MITM risk)", () => {
-    assert.ok(!isPublicPath("/connect/install.sh"));
-    assert.ok(!isPublicPath("/connect/uninstall.sh"));
+  it("rejects /connect/trust paths (removed with LAN support)", () => {
+    assert.ok(!isPublicPath("/connect/trust"));
+    assert.ok(!isPublicPath("/connect/trust/ca.crt"));
+    assert.ok(!isPublicPath("/connect/trust/ca.mobileconfig"));
   });
 
   it("allows static extensions", () => {

@@ -31,7 +31,6 @@ describe("Config API Integration", () => {
       env: {
         ...process.env,
         PORT: TEST_PORT,
-        HTTPS_PORT: TEST_PORT + 1, // Use 3004 for HTTPS
         SSH_PORT: TEST_PORT + 10, // Use 3013 for SSH
         KATULONG_DATA_DIR: testDataDir, // Use correct env var name
         KATULONG_NO_AUTH: "1" // Bypass auth for testing

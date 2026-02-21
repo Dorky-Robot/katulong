@@ -2,7 +2,7 @@
  * Device Management Module
  *
  * Provides utilities for device identification and persistence using IndexedDB
- * with localStorage fallback. Used across app.js, login.js, and pair.js.
+ * with localStorage fallback. Used across app.js and login.js.
  */
 
 /**
