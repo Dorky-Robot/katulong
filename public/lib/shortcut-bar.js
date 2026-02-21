@@ -1,7 +1,7 @@
 /**
  * Shortcut Bar Renderer
  *
- * Composable shortcut bar with P2P indicator, session button, and shortcuts.
+ * Composable shortcut bar with session button and shortcuts.
  */
 
 import { keysToSequence, sendSequence } from "/lib/key-mapping.js";
@@ -21,7 +21,6 @@ export function createShortcutBar(options = {}) {
     onSettingsClick,
     sendFn,
     term,
-    updateP2PIndicator,
     getInstanceIcon
   } = options;
 
@@ -32,15 +31,6 @@ export function createShortcutBar(options = {}) {
     if (!container) return;
 
     container.innerHTML = "";
-
-    // P2P indicator
-    const p2pDot = document.createElement("span");
-    p2pDot.id = "p2p-indicator";
-    p2pDot.title = "P2P: connecting...";
-    container.appendChild(p2pDot);
-
-    // Update P2P indicator if callback provided
-    if (updateP2PIndicator) updateP2PIndicator();
 
     // Session button
     const sessBtn = document.createElement("button");

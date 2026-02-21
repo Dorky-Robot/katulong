@@ -1,8 +1,8 @@
 /**
- * E2E tests for WebSocket and P2P connection reliability
+ * E2E tests for WebSocket connection reliability
  *
- * Tests reconnection logic, fallback behavior, and connection indicator.
- * Validates fixes from PR #40 (WebSocket and P2P reconnection issues).
+ * Tests reconnection logic and connection behavior.
+ * Validates fixes from PR #40 (WebSocket reconnection issues).
  */
 
 import { test, expect } from '@playwright/test';
@@ -11,38 +11,6 @@ import { setupTest } from './helpers.js';
 test.describe('Connection Reliability', () => {
   test.beforeEach(async ({ page, context }) => {
     await setupTest({ page, context });
-  });
-
-  test('should establish P2P connection on load', async ({ page }) => {
-    // Check connection indicator (ID not class)
-    const p2pIndicator = page.locator('#p2p-indicator');
-    await expect(p2pIndicator).toBeVisible({ timeout: 5000 });
-
-    // Wait for connection to be established - indicator should get a class
-    await page.waitForFunction(
-      () => {
-        const indicator = document.getElementById('p2p-indicator');
-        return indicator && (
-          indicator.classList.contains('p2p-active') ||
-          indicator.classList.contains('p2p-relay') ||
-          indicator.classList.contains('ws-connected')
-        );
-      },
-      { timeout: 10000 }
-    );
-
-    // Should show connected state - either p2p-active (green), p2p-relay (orange), or ws-connected
-    const hasConnectedClass = await p2pIndicator.evaluate(el => {
-      return el.classList.contains('p2p-active') ||
-             el.classList.contains('p2p-relay') ||
-             el.classList.contains('ws-connected');
-    });
-
-    // Log connection state for debugging
-    const classes = await p2pIndicator.evaluate(el => el.className);
-    console.log('[Test] P2P indicator classes:', classes);
-
-    expect(hasConnectedClass).toBeTruthy();
   });
 
   test('should send and receive terminal data over connection', async ({ page }) => {
@@ -68,24 +36,21 @@ test.describe('Connection Reliability', () => {
   });
 
   test('should show connection indicator states', async ({ page }) => {
-    const p2pIndicator = page.locator('#p2p-indicator');
-    await expect(p2pIndicator).toBeVisible({ timeout: 5000 });
+    // Verify the terminal is connected and responsive
+    await page.waitForSelector('.xterm-screen');
+    const testCommand = `echo "indicator-test-${Date.now()}"`;
+    await page.keyboard.type(testCommand);
+    await page.keyboard.press('Enter');
 
-    // Get initial state
-    const initialState = await p2pIndicator.evaluate(el => ({
-      classes: el.className,
-      status: el.dataset.connectionStatus,
-      title: el.getAttribute('title') || el.getAttribute('aria-label')
-    }));
+    await page.waitForFunction(
+      () => document.querySelector('.xterm-screen')?.textContent?.includes('indicator-test'),
+      { timeout: 5000 }
+    );
 
-    console.log('[Test] Connection state:', initialState);
+    const terminalText = await page.locator('.xterm-screen').textContent();
+    expect(terminalText).toContain('indicator-test');
 
-    // Should have some indication of connection status
-    expect(
-      initialState.classes.length > 0 ||
-      initialState.status ||
-      initialState.title
-    ).toBeTruthy();
+    console.log('[Test] Connection is active and responsive');
   });
 
   test('should handle page reload and reconnect', async ({ page }) => {
@@ -171,7 +136,6 @@ test.describe('Connection Reliability', () => {
     // Should not have connection-related errors
     const connectionErrors = errors.filter(e =>
       e.includes('WebSocket') ||
-      e.includes('P2P') ||
       e.includes('connection') ||
       e.includes('reconnect')
     );
@@ -185,25 +149,22 @@ test.describe('Connection Reliability', () => {
     expect(connectionErrors.length).toBeLessThan(5);
   });
 
-  test('should fallback to WebSocket if P2P fails', async ({ page }) => {
-    // This is hard to test directly without mocking P2P failure
-    // For now, verify that connection works regardless of transport
-
-    // Send command to verify connection works
-    const testCommand = `echo "fallback-test-${Date.now()}"`;
+  test('should send commands over WebSocket', async ({ page }) => {
+    // Send command to verify WebSocket connection works
+    const testCommand = `echo "ws-test-${Date.now()}"`;
     await page.keyboard.type(testCommand);
     await page.keyboard.press('Enter');
 
     // Wait for output to appear
     await page.waitForFunction(
-      () => document.querySelector('.xterm-screen')?.textContent?.includes('fallback-test'),
+      () => document.querySelector('.xterm-screen')?.textContent?.includes('ws-test'),
       { timeout: 5000 }
     );
 
     const terminalText = await page.locator('.xterm-screen').textContent();
-    expect(terminalText).toContain('fallback-test');
+    expect(terminalText).toContain('ws-test');
 
-    console.log('[Test] Connection working (P2P or WebSocket)');
+    console.log('[Test] WebSocket connection working');
   });
 
   test('should handle WebSocket close and reopen', async ({ page }) => {
@@ -218,7 +179,7 @@ test.describe('Connection Reliability', () => {
     // Wait a moment for reconnection to be initiated
     await page.waitForTimeout(1000);
 
-    // Verify reconnection by sending command (WebSocket or P2P should reconnect)
+    // Verify reconnection by sending command
     const testCommand = `echo "after-ws-close-${Date.now()}"`;
     await page.keyboard.type(testCommand);
     await page.keyboard.press('Enter');
@@ -323,72 +284,15 @@ test.describe('Connection Reliability', () => {
     const page2 = await context.newPage();
     const pagePromise = page2.goto("/");
 
-    // Try to catch the connecting state
-    const p2pIndicator = page2.locator('#p2p-indicator');
-
-    // Check if we can see a connecting/intermediate state
-    let connectingStateSeen = false;
-    for (let i = 0; i < 10; i++) {
-      const classes = await p2pIndicator.evaluate(el => el.className).catch(() => '');
-      if (classes.includes('connecting') || classes.includes('pending')) {
-        connectingStateSeen = true;
-        console.log('[Test] Connecting state observed');
-        break;
-      }
-      // Small delay to poll state
-      await page2.waitForFunction(() => true, { timeout: 100 }).catch(() => {});
-    }
-
     await pagePromise;
     await page2.waitForSelector('.xterm', { timeout: 10000 });
     await page2.waitForSelector('.xterm-screen', { timeout: 5000 });
 
+    // Verify terminal is functional
+    const terminalVisible = await page2.locator('.xterm-screen').isVisible();
+    expect(terminalVisible).toBeTruthy();
+    console.log('[Test] Terminal visible after connection');
+
     await page2.close();
-
-    // Note: connecting state is very brief, so it's ok if we don't catch it
-    console.log('[Test] Connecting state seen:', connectingStateSeen);
-  });
-});
-
-test.describe('P2P Specific Tests', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
-  });
-
-  test('should use P2P when available (localhost)', async ({ page }) => {
-    // On localhost, P2P should be available
-    // Check if P2P is being used by examining connection logs or state
-
-    const p2pActive = await page.evaluate(() => {
-      // Check if P2P datachannel exists
-      return window.pc && window.pc.connectionState === 'connected';
-    }).catch(() => false);
-
-    console.log('[Test] P2P active:', p2pActive);
-
-    // Even if P2P not active, WebSocket fallback should work
-  });
-
-  test('should have low latency with P2P connection', async ({ page }) => {
-    // Measure round-trip time for a command
-    const startTime = Date.now();
-
-    await page.keyboard.type('echo "latency-test"');
-    await page.keyboard.press('Enter');
-
-    // Wait for output to appear
-    await page.waitForFunction(
-      () => document.querySelector('.xterm-screen')?.textContent?.includes('latency-test'),
-      { timeout: 5000 }
-    );
-
-    const latency = Date.now() - startTime;
-    console.log('[Test] Command latency:', latency, 'ms');
-
-    // P2P should have low latency (< 500ms for simple echo)
-    // WebSocket might be slightly higher but still reasonable
-    expect(latency).toBeLessThan(2000);
   });
 });

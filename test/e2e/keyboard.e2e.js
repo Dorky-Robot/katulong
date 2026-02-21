@@ -3,7 +3,7 @@ import { setupTest } from "./helpers.js";
 
 test.describe("Keyboard handling", () => {
   test.beforeEach(async ({ page, context }) => {
-    // Capture outgoing input messages from both WebSocket and P2P DataChannel
+    // Capture outgoing input messages from WebSocket
     await page.addInitScript(() => {
       window.__inputsSent = [];
       const origWsSend = WebSocket.prototype.send;
