@@ -52,6 +52,52 @@ describe("parseCookies", () => {
     assert.equal(map.get("good"), "value");
     assert.equal(map.get("also"), "ok");
   });
+
+  it("handles cookie with empty key (=value)", () => {
+    const map = parseCookies("=orphan-value");
+    // After trim, key is "" — still stored in the map
+    assert.equal(map.get(""), "orphan-value");
+  });
+
+  it("does not URL-decode percent-encoded values (cookies are not decoded by this parser)", () => {
+    const map = parseCookies("token=hello%20world");
+    assert.equal(map.get("token"), "hello%20world");
+  });
+
+  it("handles duplicate cookie names — last value wins (Map semantics)", () => {
+    const map = parseCookies("session=first; session=second");
+    assert.equal(map.get("session"), "second");
+    assert.equal(map.size, 1);
+  });
+
+  it("handles trailing semicolon without error", () => {
+    const map = parseCookies("a=1;");
+    assert.equal(map.get("a"), "1");
+    assert.equal(map.size, 1);
+  });
+
+  it("returns empty map for header containing only semicolons", () => {
+    const map = parseCookies(";;;");
+    assert.equal(map.size, 0);
+  });
+
+  it("handles very long cookie values", () => {
+    const longValue = "x".repeat(4096);
+    const map = parseCookies(`session=${longValue}`);
+    assert.equal(map.get("session"), longValue);
+    assert.equal(map.get("session").length, 4096);
+  });
+
+  it("handles unicode characters in cookie value", () => {
+    const map = parseCookies("lang=日本語");
+    assert.equal(map.get("lang"), "日本語");
+  });
+
+  it("handles whitespace-only key (trims to empty string)", () => {
+    const map = parseCookies("   =value");
+    // Key after trim is "", value is "value"
+    assert.equal(map.get(""), "value");
+  });
 });
 
 describe("escapeAttr", () => {

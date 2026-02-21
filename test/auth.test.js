@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { writeFileSync, readFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSession, validateSession, pruneExpiredSessions, loadState, saveState, _invalidateCache } from "../lib/auth.js";
@@ -229,5 +229,131 @@ describe("loadState caching", () => {
 
     // Should remove token5 (old pairing session - pairing now creates credentials)
     assert.equal(sessions.token5, undefined, "should remove old pairing sessions");
+  });
+});
+
+describe("loadState - corrupted state file handling", () => {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const DATA_DIR = process.env.KATULONG_DATA_DIR || join(__dirname, "..");
+  const STATE_PATH = join(DATA_DIR, "katulong-auth.json");
+  let originalExists = false;
+  let originalContent;
+
+  beforeEach(() => {
+    try {
+      originalContent = readFileSync(STATE_PATH, "utf-8");
+      originalExists = true;
+    } catch {
+      originalExists = false;
+    }
+    _invalidateCache();
+  });
+
+  afterEach(() => {
+    _invalidateCache();
+    if (originalExists) {
+      writeFileSync(STATE_PATH, originalContent);
+    } else {
+      try { unlinkSync(STATE_PATH); } catch {}
+    }
+  });
+
+  it("returns null for corrupt JSON (unparseable content)", () => {
+    writeFileSync(STATE_PATH, "{ invalid json ::::");
+    _invalidateCache();
+    const result = loadState();
+    assert.equal(result, null, "corrupt JSON should return null rather than throw");
+  });
+
+  it("returns null for truncated JSON", () => {
+    writeFileSync(STATE_PATH, '{"user": {"id": "test"'); // truncated before closing braces
+    _invalidateCache();
+    const result = loadState();
+    assert.equal(result, null, "truncated JSON should return null");
+  });
+
+  it("returns null for empty state file", () => {
+    writeFileSync(STATE_PATH, "");
+    _invalidateCache();
+    const result = loadState();
+    assert.equal(result, null, "empty file should return null");
+  });
+
+  it("returns null for file containing only whitespace", () => {
+    writeFileSync(STATE_PATH, "   \n  \t  ");
+    _invalidateCache();
+    const result = loadState();
+    assert.equal(result, null, "whitespace-only file should return null");
+  });
+
+  it("can recover and load valid state after corruption is fixed", () => {
+    // Write corrupt file first
+    writeFileSync(STATE_PATH, "not-json");
+    _invalidateCache();
+    assert.equal(loadState(), null, "should be null when corrupt");
+
+    // Now fix the file
+    const validState = { user: { id: "recover", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] };
+    writeFileSync(STATE_PATH, JSON.stringify(validState));
+    _invalidateCache();
+    const result = loadState();
+    assert.ok(result, "should load successfully after fixing corruption");
+    assert.equal(result.user.id, "recover");
+  });
+});
+
+describe("validateSession - boundary and edge cases", () => {
+  it("returns false for session expiring exactly 1ms in the past", () => {
+    const state = { sessions: { tok: Date.now() - 1 } };
+    assert.ok(!validateSession(state, "tok"), "session expired 1ms ago should be invalid");
+  });
+
+  it("returns true for session expiring 1ms in the future", () => {
+    const state = { sessions: { tok: Date.now() + 1000 } };
+    assert.ok(validateSession(state, "tok"), "session expiring 1s from now should be valid");
+  });
+
+  it("returns false for session with expiry of 0 (epoch)", () => {
+    const state = { sessions: { tok: 0 } };
+    assert.ok(!validateSession(state, "tok"), "expiry of 0 (epoch) is always in the past");
+  });
+
+  it("returns false for empty-string token", () => {
+    const state = { sessions: { "": Date.now() + 60000 } };
+    assert.ok(!validateSession(state, ""), "empty token should not be valid");
+  });
+});
+
+describe("pruneExpiredSessions - boundary conditions", () => {
+  it("removes sessions with expiry exactly equal to Date.now() - 1", () => {
+    const expiry = Date.now() - 1;
+    const state = { sessions: { boundaryToken: expiry } };
+    const result = pruneExpiredSessions(state);
+    assert.equal(result.sessions.boundaryToken, undefined, "just-expired session should be pruned");
+  });
+
+  it("keeps sessions with expiry well in the future", () => {
+    const expiry = Date.now() + 1000 * 60 * 60; // 1 hour from now
+    const state = { sessions: { futureToken: expiry } };
+    const result = pruneExpiredSessions(state);
+    assert.ok(result.sessions.futureToken, "future session should be kept");
+  });
+
+  it("handles mixed valid and expired sessions in one pass", () => {
+    const now = Date.now();
+    const state = {
+      sessions: {
+        valid1: now + 10000,
+        expired1: now - 10000,
+        valid2: now + 20000,
+        expired2: now - 1,
+      },
+    };
+    const result = pruneExpiredSessions(state);
+    assert.ok(result.sessions.valid1, "valid1 should survive");
+    assert.ok(result.sessions.valid2, "valid2 should survive");
+    assert.equal(result.sessions.expired1, undefined, "expired1 should be pruned");
+    assert.equal(result.sessions.expired2, undefined, "expired2 should be pruned");
+    assert.equal(Object.keys(result.sessions).length, 2);
   });
 });

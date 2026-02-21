@@ -137,6 +137,108 @@ describe("daemon integration", () => {
     assert.ok(result.error);
   });
 
+  it("returns error for unknown RPC message type", async () => {
+    const result = await rpc(sock, { type: "unknown-command-xyz", data: "test" });
+    assert.ok(result.error, "unknown message type should return an error response");
+    assert.match(result.error, /unknown/i);
+  });
+
+  it("attach auto-creates a session that does not yet exist", async () => {
+    const sessionName = "auto-create-" + Date.now();
+    const result = await rpc(sock, {
+      type: "attach",
+      clientId: "auto-client-" + Date.now(),
+      session: sessionName,
+      cols: 80,
+      rows: 24,
+    });
+    assert.equal(typeof result.buffer, "string", "auto-created session should return a buffer");
+    assert.equal(typeof result.alive, "boolean", "auto-created session should return alive status");
+    assert.ok(result.alive, "newly created session should be alive");
+
+    // Verify session appears in the list
+    const list = await rpc(sock, { type: "list-sessions" });
+    const names = list.sessions.map((s) => s.name);
+    assert.ok(names.includes(sessionName), "auto-created session should appear in list");
+
+    // Cleanup
+    await rpc(sock, { type: "delete-session", name: sessionName });
+  });
+
+  it("rename-session fails when destination name already exists", async () => {
+    await rpc(sock, { type: "create-session", name: "rename-src-" + process.pid });
+    await rpc(sock, { type: "create-session", name: "rename-dst-" + process.pid });
+
+    const result = await rpc(sock, {
+      type: "rename-session",
+      oldName: "rename-src-" + process.pid,
+      newName: "rename-dst-" + process.pid,
+    });
+    assert.ok(result.error, "rename to an existing name should fail");
+
+    // Cleanup
+    await rpc(sock, { type: "delete-session", name: "rename-src-" + process.pid });
+    await rpc(sock, { type: "delete-session", name: "rename-dst-" + process.pid });
+  });
+
+  it("handles concurrent create-session calls with the same name", async () => {
+    const sessionName = "concurrent-create-" + Date.now();
+
+    // Fire both RPCs concurrently — Node.js daemon is single-threaded but
+    // responses may arrive out-of-order; verify exactly one succeeds.
+    const [result1, result2] = await Promise.all([
+      rpc(sock, { type: "create-session", name: sessionName }),
+      rpc(sock, { type: "create-session", name: sessionName }),
+    ]);
+
+    const successes = [result1, result2].filter((r) => !r.error);
+    const failures = [result1, result2].filter((r) => r.error);
+
+    assert.equal(successes.length, 1, "exactly one concurrent create should succeed");
+    assert.equal(failures.length, 1, "the other should fail as duplicate");
+
+    // Cleanup
+    await rpc(sock, { type: "delete-session", name: sessionName });
+  });
+
+  it("session persists after a client disconnects and reconnects", async () => {
+    const sessionName = "reconnect-persist-" + Date.now();
+    await rpc(sock, { type: "create-session", name: sessionName });
+
+    // Open a second independent connection and immediately disconnect it
+    const sock2 = createConnection(SOCKET_PATH);
+    await new Promise((resolve) => sock2.on("connect", resolve));
+
+    // Verify the session is visible from the second connection
+    const list1 = await rpc(sock2, { type: "list-sessions" });
+    const names1 = list1.sessions.map((s) => s.name);
+    assert.ok(names1.includes(sessionName), "session should be visible from a fresh connection");
+
+    // Disconnect the second socket abruptly (simulates a client crash / disconnect)
+    sock2.destroy();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Verify from the original connection that the PTY session still exists
+    const list2 = await rpc(sock, { type: "list-sessions" });
+    const names2 = list2.sessions.map((s) => s.name);
+    assert.ok(names2.includes(sessionName), "PTY session should survive client disconnect");
+
+    // Cleanup
+    await rpc(sock, { type: "delete-session", name: sessionName });
+  });
+
+  it("double-delete returns error on second attempt", async () => {
+    const sessionName = "double-delete-" + Date.now();
+    await rpc(sock, { type: "create-session", name: sessionName });
+
+    const first = await rpc(sock, { type: "delete-session", name: sessionName });
+    assert.ok(first.ok, "first delete should succeed");
+    assert.ok(!first.error);
+
+    const second = await rpc(sock, { type: "delete-session", name: sessionName });
+    assert.ok(second.error, "second delete of same session should return an error");
+  });
+
   it("get-shortcuts returns shortcuts array", async () => {
     const result = await rpc(sock, { type: "get-shortcuts" });
     assert.ok(Array.isArray(result.shortcuts));
