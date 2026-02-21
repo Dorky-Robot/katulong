@@ -90,8 +90,13 @@ test.describe("Terminal I/O", () => {
     await waitForAppReady(page);
 
     // After reload the server replays the terminal scrollback buffer.
-    // Wait for window.__xterm to be set (happens in term.open() → app.js),
-    // then check the replayed buffer for the marker.
+    // Wait for the sentinel in xterm's internal buffer (window.__xterm.buffer.active)
+    // rather than the DOM. The DOM-based shell-prompt check fires as soon as the
+    // accessibility layer renders the current cursor row, which can happen before
+    // xterm has committed the full ring-buffer replay to buffer.active. Waiting for
+    // the sentinel (which appears *after* the marker in the replay) guarantees that
+    // buffer.active has the complete replayed content before we check for the marker.
+    await waitForTerminalOutput(page, sentinel, { timeout: 15000 });
     await waitForTerminalOutput(page, marker);
   });
 });
