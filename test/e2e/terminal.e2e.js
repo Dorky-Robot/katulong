@@ -75,6 +75,17 @@ test.describe("Terminal I/O", () => {
     await termSend(page, `echo ${marker}\r`);
     await waitForTerminalOutput(page, marker);
 
+    // Send a sentinel command after the marker command. When the sentinel's
+    // echo appears in xterm, the PTY must have been at the shell prompt
+    // (i.e. the marker command fully completed), so both the marker echo and
+    // its actual output are guaranteed to be in the server's ring buffer
+    // before we reload. Without this, waitForTerminalOutput can return on
+    // the echo of the marker command before actual output hits the ring buffer,
+    // creating a race where page.reload() runs too early.
+    const sentinel = `s${Date.now()}`;
+    await termSend(page, `echo ${sentinel}\r`);
+    await waitForTerminalOutput(page, sentinel);
+
     await page.reload();
     await waitForAppReady(page);
 
