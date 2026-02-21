@@ -261,9 +261,11 @@ async function start() {
     // Restore original umask
     process.umask(oldUmask);
     // Double-check permissions (defense-in-depth)
-    try { chmodSync(SOCKET_PATH, 0o600); } catch { /* best-effort */ }
+    try { chmodSync(SOCKET_PATH, 0o600); } catch { /* best-effort on platforms that don't support chmod */ }
     // Write PID file for safe process management
-    try { writeFileSync(PID_PATH, String(process.pid), { mode: 0o600 }); } catch {}
+    try { writeFileSync(PID_PATH, String(process.pid), { mode: 0o600 }); } catch (err) {
+      log.warn("Failed to write PID file", { path: PID_PATH, error: err.message });
+    }
     log.info("Katulong daemon listening", { socket: SOCKET_PATH, pid: process.pid });
   });
 }
