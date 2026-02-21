@@ -106,11 +106,24 @@ export async function readTerminalBuffer(page) {
  * accumulated IME state across multiple page navigations causes spurious
  * "clear" injections mid-typing.
  *
+ * The inputSender in app.js batches sends via requestAnimationFrame. This
+ * helper awaits a second rAF (scheduled after the send's rAF) so that by the
+ * time termSend() returns the data has actually been flushed to the PTY, not
+ * just queued. This prevents false-positive waitForTerminalOutput matches on
+ * the command echo before the command has actually executed.
+ *
  * Requires window.__termSend to be set in the app (set by app.js after
  * the input sender is created, i.e. available once the terminal boots).
  */
 export async function termSend(page, text) {
-  await page.evaluate((t) => window.__termSend?.(t), text);
+  await page.evaluate((t) => {
+    window.__termSend?.(t);
+    // Await the next animation frame so the inputSender's rAF-batched send
+    // fires before this call returns. rAF callbacks execute in registration
+    // order, so this rAF fires after the send's rAF, guaranteeing the data
+    // has been delivered to the WebSocket/P2P channel.
+    return new Promise(resolve => requestAnimationFrame(resolve));
+  }, text);
 }
 
 /**
