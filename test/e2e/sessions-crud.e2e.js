@@ -176,7 +176,8 @@ test.describe("Session CRUD", () => {
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
     await waitForPrompt();
-    await page.locator(".xterm-helper-textarea").focus();
+    // Do NOT explicitly focus the textarea — xterm auto-focuses it on page
+    // load, and explicit re-focus on mobile activates IME autocorrect.
     await page.keyboard.type(`echo ${markerA}`);
     await page.keyboard.press("Enter");
     // .xterm-rows only reflects the current prompt line on canvas renderers.
@@ -192,7 +193,6 @@ test.describe("Session CRUD", () => {
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
     await waitForPrompt();
-    await page.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type(`echo ${markerB}`);
     await page.keyboard.press("Enter");
     await page.waitForFunction(

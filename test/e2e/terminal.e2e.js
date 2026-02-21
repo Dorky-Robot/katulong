@@ -21,9 +21,12 @@ test.describe("Terminal I/O", () => {
       () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
       { timeout: 10000 },
     );
-    // Focus the textarea AFTER the prompt appears so focus is held when
-    // the test starts typing.
-    await page.locator(".xterm-helper-textarea").focus();
+    // Do NOT explicitly focus the xterm-helper-textarea here.
+    // xterm auto-focuses it on page load; explicitly calling .focus() again
+    // on mobile emulation activates IME autocorrect behaviors that inject
+    // spurious characters ("clear"), and on desktop it switches the
+    // accessibility layer to single-row mode, breaking .xterm-screen reads.
+    // Keyboard events are routed to the auto-focused textarea automatically.
   });
 
   test.afterEach(async ({ page }) => {
