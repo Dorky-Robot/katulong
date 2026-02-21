@@ -20,6 +20,9 @@ test.describe("Terminal I/O", () => {
     // Focus the textarea AFTER waiting for the prompt.
     // Focusing before waitForFunction risks losing focus during shell init.
     await page.locator(".xterm-helper-textarea").focus();
+    // Brief pause to ensure xterm.js event listeners are active after focus.
+    // Without this, keyboard events sent immediately after focus can be lost.
+    await page.waitForTimeout(100);
   });
 
   test.afterEach(async ({ page }) => {
