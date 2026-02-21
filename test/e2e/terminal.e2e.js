@@ -17,9 +17,9 @@ test.describe("Terminal I/O", () => {
       () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
       { timeout: 10000 },
     );
-    // Click the textarea after the wait to ensure focus is held
+    // Re-focus the textarea after the wait to ensure focus is held
     // (waitForFunction can cause focus loss on mobile device emulation)
-    await page.locator(".xterm-helper-textarea").click();
+    await page.locator(".xterm-helper-textarea").focus();
   });
 
   test.afterEach(async ({ page }) => {
