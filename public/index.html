@@ -624,7 +624,7 @@
       background: var(--bg-input); line-height: 1.4;
     }
     .session-new-row {
-      display: flex; gap: var(--space-sm); padding: 0.875rem 0; position: sticky; bottom: 0;
+      display: flex; gap: var(--space-sm); padding: 0.875rem 0;
       background: var(--bg-surface);
     }
     .session-new-input {
@@ -638,6 +638,12 @@
       display: flex; align-items: center; gap: 0.375rem;
     }
     .session-new-btn:active { background: var(--accent-active); }
+    #session-panel {
+      display: flex; flex-direction: column; max-height: min(80vh, 100%);
+    }
+    .session-scroll-area {
+      overflow-y: auto; flex: 1; min-height: 0;
+    }
 
     /* --- Settings modal --- */
     #settings-overlay { z-index: var(--z-modal-bg); }
@@ -1498,6 +1504,7 @@
   <div id="session-overlay" class="modal-overlay" role="dialog" aria-label="Session manager">
     <div id="session-panel" class="modal-panel">
       <h3>Sessions</h3>
+      <div class="session-scroll-area">
       <div id="session-list" role="list"></div>
       <div class="ssh-password-row" id="ssh-password-row">
         <span class="ssh-password-label">SSH password</span>
@@ -1512,6 +1519,7 @@
         </div>
       </div>
       <div class="ssh-hint">Disconnect: <kbd>Enter</kbd> <kbd>~</kbd> <kbd>.</kbd></div>
+      </div>
       <div class="session-new-row">
         <input type="text" class="session-new-input" id="session-new-name"
           placeholder="new-session-name" autocorrect="off" autocapitalize="off"
