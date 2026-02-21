@@ -47,8 +47,8 @@ export function createDeviceActions(options = {}) {
   async function removeDevice(deviceId, isCurrent) {
     // Different warning messages based on whether it's the current device
     const message = isCurrent
-      ? "WARNING: You are about to END YOUR SESSION on THIS DEVICE (the one you're using right now).\n\nThis will PERMANENTLY REMOVE this device and you will need to RE-PAIR to access Katulong again.\n\nAre you sure you want to continue?"
-      : "Are you sure you want to end this session? This will permanently remove this device and it will need to be re-paired to access Katulong again.";
+      ? "WARNING: You are about to END YOUR SESSION on THIS DEVICE (the one you're using right now).\n\nThis will PERMANENTLY REMOVE this device and you will need to re-register to access Katulong again.\n\nAre you sure you want to continue?"
+      : "Are you sure you want to end this session? This will permanently remove this device and it will need to re-register to access Katulong again.";
 
     if (!confirm(message)) return;
 

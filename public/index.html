@@ -1443,9 +1443,9 @@
   <!-- Settings -->
   <div id="settings-overlay" class="modal-overlay" role="dialog" aria-label="Settings">
     <div id="settings-panel" class="modal-panel">
-      <div id="settings-views" class="settings-views">
-        <!-- View 0: Main settings -->
-        <div class="settings-view active" id="settings-view-main">
+      <div id="settings-views">
+        <!-- Main settings -->
+        <div id="settings-view-main">
           <h3>Settings</h3>
 
           <!-- Tab navigation -->
@@ -1510,7 +1510,7 @@
 
           <!-- Remote tab content -->
           <div class="settings-tab-content" id="settings-tab-remote">
-            <p class="tab-description">Manage setup tokens for pairing devices remotely (e.g., via ngrok).</p>
+            <p class="tab-description">Manage setup tokens for registering new devices via tunnel URL.</p>
 
             <!-- Inline token creation form (GitHub-style) -->
             <div class="token-create-form" id="token-create-form" style="display: none;">

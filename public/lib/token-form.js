@@ -122,7 +122,7 @@ export function createTokenFormManager(options = {}) {
   async function revokeToken(tokenId, hasCredential = false) {
     const message = hasCredential
       ? "Are you sure you want to revoke this device? The device will immediately lose access and need to re-register."
-      : "Are you sure you want to revoke this token? It will no longer work for device pairing.";
+      : "Are you sure you want to revoke this token? It will no longer work for device registration.";
 
     if (!confirm(message)) return;
 

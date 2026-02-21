@@ -50,91 +50,6 @@ test.describe('LAN Device Management', () => {
     }
   });
 
-  test('should open LAN pairing wizard', async ({ page }) => {
-    // Open settings modal
-    await page.click('button[aria-label="Settings"]');
-    await expect(page.locator('#settings-overlay')).toBeVisible();
-
-    // Click LAN tab
-    await page.click('.settings-tab[data-tab="lan"]');
-
-    // Click "Pair Device on LAN" button
-    await page.click('button:has-text("Pair Device on LAN")');
-
-    // Should show wizard view (trust or pair step)
-    // Actual selectors: #settings-view-trust or #settings-view-pair
-    const trustView = page.locator('#settings-view-trust');
-    const pairView = page.locator('#settings-view-pair');
-
-    // Wait for either view to become visible (they toggle visibility with CSS)
-    await page.waitForFunction(
-      () => {
-        const trust = document.getElementById('settings-view-trust');
-        const pair = document.getElementById('settings-view-pair');
-        return (trust && trust.offsetParent !== null) || (pair && pair.offsetParent !== null);
-      },
-      { timeout: 2000 }
-    );
-
-    const isTrustVisible = await trustView.isVisible();
-    const isPairVisible = await pairView.isVisible();
-
-    expect(isTrustVisible || isPairVisible).toBeTruthy();
-
-    if (isTrustVisible) {
-      // Should show trust instructions (actual text is "Install Certificate")
-      await expect(trustView).toContainText('Install Certificate');
-
-      // Should have QR code canvas
-      const qrCanvas = trustView.locator('canvas');
-      await expect(qrCanvas).toBeVisible();
-
-      // Should have copy URL button
-      const copyBtn = trustView.locator('button');
-      await expect(copyBtn.first()).toBeVisible();
-    }
-
-    if (isPairVisible) {
-      // Should show pairing QR code canvas
-      const qrCanvas = pairView.locator('canvas');
-      await expect(qrCanvas).toBeVisible();
-
-      // Should show PIN - check for any element containing digits
-      const viewText = await pairView.textContent();
-      const digits = viewText.match(/\d{8}/); // 8 consecutive digits
-      expect(digits).toBeTruthy();
-    }
-  });
-
-  test('should close pairing wizard without errors', async ({ page }) => {
-    // Open settings modal
-    await openSettings(page);
-    await switchSettingsTab(page, 'lan');
-
-    // Start pairing wizard
-    await page.click('button:has-text("Pair Device on LAN")');
-
-    // Wait for wizard view to be visible
-    await page.waitForFunction(
-      () => {
-        const trust = document.getElementById('settings-view-trust');
-        const pair = document.getElementById('settings-view-pair');
-        return (trust && trust.offsetParent !== null) || (pair && pair.offsetParent !== null);
-      },
-      { timeout: 2000 }
-    );
-
-    // Close modal by pressing Escape (no close button exists)
-    await page.keyboard.press('Escape');
-
-    // Wait for modal to close
-    const modal = page.locator('#settings-overlay');
-    await expect(modal).not.toBeVisible({ timeout: 2000 });
-
-    // Should not have console errors
-    // (Playwright automatically fails on console errors if configured)
-  });
-
   test('should display device count correctly', async ({ page }) => {
     // Open settings
     await page.click('button[aria-label="Settings"]');
@@ -147,9 +62,9 @@ test.describe('LAN Device Management', () => {
     // Should match the actual devices returned from API
     expect(count).toBeGreaterThanOrEqual(0);
 
-    // If no devices, should show empty state
+    // If no devices, list should just be empty (no devices-loading spinner)
     if (count === 0) {
-      await expect(page.locator('text=/No LAN devices paired yet/')).toBeVisible();
+      await expect(page.locator('.device-item')).toHaveCount(0);
     }
   });
 

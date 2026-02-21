@@ -157,7 +157,7 @@ export function createTokenListComponent(store, options = {}) {
     if (filteredTokens.length === 0 && !state.newToken) {
       const emptyEl = document.createElement('p');
       emptyEl.className = 'tokens-empty';
-      emptyEl.textContent = 'No setup tokens yet. Generate one to pair remote devices.';
+      emptyEl.textContent = 'No setup tokens yet. Generate one to register new devices.';
       container.appendChild(emptyEl);
     } else if (filteredTokens.length > 0) {
       const listContainer = document.createElement('div');

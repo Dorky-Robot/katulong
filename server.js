@@ -787,18 +787,6 @@ const routes = [
     json(res, 200, { trustUrl, httpsPort: HTTPS_PORT, sshPort: SSH_PORT, sshHost: lanIP || "localhost" });
   }},
 
-  { method: "GET", path: "/connect", handler: (req, res) => {
-    const lanIP = getLanIP();
-    const trustUrl = lanIP ? `http://${lanIP}:${PORT}/connect/trust` : `/connect/trust`;
-    let html = readFileSync(join(__dirname, "public", "connect.html"), "utf-8");
-    html = html.replace("<body>", `<body data-trust-url="${escapeAttr(trustUrl)}" data-https-port="${escapeAttr(HTTPS_PORT)}">`);
-    res.writeHead(200, {
-      "Content-Type": "text/html",
-      ...getCspHeaders(false, req)
-    });
-    res.end(html);
-  }},
-
   { method: "POST", path: "/auth/logout", handler: async (req, res) => {
     const state = loadState();
     if (!validateCsrfToken(req, state)) {
