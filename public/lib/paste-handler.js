@@ -20,6 +20,14 @@ export function createPasteHandler(options = {}) {
    * Handle paste event
    */
   function handlePaste(e) {
+    // Let native paste work in input/textarea elements (e.g., dictation modal)
+    // except for xterm's hidden textarea which we always intercept
+    const target = e.target;
+    if ((target.tagName === "TEXTAREA" || target.tagName === "INPUT") &&
+        !target.classList.contains("xterm-helper-textarea")) {
+      return;
+    }
+
     // Check for pasted images first (e.g., screenshots)
     const imageFiles = [...(e.clipboardData?.files || [])].filter(isImageFileFn);
     if (imageFiles.length > 0) {
