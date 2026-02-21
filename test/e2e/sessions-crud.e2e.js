@@ -171,7 +171,13 @@ test.describe("Session CRUD", () => {
     await page.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type(`echo ${markerA}`);
     await page.keyboard.press("Enter");
-    await expect(page.locator(".xterm-rows")).toContainText(markerA);
+    // .xterm-rows only reflects the current prompt line; use .xterm-screen
+    // which contains the full terminal viewport including command output.
+    await page.waitForFunction(
+      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
+      markerA,
+      { timeout: 5000 },
+    );
 
     // Type marker in session B
     await page.goto(`/?s=${encodeURIComponent(nameB)}`);
@@ -180,18 +186,26 @@ test.describe("Session CRUD", () => {
     await page.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type(`echo ${markerB}`);
     await page.keyboard.press("Enter");
-    await expect(page.locator(".xterm-rows")).toContainText(markerB);
+    await page.waitForFunction(
+      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
+      markerB,
+      { timeout: 5000 },
+    );
 
     // Session B should NOT contain marker A
-    const textB = await page.locator(".xterm-rows").textContent();
+    const textB = await page.locator(".xterm-screen").textContent();
     expect(textB).not.toContain(markerA);
 
     // Go back to session A — buffer replay should show marker A but not B
     await page.goto(`/?s=${encodeURIComponent(nameA)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
-    await expect(page.locator(".xterm-rows")).toContainText(markerA);
-    const textA = await page.locator(".xterm-rows").textContent();
+    await page.waitForFunction(
+      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
+      markerA,
+      { timeout: 5000 },
+    );
+    const textA = await page.locator(".xterm-screen").textContent();
     expect(textA).not.toContain(markerB);
 
     // Cleanup

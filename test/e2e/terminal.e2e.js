@@ -43,8 +43,15 @@ test.describe("Terminal I/O", () => {
     await page.keyboard.type(`echo ${marker}`);
     await page.keyboard.press("Enter");
 
-    const rows = page.locator(".xterm-rows");
-    await expect(rows).toContainText(marker);
+    // .xterm-rows only reflects the current prompt line; use .xterm-screen
+    // which contains the full terminal viewport including command output.
+    await page.waitForFunction(
+      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
+      marker,
+      { timeout: 5000 },
+    );
+    const termText = await page.locator('.xterm-screen').textContent();
+    expect(termText).toContain(marker);
   });
 
   test("Multiple commands produce sequential output", async ({ page }) => {
@@ -53,25 +60,44 @@ test.describe("Terminal I/O", () => {
 
     await page.keyboard.type(`echo ${marker1}`);
     await page.keyboard.press("Enter");
-    await expect(page.locator(".xterm-rows")).toContainText(marker1);
+    await page.waitForFunction(
+      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
+      marker1,
+      { timeout: 5000 },
+    );
 
     await page.keyboard.type(`echo ${marker2}`);
     await page.keyboard.press("Enter");
+    await page.waitForFunction(
+      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
+      marker2,
+      { timeout: 5000 },
+    );
 
-    const rows = page.locator(".xterm-rows");
-    await expect(rows).toContainText(marker1);
-    await expect(rows).toContainText(marker2);
+    const termText = await page.locator('.xterm-screen').textContent();
+    expect(termText).toContain(marker1);
+    expect(termText).toContain(marker2);
   });
 
   test("Buffer replays on page reload", async ({ page }) => {
     const marker = `reload_${Date.now()}`;
     await page.keyboard.type(`echo ${marker}`);
     await page.keyboard.press("Enter");
-    await expect(page.locator(".xterm-rows")).toContainText(marker);
+    await page.waitForFunction(
+      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
+      marker,
+      { timeout: 5000 },
+    );
 
     await page.reload();
     await waitForAppReady(page);
 
-    await expect(page.locator(".xterm-rows")).toContainText(marker);
+    await page.waitForFunction(
+      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
+      marker,
+      { timeout: 5000 },
+    );
+    const termText = await page.locator('.xterm-screen').textContent();
+    expect(termText).toContain(marker);
   });
 });
