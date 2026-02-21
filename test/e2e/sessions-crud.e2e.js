@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { waitForTerminalOutput, readTerminalBuffer } from './helpers.js';
 
 test.describe("Session CRUD", () => {
   // Helper: delete a session via API (best-effort cleanup)
@@ -180,13 +181,10 @@ test.describe("Session CRUD", () => {
     // load, and explicit re-focus on mobile activates IME autocorrect.
     await page.keyboard.type(`echo ${markerA}`);
     await page.keyboard.press("Enter");
-    // .xterm-rows only reflects the current prompt line on canvas renderers.
-    // Use .xterm-screen which contains the full terminal viewport.
-    await page.waitForFunction(
-      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
-      markerA,
-      { timeout: 5000 },
-    );
+    // Use xterm's internal buffer rather than .xterm-screen.textContent.
+    // The canvas renderer's accessibility layer only shows the current cursor
+    // row; once the shell returns to the prompt, output rows disappear.
+    await waitForTerminalOutput(page, markerA);
 
     // Type marker in session B
     await page.goto(`/?s=${encodeURIComponent(nameB)}`);
@@ -195,26 +193,18 @@ test.describe("Session CRUD", () => {
     await waitForPrompt();
     await page.keyboard.type(`echo ${markerB}`);
     await page.keyboard.press("Enter");
-    await page.waitForFunction(
-      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
-      markerB,
-      { timeout: 5000 },
-    );
+    await waitForTerminalOutput(page, markerB);
 
     // Session B should NOT contain marker A
-    const textB = await page.locator(".xterm-screen").textContent();
+    const textB = await readTerminalBuffer(page);
     expect(textB).not.toContain(markerA);
 
     // Go back to session A — buffer replay should show marker A but not B
     await page.goto(`/?s=${encodeURIComponent(nameA)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
-    await page.waitForFunction(
-      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
-      markerA,
-      { timeout: 5000 },
-    );
-    const textA = await page.locator(".xterm-screen").textContent();
+    await waitForTerminalOutput(page, markerA);
+    const textA = await readTerminalBuffer(page);
     expect(textA).not.toContain(markerB);
 
     // Cleanup

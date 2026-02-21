@@ -52,26 +52,64 @@ export async function waitForModalClose(page, modalId) {
 }
 
 /**
+ * Wait for the xterm buffer to contain text.
+ *
+ * More reliable than reading .xterm-screen.textContent because the canvas
+ * renderer's accessibility layer only exposes the current cursor row; output
+ * on previous rows disappears from the DOM once the shell returns to a prompt.
+ * The internal xterm buffer retains all scrollback lines permanently.
+ *
+ * Requires window.__xterm to be set in the app (set by app.js after term.open()).
+ */
+export async function waitForTerminalOutput(page, text, { timeout = 5000 } = {}) {
+  await page.waitForFunction(
+    (searchText) => {
+      const term = window.__xterm;
+      if (!term) return false;
+      const buf = term.buffer.active;
+      for (let i = 0; i < buf.length; i++) {
+        const line = buf.getLine(i)?.translateToString(true);
+        if (line?.includes(searchText)) return true;
+      }
+      return false;
+    },
+    text,
+    { timeout }
+  );
+}
+
+/**
+ * Read the entire xterm buffer as a string (all rows including scrollback).
+ *
+ * Use this instead of page.locator('.xterm-screen').textContent() to get
+ * reliable access to terminal history on canvas renderers.
+ */
+export async function readTerminalBuffer(page) {
+  return page.evaluate(() => {
+    const term = window.__xterm;
+    if (!term) return '';
+    const buf = term.buffer.active;
+    const lines = [];
+    for (let i = 0; i < buf.length; i++) {
+      const line = buf.getLine(i)?.translateToString(true);
+      if (line) lines.push(line);
+    }
+    return lines.join('\n');
+  });
+}
+
+/**
  * Type command and wait for output
  */
 export async function typeCommand(page, command) {
   await page.keyboard.type(command);
   await page.keyboard.press('Enter');
-  // Wait for command to appear in terminal
-  await page.waitForFunction(
-    (cmd) => document.querySelector('.xterm-screen')?.textContent?.includes(cmd),
-    command,
-    { timeout: 5000 }
-  );
+  await waitForTerminalOutput(page, command);
 }
 
 /**
  * Wait for terminal output to contain text
  */
 export async function waitForOutput(page, text) {
-  await page.waitForFunction(
-    (txt) => document.querySelector('.xterm-screen')?.textContent?.includes(txt),
-    text,
-    { timeout: 5000 }
-  );
+  await waitForTerminalOutput(page, text);
 }

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { waitForAppReady } from './helpers.js';
+import { waitForAppReady, waitForTerminalOutput } from './helpers.js';
 
 test.describe("Terminal I/O", () => {
   // Run serially in one worker to avoid resource contention between PTY sessions.
@@ -46,15 +46,11 @@ test.describe("Terminal I/O", () => {
     await page.keyboard.type(`echo ${marker}`);
     await page.keyboard.press("Enter");
 
-    // .xterm-rows only reflects the current prompt line on canvas renderers.
-    // Use .xterm-screen which includes the full terminal viewport content.
-    await page.waitForFunction(
-      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
-      marker,
-      { timeout: 5000 },
-    );
-    const termText = await page.locator('.xterm-screen').textContent();
-    expect(termText).toContain(marker);
+    // Use xterm's internal buffer (window.__xterm.buffer.active) rather than
+    // .xterm-screen.textContent. The canvas renderer's accessibility layer only
+    // exposes the current cursor row; the output row disappears once the shell
+    // returns to the prompt. The buffer retains all lines permanently.
+    await waitForTerminalOutput(page, marker);
   });
 
   test("Multiple commands produce sequential output", async ({ page }) => {
@@ -63,44 +59,25 @@ test.describe("Terminal I/O", () => {
 
     await page.keyboard.type(`echo ${marker1}`);
     await page.keyboard.press("Enter");
-    // waitForFunction itself is the assertion that marker1 appeared in output.
-    // On narrow viewports marker1 may scroll off once marker2 is typed,
-    // so we check each marker immediately after it appears rather than
-    // asserting both at the same time at the end.
-    await page.waitForFunction(
-      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
-      marker1,
-      { timeout: 5000 },
-    );
+    await waitForTerminalOutput(page, marker1);
 
     await page.keyboard.type(`echo ${marker2}`);
     await page.keyboard.press("Enter");
-    await page.waitForFunction(
-      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
-      marker2,
-      { timeout: 5000 },
-    );
+    await waitForTerminalOutput(page, marker2);
   });
 
   test("Buffer replays on page reload", async ({ page }) => {
     const marker = `reload_${Date.now()}`;
     await page.keyboard.type(`echo ${marker}`);
     await page.keyboard.press("Enter");
-    await page.waitForFunction(
-      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
-      marker,
-      { timeout: 5000 },
-    );
+    await waitForTerminalOutput(page, marker);
 
     await page.reload();
     await waitForAppReady(page);
 
-    await page.waitForFunction(
-      (text) => document.querySelector('.xterm-screen')?.textContent?.includes(text),
-      marker,
-      { timeout: 5000 },
-    );
-    const termText = await page.locator('.xterm-screen').textContent();
-    expect(termText).toContain(marker);
+    // After reload the server replays the terminal scrollback buffer.
+    // Wait for window.__xterm to be set (happens in term.open() → app.js),
+    // then check the replayed buffer for the marker.
+    await waitForTerminalOutput(page, marker);
   });
 });

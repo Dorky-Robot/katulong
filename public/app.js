@@ -186,6 +186,10 @@
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(document.getElementById("terminal-container"));
+    // Expose terminal instance for E2E test buffer inspection.
+    // Tests read window.__xterm.buffer.active to check output reliably across
+    // renderers (canvas renderer's accessibility layer only shows the cursor row).
+    window.__xterm = term;
 
     // Initialize modals with terminal reference
     initModals(modals, term);
