@@ -8,7 +8,6 @@ SHARD=${TEST_SHARD_INDEX:-0}
 # Derive ports and paths from shard index
 # Shard 0 produces the original values for backward compatibility
 HTTP_PORT=$(( 3099 + SHARD * 10 ))
-HTTPS_PORT=$(( 3100 + SHARD * 10 ))
 SSH_PORT=$(( 2223 + SHARD * 10 ))
 
 if [ "$SHARD" -eq 0 ]; then
@@ -24,7 +23,6 @@ TEST_SHARD_INDEX=$SHARD node test/e2e/pre-server-setup.js
 
 # Start the server with test configuration
 PORT=$HTTP_PORT \
-HTTPS_PORT=$HTTPS_PORT \
 SSH_PORT=$SSH_PORT \
 KATULONG_NO_AUTH=1 \
 KATULONG_SOCK="$SOCK_PATH" \

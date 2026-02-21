@@ -313,7 +313,7 @@ const routes = [
   // --- Auth routes ---
 
   { method: "GET", path: "/auth/status", handler: (req, res) => {
-    // Allow CORS for certificate trust check (HTTP → HTTPS cross-origin fetch)
+    // Allow CORS for tunnel access (frontend may be at a different origin)
     const origin = req.headers.origin;
     if (origin) {
       res.setHeader("Access-Control-Allow-Origin", origin);
@@ -1133,11 +1133,6 @@ function matchRoute(method, pathname) {
 
 async function handleRequest(req, res) {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
-
-  // Add HSTS header for HTTPS requests
-  if (req.socket.encrypted) {
-    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-  }
 
   // Auth middleware: redirect unauthenticated requests
   if (!isPublicPath(pathname) && !isAuthenticated(req)) {
