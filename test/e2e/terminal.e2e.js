@@ -10,7 +10,6 @@ test.describe("Terminal I/O", () => {
     sessionName = `term-io-${testInfo.testId}-${Date.now()}`;
     await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
     await waitForAppReady(page);
-    await page.locator(".xterm-helper-textarea").focus();
     // Wait for shell prompt before typing — the shell runs init scripts
     // (e.g. .zshrc, clear) and keystrokes typed before the prompt appears
     // get swallowed, causing flaky failures.
@@ -18,6 +17,9 @@ test.describe("Terminal I/O", () => {
       () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
       { timeout: 10000 },
     );
+    // Focus the textarea AFTER waiting for the prompt.
+    // Focusing before waitForFunction risks losing focus during shell init.
+    await page.locator(".xterm-helper-textarea").focus();
   });
 
   test.afterEach(async ({ page }) => {
