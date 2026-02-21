@@ -320,6 +320,7 @@
           const staleNewToken = tokensList?.querySelector('.token-item-new');
           if (staleNewToken) staleNewToken.remove();
           loadTokens();
+          invalidateDevices(deviceStore);
         }
       }
     });

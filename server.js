@@ -246,12 +246,6 @@ async function parseJSON(req, maxSize = MAX_REQUEST_BODY_SIZE) {
 
 // MIME_TYPES is now imported from lib/static-files.js
 
-function isLanHost(req) {
-  const host = (req.headers.host || "").replace(/:\d+$/, "");
-  return host === "localhost" || host === "127.0.0.1" || host === "::1"
-    || /^(10|172\.(1[6-9]|2\d|3[01])|192\.168)\./.test(host);
-}
-
 const routes = [
   { method: "GET", path: "/", handler: (req, res) => {
     let html = readFileSync(join(__dirname, "public", "index.html"), "utf-8");
@@ -277,10 +271,6 @@ const routes = [
 
   { method: "GET", path: "/manifest.json", handler: (req, res) => {
     const manifest = JSON.parse(readFileSync(join(__dirname, "public", "manifest.json"), "utf-8"));
-    if (isLanHost(req)) {
-      manifest.name = "Katulong (LAN)";
-      manifest.short_name = "Katulong LAN";
-    }
     res.writeHead(200, { "Content-Type": "application/manifest+json" });
     res.end(JSON.stringify(manifest));
   }},
@@ -526,7 +516,7 @@ const routes = [
       return json(res, 403, { error: "Invalid or missing CSRF token" });
     }
     const challenge = pairingStore.create();
-    json(res, 200, { ...challenge.toJSON(), url: null });
+    json(res, 200, challenge.toJSON());
   }},
 
   { method: "POST", path: "/auth/pair/verify", handler: async (req, res) => {

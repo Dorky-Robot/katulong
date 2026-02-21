@@ -1443,7 +1443,6 @@
           <!-- Tab navigation -->
           <div class="settings-tabs" role="tablist">
             <button class="settings-tab active" data-tab="theme" role="tab" aria-selected="true">Theme</button>
-            <button class="settings-tab" data-tab="lan" role="tab" aria-selected="false">LAN</button>
             <button class="settings-tab" data-tab="remote" role="tab" aria-selected="false">Remote</button>
           </div>
 
@@ -1492,20 +1491,15 @@
             </div>
           </div>
 
-          <!-- LAN tab content -->
-          <div class="settings-tab-content" id="settings-tab-lan">
-            <p class="tab-description">Pair devices on your local network using QR code + PIN.</p>
+          <!-- Remote tab content -->
+          <div class="settings-tab-content" id="settings-tab-remote">
+            <p class="tab-description">Manage paired devices and setup tokens for remote access (e.g., via ngrok).</p>
             <div class="devices-list" id="devices-list">
               <p class="devices-loading">Loading devices...</p>
             </div>
             <button class="settings-pair-btn" id="settings-pair-lan">
-              <i class="ph ph-qr-code"></i> Pair Device on LAN
+              <i class="ph ph-qr-code"></i> Pair New Device
             </button>
-          </div>
-
-          <!-- Remote tab content -->
-          <div class="settings-tab-content" id="settings-tab-remote">
-            <p class="tab-description">Manage setup tokens for pairing devices remotely (e.g., via ngrok).</p>
 
             <!-- Inline token creation form (GitHub-style) -->
             <div class="token-create-form" id="token-create-form" style="display: none;">

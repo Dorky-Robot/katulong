@@ -129,16 +129,16 @@ export function createWizardController(options = {}) {
       });
     }
 
-    // Event: Done → cleanup + show LAN tab
+    // Event: Done → cleanup + show Remote tab (devices list is there now)
     const wizardDoneBtn = document.getElementById(wizardDoneBtnId);
     if (wizardDoneBtn) {
       wizardDoneBtn.addEventListener("click", () => {
         cleanupWizard();
         switchSettingsView(viewMain);
 
-        // Switch to LAN tab to show newly paired device
-        const lanTab = document.querySelector('.settings-tab[data-tab="lan"]');
-        if (lanTab) lanTab.click();
+        // Switch to Remote tab to show newly paired device
+        const remoteTab = document.querySelector('.settings-tab[data-tab="remote"]');
+        if (remoteTab) remoteTab.click();
       });
     }
 
