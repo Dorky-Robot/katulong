@@ -17,9 +17,6 @@ test.describe("Terminal I/O", () => {
       () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
       { timeout: 10000 },
     );
-    // Re-focus the textarea after the wait to ensure focus is held
-    // (waitForFunction can cause focus loss on mobile device emulation)
-    await page.locator(".xterm-helper-textarea").focus();
   });
 
   test.afterEach(async ({ page }) => {
@@ -36,8 +33,11 @@ test.describe("Terminal I/O", () => {
 
   test("Typed command produces visible output", async ({ page }) => {
     const marker = `marker_${Date.now()}`;
-    await page.keyboard.type(`echo ${marker}`);
-    await page.keyboard.press("Enter");
+    // Use pressSequentially on the textarea to work in both desktop and mobile
+    // emulation (mobile requires targeting the element directly)
+    const textarea = page.locator(".xterm-helper-textarea");
+    await textarea.pressSequentially(`echo ${marker}`);
+    await textarea.press("Enter");
 
     const rows = page.locator(".xterm-rows");
     await expect(rows).toContainText(marker);
@@ -46,13 +46,14 @@ test.describe("Terminal I/O", () => {
   test("Multiple commands produce sequential output", async ({ page }) => {
     const marker1 = `first_${Date.now()}`;
     const marker2 = `second_${Date.now()}`;
+    const textarea = page.locator(".xterm-helper-textarea");
 
-    await page.keyboard.type(`echo ${marker1}`);
-    await page.keyboard.press("Enter");
+    await textarea.pressSequentially(`echo ${marker1}`);
+    await textarea.press("Enter");
     await expect(page.locator(".xterm-rows")).toContainText(marker1);
 
-    await page.keyboard.type(`echo ${marker2}`);
-    await page.keyboard.press("Enter");
+    await textarea.pressSequentially(`echo ${marker2}`);
+    await textarea.press("Enter");
 
     const rows = page.locator(".xterm-rows");
     await expect(rows).toContainText(marker1);
@@ -61,8 +62,9 @@ test.describe("Terminal I/O", () => {
 
   test("Buffer replays on page reload", async ({ page }) => {
     const marker = `reload_${Date.now()}`;
-    await page.keyboard.type(`echo ${marker}`);
-    await page.keyboard.press("Enter");
+    const textarea = page.locator(".xterm-helper-textarea");
+    await textarea.pressSequentially(`echo ${marker}`);
+    await textarea.press("Enter");
     await expect(page.locator(".xterm-rows")).toContainText(marker);
 
     await page.reload();
