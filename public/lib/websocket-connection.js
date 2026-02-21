@@ -97,9 +97,6 @@ export function createWebSocketConnection(deps = {}) {
           term.write(effect.data);
         }
         break;
-      case 'log':
-        console.log(effect.message);
-        break;
       case 'stopWizardPairing':
         stopWizardPairing();
         break;
@@ -139,7 +136,6 @@ export function createWebSocketConnection(deps = {}) {
   function connect() {
     // Prevent multiple simultaneous connection attempts
     if (isConnecting) {
-      console.log('[WS] Already connecting, skipping duplicate attempt');
       return;
     }
 
@@ -183,8 +179,6 @@ export function createWebSocketConnection(deps = {}) {
 
       // Check if connection was closed due to revoked credentials
       if (event.code === 1008) { // 1008 = Policy Violation
-        console.log('[Auth] Session invalidated, redirecting to login');
-        // Redirect to login with message
         window.location.href = '/login?reason=revoked';
         return;
       }
@@ -194,13 +188,11 @@ export function createWebSocketConnection(deps = {}) {
       state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
       state.connection.attached = false;
 
-      console.log(`[WS] Reconnecting in ${state.connection.reconnectDelay}ms`);
       reconnectTimeout = setTimeout(connect, state.connection.reconnectDelay);
       state.connection.reconnectDelay = Math.min(state.connection.reconnectDelay * 2, 10000);
     };
 
-    state.connection.ws.onerror = (err) => {
-      console.log('[WS] Connection error:', err.message || 'Unknown error');
+    state.connection.ws.onerror = () => {
       isConnecting = false;
       state.connection.ws.close();
     };
@@ -218,20 +210,17 @@ export function createWebSocketConnection(deps = {}) {
 
         // Skip if already connecting
         if (isConnecting) {
-          console.log('[Reconnect] Already connecting, skipping visibility reconnect');
           return;
         }
 
         // If was hidden for more than 5 seconds, force reconnect
         if (hiddenDuration > 5000 && state.connection.ws && !isConnecting) {
-          console.log(`[Reconnect] Was hidden for ${Math.round(hiddenDuration/1000)}s, forcing reconnect`);
           state.connection.ws.close();
         } else if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
           // Quick test - send resize to verify connection is alive
           try {
             state.connection.ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-          } catch (e) {
-            console.log("[Reconnect] Send failed, forcing reconnect");
+          } catch {
             state.connection.ws.close();
           }
         }
