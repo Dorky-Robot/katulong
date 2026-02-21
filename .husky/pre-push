@@ -1,3 +1,4 @@
+#!/bin/sh
 # --- Save stdin before anything else consumes it ---
 # Git pre-push hook receives ref info on stdin. npm/node may consume it.
 PUSH_INPUT=$(cat)
@@ -26,14 +27,16 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     # on local main but haven't been pushed yet (commit on main → branch → push).
     MERGE_BASE=$(git merge-base "origin/$DEFAULT_BRANCH" "$local_sha" 2>/dev/null || echo "")
     if [ -n "$MERGE_BASE" ]; then
-      PUSH_DIFF+=$(git diff "$MERGE_BASE".."$local_sha")
-      CHANGED_FILES+=$(git diff --name-only "$MERGE_BASE".."$local_sha")
+      PUSH_DIFF="${PUSH_DIFF}$(git diff "$MERGE_BASE".."$local_sha")"
+      CHANGED_FILES="${CHANGED_FILES}$(git diff --name-only "$MERGE_BASE".."$local_sha")"
     fi
   else
-    PUSH_DIFF+=$(git diff "$remote_sha".."$local_sha")
-    CHANGED_FILES+=$(git diff --name-only "$remote_sha".."$local_sha")
+    PUSH_DIFF="${PUSH_DIFF}$(git diff "$remote_sha".."$local_sha")"
+    CHANGED_FILES="${CHANGED_FILES}$(git diff --name-only "$remote_sha".."$local_sha")"
   fi
-done <<< "$PUSH_INPUT"
+done << PUSH_INPUT_HEREDOC
+$PUSH_INPUT
+PUSH_INPUT_HEREDOC
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/../scripts" && pwd)"
 
@@ -108,7 +111,7 @@ fi
 
 # --- Step 3: Security scan ---
 
-source "$SCRIPT_DIR/secrets-scan.sh"
+. "$SCRIPT_DIR/secrets-scan.sh"
 if ! scan_secrets "pre-push"; then
   [ -n "$REVIEW_PID" ] && { kill "$REVIEW_PID" 2>/dev/null; wait "$REVIEW_PID" 2>/dev/null; }
   exit 1
