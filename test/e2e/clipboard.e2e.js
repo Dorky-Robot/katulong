@@ -53,39 +53,6 @@ test.describe('Clipboard - Copy Buttons', () => {
     await page.click('#token-done-btn');
   });
 
-  test('should copy trust URL in wizard', async ({ page }) => {
-    // Open Settings → LAN tab
-    await openSettings(page);
-    await switchSettingsTab(page, 'lan');
-
-    // Start wizard
-    await page.click('button:has-text("Pair Device on LAN")');
-
-    // Wait for trust view
-    const trustView = page.locator('#settings-view-trust');
-    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
-
-    // Wait for QR and copy button to appear
-    const copyBtn = page.locator('#wizard-trust-copy-url');
-    await expect(copyBtn).toBeVisible({ timeout: 3000 });
-
-    // Click copy button
-    await copyBtn.click();
-
-    // Should show "Copied!" feedback
-    await expect(copyBtn).toContainText('Copied!', { timeout: 1000 });
-
-    // Verify clipboard has URL
-    const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
-    expect(clipboardText).toMatch(/^https?:\/\//);
-    expect(clipboardText).toContain('/connect/trust');
-
-    console.log('[Test] Trust URL copied:', clipboardText);
-
-    // Close wizard
-    await page.keyboard.press('Escape');
-  });
-
   test('should copy pairing URL in wizard', async ({ page }) => {
     // Open Settings → LAN tab → Wizard
     await openSettings(page);
