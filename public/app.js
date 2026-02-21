@@ -206,10 +206,8 @@
       isAtBottom,
       onRefresh: () => {
         if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN && state.connection.attached) {
-          console.log("[Pull-refresh] Connected - sending Ctrl-L");
           rawSend("\x0C"); // Ctrl-L: refresh screen
         } else {
-          console.log("[Pull-refresh] Disconnected - forcing reconnect");
           if (state.connection.ws) state.connection.ws.close();
         }
       }

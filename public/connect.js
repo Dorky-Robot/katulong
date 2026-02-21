@@ -1,6 +1,5 @@
 (function() {
   var trustUrl = document.body.dataset.trustUrl || '';
-  var httpsPort = document.body.dataset.httpsPort || '3002';
 
   var steps = [
     document.getElementById('step-1'),

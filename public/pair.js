@@ -13,7 +13,6 @@
       div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
       debugLog.appendChild(div);
       debugLog.scrollTop = debugLog.scrollHeight;
-      console.log(msg);
     }
 
     logDebug(`Page loaded. Code: ${code ? code.substring(0, 8) + "..." : "MISSING"}`);
