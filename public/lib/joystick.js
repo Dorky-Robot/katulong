@@ -219,7 +219,7 @@ export function createJoystickManager(options = {}) {
         const rect = joystick.getBoundingClientRect();
         const zone = getZone(t, rect);
         dispatch({ type: 'TOUCH_START', zone, x: t.clientX, y: t.clientY });
-      });
+      }, { passive: false });
 
       joystick.addEventListener("touchmove", (e) => {
         e.preventDefault();
@@ -229,7 +229,7 @@ export function createJoystickManager(options = {}) {
         const rect = joystick.getBoundingClientRect();
         const newZone = (joyState.mode === 'hold') ? getZone(t, rect) : null;
         dispatch({ type: 'TOUCH_MOVE', dx, dy, newZone });
-      });
+      }, { passive: false });
 
       joystick.addEventListener("touchend", (e) => {
         e.preventDefault();
@@ -247,12 +247,12 @@ export function createJoystickManager(options = {}) {
         }
 
         dispatch({ type: 'TOUCH_END' });
-      });
+      }, { passive: false });
 
       joystick.addEventListener("touchcancel", (e) => {
         e.preventDefault();
         dispatch({ type: 'TOUCH_CANCEL' });
-      });
+      }, { passive: false });
     },
 
     getState: () => joyState
