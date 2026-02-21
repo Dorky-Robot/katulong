@@ -1,18 +1,18 @@
 # Katulong
 
-Katulong is a self-hosted web terminal that gives remote shell access to the host machine over HTTP/HTTPS + WebSocket. It multiplexes PTY sessions via a Unix socket daemon and serves a single-page xterm.js frontend.
+Katulong is a self-hosted web terminal that gives remote shell access to the host machine over HTTP + WebSocket. It runs locally (localhost-only) and remote access is provided via an external tunnel (ngrok, Cloudflare Tunnel, etc.). It multiplexes PTY sessions via a Unix socket daemon and serves a single-page xterm.js frontend.
 
 ## Architecture
 
-- `server.js` — HTTP/HTTPS + WebSocket server (routes, auth middleware, daemon IPC, device pairing)
+- `server.js` — HTTP + WebSocket server (routes, auth middleware, daemon IPC, device pairing)
 - `daemon.js` — Long-lived process that owns PTY sessions, communicates over a Unix socket via NDJSON
 - `public/index.html` — SPA frontend (xterm.js terminal, shortcut bar, settings, inline pairing wizard)
 - `lib/auth.js` — WebAuthn registration/login, session token management, passkey storage
 - `lib/http-util.js` — Cookie parsing, public path allowlist, session cookies, challenge store
-- `lib/tls.js` — Auto-generated CA + server certificates for LAN HTTPS
-- `lib/p2p.js` — WebRTC DataChannel for low-latency terminal I/O
 - `lib/ssh.js` — SSH server bridging native terminals to daemon PTY sessions
 - `lib/ndjson.js` — Newline-delimited JSON encode/decode for daemon IPC
+
+Remote access model: the server binds to localhost and an external tunnel tool (ngrok, Cloudflare Tunnel, etc.) forwards HTTPS traffic to it. TLS termination and external certificate management are handled by the tunnel, not by Katulong itself.
 
 ## Development principles
 
@@ -72,7 +72,7 @@ This ensures:
 ### Authentication
 - First device registers via WebAuthn (passkey). Subsequent devices pair via QR code + 6-digit PIN.
 - Localhost requests (`127.0.0.1`, `::1`) bypass auth (auto-authenticated).
-- LAN/remote requests require a valid `katulong_session` cookie.
+- Remote requests via tunnel require a valid `katulong_session` cookie.
 - Sessions are 30-day tokens stored server-side. Expired sessions are pruned.
 - SSH access authenticates via password (`SSH_PASSWORD` or `SETUP_TOKEN`). Username maps to session name.
 
@@ -89,8 +89,8 @@ This ensures:
 - **Pairing flow**: Pairing codes are short-lived (30s), single-use, and validated (UUID format for code, exactly 6 digits for PIN). PIN brute-force is mitigated by expiry. The pairing endpoint (`POST /auth/pair/start`) requires authentication.
 - **XSS**: The frontend is a single HTML file with no templating. Any server-side HTML injection (e.g., `data-` attribute interpolation) must escape user-controlled values via `escapeAttr()`.
 - **SSH access**: Password compared via `timingSafeEqual`. Host key persisted to `DATA_DIR/ssh/`. SSH port should be firewalled on untrusted networks.
-- **WebSocket origin**: Origin header validated on WS upgrade — must match Host header for non-localhost requests. Rejects missing or mismatched origins.
-- **TLS**: LAN HTTPS uses auto-generated self-signed certs. The CA cert must never be served without user intent. Only actual TLS socket state (`req.socket.encrypted`) is trusted, never `X-Forwarded-Proto` header.
+- **WebSocket origin**: Origin header validated on WS upgrade. For localhost connections, both socket address and Host/Origin headers are checked — a loopback socket address alone is not sufficient (tunnels like ngrok forward traffic from loopback). Rejects missing or mismatched origins on non-localhost requests.
+- **Tunnel security**: Remote access relies on an external tunnel (ngrok, Cloudflare Tunnel, etc.) for TLS termination. The tunnel URL must be kept private; anyone with the URL can reach the login page. Katulong never trusts `X-Forwarded-Proto` or similar headers for security decisions — only actual socket state.
 - **Request body size**: All public auth endpoints enforce 1MB request body limit to prevent DoS attacks.
 - **Supply chain security**: All frontend dependencies are self-hosted in `public/vendor/` to eliminate CDN trust. No external JavaScript is loaded at runtime.
 
@@ -100,7 +100,7 @@ When reviewing PRs, pay close attention to:
 
 1. **Auth changes**: Any modification to `isAuthenticated()`, `isPublicPath()`, `isLocalRequest()`, session validation, or cookie handling
 2. **New routes**: Every new HTTP route must either be in `isPublicPath()` (with justification) or protected by the auth middleware
-3. **WebSocket handling**: Origin validation must be maintained. New message types must not allow unauthenticated actions.
+3. **WebSocket handling**: Origin validation must be maintained. New message types must not allow unauthenticated actions. Localhost detection must check both socket address and Host/Origin headers — a loopback socket alone is not sufficient (tunnel traffic arrives on loopback).
 4. **Input handling**: Server-side code must never pass unsanitized input to `child_process`, `exec`, or similar. Validate all input formats (UUIDs, PINs, etc.).
 5. **Static file serving**: The `filePath.startsWith(publicDir)` guard must not be weakened. Path traversal checks in `isPublicPath()` must remain strict.
 6. **Request body handling**: All public endpoints must use `readBody()` with size limits (max 1MB for auth endpoints).
@@ -110,8 +110,9 @@ When reviewing PRs, pay close attention to:
 10. **Error handling**: Error responses must not leak internal paths, stack traces, or secrets.
 11. **File I/O**: Auth state writes must be atomic (temp + rename). Add error handling for corrupt JSON.
 12. **Environment variables**: Never expose sensitive env vars (SSH_PASSWORD, SETUP_TOKEN, KATULONG_NO_AUTH) to PTY processes.
-13. **Header trust**: Never trust request headers (`X-Forwarded-*`) for security decisions. Only trust actual socket state.
-14. **State mutations**: All auth state mutations must use `withStateLock()` from `lib/auth.js` to prevent race conditions.
+13. **Header trust**: Never trust request headers (`X-Forwarded-*`, `X-Forwarded-Proto`, etc.) for security decisions. Only trust actual socket state. This is especially important for tunnel-based access (ngrok, Cloudflare Tunnel) where reverse-proxy headers are trivially forgeable.
+14. **Localhost detection**: `isLocalRequest()` in `lib/access-method.js` is security-critical — it gates auth bypass. It must check Host and Origin headers in addition to socket address to prevent tunnel traffic from being classified as local.
+15. **State mutations**: All auth state mutations must use `withStateLock()` from `lib/auth.js` to prevent race conditions.
 
 ## Testing
 
