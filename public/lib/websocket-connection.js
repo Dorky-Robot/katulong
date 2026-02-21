@@ -16,11 +16,7 @@ export function createWebSocketConnection(deps = {}) {
     state,
     p2pManager,
     updateP2PIndicator,
-    stopWizardPairing,
-    switchSettingsView,
-    viewSuccess,
     loadTokens,
-    getWizardActivePairCode,
     isAtBottom
   } = deps;
 
@@ -69,13 +65,6 @@ export function createWebSocketConnection(deps = {}) {
         { type: 'log', message: '[P2P] Server reports DataChannel closed' },
         { type: 'updateP2PIndicator' }
       ]
-    }),
-
-    'pair-complete': (msg, currentState, wizardActivePairCode) => ({
-      stateUpdates: {},
-      effects: (wizardActivePairCode && msg.code === wizardActivePairCode)
-        ? [{ type: 'stopWizardPairing' }, { type: 'switchSettingsView', view: 'success' }, { type: 'refreshDeviceList' }]
-        : [{ type: 'refreshDeviceList' }]
     }),
 
     reload: () => ({
@@ -136,12 +125,6 @@ export function createWebSocketConnection(deps = {}) {
       case 'log':
         console.log(effect.message);
         break;
-      case 'stopWizardPairing':
-        stopWizardPairing();
-        break;
-      case 'switchSettingsView':
-        switchSettingsView(effect.view === 'success' ? viewSuccess : null);
-        break;
       case 'reload':
         location.reload();
         break;
@@ -201,8 +184,7 @@ export function createWebSocketConnection(deps = {}) {
       const handler = wsMessageHandlers[msg.type];
 
       if (handler) {
-        const wizardActivePairCode = getWizardActivePairCode ? getWizardActivePairCode() : null;
-        const { stateUpdates, effects } = handler(msg, state, wizardActivePairCode);
+        const { stateUpdates, effects } = handler(msg, state);
 
         // Apply state updates
         if (Object.keys(stateUpdates).length > 0) {

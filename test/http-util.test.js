@@ -120,18 +120,6 @@ describe("isPublicPath", () => {
     assert.ok(isPublicPath("/auth/logout"));
   });
 
-  it("allows /pair", () => {
-    assert.ok(isPublicPath("/pair"));
-  });
-
-  it("allows /auth/pair/verify", () => {
-    assert.ok(isPublicPath("/auth/pair/verify"));
-  });
-
-  it("rejects /auth/pair/start (protected)", () => {
-    assert.ok(!isPublicPath("/auth/pair/start"));
-  });
-
   it("rejects unknown /auth/ paths", () => {
     assert.ok(!isPublicPath("/auth/admin"));
     assert.ok(!isPublicPath("/auth/secret"));

@@ -1169,141 +1169,6 @@
       background: var(--accent-active);
     }
 
-    /* --- Settings wizard views (inline pairing) --- */
-    .settings-views {
-      position: relative;
-      overflow: hidden;
-      transition: height 250ms ease;
-    }
-    .settings-view {
-      opacity: 0;
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      visibility: hidden;
-      transition: opacity 250ms ease, visibility 0ms 250ms;
-    }
-    .settings-view.active {
-      opacity: 1;
-      position: relative;
-      visibility: visible;
-      transition: opacity 250ms ease 50ms, visibility 0ms 0ms;
-    }
-    .wizard-header {
-      display: flex;
-      align-items: center;
-      gap: var(--space-sm);
-      padding-top: 1rem;
-      margin-bottom: 0.875rem;
-    }
-    .wizard-header h3 {
-      margin: 0;
-      padding: 0;
-    }
-    .settings-back-btn {
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      font-size: 1.25rem;
-      cursor: pointer;
-      padding: var(--space-xs);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: var(--radius-sm);
-    }
-    .settings-back-btn:active { color: var(--text); }
-    .wizard-step-dots {
-      display: flex;
-      justify-content: center;
-      gap: var(--space-sm);
-      margin-bottom: 1.25rem;
-    }
-    .wizard-step-dots .step-dot {
-      width: 0.5rem;
-      height: 0.5rem;
-      border-radius: 50%;
-      background: var(--border);
-      transition: background 0.2s;
-    }
-    .wizard-step-dots .step-dot.active { background: var(--accent-active); }
-    .wizard-step-dots .step-dot.done { background: var(--success); }
-    .wizard-subtitle {
-      color: var(--text-muted);
-      font-size: 0.8125rem;
-      line-height: 1.5;
-      margin-bottom: 1.25rem;
-      text-align: center;
-    }
-    .wizard-qr-container {
-      display: flex;
-      justify-content: center;
-      margin-bottom: 1rem;
-      min-height: 200px;
-      align-items: center;
-    }
-    .wizard-qr-container canvas {
-      border-radius: var(--radius-md);
-    }
-    .wizard-pin {
-      font-size: 2rem;
-      font-weight: 500;
-      letter-spacing: 0.3em;
-      color: var(--text);
-      margin-bottom: 0.5rem;
-      text-align: center;
-    }
-    .wizard-countdown {
-      color: var(--text-muted);
-      font-size: 0.75rem;
-      margin-bottom: 1rem;
-      text-align: center;
-    }
-    .wizard-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 100%;
-      height: var(--height-btn-md);
-      border: none;
-      border-radius: var(--radius-md);
-      font-size: 0.875rem;
-      font-family: var(--font-mono);
-      font-weight: 500;
-      cursor: pointer;
-      margin-bottom: 1rem;
-    }
-    .wizard-btn:active { opacity: 0.8; }
-    .wizard-btn-primary { background: var(--accent-active); color: #1e1e2e; }
-    .wizard-btn-success { background: var(--success); color: #1e1e2e; }
-    .wizard-copy-url-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.375rem;
-      width: 100%;
-      height: 2.25rem;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      background: var(--bg-surface);
-      color: var(--text-muted);
-      font-size: 0.75rem;
-      font-family: var(--font-mono);
-      cursor: pointer;
-      margin-bottom: 1rem;
-    }
-    .wizard-copy-url-btn:hover {
-      background: var(--bg-input);
-      color: var(--text);
-    }
-    .wizard-copy-url-btn:active { opacity: 0.8; }
-    .wizard-copy-url-btn i { font-size: 0.875rem; }
-    .wizard-success-icon {
-      font-size: 3rem;
-      margin: 1rem 0;
-      color: var(--success);
-      text-align: center;
-    }
-
     /* --- Drop overlay --- */
     .drop-overlay {
       display: none; position: fixed; inset: 0; z-index: 20000;
@@ -1586,7 +1451,7 @@
           <!-- Tab navigation -->
           <div class="settings-tabs" role="tablist">
             <button class="settings-tab active" data-tab="theme" role="tab" aria-selected="true">Theme</button>
-            <button class="settings-tab" data-tab="lan" role="tab" aria-selected="false">LAN</button>
+            <button class="settings-tab" data-tab="lan" role="tab" aria-selected="false">Devices</button>
             <button class="settings-tab" data-tab="remote" role="tab" aria-selected="false">Remote</button>
             <button class="settings-tab" data-tab="certificates" role="tab" aria-selected="false">Certificates</button>
           </div>
@@ -1636,15 +1501,11 @@
             </div>
           </div>
 
-          <!-- LAN tab content -->
+          <!-- Devices tab content -->
           <div class="settings-tab-content" id="settings-tab-lan">
-            <p class="tab-description">Pair devices on your local network using QR code + PIN.</p>
             <div class="devices-list" id="devices-list">
               <p class="devices-loading">Loading devices...</p>
             </div>
-            <button class="settings-pair-btn" id="settings-pair-lan">
-              <i class="ph ph-qr-code"></i> Pair Device on LAN
-            </button>
           </div>
 
           <!-- Remote tab content -->
@@ -1697,61 +1558,6 @@
           </div>
         </div>
 
-        <!-- View 1: Trust / install certificate -->
-        <div class="settings-view" id="settings-view-trust">
-          <div class="wizard-header">
-            <button class="settings-back-btn" id="wizard-back-trust" aria-label="Back to settings">
-              <i class="ph ph-arrow-left"></i>
-            </button>
-            <h3>Install Certificate</h3>
-          </div>
-          <div class="wizard-step-dots">
-            <span class="step-dot active"></span>
-            <span class="step-dot"></span>
-            <span class="step-dot"></span>
-          </div>
-          <p class="wizard-subtitle">Scan this QR code with your phone to install the trust certificate.</p>
-          <div class="wizard-qr-container" id="wizard-trust-qr"></div>
-          <button class="wizard-copy-url-btn" id="wizard-trust-copy-url" style="display:none;">
-            <i class="ph ph-copy"></i> Copy URL
-          </button>
-          <button class="wizard-btn wizard-btn-primary" id="wizard-next-pair">Next</button>
-        </div>
-
-        <!-- View 2: Pair / rotating QR + PIN -->
-        <div class="settings-view" id="settings-view-pair">
-          <div class="wizard-header">
-            <button class="settings-back-btn" id="wizard-back-pair" aria-label="Back to certificate step">
-              <i class="ph ph-arrow-left"></i>
-            </button>
-            <h3>Pair Device</h3>
-          </div>
-          <div class="wizard-step-dots">
-            <span class="step-dot done"></span>
-            <span class="step-dot active"></span>
-            <span class="step-dot"></span>
-          </div>
-          <p class="wizard-subtitle">Scan the QR code and enter the PIN on your phone.</p>
-          <div class="wizard-error" id="wizard-error" style="display:none; color:#f38ba8; margin:0.5rem 0; font-size:0.875rem; text-align:center;"></div>
-          <div class="wizard-qr-container" id="wizard-pair-qr"></div>
-          <button class="wizard-copy-url-btn" id="wizard-pair-copy-url" style="display:none;">
-            <i class="ph ph-copy"></i> Copy URL
-          </button>
-          <div class="wizard-pin" id="wizard-pair-pin"></div>
-          <div class="wizard-countdown" id="wizard-pair-countdown"></div>
-        </div>
-
-        <!-- View 3: Success -->
-        <div class="settings-view" id="settings-view-success">
-          <div class="wizard-step-dots" style="margin-top:1rem">
-            <span class="step-dot done"></span>
-            <span class="step-dot done"></span>
-            <span class="step-dot active"></span>
-          </div>
-          <div class="wizard-success-icon">&#10003;</div>
-          <p class="wizard-subtitle">Device paired successfully.</p>
-          <button class="wizard-btn wizard-btn-success" id="wizard-done">Done</button>
-        </div>
       </div>
     </div>
   </div>
