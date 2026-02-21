@@ -17,9 +17,10 @@ test.describe("Terminal I/O", () => {
       () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
       { timeout: 10000 },
     );
-    // Focus the textarea AFTER the prompt appears so the focus is held
-    // when the test starts typing.
-    await page.locator(".xterm-helper-textarea").focus();
+    // Click the terminal to ensure xterm has keyboard focus. Using click
+    // instead of .focus() on the off-screen textarea because click triggers
+    // xterm's internal focus handler which properly sets up keyboard capture.
+    await page.locator(".xterm").click();
   });
 
   test.afterEach(async ({ page }) => {
