@@ -67,11 +67,13 @@ export async function waitForTerminalOutput(page, text, { timeout = 10000 } = {}
       const term = window.__xterm;
       if (!term) return false;
       const buf = term.buffer.active;
+      // Concatenate all rows before searching so that text soft-wrapped across
+      // two buffer rows (common on narrow mobile terminals) is still found.
+      let bufText = '';
       for (let i = 0; i < buf.length; i++) {
-        const line = buf.getLine(i)?.translateToString(true);
-        if (line?.includes(searchText)) return true;
+        bufText += buf.getLine(i)?.translateToString(true) || '';
       }
-      return false;
+      return bufText.includes(searchText);
     },
     text,
     { timeout }
