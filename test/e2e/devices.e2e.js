@@ -61,49 +61,18 @@ test.describe('LAN Device Management', () => {
     // Click "Pair Device on LAN" button
     await page.click('button:has-text("Pair Device on LAN")');
 
-    // Should show wizard view (trust or pair step)
-    // Actual selectors: #settings-view-trust or #settings-view-pair
-    const trustView = page.locator('#settings-view-trust');
+    // Should show pair step directly (no trust step since TLS was removed)
     const pairView = page.locator('#settings-view-pair');
+    await expect(pairView).toBeVisible({ timeout: 2000 });
 
-    // Wait for either view to become visible (they toggle visibility with CSS)
-    await page.waitForFunction(
-      () => {
-        const trust = document.getElementById('settings-view-trust');
-        const pair = document.getElementById('settings-view-pair');
-        return (trust && trust.offsetParent !== null) || (pair && pair.offsetParent !== null);
-      },
-      { timeout: 2000 }
-    );
+    // Should show pairing QR code canvas
+    const qrCanvas = pairView.locator('canvas');
+    await expect(qrCanvas).toBeVisible({ timeout: 5000 });
 
-    const isTrustVisible = await trustView.isVisible();
-    const isPairVisible = await pairView.isVisible();
-
-    expect(isTrustVisible || isPairVisible).toBeTruthy();
-
-    if (isTrustVisible) {
-      // Should show trust instructions (actual text is "Install Certificate")
-      await expect(trustView).toContainText('Install Certificate');
-
-      // Should have QR code canvas
-      const qrCanvas = trustView.locator('canvas');
-      await expect(qrCanvas).toBeVisible();
-
-      // Should have copy URL button
-      const copyBtn = trustView.locator('button');
-      await expect(copyBtn.first()).toBeVisible();
-    }
-
-    if (isPairVisible) {
-      // Should show pairing QR code canvas
-      const qrCanvas = pairView.locator('canvas');
-      await expect(qrCanvas).toBeVisible();
-
-      // Should show PIN - check for any element containing digits
-      const viewText = await pairView.textContent();
-      const digits = viewText.match(/\d{8}/); // 8 consecutive digits
-      expect(digits).toBeTruthy();
-    }
+    // Should show PIN - check for any element containing digits
+    const viewText = await pairView.textContent();
+    const digits = viewText.match(/\d{8}/); // 8 consecutive digits
+    expect(digits).toBeTruthy();
   });
 
   test('should close pairing wizard without errors', async ({ page }) => {

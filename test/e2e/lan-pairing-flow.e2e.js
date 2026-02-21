@@ -13,61 +13,13 @@ test.describe('LAN Pairing Wizard Flow', () => {
     await setupTest({ page, context });
   });
 
-  test('should complete full pairing flow - trust step', async ({ page }) => {
-    // Step 1: Open Settings → LAN tab
-    await openSettings(page);
-    await switchSettingsTab(page, 'lan');
-
-    // Step 2: Click "Pair Device on LAN"
-    await page.click('button:has-text("Pair Device on LAN")');
-
-    // Step 3: Should be on Trust step
-    const trustView = page.locator('#settings-view-trust');
-    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
-
-    // Step 4: Verify trust QR code renders
-    const trustQR = trustView.locator('#wizard-trust-qr canvas');
-    await expect(trustQR).toBeVisible({ timeout: 3000 });
-
-    // Verify QR has actual content (not empty)
-    const qrWidth = await trustQR.evaluate(el => el.width);
-    expect(qrWidth).toBeGreaterThan(100);
-
-    // Step 5: Verify copy button appears
-    const copyBtn = trustView.locator('#wizard-trust-copy-url');
-    await expect(copyBtn).toBeVisible();
-
-    // Step 6: Test copy button
-    await copyBtn.click();
-
-    // Should show "Copied!" feedback
-    await expect(copyBtn).toContainText('Copied!');
-
-    // Wait for it to revert
-    await expect(copyBtn).not.toContainText('Copied!', { timeout: 3000 });
-
-    // Verify clipboard has URL
-    const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
-    expect(clipboardText).toMatch(/^https?:\/\//);
-    expect(clipboardText).toContain('/connect/trust');
-
-    // Step 7: Click "Next" to go to pairing step
-    await page.click('#wizard-next-pair');
-  });
-
   test('should complete full pairing flow - pairing step', async ({ page }) => {
-    // Navigate to pairing step
+    // Navigate to pairing step (wizard now starts directly at pair step)
     await openSettings(page);
     await switchSettingsTab(page, 'lan');
     await page.click('button:has-text("Pair Device on LAN")');
 
-    // Wait for trust view to be active first
-    const trustView = page.locator('#settings-view-trust');
-    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
-
-    await page.click('#wizard-next-pair');
-
-    // Should be on Pair step
+    // Should be on Pair step directly
     const pairView = page.locator('#settings-view-pair');
     await expect(pairView).toHaveClass(/active/, { timeout: 2000 });
 
@@ -131,14 +83,9 @@ test.describe('LAN Pairing Wizard Flow', () => {
     await switchSettingsTab(page, 'lan');
     await page.click('button:has-text("Pair Device on LAN")');
 
-    // Wait for trust view first
-    const trustView = page.locator('#settings-view-trust');
-    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
-
-    await page.click('#wizard-next-pair');
-
+    // Wizard starts directly at pair step
     const pairView = page.locator('#settings-view-pair');
-    await expect(pairView).toHaveClass(/active/);
+    await expect(pairView).toHaveClass(/active/, { timeout: 2000 });
 
     // Get initial PIN
     const pinDisplay = pairView.locator('#wizard-pair-pin');
@@ -164,24 +111,16 @@ test.describe('LAN Pairing Wizard Flow', () => {
     await switchSettingsTab(page, 'lan');
     await page.click('button:has-text("Pair Device on LAN")');
 
-    const trustView = page.locator('#settings-view-trust');
-    await expect(trustView).toHaveClass(/active/);
-
-    // Go to pairing step
-    await page.click('#wizard-next-pair');
     const pairView = page.locator('#settings-view-pair');
-    await expect(pairView).toHaveClass(/active/);
+    await expect(pairView).toHaveClass(/active/, { timeout: 2000 });
 
-    // Click back button
+    // Click back button - should return to main settings view
     const backBtn = page.locator('#wizard-back-pair');
     await backBtn.click();
 
-    // Should be back on trust step
-    await expect(trustView).toHaveClass(/active/);
-
-    // QR code should render again
-    const trustQR = trustView.locator('#wizard-trust-qr canvas');
-    await expect(trustQR).toBeVisible({ timeout: 3000 });
+    // Should be back on main settings view
+    const mainView = page.locator('#settings-view-main');
+    await expect(mainView).toHaveClass(/active/, { timeout: 2000 });
   });
 
   test('should clean up timers when closing wizard', async ({ page }) => {
@@ -190,13 +129,9 @@ test.describe('LAN Pairing Wizard Flow', () => {
     await switchSettingsTab(page, 'lan');
     await page.click('button:has-text("Pair Device on LAN")');
 
-    const trustView = page.locator('#settings-view-trust');
-    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
-
-    await page.click('#wizard-next-pair');
-
+    // Wizard starts directly at pair step
     const pairView = page.locator('#settings-view-pair');
-    await expect(pairView).toHaveClass(/active/);
+    await expect(pairView).toHaveClass(/active/, { timeout: 2000 });
 
     // Verify countdown is running by capturing its text
     const countdown = pairView.locator('#wizard-pair-countdown');
@@ -229,16 +164,10 @@ test.describe('LAN Pairing Wizard Flow', () => {
       });
     });
 
-    // Navigate to pairing step
+    // Navigate to pairing step (wizard starts directly at pair step)
     await openSettings(page);
     await switchSettingsTab(page, 'lan');
     await page.click('button:has-text("Pair Device on LAN")');
-
-    // Wait for trust view
-    const trustView = page.locator('#settings-view-trust');
-    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
-
-    await page.click('#wizard-next-pair');
 
     // Should show error message or fail gracefully
     // Wait for either error state or view to be active
@@ -265,11 +194,11 @@ test.describe('LAN Pairing Wizard Flow', () => {
     await page.click('button:has-text("Pair Device on LAN")');
 
     // Should not crash, just not show QR
-    const trustView = page.locator('#settings-view-trust');
-    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
+    const pairView = page.locator('#settings-view-pair');
+    await expect(pairView).toHaveClass(/active/, { timeout: 2000 });
 
     // QR canvas won't be present, but view should still be visible
-    await expect(trustView).toBeVisible();
+    await expect(pairView).toBeVisible();
   });
 
   test('should have correct QR code colors based on theme', async ({ page }) => {
@@ -278,17 +207,17 @@ test.describe('LAN Pairing Wizard Flow', () => {
     await page.reload();
     await page.waitForSelector(".xterm", { timeout: 10000 });
 
-    // Open wizard
+    // Open wizard - starts directly at pair step
     await page.click('button[aria-label="Settings"]');
     await page.click('.settings-tab[data-tab="lan"]');
     await page.click('button:has-text("Pair Device on LAN")');
 
-    const trustView = page.locator('#settings-view-trust');
-    const trustQR = trustView.locator('#wizard-trust-qr canvas');
-    await expect(trustQR).toBeVisible({ timeout: 3000 });
+    const pairView = page.locator('#settings-view-pair');
+    const pairQR = pairView.locator('#wizard-pair-qr canvas');
+    await expect(pairQR).toBeVisible({ timeout: 5000 });
 
     // Get canvas pixel data to verify it's not all white or all black
-    const hasContent = await trustQR.evaluate(canvas => {
+    const hasContent = await pairQR.evaluate(canvas => {
       const ctx = canvas.getContext('2d');
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const data = imageData.data;
@@ -376,11 +305,8 @@ test.describe('Device List After Pairing', () => {
     const initialCount = await deviceItems.count();
 
     // Start pairing wizard to get a pairing code and PIN
+    // Wizard starts directly at pair step
     await page.click('button:has-text("Pair Device on LAN")');
-    const trustView = page.locator('#settings-view-trust');
-    await expect(trustView).toHaveClass(/active/, { timeout: 2000 });
-    await page.click('#wizard-next-pair');
-
     const pairView = page.locator('#settings-view-pair');
     await expect(pairView).toHaveClass(/active/, { timeout: 2000 });
 

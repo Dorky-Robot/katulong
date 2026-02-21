@@ -38,7 +38,7 @@
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
     import { createP2PIndicator } from "/lib/p2p-ui.js";
-    import { loadQRLib, getConnectInfo, checkPairingStatus } from "/lib/wizard-utils.js";
+    import { loadQRLib, checkPairingStatus } from "/lib/wizard-utils.js";
     import { initModals } from "/lib/modal-init.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
     import { createWebSocketConnection } from "/lib/websocket-connection.js";
@@ -432,7 +432,6 @@
 
     const settingsViews = document.getElementById("settings-views");
     const viewMain = document.getElementById("settings-view-main");
-    const viewTrust = document.getElementById("settings-view-trust");
     const viewPair = document.getElementById("settings-view-pair");
     const viewSuccess = document.getElementById("settings-view-success");
 
@@ -446,7 +445,6 @@
       wizardStore,
       settingsViews,
       viewMain,
-      viewTrust,
       viewPair,
       viewSuccess,
       deviceStore,
@@ -462,7 +460,6 @@
     // Create wizard component (handles all rendering automatically)
     const wizardComponent = createWizardComponent(wizardStore, {
       loadQRLib,
-      getConnectInfo,
       checkPairingStatus,
       onSuccess: () => {
         wizardStore.dispatch({ type: WIZARD_ACTIONS.PAIRING_SUCCESS });

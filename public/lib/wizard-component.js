@@ -13,13 +13,12 @@ import { WIZARD_STATES, WIZARD_ACTIONS } from '/lib/wizard-state.js';
  * @param {object} wizardStore - Wizard state store
  * @param {object} options - Component options
  * @param {Function} options.loadQRLib - Load QR code library
- * @param {Function} options.getConnectInfo - Get connection info
  * @param {Function} options.checkPairingStatus - Check if pairing consumed
  * @param {Function} options.onSuccess - Called when pairing succeeds
  * @returns {object} Component instance
  */
 export function createWizardComponent(wizardStore, options) {
-  const { loadQRLib, getConnectInfo, checkPairingStatus, onSuccess } = options;
+  const { loadQRLib, checkPairingStatus, onSuccess } = options;
 
   // Track active timers for cleanup
   let countdownInterval = null;
@@ -38,10 +37,6 @@ export function createWizardComponent(wizardStore, options) {
 
     // Handle state-specific rendering
     switch (state.currentState) {
-      case WIZARD_STATES.TRUST:
-        await renderTrustQR();
-        break;
-
       case WIZARD_STATES.PAIRING:
         if (state.pairCode) {
           await renderPairingQR(state);
@@ -58,51 +53,6 @@ export function createWizardComponent(wizardStore, options) {
         break;
     }
   };
-
-  /**
-   * Render trust certificate QR code
-   */
-  async function renderTrustQR() {
-    const container = document.getElementById("wizard-trust-qr");
-    const copyBtn = document.getElementById("wizard-trust-copy-url");
-    if (!container || !copyBtn) return;
-
-    container.innerHTML = "";
-    copyBtn.style.display = "none";
-
-    try {
-      await loadQRLib();
-      const info = await getConnectInfo();
-      if (!info.trustUrl) return;
-
-      const isDark = getEffectiveTheme() === "dark";
-      QRCode.toCanvas(info.trustUrl, {
-        width: 200,
-        margin: 2,
-        color: {
-          dark: isDark ? "#cdd6f4" : "#4c4f69",
-          light: isDark ? "#1e1e2e" : "#eff1f5"
-        }
-      }, (err, canvas) => {
-        if (!err) {
-          container.appendChild(canvas);
-          copyBtn.style.display = "flex";
-          copyBtn.onclick = async () => {
-            try {
-              await navigator.clipboard.writeText(info.trustUrl);
-              const originalText = copyBtn.innerHTML;
-              copyBtn.innerHTML = '<i class="ph ph-check"></i> Copied!';
-              setTimeout(() => { copyBtn.innerHTML = originalText; }, 2000);
-            } catch {
-              alert("Failed to copy URL");
-            }
-          };
-        }
-      });
-    } catch (err) {
-      console.error('[Wizard] Failed to render trust QR:', err);
-    }
-  }
 
   /**
    * Render pairing QR code

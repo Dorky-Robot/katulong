@@ -1697,37 +1697,15 @@
           </div>
         </div>
 
-        <!-- View 1: Trust / install certificate -->
-        <div class="settings-view" id="settings-view-trust">
-          <div class="wizard-header">
-            <button class="settings-back-btn" id="wizard-back-trust" aria-label="Back to settings">
-              <i class="ph ph-arrow-left"></i>
-            </button>
-            <h3>Install Certificate</h3>
-          </div>
-          <div class="wizard-step-dots">
-            <span class="step-dot active"></span>
-            <span class="step-dot"></span>
-            <span class="step-dot"></span>
-          </div>
-          <p class="wizard-subtitle">Scan this QR code with your phone to install the trust certificate.</p>
-          <div class="wizard-qr-container" id="wizard-trust-qr"></div>
-          <button class="wizard-copy-url-btn" id="wizard-trust-copy-url" style="display:none;">
-            <i class="ph ph-copy"></i> Copy URL
-          </button>
-          <button class="wizard-btn wizard-btn-primary" id="wizard-next-pair">Next</button>
-        </div>
-
-        <!-- View 2: Pair / rotating QR + PIN -->
+        <!-- View 1: Pair / rotating QR + PIN -->
         <div class="settings-view" id="settings-view-pair">
           <div class="wizard-header">
-            <button class="settings-back-btn" id="wizard-back-pair" aria-label="Back to certificate step">
+            <button class="settings-back-btn" id="wizard-back-pair" aria-label="Back to settings">
               <i class="ph ph-arrow-left"></i>
             </button>
             <h3>Pair Device</h3>
           </div>
           <div class="wizard-step-dots">
-            <span class="step-dot done"></span>
             <span class="step-dot active"></span>
             <span class="step-dot"></span>
           </div>
@@ -1741,10 +1719,9 @@
           <div class="wizard-countdown" id="wizard-pair-countdown"></div>
         </div>
 
-        <!-- View 3: Success -->
+        <!-- View 2: Success -->
         <div class="settings-view" id="settings-view-success">
           <div class="wizard-step-dots" style="margin-top:1rem">
-            <span class="step-dot done"></span>
             <span class="step-dot done"></span>
             <span class="step-dot active"></span>
           </div>
