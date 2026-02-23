@@ -224,6 +224,102 @@ describe("AuthState", () => {
 
       assert.strictEqual(original.sessions.token1.lastActivityAt, originalLastActivity);
     });
+
+    it("does not extend expiry when activity is exactly at the 24h threshold", () => {
+      const THRESHOLD_MS = 24 * 60 * 60 * 1000;
+      const now = 1000000000;
+      const original = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [],
+        sessions: {
+          // lastActivityAt exactly THRESHOLD_MS ago: timeSinceActivity == THRESHOLD_MS (not strictly greater)
+          token1: { expiry: now + 100000, credentialId: "cred1", csrfToken: "csrf1", lastActivityAt: now - THRESHOLD_MS }
+        },
+      });
+
+      const newState = original.updateSessionActivity("token1", now);
+
+      assert.strictEqual(newState.sessions.token1.lastActivityAt, now);
+      assert.strictEqual(newState.sessions.token1.expiry, now + 100000, "expiry must not be extended when activity is exactly at the threshold");
+    });
+
+    it("extends expiry when activity is 1ms beyond the 24h threshold", () => {
+      const THRESHOLD_MS = 24 * 60 * 60 * 1000;
+      const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+      const now = 1000000000;
+      const original = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [],
+        sessions: {
+          // lastActivityAt 1ms beyond THRESHOLD_MS: timeSinceActivity > THRESHOLD_MS
+          token1: { expiry: now + 100000, credentialId: "cred1", csrfToken: "csrf1", lastActivityAt: now - THRESHOLD_MS - 1 }
+        },
+      });
+
+      const newState = original.updateSessionActivity("token1", now);
+
+      assert.strictEqual(newState.sessions.token1.lastActivityAt, now);
+      assert.strictEqual(newState.sessions.token1.expiry, now + SESSION_TTL_MS, "expiry must be extended when activity exceeds the threshold by 1ms");
+    });
+
+    it("updates correctly across consecutive calls (chaining)", () => {
+      const t1 = 1000000000;
+      const t2 = t1 + 1000; // 1 second later
+      const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+      const original = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [],
+        sessions: {
+          token1: { expiry: t1 + SESSION_TTL_MS, credentialId: "cred1", csrfToken: "csrf1", lastActivityAt: t1 - 50000 }
+        },
+      });
+
+      const state1 = original.updateSessionActivity("token1", t1);
+      assert.strictEqual(state1.sessions.token1.lastActivityAt, t1, "first call should set lastActivityAt to t1");
+
+      const state2 = state1.updateSessionActivity("token1", t2);
+      assert.strictEqual(state2.sessions.token1.lastActivityAt, t2, "second call should update lastActivityAt to t2");
+
+      // Prior states should be unaffected
+      assert.strictEqual(original.sessions.token1.lastActivityAt, t1 - 50000, "original should be unchanged");
+      assert.strictEqual(state1.sessions.token1.lastActivityAt, t1, "state1 should be unchanged after second call");
+    });
+
+    it("extends expiry for a session with lastActivityAt: 0 (pre-migration default)", () => {
+      const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      const original = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [],
+        sessions: {
+          // lastActivityAt of 0 is treated as epoch: timeSinceActivity = now - 0 >> 24h threshold
+          token1: { expiry: now + 100000, credentialId: "cred1", csrfToken: "csrf1", lastActivityAt: 0 }
+        },
+      });
+
+      const newState = original.updateSessionActivity("token1", now);
+
+      assert.strictEqual(newState.sessions.token1.lastActivityAt, now);
+      assert.strictEqual(newState.sessions.token1.expiry, now + SESSION_TTL_MS, "expiry should be extended for session with lastActivityAt: 0");
+    });
+
+    it("updates lastActivityAt even on an already-expired session", () => {
+      // updateSessionActivity is a pure value transform — it does not check session expiry
+      const now = 1000000000;
+      const original = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [],
+        sessions: {
+          token1: { expiry: now - 1000, credentialId: "cred1", csrfToken: "csrf1", lastActivityAt: now - 500 }
+        },
+      });
+
+      const newState = original.updateSessionActivity("token1", now);
+
+      assert.strictEqual(newState.sessions.token1.lastActivityAt, now, "lastActivityAt should be updated regardless of expiry");
+      // timeSinceActivity = 500ms < 24h, so expiry is NOT extended (remains expired)
+      assert.strictEqual(newState.sessions.token1.expiry, now - 1000, "expiry should not be extended when activity is recent");
+    });
   });
 
   describe("revokeAllSessions", () => {

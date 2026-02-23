@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { writeFileSync, readFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createSession, validateSession, pruneExpiredSessions, loadState, saveState, _invalidateCache } from "../lib/auth.js";
+import { createSession, validateSession, pruneExpiredSessions, loadState, saveState, _invalidateCache, refreshSessionActivity } from "../lib/auth.js";
 import { AuthState } from "../lib/auth-state.js";
 
 describe("createSession", () => {
@@ -456,5 +456,140 @@ describe("pruneExpiredSessions - boundary conditions", () => {
     assert.equal(result.sessions.expired1, undefined, "expired1 should be pruned");
     assert.equal(result.sessions.expired2, undefined, "expired2 should be pruned");
     assert.equal(Object.keys(result.sessions).length, 2);
+  });
+});
+
+describe("refreshSessionActivity", () => {
+  const __dirname_test = dirname(fileURLToPath(import.meta.url));
+  const DATA_DIR_TEST = process.env.KATULONG_DATA_DIR || join(__dirname_test, "..");
+  const STATE_PATH_TEST = join(DATA_DIR_TEST, "katulong-auth.json");
+  let originalExists = false;
+  let originalContent;
+
+  beforeEach(() => {
+    try {
+      originalContent = readFileSync(STATE_PATH_TEST, "utf-8");
+      originalExists = true;
+    } catch {
+      originalExists = false;
+    }
+    _invalidateCache();
+  });
+
+  afterEach(() => {
+    _invalidateCache();
+    if (originalExists) {
+      writeFileSync(STATE_PATH_TEST, originalContent);
+    } else {
+      try { unlinkSync(STATE_PATH_TEST); } catch {}
+    }
+  });
+
+  const credential = { id: "cred1", publicKey: "key1", counter: 0, deviceId: "dev1", name: "Test Device" };
+
+  function makeValidState(token, sessionOverrides = {}) {
+    const now = Date.now();
+    return new AuthState({
+      user: { id: "user1", name: "owner" },
+      credentials: [credential],
+      sessions: {
+        [token]: {
+          expiry: now + 30 * 24 * 60 * 60 * 1000,
+          credentialId: credential.id,
+          csrfToken: "csrf1",
+          lastActivityAt: now - 2 * 60 * 60 * 1000, // 2 hours ago
+          ...sessionOverrides,
+        },
+      },
+      setupTokens: [],
+    });
+  }
+
+  it("returns early for null token without calling withStateLock", async () => {
+    const initial = new AuthState({
+      user: { id: "user1", name: "owner" },
+      credentials: [credential],
+      sessions: {},
+      setupTokens: [],
+    });
+    saveState(initial);
+
+    await refreshSessionActivity(null);
+
+    const loaded = loadState();
+    assert.deepEqual(Object.keys(loaded.sessions), [], "no sessions should be added for null token");
+  });
+
+  it("returns early for undefined token without throwing", async () => {
+    await assert.doesNotReject(
+      () => refreshSessionActivity(undefined),
+      "refreshSessionActivity should not throw for undefined token"
+    );
+  });
+
+  it("updates lastActivityAt for a valid session", async () => {
+    const token = "validtoken123";
+    const initial = makeValidState(token);
+    const originalLastActivity = initial.sessions[token].lastActivityAt;
+    const beforeCall = Date.now() - 1;
+    saveState(initial);
+
+    await refreshSessionActivity(token);
+
+    const updated = loadState();
+    assert.ok(updated.sessions[token], "session should still exist after refresh");
+    assert.ok(
+      updated.sessions[token].lastActivityAt > originalLastActivity,
+      "lastActivityAt should be updated to a more recent time"
+    );
+    assert.ok(
+      updated.sessions[token].lastActivityAt >= beforeCall,
+      "lastActivityAt should be at or after the time of the call"
+    );
+  });
+
+  it("does not update lastActivityAt for an expired token", async () => {
+    const token = "expiredtoken456";
+    const now = Date.now();
+    const initial = makeValidState(token, {
+      expiry: now - 1000, // expired 1 second ago
+      lastActivityAt: now - 2000,
+    });
+    const originalLastActivity = initial.sessions[token].lastActivityAt;
+    saveState(initial);
+
+    await refreshSessionActivity(token);
+
+    const loaded = loadState();
+    assert.equal(
+      loaded.sessions[token].lastActivityAt,
+      originalLastActivity,
+      "expired session lastActivityAt should not be updated"
+    );
+  });
+
+  it("does not modify state for a non-existent token", async () => {
+    const initial = new AuthState({
+      user: { id: "user1", name: "owner" },
+      credentials: [credential],
+      sessions: {},
+      setupTokens: [],
+    });
+    saveState(initial);
+
+    await refreshSessionActivity("doesnotexist");
+
+    const loaded = loadState();
+    assert.deepEqual(Object.keys(loaded.sessions), [], "no sessions should be created for unknown token");
+  });
+
+  it("is a no-op when there is no auth state (null state)", async () => {
+    try { unlinkSync(STATE_PATH_TEST); } catch {}
+    _invalidateCache();
+
+    await assert.doesNotReject(
+      () => refreshSessionActivity("sometoken"),
+      "refreshSessionActivity should not throw when no state file exists"
+    );
   });
 });
