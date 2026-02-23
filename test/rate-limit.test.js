@@ -272,6 +272,27 @@ describe("getClientIp", () => {
     assert.equal(res.statusCode, 429, "Second request from same client IP behind proxy should be rate limited");
   });
 
+  it("falls back to socket address when XFF is all whitespace", () => {
+    const req = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: { "x-forwarded-for": "   " },
+    };
+    assert.equal(getClientIp(req), "127.0.0.1");
+  });
+
+  it("falls back to socket address when XFF contains non-IP string", () => {
+    const req = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: { "x-forwarded-for": "not-an-ip-address" },
+    };
+    assert.equal(getClientIp(req), "127.0.0.1");
+  });
+
+  it("falls back to socket address when req.socket is missing", () => {
+    const req = { socket: null, headers: {} };
+    assert.equal(getClientIp(req), "");
+  });
+
   it("default rate limiter isolates different XFF IPs behind same proxy", () => {
     const middleware = rateLimit(1, 60000); // no keyFn → uses getClientIp
     const clientIp1 = `203.0.113.${++keyCounter}`;
