@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { rateLimit } from "../lib/rate-limit.js";
+import { rateLimit, getClientIp } from "../lib/rate-limit.js";
 
 // Unique key counter so tests don't share state in the module-level store
 let keyCounter = 0;
@@ -78,9 +78,10 @@ describe("rateLimit", () => {
     assert.ok(retryAfter > 0 && retryAfter <= 10, `Retry-After should be 1–10, got ${retryAfter}`);
   });
 
-  it("uses req.socket.remoteAddress as default key", () => {
+  it("uses getClientIp as default key (direct connection uses socket address)", () => {
     const middleware = rateLimit(1, 60000); // no keyFn
-    const req = { socket: { remoteAddress: `default-key-test-${++keyCounter}` } };
+    // Use a non-loopback, non-private address so XFF is not trusted
+    const req = { socket: { remoteAddress: `203.0.113.${++keyCounter}` }, headers: {} };
     const next = () => {};
 
     middleware(req, makeRes(), next);
@@ -161,5 +162,151 @@ describe("rateLimit", () => {
     middleware(req, res, () => {});
 
     assert.equal(res.headers["Content-Type"], "application/json");
+  });
+});
+
+describe("getClientIp", () => {
+  it("returns socket address for direct (non-proxied) connections", () => {
+    const req = {
+      socket: { remoteAddress: "203.0.113.42" },
+      headers: { "x-forwarded-for": "10.0.0.1" },
+    };
+    // XFF should be ignored because socket is a public IP (not loopback/private)
+    assert.equal(getClientIp(req), "203.0.113.42");
+  });
+
+  it("returns first XFF IP for loopback socket (proxied via ngrok/Cloudflare)", () => {
+    const req = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: { "x-forwarded-for": "203.0.113.42" },
+    };
+    assert.equal(getClientIp(req), "203.0.113.42");
+  });
+
+  it("returns first XFF IP when multiple are present", () => {
+    const req = {
+      socket: { remoteAddress: "::1" },
+      headers: { "x-forwarded-for": "203.0.113.42, 10.0.0.1, 172.16.0.5" },
+    };
+    assert.equal(getClientIp(req), "203.0.113.42");
+  });
+
+  it("falls back to socket address when XFF is missing on proxied connection", () => {
+    const req = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: {},
+    };
+    assert.equal(getClientIp(req), "127.0.0.1");
+  });
+
+  it("falls back to socket address when XFF is empty string", () => {
+    const req = {
+      socket: { remoteAddress: "::1" },
+      headers: { "x-forwarded-for": "" },
+    };
+    assert.equal(getClientIp(req), "::1");
+  });
+
+  it("handles ::ffff:127.0.0.1 (IPv4-mapped loopback) as proxied", () => {
+    const req = {
+      socket: { remoteAddress: "::ffff:127.0.0.1" },
+      headers: { "x-forwarded-for": "203.0.113.99" },
+    };
+    assert.equal(getClientIp(req), "203.0.113.99");
+  });
+
+  it("trusts XFF for private 10.x.x.x socket address", () => {
+    const req = {
+      socket: { remoteAddress: "10.0.0.5" },
+      headers: { "x-forwarded-for": "203.0.113.7" },
+    };
+    assert.equal(getClientIp(req), "203.0.113.7");
+  });
+
+  it("trusts XFF for private 172.16-31.x.x socket address", () => {
+    const req = {
+      socket: { remoteAddress: "172.20.0.1" },
+      headers: { "x-forwarded-for": "203.0.113.8" },
+    };
+    assert.equal(getClientIp(req), "203.0.113.8");
+  });
+
+  it("trusts XFF for private 192.168.x.x socket address", () => {
+    const req = {
+      socket: { remoteAddress: "192.168.1.100" },
+      headers: { "x-forwarded-for": "203.0.113.9" },
+    };
+    assert.equal(getClientIp(req), "203.0.113.9");
+  });
+
+  it("does NOT trust XFF for 172.15 (just outside private range)", () => {
+    const req = {
+      socket: { remoteAddress: "172.15.0.1" },
+      headers: { "x-forwarded-for": "203.0.113.10" },
+    };
+    // 172.15 is not in 172.16-31 range, so socket is public
+    assert.equal(getClientIp(req), "172.15.0.1");
+  });
+
+  it("trims whitespace from XFF first IP", () => {
+    const req = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: { "x-forwarded-for": "  203.0.113.11  , 10.0.0.2" },
+    };
+    assert.equal(getClientIp(req), "203.0.113.11");
+  });
+
+  it("default rate limiter uses XFF for proxied connections", () => {
+    const middleware = rateLimit(1, 60000); // no keyFn → uses getClientIp
+    const clientIp = `203.0.113.${++keyCounter}`;
+
+    // Two requests from same client IP behind a proxy — should share the limit
+    const req1 = { socket: { remoteAddress: "127.0.0.1" }, headers: { "x-forwarded-for": clientIp } };
+    const req2 = { socket: { remoteAddress: "127.0.0.1" }, headers: { "x-forwarded-for": clientIp } };
+
+    const next = () => {};
+    middleware(req1, makeRes(), next);
+
+    const res = makeRes();
+    middleware(req2, res, next);
+    assert.equal(res.statusCode, 429, "Second request from same client IP behind proxy should be rate limited");
+  });
+
+  it("falls back to socket address when XFF is all whitespace", () => {
+    const req = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: { "x-forwarded-for": "   " },
+    };
+    assert.equal(getClientIp(req), "127.0.0.1");
+  });
+
+  it("falls back to socket address when XFF contains non-IP string", () => {
+    const req = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: { "x-forwarded-for": "not-an-ip-address" },
+    };
+    assert.equal(getClientIp(req), "127.0.0.1");
+  });
+
+  it("falls back to socket address when req.socket is missing", () => {
+    const req = { socket: null, headers: {} };
+    assert.equal(getClientIp(req), "");
+  });
+
+  it("default rate limiter isolates different XFF IPs behind same proxy", () => {
+    const middleware = rateLimit(1, 60000); // no keyFn → uses getClientIp
+    const clientIp1 = `203.0.113.${++keyCounter}`;
+    const clientIp2 = `203.0.113.${++keyCounter}`;
+
+    const req1 = { socket: { remoteAddress: "127.0.0.1" }, headers: { "x-forwarded-for": clientIp1 } };
+    const req2 = { socket: { remoteAddress: "127.0.0.1" }, headers: { "x-forwarded-for": clientIp2 } };
+
+    let nextCalled = 0;
+    const next = () => nextCalled++;
+
+    middleware(req1, makeRes(), next);
+    middleware(req2, makeRes(), next);
+    // Both have different client IPs, so both should be allowed (count = 1 each)
+    assert.equal(nextCalled, 2, "Different client IPs behind same proxy should have independent limits");
   });
 });

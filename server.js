@@ -22,7 +22,7 @@ import {
   isPublicPath, createChallengeStore, escapeAttr,
   getCsrfToken, validateCsrfToken, getCspHeaders,
 } from "./lib/http-util.js";
-import { rateLimit } from "./lib/rate-limit.js";
+import { rateLimit, getClientIp } from "./lib/rate-limit.js";
 import {
   processRegistration,
   processAuthentication,
@@ -83,7 +83,7 @@ const RP_NAME = "Katulong";
 // --- Rate limiting ---
 // 10 attempts per minute for auth endpoints
 const authRateLimit = rateLimit(10, 60000, (req) => {
-  const addr = req.socket.remoteAddress;
+  const addr = getClientIp(req);
   const ua = req.headers['user-agent'] || '';
   const origin = req.headers['origin'] || req.headers['host'] || '';
   return `${addr}:${ua}:${origin}`;
