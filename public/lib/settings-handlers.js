@@ -363,12 +363,21 @@ export function createSettingsHandlers(options = {}) {
   /**
    * Initialize all settings handlers
    */
+  function initVersion() {
+    const el = document.getElementById("settings-version");
+    const version = document.body.dataset.version;
+    if (el && version) {
+      el.textContent = `v${version}`;
+    }
+  }
+
   function init() {
     initInstanceName();
     initInstanceIcon();
     initToolbarColor();
     initThemeToggle();
     initLogout();
+    initVersion();
   }
 
   return {

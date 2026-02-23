@@ -51,7 +51,8 @@ const configManager = new ConfigManager(DATA_DIR);
 configManager.initialize();
 const instanceName = configManager.getInstanceName();
 const instanceId = configManager.getInstanceId();
-log.info("Configuration loaded", { instanceName, instanceId });
+const APP_VERSION = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf-8")).version;
+log.info("Configuration loaded", { instanceName, instanceId, version: APP_VERSION });
 
 await initP2P();
 
@@ -270,6 +271,9 @@ const routes = [
         html = html.replace("<head>", `<head>\n    <meta name="csrf-token" content="${escapeAttr(csrfToken)}">`);
       }
     }
+
+    // Inject version as data attribute on body
+    html = html.replace("<body>", `<body data-version="${escapeAttr(APP_VERSION)}">`);
 
     res.writeHead(200, {
       "Content-Type": "text/html",

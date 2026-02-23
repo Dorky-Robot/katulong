@@ -776,6 +776,10 @@
       margin-bottom: 0.5rem;
     }
     .settings-logout-btn:active { opacity: 0.8; }
+    .settings-version {
+      display: block; text-align: center; font-size: 0.75rem;
+      color: var(--text-muted, #888); opacity: 0.6;
+    }
 
     .settings-pair-btn {
       width: 100%; height: var(--height-btn-md); border: none; border-radius: var(--radius-md);
@@ -1308,6 +1312,7 @@
 
           <div class="settings-footer">
             <button class="settings-logout-btn" id="settings-logout">End Session</button>
+            <span class="settings-version" id="settings-version"></span>
           </div>
         </div>
       </div>
