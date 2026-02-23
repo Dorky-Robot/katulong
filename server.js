@@ -617,6 +617,7 @@ const routes = [
         name: t.name,
         createdAt: t.createdAt,
         lastUsedAt: t.lastUsedAt,
+        expiresAt: t.expiresAt || null,
         credential: null, // Will be populated if token was used
       };
 
@@ -659,14 +660,17 @@ const routes = [
     }
 
     // Create token inside lock to prevent race conditions
+    const SETUP_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
     const tokenData = await withStateLock((state) => {
       const tokenValue = randomBytes(16).toString("hex");
+      const now = Date.now();
       const tokenData = {
         id: randomBytes(8).toString("hex"),
         token: tokenValue,
         name: name.trim(),
-        createdAt: Date.now(),
+        createdAt: now,
         lastUsedAt: null,
+        expiresAt: now + SETUP_TOKEN_TTL_MS,
       };
 
       const newState = (state || AuthState.empty()).addSetupToken(tokenData);
@@ -681,6 +685,7 @@ const routes = [
       name: tokenData.tokenData.name,
       token: tokenData.tokenData.token,
       createdAt: tokenData.tokenData.createdAt,
+      expiresAt: tokenData.tokenData.expiresAt,
     });
   }},
 
