@@ -10,7 +10,10 @@ import {
   createChallengeStore,
   escapeAttr,
   getCspHeaders,
+  getCsrfToken,
+  validateCsrfToken,
 } from "../lib/http-util.js";
+import { AuthState } from "../lib/auth-state.js";
 
 describe("parseCookies", () => {
   it("returns empty map for null/undefined", () => {
@@ -542,5 +545,100 @@ describe("getCspHeaders", () => {
     const headers = getCspHeaders(false, req);
     const policy = headers["Content-Security-Policy"];
     assert.doesNotMatch(policy, /cloudflareinsights/);
+  });
+});
+
+describe("getCsrfToken", () => {
+  function makeState(sessionToken, csrfToken) {
+    return AuthState.empty("user1")
+      .addCredential({ id: "cred1", publicKey: "key", counter: 0 })
+      .addSession(sessionToken, Date.now() + 86400000, "cred1", csrfToken);
+  }
+
+  it("returns CSRF token for valid session", () => {
+    const state = makeState("sess-abc", "csrf-xyz");
+    assert.equal(getCsrfToken(state, "sess-abc"), "csrf-xyz");
+  });
+
+  it("returns null when session token is not in state", () => {
+    const state = makeState("sess-abc", "csrf-xyz");
+    assert.equal(getCsrfToken(state, "sess-other"), null);
+  });
+
+  it("returns null when state is null", () => {
+    assert.equal(getCsrfToken(null, "sess-abc"), null);
+  });
+
+  it("returns null when sessionToken is null", () => {
+    const state = makeState("sess-abc", "csrf-xyz");
+    assert.equal(getCsrfToken(state, null), null);
+  });
+
+  it("returns null when session has no csrfToken (backward compat)", () => {
+    // addSession with null csrfToken
+    const state = AuthState.empty("user1")
+      .addCredential({ id: "cred1", publicKey: "key", counter: 0 })
+      .addSession("sess-abc", Date.now() + 86400000, "cred1", null);
+    assert.equal(getCsrfToken(state, "sess-abc"), null);
+  });
+});
+
+describe("validateCsrfToken", () => {
+  const SESSION_TOKEN = "test-session-token-abcdef1234567890";
+  const CSRF_TOKEN = "a".repeat(64); // 64 char CSRF token
+
+  function makeState(csrfToken = CSRF_TOKEN) {
+    return AuthState.empty("user1")
+      .addCredential({ id: "cred1", publicKey: "key", counter: 0 })
+      .addSession(SESSION_TOKEN, Date.now() + 86400000, "cred1", csrfToken);
+  }
+
+  function makeReq({ cookie, csrfHeader } = {}) {
+    return {
+      headers: {
+        cookie: cookie ?? `katulong_session=${SESSION_TOKEN}`,
+        ...(csrfHeader !== undefined ? { "x-csrf-token": csrfHeader } : {}),
+      },
+    };
+  }
+
+  it("returns true when CSRF token matches", () => {
+    const req = makeReq({ csrfHeader: CSRF_TOKEN });
+    assert.ok(validateCsrfToken(req, makeState()));
+  });
+
+  it("returns false when CSRF token is wrong", () => {
+    const req = makeReq({ csrfHeader: "b".repeat(64) });
+    assert.ok(!validateCsrfToken(req, makeState()));
+  });
+
+  it("returns false when x-csrf-token header is missing", () => {
+    const req = makeReq();
+    assert.ok(!validateCsrfToken(req, makeState()));
+  });
+
+  it("returns false when session cookie is missing", () => {
+    const req = { headers: { "x-csrf-token": CSRF_TOKEN } };
+    assert.ok(!validateCsrfToken(req, makeState()));
+  });
+
+  it("returns false when state is null", () => {
+    const req = makeReq({ csrfHeader: CSRF_TOKEN });
+    assert.ok(!validateCsrfToken(req, null));
+  });
+
+  it("returns false when session not found in state", () => {
+    const req = {
+      headers: {
+        cookie: "katulong_session=unknown-token",
+        "x-csrf-token": CSRF_TOKEN,
+      },
+    };
+    assert.ok(!validateCsrfToken(req, makeState()));
+  });
+
+  it("returns false when CSRF token length differs (timing-safe check)", () => {
+    const req = makeReq({ csrfHeader: "short" });
+    assert.ok(!validateCsrfToken(req, makeState()));
   });
 });
