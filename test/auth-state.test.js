@@ -519,6 +519,70 @@ describe("AuthState", () => {
     });
   });
 
+  describe("updateCredential", () => {
+    it("returns new state with credential fields updated", () => {
+      const original = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [{ id: "cred1", counter: 0, name: "Device" }],
+        sessions: {},
+      });
+
+      const updated = original.updateCredential("cred1", { counter: 5 });
+
+      assert.strictEqual(updated.credentials[0].counter, 5);
+      assert.strictEqual(updated.credentials[0].name, "Device");
+    });
+
+    it("does not mutate original state credential", () => {
+      const original = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [{ id: "cred1", counter: 0 }],
+        sessions: {},
+      });
+
+      original.updateCredential("cred1", { counter: 99 });
+
+      // Original credential must be unchanged
+      assert.strictEqual(original.credentials[0].counter, 0);
+    });
+
+    it("returns new AuthState instance", () => {
+      const original = AuthState.empty("user123").addCredential({ id: "cred1", counter: 0 });
+      const updated = original.updateCredential("cred1", { counter: 1 });
+
+      assert.notStrictEqual(original, updated);
+    });
+
+    it("leaves other credentials unchanged", () => {
+      const original = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [
+          { id: "cred1", counter: 0 },
+          { id: "cred2", counter: 0 },
+        ],
+        sessions: {},
+      });
+
+      const updated = original.updateCredential("cred1", { counter: 7 });
+
+      assert.strictEqual(updated.credentials[0].counter, 7);
+      assert.strictEqual(updated.credentials[1].counter, 0);
+    });
+
+    it("preserves sessions and user", () => {
+      const original = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [{ id: "cred1", counter: 0 }],
+        sessions: { tok: { expiry: 9999999, credentialId: "cred1", csrfToken: null, lastActivityAt: null } },
+      });
+
+      const updated = original.updateCredential("cred1", { counter: 3 });
+
+      assert.deepStrictEqual(updated.user, original.user);
+      assert.deepStrictEqual(updated.sessions, original.sessions);
+    });
+  });
+
   describe("toJSON", () => {
     it("serializes to plain object", () => {
       const state = new AuthState({
