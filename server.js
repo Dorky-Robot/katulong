@@ -81,7 +81,12 @@ const RP_NAME = "Katulong";
 
 // --- Rate limiting ---
 // 10 attempts per minute for auth endpoints
-const authRateLimit = rateLimit(10, 60000);
+const authRateLimit = rateLimit(10, 60000, (req) => {
+  const addr = req.socket.remoteAddress;
+  const ua = req.headers['user-agent'] || '';
+  const origin = req.headers['origin'] || req.headers['host'] || '';
+  return `${addr}:${ua}:${origin}`;
+});
 
 if (!process.env.SSH_PASSWORD) {
   log.info("SSH password generated", { password: SSH_PASSWORD });
@@ -543,6 +548,13 @@ const routes = [
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
     }
+    // CSRF not needed for localhost (auth bypassed, no session to protect)
+    if (!isLocalRequest(req)) {
+      const state = loadState();
+      if (!validateCsrfToken(req, state)) {
+        return json(res, 403, { error: "Invalid or missing CSRF token" });
+      }
+    }
 
     const { name } = await parseJSON(req);
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -579,6 +591,13 @@ const routes = [
     // Only authenticated users can delete tokens
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
+    }
+    // CSRF not needed for localhost (auth bypassed, no session to protect)
+    if (!isLocalRequest(req)) {
+      const state = loadState();
+      if (!validateCsrfToken(req, state)) {
+        return json(res, 403, { error: "Invalid or missing CSRF token" });
+      }
     }
 
     const id = param;
@@ -641,6 +660,13 @@ const routes = [
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
     }
+    // CSRF not needed for localhost (auth bypassed, no session to protect)
+    if (!isLocalRequest(req)) {
+      const state = loadState();
+      if (!validateCsrfToken(req, state)) {
+        return json(res, 403, { error: "Invalid or missing CSRF token" });
+      }
+    }
 
     const id = param;
     if (!id) {
@@ -697,7 +723,7 @@ const routes = [
 
         // Notify all connected clients if a credential was removed
         if (newState && newState.removedCredentialId) {
-          broadcast({ type: 'credential-removed', credentialId: newState.removedCredentialId });
+          broadcastToAll({ type: 'credential-removed', credentialId: newState.removedCredentialId });
         }
       } catch (err) {
         // Handle "last credential" protection
