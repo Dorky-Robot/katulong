@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { createServer } from "node:http";
 import { createConnection } from "node:net";
-import { readFileSync, existsSync, watch, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, watch, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { WebSocketServer } from "ws";
@@ -86,6 +86,12 @@ const MAX_REQUEST_BODY_SIZE = 1024 * 1024; // 1MB limit for request bodies
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const DAEMON_RECONNECT_INITIAL_MS = 1000; // 1 second
 const DAEMON_RECONNECT_MAX_MS = 30000; // 30 seconds
+const SERVER_PID_PATH = join(DATA_DIR, "server.pid");
+const DRAIN_TIMEOUT_MS = parseInt(process.env.DRAIN_TIMEOUT || "30000", 10);
+
+// --- Graceful shutdown state ---
+
+let draining = false;
 
 // --- Challenge storage (in-memory, 5-min expiry) ---
 
@@ -238,6 +244,18 @@ function setSecurityHeaders(res) {
 // --- HTTP routes ---
 
 const routes = [
+  { method: "GET", path: "/health", handler: (req, res) => {
+    if (draining) {
+      return json(res, 503, { status: "draining", pid: process.pid });
+    }
+    json(res, 200, {
+      status: "ok",
+      pid: process.pid,
+      uptime: process.uptime(),
+      daemonConnected,
+    });
+  }},
+
   { method: "GET", path: "/", handler: (req, res) => {
     let html = readFileSync(join(__dirname, "public", "index.html"), "utf-8");
 
@@ -1420,7 +1438,95 @@ process.on("unhandledRejection", (err) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   log.info("Katulong HTTP started", { port: PORT });
+  // Write PID file so CLI commands can find us
+  try {
+    writeFileSync(SERVER_PID_PATH, String(process.pid), { encoding: "utf-8" });
+  } catch (err) {
+    log.warn("Failed to write server PID file", { error: err.message });
+  }
 });
+
+// --- Graceful shutdown ---
+
+function cleanupPidFile() {
+  try {
+    // Only remove if it's our PID (another server may have overwritten it)
+    if (existsSync(SERVER_PID_PATH)) {
+      const content = readFileSync(SERVER_PID_PATH, "utf-8").trim();
+      if (content === String(process.pid)) {
+        unlinkSync(SERVER_PID_PATH);
+      }
+    }
+  } catch {
+    // Best-effort cleanup
+  }
+}
+
+let shutdownInProgress = false;
+
+async function gracefulShutdown(signal) {
+  if (shutdownInProgress) return;
+  shutdownInProgress = true;
+  draining = true;
+
+  log.info("Graceful shutdown starting", { signal, pid: process.pid });
+
+  // 1. Notify all WebSocket clients that this server is draining
+  //    (triggers fast reconnect on the frontend)
+  for (const [, info] of wsClients) {
+    if (info.ws.readyState === 1) {
+      try {
+        info.ws.send(JSON.stringify({ type: "server-draining" }));
+      } catch { /* client may already be closing */ }
+    }
+  }
+
+  // 2. Stop accepting new HTTP connections — releases the port immediately
+  server.close(() => {
+    log.info("HTTP server closed, no more new connections");
+  });
+
+  // 3. Wait briefly for clients to receive the draining message, then close WebSockets
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  for (const [clientId, info] of wsClients) {
+    if (info.ws.readyState === 1) {
+      info.ws.close(1001, "Server shutting down"); // 1001 = Going Away
+    }
+    if (info.p2pPeer) {
+      try { destroyPeer(info.p2pPeer); } catch { /* ignore */ }
+    }
+    wsClients.delete(clientId);
+    daemonSend({ type: "detach", clientId });
+  }
+
+  // 4. Wait for WebSocket connections to drain (up to DRAIN_TIMEOUT_MS)
+  const drainDeadline = Date.now() + DRAIN_TIMEOUT_MS;
+  while (wss.clients.size > 0 && Date.now() < drainDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  // 5. Force-close any remaining connections
+  for (const client of wss.clients) {
+    client.terminate();
+  }
+
+  // 6. Disconnect from daemon (don't kill it — other servers may be connected)
+  if (daemonSocket) {
+    daemonSocket.removeAllListeners();
+    daemonSocket.destroy();
+    daemonSocket = null;
+  }
+
+  // 7. Clean up PID file
+  cleanupPidFile();
+
+  log.info("Graceful shutdown complete", { signal });
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 startSSHServer({
   port: SSH_PORT,
