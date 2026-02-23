@@ -288,3 +288,338 @@ describe("daemon integration", () => {
     await rpc(sock, { type: "delete-session", name: sessionName });
   });
 });
+
+// ─── Error scenario helpers ───────────────────────────────────────────────────
+
+/** Send a message without an id (fire-and-forget; daemon sends no response). */
+function sendFireAndForget(socket, msg) {
+  socket.write(encode(msg));
+}
+
+/**
+ * Wait for a broadcast message (no id field) that satisfies `filter`.
+ * Resolves with the first matching message.
+ */
+function waitForBroadcast(socket, filter, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const handler = decoder((msg) => {
+      if (filter(msg)) {
+        clearTimeout(timer);
+        socket.removeListener("data", handler);
+        resolve(msg);
+      }
+    });
+    const timer = setTimeout(() => {
+      socket.removeListener("data", handler);
+      reject(new Error("Broadcast timeout"));
+    }, timeoutMs);
+    socket.on("data", handler);
+  });
+}
+
+// ─── Error scenarios (separate daemon instance) ───────────────────────────────
+
+describe("daemon error scenarios", () => {
+  let errDaemon;
+  let errSock;
+
+  const ERR_SOCKET = `/tmp/katulong-test-${process.pid}-err.sock`;
+  const ERR_DATA_DIR = mkdtempSync(join(tmpdir(), "katulong-err-test-"));
+
+  before(async () => {
+    if (existsSync(ERR_SOCKET)) unlinkSync(ERR_SOCKET);
+
+    errDaemon = spawn("node", [DAEMON_PATH], {
+      env: {
+        ...process.env,
+        KATULONG_SOCK: ERR_SOCKET,
+        KATULONG_DATA_DIR: ERR_DATA_DIR,
+      },
+      stdio: "pipe",
+    });
+
+    errDaemon.stderr.on("data", () => {});
+    errDaemon.stdout.on("data", () => {});
+
+    await waitForSocket(ERR_SOCKET);
+    errSock = createConnection(ERR_SOCKET);
+    await new Promise((resolve) => errSock.on("connect", resolve));
+  });
+
+  after(async () => {
+    if (errSock) errSock.destroy();
+    if (errDaemon) {
+      errDaemon.kill("SIGTERM");
+      await new Promise((resolve) => errDaemon.on("exit", resolve));
+    }
+    if (existsSync(ERR_SOCKET)) {
+      try { unlinkSync(ERR_SOCKET); } catch {}
+    }
+  });
+
+  // ── Fire-and-forget failures ──────────────────────────────────────────────
+
+  describe("fire-and-forget failures", () => {
+    it("input on dead session does not crash daemon", async () => {
+      const sessionName = "ff-dead-input-" + Date.now();
+      const clientId = "ff-dead-client-" + Date.now();
+
+      await rpc(errSock, { type: "create-session", name: sessionName });
+      await rpc(errSock, { type: "attach", clientId, session: sessionName });
+
+      // Register for exit broadcast before triggering the exit
+      const exitPromise = waitForBroadcast(
+        errSock,
+        (msg) => msg.type === "exit" && msg.session === sessionName
+      );
+
+      sendFireAndForget(errSock, { type: "input", clientId, data: "exit\n" });
+      await exitPromise; // session.alive is now false
+
+      // Input on dead session — aliveSessionFor returns null, optional chain is no-op
+      // The surrounding try/catch (daemon.js line 192) guards against any race
+      sendFireAndForget(errSock, { type: "input", clientId, data: "this-should-not-crash\n" });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const result = await rpc(errSock, { type: "list-sessions" });
+      assert.ok(Array.isArray(result.sessions), "daemon should still respond after input on dead session");
+
+      await rpc(errSock, { type: "delete-session", name: sessionName });
+    });
+
+    it("resize on dead session is silently ignored", async () => {
+      const sessionName = "ff-dead-resize-" + Date.now();
+      const clientId = "ff-resize-client-" + Date.now();
+
+      await rpc(errSock, { type: "create-session", name: sessionName });
+      await rpc(errSock, { type: "attach", clientId, session: sessionName });
+
+      const exitPromise = waitForBroadcast(
+        errSock,
+        (msg) => msg.type === "exit" && msg.session === sessionName
+      );
+
+      sendFireAndForget(errSock, { type: "input", clientId, data: "exit\n" });
+      await exitPromise;
+
+      // Resize on dead session — aliveSessionFor returns null, optional chain is no-op
+      // Session.resize() also guards with if (this.alive) (session.js lines 87-88)
+      sendFireAndForget(errSock, { type: "resize", clientId, cols: 120, rows: 40 });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const result = await rpc(errSock, { type: "list-sessions" });
+      assert.ok(Array.isArray(result.sessions), "daemon should still respond after resize on dead session");
+
+      await rpc(errSock, { type: "delete-session", name: sessionName });
+    });
+
+    it("detach on unknown or already-detached client is idempotent", async () => {
+      const unknownClientId = "unknown-client-" + Date.now();
+
+      // Send detach for a clientId that was never registered — Map.delete on
+      // a missing key is a no-op and should not crash the daemon
+      sendFireAndForget(errSock, { type: "detach", clientId: unknownClientId });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const result = await rpc(errSock, { type: "list-sessions" });
+      assert.ok(Array.isArray(result.sessions), "daemon should be alive after detach of unknown client");
+    });
+  });
+
+  // ── Malformed messages ────────────────────────────────────────────────────
+
+  describe("malformed messages", () => {
+    it("RPC with missing type field returns error without crashing daemon", async () => {
+      const result = await rpc(errSock, { data: "no-type-field" });
+      assert.ok(result.error, "missing type should return an error");
+      assert.match(result.error, /unknown/i);
+
+      const list = await rpc(errSock, { type: "list-sessions" });
+      assert.ok(Array.isArray(list.sessions), "daemon should still be alive");
+    });
+
+    it("fire-and-forget with missing type does not crash daemon", async () => {
+      // No type field: none of the if (type === "...") branches match, returns silently
+      sendFireAndForget(errSock, { data: "no-type-field" });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const result = await rpc(errSock, { type: "list-sessions" });
+      assert.ok(Array.isArray(result.sessions), "daemon should be alive after fire-and-forget with no type");
+    });
+
+    it("create-session with missing name does not crash daemon", async () => {
+      // msg.name is undefined — spawnSession(undefined) creates a PTY keyed
+      // with undefined in the Map. The daemon must not throw.
+      const result = await rpc(errSock, { type: "create-session" });
+
+      // Daemon must still be reachable
+      const list = await rpc(errSock, { type: "list-sessions" });
+      assert.ok(Array.isArray(list.sessions), "daemon should be alive after malformed create-session");
+
+      // Clean up: delete-session with name=undefined targets the same Map key,
+      // so this succeeds whether or not the session was created.
+      if (!result.error) {
+        const del = await rpc(errSock, { type: "delete-session", name: result.name });
+        assert.ok(del.ok, "should be able to delete the session created with missing name");
+      }
+    });
+
+    it("rename-session with missing fields returns error without crashing daemon", async () => {
+      // renameSession(undefined, undefined) → sessions.get(undefined) → falsy → returns false
+      const result = await rpc(errSock, { type: "rename-session" });
+      assert.ok(result.error, "rename with missing fields should return an error");
+
+      const list = await rpc(errSock, { type: "list-sessions" });
+      assert.ok(Array.isArray(list.sessions), "daemon should still be alive after malformed rename-session");
+    });
+  });
+
+  // ── Resource exhaustion ───────────────────────────────────────────────────
+
+  describe("resource exhaustion", () => {
+    it("rejects session creation at MAX_SESSIONS limit and recovers after deletion", async () => {
+      const MAX_SESSIONS = 20;
+      const created = [];
+
+      // Fill up to the limit
+      for (let i = 0; i < MAX_SESSIONS; i++) {
+        const name = `maxsess-${i}-${Date.now()}`;
+        const r = await rpc(errSock, { type: "create-session", name });
+        assert.ok(!r.error, `session ${i} creation should succeed, got: ${r.error}`);
+        created.push(name);
+      }
+
+      // Next creation must be rejected
+      const overflow = await rpc(errSock, { type: "create-session", name: "overflow-" + Date.now() });
+      assert.ok(overflow.error, "should reject creation when MAX_SESSIONS is reached");
+      assert.match(overflow.error, /maximum session limit/i);
+
+      // Delete one session — the slot should open up
+      const toDelete = created.pop();
+      await rpc(errSock, { type: "delete-session", name: toDelete });
+
+      // Creation must now succeed again
+      const recoveryName = "recovery-" + Date.now();
+      const recovery = await rpc(errSock, { type: "create-session", name: recoveryName });
+      assert.ok(!recovery.error, "should allow creation after a slot is freed");
+      created.push(recoveryName);
+
+      // Cleanup
+      for (const name of created) {
+        await rpc(errSock, { type: "delete-session", name });
+      }
+    });
+
+    it("output buffer item cap handles single large burst without crashing daemon", async () => {
+      const sessionName = "burst-cap-" + Date.now();
+      const clientId = "burst-cap-client-" + Date.now();
+
+      await rpc(errSock, { type: "create-session", name: sessionName });
+      await rpc(errSock, { type: "attach", clientId, session: sessionName });
+
+      // Generate many small output lines well above MAX_BUFFER (5000 items)
+      // PTY batching may group lines, but the ring buffer still evicts by item count
+      sendFireAndForget(errSock, {
+        type: "input",
+        clientId,
+        data: "for i in $(seq 1 6000); do printf 'x\\n'; done\n",
+      });
+
+      // Allow the loop to run and output to be buffered
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      // Daemon must still be alive and buffer must be bounded
+      const result = await rpc(errSock, {
+        type: "attach",
+        clientId: "check-" + Date.now(),
+        session: sessionName,
+      });
+      assert.equal(typeof result.buffer, "string", "buffer should be a string");
+      const bufferBytes = Buffer.byteLength(result.buffer, "utf8");
+      assert.ok(
+        bufferBytes <= 5 * 1024 * 1024,
+        `buffer size ${bufferBytes} should be within the 5MB cap`
+      );
+
+      await rpc(errSock, { type: "delete-session", name: sessionName });
+    });
+  });
+
+  // ── Session lifecycle edge cases ──────────────────────────────────────────
+
+  describe("session lifecycle edge cases", () => {
+    it("attached client receives exit broadcast when session exits", async () => {
+      const sessionName = "lifecycle-exit-" + Date.now();
+      const clientId = "lifecycle-client-" + Date.now();
+
+      await rpc(errSock, { type: "create-session", name: sessionName });
+      await rpc(errSock, { type: "attach", clientId, session: sessionName });
+
+      const exitPromise = waitForBroadcast(
+        errSock,
+        (msg) => msg.type === "exit" && msg.session === sessionName
+      );
+
+      sendFireAndForget(errSock, { type: "input", clientId, data: "exit\n" });
+
+      const exitMsg = await exitPromise;
+      assert.equal(exitMsg.type, "exit");
+      assert.equal(exitMsg.session, sessionName);
+      assert.equal(typeof exitMsg.code, "number", "exit code should be a number");
+
+      await rpc(errSock, { type: "delete-session", name: sessionName });
+    });
+
+    it("attach to exited session reports alive false", async () => {
+      const sessionName = "lifecycle-dead-attach-" + Date.now();
+      const clientId = "lifecycle-dead-client-" + Date.now();
+
+      await rpc(errSock, { type: "create-session", name: sessionName });
+      await rpc(errSock, { type: "attach", clientId, session: sessionName });
+
+      const exitPromise = waitForBroadcast(
+        errSock,
+        (msg) => msg.type === "exit" && msg.session === sessionName
+      );
+
+      sendFireAndForget(errSock, { type: "input", clientId, data: "exit\n" });
+      await exitPromise;
+
+      // Re-attach after session has exited — should reflect the dead state
+      const result = await rpc(errSock, {
+        type: "attach",
+        clientId: "reattach-" + Date.now(),
+        session: sessionName,
+      });
+      assert.equal(result.alive, false, "attach to exited session should return alive=false");
+
+      await rpc(errSock, { type: "delete-session", name: sessionName });
+    });
+
+    it("input after session is deleted by another client does not crash daemon", async () => {
+      const sessionName = "lifecycle-deleted-" + Date.now();
+      const clientIdA = "clientA-" + Date.now();
+      const clientIdB = "clientB-" + Date.now();
+
+      await rpc(errSock, { type: "create-session", name: sessionName });
+      await rpc(errSock, { type: "attach", clientId: clientIdA, session: sessionName });
+      await rpc(errSock, { type: "attach", clientId: clientIdB, session: sessionName });
+
+      // Simulate one client deleting the shared session
+      await rpc(errSock, { type: "delete-session", name: sessionName });
+
+      // The other client's entry is also cleared by removeSession; fire-and-forget
+      // input now hits the aliveSessionFor(clientIdA) → null path — must not crash
+      sendFireAndForget(errSock, { type: "input", clientId: clientIdA, data: "orphan-input\n" });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const result = await rpc(errSock, { type: "list-sessions" });
+      assert.ok(Array.isArray(result.sessions), "daemon should survive input after session deletion");
+    });
+  });
+});
