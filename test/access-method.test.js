@@ -3,7 +3,9 @@ import assert from 'node:assert';
 import {
   isLocalRequest,
   getAccessMethod,
-  getAccessDescription
+  getAccessDescription,
+  isLoopbackAddress,
+  TUNNEL_HOSTNAMES,
 } from '../lib/access-method.js';
 
 function mockRequest({ remoteAddress, host, origin }) {
@@ -301,5 +303,54 @@ describe('access-method', () => {
       });
       assert.strictEqual(isLocalRequest(req), true);
     });
+  });
+});
+
+describe('isLoopbackAddress', () => {
+  it('returns true for IPv4 loopback', () => {
+    assert.strictEqual(isLoopbackAddress('127.0.0.1'), true);
+  });
+
+  it('returns true for IPv6 loopback', () => {
+    assert.strictEqual(isLoopbackAddress('::1'), true);
+  });
+
+  it('returns true for IPv4-mapped IPv6 loopback', () => {
+    assert.strictEqual(isLoopbackAddress('::ffff:127.0.0.1'), true);
+  });
+
+  it('returns false for public IPv4 address', () => {
+    assert.strictEqual(isLoopbackAddress('8.8.8.8'), false);
+  });
+
+  it('returns false for private IPv4 address', () => {
+    assert.strictEqual(isLoopbackAddress('192.168.1.100'), false);
+  });
+
+  it('returns false for empty string', () => {
+    assert.strictEqual(isLoopbackAddress(''), false);
+  });
+
+  it('returns false for other IPv6 address', () => {
+    assert.strictEqual(isLoopbackAddress('2001:db8::1'), false);
+  });
+});
+
+describe('TUNNEL_HOSTNAMES', () => {
+  it('is an array of hostname suffixes', () => {
+    assert.ok(Array.isArray(TUNNEL_HOSTNAMES));
+    assert.ok(TUNNEL_HOSTNAMES.length > 0);
+  });
+
+  it('includes known tunnel services', () => {
+    assert.ok(TUNNEL_HOSTNAMES.some(s => s.includes('ngrok')));
+    assert.ok(TUNNEL_HOSTNAMES.some(s => s.includes('trycloudflare')));
+    assert.ok(TUNNEL_HOSTNAMES.some(s => s.includes('loca.lt')));
+  });
+
+  it('all entries start with a dot (hostname suffix format)', () => {
+    for (const suffix of TUNNEL_HOSTNAMES) {
+      assert.ok(suffix.startsWith('.'), `${suffix} should start with a dot`);
+    }
   });
 });

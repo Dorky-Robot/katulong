@@ -181,6 +181,56 @@ describe("ConfigManager", () => {
       const saved = JSON.parse(readFileSync(join(testDir, "config.json"), "utf-8"));
       assert.strictEqual(saved.instanceIcon, "terminal-window", "Should persist the reset icon to file");
     });
+
+    it("should reset instanceName to hostname when loaded value contains quotes", () => {
+      const poisonedConfig = {
+        instanceId: "00000000-0000-0000-0000-000000000000",
+        instanceName: 'name"with"quotes',
+        instanceIcon: "terminal-window",
+        toolbarColor: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      };
+
+      writeFileSync(join(testDir, "config.json"), JSON.stringify(poisonedConfig), "utf-8");
+
+      const config = configManager.initialize();
+      assert.strictEqual(config.instanceName, hostname(), "Should reset name with quotes to hostname");
+    });
+
+    it("should save reset instanceName to file when poisoned value contains bad chars", () => {
+      const poisonedConfig = {
+        instanceId: "00000000-0000-0000-0000-000000000000",
+        instanceName: "bad<name>",
+        instanceIcon: "terminal-window",
+        toolbarColor: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      };
+
+      writeFileSync(join(testDir, "config.json"), JSON.stringify(poisonedConfig), "utf-8");
+
+      configManager.initialize();
+
+      const saved = JSON.parse(readFileSync(join(testDir, "config.json"), "utf-8"));
+      assert.strictEqual(saved.instanceName, hostname(), "Should persist the reset name to file");
+    });
+
+    it("should preserve valid instanceName from existing config", () => {
+      const validConfig = {
+        instanceId: "00000000-0000-0000-0000-000000000000",
+        instanceName: "My Server 2.0",
+        instanceIcon: "terminal-window",
+        toolbarColor: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      };
+
+      writeFileSync(join(testDir, "config.json"), JSON.stringify(validConfig), "utf-8");
+
+      const config = configManager.initialize();
+      assert.strictEqual(config.instanceName, "My Server 2.0", "Should preserve valid instance name");
+    });
   });
 
   describe("getInstanceName", () => {
@@ -328,6 +378,30 @@ describe("ConfigManager", () => {
       assert.strictEqual(configManager.getInstanceName(), name100, "Should accept 100 char name");
     });
 
+    it("should reject names with HTML injection characters", () => {
+      assert.throws(
+        () => configManager.setInstanceName('<script>alert(1)</script>'),
+        /letters, digits, spaces, hyphens, underscores, and periods/,
+        "Should reject HTML injection in instance name"
+      );
+    });
+
+    it("should reject names with quotes", () => {
+      assert.throws(
+        () => configManager.setInstanceName('name"with"quotes'),
+        /letters, digits, spaces, hyphens, underscores, and periods/,
+        "Should reject quotes in instance name"
+      );
+    });
+
+    it("should reject names with ampersands and semicolons", () => {
+      assert.throws(
+        () => configManager.setInstanceName("name&amp;injected"),
+        /letters, digits, spaces, hyphens, underscores, and periods/,
+        "Should reject ampersands in instance name"
+      );
+    });
+
     it("should reject XSS script tag payload", () => {
       assert.throws(
         () => configManager.setInstanceName("<script>alert(1)</script>"),
@@ -350,6 +424,14 @@ describe("ConfigManager", () => {
         /letters, digits, spaces, hyphens, underscores, and periods/,
         "Should reject angle brackets"
       );
+    });
+
+    it("should accept names with allowed special characters", () => {
+      configManager.setInstanceName("My Server 2.0");
+      assert.strictEqual(configManager.getInstanceName(), "My Server 2.0");
+
+      configManager.setInstanceName("my-server_v1");
+      assert.strictEqual(configManager.getInstanceName(), "my-server_v1");
     });
 
     it("should accept normal names with spaces", () => {

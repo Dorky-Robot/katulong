@@ -6,7 +6,6 @@ import {
   setSessionCookie,
   getOriginAndRpID,
   isPublicPath,
-  sanitizeName,
   createChallengeStore,
   escapeAttr,
   getCspHeaders,
@@ -115,40 +114,6 @@ describe("escapeAttr", () => {
 
   it("handles numbers", () => {
     assert.equal(escapeAttr(3002), "3002");
-  });
-});
-
-describe("sanitizeName", () => {
-  it("returns null for null/undefined", () => {
-    assert.equal(sanitizeName(null), null);
-    assert.equal(sanitizeName(undefined), null);
-  });
-
-  it("returns null for empty string", () => {
-    assert.equal(sanitizeName(""), null);
-  });
-
-  it("returns null for non-string", () => {
-    assert.equal(sanitizeName(42), null);
-  });
-
-  it("passes through safe names", () => {
-    assert.equal(sanitizeName("my-session_1"), "my-session_1");
-  });
-
-  it("strips unsafe characters", () => {
-    assert.equal(sanitizeName("hello world!@#$"), "helloworld");
-  });
-
-  it("returns null if all characters are unsafe", () => {
-    assert.equal(sanitizeName("!@#$%^&*()"), null);
-  });
-
-  it("truncates to 64 characters", () => {
-    const long = "a".repeat(100);
-    const result = sanitizeName(long);
-    assert.equal(result.length, 64);
-    assert.equal(result, "a".repeat(64));
   });
 });
 

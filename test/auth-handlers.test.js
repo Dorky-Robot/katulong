@@ -4,10 +4,9 @@ import {
   processRegistration,
   processAuthentication,
   extractChallenge,
-  AuthSuccess,
-  AuthFailure,
 } from "../lib/auth-handlers.js";
 import { AuthState } from "../lib/auth-state.js";
+import { Success, Failure } from "../lib/result.js";
 
 describe("extractChallenge", () => {
   it("extracts challenge from WebAuthn credential", () => {
@@ -52,7 +51,7 @@ describe("processRegistration", () => {
       currentState: null,
     });
 
-    assert.ok(result instanceof AuthFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "invalid-challenge");
     assert.equal(result.statusCode, 400);
   });
@@ -79,7 +78,7 @@ describe("processRegistration", () => {
       currentState: null,
     });
 
-    assert.ok(result instanceof AuthFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "verification-failed");
   });
 
@@ -119,7 +118,7 @@ describe("processAuthentication", () => {
       currentState: null,
     });
 
-    assert.ok(result instanceof AuthFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "not-setup");
     assert.equal(result.statusCode, 400);
   });
@@ -140,7 +139,7 @@ describe("processAuthentication", () => {
       currentState: state,
     });
 
-    assert.ok(result instanceof AuthFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "unknown-credential");
   });
 
@@ -160,7 +159,7 @@ describe("processAuthentication", () => {
       currentState: state,
     });
 
-    assert.ok(result instanceof AuthFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "invalid-challenge");
   });
 
@@ -185,7 +184,7 @@ describe("processAuthentication", () => {
       currentState: state,
     });
 
-    assert.ok(result instanceof AuthFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "verification-failed");
   });
 
@@ -200,12 +199,12 @@ describe("processAuthentication", () => {
   });
 });
 
-describe("AuthSuccess", () => {
+describe("Success (result type used by auth handlers)", () => {
   it("creates success result with session and state", () => {
     const session = { token: "abc123", expiry: Date.now() + 10000 };
     const state = AuthState.empty("user123");
 
-    const result = new AuthSuccess({ session, updatedState: state });
+    const result = new Success({ session, updatedState: state });
 
     assert.equal(result.success, true);
     assert.deepEqual(result.data.session, session);
@@ -213,9 +212,9 @@ describe("AuthSuccess", () => {
   });
 });
 
-describe("AuthFailure", () => {
+describe("Failure (result type used by auth handlers)", () => {
   it("creates failure result with reason and message", () => {
-    const result = new AuthFailure("test-reason", "Test message", 400);
+    const result = new Failure("test-reason", "Test message", 400);
 
     assert.equal(result.success, false);
     assert.equal(result.reason, "test-reason");
@@ -224,7 +223,7 @@ describe("AuthFailure", () => {
   });
 
   it("defaults status code to 400", () => {
-    const result = new AuthFailure("test-reason", "Test message");
+    const result = new Failure("test-reason", "Test message");
 
     assert.equal(result.statusCode, 400);
   });

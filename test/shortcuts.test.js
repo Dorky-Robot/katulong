@@ -9,9 +9,8 @@ import {
   loadShortcuts,
   saveShortcuts,
   validateShortcut,
-  ShortcutsSuccess,
-  ShortcutsFailure,
 } from "../lib/shortcuts.js";
+import { Success, Failure } from "../lib/result.js";
 
 describe("parseShortcuts", () => {
   it("parses valid shortcuts JSON", () => {
@@ -22,7 +21,7 @@ describe("parseShortcuts", () => {
 
     const result = parseShortcuts(json);
 
-    assert.ok(result instanceof ShortcutsSuccess);
+    assert.ok(result instanceof Success);
     assert.equal(result.data.length, 2);
     assert.equal(result.data[0].label, "Clear");
     assert.equal(result.data[1].keys, "ctrl+d");
@@ -31,21 +30,21 @@ describe("parseShortcuts", () => {
   it("accepts empty array", () => {
     const result = parseShortcuts("[]");
 
-    assert.ok(result instanceof ShortcutsSuccess);
+    assert.ok(result instanceof Success);
     assert.deepEqual(result.data, []);
   });
 
   it("returns failure for invalid JSON", () => {
     const result = parseShortcuts("not json");
 
-    assert.ok(result instanceof ShortcutsFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "parse-error");
   });
 
   it("returns failure when shortcuts is not an array", () => {
     const result = parseShortcuts('{"label": "test"}');
 
-    assert.ok(result instanceof ShortcutsFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "invalid-format");
     assert.match(result.message, /must be an array/i);
   });
@@ -53,7 +52,7 @@ describe("parseShortcuts", () => {
   it("returns failure when entry is not an object", () => {
     const result = parseShortcuts('["string", "another"]');
 
-    assert.ok(result instanceof ShortcutsFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "invalid-entry");
     assert.match(result.message, /index 0.*not an object/i);
   });
@@ -65,7 +64,7 @@ describe("parseShortcuts", () => {
 
     const result = parseShortcuts(json);
 
-    assert.ok(result instanceof ShortcutsFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "missing-label");
     assert.match(result.message, /index 0.*missing.*label/i);
   });
@@ -77,7 +76,7 @@ describe("parseShortcuts", () => {
 
     const result = parseShortcuts(json);
 
-    assert.ok(result instanceof ShortcutsFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "missing-keys");
     assert.match(result.message, /index 0.*missing.*keys/i);
   });
@@ -89,7 +88,7 @@ describe("parseShortcuts", () => {
 
     const result = parseShortcuts(json);
 
-    assert.ok(result instanceof ShortcutsFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "missing-label");
   });
 
@@ -100,7 +99,7 @@ describe("parseShortcuts", () => {
 
     const result = parseShortcuts(json);
 
-    assert.ok(result instanceof ShortcutsFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "missing-keys");
   });
 
@@ -112,7 +111,7 @@ describe("parseShortcuts", () => {
 
     const result = parseShortcuts(json);
 
-    assert.ok(result instanceof ShortcutsFailure);
+    assert.ok(result instanceof Failure);
     assert.match(result.message, /index 1/);
   });
 });
@@ -160,7 +159,7 @@ describe("loadShortcuts", () => {
 
     const result = loadShortcuts(testFile);
 
-    assert.ok(result instanceof ShortcutsSuccess);
+    assert.ok(result instanceof Success);
     assert.equal(result.data.length, 2);
     assert.equal(result.data[0].label, "Clear");
   });
@@ -168,7 +167,7 @@ describe("loadShortcuts", () => {
   it("returns empty array when file does not exist", () => {
     const result = loadShortcuts(join(testDir, "nonexistent.json"));
 
-    assert.ok(result instanceof ShortcutsSuccess);
+    assert.ok(result instanceof Success);
     assert.deepEqual(result.data, []);
   });
 
@@ -177,7 +176,7 @@ describe("loadShortcuts", () => {
 
     const result = loadShortcuts(testFile);
 
-    assert.ok(result instanceof ShortcutsFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "parse-error");
   });
 
@@ -186,7 +185,7 @@ describe("loadShortcuts", () => {
 
     const result = loadShortcuts(testFile);
 
-    assert.ok(result instanceof ShortcutsFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "invalid-format");
   });
 });
@@ -211,12 +210,12 @@ describe("saveShortcuts", () => {
 
     const result = saveShortcuts(testFile, shortcuts);
 
-    assert.ok(result instanceof ShortcutsSuccess);
+    assert.ok(result instanceof Success);
     assert.ok(existsSync(testFile));
 
     // Verify file contents
     const loaded = loadShortcuts(testFile);
-    assert.ok(loaded instanceof ShortcutsSuccess);
+    assert.ok(loaded instanceof Success);
     assert.equal(loaded.data.length, 2);
   });
 
@@ -227,7 +226,7 @@ describe("saveShortcuts", () => {
 
     const result = saveShortcuts(testFile, invalidShortcuts);
 
-    assert.ok(result instanceof ShortcutsFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "missing-keys");
   });
 
@@ -247,7 +246,7 @@ describe("saveShortcuts", () => {
 
     const result = saveShortcuts(badPath, shortcuts);
 
-    assert.ok(result instanceof ShortcutsFailure);
+    assert.ok(result instanceof Failure);
     assert.equal(result.reason, "file-error");
   });
 });
@@ -327,19 +326,19 @@ describe("validateShortcut", () => {
   });
 });
 
-describe("ShortcutsSuccess", () => {
+describe("Success (result type used by shortcuts)", () => {
   it("creates success result with shortcuts", () => {
     const shortcuts = [{ label: "Test", keys: "ctrl+t" }];
-    const result = new ShortcutsSuccess(shortcuts);
+    const result = new Success(shortcuts);
 
     assert.equal(result.success, true);
     assert.deepEqual(result.data, shortcuts);
   });
 });
 
-describe("ShortcutsFailure", () => {
+describe("Failure (result type used by shortcuts)", () => {
   it("creates failure result with reason and message", () => {
-    const result = new ShortcutsFailure("test-reason", "Test message");
+    const result = new Failure("test-reason", "Test message");
 
     assert.equal(result.success, false);
     assert.equal(result.reason, "test-reason");
