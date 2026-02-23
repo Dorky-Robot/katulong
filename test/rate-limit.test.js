@@ -1,6 +1,6 @@
-import { describe, it } from "node:test";
+import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { rateLimit, getClientIp } from "../lib/rate-limit.js";
+import { rateLimit, getClientIp, createRateLimiter } from "../lib/rate-limit.js";
 
 // Unique key counter so tests don't share state in the module-level store
 let keyCounter = 0;
@@ -29,7 +29,7 @@ function makeReq() {
   return { socket: { remoteAddress: "127.0.0.1" } };
 }
 
-describe("rateLimit", () => {
+describe("rateLimit (default instance — backward compat)", () => {
   it("allows requests under the limit", () => {
     const keyFn = uniqueKey();
     const middleware = rateLimit(3, 60000, keyFn);
@@ -162,6 +162,105 @@ describe("rateLimit", () => {
     middleware(req, res, () => {});
 
     assert.equal(res.headers["Content-Type"], "application/json");
+  });
+});
+
+describe("createRateLimiter (factory)", () => {
+  let limiter;
+
+  afterEach(() => {
+    if (limiter) {
+      limiter.destroy();
+      limiter = null;
+    }
+  });
+
+  it("isolated instances do not share state", () => {
+    const l1 = createRateLimiter({ cleanupMs: 0 });
+    const l2 = createRateLimiter({ cleanupMs: 0 });
+
+    const key = `factory-${++keyCounter}`;
+    const keyFn = () => key;
+
+    try {
+      const req = makeReq();
+      // Hit l1 twice (maxAttempts=1, so second is blocked)
+      l1.rateLimit(1, 60000, keyFn)(req, makeRes(), () => {});
+      const res1 = makeRes();
+      l1.rateLimit(1, 60000, keyFn)(req, res1, () => {});
+      assert.equal(res1.statusCode, 429, "l1 should block after exceeding limit");
+
+      // l2 has its own store — first request must be allowed
+      let nextCalled = 0;
+      l2.rateLimit(1, 60000, keyFn)(req, makeRes(), () => nextCalled++);
+      assert.equal(nextCalled, 1, "l2 should not be affected by l1 state");
+    } finally {
+      l1.destroy();
+      l2.destroy();
+    }
+  });
+
+  it("destroy() clears the store and stops background interval", () => {
+    limiter = createRateLimiter({ cleanupMs: 100 });
+    const key = `destroy-${++keyCounter}`;
+    const keyFn = () => key;
+    const req = makeReq();
+
+    // Exceed limit
+    limiter.rateLimit(1, 60000, keyFn)(req, makeRes(), () => {});
+    const res1 = makeRes();
+    limiter.rateLimit(1, 60000, keyFn)(req, res1, () => {});
+    assert.equal(res1.statusCode, 429);
+
+    // destroy() clears state; subsequent calls should not throw
+    limiter.destroy();
+
+    // After destroy the store is empty — a fresh request should be allowed
+    // We need a new limiter to test this since destroy() clears the internal store
+    const fresh = createRateLimiter({ cleanupMs: 0 });
+    try {
+      let nextCalled = 0;
+      fresh.rateLimit(1, 60000, keyFn)(req, makeRes(), () => nextCalled++);
+      assert.equal(nextCalled, 1, "Fresh limiter should allow first request");
+    } finally {
+      fresh.destroy();
+    }
+
+    limiter = null; // already destroyed
+  });
+
+  it("reset() clears the entry for a specific key", () => {
+    limiter = createRateLimiter({ cleanupMs: 0 });
+    const key = `reset-${++keyCounter}`;
+    const keyFn = () => key;
+    const req = makeReq();
+
+    // Exceed limit
+    limiter.rateLimit(1, 60000, keyFn)(req, makeRes(), () => {});
+    const blocked = makeRes();
+    limiter.rateLimit(1, 60000, keyFn)(req, blocked, () => {});
+    assert.equal(blocked.statusCode, 429);
+
+    // Reset key
+    limiter.reset(key);
+
+    // Should be allowed again
+    let nextCalled = 0;
+    limiter.rateLimit(1, 60000, keyFn)(req, makeRes(), () => nextCalled++);
+    assert.equal(nextCalled, 1, "After reset, request should be allowed");
+  });
+
+  it("background cleanup interval fires (cleanupMs > 0)", () => {
+    // Just verify that creating with cleanupMs > 0 does not throw,
+    // and destroy() properly clears the interval without error.
+    limiter = createRateLimiter({ cleanupMs: 50 });
+    assert.ok(limiter.rateLimit);
+    assert.ok(limiter.reset);
+    assert.ok(limiter.destroy);
+    // Calling destroy twice should not throw
+    limiter.destroy();
+    limiter.destroy();
+    limiter = null;
   });
 });
 

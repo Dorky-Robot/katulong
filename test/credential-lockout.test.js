@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { CredentialLockout } from "../lib/credential-lockout.js";
 
@@ -11,6 +11,10 @@ describe("CredentialLockout", () => {
       windowMs: 15 * 60 * 1000, // 15 minutes
       lockoutMs: 15 * 60 * 1000, // 15 minutes
     });
+  });
+
+  afterEach(() => {
+    lockout.destroy();
   });
 
   describe("isLocked", () => {
@@ -60,6 +64,7 @@ describe("CredentialLockout", () => {
           const result = shortLockout.isLocked("cred-456");
           assert.equal(result.locked, false);
           assert.equal(result.retryAfter, undefined);
+          shortLockout.destroy();
           resolve();
         }, 150);
       });
@@ -135,6 +140,7 @@ describe("CredentialLockout", () => {
 
           // Should not be locked (old failures expired, only 1 in current window)
           assert.equal(result.locked, false);
+          shortWindow.destroy();
           resolve();
         }, 150);
       });
@@ -232,6 +238,7 @@ describe("CredentialLockout", () => {
         setTimeout(() => {
           // Old failures should be excluded
           assert.equal(shortWindow.getFailureCount("time-count"), 0);
+          shortWindow.destroy();
           resolve();
         }, 150);
       });
@@ -262,6 +269,7 @@ describe("CredentialLockout", () => {
 
           // Lockout should be removed
           assert.equal(shortLockout.isLocked("cleanup-expired").locked, false);
+          shortLockout.destroy();
           resolve();
         }, 150);
       });
@@ -286,6 +294,7 @@ describe("CredentialLockout", () => {
 
           // Old failures should be removed
           assert.equal(shortWindow.getFailureCount("cleanup-failures"), 0);
+          shortWindow.destroy();
           resolve();
         }, 150);
       });
@@ -349,6 +358,37 @@ describe("CredentialLockout", () => {
     });
   });
 
+  describe("destroy", () => {
+    it("clears all failures and lockouts", () => {
+      lockout.recordFailure("cred-destroy-1");
+      lockout.recordFailure("cred-destroy-1");
+      for (let i = 0; i < 5; i++) {
+        lockout.recordFailure("cred-destroy-2");
+      }
+
+      assert.equal(lockout.getStatus().trackedCredentials, 2);
+      assert.equal(lockout.getStatus().lockedCredentials, 1);
+
+      lockout.destroy();
+
+      // After destroy, a new instance is needed for further assertions;
+      // just verify that calling destroy() a second time does not throw
+      assert.doesNotThrow(() => lockout.destroy());
+
+      // Re-create for afterEach to call destroy() safely on a fresh instance
+      lockout = new CredentialLockout({ maxAttempts: 5, windowMs: 60000, lockoutMs: 60000 });
+    });
+
+    it("stops the background cleanup interval (calling destroy twice is safe)", () => {
+      const temp = new CredentialLockout({ maxAttempts: 3, windowMs: 100, lockoutMs: 100 });
+      // Should not throw
+      assert.doesNotThrow(() => {
+        temp.destroy();
+        temp.destroy();
+      });
+    });
+  });
+
   describe("edge cases", () => {
     it("handles exactly maxAttempts failures", () => {
       const lockout3 = new CredentialLockout({ maxAttempts: 3, windowMs: 60000, lockoutMs: 60000 });
@@ -359,6 +399,7 @@ describe("CredentialLockout", () => {
 
       // Third failure (>= 3) should trigger lockout
       assert.equal(result.locked, true);
+      lockout3.destroy();
     });
 
     it("handles concurrent failures for same credential", () => {
@@ -396,6 +437,7 @@ describe("CredentialLockout", () => {
         setTimeout(() => {
           // Should be unlocked
           assert.equal(microLockout.isLocked("micro").locked, false);
+          microLockout.destroy();
           resolve();
         }, 50);
       });

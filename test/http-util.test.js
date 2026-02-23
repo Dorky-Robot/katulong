@@ -370,63 +370,80 @@ describe("setSessionCookie", () => {
 
 describe("createChallengeStore", () => {
   it("store + consume round-trip succeeds", () => {
-    const { store, consume } = createChallengeStore(60000);
-    store("challenge-1");
-    assert.ok(consume("challenge-1"));
+    const cs = createChallengeStore(60000);
+    cs.store("challenge-1");
+    assert.ok(cs.consume("challenge-1"));
+    cs.destroy();
   });
 
   it("returns false for unknown challenge", () => {
-    const { consume } = createChallengeStore(60000);
-    assert.ok(!consume("nonexistent"));
+    const cs = createChallengeStore(60000);
+    assert.ok(!cs.consume("nonexistent"));
+    cs.destroy();
   });
 
   it("challenge is single-use", () => {
-    const { store, consume } = createChallengeStore(60000);
-    store("once");
-    assert.ok(consume("once"));
-    assert.ok(!consume("once"));
+    const cs = createChallengeStore(60000);
+    cs.store("once");
+    assert.ok(cs.consume("once"));
+    assert.ok(!cs.consume("once"));
+    cs.destroy();
   });
 
   it("expired challenges are rejected", () => {
-    const { store, consume, _challenges } = createChallengeStore(1000);
-    store("exp");
+    const cs = createChallengeStore(1000);
+    cs.store("exp");
     // Manually set expiry to the past
-    _challenges.set("exp", Date.now() - 1);
-    assert.ok(!consume("exp"));
+    cs._challenges.set("exp", Date.now() - 1);
+    assert.ok(!cs.consume("exp"));
+    cs.destroy();
   });
 
   it("prunes expired entries during consume", () => {
-    const { store, consume, _challenges } = createChallengeStore(1000);
-    store("old");
-    store("current");
+    const cs = createChallengeStore(1000);
+    cs.store("old");
+    cs.store("current");
     // Expire "old"
-    _challenges.set("old", Date.now() - 1);
+    cs._challenges.set("old", Date.now() - 1);
     // Consuming "current" should prune "old"
-    consume("current");
-    assert.ok(!_challenges.has("old"));
+    cs.consume("current");
+    assert.ok(!cs._challenges.has("old"));
+    cs.destroy();
   });
 
   it("periodic sweep cleans up expired challenges", () => {
-    const { store, _challenges, _sweep } = createChallengeStore(100);
+    const cs = createChallengeStore(100);
 
     // Store some challenges
-    store("challenge-1");
-    store("challenge-2");
-    store("challenge-3");
+    cs.store("challenge-1");
+    cs.store("challenge-2");
+    cs.store("challenge-3");
 
     // All challenges should exist initially
-    assert.equal(_challenges.size, 3);
+    assert.equal(cs._challenges.size, 3);
 
     // Manually expire all challenges
-    for (const [key] of _challenges) {
-      _challenges.set(key, Date.now() - 1);
+    for (const [key] of cs._challenges) {
+      cs._challenges.set(key, Date.now() - 1);
     }
 
     // Trigger sweep manually
-    _sweep();
+    cs._sweep();
 
     // After sweep, expired challenges should be removed
-    assert.equal(_challenges.size, 0, "Expired challenges should be removed by sweep");
+    assert.equal(cs._challenges.size, 0, "Expired challenges should be removed by sweep");
+    cs.destroy();
+  });
+
+  it("destroy() stops the sweep interval and clears challenges", () => {
+    const cs = createChallengeStore(100);
+    cs.store("keep");
+    assert.equal(cs._challenges.size, 1);
+    cs.destroy();
+    // After destroy the Map is empty
+    assert.equal(cs._challenges.size, 0, "destroy() should clear challenges");
+    // Calling destroy twice should not throw
+    assert.doesNotThrow(() => cs.destroy());
   });
 });
 
