@@ -85,6 +85,21 @@ npm install
 npm link  # Makes 'katulong' command available globally
 ```
 
+## Updating
+
+```bash
+katulong update
+```
+
+Katulong detects how it was installed (Homebrew, npm global, or git clone) and runs the appropriate update. If the server is running, it performs a rolling restart — the new version starts up while the old one drains, so your terminal sessions are never interrupted.
+
+```bash
+katulong update --check       # Check if an update is available without applying it
+katulong update --no-restart  # Update the code but skip the rolling restart
+```
+
+Sessions live in the daemon process, which is independent of the web server. During a rolling restart, the browser automatically reconnects to the new server and the daemon replays your scrollback. Typical downtime is 2-5 seconds.
+
 ## Quick start
 
 ```bash
@@ -92,6 +107,7 @@ katulong start        # Start the daemon + web server
 katulong status       # Check if it's running
 katulong open         # Open in your default browser
 katulong logs         # View logs
+katulong update       # Update to the latest version
 katulong stop         # Stop everything
 ```
 
@@ -136,6 +152,11 @@ One daemon. Multiple transports. Your work follows you.
 - **Sessions survive restarts** — Daemon owns PTYs. Restart the server, your sessions are still there.
 - **Shared sessions** — Same URL in multiple windows = shared terminal
 - **Session manager** — Create, rename, delete sessions from the UI
+
+### Self-updating
+- **One-command update** — `katulong update` detects install method and does the right thing
+- **Rolling restart** — New server starts before old one exits. Sessions survive with ~2-5s reconnect.
+- **Update check** — `katulong update --check` to see if a new version is available without applying it
 
 ### Power user features
 - **Configurable shortcuts** — Pinned keys in the toolbar, full list in a popup
