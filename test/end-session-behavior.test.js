@@ -121,11 +121,13 @@ describe('End Session Behavior', () => {
       });
 
       // Should remove session but not crash
-      const { state: newState } = stateWithOrphan.endSession('orphan-token');
+      const { state: newState, removedCredentialId } = stateWithOrphan.endSession('orphan-token');
 
       assert.strictEqual(newState.sessions['orphan-token'], undefined);
       // Other sessions should remain
       assert.ok(newState.sessions['session-token-1']);
+      // No credential was removed (orphan session had a non-existent credentialId reference)
+      assert.strictEqual(removedCredentialId, 'non-existent-cred');
     });
 
     it('should throw error when ending session for last credential', () => {
