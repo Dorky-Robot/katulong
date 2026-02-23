@@ -327,13 +327,14 @@ const routes = [
     // Get state (or create empty if first time)
     let state = loadState();
     if (!state) {
-      state = await withStateLock((currentState) => {
-        if (currentState) return currentState;
+      const firstTimeResult = await withStateLock((currentState) => {
+        if (currentState) return { state: currentState };
         // First time - create empty state
         const newState = AuthState.empty();
         log.info("First time setup - empty state created");
-        return newState;
+        return { state: newState };
       });
+      state = firstTimeResult.state;
     }
 
     // First registration from localhost doesn't require a token
@@ -352,7 +353,7 @@ const routes = [
 
       // Update lastUsedAt for the token (inside lock to prevent race)
       await withStateLock((currentState) => {
-        return currentState.updateSetupToken(tokenData.id, { lastUsedAt: Date.now() });
+        return { state: currentState.updateSetupToken(tokenData.id, { lastUsedAt: Date.now() }) };
       });
     }
     const { origin, rpID } = getOriginAndRpID(req);
@@ -831,7 +832,7 @@ const routes = [
           if (state && state.isValidSession(token)) {
             return state.endSession(token, { allowRemoveLast: isLocalRequest(req) });
           }
-          return { state, removedCredentialId: null };
+          return { removedCredentialId: null };
         });
 
         // Notify all connected clients if a credential was removed
@@ -861,8 +862,8 @@ const routes = [
       return json(res, 403, { error: "Invalid or missing CSRF token" });
     }
     await withStateLock((currentState) => {
-      if (!currentState) return currentState;
-      return currentState.revokeAllSessions();
+      if (!currentState) return {};
+      return { state: currentState.revokeAllSessions() };
     });
     // SECURITY: Close all non-localhost WebSocket connections
     for (const [clientId, info] of wsClients) {
