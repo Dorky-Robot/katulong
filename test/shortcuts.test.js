@@ -9,8 +9,70 @@ import {
   loadShortcuts,
   saveShortcuts,
   validateShortcut,
+  validateShortcutsArray,
 } from "../lib/shortcuts.js";
 import { Success, Failure } from "../lib/result.js";
+
+describe("validateShortcutsArray", () => {
+  it("returns success for valid array", () => {
+    const shortcuts = [
+      { label: "Clear", keys: "ctrl+l" },
+      { label: "List", keys: "ctrl+d" },
+    ];
+    const result = validateShortcutsArray(shortcuts);
+    assert.ok(result instanceof Success);
+    assert.deepEqual(result.data, shortcuts);
+  });
+
+  it("returns success for empty array", () => {
+    const result = validateShortcutsArray([]);
+    assert.ok(result instanceof Success);
+    assert.deepEqual(result.data, []);
+  });
+
+  it("returns failure when input is not an array", () => {
+    const result = validateShortcutsArray({ label: "test" });
+    assert.ok(result instanceof Failure);
+    assert.equal(result.reason, "invalid-format");
+    assert.match(result.message, /must be an array/i);
+  });
+
+  it("returns failure when entry is not an object", () => {
+    const result = validateShortcutsArray(["string"]);
+    assert.ok(result instanceof Failure);
+    assert.equal(result.reason, "invalid-entry");
+    assert.match(result.message, /index 0.*not an object/i);
+  });
+
+  it("returns failure when entry is missing label", () => {
+    const result = validateShortcutsArray([{ keys: "ctrl+l" }]);
+    assert.ok(result instanceof Failure);
+    assert.equal(result.reason, "missing-label");
+    assert.match(result.message, /index 0.*missing.*label/i);
+  });
+
+  it("returns failure when entry is missing keys", () => {
+    const result = validateShortcutsArray([{ label: "Clear" }]);
+    assert.ok(result instanceof Failure);
+    assert.equal(result.reason, "missing-keys");
+    assert.match(result.message, /index 0.*missing.*keys/i);
+  });
+
+  it("validates all entries, reports the first failing one", () => {
+    const result = validateShortcutsArray([
+      { label: "Clear", keys: "ctrl+l" },
+      { label: "List" }, // missing keys
+    ]);
+    assert.ok(result instanceof Failure);
+    assert.match(result.message, /index 1/);
+  });
+
+  it("returns failure when input is null", () => {
+    const result = validateShortcutsArray(null);
+    assert.ok(result instanceof Failure);
+    assert.equal(result.reason, "invalid-format");
+  });
+});
 
 describe("parseShortcuts", () => {
   it("parses valid shortcuts JSON", () => {
