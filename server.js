@@ -242,6 +242,16 @@ async function parseJSON(req, maxSize = MAX_REQUEST_BODY_SIZE) {
   return JSON.parse(body);
 }
 
+// --- Security headers middleware ---
+
+function setSecurityHeaders(res) {
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-XSS-Protection", "0");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+}
+
 // --- HTTP routes ---
 
 const routes = [
@@ -903,6 +913,9 @@ function matchRoute(method, pathname) {
 
 async function handleRequest(req, res) {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
+
+  // Apply security headers to every response
+  setSecurityHeaders(res);
 
   // Auth middleware: redirect unauthenticated requests
   if (!isPublicPath(pathname) && !isAuthenticated(req)) {
