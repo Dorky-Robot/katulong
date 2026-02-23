@@ -1054,8 +1054,8 @@ function sendToSession(sessionName, payload, { preferP2P = false } = {}) {
     if (preferP2P && info.p2pConnected && info.p2pPeer) {
       try {
         info.p2pPeer.send(encoded);
+        continue; // Only skip WS if P2P send succeeded
       } catch { /* fall through to WS */ }
-      continue;
     }
     if (info.ws.readyState === 1) {
       info.ws.send(encoded);
