@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSession, validateSession, pruneExpiredSessions, loadState, saveState, _invalidateCache, refreshSessionActivity } from "../lib/auth.js";
 import { AuthState } from "../lib/auth-state.js";
+import { SESSION_TTL_MS } from "../lib/constants.js";
 
 describe("createSession", () => {
   it("returns a token that is 64 hex characters", () => {
@@ -15,11 +16,10 @@ describe("createSession", () => {
 
   it("returns an expiry roughly 30 days in the future", () => {
     const { expiry } = createSession();
-    const thirtyDays = 30 * 24 * 60 * 60 * 1000;
     const diff = expiry - Date.now();
     // Allow 5 second tolerance
-    assert.ok(diff > thirtyDays - 5000, `expiry too early: ${diff}ms`);
-    assert.ok(diff <= thirtyDays, `expiry too late: ${diff}ms`);
+    assert.ok(diff > SESSION_TTL_MS - 5000, `expiry too early: ${diff}ms`);
+    assert.ok(diff <= SESSION_TTL_MS, `expiry too late: ${diff}ms`);
   });
 
   it("generates unique tokens", () => {
@@ -494,7 +494,7 @@ describe("refreshSessionActivity", () => {
       credentials: [credential],
       sessions: {
         [token]: {
-          expiry: now + 30 * 24 * 60 * 60 * 1000,
+          expiry: now + SESSION_TTL_MS,
           credentialId: credential.id,
           csrfToken: "csrf1",
           lastActivityAt: now - 2 * 60 * 60 * 1000, // 2 hours ago
@@ -594,7 +594,6 @@ describe("refreshSessionActivity", () => {
   });
 
   it("extends session expiry when lastActivityAt is more than 24h ago (sliding window)", async () => {
-    const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
     const token = "oldactivitytoken";
     const now = Date.now();
     // Use a short initial expiry (10 minutes) so any sliding-window extension to 30 days is unambiguous
