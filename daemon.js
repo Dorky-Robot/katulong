@@ -185,7 +185,10 @@ function handleMessage(msg, socket) {
 
   // Fire-and-forget: no response needed
   if (!id) {
-    if (type === "input")  aliveSessionFor(msg.clientId)?.write(msg.data);
+    if (type === "input") {
+      // Guard against TOCTOU race: session may die between aliveSessionFor() check and write()
+      try { aliveSessionFor(msg.clientId)?.write(msg.data); } catch { /* session died */ }
+    }
     if (type === "resize") aliveSessionFor(msg.clientId)?.resize(msg.cols, msg.rows);
     if (type === "detach") clients.delete(msg.clientId);
     return;

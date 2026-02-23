@@ -239,6 +239,31 @@ describe("daemon integration", () => {
     assert.ok(second.error, "second delete of same session should return an error");
   });
 
+  it("input to dead session does not crash the daemon", async () => {
+    const sessionName = "dead-input-test-" + Date.now();
+    const clientId = "dead-input-client-" + Date.now();
+
+    // Create a session and attach a client
+    await rpc(sock, { type: "create-session", name: sessionName });
+    await rpc(sock, { type: "attach", clientId, session: sessionName });
+
+    // Delete the session (kills the PTY)
+    await rpc(sock, { type: "delete-session", name: sessionName });
+
+    // Give the PTY exit event time to propagate
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Send a fire-and-forget input to the now-dead session (no id = no response expected)
+    sock.write(encode({ type: "input", clientId, data: "should not crash\n" }));
+
+    // Give the daemon time to process the message
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Verify the daemon is still alive by completing a normal RPC
+    const result = await rpc(sock, { type: "list-sessions" });
+    assert.ok(Array.isArray(result.sessions), "daemon should still respond after input to dead session");
+  });
+
   it("get-shortcuts returns shortcuts array", async () => {
     const result = await rpc(sock, { type: "get-shortcuts" });
     assert.ok(Array.isArray(result.shortcuts));
