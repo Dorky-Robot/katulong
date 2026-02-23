@@ -52,9 +52,10 @@ describe("createTransportBridge", () => {
     bridge.register(() => { throw new Error("boom"); });
     bridge.register((msg) => received.push(msg));
 
-    // The second subscriber runs despite the first throwing — relay propagates
-    // the exception from the first subscriber before reaching the second.
-    // This test documents the current (fail-fast) behaviour.
-    assert.throws(() => bridge.relay({ type: "exit", session: "s", code: 1 }), /boom/);
+    // relay() must not throw — each subscriber is isolated.
+    assert.doesNotThrow(() => bridge.relay({ type: "exit", session: "s", code: 1 }));
+    // The second subscriber receives the message despite the first throwing.
+    assert.equal(received.length, 1);
+    assert.deepEqual(received[0], { type: "exit", session: "s", code: 1 });
   });
 });
