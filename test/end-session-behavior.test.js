@@ -82,9 +82,9 @@ describe('End Session Behavior', () => {
     it('should remove credential and all its sessions', () => {
       const sessionToken = 'session-token-1';
       const session = testState.sessions[sessionToken];
-      
+
       // End session should remove credential and all sessions for that credential
-      const newState = testState.endSession(sessionToken);
+      const { state: newState } = testState.endSession(sessionToken);
 
       // Credential should be removed
       assert.strictEqual(
@@ -121,8 +121,8 @@ describe('End Session Behavior', () => {
       });
 
       // Should remove session but not crash
-      const newState = stateWithOrphan.endSession('orphan-token');
-      
+      const { state: newState } = stateWithOrphan.endSession('orphan-token');
+
       assert.strictEqual(newState.sessions['orphan-token'], undefined);
       // Other sessions should remain
       assert.ok(newState.sessions['session-token-1']);
@@ -145,13 +145,13 @@ describe('End Session Behavior', () => {
       const stateWithOneCred = testState.removeCredential('cred-2');
 
       // With allowRemoveLast, ending session for the last credential should succeed
-      const newState = stateWithOneCred.endSession('session-token-1', { allowRemoveLast: true });
+      const { state: newState, removedCredentialId } = stateWithOneCred.endSession('session-token-1', { allowRemoveLast: true });
 
       assert.strictEqual(newState.credentials.length, 0,
         'All credentials should be removed');
       assert.strictEqual(Object.keys(newState.sessions).length, 0,
         'All sessions should be removed');
-      assert.strictEqual(newState.removedCredentialId, 'cred-1',
+      assert.strictEqual(removedCredentialId, 'cred-1',
         'Should report which credential was removed');
     });
 
@@ -166,8 +166,8 @@ describe('End Session Behavior', () => {
     });
 
     it('should handle invalid session token gracefully', () => {
-      const newState = testState.endSession('non-existent-session');
-      
+      const { state: newState } = testState.endSession('non-existent-session');
+
       // State should be unchanged
       assert.strictEqual(newState.credentials.length, 2);
       assert.strictEqual(Object.keys(newState.sessions).length, 3);
@@ -192,7 +192,7 @@ describe('End Session Behavior', () => {
       });
 
       // End session for credential1
-      const newState = stateWithToken.endSession('session-token-1');
+      const { state: newState } = stateWithToken.endSession('session-token-1');
 
       // Setup token should be removed
       assert.strictEqual(
@@ -204,15 +204,20 @@ describe('End Session Behavior', () => {
 
     it('should return credentialId that was removed', () => {
       const result = testState.endSession('session-token-1');
-      
+
       // Should be able to identify which credential was removed (for UI updates)
       assert.strictEqual(result.removedCredentialId, 'cred-1');
+    });
+
+    it('should return null removedCredentialId for non-existent session', () => {
+      const result = testState.endSession('non-existent-session');
+      assert.strictEqual(result.removedCredentialId, null);
     });
   });
 
   describe('Integration with existing methods', () => {
     it('should invalidate sessions after endSession', () => {
-      const newState = testState.endSession('session-token-1');
+      const { state: newState } = testState.endSession('session-token-1');
 
       // Sessions should be invalid
       assert.strictEqual(newState.isValidSession('session-token-1'), false);
@@ -223,7 +228,7 @@ describe('End Session Behavior', () => {
     });
 
     it('should remove credential from getCredentialsWithMetadata', () => {
-      const newState = testState.endSession('session-token-1');
+      const { state: newState } = testState.endSession('session-token-1');
       const credentials = newState.getCredentialsWithMetadata();
 
       // Should only have credential2

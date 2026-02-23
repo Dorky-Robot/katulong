@@ -827,18 +827,18 @@ const routes = [
       try {
         // Use withStateLock for atomic state modification
         // endSession() permanently removes the credential and all its sessions
-        const newState = await withStateLock(async (state) => {
+        const result = await withStateLock(async (state) => {
           if (state && state.isValidSession(token)) {
             return state.endSession(token, { allowRemoveLast: isLocalRequest(req) });
           }
-          return state;
+          return { state, removedCredentialId: null };
         });
 
         // Notify all connected clients if a credential was removed
-        if (newState && newState.removedCredentialId) {
-          broadcastToAll({ type: 'credential-removed', credentialId: newState.removedCredentialId });
+        if (result && result.removedCredentialId) {
+          broadcastToAll({ type: 'credential-removed', credentialId: result.removedCredentialId });
           // SECURITY: Immediately close all WebSocket connections for the revoked credential
-          closeWebSocketsForCredential(newState.removedCredentialId);
+          closeWebSocketsForCredential(result.removedCredentialId);
         }
       } catch (err) {
         // Handle "last credential" protection
