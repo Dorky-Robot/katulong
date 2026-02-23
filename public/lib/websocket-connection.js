@@ -14,6 +14,8 @@ export function createWebSocketConnection(deps = {}) {
   const {
     term,
     state,
+    p2pManager,
+    updateP2PIndicator,
     loadTokens,
     isAtBottom
   } = deps;
@@ -29,6 +31,8 @@ export function createWebSocketConnection(deps = {}) {
         'scroll.userScrolledUpBeforeDisconnect': false
       },
       effects: [
+        { type: 'updateP2PIndicator' },
+        { type: 'initP2P' },
         { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect }
       ]
     }),
@@ -68,12 +72,47 @@ export function createWebSocketConnection(deps = {}) {
     'credential-removed': (msg) => ({
       stateUpdates: {},
       effects: [{ type: 'refreshDeviceList', credentialId: msg.credentialId }]
+    }),
+
+    'p2p-signal': (msg, currentState) => ({
+      stateUpdates: {},
+      effects: currentState.p2p?.peer
+        ? [{ type: 'p2pSignal', data: msg.data }]
+        : []
+    }),
+
+    'p2p-ready': () => ({
+      stateUpdates: {},
+      effects: [
+        { type: 'log', message: '[P2P] Server confirmed DataChannel ready' },
+        { type: 'updateP2PIndicator' }
+      ]
+    }),
+
+    'p2p-closed': () => ({
+      stateUpdates: { 'p2p.connected': false },
+      effects: [
+        { type: 'log', message: '[P2P] Server reports DataChannel closed' },
+        { type: 'updateP2PIndicator' }
+      ]
     })
   };
 
   // Effect executor (side effects at edges)
   function executeEffect(effect) {
     switch (effect.type) {
+      case 'updateP2PIndicator':
+        if (updateP2PIndicator) updateP2PIndicator();
+        break;
+      case 'initP2P':
+        if (p2pManager) p2pManager.create();
+        break;
+      case 'p2pSignal':
+        if (p2pManager) p2pManager.signal(effect.data);
+        break;
+      case 'log':
+        console.log(effect.message);
+        break;
       case 'scrollToBottomIfNeeded':
         if (effect.condition) {
           scrollToBottom(term);
@@ -169,7 +208,9 @@ export function createWebSocketConnection(deps = {}) {
       const viewport = document.querySelector(".xterm-viewport");
       state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
       state.connection.attached = false;
+      if (p2pManager) p2pManager.destroy();
 
+      console.log(`[WS] Reconnecting in ${state.connection.reconnectDelay}ms`);
       reconnectTimeout = setTimeout(connect, state.connection.reconnectDelay);
       state.connection.reconnectDelay = Math.min(state.connection.reconnectDelay * 2, 10000);
     };

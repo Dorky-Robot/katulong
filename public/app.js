@@ -29,9 +29,11 @@
     import { createShortcutBar } from "/lib/shortcut-bar.js";
     import { createPasteHandler } from "/lib/paste-handler.js";
     import { createNetworkMonitor } from "/lib/network-monitor.js";
+    import { createP2PManager } from "/lib/p2p-manager.js";
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
+    import { createP2PIndicator } from "/lib/p2p-ui.js";
     import { initModals } from "/lib/modal-init.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
     import { createWebSocketConnection } from "/lib/websocket-connection.js";
@@ -70,6 +72,11 @@
           ws: null,
           attached: false,
           reconnectDelay: 1000
+        },
+        p2p: {
+          peer: null,
+          connected: false,
+          retryTimer: 0,
         },
         scroll: {
           userScrolledUpBeforeDisconnect: false
@@ -114,6 +121,35 @@
 
     // Subscribe to shortcuts changes for render side effects
     // Note: shortcuts store subscription moved after renderBar is defined (line ~640)
+
+    // --- P2P Manager ---
+
+    // Initialize P2P manager
+    const p2pManager = createP2PManager({
+      onStateChange: (p2pState) => {
+        state.update('p2p.connected', p2pState.connected);
+        state.update('p2p.peer', p2pState.peer);
+        updateP2PIndicator();
+      },
+      onData: (str) => {
+        try {
+          const msg = JSON.parse(str);
+          if (msg.type === "output") {
+            term.write(msg.data);
+          }
+        } catch {
+          // ignore malformed P2P data
+        }
+      },
+      getWS: () => state.connection.ws
+    });
+
+    // P2P UI indicator
+    const p2pIndicator = createP2PIndicator({
+      p2pManager,
+      getConnectionState: () => ({ attached: state.connection.attached })
+    });
+    const updateP2PIndicator = () => p2pIndicator.update();
 
     document.title = state.session.name;
 
@@ -169,6 +205,7 @@
 
     // Create buffered input sender
     const inputSender = createInputSender({
+      p2pManager,
       getWebSocket: () => state.connection.ws
     });
 
@@ -412,6 +449,7 @@
       onSettingsClick: () => modals.open('settings'),
       sendFn: rawSend,
       term,
+      updateP2PIndicator,
       getInstanceIcon
     });
 
@@ -461,7 +499,9 @@
 
     const networkMonitor = createNetworkMonitor({
       onNetworkChange: () => {
-        // No-op: network change detection retained for future use
+        if (!state.connection.ws || state.connection.ws.readyState !== 1) return;
+        console.log("[P2P] Network change detected, re-establishing");
+        p2pManager.create();
       }
     });
     networkMonitor.init();
@@ -471,6 +511,8 @@
     const wsConnection = createWebSocketConnection({
       term,
       state,
+      p2pManager,
+      updateP2PIndicator,
       loadTokens,
       loadDevices: () => invalidateDevices(deviceStore),
       isAtBottom,

@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="/vendor/fonts/fonts.css">
   <link rel="stylesheet" href="/vendor/xterm/xterm.min.css">
   <link rel="stylesheet" href="/vendor/phosphor-icons/style.css">
+  <script async src="/vendor/simple-peer/simplepeer.min.js"></script>
   <style>
     /* --- Catppuccin Mocha (dark) / Latte (light) --- */
     :root {
@@ -230,48 +231,72 @@
     #shortcut-bar[data-toolbar-color="blue"] .session-btn i { color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="blue"] .shortcut-btn,
     #shortcut-bar[data-toolbar-color="blue"] .bar-icon-btn { color: #1e1e2e; border-color: #6690e0; background: rgba(255,255,255,0.3); }
+    #shortcut-bar[data-toolbar-color="blue"] #p2p-indicator { background: #1e1e2e; }
+    #shortcut-bar[data-toolbar-color="blue"] #p2p-indicator.p2p-active { background: #40a02b; }
+    #shortcut-bar[data-toolbar-color="blue"] #p2p-indicator.p2p-relay { background: #df8e1d; }
 
     #shortcut-bar[data-toolbar-color="purple"] { background: #cba6f7; border-bottom-color: #b4a1e8; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="purple"] .session-btn { background: #b4a1e8; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="purple"] .session-btn i { color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="purple"] .shortcut-btn,
     #shortcut-bar[data-toolbar-color="purple"] .bar-icon-btn { color: #1e1e2e; border-color: #a090d6; background: rgba(255,255,255,0.3); }
+    #shortcut-bar[data-toolbar-color="purple"] #p2p-indicator { background: #1e1e2e; }
+    #shortcut-bar[data-toolbar-color="purple"] #p2p-indicator.p2p-active { background: #40a02b; }
+    #shortcut-bar[data-toolbar-color="purple"] #p2p-indicator.p2p-relay { background: #df8e1d; }
 
     #shortcut-bar[data-toolbar-color="green"] { background: #a6e3a1; border-bottom-color: #94d890; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="green"] .session-btn { background: #94d890; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="green"] .session-btn i { color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="green"] .shortcut-btn,
     #shortcut-bar[data-toolbar-color="green"] .bar-icon-btn { color: #1e1e2e; border-color: #7fc97a; background: rgba(255,255,255,0.3); }
+    #shortcut-bar[data-toolbar-color="green"] #p2p-indicator { background: #1e1e2e; }
+    #shortcut-bar[data-toolbar-color="green"] #p2p-indicator.p2p-active { background: #40a02b; }
+    #shortcut-bar[data-toolbar-color="green"] #p2p-indicator.p2p-relay { background: #df8e1d; }
 
     #shortcut-bar[data-toolbar-color="red"] { background: #f38ba8; border-bottom-color: #e57996; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="red"] .session-btn { background: #e57996; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="red"] .session-btn i { color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="red"] .shortcut-btn,
     #shortcut-bar[data-toolbar-color="red"] .bar-icon-btn { color: #1e1e2e; border-color: #d66884; background: rgba(255,255,255,0.3); }
+    #shortcut-bar[data-toolbar-color="red"] #p2p-indicator { background: #1e1e2e; }
+    #shortcut-bar[data-toolbar-color="red"] #p2p-indicator.p2p-active { background: #40a02b; }
+    #shortcut-bar[data-toolbar-color="red"] #p2p-indicator.p2p-relay { background: #df8e1d; }
 
     #shortcut-bar[data-toolbar-color="orange"] { background: #fab387; border-bottom-color: #f5a76e; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="orange"] .session-btn { background: #f5a76e; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="orange"] .session-btn i { color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="orange"] .shortcut-btn,
     #shortcut-bar[data-toolbar-color="orange"] .bar-icon-btn { color: #1e1e2e; border-color: #f09955; background: rgba(255,255,255,0.3); }
+    #shortcut-bar[data-toolbar-color="orange"] #p2p-indicator { background: #1e1e2e; }
+    #shortcut-bar[data-toolbar-color="orange"] #p2p-indicator.p2p-active { background: #40a02b; }
+    #shortcut-bar[data-toolbar-color="orange"] #p2p-indicator.p2p-relay { background: #df8e1d; }
 
     #shortcut-bar[data-toolbar-color="pink"] { background: #f5c2e7; border-bottom-color: #f0b3de; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="pink"] .session-btn { background: #f0b3de; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="pink"] .session-btn i { color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="pink"] .shortcut-btn,
     #shortcut-bar[data-toolbar-color="pink"] .bar-icon-btn { color: #1e1e2e; border-color: #e8a4d5; background: rgba(255,255,255,0.3); }
+    #shortcut-bar[data-toolbar-color="pink"] #p2p-indicator { background: #1e1e2e; }
+    #shortcut-bar[data-toolbar-color="pink"] #p2p-indicator.p2p-active { background: #40a02b; }
+    #shortcut-bar[data-toolbar-color="pink"] #p2p-indicator.p2p-relay { background: #df8e1d; }
 
     #shortcut-bar[data-toolbar-color="teal"] { background: #94e2d5; border-bottom-color: #81d8cc; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="teal"] .session-btn { background: #81d8cc; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="teal"] .session-btn i { color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="teal"] .shortcut-btn,
     #shortcut-bar[data-toolbar-color="teal"] .bar-icon-btn { color: #1e1e2e; border-color: #6ec9bc; background: rgba(255,255,255,0.3); }
+    #shortcut-bar[data-toolbar-color="teal"] #p2p-indicator { background: #1e1e2e; }
+    #shortcut-bar[data-toolbar-color="teal"] #p2p-indicator.p2p-active { background: #40a02b; }
+    #shortcut-bar[data-toolbar-color="teal"] #p2p-indicator.p2p-relay { background: #df8e1d; }
 
     #shortcut-bar[data-toolbar-color="yellow"] { background: #f9e2af; border-bottom-color: #f5d99d; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="yellow"] .session-btn { background: #f5d99d; color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="yellow"] .session-btn i { color: #1e1e2e; }
     #shortcut-bar[data-toolbar-color="yellow"] .shortcut-btn,
     #shortcut-bar[data-toolbar-color="yellow"] .bar-icon-btn { color: #1e1e2e; border-color: #f0ce8b; background: rgba(255,255,255,0.3); }
+    #shortcut-bar[data-toolbar-color="yellow"] #p2p-indicator { background: #1e1e2e; }
+    #shortcut-bar[data-toolbar-color="yellow"] #p2p-indicator.p2p-active { background: #40a02b; }
+    #shortcut-bar[data-toolbar-color="yellow"] #p2p-indicator.p2p-relay { background: #df8e1d; }
 
     .shortcut-btn {
       flex-shrink: 0; height: var(--height-btn-sm); padding: 0 var(--space-md);
@@ -288,6 +313,15 @@
       cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 0.375rem;
     }
     .session-btn:active { background: var(--accent-active); }
+
+    /* P2P status indicator */
+    #p2p-indicator {
+      flex-shrink: 0; width: 0.5rem; height: 0.5rem; border-radius: 50%;
+      margin-right: 0.25rem;
+      background: var(--text-dim); transition: background 0.2s;
+    }
+    #p2p-indicator.p2p-active { background: var(--success); }
+    #p2p-indicator.p2p-relay { background: var(--warning); }
 
     .bar-icon-btn {
       flex-shrink: 0; height: var(--height-btn-sm); width: 2rem; padding: 0;

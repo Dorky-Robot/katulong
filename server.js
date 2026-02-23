@@ -8,6 +8,7 @@ import { WebSocketServer } from "ws";
 import { randomUUID, randomBytes } from "node:crypto";
 import { encode, decoder } from "./lib/ndjson.js";
 import { log } from "./lib/log.js";
+import { createServerPeer, destroyPeer, initP2P, p2pAvailable } from "./lib/p2p.js";
 import { detectImage, readRawBody, MAX_UPLOAD_BYTES } from "./lib/upload.js";
 import {
   loadState, saveState, isSetup,
@@ -67,6 +68,8 @@ configManager.initialize();
 const instanceName = configManager.getInstanceName();
 const instanceId = configManager.getInstanceId();
 log.info("Configuration loaded", { instanceName, instanceId });
+
+await initP2P();
 
 const sshHostKey = ensureHostKey(DATA_DIR);
 
@@ -1058,7 +1061,7 @@ const server = createServer(handleRequest);
 // --- WebSocket ---
 
 const wss = new WebSocketServer({ noServer: true });
-const wsClients = new Map(); // clientId -> { ws, session, sessionToken, credentialId }
+const wsClients = new Map(); // clientId -> { ws, session, sessionToken, credentialId, p2pPeer, p2pConnected }
 
 function handleUpgrade(req, socket, head) {
   log.info("WebSocket upgrade attempt", {
@@ -1131,10 +1134,16 @@ function handleUpgrade(req, socket, head) {
 server.on("upgrade", handleUpgrade);
 
 // Relay daemon broadcasts to matching browser clients
-function sendToSession(sessionName, payload) {
+function sendToSession(sessionName, payload, { preferP2P = false } = {}) {
   const encoded = JSON.stringify(payload);
   for (const [, info] of wsClients) {
     if (info.session !== sessionName) continue;
+    if (preferP2P && info.p2pConnected && info.p2pPeer) {
+      try {
+        info.p2pPeer.send(encoded);
+      } catch { /* fall through to WS */ }
+      continue;
+    }
     if (info.ws.readyState === 1) {
       info.ws.send(encoded);
     }
@@ -1163,6 +1172,13 @@ function closeWebSocketsForCredential(credentialId) {
     if (info.credentialId === credentialId) {
       log.info("Closing WebSocket for revoked credential", { clientId, credentialId });
 
+      // Close P2P connection if exists
+      if (info.p2pPeer) {
+        try { destroyPeer(info.p2pPeer); } catch (err) {
+          log.warn("Error destroying P2P peer", { error: err.message });
+        }
+      }
+
       // Close WebSocket with appropriate code
       if (info.ws.readyState === 1) { // OPEN
         info.ws.close(1008, "Credential revoked"); // 1008 = Policy Violation
@@ -1183,7 +1199,7 @@ let sshRelay = null;
 function relayBroadcast(msg) {
   switch (msg.type) {
     case "output":
-      sendToSession(msg.session, { type: "output", data: msg.data });
+      sendToSession(msg.session, { type: "output", data: msg.data }, { preferP2P: true });
       break;
     case "exit":
       sendToSession(msg.session, { type: "exit", code: msg.code });
@@ -1238,6 +1254,8 @@ wss.on("connection", (ws) => {
           session: name,
           sessionToken: ws.sessionToken,
           credentialId: ws.credentialId,
+          p2pPeer: null,
+          p2pConnected: false,
         });
         log.debug("Client attached", { clientId, session: name });
         ws.send(JSON.stringify({ type: "attached" }));
@@ -1251,17 +1269,81 @@ wss.on("connection", (ws) => {
       daemonSend({ type: "input", clientId, data: msg.data });
     } else if (msg.type === "resize") {
       daemonSend({ type: "resize", clientId, cols: msg.cols, rows: msg.rows });
+    } else if (msg.type === "p2p-signal") {
+      const info = wsClients.get(clientId);
+      if (!info) return;
+
+      if (!p2pAvailable) {
+        ws.send(JSON.stringify({ type: "p2p-unavailable" }));
+        return;
+      }
+
+      // If this is a new SDP offer, tear down the old peer and start fresh
+      if (msg.data?.type === "offer" && info.p2pPeer) {
+        destroyPeer(info.p2pPeer);
+        info.p2pPeer = null;
+        info.p2pConnected = false;
+      }
+
+      if (!info.p2pPeer) {
+        info.p2pPeer = createServerPeer(
+          // onSignal: relay back to browser
+          (data) => {
+            if (ws.readyState === 1) {
+              ws.send(JSON.stringify({ type: "p2p-signal", data }));
+            }
+          },
+          // onData: terminal input via P2P DataChannel
+          (chunk) => {
+            try {
+              const str = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+              const p2pMsg = JSON.parse(str);
+              if (p2pMsg.type === "input") {
+                daemonSend({ type: "input", clientId, data: p2pMsg.data });
+              }
+            } catch (err) {
+              log.warn("Malformed P2P data", { clientId, error: err.message });
+            }
+          },
+          // onClose: clean up P2P state, notify browser
+          () => {
+            const cur = wsClients.get(clientId);
+            if (cur) {
+              cur.p2pPeer = null;
+              cur.p2pConnected = false;
+            }
+            if (ws.readyState === 1) {
+              ws.send(JSON.stringify({ type: "p2p-closed" }));
+            }
+          }
+        );
+
+        info.p2pPeer.on("connect", () => {
+          const cur = wsClients.get(clientId);
+          if (cur) cur.p2pConnected = true;
+          if (ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: "p2p-ready" }));
+          }
+        });
+      }
+
+      // Feed the signal data to the peer
+      info.p2pPeer.signal(msg.data);
     }
   });
 
   ws.on("error", (err) => {
     log.error("WebSocket client error", { clientId, error: err.message });
+    const info = wsClients.get(clientId);
+    if (info?.p2pPeer) destroyPeer(info.p2pPeer);
     wsClients.delete(clientId);
     daemonSend({ type: "detach", clientId });
   });
 
   ws.on("close", () => {
     log.debug("Client disconnected", { clientId });
+    const info = wsClients.get(clientId);
+    if (info?.p2pPeer) destroyPeer(info.p2pPeer);
     wsClients.delete(clientId);
     daemonSend({ type: "detach", clientId });
   });
