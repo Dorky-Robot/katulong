@@ -101,7 +101,7 @@
     let shortcutBarInstance = null;
     const getInstanceIcon = () => instanceIcon;
     const setInstanceIcon = (icon) => {
-      instanceIcon = icon;
+      instanceIcon = icon.replace(/[^a-z0-9-]/g, "");
       // Re-render shortcut bar to show new icon
       if (shortcutBarInstance) {
         shortcutBarInstance.render(state.session.name);

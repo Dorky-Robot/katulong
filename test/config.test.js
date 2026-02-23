@@ -65,6 +65,88 @@ describe("ConfigManager", () => {
       const config = configManager.initialize();
       assert.strictEqual(config.instanceName, hostname(), "Should fall back to defaults on corruption");
     });
+
+    it("should reset instanceIcon to default when loaded value contains XSS payload", () => {
+      const poisonedConfig = {
+        instanceId: "00000000-0000-0000-0000-000000000000",
+        instanceName: "Test",
+        instanceIcon: 'terminal"><img src=x onerror=alert(1)>',
+        toolbarColor: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      };
+
+      writeFileSync(join(testDir, "config.json"), JSON.stringify(poisonedConfig), "utf-8");
+
+      const config = configManager.initialize();
+      assert.strictEqual(config.instanceIcon, "terminal-window", "Should reset poisoned icon to default");
+    });
+
+    it("should reset instanceIcon to default when loaded value contains uppercase letters", () => {
+      const poisonedConfig = {
+        instanceId: "00000000-0000-0000-0000-000000000000",
+        instanceName: "Test",
+        instanceIcon: "Terminal-Window",
+        toolbarColor: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      };
+
+      writeFileSync(join(testDir, "config.json"), JSON.stringify(poisonedConfig), "utf-8");
+
+      const config = configManager.initialize();
+      assert.strictEqual(config.instanceIcon, "terminal-window", "Should reset icon with uppercase letters to default");
+    });
+
+    it("should reset instanceIcon to default when loaded value contains spaces", () => {
+      const poisonedConfig = {
+        instanceId: "00000000-0000-0000-0000-000000000000",
+        instanceName: "Test",
+        instanceIcon: "terminal window",
+        toolbarColor: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      };
+
+      writeFileSync(join(testDir, "config.json"), JSON.stringify(poisonedConfig), "utf-8");
+
+      const config = configManager.initialize();
+      assert.strictEqual(config.instanceIcon, "terminal-window", "Should reset icon with spaces to default");
+    });
+
+    it("should preserve valid instanceIcon from existing config", () => {
+      const validConfig = {
+        instanceId: "00000000-0000-0000-0000-000000000000",
+        instanceName: "Test",
+        instanceIcon: "laptop",
+        toolbarColor: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      };
+
+      writeFileSync(join(testDir, "config.json"), JSON.stringify(validConfig), "utf-8");
+
+      const config = configManager.initialize();
+      assert.strictEqual(config.instanceIcon, "laptop", "Should preserve valid icon name");
+    });
+
+    it("should save reset icon to file when poisoned value is found", () => {
+      const poisonedConfig = {
+        instanceId: "00000000-0000-0000-0000-000000000000",
+        instanceName: "Test",
+        instanceIcon: "bad<script>icon",
+        toolbarColor: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      };
+
+      writeFileSync(join(testDir, "config.json"), JSON.stringify(poisonedConfig), "utf-8");
+
+      configManager.initialize();
+
+      const saved = JSON.parse(readFileSync(join(testDir, "config.json"), "utf-8"));
+      assert.strictEqual(saved.instanceIcon, "terminal-window", "Should persist the reset icon to file");
+    });
   });
 
   describe("getInstanceName", () => {

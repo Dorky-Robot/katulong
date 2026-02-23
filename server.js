@@ -21,8 +21,9 @@ import {
   parseCookies, setSessionCookie, getOriginAndRpID,
   isPublicPath, createChallengeStore, escapeAttr,
   getCsrfToken, validateCsrfToken, getCspHeaders,
+  isAllowedCorsOrigin,
 } from "./lib/http-util.js";
-import { rateLimit } from "./lib/rate-limit.js";
+import { rateLimit, getClientIp } from "./lib/rate-limit.js";
 import {
   processRegistration,
   processAuthentication,
@@ -83,7 +84,7 @@ const RP_NAME = "Katulong";
 // --- Rate limiting ---
 // 10 attempts per minute for auth endpoints
 const authRateLimit = rateLimit(10, 60000, (req) => {
-  const addr = req.socket.remoteAddress;
+  const addr = getClientIp(req);
   const ua = req.headers['user-agent'] || '';
   const origin = req.headers['origin'] || req.headers['host'] || '';
   return `${addr}:${ua}:${origin}`;
@@ -297,11 +298,17 @@ const routes = [
   // --- Auth routes ---
 
   { method: "GET", path: "/auth/status", handler: (req, res) => {
-    // Allow CORS for tunnel access (frontend may be at a different origin)
+    // CORS: strict allowlist — never reflect arbitrary origins with credentials.
+    // Only the server's own origin (tunnel or localhost) is allowed, preventing
+    // third-party sites from making credentialed cross-origin requests.
     const origin = req.headers.origin;
     if (origin) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Access-Control-Allow-Credentials", "true");
+      const { origin: serverOrigin } = getOriginAndRpID(req);
+      if (isAllowedCorsOrigin(origin, serverOrigin, PORT)) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+      }
+      // Disallowed origins: omit CORS headers (browser enforces the cross-origin block)
     }
     const accessMethod = getAccessMethod(req);
     json(res, 200, {
