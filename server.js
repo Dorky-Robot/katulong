@@ -35,7 +35,7 @@ import { ConfigManager } from "./lib/config.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 import { validateMessage } from "./lib/websocket-validation.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
-import { isLocalRequest, getAccessMethod } from "./lib/access-method.js";
+import { isLocalRequest, getAccessMethod, isLoopbackAddress, TUNNEL_HOSTNAMES } from "./lib/access-method.js";
 import { serveStaticFile } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 
@@ -50,16 +50,12 @@ function isHttpsConnection(req) {
   if (req.socket?.encrypted) return true;
   const hostname = (req.headers.host || 'localhost').split(':')[0];
   // Known HTTPS-only tunnel services
-  if (hostname.endsWith('.ngrok.app') ||
-      hostname.endsWith('.ngrok.io') ||
-      hostname.endsWith('.trycloudflare.com') ||
-      hostname.endsWith('.loca.lt')) return true;
+  if (TUNNEL_HOSTNAMES.some(suffix => hostname.endsWith(suffix))) return true;
   // Cloudflare Tunnel with custom domain: socket is loopback (from cloudflared)
   // and CF-Connecting-IP header present (added by Cloudflare edge, not forgeable
   // since the connection is local)
   const addr = req.socket?.remoteAddress || "";
-  const isLoopback = addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
-  if (isLoopback && req.headers["cf-connecting-ip"]) return true;
+  if (isLoopbackAddress(addr) && req.headers["cf-connecting-ip"]) return true;
   return false;
 }
 
