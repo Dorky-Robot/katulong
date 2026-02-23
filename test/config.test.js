@@ -101,6 +101,31 @@ describe("ConfigManager", () => {
       assert.strictEqual(id1, id2, "Instance ID should persist across restarts");
     });
 
+    it("should reset invalid instanceIcon to default on load", () => {
+      // Write config with poisoned icon (bypasses setInstanceIcon validation)
+      const poisonedConfig = {
+        instanceId: "test-uuid",
+        instanceName: "Test Instance",
+        instanceIcon: 'terminal"><img src=x onerror=alert(1)>',
+        toolbarColor: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      };
+
+      writeFileSync(
+        join(testDir, "config.json"),
+        JSON.stringify(poisonedConfig),
+        "utf-8"
+      );
+
+      const config = configManager.initialize();
+      assert.strictEqual(config.instanceIcon, "terminal-window", "Should reset invalid icon to default");
+
+      // Verify it was saved back
+      const savedConfig = JSON.parse(readFileSync(join(testDir, "config.json"), "utf-8"));
+      assert.strictEqual(savedConfig.instanceIcon, "terminal-window", "Should persist reset icon to file");
+    });
+
     it("should generate instance ID for legacy configs without it", () => {
       // Create a config without instanceId (legacy format)
       const legacyConfig = {
