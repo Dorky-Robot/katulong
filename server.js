@@ -669,12 +669,11 @@ const routes = [
 
     // Create token inside lock to prevent race conditions
     const SETUP_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-    const tokenData = await withStateLock((state) => {
-      const tokenValue = randomBytes(16).toString("hex");
+    const { tokenData } = await withStateLock((state) => {
       const now = Date.now();
-      const tokenMeta = {
+      const tokenData = {
         id: randomBytes(8).toString("hex"),
-        token: tokenValue,
+        token: randomBytes(16).toString("hex"),
         name: name.trim(),
         createdAt: now,
         lastUsedAt: null,
@@ -683,19 +682,19 @@ const routes = [
 
       // addSetupToken hashes the plaintext token before storing; preserve plaintext
       // for the one-time response to the caller
-      const newState = (state || AuthState.empty()).addSetupToken(tokenMeta);
-      return { state: newState, tokenMeta, tokenValue };
+      const newState = (state || AuthState.empty()).addSetupToken(tokenData);
+      return { state: newState, tokenData };
     });
 
-    log.info("Setup token created", { id: tokenData.tokenMeta.id, name: tokenData.tokenMeta.name });
+    log.info("Setup token created", { id: tokenData.id, name: tokenData.name });
 
     // Return the plaintext token value only once (on creation); it is never stored
     json(res, 200, {
-      id: tokenData.tokenMeta.id,
-      name: tokenData.tokenMeta.name,
-      token: tokenData.tokenValue,
-      createdAt: tokenData.tokenMeta.createdAt,
-      expiresAt: tokenData.tokenMeta.expiresAt,
+      id: tokenData.id,
+      name: tokenData.name,
+      token: tokenData.token,
+      createdAt: tokenData.createdAt,
+      expiresAt: tokenData.expiresAt,
     });
   }},
 
