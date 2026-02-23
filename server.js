@@ -90,7 +90,7 @@ const authRateLimit = rateLimit(10, 60000, (req) => {
 });
 
 if (!process.env.SSH_PASSWORD) {
-  log.info("SSH password generated", { password: SSH_PASSWORD });
+  log.info("SSH password generated (retrieve via GET /ssh/password)");
 }
 
 if (process.env.KATULONG_NO_AUTH === "1") {
