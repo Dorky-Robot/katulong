@@ -12,6 +12,7 @@ import {
   getCspHeaders,
   getCsrfToken,
   validateCsrfToken,
+  isAllowedCorsOrigin,
 } from "../lib/http-util.js";
 import { AuthState } from "../lib/auth-state.js";
 
@@ -640,5 +641,69 @@ describe("validateCsrfToken", () => {
   it("returns false when CSRF token length differs (timing-safe check)", () => {
     const req = makeReq({ csrfHeader: "short" });
     assert.ok(!validateCsrfToken(req, makeState()));
+  });
+});
+
+describe("isAllowedCorsOrigin", () => {
+  const PORT = 3001;
+  const SERVER_ORIGIN = "https://example.ngrok.app";
+
+  it("allows the server's own tunnel origin", () => {
+    assert.ok(isAllowedCorsOrigin(SERVER_ORIGIN, SERVER_ORIGIN, PORT));
+  });
+
+  it("allows http://localhost:<PORT>", () => {
+    assert.ok(isAllowedCorsOrigin(`http://localhost:${PORT}`, SERVER_ORIGIN, PORT));
+  });
+
+  it("allows http://127.0.0.1:<PORT>", () => {
+    assert.ok(isAllowedCorsOrigin(`http://127.0.0.1:${PORT}`, SERVER_ORIGIN, PORT));
+  });
+
+  it("rejects an arbitrary external origin", () => {
+    assert.ok(!isAllowedCorsOrigin("https://evil.com", SERVER_ORIGIN, PORT));
+  });
+
+  it("rejects localhost on a different port", () => {
+    assert.ok(!isAllowedCorsOrigin("http://localhost:9999", SERVER_ORIGIN, PORT));
+  });
+
+  it("rejects a null/undefined origin", () => {
+    assert.ok(!isAllowedCorsOrigin(null, SERVER_ORIGIN, PORT));
+    assert.ok(!isAllowedCorsOrigin(undefined, SERVER_ORIGIN, PORT));
+  });
+
+  it("rejects an empty string origin", () => {
+    assert.ok(!isAllowedCorsOrigin("", SERVER_ORIGIN, PORT));
+  });
+
+  it("does not allow http://localhost when serverOrigin is http://localhost (no port mismatch)", () => {
+    // serverOrigin includes port; bare localhost without port is rejected
+    assert.ok(!isAllowedCorsOrigin("http://localhost", "http://localhost:3001", 3001));
+  });
+
+  it("allows the server's own localhost origin when running on localhost", () => {
+    const localOrigin = "http://localhost:3001";
+    assert.ok(isAllowedCorsOrigin(localOrigin, localOrigin, 3001));
+  });
+
+  it("rejects a case-variant of an allowed origin (case-sensitive)", () => {
+    assert.ok(!isAllowedCorsOrigin("HTTPS://EXAMPLE.NGROK.APP", SERVER_ORIGIN, PORT));
+  });
+
+  it("rejects an origin that is a substring of an allowed origin", () => {
+    assert.ok(!isAllowedCorsOrigin("https://example.ngrok", SERVER_ORIGIN, PORT));
+  });
+
+  it("credentials header should only be set for allowed origins (integration check)", () => {
+    const headers = {};
+    const setHeader = (k, v) => { headers[k] = v; };
+    const origin = "https://evil.com";
+    if (isAllowedCorsOrigin(origin, SERVER_ORIGIN, PORT)) {
+      setHeader("Access-Control-Allow-Origin", origin);
+      setHeader("Access-Control-Allow-Credentials", "true");
+    }
+    assert.ok(!headers["Access-Control-Allow-Origin"]);
+    assert.ok(!headers["Access-Control-Allow-Credentials"]);
   });
 });
