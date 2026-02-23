@@ -374,6 +374,167 @@ describe("ConfigManager", () => {
       const content = JSON.parse(readFileSync(join(testDir, "config.json"), "utf-8"));
       assert.strictEqual(content.instanceIcon, "code", "Should save to file");
     });
+
+    it("should trim whitespace", () => {
+      configManager.setInstanceIcon("  code  ");
+      assert.strictEqual(configManager.getInstanceIcon(), "code", "Should trim whitespace");
+    });
+
+    it("should reject non-string values", () => {
+      assert.throws(
+        () => configManager.setInstanceIcon(123),
+        /non-empty string/,
+        "Should reject number"
+      );
+
+      assert.throws(
+        () => configManager.setInstanceIcon(null),
+        /non-empty string/,
+        "Should reject null"
+      );
+
+      assert.throws(
+        () => configManager.setInstanceIcon(undefined),
+        /non-empty string/,
+        "Should reject undefined"
+      );
+    });
+
+    it("should update updatedAt timestamp", async () => {
+      const originalUpdatedAt = configManager.config.updatedAt;
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+      configManager.setInstanceIcon("laptop");
+
+      assert.notStrictEqual(
+        configManager.config.updatedAt,
+        originalUpdatedAt,
+        "updatedAt should change"
+      );
+    });
+
+    it("should persist icon across config reload", () => {
+      configManager.setInstanceIcon("laptop");
+
+      const configManager2 = new ConfigManager(testDir);
+      configManager2.initialize();
+      assert.strictEqual(configManager2.getInstanceIcon(), "laptop", "Icon should persist across reload");
+    });
+
+    it("should accept icon names exactly 50 characters", () => {
+      const icon50 = "a".repeat(50);
+      configManager.setInstanceIcon(icon50);
+      assert.strictEqual(configManager.getInstanceIcon(), icon50, "Should accept 50 char icon name");
+    });
+  });
+
+  describe("setToolbarColor", () => {
+    beforeEach(() => {
+      configManager.initialize();
+    });
+
+    it("should update toolbar color", () => {
+      configManager.setToolbarColor("blue");
+      assert.strictEqual(configManager.getToolbarColor(), "blue", "Toolbar color should be updated");
+    });
+
+    it("should accept common color values", () => {
+      configManager.setToolbarColor("default");
+      assert.strictEqual(configManager.getToolbarColor(), "default");
+
+      configManager.setToolbarColor("red");
+      assert.strictEqual(configManager.getToolbarColor(), "red");
+
+      configManager.setToolbarColor("#ff0000");
+      assert.strictEqual(configManager.getToolbarColor(), "#ff0000");
+
+      configManager.setToolbarColor("rgb(255, 0, 0)");
+      assert.strictEqual(configManager.getToolbarColor(), "rgb(255, 0, 0)");
+    });
+
+    it("should trim whitespace", () => {
+      configManager.setToolbarColor("  blue  ");
+      assert.strictEqual(configManager.getToolbarColor(), "blue", "Should trim whitespace");
+    });
+
+    it("should update updatedAt timestamp", async () => {
+      const originalUpdatedAt = configManager.config.updatedAt;
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+      configManager.setToolbarColor("green");
+
+      assert.notStrictEqual(
+        configManager.config.updatedAt,
+        originalUpdatedAt,
+        "updatedAt should change"
+      );
+    });
+
+    it("should persist to file", () => {
+      configManager.setToolbarColor("purple");
+
+      const content = JSON.parse(readFileSync(join(testDir, "config.json"), "utf-8"));
+      assert.strictEqual(content.toolbarColor, "purple", "Should save to file");
+    });
+
+    it("should persist color across config reload", () => {
+      configManager.setToolbarColor("teal");
+
+      const configManager2 = new ConfigManager(testDir);
+      configManager2.initialize();
+      assert.strictEqual(configManager2.getToolbarColor(), "teal", "Color should persist across reload");
+    });
+
+    it("should reject empty string", () => {
+      assert.throws(
+        () => configManager.setToolbarColor(""),
+        /non-empty string/,
+        "Should reject empty string"
+      );
+    });
+
+    it("should reject whitespace-only string", () => {
+      assert.throws(
+        () => configManager.setToolbarColor("   "),
+        /non-empty string/,
+        "Should reject whitespace-only string"
+      );
+    });
+
+    it("should reject non-string values", () => {
+      assert.throws(
+        () => configManager.setToolbarColor(123),
+        /non-empty string/,
+        "Should reject number"
+      );
+
+      assert.throws(
+        () => configManager.setToolbarColor(null),
+        /non-empty string/,
+        "Should reject null"
+      );
+
+      assert.throws(
+        () => configManager.setToolbarColor(undefined),
+        /non-empty string/,
+        "Should reject undefined"
+      );
+    });
+
+    it("should reject colors longer than 50 characters", () => {
+      const longColor = "a".repeat(51);
+      assert.throws(
+        () => configManager.setToolbarColor(longColor),
+        /50 characters or less/,
+        "Should reject colors over 50 chars"
+      );
+    });
+
+    it("should accept colors exactly 50 characters", () => {
+      const color50 = "a".repeat(50);
+      configManager.setToolbarColor(color50);
+      assert.strictEqual(configManager.getToolbarColor(), color50, "Should accept 50 char color");
+    });
   });
 
   describe("getConfig", () => {
