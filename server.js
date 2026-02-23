@@ -820,6 +820,13 @@ const routes = [
   }},
 
   { method: "POST", path: "/sessions", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+    const state = loadState();
+    if (!validateCsrfToken(req, state)) {
+      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    }
     const { name } = await parseJSON(req);
     const sessionName = SessionName.tryCreate(name);
     if (!sessionName) return json(res, 400, { error: "Invalid name" });
@@ -828,11 +835,25 @@ const routes = [
   }},
 
   { method: "DELETE", prefix: "/sessions/", handler: async (req, res, name) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+    const state = loadState();
+    if (!validateCsrfToken(req, state)) {
+      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    }
     const result = await daemonRPC({ type: "delete-session", name });
     json(res, result.error ? 404 : 200, result.error ? { error: result.error } : { ok: true });
   }},
 
   { method: "PUT", prefix: "/sessions/", handler: async (req, res, name) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+    const state = loadState();
+    if (!validateCsrfToken(req, state)) {
+      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    }
     const { name: newName } = await parseJSON(req);
     const sessionName = SessionName.tryCreate(newName);
     if (!sessionName) return json(res, 400, { error: "Invalid name" });
