@@ -266,19 +266,23 @@ describe("AuthState", () => {
       const t1 = 1000000000;
       const t2 = t1 + 1000; // 1 second later
       const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+      const originalExpiry = t1 + SESSION_TTL_MS;
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [],
         sessions: {
-          token1: { expiry: t1 + SESSION_TTL_MS, credentialId: "cred1", csrfToken: "csrf1", lastActivityAt: t1 - 50000 }
+          // lastActivityAt 50s ago: timeSinceActivity << 24h, so neither call should extend expiry
+          token1: { expiry: originalExpiry, credentialId: "cred1", csrfToken: "csrf1", lastActivityAt: t1 - 50000 }
         },
       });
 
       const state1 = original.updateSessionActivity("token1", t1);
       assert.strictEqual(state1.sessions.token1.lastActivityAt, t1, "first call should set lastActivityAt to t1");
+      assert.strictEqual(state1.sessions.token1.expiry, originalExpiry, "first call should not extend expiry (activity under 24h)");
 
       const state2 = state1.updateSessionActivity("token1", t2);
       assert.strictEqual(state2.sessions.token1.lastActivityAt, t2, "second call should update lastActivityAt to t2");
+      assert.strictEqual(state2.sessions.token1.expiry, originalExpiry, "second call should not extend expiry (activity 1s ago)");
 
       // Prior states should be unaffected
       assert.strictEqual(original.sessions.token1.lastActivityAt, t1 - 50000, "original should be unchanged");

@@ -592,4 +592,29 @@ describe("refreshSessionActivity", () => {
       "refreshSessionActivity should not throw when no state file exists"
     );
   });
+
+  it("extends session expiry when lastActivityAt is more than 24h ago (sliding window)", async () => {
+    const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+    const token = "oldactivitytoken";
+    const now = Date.now();
+    // Use a short initial expiry (10 minutes) so any sliding-window extension to 30 days is unambiguous
+    const initial = makeValidState(token, {
+      expiry: now + 10 * 60 * 1000, // 10 minutes from now
+      lastActivityAt: now - 25 * 60 * 60 * 1000, // 25 hours ago, beyond the 24h threshold
+    });
+    const originalExpiry = initial.sessions[token].expiry;
+    saveState(initial);
+
+    await refreshSessionActivity(token);
+
+    const updated = loadState();
+    assert.ok(
+      updated.sessions[token].expiry > originalExpiry,
+      "expiry should be extended when lastActivityAt was more than 24h ago"
+    );
+    assert.ok(
+      updated.sessions[token].expiry >= now + SESSION_TTL_MS - 1000,
+      "expiry should be approximately 30 days from now"
+    );
+  });
 });
