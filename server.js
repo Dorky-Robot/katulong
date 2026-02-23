@@ -660,7 +660,7 @@ const routes = [
     const tokenData = await withStateLock((state) => {
       const tokenValue = randomBytes(16).toString("hex");
       const now = Date.now();
-      const tokenData = {
+      const tokenMeta = {
         id: randomBytes(8).toString("hex"),
         token: tokenValue,
         name: name.trim(),
@@ -669,19 +669,21 @@ const routes = [
         expiresAt: now + SETUP_TOKEN_TTL_MS,
       };
 
-      const newState = (state || AuthState.empty()).addSetupToken(tokenData);
-      return { state: newState, tokenData };
+      // addSetupToken hashes the plaintext token before storing; preserve plaintext
+      // for the one-time response to the caller
+      const newState = (state || AuthState.empty()).addSetupToken(tokenMeta);
+      return { state: newState, tokenMeta, tokenValue };
     });
 
-    log.info("Setup token created", { id: tokenData.tokenData.id, name: tokenData.tokenData.name });
+    log.info("Setup token created", { id: tokenData.tokenMeta.id, name: tokenData.tokenMeta.name });
 
-    // Return the token value only once (on creation)
+    // Return the plaintext token value only once (on creation); it is never stored
     json(res, 200, {
-      id: tokenData.tokenData.id,
-      name: tokenData.tokenData.name,
-      token: tokenData.tokenData.token,
-      createdAt: tokenData.tokenData.createdAt,
-      expiresAt: tokenData.tokenData.expiresAt,
+      id: tokenData.tokenMeta.id,
+      name: tokenData.tokenMeta.name,
+      token: tokenData.tokenValue,
+      createdAt: tokenData.tokenMeta.createdAt,
+      expiresAt: tokenData.tokenMeta.expiresAt,
     });
   }},
 
