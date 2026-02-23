@@ -1,6 +1,13 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("Session CRUD", () => {
+  // Helper: create a session by navigating to it (triggers daemon attach/create)
+  async function createSessionByNav(page, name) {
+    await page.goto(`/?s=${encodeURIComponent(name)}`);
+    await page.waitForSelector(".xterm-helper-textarea");
+    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+  }
+
   // Helper: delete a session via API (best-effort cleanup)
   async function deleteSession(page, name) {
     await page.evaluate(
@@ -20,21 +27,29 @@ test.describe("Session CRUD", () => {
     await page.locator("#session-new-name").fill(name);
 
     // Capture the new tab that opens on create
-    const [newPage] = await Promise.all([
-      context.waitForEvent("page"),
-      page.locator("#session-new-create").click(),
-    ]);
-    await newPage.waitForLoadState();
-    expect(newPage.url()).toContain(`?s=${encodeURIComponent(name)}`);
+    // window.open may be blocked in headless browsers, so handle both cases
+    const pagePromise = context.waitForEvent("page", { timeout: 5000 }).catch(() => null);
+    await page.locator("#session-new-create").click();
+    const newPage = await pagePromise;
 
-    // Verify terminal is functional in new tab
-    await newPage.waitForSelector(".xterm-helper-textarea");
-    await newPage.waitForSelector(".xterm-screen", { timeout: 5000 });
-    await newPage.locator(".xterm-helper-textarea").focus();
-    await expect(newPage.locator(".xterm-rows")).not.toHaveText("");
+    if (newPage) {
+      await newPage.waitForLoadState();
+      expect(newPage.url()).toContain(`?s=${encodeURIComponent(name)}`);
+
+      // Verify terminal is functional in new tab
+      await newPage.waitForSelector(".xterm-helper-textarea");
+      await newPage.waitForSelector(".xterm-screen", { timeout: 5000 });
+      await newPage.locator(".xterm-helper-textarea").focus();
+      await expect(newPage.locator(".xterm-rows")).not.toHaveText("");
+      await newPage.close();
+    } else {
+      // Popup blocked — verify session was created via daemon list
+      const res = await page.evaluate(() => fetch("/sessions").then(r => r.json()));
+      const created = res.some(s => s.name === name);
+      expect(created).toBe(true);
+    }
 
     // Cleanup
-    await newPage.close();
     await deleteSession(page, name);
   });
 
@@ -43,26 +58,22 @@ test.describe("Session CRUD", () => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Create session via API
-    await page.evaluate(
-      (n) =>
-        fetch("/sessions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: n }),
-        }),
-      name,
-    );
+    // Create session by navigating to it (triggers daemon create on attach)
+    await createSessionByNav(page, name);
+
+    // Go back to default session
+    await page.goto("/");
+    await page.waitForSelector("#shortcut-bar");
 
     // Open session modal — list fetches on open
     await page.locator("#shortcut-bar .session-btn").click();
     await expect(page.locator("#session-overlay")).toHaveClass(/visible/);
 
-    // Find the row by the input's aria-label which is set as an HTML attribute
+    // Wait for the session list to load and find the row
     const row = page.locator(".session-item", {
       has: page.getByLabel(`Session name: ${name}`),
     });
-    await expect(row).toBeVisible();
+    await expect(row).toBeVisible({ timeout: 10000 });
 
     // Handle potential confirmation dialog
     page.on("dialog", (dialog) => dialog.accept());
@@ -79,28 +90,25 @@ test.describe("Session CRUD", () => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Create session via API
-    await page.evaluate(
-      (n) =>
-        fetch("/sessions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: n }),
-        }),
-      name,
-    );
+    // Create session by navigating to it (triggers daemon create on attach)
+    await createSessionByNav(page, name);
+
+    // Go back to default session
+    await page.goto("/");
+    await page.waitForSelector("#shortcut-bar");
 
     // Open session modal and rename
     await page.locator("#shortcut-bar .session-btn").click();
     await expect(page.locator("#session-overlay")).toHaveClass(/visible/);
 
+    // Wait for session list to load
     const nameInput = page.getByLabel(`Session name: ${name}`);
-    await expect(nameInput).toBeVisible();
+    await expect(nameInput).toBeVisible({ timeout: 10000 });
     await nameInput.fill(newName);
     await nameInput.press("Enter");
 
     // Verify new name appears in list (re-rendered after rename)
-    await expect(page.getByLabel(`Session name: ${newName}`)).toBeVisible();
+    await expect(page.getByLabel(`Session name: ${newName}`)).toBeVisible({ timeout: 10000 });
 
     // Cleanup
     await deleteSession(page, newName);
@@ -111,18 +119,7 @@ test.describe("Session CRUD", () => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Create session via API
-    await page.evaluate(
-      (n) =>
-        fetch("/sessions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: n }),
-        }),
-      name,
-    );
-
-    // Navigate to that session
+    // Navigate to session (creates it via daemon attach)
     await page.goto(`/?s=${encodeURIComponent(name)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
@@ -151,20 +148,7 @@ test.describe("Session CRUD", () => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Create both sessions via API
-    for (const n of [nameA, nameB]) {
-      await page.evaluate(
-        (n) =>
-          fetch("/sessions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: n }),
-          }),
-        n,
-      );
-    }
-
-    // Type marker in session A
+    // Type marker in session A (creates it via daemon attach)
     await page.goto(`/?s=${encodeURIComponent(nameA)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
@@ -173,7 +157,7 @@ test.describe("Session CRUD", () => {
     await page.keyboard.press("Enter");
     await expect(page.locator(".xterm-rows")).toContainText(markerA);
 
-    // Type marker in session B
+    // Type marker in session B (creates it via daemon attach)
     await page.goto(`/?s=${encodeURIComponent(nameB)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });

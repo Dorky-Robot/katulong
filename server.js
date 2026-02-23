@@ -929,9 +929,11 @@ const routes = [
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
     }
-    const state = loadState();
-    if (!validateCsrfToken(req, state)) {
-      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    if (!isLocalRequest(req)) {
+      const state = loadState();
+      if (!validateCsrfToken(req, state)) {
+        return json(res, 403, { error: "Invalid or missing CSRF token" });
+      }
     }
     const { name } = await parseJSON(req);
     const sessionName = SessionName.tryCreate(name);
@@ -944,9 +946,11 @@ const routes = [
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
     }
-    const state = loadState();
-    if (!validateCsrfToken(req, state)) {
-      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    if (!isLocalRequest(req)) {
+      const state = loadState();
+      if (!validateCsrfToken(req, state)) {
+        return json(res, 403, { error: "Invalid or missing CSRF token" });
+      }
     }
     const result = await daemonRPC({ type: "delete-session", name });
     json(res, result.error ? 404 : 200, result.error ? { error: result.error } : { ok: true });
@@ -956,9 +960,11 @@ const routes = [
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
     }
-    const state = loadState();
-    if (!validateCsrfToken(req, state)) {
-      return json(res, 403, { error: "Invalid or missing CSRF token" });
+    if (!isLocalRequest(req)) {
+      const state = loadState();
+      if (!validateCsrfToken(req, state)) {
+        return json(res, 403, { error: "Invalid or missing CSRF token" });
+      }
     }
     const { name: newName } = await parseJSON(req);
     const sessionName = SessionName.tryCreate(newName);
