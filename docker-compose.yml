@@ -12,6 +12,11 @@ services:
     environment:
       - KATULONG_DATA_DIR=/data
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          pids: 200
 
 volumes:
   katulong-data:
