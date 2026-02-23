@@ -9,9 +9,8 @@ import {
   loadShortcuts,
   saveShortcuts,
   validateShortcut,
-  ShortcutsSuccess,
-  ShortcutsFailure,
 } from "../lib/shortcuts.js";
+import { Success as ShortcutsSuccess, Failure as ShortcutsFailure } from "../lib/result.js";
 
 describe("parseShortcuts", () => {
   it("parses valid shortcuts JSON", () => {

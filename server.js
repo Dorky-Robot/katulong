@@ -354,10 +354,10 @@ const routes = [
     const { origin, rpID } = getOriginAndRpID(req);
     let opts, userID;
     if (isSetup()) {
-      const state = loadState();
+      const existingState = loadState();
       // Handle case where credentials exist but user is null (shouldn't happen, but defensive)
-      if (state.user && state.user.id) {
-        ({ opts, userID } = await generateRegistrationOptsForUser(state.user.id, RP_NAME, rpID, origin));
+      if (existingState.user && existingState.user.id) {
+        ({ opts, userID } = await generateRegistrationOptsForUser(existingState.user.id, RP_NAME, rpID, origin));
       } else {
         // Fallback: create new user if somehow credentials exist without user
         ({ opts, userID } = await generateRegistrationOpts(RP_NAME, rpID, origin));
@@ -732,7 +732,7 @@ const routes = [
       try {
         // Use withStateLock for atomic state modification
         // endSession() permanently removes the credential and all its sessions
-        const newState = await withStateLock(async (state) => {
+        const result = await withStateLock(async (state) => {
           if (state && state.isValidSession(token)) {
             return state.endSession(token, { allowRemoveLast: isLocalRequest(req) });
           }
@@ -740,8 +740,9 @@ const routes = [
         });
 
         // Notify all connected clients if a credential was removed
-        if (newState && newState.removedCredentialId) {
-          broadcastToAll({ type: 'credential-removed', credentialId: newState.removedCredentialId });
+        const removedCredentialId = result?.removedCredentialId;
+        if (removedCredentialId) {
+          broadcastToAll({ type: 'credential-removed', credentialId: removedCredentialId });
         }
       } catch (err) {
         // Handle "last credential" protection
