@@ -4,6 +4,7 @@
  * Generic composable form manager for token creation.
  * Follows composition pattern with callbacks for actions.
  */
+import { addCsrfHeader } from "./csrf.js";
 
 /**
  * Create token form manager
@@ -70,7 +71,7 @@ export function createTokenFormManager(options = {}) {
     try {
       const res = await fetch("/api/tokens", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: addCsrfHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({ name }),
       });
 
@@ -102,7 +103,7 @@ export function createTokenFormManager(options = {}) {
     try {
       const res = await fetch(`/api/tokens/${tokenId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: addCsrfHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({ name: newName.trim() }),
       });
 
@@ -129,6 +130,7 @@ export function createTokenFormManager(options = {}) {
     try {
       const res = await fetch(`/api/tokens/${tokenId}`, {
         method: "DELETE",
+        headers: addCsrfHeader({}),
       });
 
       if (!res.ok) throw new Error("Failed to revoke token");
