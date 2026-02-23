@@ -84,7 +84,7 @@ if [ "$E2E_AVAILABLE" -eq 1 ]; then
 
   # Split cores evenly: half for unit tests, half for E2E browsers.
   # Running both at full concurrency starves the test server daemon.
-  node --test --test-concurrency="$HALF_CPUS" test/*.test.js test/*.integration.js > "$UNIT_LOG" 2>&1 &
+  node --experimental-test-module-mocks --test --test-concurrency="$HALF_CPUS" test/*.test.js test/*.integration.js > "$UNIT_LOG" 2>&1 &
   UNIT_PID=$!
 
   E2E_CPUS=$HALF_CPUS bash scripts/run-e2e-sharded.sh > "$E2E_LOG" 2>&1 &
@@ -102,7 +102,7 @@ if [ "$E2E_AVAILABLE" -eq 1 ]; then
   rm -f "$E2E_LOG"
 else
   echo "pre-push: Playwright browser unavailable — skipping E2E tests (install system deps to enable)"
-  node --test --test-concurrency="$HALF_CPUS" test/*.test.js test/*.integration.js > "$UNIT_LOG" 2>&1 &
+  node --experimental-test-module-mocks --test --test-concurrency="$HALF_CPUS" test/*.test.js test/*.integration.js > "$UNIT_LOG" 2>&1 &
   UNIT_PID=$!
   wait "$UNIT_PID" || UNIT_RC=$?
 fi
