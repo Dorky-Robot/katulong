@@ -382,6 +382,7 @@ describe("processRegistration — success path", () => {
     const cred = result.data.updatedState.credentials[0];
     assert.equal(cred.name, "Unknown Device", "name should default to 'Unknown Device'");
     assert.equal(cred.deviceId, null, "deviceId should be null when not provided");
+    assert.equal(cred.userAgent, "Unknown", "userAgent should default to 'Unknown'");
   });
 
   it("stores setupTokenId on credential when provided", async () => {
@@ -416,6 +417,38 @@ describe("processRegistration — success path", () => {
     assert.ok(result instanceof Success);
     const cred = result.data.updatedState.credentials[0];
     assert.equal(cred.setupTokenId, null, "setupTokenId should be null for first-device registrations");
+  });
+
+  it("prunes expired sessions from currentState before building updatedState", async () => {
+    // Build a state with one valid and one expired session
+    const expiredToken = "expired-tok";
+    const existingCred = { id: "cred-xyz", publicKey: "key", counter: 0 };
+    const stateWithExpired = new AuthState({
+      user: { id: "user123", name: "owner" },
+      credentials: [existingCred],
+      sessions: {
+        [expiredToken]: { expiry: Date.now() - 1000, credentialId: "cred-xyz", csrfToken: "x", lastActivityAt: Date.now() - 2000 },
+      },
+      setupTokens: [],
+    });
+
+    const result = await processRegistrationMocked({
+      credential: {},
+      challenge: "test-challenge",
+      challengeValid: true,
+      userID: "user123",
+      origin: "https://example.com",
+      rpID: "example.com",
+      currentState: stateWithExpired,
+    });
+
+    assert.ok(result instanceof Success);
+    const { updatedState } = result.data;
+    assert.equal(
+      updatedState.sessions[expiredToken],
+      undefined,
+      "expired session should be pruned from updatedState"
+    );
   });
 });
 
@@ -528,6 +561,36 @@ describe("processAuthentication — success path", () => {
     assert.ok(result instanceof Success);
     const cred = result.data.updatedState.credentials.find((c) => c.id === "cred123");
     assert.ok(cred.lastUsedAt >= before, "lastUsedAt should be updated to approximately current time");
+  });
+
+  it("prunes expired sessions from currentState before building updatedState", async () => {
+    const expiredToken = "expired-auth-tok";
+    const existingCred = { id: "cred123", publicKey: "pubkey", counter: 0 };
+    const stateWithExpired = new AuthState({
+      user: { id: "user123", name: "owner" },
+      credentials: [existingCred],
+      sessions: {
+        [expiredToken]: { expiry: Date.now() - 1000, credentialId: "cred123", csrfToken: "x", lastActivityAt: Date.now() - 2000 },
+      },
+      setupTokens: [],
+    });
+
+    const result = await processAuthenticationMocked({
+      credential: { id: "cred123" },
+      challenge: "test-challenge",
+      challengeValid: true,
+      origin: "https://example.com",
+      rpID: "example.com",
+      currentState: stateWithExpired,
+    });
+
+    assert.ok(result instanceof Success);
+    const { updatedState } = result.data;
+    assert.equal(
+      updatedState.sessions[expiredToken],
+      undefined,
+      "expired session should be pruned from updatedState"
+    );
   });
 });
 
