@@ -66,6 +66,40 @@ describe("ConfigManager", () => {
       assert.strictEqual(config.instanceName, hostname(), "Should fall back to defaults on corruption");
     });
 
+    it("should reset instanceName to hostname when loaded value contains XSS payload", () => {
+      const poisonedConfig = {
+        instanceId: "00000000-0000-0000-0000-000000000000",
+        instanceName: "<script>alert(1)</script>",
+        instanceIcon: "terminal-window",
+        toolbarColor: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      };
+
+      writeFileSync(join(testDir, "config.json"), JSON.stringify(poisonedConfig), "utf-8");
+
+      const config = configManager.initialize();
+      assert.strictEqual(config.instanceName, hostname(), "Should reset poisoned name to hostname");
+    });
+
+    it("should save reset instanceName to file when poisoned value is found", () => {
+      const poisonedConfig = {
+        instanceId: "00000000-0000-0000-0000-000000000000",
+        instanceName: '"><img src=x onerror=alert(1)>',
+        instanceIcon: "terminal-window",
+        toolbarColor: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      };
+
+      writeFileSync(join(testDir, "config.json"), JSON.stringify(poisonedConfig), "utf-8");
+
+      configManager.initialize();
+
+      const saved = JSON.parse(readFileSync(join(testDir, "config.json"), "utf-8"));
+      assert.strictEqual(saved.instanceName, hostname(), "Should persist the reset name to file");
+    });
+
     it("should reset instanceIcon to default when loaded value contains XSS payload", () => {
       const poisonedConfig = {
         instanceId: "00000000-0000-0000-0000-000000000000",
@@ -148,22 +182,6 @@ describe("ConfigManager", () => {
       assert.strictEqual(saved.instanceIcon, "terminal-window", "Should persist the reset icon to file");
     });
 
-    it("should reset instanceName to hostname when loaded value contains XSS payload", () => {
-      const poisonedConfig = {
-        instanceId: "00000000-0000-0000-0000-000000000000",
-        instanceName: '<script>alert(1)</script>',
-        instanceIcon: "terminal-window",
-        toolbarColor: "default",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z"
-      };
-
-      writeFileSync(join(testDir, "config.json"), JSON.stringify(poisonedConfig), "utf-8");
-
-      const config = configManager.initialize();
-      assert.strictEqual(config.instanceName, hostname(), "Should reset poisoned name to hostname");
-    });
-
     it("should reset instanceName to hostname when loaded value contains quotes", () => {
       const poisonedConfig = {
         instanceId: "00000000-0000-0000-0000-000000000000",
@@ -180,7 +198,7 @@ describe("ConfigManager", () => {
       assert.strictEqual(config.instanceName, hostname(), "Should reset name with quotes to hostname");
     });
 
-    it("should save reset instanceName to file when poisoned value is found", () => {
+    it("should save reset instanceName to file when poisoned value contains bad chars", () => {
       const poisonedConfig = {
         instanceId: "00000000-0000-0000-0000-000000000000",
         instanceName: "bad<name>",
@@ -363,7 +381,7 @@ describe("ConfigManager", () => {
     it("should reject names with HTML injection characters", () => {
       assert.throws(
         () => configManager.setInstanceName('<script>alert(1)</script>'),
-        /letters, digits, spaces, hyphens, underscores, and dots/,
+        /letters, digits, spaces, hyphens, underscores, and periods/,
         "Should reject HTML injection in instance name"
       );
     });
@@ -371,7 +389,7 @@ describe("ConfigManager", () => {
     it("should reject names with quotes", () => {
       assert.throws(
         () => configManager.setInstanceName('name"with"quotes'),
-        /letters, digits, spaces, hyphens, underscores, and dots/,
+        /letters, digits, spaces, hyphens, underscores, and periods/,
         "Should reject quotes in instance name"
       );
     });
@@ -379,8 +397,32 @@ describe("ConfigManager", () => {
     it("should reject names with ampersands and semicolons", () => {
       assert.throws(
         () => configManager.setInstanceName("name&amp;injected"),
-        /letters, digits, spaces, hyphens, underscores, and dots/,
+        /letters, digits, spaces, hyphens, underscores, and periods/,
         "Should reject ampersands in instance name"
+      );
+    });
+
+    it("should reject XSS script tag payload", () => {
+      assert.throws(
+        () => configManager.setInstanceName("<script>alert(1)</script>"),
+        /letters, digits, spaces, hyphens, underscores, and periods/,
+        "Should reject XSS script tag"
+      );
+    });
+
+    it("should reject HTML attribute injection payload", () => {
+      assert.throws(
+        () => configManager.setInstanceName('"><img src=x onerror=alert(1)>'),
+        /letters, digits, spaces, hyphens, underscores, and periods/,
+        "Should reject HTML injection"
+      );
+    });
+
+    it("should reject names with angle brackets", () => {
+      assert.throws(
+        () => configManager.setInstanceName("My <Terminal>"),
+        /letters, digits, spaces, hyphens, underscores, and periods/,
+        "Should reject angle brackets"
       );
     });
 
@@ -390,6 +432,16 @@ describe("ConfigManager", () => {
 
       configManager.setInstanceName("my-server_v1");
       assert.strictEqual(configManager.getInstanceName(), "my-server_v1");
+    });
+
+    it("should accept normal names with spaces", () => {
+      configManager.setInstanceName("My Terminal");
+      assert.strictEqual(configManager.getInstanceName(), "My Terminal");
+    });
+
+    it("should accept names with hyphens, underscores, and periods", () => {
+      configManager.setInstanceName("my-server_1.0");
+      assert.strictEqual(configManager.getInstanceName(), "my-server_1.0");
     });
   });
 
