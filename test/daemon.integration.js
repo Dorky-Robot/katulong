@@ -2,7 +2,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
-import { existsSync, unlinkSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, unlinkSync, mkdtempSync, statSync, writeFileSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -378,6 +378,7 @@ describe("daemon security", () => {
         if (existsSync(STALE_SOCKET)) {
           try { unlinkSync(STALE_SOCKET); } catch {}
         }
+        try { rmSync(STALE_DATA_DIR, { recursive: true, force: true }); } catch {}
       }
     });
   });
