@@ -360,6 +360,14 @@ describe("ConfigManager", () => {
       );
     });
 
+    it("should reject whitespace-only string", () => {
+      assert.throws(
+        () => configManager.setInstanceIcon("   "),
+        /non-empty string/,
+        "Should reject whitespace-only string"
+      );
+    });
+
     it("should reject icons longer than 50 characters", () => {
       const longIcon = "a".repeat(51);
       assert.throws(
