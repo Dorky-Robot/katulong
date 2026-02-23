@@ -47,8 +47,12 @@ export function createShortcutBar(options = {}) {
     sessBtn.className = "session-btn";
     sessBtn.tabIndex = -1;
     sessBtn.setAttribute("aria-label", `Session: ${sessionName}`);
-    const instanceIcon = getInstanceIcon ? getInstanceIcon() : "terminal-window";
-    sessBtn.innerHTML = `<i class="ph ph-${instanceIcon}"></i> `;
+    const rawIcon = getInstanceIcon ? getInstanceIcon() : "terminal-window";
+    const instanceIcon = rawIcon.replace(/[^a-z0-9-]/g, "");
+    const iconEl = document.createElement("i");
+    iconEl.className = `ph ph-${instanceIcon}`;
+    sessBtn.appendChild(iconEl);
+    sessBtn.appendChild(document.createTextNode(" "));
     sessBtn.appendChild(document.createTextNode(sessionName));
     if (onSessionClick) {
       sessBtn.addEventListener("click", onSessionClick);

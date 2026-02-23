@@ -213,6 +213,87 @@ describe("ConfigManager", () => {
     });
   });
 
+  describe("setInstanceIcon", () => {
+    beforeEach(() => {
+      configManager.initialize();
+    });
+
+    it("should accept valid icon names", () => {
+      configManager.setInstanceIcon("terminal-window");
+      assert.strictEqual(configManager.getInstanceIcon(), "terminal-window");
+
+      configManager.setInstanceIcon("code");
+      assert.strictEqual(configManager.getInstanceIcon(), "code");
+
+      configManager.setInstanceIcon("gear");
+      assert.strictEqual(configManager.getInstanceIcon(), "gear");
+
+      configManager.setInstanceIcon("file-text");
+      assert.strictEqual(configManager.getInstanceIcon(), "file-text");
+    });
+
+    it("should reject icon names with HTML injection characters", () => {
+      assert.throws(
+        () => configManager.setInstanceIcon('terminal"><img src=x onerror=alert(1)'),
+        /lowercase letters, digits, and hyphens/,
+        "Should reject icon names with HTML injection"
+      );
+    });
+
+    it("should reject icon names with uppercase letters", () => {
+      assert.throws(
+        () => configManager.setInstanceIcon("Terminal"),
+        /lowercase letters, digits, and hyphens/,
+        "Should reject uppercase letters"
+      );
+    });
+
+    it("should reject icon names with spaces", () => {
+      assert.throws(
+        () => configManager.setInstanceIcon("terminal window"),
+        /lowercase letters, digits, and hyphens/,
+        "Should reject spaces"
+      );
+    });
+
+    it("should reject icon names with special characters", () => {
+      assert.throws(
+        () => configManager.setInstanceIcon("terminal_window"),
+        /lowercase letters, digits, and hyphens/,
+        "Should reject underscores"
+      );
+
+      assert.throws(
+        () => configManager.setInstanceIcon("terminal.window"),
+        /lowercase letters, digits, and hyphens/,
+        "Should reject dots"
+      );
+    });
+
+    it("should reject empty string", () => {
+      assert.throws(
+        () => configManager.setInstanceIcon(""),
+        /non-empty string/,
+        "Should reject empty string"
+      );
+    });
+
+    it("should reject icons longer than 50 characters", () => {
+      const longIcon = "a".repeat(51);
+      assert.throws(
+        () => configManager.setInstanceIcon(longIcon),
+        /50 characters or less/,
+        "Should reject icon names over 50 chars"
+      );
+    });
+
+    it("should persist to file", () => {
+      configManager.setInstanceIcon("code");
+      const content = JSON.parse(readFileSync(join(testDir, "config.json"), "utf-8"));
+      assert.strictEqual(content.instanceIcon, "code", "Should save to file");
+    });
+  });
+
   describe("getConfig", () => {
     it("should return a copy of config", () => {
       configManager.initialize();
