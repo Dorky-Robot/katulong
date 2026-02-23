@@ -784,7 +784,7 @@ const routes = [
     const filename = `${randomUUID()}.${ext}`;
     const filePath = join(uploadsDir, filename);
     writeFileSync(filePath, buf);
-    json(res, 200, { path: filePath });
+    json(res, 200, { path: `/uploads/${filename}` });
   }},
 
   // --- App routes ---
@@ -797,6 +797,9 @@ const routes = [
   }},
 
   { method: "GET", path: "/shortcuts", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
     const result = await daemonRPC({ type: "get-shortcuts" });
     json(res, 200, result.shortcuts);
   }},
@@ -815,6 +818,9 @@ const routes = [
   }},
 
   { method: "GET", path: "/sessions", handler: async (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
     const result = await daemonRPC({ type: "list-sessions" });
     json(res, 200, result.sessions);
   }},
