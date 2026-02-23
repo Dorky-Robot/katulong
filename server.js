@@ -387,18 +387,28 @@ const routes = [
     // Extract user-agent (prefer client-provided, fallback to header)
     const userAgent = clientUserAgent || req.headers['user-agent'] || 'Unknown';
 
-    // Find setup token ID (if provided)
-    let setupTokenId = null;
-    if (setupToken) {
-      const state = loadState();
-      const tokenData = state?.findSetupToken(setupToken);
-      if (tokenData) {
-        setupTokenId = tokenData.id;
-      }
-    }
+    // Determine if this is an exempt first registration (same logic as /register/options)
+    const isFirstRegistration = !isSetup();
+    const isLocal = isLocalRequest(req);
 
     // Process registration inside lock to prevent race conditions
     const result = await withStateLock(async (currentState) => {
+      // Re-validate setup token inside the lock so revocation between options and verify
+      // is caught atomically. First registration from localhost is exempt.
+      let setupTokenId = null;
+      if (isFirstRegistration && isLocal) {
+        // No token required
+      } else {
+        if (!setupToken) {
+          return { result: new AuthFailure("token-required", "Setup token required", 403) };
+        }
+        const tokenData = currentState?.findSetupToken(setupToken);
+        if (!tokenData) {
+          return { result: new AuthFailure("invalid-token", "Invalid or expired setup token", 403) };
+        }
+        setupTokenId = tokenData.id;
+      }
+
       const result = await processRegistration({
         credential,
         challenge,
@@ -427,7 +437,7 @@ const routes = [
       }
 
       // Return updated state and success result
-      return { state: updatedState, result };
+      return { state: updatedState, result, setupTokenId };
     });
 
     // I/O: Handle result
@@ -440,8 +450,8 @@ const routes = [
     setSessionCookie(res, session.token, session.expiry, { secure: isHttpsConnection(req) });
 
     // Broadcast to all connected clients (for real-time UI updates)
-    if (setupTokenId) {
-      broadcastToAll({ type: "credential-registered", tokenId: setupTokenId });
+    if (result.setupTokenId) {
+      broadcastToAll({ type: "credential-registered", tokenId: result.setupTokenId });
     }
 
     json(res, 200, { ok: true });

@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert";
-import { AuthState } from "../lib/auth-state.js";
+import { AuthState, SETUP_TOKEN_TTL_MS } from "../lib/auth-state.js";
 
 describe("Setup Tokens", () => {
   let state;
@@ -98,6 +98,95 @@ describe("Setup Tokens", () => {
 
       const newState = state.addSetupToken(tokenData);
       const found = newState.findSetupToken("");
+
+      assert.strictEqual(found, null);
+    });
+
+    it("returns null for an expired token (past TTL)", () => {
+      const expiredCreatedAt = Date.now() - SETUP_TOKEN_TTL_MS - 1;
+      const tokenData = {
+        id: "expired-token",
+        token: "expired-token-value",
+        name: "Expired Token",
+        createdAt: expiredCreatedAt,
+        lastUsedAt: null,
+      };
+
+      const newState = state.addSetupToken(tokenData);
+      const found = newState.findSetupToken("expired-token-value");
+
+      assert.strictEqual(found, null);
+    });
+
+    it("returns token when exactly within TTL", () => {
+      const recentCreatedAt = Date.now() - SETUP_TOKEN_TTL_MS + 1000; // 1 second before expiry
+      const tokenData = {
+        id: "fresh-token",
+        token: "fresh-token-value",
+        name: "Fresh Token",
+        createdAt: recentCreatedAt,
+        lastUsedAt: null,
+      };
+
+      const newState = state.addSetupToken(tokenData);
+      const found = newState.findSetupToken("fresh-token-value");
+
+      assert.deepStrictEqual(found, tokenData);
+    });
+
+    it("accepts injectable `now` to test expiration boundary", () => {
+      const createdAt = 1000;
+      const tokenData = {
+        id: "t1",
+        token: "some-token",
+        name: "Token",
+        createdAt,
+        lastUsedAt: null,
+      };
+
+      const newState = state.addSetupToken(tokenData);
+
+      // Just before expiry: token is valid
+      assert.deepStrictEqual(newState.findSetupToken("some-token", createdAt + SETUP_TOKEN_TTL_MS - 1), tokenData);
+
+      // Exactly at expiry boundary (diff === TTL): expired
+      assert.strictEqual(newState.findSetupToken("some-token", createdAt + SETUP_TOKEN_TTL_MS), null);
+
+      // After expiry: null
+      assert.strictEqual(newState.findSetupToken("some-token", createdAt + SETUP_TOKEN_TTL_MS + 1), null);
+    });
+
+    it("does not expire tokens without createdAt (backward compat)", () => {
+      const tokenData = {
+        id: "legacy-token",
+        token: "legacy-value",
+        name: "Legacy Token",
+        createdAt: null, // old tokens may lack createdAt
+        lastUsedAt: null,
+      };
+
+      const newState = state.addSetupToken(tokenData);
+      // A very far future `now` should not expire a token with no createdAt
+      const found = newState.findSetupToken("legacy-value", Date.now() + 999999999);
+
+      assert.deepStrictEqual(found, tokenData);
+    });
+
+    it("returns null for a revoked (removed) token", () => {
+      const tokenData = {
+        id: "revoked-token",
+        token: "revocable-value",
+        name: "Revocable Token",
+        createdAt: Date.now(),
+        lastUsedAt: null,
+      };
+
+      const stateWithToken = state.addSetupToken(tokenData);
+      assert.ok(stateWithToken.findSetupToken("revocable-value"), "token should be findable before revocation");
+
+      // Simulate revocation (e.g. token deleted between /register/options and /register/verify)
+      const stateAfterRevocation = stateWithToken.removeSetupToken("revoked-token");
+      const found = stateAfterRevocation.findSetupToken("revocable-value");
 
       assert.strictEqual(found, null);
     });
