@@ -1,4 +1,4 @@
-import { describe, it, mock } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 // Mock the auth functions from server.js
@@ -103,3 +103,59 @@ describe("readBody size limiting", () => {
   });
 });
 
+describe("setSecurityHeaders", () => {
+  function setSecurityHeaders(res) {
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-XSS-Protection", "0");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  }
+
+  function mockRes() {
+    const headers = {};
+    return {
+      setHeader(name, value) { headers[name.toLowerCase()] = value; },
+      headers,
+    };
+  }
+
+  it("sets X-Frame-Options to DENY", () => {
+    const res = mockRes();
+    setSecurityHeaders(res);
+    assert.equal(res.headers["x-frame-options"], "DENY");
+  });
+
+  it("sets X-Content-Type-Options to nosniff", () => {
+    const res = mockRes();
+    setSecurityHeaders(res);
+    assert.equal(res.headers["x-content-type-options"], "nosniff");
+  });
+
+  it("sets X-XSS-Protection to 0 (disables legacy filter)", () => {
+    const res = mockRes();
+    setSecurityHeaders(res);
+    assert.equal(res.headers["x-xss-protection"], "0");
+  });
+
+  it("sets Referrer-Policy to strict-origin-when-cross-origin", () => {
+    const res = mockRes();
+    setSecurityHeaders(res);
+    assert.equal(res.headers["referrer-policy"], "strict-origin-when-cross-origin");
+  });
+
+  it("sets Permissions-Policy to restrict camera, microphone, geolocation", () => {
+    const res = mockRes();
+    setSecurityHeaders(res);
+    assert.equal(res.headers["permissions-policy"], "camera=(), microphone=(), geolocation=()");
+  });
+
+  it("sets all five headers in a single call", () => {
+    const res = mockRes();
+    setSecurityHeaders(res);
+    const expected = ["x-frame-options", "x-content-type-options", "x-xss-protection", "referrer-policy", "permissions-policy"];
+    for (const header of expected) {
+      assert.ok(res.headers[header] !== undefined, `missing header: ${header}`);
+    }
+  });
+});
