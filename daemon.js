@@ -16,6 +16,7 @@ const SHORTCUTS_PATH = join(DATA_DIR, "shortcuts.json");
 const PID_PATH = join(DATA_DIR, "daemon.pid");
 const MAX_BUFFER = 5000;
 const MAX_BUFFER_BYTES = 5 * 1024 * 1024; // 5 MB
+const MAX_SESSIONS = 20;
 
 // Set process title for safe process management (pkill katulong-daemon)
 process.title = "katulong-daemon";
@@ -141,9 +142,11 @@ const rpcHandlers = {
     ({ sessions: sessionList() }),
 
   "create-session": (msg) =>
-    sessions.has(msg.name)
-      ? { error: "Session already exists" }
-      : (spawnSession(msg.name), { name: msg.name }),
+    sessions.size >= MAX_SESSIONS
+      ? { error: `Maximum session limit (${MAX_SESSIONS}) reached` }
+      : sessions.has(msg.name)
+        ? { error: "Session already exists" }
+        : (spawnSession(msg.name), { name: msg.name }),
 
   "delete-session": (msg) =>
     removeSession(msg.name) ? { ok: true } : { error: "Not found" },
@@ -185,7 +188,9 @@ function handleMessage(msg, socket) {
 
   // Fire-and-forget: no response needed
   if (!id) {
-    if (type === "input")  aliveSessionFor(msg.clientId)?.write(msg.data);
+    if (type === "input") {
+      try { aliveSessionFor(msg.clientId)?.write(msg.data); } catch { /* session died between alive check and write */ }
+    }
     if (type === "resize") aliveSessionFor(msg.clientId)?.resize(msg.cols, msg.rows);
     if (type === "detach") clients.delete(msg.clientId);
     return;
