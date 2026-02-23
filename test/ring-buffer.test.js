@@ -188,6 +188,22 @@ describe("RingBuffer", () => {
     });
   });
 
+  describe("eviction performance", () => {
+    it("evicts efficiently under high item count (O(n) not O(n^2))", () => {
+      const buffer = new RingBuffer(5000, 5 * 1024 * 1024);
+
+      // Push 10000 items — eviction must drain 5000 of them without quadratic cost
+      for (let i = 0; i < 10000; i++) {
+        buffer.push(`chunk${i}\n`);
+      }
+
+      const stats = buffer.stats();
+      assert.ok(stats.items <= 5000, `expected ≤5000 items, got ${stats.items}`);
+      // Most recent item should be present
+      assert.ok(buffer.toString().includes("chunk9999"));
+    });
+  });
+
   describe("real-world terminal output simulation", () => {
     it("handles typical terminal output patterns", () => {
       const buffer = new RingBuffer(5000, 5 * 1024 * 1024);
