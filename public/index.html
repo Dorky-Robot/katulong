@@ -817,117 +817,6 @@
       display: block;
     }
 
-    /* --- Devices list --- */
-    .devices-list {
-      max-height: 300px;
-      overflow-y: auto;
-      margin-bottom: 1rem;
-    }
-    .devices-loading {
-      color: var(--text-muted);
-      font-size: 0.8125rem;
-      text-align: center;
-      padding: var(--space-2xl);
-    }
-    .device-section-header {
-      font-size: 0.75rem;
-      font-weight: 600;
-      color: var(--text-dim);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-bottom: 0.5rem;
-    }
-    .device-item {
-      padding: 0.875rem;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      margin-bottom: 0.75rem;
-      background: var(--bg-input);
-    }
-    .device-item.current-device {
-      border-color: var(--accent-active);
-      background: var(--bg-surface);
-    }
-    .device-item-host {
-      background: var(--bg-surface);
-      border-color: var(--success);
-      border-width: 2px;
-    }
-    .device-header {
-      display: flex;
-      align-items: center;
-      gap: var(--space-sm);
-      margin-bottom: 0.375rem;
-    }
-    .device-icon {
-      font-size: 1.25rem;
-    }
-    .device-name {
-      flex: 1;
-      font-size: 0.875rem;
-      color: var(--text);
-      font-weight: 500;
-    }
-    .device-current-badge {
-      font-size: 0.6875rem;
-      color: var(--text-muted);
-      background: var(--tag-bg);
-      padding: 0.125rem 0.375rem;
-      border-radius: 0.25rem;
-    }
-    .device-host-badge {
-      font-size: 0.6875rem;
-      color: var(--success);
-      background: rgba(166, 227, 161, 0.15);
-      padding: 0.125rem 0.375rem;
-      border-radius: 0.25rem;
-      font-weight: 600;
-    }
-    [data-theme="light"] .device-host-badge {
-      background: rgba(64, 160, 43, 0.15);
-    }
-    .device-meta {
-      color: var(--text-dim);
-      font-size: 0.75rem;
-      margin-bottom: 0.5rem;
-    }
-    .device-actions {
-      display: flex;
-      gap: var(--space-sm);
-    }
-    .device-btn {
-      flex: 1;
-      height: var(--height-btn-sm);
-      border: none;
-      border-radius: var(--radius-sm);
-      background: var(--accent);
-      color: var(--text);
-      font-size: 0.75rem;
-      cursor: pointer;
-      font-family: var(--font-mono);
-    }
-    .device-btn:active { background: var(--accent-active); }
-    .device-btn:disabled {
-      opacity: var(--opacity-disabled);
-      cursor: not-allowed;
-    }
-    .device-btn-danger {
-      background: var(--danger);
-      color: #fff;
-    }
-    .device-btn-danger:active { opacity: 0.8; }
-    .devices-warning {
-      color: var(--warning);
-      font-size: 0.75rem;
-      padding: var(--space-sm) var(--space-md);
-      background: var(--bg-input);
-      border-radius: var(--radius-sm);
-      margin-top: 0.5rem;
-      display: flex;
-      align-items: center;
-      gap: var(--space-sm);
-    }
-
     /* --- Token list --- */
     .tab-description {
       color: var(--text-muted);
@@ -1341,7 +1230,6 @@
           <!-- Tab navigation -->
           <div class="settings-tabs" role="tablist">
             <button class="settings-tab active" data-tab="theme" role="tab" aria-selected="true">Theme</button>
-            <button class="settings-tab" data-tab="devices" role="tab" aria-selected="false">Devices</button>
             <button class="settings-tab" data-tab="remote" role="tab" aria-selected="false">Remote</button>
           </div>
 
@@ -1387,14 +1275,6 @@
                   <i class="ph ph-moon"></i> Dark
                 </button>
               </div>
-            </div>
-          </div>
-
-          <!-- Devices tab content -->
-          <div class="settings-tab-content" id="settings-tab-devices">
-            <p class="tab-description">Manage devices registered with a passkey.</p>
-            <div class="devices-list" id="devices-list">
-              <p class="devices-loading">Loading devices...</p>
             </div>
           </div>
 

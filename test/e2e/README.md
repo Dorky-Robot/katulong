@@ -11,31 +11,9 @@ Comprehensive end-to-end tests for Katulong terminal application.
 - **settings.e2e.js** - Settings modal, theme switching
 - **shortcuts.e2e.js** - Shortcuts popup, dictation, joystick
 - **tokens.e2e.js** - Token CRUD with optimistic updates (✅ fixed today)
-- **devices.e2e.js** - Basic device list display (partially complete)
 - **keyboard.e2e.js** - Special key handling (Enter, Shift+Enter, Tab)
 
 ### 🆕 New Tests
-
-#### **device-actions.e2e.js** - Device Actions with Optimistic Updates
-Priority 2: Tests device rename/remove with immediate UI updates.
-
-**Coverage:**
-- ✅ Rename device with optimistic update
-- ✅ Remove device with optimistic update
-- ✅ Error handling for failed API calls
-- ✅ Cancel actions without side effects
-- ✅ Last device protection (remote vs localhost)
-- ✅ Metadata preservation after actions
-- ✅ Concurrent action handling
-
-**Key Tests:**
-- `should rename device with optimistic update` - Name updates immediately
-- `should remove device with optimistic update` - Device disappears immediately
-- `should show error if rename API fails` - Error recovery
-- `should prevent removing last device when not localhost` - Safety check
-- `should preserve device metadata after actions` - Data integrity
-
----
 
 #### **connection-reliability.e2e.js** - WebSocket/P2P Reliability
 Priority 3: Tests connection stability and reconnection (validates PR #40 fixes).
@@ -136,7 +114,6 @@ npm run test:e2e
 
 ### Run specific test file:
 ```bash
-npm run test:e2e -- device-actions.e2e.js
 npm run test:e2e -- connection-reliability.e2e.js
 npm run test:e2e -- clipboard.e2e.js
 ```
@@ -155,7 +132,7 @@ npm run test:e2e -- --debug
 
 - **Total test files**: 14 (10 existing + 4 new)
 - **New test coverage**: ~400+ additional test lines
-- **Focus areas**: device management, connection reliability, clipboard
+- **Focus areas**: connection reliability, clipboard
 - **Coverage estimate**: 60% → 90% of critical user flows
 
 ## Known Issues

@@ -69,9 +69,9 @@ export function createWebSocketConnection(deps = {}) {
       effects: [{ type: 'refreshTokensAfterRegistration' }]
     }),
 
-    'credential-removed': (msg) => ({
+    'credential-removed': () => ({
       stateUpdates: {},
-      effects: [{ type: 'refreshDeviceList', credentialId: msg.credentialId }]
+      effects: []
     }),
 
     'p2p-signal': (msg, currentState) => ({
@@ -144,12 +144,6 @@ export function createWebSocketConnection(deps = {}) {
         const createTokenBtn = document.getElementById("settings-create-token");
         if (tokenCreateForm) tokenCreateForm.style.display = "none";
         if (createTokenBtn) createTokenBtn.style.display = "block";
-        break;
-      case 'refreshDeviceList':
-        // Refresh device list when credential removed (End Session)
-        if (deps.loadDevices) {
-          deps.loadDevices();
-        }
         break;
     }
   }

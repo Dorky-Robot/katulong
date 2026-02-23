@@ -1,13 +1,9 @@
     import { Terminal } from "/vendor/xterm/xterm.esm.js";
     import { FitAddon } from "/vendor/xterm/addon-fit.esm.js";
     import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
-    import { getOrCreateDeviceId, generateDeviceName } from "/lib/device.js";
     import { ModalRegistry } from "/lib/modal.js";
     import { ListRenderer } from "/lib/list-renderer.js";
     import { createStore, createReducer } from "/lib/store.js";
-    import { createDeviceStore, loadDevices as reloadDevices, invalidateDevices } from "/lib/device-store.js";
-    import { createDeviceListComponent } from "/lib/device-list-component.js";
-    import { createDeviceActions } from "/lib/device-actions.js";
     import { createSessionStore, invalidateSessions } from "/lib/session-store.js";
     import { createSessionListComponent } from "/lib/session-list-component.js";
     import { createSessionManager } from "/lib/session-manager.js";
@@ -53,9 +49,6 @@
     });
 
     const applyTheme = themeManager.apply;
-
-    // --- Device ID Management ---
-    // Device management functions imported from /lib/device.js
 
     // --- State ---
 
@@ -356,24 +349,6 @@
     });
     settingsTabManager.init();
 
-    // --- Device management (reactive component) ---
-
-    const deviceStore = createDeviceStore();
-
-    // Create device actions with callbacks
-    const deviceActions = createDeviceActions({
-      onRename: () => invalidateDevices(deviceStore),
-      onRemove: () => invalidateDevices(deviceStore)
-    });
-
-    // Create and mount device list component
-    const deviceListComponent = createDeviceListComponent(deviceStore, {
-      onRename: (deviceId) => deviceActions.renameDevice(deviceId),
-      onRemove: (deviceId, isCurrent) => deviceActions.removeDevice(deviceId, isCurrent)
-    });
-    const devicesList = document.getElementById("devices-list");
-    deviceListComponent.mount(devicesList);
-
     // --- Token management ---
 
     const tokenStore = createTokenStore();
@@ -514,7 +489,6 @@
       p2pManager,
       updateP2PIndicator,
       loadTokens,
-      loadDevices: () => invalidateDevices(deviceStore),
       isAtBottom,
       renderBar
     });

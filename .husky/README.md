@@ -245,10 +245,8 @@ echo "command-to-run" > .husky/hook-name
 | shortcuts.e2e.js | 6 | ~5s |
 | tokens.e2e.js | 6 | ~5s |
 | **lan-pairing-flow.e2e.js** | 11 | ~8s | ⭐ NEW
-| **device-actions.e2e.js** | 9 | ~7s | ⭐ NEW
 | **connection-reliability.e2e.js** | 13 | ~10s | ⭐ NEW
 | **clipboard.e2e.js** | 12 | ~6s | ⭐ NEW
-| devices.e2e.js | 8 | ~5s |
 | keyboard.e2e.js | 3 | ~2s |
 | fonts.e2e.js | 4 | ~2s |
 | toolbar.e2e.js | 6 | ~3s |
@@ -291,7 +289,6 @@ See `.github/workflows/test.yml` for CI configuration.
 - **Feb 10, 2026** - Added pre-push hook with E2E tests
 - **Feb 12, 2026** - Enhanced E2E coverage:
   - Added LAN pairing flow tests (11 tests)
-  - Added device actions tests (9 tests)
   - Added connection reliability tests (13 tests)
   - Added clipboard tests (12 tests)
   - Total E2E coverage: 60% → 90% of critical flows
