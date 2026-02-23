@@ -11,53 +11,9 @@ Comprehensive end-to-end tests for Katulong terminal application.
 - **settings.e2e.js** - Settings modal, theme switching
 - **shortcuts.e2e.js** - Shortcuts popup, dictation, joystick
 - **tokens.e2e.js** - Token CRUD with optimistic updates (✅ fixed today)
-- **devices.e2e.js** - Basic device list display (partially complete)
 - **keyboard.e2e.js** - Special key handling (Enter, Shift+Enter, Tab)
 
-### 🆕 New Tests (Added Today)
-
-#### **lan-pairing-flow.e2e.js** - Complete LAN Pairing Flow
-Priority 1: Tests the full wizard journey we just fixed.
-
-**Coverage:**
-- ✅ Trust step: QR code rendering, copy URL button
-- ✅ Pairing step: QR code, 8-digit PIN, countdown timer
-- ✅ Back navigation in wizard
-- ✅ Timer cleanup on close
-- ✅ Error handling (API failure, QR lib failure)
-- ✅ QR code colors based on theme
-- ✅ Device list format after pairing
-
-**Key Tests:**
-- `should complete full pairing flow - trust step` - Verify trust QR and copy
-- `should complete full pairing flow - pairing step` - Verify pairing QR and PIN
-- `should show countdown and refresh pairing code` - Countdown functionality
-- `should handle back navigation in wizard` - Navigation state management
-- `should clean up timers when closing wizard` - Memory leak prevention
-- `should have correct QR code colors based on theme` - Theme integration
-
----
-
-#### **device-actions.e2e.js** - Device Actions with Optimistic Updates
-Priority 2: Tests device rename/remove with immediate UI updates.
-
-**Coverage:**
-- ✅ Rename device with optimistic update
-- ✅ Remove device with optimistic update
-- ✅ Error handling for failed API calls
-- ✅ Cancel actions without side effects
-- ✅ Last device protection (remote vs localhost)
-- ✅ Metadata preservation after actions
-- ✅ Concurrent action handling
-
-**Key Tests:**
-- `should rename device with optimistic update` - Name updates immediately
-- `should remove device with optimistic update` - Device disappears immediately
-- `should show error if rename API fails` - Error recovery
-- `should prevent removing last device when not localhost` - Safety check
-- `should preserve device metadata after actions` - Data integrity
-
----
+### 🆕 New Tests
 
 #### **connection-reliability.e2e.js** - WebSocket/P2P Reliability
 Priority 3: Tests connection stability and reconnection (validates PR #40 fixes).
@@ -88,8 +44,6 @@ Priority 4: Tests all copy/paste functionality.
 
 **Coverage:**
 - ✅ Token copy buttons with feedback
-- ✅ Trust URL copy (wizard)
-- ✅ Pairing URL copy (wizard)
 - ✅ Copy failure handling
 - ✅ Multiple sequential copies
 - ✅ Paste into terminal
@@ -100,8 +54,6 @@ Priority 4: Tests all copy/paste functionality.
 
 **Key Tests:**
 - `should copy token value with feedback` - Token copy UX
-- `should copy trust URL in wizard` - Wizard copy button
-- `should copy pairing URL in wizard` - Wizard copy button
 - `should handle copy failure gracefully` - Error handling
 - `should paste text into terminal` - Terminal paste
 - `should copy selected text from terminal` - Terminal copy
@@ -162,8 +114,6 @@ npm run test:e2e
 
 ### Run specific test file:
 ```bash
-npm run test:e2e -- lan-pairing-flow.e2e.js
-npm run test:e2e -- device-actions.e2e.js
 npm run test:e2e -- connection-reliability.e2e.js
 npm run test:e2e -- clipboard.e2e.js
 ```
@@ -182,7 +132,7 @@ npm run test:e2e -- --debug
 
 - **Total test files**: 14 (10 existing + 4 new)
 - **New test coverage**: ~400+ additional test lines
-- **Focus areas**: LAN pairing flow, device management, connection reliability, clipboard
+- **Focus areas**: connection reliability, clipboard
 - **Coverage estimate**: 60% → 90% of critical user flows
 
 ## Known Issues
@@ -192,11 +142,7 @@ npm run test:e2e -- --debug
    - Fix port conflict detection
    - Configure proper test environment
 
-2. **Pairing simulation** - Full pairing flow requires two devices:
-   - Current tests verify UI up to the point of actual pairing
-   - Future: Add API simulation or second browser context
-
-3. **Connection tests timing** - Some connection tests may be flaky:
+2. **Connection tests timing** - Some connection tests may be flaky:
    - Reconnection timing varies by browser
    - Network conditions affect latency tests
    - May need retry logic or longer timeouts
@@ -218,7 +164,6 @@ npm run test:e2e -- --debug
 ### Low Priority:
 - [ ] Settings export/import
 - [ ] SSH access
-- [ ] Certificate trust flow
 - [ ] Theme color verification
 
 ## Writing New Tests

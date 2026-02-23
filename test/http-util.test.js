@@ -166,16 +166,12 @@ describe("isPublicPath", () => {
     assert.ok(isPublicPath("/auth/logout"));
   });
 
-  it("allows /pair", () => {
-    assert.ok(isPublicPath("/pair"));
+  it("rejects /pair (pairing removed)", () => {
+    assert.ok(!isPublicPath("/pair"));
   });
 
-  it("allows /auth/pair/verify", () => {
-    assert.ok(isPublicPath("/auth/pair/verify"));
-  });
-
-  it("rejects /auth/pair/start (protected)", () => {
-    assert.ok(!isPublicPath("/auth/pair/start"));
+  it("rejects /auth/pair/verify (pairing removed)", () => {
+    assert.ok(!isPublicPath("/auth/pair/verify"));
   });
 
   it("rejects unknown /auth/ paths", () => {

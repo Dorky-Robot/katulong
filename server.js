@@ -2,13 +2,13 @@ import "dotenv/config";
 import { createServer } from "node:http";
 import { createConnection } from "node:net";
 import { readFileSync, existsSync, watch, mkdirSync, writeFileSync } from "node:fs";
-import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { WebSocketServer } from "ws";
 import { randomUUID, randomBytes } from "node:crypto";
 import { encode, decoder } from "./lib/ndjson.js";
 import { log } from "./lib/log.js";
+import { createServerPeer, destroyPeer, initP2P, p2pAvailable } from "./lib/p2p.js";
 import { detectImage, readRawBody, MAX_UPLOAD_BYTES } from "./lib/upload.js";
 import {
   loadState, saveState, isSetup,
@@ -26,19 +26,16 @@ import { rateLimit } from "./lib/rate-limit.js";
 import {
   processRegistration,
   processAuthentication,
-  processPairing,
   extractChallenge,
 } from "./lib/auth-handlers.js";
 import { SessionName } from "./lib/session-name.js";
-import { PairingChallengeStore } from "./lib/pairing-challenge.js";
 import { AuthState } from "./lib/auth-state.js";
 import { ConfigManager } from "./lib/config.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 import { validateMessage } from "./lib/websocket-validation.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
-import { isLocalRequest, getAccessMethod, getAccessDescription } from "./lib/access-method.js";
+import { isLocalRequest, getAccessMethod } from "./lib/access-method.js";
 import { serveStaticFile } from "./lib/static-files.js";
-import mdns from "multicast-dns";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -72,6 +69,8 @@ const instanceName = configManager.getInstanceName();
 const instanceId = configManager.getInstanceId();
 log.info("Configuration loaded", { instanceName, instanceId });
 
+await initP2P();
+
 const sshHostKey = ensureHostKey(DATA_DIR);
 
 // --- Authentication tokens ---
@@ -83,8 +82,6 @@ const RP_NAME = "Katulong";
 // --- Rate limiting ---
 // 10 attempts per minute for auth endpoints
 const authRateLimit = rateLimit(10, 60000);
-// Stricter limit for pairing (10 attempts per 30 seconds)
-const pairingRateLimit = rateLimit(10, 30000);
 
 if (!process.env.SSH_PASSWORD) {
   log.info("SSH password generated", { password: SSH_PASSWORD });
@@ -98,17 +95,12 @@ if (process.env.KATULONG_NO_AUTH === "1") {
 
 const MAX_REQUEST_BODY_SIZE = 1024 * 1024; // 1MB limit for request bodies
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const PAIR_TTL_MS = 30 * 1000; // 30 seconds
 const DAEMON_RECONNECT_INITIAL_MS = 1000; // 1 second
 const DAEMON_RECONNECT_MAX_MS = 30000; // 30 seconds
 
 // --- Challenge storage (in-memory, 5-min expiry) ---
 
 const { store: storeChallenge, consume: consumeChallenge, _challenges: challenges } = createChallengeStore(CHALLENGE_TTL_MS);
-
-// --- Device pairing (in-memory, 30s expiry) ---
-
-const pairingStore = new PairingChallengeStore(PAIR_TTL_MS);
 
 // --- Credential lockout (in-memory, 15 min window) ---
 
@@ -117,18 +109,6 @@ const credentialLockout = new CredentialLockout({
   windowMs: 15 * 60 * 1000,  // within 15 minutes
   lockoutMs: 15 * 60 * 1000, // locks for 15 minutes
 });
-
-function getLanIP() {
-  const nets = networkInterfaces();
-  for (const ifaces of Object.values(nets)) {
-    for (const iface of ifaces) {
-      if (!iface.internal && iface.family === "IPv4") return iface.address;
-    }
-  }
-  return null;
-}
-
-// isLocalRequest is now imported from lib/access-method.js
 
 function isAuthenticated(req) {
   if (process.env.KATULONG_NO_AUTH === "1") {
@@ -258,12 +238,6 @@ async function parseJSON(req, maxSize = MAX_REQUEST_BODY_SIZE) {
 
 // --- HTTP routes ---
 
-function isLanHost(req) {
-  const host = (req.headers.host || "").replace(/:\d+$/, "");
-  return host === "localhost" || host === "127.0.0.1" || host === "::1"
-    || /^(10|172\.(1[6-9]|2\d|3[01])|192\.168)\./.test(host);
-}
-
 const routes = [
   { method: "GET", path: "/", handler: (req, res) => {
     let html = readFileSync(join(__dirname, "public", "index.html"), "utf-8");
@@ -288,13 +262,9 @@ const routes = [
   }},
 
   { method: "GET", path: "/manifest.json", handler: (req, res) => {
-    const manifest = JSON.parse(readFileSync(join(__dirname, "public", "manifest.json"), "utf-8"));
-    if (isLanHost(req)) {
-      manifest.name = "Katulong (LAN)";
-      manifest.short_name = "Katulong LAN";
-    }
+    const manifest = readFileSync(join(__dirname, "public", "manifest.json"), "utf-8");
     res.writeHead(200, { "Content-Type": "application/manifest+json" });
-    res.end(JSON.stringify(manifest));
+    res.end(manifest);
   }},
 
   { method: "GET", path: "/login", handler: (req, res) => {
@@ -320,7 +290,7 @@ const routes = [
     const accessMethod = getAccessMethod(req);
     json(res, 200, {
       setup: isSetup(),
-      accessMethod  // "localhost", "lan", or "internet"
+      accessMethod  // "localhost" or "internet"
     });
   }},
 
@@ -525,93 +495,6 @@ const routes = [
     json(res, 200, { ok: true });
   }},
 
-  // --- Pairing routes ---
-
-  { method: "POST", path: "/auth/pair/start", handler: (req, res) => {
-    // Only authenticated users (e.g. localhost auto-auth) can start pairing
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-    const state = loadState();
-    // Skip CSRF validation for localhost (auto-authenticated, trusted environment)
-    if (!isLocalRequest(req) && !validateCsrfToken(req, state)) {
-      return json(res, 403, { error: "Invalid or missing CSRF token" });
-    }
-    const challenge = pairingStore.create();
-    const lanIP = getLanIP();
-    const url = lanIP ? `http://${lanIP}:${PORT}/pair?code=${challenge.code}` : null;
-    json(res, 200, { ...challenge.toJSON(), url });
-  }},
-
-  { method: "POST", path: "/auth/pair/verify", handler: async (req, res) => {
-    // I/O: Parse request and consume pairing challenge
-    const { code, pin, deviceId, deviceName, userAgent: clientUserAgent } = await parseJSON(req);
-    const pairingResult = pairingStore.consume(code, pin);
-
-    // Handle rate limiting (exponential backoff)
-    if (pairingResult.reason === "rate-limited" && pairingResult.retryAfter) {
-      res.writeHead(429, {
-        "Content-Type": "application/json",
-        "Retry-After": String(pairingResult.retryAfter),
-      });
-      res.end(JSON.stringify({
-        error: "Too many failed attempts. Please wait before trying again.",
-        retryAfter: pairingResult.retryAfter,
-      }));
-      return;
-    }
-
-    // Extract user-agent (prefer client-provided, fallback to header)
-    const userAgent = clientUserAgent || req.headers['user-agent'] || 'Unknown';
-
-    // Process pairing inside lock to prevent race conditions
-    const result = await withStateLock(async (currentState) => {
-      const result = processPairing({
-        pairingResult,
-        currentState,
-        deviceId,
-        deviceName,
-        userAgent,
-      });
-
-      if (!result.success) {
-        // Return error info without saving (state unchanged)
-        return { result };
-      }
-
-      // Return updated state and success result
-      return { state: result.data.updatedState, result };
-    });
-
-    // I/O: Handle result
-    if (!result.result.success) {
-      log.warn("Pair verify failed", { reason: result.result.reason, code, storeSize: pairingStore.size() });
-      return json(res, result.result.statusCode, { error: result.result.message });
-    }
-
-    // I/O: Set cookie
-    const { session } = result.result.data;
-    setSessionCookie(res, session.token, session.expiry, { secure: isHttpsConnection(req) });
-
-    // I/O: Notify WebSocket clients
-    for (const client of wss.clients) {
-      if (client.readyState === 1) {
-        client.send(JSON.stringify({ type: "pair-complete", code }));
-      }
-    }
-
-    json(res, 200, { ok: true });
-  }},
-
-  { method: "GET", prefix: "/auth/pair/status/", handler: (req, res, code) => {
-    // Only authenticated users can check pairing status
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-    const consumed = pairingStore.wasConsumed(code);
-    json(res, 200, { consumed });
-  }},
-
   // --- Setup token API (GitHub-style token management) ---
 
   { method: "GET", path: "/api/tokens", handler: (req, res) => {
@@ -794,31 +677,6 @@ const routes = [
     json(res, 200, { ok: true });
   }},
 
-  { method: "GET", path: "/pair", handler: (req, res) => {
-    res.writeHead(200, {
-      "Content-Type": "text/html",
-      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-      "Pragma": "no-cache",
-      "Expires": "0",
-      ...getCspHeaders(false, req)
-    });
-    res.end(readFileSync(join(__dirname, "public", "pair.html"), "utf-8"));
-  }},
-
-  { method: "GET", path: "/connect/info", handler: (req, res) => {
-    const lanIP = getLanIP();
-    json(res, 200, { sshPort: SSH_PORT, sshHost: lanIP || "localhost" });
-  }},
-
-  { method: "GET", path: "/connect", handler: (req, res) => {
-    let html = readFileSync(join(__dirname, "public", "connect.html"), "utf-8");
-    res.writeHead(200, {
-      "Content-Type": "text/html",
-      ...getCspHeaders(false, req)
-    });
-    res.end(html);
-  }},
-
   { method: "POST", path: "/auth/logout", handler: async (req, res) => {
     const state = loadState();
     if (!validateCsrfToken(req, state)) {
@@ -866,119 +724,6 @@ const routes = [
     if (req.socket.encrypted) clearCookie += "; Secure";
     res.setHeader("Set-Cookie", clearCookie);
     json(res, 200, { ok: true });
-  }},
-
-  // --- Device management ---
-
-  { method: "GET", path: "/auth/devices", handler: (req, res) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-    const state = loadState();
-    if (!state) return json(res, 200, { devices: [], currentCredentialId: null });
-    const devices = state.getCredentialsWithMetadata();
-
-    // Find current device
-    let currentCredentialId = null;
-
-    if (isLocalRequest(req)) {
-      // Localhost is auto-authenticated (not a paired device), so currentCredentialId stays null
-      currentCredentialId = null;
-    } else {
-      // For remote access, use the session's credential
-      const cookies = parseCookies(req.headers.cookie);
-      const token = cookies.get("katulong_session");
-      const session = token ? state.getSession(token) : null;
-      currentCredentialId = session?.credentialId || null;
-    }
-
-    json(res, 200, { devices, currentCredentialId });
-  }},
-
-  { method: "POST", prefix: "/auth/devices/", handler: async (req, res, param) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-    // param is everything after /auth/devices/
-    // e.g., "abc123/name" or "abc123/refresh"
-    const parts = param.split('/');
-    const id = parts[0];
-    const action = parts[1];
-
-    if (action === 'name') {
-      // POST /auth/devices/:id/name
-      const { name } = await parseJSON(req);
-      if (!name || typeof name !== 'string' || name.trim().length === 0) {
-        return json(res, 400, { error: "Device name is required" });
-      }
-
-      try {
-        await withStateLock(async (state) => {
-          if (!state) throw new Error("Not set up");
-          const credential = state.getCredential(id);
-          if (!credential) throw new Error("Device not found");
-          return state.updateCredential(id, { name: name.trim() });
-        });
-        json(res, 200, { ok: true });
-      } catch (err) {
-        if (err.message === 'Device not found') {
-          return json(res, 404, { error: err.message });
-        }
-        throw err;
-      }
-    } else if (action === 'refresh') {
-      // POST /auth/devices/:id/refresh
-      try {
-        await withStateLock(async (state) => {
-          if (!state) throw new Error("Not set up");
-          const credential = state.getCredential(id);
-          if (!credential) throw new Error("Device not found");
-          return state.updateCredential(id, { lastUsedAt: Date.now() });
-        });
-        json(res, 200, { ok: true });
-      } catch (err) {
-        if (err.message === 'Device not found') {
-          return json(res, 404, { error: err.message });
-        }
-        throw err;
-      }
-    } else {
-      json(res, 404, { error: "Not found" });
-    }
-  }},
-
-  { method: "DELETE", prefix: "/auth/devices/", handler: async (req, res, id) => {
-    if (!isAuthenticated(req)) {
-      return json(res, 401, { error: "Authentication required" });
-    }
-    const state = loadState();
-    // Skip CSRF validation for localhost (auto-authenticated, trusted environment)
-    if (!isLocalRequest(req) && !validateCsrfToken(req, state)) {
-      return json(res, 403, { error: "Invalid or missing CSRF token" });
-    }
-    // Localhost can remove paired devices (localhost itself is not a paired device)
-
-    try {
-      await withStateLock(async (state) => {
-        if (!state) throw new Error("Not set up");
-        const credential = state.getCredential(id);
-        if (!credential) throw new Error("Device not found");
-        return state.removeCredential(id, { allowRemoveLast: isLocalRequest(req) });
-      });
-
-      // SECURITY: Close all active WebSocket connections for this credential
-      closeWebSocketsForCredential(id);
-
-      json(res, 200, { ok: true });
-    } catch (err) {
-      if (err.message === 'Cannot remove the last credential - would lock you out') {
-        return json(res, 400, { error: "Cannot remove the last device. At least one device must remain." });
-      }
-      if (err.message === 'Device not found') {
-        return json(res, 404, { error: "Device not found" });
-      }
-      throw err;
-    }
   }},
 
   // --- Upload route ---
@@ -1157,15 +902,8 @@ async function handleRequest(req, res) {
   if (match) {
     // Apply rate limiting to auth endpoints
     const authPaths = ["/auth/register/options", "/auth/register/verify", "/auth/login/options", "/auth/login/verify"];
-    const pairingPaths = ["/auth/pair/verify"];
 
-    if (pairingPaths.includes(pathname)) {
-      // Check pairing rate limit (stricter)
-      const rateLimitResult = await new Promise((resolve) => {
-        pairingRateLimit(req, res, () => resolve(true));
-      });
-      if (!rateLimitResult) return; // Rate limit exceeded, response already sent
-    } else if (authPaths.includes(pathname)) {
+    if (authPaths.includes(pathname)) {
       // Check auth rate limit
       const rateLimitResult = await new Promise((resolve) => {
         authRateLimit(req, res, () => resolve(true));
@@ -1210,7 +948,7 @@ const server = createServer(handleRequest);
 // --- WebSocket ---
 
 const wss = new WebSocketServer({ noServer: true });
-const wsClients = new Map(); // clientId -> { ws, session, sessionToken, credentialId }
+const wsClients = new Map(); // clientId -> { ws, session, sessionToken, credentialId, p2pPeer, p2pConnected }
 
 function handleUpgrade(req, socket, head) {
   log.info("WebSocket upgrade attempt", {
@@ -1283,10 +1021,16 @@ function handleUpgrade(req, socket, head) {
 server.on("upgrade", handleUpgrade);
 
 // Relay daemon broadcasts to matching browser clients
-function sendToSession(sessionName, payload) {
+function sendToSession(sessionName, payload, { preferP2P = false } = {}) {
   const encoded = JSON.stringify(payload);
   for (const [, info] of wsClients) {
     if (info.session !== sessionName) continue;
+    if (preferP2P && info.p2pConnected && info.p2pPeer) {
+      try {
+        info.p2pPeer.send(encoded);
+      } catch { /* fall through to WS */ }
+      continue;
+    }
     if (info.ws.readyState === 1) {
       info.ws.send(encoded);
     }
@@ -1315,6 +1059,13 @@ function closeWebSocketsForCredential(credentialId) {
     if (info.credentialId === credentialId) {
       log.info("Closing WebSocket for revoked credential", { clientId, credentialId });
 
+      // Close P2P connection if exists
+      if (info.p2pPeer) {
+        try { destroyPeer(info.p2pPeer); } catch (err) {
+          log.warn("Error destroying P2P peer", { error: err.message });
+        }
+      }
+
       // Close WebSocket with appropriate code
       if (info.ws.readyState === 1) { // OPEN
         info.ws.close(1008, "Credential revoked"); // 1008 = Policy Violation
@@ -1335,7 +1086,7 @@ let sshRelay = null;
 function relayBroadcast(msg) {
   switch (msg.type) {
     case "output":
-      sendToSession(msg.session, { type: "output", data: msg.data });
+      sendToSession(msg.session, { type: "output", data: msg.data }, { preferP2P: true });
       break;
     case "exit":
       sendToSession(msg.session, { type: "exit", code: msg.code });
@@ -1390,6 +1141,8 @@ wss.on("connection", (ws) => {
           session: name,
           sessionToken: ws.sessionToken,
           credentialId: ws.credentialId,
+          p2pPeer: null,
+          p2pConnected: false,
         });
         log.debug("Client attached", { clientId, session: name });
         ws.send(JSON.stringify({ type: "attached" }));
@@ -1403,17 +1156,81 @@ wss.on("connection", (ws) => {
       daemonSend({ type: "input", clientId, data: msg.data });
     } else if (msg.type === "resize") {
       daemonSend({ type: "resize", clientId, cols: msg.cols, rows: msg.rows });
+    } else if (msg.type === "p2p-signal") {
+      const info = wsClients.get(clientId);
+      if (!info) return;
+
+      if (!p2pAvailable) {
+        ws.send(JSON.stringify({ type: "p2p-unavailable" }));
+        return;
+      }
+
+      // If this is a new SDP offer, tear down the old peer and start fresh
+      if (msg.data?.type === "offer" && info.p2pPeer) {
+        destroyPeer(info.p2pPeer);
+        info.p2pPeer = null;
+        info.p2pConnected = false;
+      }
+
+      if (!info.p2pPeer) {
+        info.p2pPeer = createServerPeer(
+          // onSignal: relay back to browser
+          (data) => {
+            if (ws.readyState === 1) {
+              ws.send(JSON.stringify({ type: "p2p-signal", data }));
+            }
+          },
+          // onData: terminal input via P2P DataChannel
+          (chunk) => {
+            try {
+              const str = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+              const p2pMsg = JSON.parse(str);
+              if (p2pMsg.type === "input") {
+                daemonSend({ type: "input", clientId, data: p2pMsg.data });
+              }
+            } catch (err) {
+              log.warn("Malformed P2P data", { clientId, error: err.message });
+            }
+          },
+          // onClose: clean up P2P state, notify browser
+          () => {
+            const cur = wsClients.get(clientId);
+            if (cur) {
+              cur.p2pPeer = null;
+              cur.p2pConnected = false;
+            }
+            if (ws.readyState === 1) {
+              ws.send(JSON.stringify({ type: "p2p-closed" }));
+            }
+          }
+        );
+
+        info.p2pPeer.on("connect", () => {
+          const cur = wsClients.get(clientId);
+          if (cur) cur.p2pConnected = true;
+          if (ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: "p2p-ready" }));
+          }
+        });
+      }
+
+      // Feed the signal data to the peer
+      info.p2pPeer.signal(msg.data);
     }
   });
 
   ws.on("error", (err) => {
     log.error("WebSocket client error", { clientId, error: err.message });
+    const info = wsClients.get(clientId);
+    if (info?.p2pPeer) destroyPeer(info.p2pPeer);
     wsClients.delete(clientId);
     daemonSend({ type: "detach", clientId });
   });
 
   ws.on("close", () => {
     log.debug("Client disconnected", { clientId });
+    const info = wsClients.get(clientId);
+    if (info?.p2pPeer) destroyPeer(info.p2pPeer);
     wsClients.delete(clientId);
     daemonSend({ type: "detach", clientId });
   });
@@ -1438,32 +1255,6 @@ process.on("unhandledRejection", (err) => {
 server.listen(PORT, "0.0.0.0", () => {
   log.info("Katulong HTTP started", { port: PORT });
 });
-
-// --- mDNS: advertise katulong.local on the LAN ---
-{
-  const mdnsIP = getLanIP();
-  if (mdnsIP) {
-    try {
-      const mdnsServer = mdns();
-      mdnsServer.on("query", (query) => {
-        for (const q of query.questions) {
-          if (q.name === "katulong.local" && (q.type === "A" || q.type === "ANY")) {
-            mdnsServer.respond({
-              answers: [{ name: "katulong.local", type: "A", ttl: 120, data: mdnsIP }],
-            });
-            break;
-          }
-        }
-      });
-      mdnsServer.on("error", (err) => {
-        log.warn("mDNS error", { error: err.message });
-      });
-      log.info("mDNS advertising katulong.local", { ip: mdnsIP });
-    } catch (err) {
-      log.warn("Failed to start mDNS", { error: err.message });
-    }
-  }
-}
 
 sshRelay = startSSHServer({
   port: SSH_PORT,

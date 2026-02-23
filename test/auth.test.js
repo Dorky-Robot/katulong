@@ -258,7 +258,7 @@ describe("loadState - corrupted state file handling", () => {
     }
   });
 
-  it("returns null for corrupt JSON (unparseable content)", () => {
+  it("returns null for corrupt JSON (unparsable content)", () => {
     writeFileSync(STATE_PATH, "{ invalid json ::::");
     _invalidateCache();
     const result = loadState();

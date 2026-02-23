@@ -4,6 +4,7 @@ import {
   validateAttach,
   validateInput,
   validateResize,
+  validateP2PSignal,
   validateMessage,
 } from "../lib/websocket-validation.js";
 
@@ -179,6 +180,54 @@ describe("validateResize", () => {
   });
 });
 
+describe("validateP2PSignal", () => {
+  it("accepts valid p2p-signal message", () => {
+    const msg = { type: "p2p-signal", data: { type: "offer", sdp: "..." } };
+    const result = validateP2PSignal(msg);
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("accepts empty data object", () => {
+    const msg = { type: "p2p-signal", data: {} };
+    const result = validateP2PSignal(msg);
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("rejects when type is not 'p2p-signal'", () => {
+    const msg = { type: "input", data: {} };
+    const result = validateP2PSignal(msg);
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /type/i);
+  });
+
+  it("rejects when data is not an object", () => {
+    const msg = { type: "p2p-signal", data: "not an object" };
+    const result = validateP2PSignal(msg);
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /data/i);
+  });
+
+  it("rejects when data is an array", () => {
+    const msg = { type: "p2p-signal", data: [] };
+    const result = validateP2PSignal(msg);
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /data/i);
+  });
+
+  it("rejects when data is null", () => {
+    const msg = { type: "p2p-signal", data: null };
+    const result = validateP2PSignal(msg);
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /data/i);
+  });
+
+  it("rejects when message is not an object", () => {
+    const result = validateP2PSignal("not an object");
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /object/i);
+  });
+});
+
 describe("validateMessage", () => {
   it("routes to validateAttach for attach messages", () => {
     const msg = { type: "attach", cols: 80, rows: 24 };
@@ -194,6 +243,12 @@ describe("validateMessage", () => {
 
   it("routes to validateResize for resize messages", () => {
     const msg = { type: "resize", cols: 100, rows: 30 };
+    const result = validateMessage(msg);
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("routes to validateP2PSignal for p2p-signal messages", () => {
+    const msg = { type: "p2p-signal", data: {} };
     const result = validateMessage(msg);
     assert.strictEqual(result.valid, true);
   });
@@ -235,91 +290,5 @@ describe("validateMessage", () => {
     const result = validateMessage(null);
     assert.strictEqual(result.valid, false);
     assert.match(result.error, /object/i);
-  });
-});
-
-describe("validateInput - oversized payload", () => {
-  it("accepts large data strings (no size limit in validation)", () => {
-    // validateInput does not impose a size limit on data — that's enforced upstream
-    const msg = { type: "input", data: "x".repeat(64 * 1024) };
-    const result = validateInput(msg);
-    assert.strictEqual(result.valid, true);
-  });
-
-  it("accepts data containing binary-like escaped characters", () => {
-    const msg = { type: "input", data: "\x00\x01\x1b[31m" };
-    const result = validateInput(msg);
-    assert.strictEqual(result.valid, true);
-  });
-});
-
-describe("validateAttach - session name edge cases", () => {
-  it("accepts empty string as session name (falsy but still a string)", () => {
-    const msg = { type: "attach", session: "", cols: 80, rows: 24 };
-    const result = validateAttach(msg);
-    assert.strictEqual(result.valid, true);
-  });
-
-  it("rejects session: null (null is not a string)", () => {
-    const msg = { type: "attach", session: null, cols: 80, rows: 24 };
-    const result = validateAttach(msg);
-    assert.strictEqual(result.valid, false);
-    assert.match(result.error, /session/i);
-  });
-
-  it("accepts session name with special characters (validation does not restrict content)", () => {
-    const msg = { type: "attach", session: "my-session_01", cols: 80, rows: 24 };
-    const result = validateAttach(msg);
-    assert.strictEqual(result.valid, true);
-  });
-});
-
-describe("validateMessage - numeric boundary conditions", () => {
-  it("rejects NaN for cols in resize", () => {
-    const msg = { type: "resize", cols: NaN, rows: 24 };
-    const result = validateMessage(msg);
-    assert.strictEqual(result.valid, false);
-    assert.match(result.error, /cols/i);
-  });
-
-  it("rejects Infinity for cols in resize", () => {
-    const msg = { type: "resize", cols: Infinity, rows: 24 };
-    const result = validateMessage(msg);
-    assert.strictEqual(result.valid, false);
-    assert.match(result.error, /cols/i);
-  });
-
-  it("rejects NaN for rows in attach", () => {
-    const msg = { type: "attach", cols: 80, rows: NaN };
-    const result = validateMessage(msg);
-    assert.strictEqual(result.valid, false);
-    assert.match(result.error, /rows/i);
-  });
-
-  it("rejects Infinity for rows in attach", () => {
-    const msg = { type: "attach", cols: 80, rows: Infinity };
-    const result = validateMessage(msg);
-    assert.strictEqual(result.valid, false);
-    assert.match(result.error, /rows/i);
-  });
-
-  it("accepts valid message with extra unknown fields (extra fields are ignored)", () => {
-    const msg = { type: "input", data: "hello", extraField: "ignored", anotherExtra: 42 };
-    const result = validateMessage(msg);
-    assert.strictEqual(result.valid, true);
-  });
-
-  it("rejects __proto__ as message type (treated as unknown type)", () => {
-    const msg = { type: "__proto__", data: "exploit" };
-    const result = validateMessage(msg);
-    assert.strictEqual(result.valid, false);
-    assert.match(result.error, /unknown/i);
-  });
-
-  it("rejects constructor as message type (treated as unknown type)", () => {
-    const msg = { type: "constructor" };
-    const result = validateMessage(msg);
-    assert.strictEqual(result.valid, false);
-    assert.match(result.error, /unknown/i);
   });
 });

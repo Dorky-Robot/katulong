@@ -14,11 +14,9 @@ export function createWebSocketConnection(deps = {}) {
   const {
     term,
     state,
-    stopWizardPairing,
-    switchSettingsView,
-    viewSuccess,
+    p2pManager,
+    updateP2PIndicator,
     loadTokens,
-    getWizardActivePairCode,
     isAtBottom
   } = deps;
 
@@ -33,6 +31,8 @@ export function createWebSocketConnection(deps = {}) {
         'scroll.userScrolledUpBeforeDisconnect': false
       },
       effects: [
+        { type: 'updateP2PIndicator' },
+        { type: 'initP2P' },
         { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect }
       ]
     }),
@@ -42,13 +42,6 @@ export function createWebSocketConnection(deps = {}) {
       effects: [
         { type: 'terminalWrite', data: msg.data, preserveScroll: true }
       ]
-    }),
-
-    'pair-complete': (msg, currentState, wizardActivePairCode) => ({
-      stateUpdates: {},
-      effects: (wizardActivePairCode && msg.code === wizardActivePairCode)
-        ? [{ type: 'stopWizardPairing' }, { type: 'switchSettingsView', view: 'success' }, { type: 'refreshDeviceList' }]
-        : [{ type: 'refreshDeviceList' }]
     }),
 
     reload: () => ({
@@ -76,15 +69,50 @@ export function createWebSocketConnection(deps = {}) {
       effects: [{ type: 'refreshTokensAfterRegistration' }]
     }),
 
-    'credential-removed': (msg) => ({
+    'credential-removed': () => ({
       stateUpdates: {},
-      effects: [{ type: 'refreshDeviceList', credentialId: msg.credentialId }]
+      effects: []
+    }),
+
+    'p2p-signal': (msg, currentState) => ({
+      stateUpdates: {},
+      effects: currentState.p2p?.peer
+        ? [{ type: 'p2pSignal', data: msg.data }]
+        : []
+    }),
+
+    'p2p-ready': () => ({
+      stateUpdates: {},
+      effects: [
+        { type: 'log', message: '[P2P] Server confirmed DataChannel ready' },
+        { type: 'updateP2PIndicator' }
+      ]
+    }),
+
+    'p2p-closed': () => ({
+      stateUpdates: { 'p2p.connected': false },
+      effects: [
+        { type: 'log', message: '[P2P] Server reports DataChannel closed' },
+        { type: 'updateP2PIndicator' }
+      ]
     })
   };
 
   // Effect executor (side effects at edges)
   function executeEffect(effect) {
     switch (effect.type) {
+      case 'updateP2PIndicator':
+        if (updateP2PIndicator) updateP2PIndicator();
+        break;
+      case 'initP2P':
+        if (p2pManager) p2pManager.create();
+        break;
+      case 'p2pSignal':
+        if (p2pManager) p2pManager.signal(effect.data);
+        break;
+      case 'log':
+        console.log(effect.message);
+        break;
       case 'scrollToBottomIfNeeded':
         if (effect.condition) {
           scrollToBottom(term);
@@ -96,12 +124,6 @@ export function createWebSocketConnection(deps = {}) {
         } else {
           term.write(effect.data);
         }
-        break;
-      case 'stopWizardPairing':
-        stopWizardPairing();
-        break;
-      case 'switchSettingsView':
-        switchSettingsView(effect.view === 'success' ? viewSuccess : null);
         break;
       case 'reload':
         location.reload();
@@ -122,12 +144,6 @@ export function createWebSocketConnection(deps = {}) {
         const createTokenBtn = document.getElementById("settings-create-token");
         if (tokenCreateForm) tokenCreateForm.style.display = "none";
         if (createTokenBtn) createTokenBtn.style.display = "block";
-        break;
-      case 'refreshDeviceList':
-        // Refresh device list when credential removed (End Session)
-        if (deps.loadDevices) {
-          deps.loadDevices();
-        }
         break;
     }
   }
@@ -161,8 +177,7 @@ export function createWebSocketConnection(deps = {}) {
       const handler = wsMessageHandlers[msg.type];
 
       if (handler) {
-        const wizardActivePairCode = getWizardActivePairCode ? getWizardActivePairCode() : null;
-        const { stateUpdates, effects } = handler(msg, state, wizardActivePairCode);
+        const { stateUpdates, effects } = handler(msg, state);
 
         // Apply state updates
         if (Object.keys(stateUpdates).length > 0) {
@@ -187,7 +202,9 @@ export function createWebSocketConnection(deps = {}) {
       const viewport = document.querySelector(".xterm-viewport");
       state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
       state.connection.attached = false;
+      if (p2pManager) p2pManager.destroy();
 
+      console.log(`[WS] Reconnecting in ${state.connection.reconnectDelay}ms`);
       reconnectTimeout = setTimeout(connect, state.connection.reconnectDelay);
       state.connection.reconnectDelay = Math.min(state.connection.reconnectDelay * 2, 10000);
     };

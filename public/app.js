@@ -1,16 +1,9 @@
     import { Terminal } from "/vendor/xterm/xterm.esm.js";
     import { FitAddon } from "/vendor/xterm/addon-fit.esm.js";
     import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
-    import { getOrCreateDeviceId, generateDeviceName } from "/lib/device.js";
     import { ModalRegistry } from "/lib/modal.js";
     import { ListRenderer } from "/lib/list-renderer.js";
     import { createStore, createReducer } from "/lib/store.js";
-    import { createWizardStore, WIZARD_STATES, WIZARD_ACTIONS } from "/lib/wizard-state.js";
-    import { createWizardController } from "/lib/wizard-controller.js";
-    import { createDeviceStore, loadDevices as reloadDevices, invalidateDevices } from "/lib/device-store.js";
-    import { createDeviceListComponent } from "/lib/device-list-component.js";
-    import { createDeviceActions } from "/lib/device-actions.js";
-    import { createWizardComponent } from "/lib/wizard-component.js";
     import { createSessionStore, invalidateSessions } from "/lib/session-store.js";
     import { createSessionListComponent } from "/lib/session-list-component.js";
     import { createSessionManager } from "/lib/session-manager.js";
@@ -32,10 +25,11 @@
     import { createShortcutBar } from "/lib/shortcut-bar.js";
     import { createPasteHandler } from "/lib/paste-handler.js";
     import { createNetworkMonitor } from "/lib/network-monitor.js";
+    import { createP2PManager } from "/lib/p2p-manager.js";
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
-    import { loadQRLib, checkPairingStatus } from "/lib/wizard-utils.js";
+    import { createP2PIndicator } from "/lib/p2p-ui.js";
     import { initModals } from "/lib/modal-init.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
     import { createWebSocketConnection } from "/lib/websocket-connection.js";
@@ -56,9 +50,6 @@
 
     const applyTheme = themeManager.apply;
 
-    // --- Device ID Management ---
-    // Device management functions imported from /lib/device.js
-
     // --- State ---
 
     // --- Centralized application state (at edge) ---
@@ -74,6 +65,11 @@
           ws: null,
           attached: false,
           reconnectDelay: 1000
+        },
+        p2p: {
+          peer: null,
+          connected: false,
+          retryTimer: 0,
         },
         scroll: {
           userScrolledUpBeforeDisconnect: false
@@ -118,6 +114,35 @@
 
     // Subscribe to shortcuts changes for render side effects
     // Note: shortcuts store subscription moved after renderBar is defined (line ~640)
+
+    // --- P2P Manager ---
+
+    // Initialize P2P manager
+    const p2pManager = createP2PManager({
+      onStateChange: (p2pState) => {
+        state.update('p2p.connected', p2pState.connected);
+        state.update('p2p.peer', p2pState.peer);
+        updateP2PIndicator();
+      },
+      onData: (str) => {
+        try {
+          const msg = JSON.parse(str);
+          if (msg.type === "output") {
+            term.write(msg.data);
+          }
+        } catch {
+          // ignore malformed P2P data
+        }
+      },
+      getWS: () => state.connection.ws
+    });
+
+    // P2P UI indicator
+    const p2pIndicator = createP2PIndicator({
+      p2pManager,
+      getConnectionState: () => ({ attached: state.connection.attached })
+    });
+    const updateP2PIndicator = () => p2pIndicator.update();
 
     document.title = state.session.name;
 
@@ -173,6 +198,7 @@
 
     // Create buffered input sender
     const inputSender = createInputSender({
+      p2pManager,
       getWebSocket: () => state.connection.ws
     });
 
@@ -323,24 +349,6 @@
     });
     settingsTabManager.init();
 
-    // --- Device management (reactive component) ---
-
-    const deviceStore = createDeviceStore();
-
-    // Create device actions with callbacks
-    const deviceActions = createDeviceActions({
-      onRename: () => invalidateDevices(deviceStore),
-      onRemove: () => invalidateDevices(deviceStore)
-    });
-
-    // Create and mount device list component
-    const deviceListComponent = createDeviceListComponent(deviceStore, {
-      onRename: (deviceId) => deviceActions.renameDevice(deviceId),
-      onRemove: (deviceId, isCurrent) => deviceActions.removeDevice(deviceId, isCurrent)
-    });
-    const devicesList = document.getElementById("devices-list");
-    deviceListComponent.mount(devicesList);
-
     // --- Token management ---
 
     const tokenStore = createTokenStore();
@@ -369,63 +377,6 @@
     if (tokensList) {
       tokenListComponent.mount(tokensList);
     }
-
-    
-
-    // --- Inline pairing wizard ---
-
-    const settingsViews = document.getElementById("settings-views");
-    const viewMain = document.getElementById("settings-view-main");
-    const viewPair = document.getElementById("settings-view-pair");
-    const viewSuccess = document.getElementById("settings-view-success");
-
-    // --- Wizard state management with reactive component ---
-    const wizardStore = createWizardStore();
-
-    // Wizard utilities imported from /lib/wizard-utils.js
-
-    // Create wizard controller
-    const wizardController = createWizardController({
-      wizardStore,
-      settingsViews,
-      viewMain,
-      viewPair,
-      viewSuccess,
-      deviceStore,
-      modals,
-      onDeviceInvalidate: () => invalidateDevices(deviceStore)
-    });
-    wizardController.init();
-
-    // Extract functions for external use
-    const switchSettingsView = (view) => wizardController.switchSettingsView(view);
-    const stopWizardPairing = () => wizardController.cleanupWizard();
-
-    // Create wizard component (handles all rendering automatically)
-    const wizardComponent = createWizardComponent(wizardStore, {
-      loadQRLib,
-      checkPairingStatus,
-      onSuccess: () => {
-        wizardStore.dispatch({ type: WIZARD_ACTIONS.PAIRING_SUCCESS });
-        switchSettingsView(viewSuccess);
-        invalidateDevices(deviceStore);
-      }
-    });
-
-    // DON'T mount wizard component - views are already in HTML
-    // Mounting wipes out all settings-view content including settings-view-main
-    // wizardComponent.mount(settingsViews);
-
-    // Manually trigger wizard rendering on state changes
-    wizardStore.subscribe(() => {
-      // Trigger the component to handle QR codes and timers
-      wizardComponent.trigger();
-    });
-
-    // Expose for WebSocket handler compatibility
-    Object.defineProperty(window, 'wizardActivePairCode', {
-      get: () => wizardStore.getState().pairCode
-    });
 
     // --- Dictation modal (reactive component) ---
 
@@ -473,6 +424,7 @@
       onSettingsClick: () => modals.open('settings'),
       sendFn: rawSend,
       term,
+      updateP2PIndicator,
       getInstanceIcon
     });
 
@@ -522,7 +474,9 @@
 
     const networkMonitor = createNetworkMonitor({
       onNetworkChange: () => {
-        // No-op: network change detection retained for future use
+        if (!state.connection.ws || state.connection.ws.readyState !== 1) return;
+        console.log("[P2P] Network change detected, re-establishing");
+        p2pManager.create();
       }
     });
     networkMonitor.init();
@@ -532,12 +486,9 @@
     const wsConnection = createWebSocketConnection({
       term,
       state,
-      stopWizardPairing,
-      switchSettingsView,
-      viewSuccess,
+      p2pManager,
+      updateP2PIndicator,
       loadTokens,
-      loadDevices: () => invalidateDevices(deviceStore),
-      getWizardActivePairCode: () => window.wizardActivePairCode,
       isAtBottom,
       renderBar
     });
