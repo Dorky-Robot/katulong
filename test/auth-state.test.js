@@ -574,6 +574,47 @@ describe("AuthState", () => {
     });
   });
 
+  describe("findSetupToken", () => {
+    it("returns the matching token object", () => {
+      const token = { id: "tok1", token: "secret-value", name: "My Token", createdAt: 1000, lastUsedAt: null };
+      const state = AuthState.empty("user123").addSetupToken(token);
+
+      const found = state.findSetupToken("secret-value");
+
+      assert.deepStrictEqual(found, token);
+    });
+
+    it("returns null for a non-matching value", () => {
+      const token = { id: "tok1", token: "secret-value", name: "My Token", createdAt: 1000, lastUsedAt: null };
+      const state = AuthState.empty("user123").addSetupToken(token);
+
+      assert.strictEqual(state.findSetupToken("wrong-value"), null);
+    });
+
+    it("returns null when there are no setup tokens", () => {
+      const state = AuthState.empty("user123");
+
+      assert.strictEqual(state.findSetupToken("anything"), null);
+    });
+
+    it("returns null for a value that is a prefix of an existing token", () => {
+      const token = { id: "tok1", token: "secret-value", name: "My Token", createdAt: 1000, lastUsedAt: null };
+      const state = AuthState.empty("user123").addSetupToken(token);
+
+      assert.strictEqual(state.findSetupToken("secret"), null);
+    });
+
+    it("iterates all tokens and returns the last match (no short-circuit)", () => {
+      const t1 = { id: "tok1", token: "aaa", name: "First", createdAt: 1000, lastUsedAt: null };
+      const t2 = { id: "tok2", token: "aaa", name: "Second", createdAt: 2000, lastUsedAt: null };
+      const state = AuthState.empty("user123").addSetupToken(t1).addSetupToken(t2);
+
+      // Should return the last matching token (no short-circuit on first match)
+      const found = state.findSetupToken("aaa");
+      assert.deepStrictEqual(found, t2);
+    });
+  });
+
   describe("fromJSON", () => {
     it("creates AuthState from plain object", () => {
       const data = {
