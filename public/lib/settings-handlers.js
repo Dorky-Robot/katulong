@@ -170,7 +170,7 @@ export function createSettingsHandlers(options = {}) {
       const data = await response.json();
 
       if (data.config && data.config.instanceIcon) {
-        currentIcon = data.config.instanceIcon;
+        currentIcon = data.config.instanceIcon.replace(/[^a-z0-9-]/g, "");
         iconDisplay.className = `ph ph-${currentIcon}`;
       }
     } catch (error) {
