@@ -284,6 +284,34 @@ describe("loadState caching", () => {
     // Should remove token5 (old pairing session - pairing now creates credentials)
     assert.equal(sessions.token5, undefined, "should remove old pairing sessions");
   });
+
+  it("loadState prunes expired setup tokens and persists the change", () => {
+    const now = Date.now();
+    const state = {
+      user: { id: "user123", name: "owner" },
+      credentials: [{ id: "cred1", publicKey: "key1", counter: 1, deviceId: "dev1", name: "Device 1" }],
+      sessions: {},
+      setupTokens: [
+        // Valid token (not expired)
+        { id: "tok1", token: "validtoken", name: "Valid", createdAt: now - 1000, lastUsedAt: null, expiresAt: now + 7 * 24 * 60 * 60 * 1000 },
+        // Expired token
+        { id: "tok2", token: "expiredtoken", name: "Expired", createdAt: now - 20000, lastUsedAt: null, expiresAt: now - 1 },
+        // Legacy token without expiresAt (fail-closed: treated as expired)
+        { id: "tok3", token: "legacytoken", name: "Legacy", createdAt: now - 30000, lastUsedAt: null },
+      ],
+    };
+
+    writeFileSync(STATE_PATH, JSON.stringify(state));
+    _invalidateCache();
+
+    const loaded = loadState();
+    const tokens = loaded.setupTokens;
+
+    assert.equal(tokens.length, 1, "should only keep valid non-expired token");
+    assert.equal(tokens[0].id, "tok1", "should keep the valid token");
+    assert.equal(tokens.find(t => t.id === "tok2"), undefined, "should remove expired token");
+    assert.equal(tokens.find(t => t.id === "tok3"), undefined, "should remove legacy token without expiresAt");
+  });
 });
 
 describe("loadState - corrupted state file handling", () => {
