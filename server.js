@@ -35,7 +35,7 @@ import { ConfigManager } from "./lib/config.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 import { validateMessage } from "./lib/websocket-validation.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
-import { isLocalRequest, getAccessMethod, isLoopbackAddress, TUNNEL_HOSTNAMES } from "./lib/access-method.js";
+import { isLocalRequest, getAccessMethod } from "./lib/access-method.js";
 import { serveStaticFile } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 
