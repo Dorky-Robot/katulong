@@ -16,11 +16,10 @@ describe("createSession", () => {
 
   it("returns an expiry roughly 30 days in the future", () => {
     const { expiry } = createSession();
-    const thirtyDays = 30 * 24 * 60 * 60 * 1000;
     const diff = expiry - Date.now();
     // Allow 5 second tolerance
-    assert.ok(diff > thirtyDays - 5000, `expiry too early: ${diff}ms`);
-    assert.ok(diff <= thirtyDays, `expiry too late: ${diff}ms`);
+    assert.ok(diff > SESSION_TTL_MS - 5000, `expiry too early: ${diff}ms`);
+    assert.ok(diff <= SESSION_TTL_MS, `expiry too late: ${diff}ms`);
   });
 
   it("generates unique tokens", () => {
@@ -495,7 +494,7 @@ describe("refreshSessionActivity", () => {
       credentials: [credential],
       sessions: {
         [token]: {
-          expiry: now + 30 * 24 * 60 * 60 * 1000,
+          expiry: now + SESSION_TTL_MS,
           credentialId: credential.id,
           csrfToken: "csrf1",
           lastActivityAt: now - 2 * 60 * 60 * 1000, // 2 hours ago
