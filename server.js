@@ -1002,6 +1002,12 @@ const routes = [
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
     }
+    if (!isLocalRequest(req)) {
+      const state = loadState();
+      if (!validateCsrfToken(req, state)) {
+        return json(res, 403, { error: "Invalid or missing CSRF token" });
+      }
+    }
 
     const { instanceName } = await parseJSON(req);
 
@@ -1018,6 +1024,12 @@ const routes = [
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
     }
+    if (!isLocalRequest(req)) {
+      const state = loadState();
+      if (!validateCsrfToken(req, state)) {
+        return json(res, 403, { error: "Invalid or missing CSRF token" });
+      }
+    }
 
     const { instanceIcon } = await parseJSON(req);
 
@@ -1033,6 +1045,12 @@ const routes = [
   { method: "PUT", path: "/api/config/toolbar-color", handler: async (req, res) => {
     if (!isAuthenticated(req)) {
       return json(res, 401, { error: "Authentication required" });
+    }
+    if (!isLocalRequest(req)) {
+      const state = loadState();
+      if (!validateCsrfToken(req, state)) {
+        return json(res, 403, { error: "Invalid or missing CSRF token" });
+      }
     }
 
     const { toolbarColor } = await parseJSON(req);
