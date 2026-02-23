@@ -336,7 +336,6 @@ const routes = [
     const { origin, rpID } = getOriginAndRpID(req);
     let opts, userID;
     if (isSetup()) {
-      const state = loadState();
       // Handle case where credentials exist but user is null (shouldn't happen, but defensive)
       if (state.user && state.user.id) {
         ({ opts, userID } = await generateRegistrationOptsForUser(state.user.id, RP_NAME, rpID, origin));
@@ -369,18 +368,23 @@ const routes = [
     // Extract user-agent (prefer client-provided, fallback to header)
     const userAgent = clientUserAgent || req.headers['user-agent'] || 'Unknown';
 
-    // Find setup token ID (if provided)
-    let setupTokenId = null;
-    if (setupToken) {
-      const state = loadState();
-      const tokenData = state?.findSetupToken(setupToken);
-      if (tokenData) {
+    // Process registration inside lock to prevent race conditions.
+    // Setup token is re-validated inside the lock to prevent TOCTOU: an attacker
+    // who initiates registration with a valid token cannot complete it after the
+    // token has been revoked, because the validity check and the state mutation
+    // are now atomic.
+    const result = await withStateLock(async (currentState) => {
+      // Re-validate setup token atomically with state mutation
+      let setupTokenId = null;
+      if (setupToken) {
+        const tokenData = currentState?.findSetupToken(setupToken);
+        if (!tokenData) {
+          // Token was revoked between /options and /verify
+          return { result: { success: false, statusCode: 403, message: "Invalid setup token" } };
+        }
         setupTokenId = tokenData.id;
       }
-    }
 
-    // Process registration inside lock to prevent race conditions
-    const result = await withStateLock(async (currentState) => {
       const result = await processRegistration({
         credential,
         challenge,
@@ -409,7 +413,7 @@ const routes = [
       }
 
       // Return updated state and success result
-      return { state: updatedState, result };
+      return { state: updatedState, result, setupTokenId };
     });
 
     // I/O: Handle result
@@ -422,8 +426,8 @@ const routes = [
     setSessionCookie(res, session.token, session.expiry, { secure: isHttpsConnection(req) });
 
     // Broadcast to all connected clients (for real-time UI updates)
-    if (setupTokenId) {
-      broadcastToAll({ type: "credential-registered", tokenId: setupTokenId });
+    if (result.setupTokenId) {
+      broadcastToAll({ type: "credential-registered", tokenId: result.setupTokenId });
     }
 
     json(res, 200, { ok: true });
