@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSession, validateSession, pruneExpiredSessions, loadState, saveState, _invalidateCache, refreshSessionActivity } from "../lib/auth.js";
 import { AuthState } from "../lib/auth-state.js";
+import { SESSION_TTL_MS } from "../lib/constants.js";
 
 describe("createSession", () => {
   it("returns a token that is 64 hex characters", () => {
@@ -594,7 +595,6 @@ describe("refreshSessionActivity", () => {
   });
 
   it("extends session expiry when lastActivityAt is more than 24h ago (sliding window)", async () => {
-    const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
     const token = "oldactivitytoken";
     const now = Date.now();
     // Use a short initial expiry (10 minutes) so any sliding-window extension to 30 days is unambiguous
