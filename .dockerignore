@@ -1,8 +1,0 @@
-node_modules
-.git
-.env
-.env.local
-.DS_Store
-*.log
-katulong-auth.json
-.claude
