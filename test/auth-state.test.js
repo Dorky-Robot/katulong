@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import { AuthState } from "../lib/auth-state.js";
+import { SESSION_TTL_MS } from "../lib/constants.js";
 
 describe("AuthState", () => {
   describe("constructor", () => {
@@ -181,7 +182,6 @@ describe("AuthState", () => {
 
     it("extends expiry if activity was more than 24h ago", () => {
       const now = 1000000;
-      const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [],
@@ -245,7 +245,6 @@ describe("AuthState", () => {
 
     it("extends expiry when activity is 1ms beyond the 24h threshold", () => {
       const THRESHOLD_MS = 24 * 60 * 60 * 1000;
-      const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
       const now = 1000000000;
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -265,7 +264,6 @@ describe("AuthState", () => {
     it("updates correctly across consecutive calls (chaining)", () => {
       const t1 = 1000000000;
       const t2 = t1 + 1000; // 1 second later
-      const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
       const originalExpiry = t1 + SESSION_TTL_MS;
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -290,7 +288,6 @@ describe("AuthState", () => {
     });
 
     it("extends expiry for a session with lastActivityAt: 0 (pre-migration default)", () => {
-      const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
       const now = Date.now();
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
