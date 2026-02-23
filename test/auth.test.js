@@ -4,6 +4,24 @@ import { writeFileSync, readFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSession, validateSession, pruneExpiredSessions, loadState, saveState, _invalidateCache } from "../lib/auth.js";
+import { AuthState } from "../lib/auth-state.js";
+
+/**
+ * Create an AuthState with a credential and a session for testing.
+ * @param {string} token - Session token
+ * @param {number} expiry - Expiry timestamp
+ * @param {string} credentialId - Credential ID (default: "test-cred-1")
+ * @returns {AuthState}
+ */
+function makeStateWithSession(token, expiry, credentialId = "test-cred-1") {
+  const state = new AuthState({
+    user: { id: "u1", name: "owner" },
+    credentials: [{ id: credentialId }],
+    sessions: {},
+    setupTokens: [],
+  });
+  return state.addSession(token, expiry, credentialId, "test-csrf-token");
+}
 
 describe("createSession", () => {
   it("returns a token that is 64 hex characters", () => {
@@ -31,17 +49,17 @@ describe("createSession", () => {
 describe("validateSession", () => {
   it("returns true for a valid session", () => {
     const { token, expiry } = createSession();
-    const state = { sessions: { [token]: expiry } };
+    const state = makeStateWithSession(token, expiry);
     assert.ok(validateSession(state, token));
   });
 
   it("returns false for missing token", () => {
-    const state = { sessions: {} };
+    const state = new AuthState({ user: null, credentials: [], sessions: {}, setupTokens: [] });
     assert.ok(!validateSession(state, "nonexistent"));
   });
 
   it("returns false for expired token", () => {
-    const state = { sessions: { expired: Date.now() - 1000 } };
+    const state = makeStateWithSession("expired", Date.now() - 1000);
     assert.ok(!validateSession(state, "expired"));
   });
 
@@ -50,12 +68,35 @@ describe("validateSession", () => {
   });
 
   it("returns false for null token", () => {
-    const state = { sessions: {} };
+    const state = new AuthState({ user: null, credentials: [], sessions: {}, setupTokens: [] });
     assert.ok(!validateSession(state, null));
   });
 
   it("returns false when state has no sessions", () => {
-    assert.ok(!validateSession({}, "tok"));
+    const state = new AuthState({ user: null, credentials: [], sessions: {}, setupTokens: [] });
+    assert.ok(!validateSession(state, "tok"));
+  });
+
+  it("returns false when credentialId is not in the credentials list", () => {
+    const { token, expiry } = createSession();
+    const state = new AuthState({
+      user: { id: "u1", name: "owner" },
+      credentials: [{ id: "other-cred" }],
+      sessions: {},
+      setupTokens: [],
+    }).addSession(token, expiry, "missing-cred", "test-csrf-token");
+    assert.ok(!validateSession(state, token), "session with unrecognized credentialId should be invalid");
+  });
+
+  it("returns false for session without credentialId (old format object)", () => {
+    const { token, expiry } = createSession();
+    const state = new AuthState({
+      user: { id: "u1", name: "owner" },
+      credentials: [],
+      sessions: { [token]: { expiry, csrfToken: "tok" } },
+      setupTokens: [],
+    });
+    assert.ok(!validateSession(state, token), "old-format session without credentialId should be invalid");
   });
 });
 
@@ -304,22 +345,22 @@ describe("loadState - corrupted state file handling", () => {
 
 describe("validateSession - boundary and edge cases", () => {
   it("returns false for session expiring exactly 1ms in the past", () => {
-    const state = { sessions: { tok: Date.now() - 1 } };
+    const state = makeStateWithSession("tok", Date.now() - 1);
     assert.ok(!validateSession(state, "tok"), "session expired 1ms ago should be invalid");
   });
 
   it("returns true for session expiring 1ms in the future", () => {
-    const state = { sessions: { tok: Date.now() + 1000 } };
+    const state = makeStateWithSession("tok", Date.now() + 1000);
     assert.ok(validateSession(state, "tok"), "session expiring 1s from now should be valid");
   });
 
   it("returns false for session with expiry of 0 (epoch)", () => {
-    const state = { sessions: { tok: 0 } };
+    const state = makeStateWithSession("tok", 0);
     assert.ok(!validateSession(state, "tok"), "expiry of 0 (epoch) is always in the past");
   });
 
   it("returns false for empty-string token", () => {
-    const state = { sessions: { "": Date.now() + 60000 } };
+    const state = makeStateWithSession("", Date.now() + 60000);
     assert.ok(!validateSession(state, ""), "empty token should not be valid");
   });
 });
