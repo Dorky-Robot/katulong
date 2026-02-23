@@ -832,7 +832,7 @@ const routes = [
           if (state && state.isValidSession(token)) {
             return state.endSession(token, { allowRemoveLast: isLocalRequest(req) });
           }
-          return { state, removedCredentialId: null };
+          return { removedCredentialId: null };
         });
 
         // Notify all connected clients if a credential was removed
