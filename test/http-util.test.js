@@ -12,6 +12,7 @@ import {
   getCsrfToken,
   validateCsrfToken,
   isAllowedCorsOrigin,
+  isHttpsConnection,
 } from "../lib/http-util.js";
 import { AuthState } from "../lib/auth-state.js";
 
@@ -687,5 +688,125 @@ describe("isAllowedCorsOrigin", () => {
     }
     assert.ok(!headers["Access-Control-Allow-Origin"]);
     assert.ok(!headers["Access-Control-Allow-Credentials"]);
+  });
+});
+
+describe("isHttpsConnection", () => {
+  it("returns true when socket is TLS-encrypted", () => {
+    const req = { headers: { host: "example.com" }, socket: { encrypted: true } };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns false when socket is not encrypted and no tunnel indicators", () => {
+    const req = { headers: { host: "example.com" }, socket: { encrypted: false, remoteAddress: "192.168.1.1" } };
+    assert.ok(!isHttpsConnection(req));
+  });
+
+  it("returns true for .ngrok.app hostname", () => {
+    const req = { headers: { host: "abc.ngrok.app" }, socket: {} };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns true for .ngrok.io hostname", () => {
+    const req = { headers: { host: "abc.ngrok.io" }, socket: {} };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns true for .trycloudflare.com hostname", () => {
+    const req = { headers: { host: "abc.trycloudflare.com" }, socket: {} };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns true for .loca.lt hostname", () => {
+    const req = { headers: { host: "abc.loca.lt" }, socket: {} };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns true for Cloudflare custom domain via CF-Visitor header (scheme=https)", () => {
+    const req = {
+      headers: { host: "myapp.example.com", "cf-visitor": '{"scheme":"https"}' },
+      socket: {},
+    };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns false when CF-Visitor scheme is http", () => {
+    const req = {
+      headers: { host: "myapp.example.com", "cf-visitor": '{"scheme":"http"}' },
+      socket: { remoteAddress: "192.168.1.1" },
+    };
+    assert.ok(!isHttpsConnection(req));
+  });
+
+  it("returns false when CF-Visitor JSON is malformed", () => {
+    const req = {
+      headers: { host: "myapp.example.com", "cf-visitor": "invalid json" },
+      socket: { remoteAddress: "192.168.1.1" },
+    };
+    assert.ok(!isHttpsConnection(req));
+  });
+
+  it("returns true for Cloudflare custom domain via IPv4 loopback + CF-Connecting-IP", () => {
+    const req = {
+      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+      socket: { remoteAddress: "127.0.0.1" },
+    };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns true for Cloudflare custom domain via IPv6 loopback + CF-Connecting-IP", () => {
+    const req = {
+      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+      socket: { remoteAddress: "::1" },
+    };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns true for Cloudflare custom domain via IPv4-mapped IPv6 loopback + CF-Connecting-IP", () => {
+    const req = {
+      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+      socket: { remoteAddress: "::ffff:127.0.0.1" },
+    };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns false (security) when CF-Connecting-IP is present but socket is NOT loopback", () => {
+    const req = {
+      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+      socket: { remoteAddress: "192.168.1.100" },
+    };
+    assert.ok(!isHttpsConnection(req));
+  });
+
+  it("returns false with no headers at all", () => {
+    const req = { headers: {}, socket: {} };
+    assert.ok(!isHttpsConnection(req));
+  });
+
+  it("returns false for malformed host header (no suffix match)", () => {
+    const req = { headers: { host: ":::invalid:::" }, socket: { remoteAddress: "192.168.1.1" } };
+    assert.ok(!isHttpsConnection(req));
+  });
+
+  it("returns false for non-loopback remote address without tunnel suffix", () => {
+    const req = {
+      headers: { host: "my.custom-domain.net" },
+      socket: { remoteAddress: "203.0.113.5" },
+    };
+    assert.ok(!isHttpsConnection(req));
+  });
+
+  it("handles missing socket gracefully", () => {
+    const req = { headers: { host: "abc.ngrok.app" }, socket: undefined };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("handles missing socket remoteAddress gracefully (defaults to empty string)", () => {
+    const req = {
+      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+      socket: {},
+    };
+    // socket.remoteAddress is undefined → addr = "" → not loopback → false
+    assert.ok(!isHttpsConnection(req));
   });
 });

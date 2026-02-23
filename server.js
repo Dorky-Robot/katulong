@@ -21,7 +21,7 @@ import {
   parseCookies, setSessionCookie, getOriginAndRpID,
   isPublicPath, createChallengeStore, escapeAttr,
   getCsrfToken, validateCsrfToken, getCspHeaders,
-  isAllowedCorsOrigin,
+  isAllowedCorsOrigin, isHttpsConnection,
 } from "./lib/http-util.js";
 import { rateLimit, getClientIp } from "./lib/rate-limit.js";
 import {
@@ -44,20 +44,6 @@ const PORT = parseInt(process.env.PORT || "3001", 10);
 const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
 const DATA_DIR = process.env.KATULONG_DATA_DIR || __dirname;
 const SSH_PORT = parseInt(process.env.SSH_PORT || "2222", 10);
-
-// Helper: Determine if connection is HTTPS (for setting Secure cookie flag)
-function isHttpsConnection(req) {
-  if (req.socket?.encrypted) return true;
-  const hostname = (req.headers.host || 'localhost').split(':')[0];
-  // Known HTTPS-only tunnel services
-  if (TUNNEL_HOSTNAMES.some(suffix => hostname.endsWith(suffix))) return true;
-  // Cloudflare Tunnel with custom domain: socket is loopback (from cloudflared)
-  // and CF-Connecting-IP header present (added by Cloudflare edge, not forgeable
-  // since the connection is local)
-  const addr = req.socket?.remoteAddress || "";
-  if (isLoopbackAddress(addr) && req.headers["cf-connecting-ip"]) return true;
-  return false;
-}
 
 // --- Configuration (load instance name first) ---
 
