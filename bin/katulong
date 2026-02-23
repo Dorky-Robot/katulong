@@ -18,6 +18,7 @@ const COMMANDS = {
   logs: "Stream logs (daemon, server, or both)",
   open: "Open Katulong in your browser",
   info: "Show system information and configuration",
+  update: "Update Katulong to the latest version",
 };
 
 function showHelp() {
@@ -44,6 +45,9 @@ EXAMPLES:
   katulong status             Check if running
   katulong logs daemon        Stream daemon logs
   katulong open               Open in browser
+  katulong update             Update to latest version
+  katulong update --check     Check if update is available
+  katulong update --no-restart Update code but skip restart
 
 For more information, visit: https://github.com/dorky-robot/katulong
 `);

@@ -95,6 +95,14 @@ export function createWebSocketConnection(deps = {}) {
         { type: 'log', message: '[P2P] Server reports DataChannel closed' },
         { type: 'updateP2PIndicator' }
       ]
+    }),
+
+    'server-draining': () => ({
+      stateUpdates: {},
+      effects: [
+        { type: 'log', message: '[WS] Server is draining, reconnecting immediately' },
+        { type: 'fastReconnect' }
+      ]
     })
   };
 
@@ -144,6 +152,13 @@ export function createWebSocketConnection(deps = {}) {
         const createTokenBtn = document.getElementById("settings-create-token");
         if (tokenCreateForm) tokenCreateForm.style.display = "none";
         if (createTokenBtn) createTokenBtn.style.display = "block";
+        break;
+      case 'fastReconnect':
+        // Reset reconnect delay for fast reconnection to new server
+        state.connection.reconnectDelay = 500;
+        if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
+          state.connection.ws.close();
+        }
         break;
     }
   }
