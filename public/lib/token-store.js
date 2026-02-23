@@ -73,15 +73,46 @@ export function createTokenStore() {
 }
 
 /**
- * Load tokens from API
+ * Load tokens from API, merging in orphaned credentials (those without setup tokens)
  */
 export async function loadTokens(store) {
   store.dispatch({ type: TOKEN_ACTIONS.LOAD_START });
 
   try {
-    const res = await fetch("/api/tokens");
-    if (!res.ok) throw new Error("Failed to load tokens");
-    const { tokens } = await res.json();
+    const [tokensRes, credsRes] = await Promise.all([
+      fetch("/api/tokens"),
+      fetch("/api/credentials"),
+    ]);
+    if (!tokensRes.ok) throw new Error("Failed to load tokens");
+    const { tokens } = await tokensRes.json();
+
+    // Merge orphaned credentials (those not linked to any setup token)
+    if (credsRes.ok) {
+      const { credentials } = await credsRes.json();
+      // Collect credential IDs already represented by setup tokens
+      const linkedCredIds = new Set(
+        tokens.filter(t => t.credential).map(t => t.credential.id)
+      );
+      // Add orphaned credentials as virtual token entries
+      for (const cred of credentials) {
+        if (!linkedCredIds.has(cred.id)) {
+          tokens.push({
+            id: null, // No setup token ID
+            name: cred.name,
+            createdAt: cred.createdAt,
+            lastUsedAt: cred.lastUsedAt,
+            credential: {
+              id: cred.id,
+              name: cred.name,
+              createdAt: cred.createdAt,
+              lastUsedAt: cred.lastUsedAt,
+              userAgent: cred.userAgent,
+            },
+            _orphanedCredential: true, // Flag for UI to use DELETE /api/credentials/{id}
+          });
+        }
+      }
+    }
 
     store.dispatch({
       type: TOKEN_ACTIONS.LOAD_SUCCESS,

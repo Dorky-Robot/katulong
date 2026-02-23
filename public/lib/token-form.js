@@ -118,9 +118,14 @@ export function createTokenFormManager(options = {}) {
   }
 
   /**
-   * Revoke a token
+   * Revoke a token (and its linked credential)
    */
-  async function revokeToken(tokenId, hasCredential = false) {
+  async function revokeToken(tokenId, hasCredential = false, isOrphaned = false) {
+    // Orphaned credentials go through the direct credential revocation endpoint
+    if (isOrphaned) {
+      return revokeCredential(tokenId); // tokenId is actually the credential ID for orphaned entries
+    }
+
     const message = hasCredential
       ? "Are you sure you want to revoke this device? The device will immediately lose access and need to re-register."
       : "Are you sure you want to revoke this token? It will no longer work for device pairing.";
@@ -133,10 +138,38 @@ export function createTokenFormManager(options = {}) {
         headers: addCsrfHeader({}),
       });
 
-      if (!res.ok) throw new Error("Failed to revoke token");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to revoke token");
+      }
 
       // Notify parent via callback
       if (onRevoke) onRevoke(tokenId);
+
+    } catch (err) {
+      if (onError) onError("Failed to revoke: " + err.message);
+    }
+  }
+
+  /**
+   * Revoke a credential directly (for orphaned credentials without setup tokens)
+   */
+  async function revokeCredential(credentialId) {
+    const message = "Are you sure you want to revoke this device? The device will immediately lose access and need to re-register.";
+    if (!confirm(message)) return;
+
+    try {
+      const res = await fetch(`/api/credentials/${credentialId}`, {
+        method: "DELETE",
+        headers: addCsrfHeader({}),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to revoke credential");
+      }
+
+      if (onRevoke) onRevoke(credentialId);
 
     } catch (err) {
       if (onError) onError("Failed to revoke: " + err.message);
@@ -207,6 +240,7 @@ export function createTokenFormManager(options = {}) {
     unmount,
     renameToken,
     revokeToken,
+    revokeCredential,
     showForm,
     hideForm
   };

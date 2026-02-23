@@ -371,7 +371,7 @@
     // Create token list component
     const tokenListComponent = createTokenListComponent(tokenStore, {
       onRename: (tokenId) => tokenFormManager.renameToken(tokenId),
-      onRevoke: (tokenId, hasCredential) => tokenFormManager.revokeToken(tokenId, hasCredential)
+      onRevoke: (tokenId, hasCredential, isOrphaned) => tokenFormManager.revokeToken(tokenId, hasCredential, isOrphaned)
     });
     const tokensList = document.getElementById("tokens-list");
     if (tokensList) {

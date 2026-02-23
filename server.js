@@ -518,6 +518,85 @@ const routes = [
     json(res, 200, { ok: true });
   }},
 
+  // --- Credential API (direct credential management) ---
+
+  { method: "GET", path: "/api/credentials", handler: (req, res) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+
+    const state = loadState();
+    if (!state) {
+      return json(res, 200, { credentials: [] });
+    }
+
+    // Return all credentials with metadata (without sensitive fields like publicKey)
+    const credentials = state.credentials.map(c => ({
+      id: c.id,
+      name: c.name,
+      createdAt: c.createdAt,
+      lastUsedAt: c.lastUsedAt,
+      userAgent: c.userAgent,
+      setupTokenId: c.setupTokenId || null,
+    }));
+
+    json(res, 200, { credentials });
+  }},
+
+  { method: "DELETE", prefix: "/api/credentials/", handler: async (req, res, param) => {
+    if (!isAuthenticated(req)) {
+      return json(res, 401, { error: "Authentication required" });
+    }
+    if (!isLocalRequest(req)) {
+      const state = loadState();
+      if (!validateCsrfToken(req, state)) {
+        return json(res, 403, { error: "Invalid or missing CSRF token" });
+      }
+    }
+
+    const credentialId = param;
+    if (!credentialId) {
+      return json(res, 400, { error: "Credential ID is required" });
+    }
+
+    let removedCredentialId = null;
+    try {
+      const result = await withStateLock((state) => {
+        if (!state) {
+          return { found: false };
+        }
+
+        const credential = state.getCredential(credentialId);
+        if (!credential) {
+          return { found: false };
+        }
+
+        const allowRemoveLast = isLocalRequest(req);
+        const updatedState = state.removeCredential(credentialId, { allowRemoveLast });
+        return { state: updatedState, found: true, removedCredentialId: credentialId };
+      });
+
+      if (!result.found) {
+        return json(res, 404, { error: "Credential not found" });
+      }
+
+      removedCredentialId = result.removedCredentialId;
+    } catch (err) {
+      if (err.message && err.message.includes('last credential')) {
+        return json(res, 403, { error: "Cannot remove the last credential — would lock you out" });
+      }
+      throw err;
+    }
+
+    // SECURITY: Immediately close all active WebSocket connections for this credential
+    if (removedCredentialId) {
+      closeWebSocketsForCredential(removedCredentialId);
+    }
+
+    log.info("Credential revoked directly", { credentialId });
+    json(res, 200, { ok: true });
+  }},
+
   // --- Setup token API (GitHub-style token management) ---
 
   { method: "GET", path: "/api/tokens", handler: (req, res) => {
@@ -624,41 +703,43 @@ const routes = [
     }
 
     // Delete token (and its linked credential) inside lock to prevent race conditions
-    const result = await withStateLock((state) => {
-      if (!state) {
-        // No state file exists, so token not found
-        return { found: false };
-      }
+    let result;
+    try {
+      result = await withStateLock((state) => {
+        if (!state) {
+          return { found: false };
+        }
 
-      const token = state.setupTokens.find(t => t.id === id);
-      if (!token) {
-        // Token not found, state unchanged
-        return { found: false };
-      }
+        const token = state.setupTokens.find(t => t.id === id);
+        if (!token) {
+          return { found: false };
+        }
 
-      let updatedState = state;
-      let removedCredentialId = null;
+        let updatedState = state;
+        let removedCredentialId = null;
 
-      // If token has a linked credential, remove it (and its sessions)
-      if (token.credentialId) {
-        const credential = state.getCredential(token.credentialId);
-        if (credential && state.credentials.length > 1) {
-          // Only remove if it's not the last credential (prevent lockout)
-          try {
-            updatedState = updatedState.removeCredential(token.credentialId);
+        // If token has a linked credential, remove the credential and its sessions
+        if (token.credentialId) {
+          const credential = state.getCredential(token.credentialId);
+          if (credential) {
+            const allowRemoveLast = isLocalRequest(req);
+            // This will throw if it's the last credential and not from localhost
+            updatedState = updatedState.removeCredential(token.credentialId, { allowRemoveLast });
             removedCredentialId = token.credentialId;
-          } catch (err) {
-            // If removal fails (e.g., last credential), just remove the token
-            log.warn("Cannot remove last credential, removing token only", { tokenId: id });
           }
         }
+
+        // Remove the setup token
+        updatedState = updatedState.removeSetupToken(id);
+
+        return { state: updatedState, found: true, removedCredentialId };
+      });
+    } catch (err) {
+      if (err.message && err.message.includes('last credential')) {
+        return json(res, 403, { error: "Cannot revoke the last credential — would lock you out" });
       }
-
-      // Remove the setup token
-      updatedState = updatedState.removeSetupToken(id);
-
-      return { state: updatedState, found: true, removedCredentialId };
-    });
+      throw err;
+    }
 
     if (!result.found) {
       return json(res, 404, { error: "Token not found" });
@@ -669,7 +750,7 @@ const routes = [
       closeWebSocketsForCredential(result.removedCredentialId);
     }
 
-    log.info("Setup token revoked", { id });
+    log.info("Setup token revoked", { id, credentialRevoked: !!result.removedCredentialId });
     json(res, 200, { ok: true });
   }},
 
@@ -742,6 +823,8 @@ const routes = [
         // Notify all connected clients if a credential was removed
         if (newState && newState.removedCredentialId) {
           broadcastToAll({ type: 'credential-removed', credentialId: newState.removedCredentialId });
+          // SECURITY: Immediately close all WebSocket connections for the revoked credential
+          closeWebSocketsForCredential(newState.removedCredentialId);
         }
       } catch (err) {
         // Handle "last credential" protection
@@ -757,13 +840,23 @@ const routes = [
     json(res, 200, { ok: true });
   }},
 
-  { method: "POST", path: "/auth/revoke-all", handler: (req, res) => {
+  { method: "POST", path: "/auth/revoke-all", handler: async (req, res) => {
     const state = loadState();
     if (!state) return json(res, 400, { error: "Not set up" });
     if (!validateCsrfToken(req, state)) {
       return json(res, 403, { error: "Invalid or missing CSRF token" });
     }
-    revokeAllSessions(state);
+    await withStateLock((currentState) => {
+      if (!currentState) return currentState;
+      return currentState.revokeAllSessions();
+    });
+    // SECURITY: Close all non-localhost WebSocket connections
+    for (const [clientId, info] of wsClients) {
+      if (info.ws.readyState === 1) {
+        info.ws.close(1008, "All sessions revoked");
+      }
+      wsClients.delete(clientId);
+    }
     let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
     if (req.socket.encrypted) clearCookie += "; Secure";
     res.setHeader("Set-Cookie", clearCookie);

@@ -39,6 +39,9 @@ function tokenItemTemplate(token) {
 
   // Check if token has been used to register a device
   const hasCredential = token.credential !== null && token.credential !== undefined;
+  const isOrphaned = token._orphanedCredential === true;
+  // For orphaned credentials, use credential ID as the revoke target
+  const revokeId = isOrphaned ? token.credential.id : token.id;
 
   let iconClass, statusText, metaText;
   if (hasCredential) {
@@ -60,7 +63,7 @@ function tokenItemTemplate(token) {
   }
 
   return `
-    <div class="token-item ${hasCredential ? 'token-item-used' : ''}" data-token-id="${token.id}" data-has-credential="${hasCredential}">
+    <div class="token-item ${hasCredential ? 'token-item-used' : ''}" data-token-id="${token.id || ''}" data-has-credential="${hasCredential}" data-orphaned="${isOrphaned}" data-credential-id="${hasCredential ? token.credential.id : ''}">
       <div class="token-header">
         <i class="token-icon ph ${iconClass}"></i>
         <span class="token-name">${escapeHtml(token.name)}</span>
@@ -70,8 +73,8 @@ function tokenItemTemplate(token) {
         ${metaText}
       </div>
       <div class="token-actions">
-        <button class="token-btn" data-action="rename" data-id="${token.id}">Rename</button>
-        <button class="token-btn token-btn-danger" data-action="revoke" data-id="${token.id}">Revoke</button>
+        ${!isOrphaned ? `<button class="token-btn" data-action="rename" data-id="${token.id}">Rename</button>` : ''}
+        <button class="token-btn token-btn-danger" data-action="revoke" data-id="${revokeId}">Revoke</button>
       </div>
     </div>
   `;
@@ -170,7 +173,8 @@ export function createTokenListComponent(store, options = {}) {
           } else if (action === 'revoke' && onRevoke) {
             const tokenItem = element.closest('.token-item');
             const hasCredential = tokenItem.dataset.hasCredential === 'true';
-            onRevoke(id, hasCredential);
+            const isOrphaned = tokenItem.dataset.orphaned === 'true';
+            onRevoke(id, hasCredential, isOrphaned);
           }
         }
       });
