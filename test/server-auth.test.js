@@ -1,6 +1,107 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
+// Mirrors the isHttpsConnection() logic from server.js (not exported, so replicated for testing)
+function isHttpsConnection(req) {
+  if (req.socket?.encrypted) return true;
+  const hostname = (req.headers?.host || 'localhost').split(':')[0];
+  if (hostname.endsWith('.ngrok.app') ||
+      hostname.endsWith('.ngrok.io') ||
+      hostname.endsWith('.trycloudflare.com') ||
+      hostname.endsWith('.loca.lt')) return true;
+  const addr = req.socket?.remoteAddress || "";
+  const isLoopback = addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+  if (isLoopback && req.headers?.["cf-connecting-ip"]) return true;
+  return false;
+}
+
+describe("isHttpsConnection (logout cookie Secure flag)", () => {
+  it("returns true when socket is directly encrypted (native TLS)", () => {
+    const req = { socket: { encrypted: true }, headers: { host: "example.com" } };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns false for plain HTTP connection", () => {
+    const req = { socket: { encrypted: false }, headers: { host: "localhost" } };
+    assert.ok(!isHttpsConnection(req));
+  });
+
+  it("returns false when socket.encrypted is absent (tunnel scenario)", () => {
+    // This is the bug: behind a tunnel socket.encrypted is always falsy
+    const req = { socket: {}, headers: { host: "myapp.example.com" } };
+    assert.ok(!isHttpsConnection(req));
+  });
+
+  it("returns true for ngrok.app tunnel", () => {
+    const req = { socket: {}, headers: { host: "abc123.ngrok.app" } };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns true for ngrok.io tunnel", () => {
+    const req = { socket: {}, headers: { host: "abc123.ngrok.io" } };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns true for trycloudflare.com tunnel", () => {
+    const req = { socket: {}, headers: { host: "random.trycloudflare.com" } };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns true for localtunnel (.loca.lt)", () => {
+    const req = { socket: {}, headers: { host: "myapp.loca.lt" } };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns true for Cloudflare Tunnel (loopback socket + CF-Connecting-IP header)", () => {
+    const req = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+    };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns true for Cloudflare Tunnel with IPv6 loopback", () => {
+    const req = {
+      socket: { remoteAddress: "::1" },
+      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+    };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("returns false for non-loopback socket with CF-Connecting-IP (forgeable)", () => {
+    const req = {
+      socket: { remoteAddress: "192.168.1.100" },
+      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+    };
+    assert.ok(!isHttpsConnection(req));
+  });
+
+  it("logout cookie includes Secure flag when behind ngrok tunnel", () => {
+    // Simulate the logout cookie-building logic from server.js
+    const req = { socket: {}, headers: { host: "abc123.ngrok.app" } };
+    let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+    if (isHttpsConnection(req)) clearCookie += "; Secure";
+    assert.ok(clearCookie.includes("; Secure"), "Secure flag must be set for tunnel connections");
+  });
+
+  it("logout cookie omits Secure flag for plain HTTP localhost", () => {
+    const req = { socket: { encrypted: false }, headers: { host: "localhost" } };
+    let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+    if (isHttpsConnection(req)) clearCookie += "; Secure";
+    assert.ok(!clearCookie.includes("; Secure"), "Secure flag must not be set for plain HTTP");
+  });
+
+  it("logout cookie includes Secure flag for Cloudflare custom domain", () => {
+    const req = {
+      socket: { remoteAddress: "::ffff:127.0.0.1" },
+      headers: { host: "terminal.example.com", "cf-connecting-ip": "203.0.113.5" },
+    };
+    let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+    if (isHttpsConnection(req)) clearCookie += "; Secure";
+    assert.ok(clearCookie.includes("; Secure"), "Secure flag must be set for Cloudflare custom domain");
+  });
+});
+
 // Mock the auth functions from server.js
 // These would normally be imported, but since server.js doesn't export them,
 // we'll test them by extracting the logic into testable units

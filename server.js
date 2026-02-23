@@ -840,7 +840,7 @@ const routes = [
       }
     }
     let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
-    if (req.socket.encrypted) clearCookie += "; Secure";
+    if (isHttpsConnection(req)) clearCookie += "; Secure";
     res.setHeader("Set-Cookie", clearCookie);
     json(res, 200, { ok: true });
   }},
@@ -863,7 +863,7 @@ const routes = [
       wsClients.delete(clientId);
     }
     let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
-    if (req.socket.encrypted) clearCookie += "; Secure";
+    if (isHttpsConnection(req)) clearCookie += "; Secure";
     res.setHeader("Set-Cookie", clearCookie);
     json(res, 200, { ok: true });
   }},
