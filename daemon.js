@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import pty from "node-pty";
 import { encode, decoder } from "./lib/ndjson.js";
 import { log } from "./lib/log.js";
+import { getSafeEnv } from "./lib/env-filter.js";
 import { Session } from "./lib/session.js";
 import { loadShortcuts, saveShortcuts } from "./lib/shortcuts.js";
 
@@ -41,24 +42,6 @@ function aliveSessionFor(clientId) {
 }
 
 // --- Side-effectful session operations ---
-
-// Filter sensitive environment variables from PTY
-const SENSITIVE_ENV_VARS = new Set([
-  "SSH_PASSWORD",
-  "SETUP_TOKEN",
-  "KATULONG_NO_AUTH",
-  "CLAUDECODE", // Prevent nested Claude Code sessions
-]);
-
-function getSafeEnv() {
-  const safe = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!SENSITIVE_ENV_VARS.has(key)) {
-      safe[key] = value;
-    }
-  }
-  return safe;
-}
 
 function broadcast(msg) {
   const line = encode(msg);

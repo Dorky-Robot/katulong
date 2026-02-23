@@ -2,7 +2,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
-import { existsSync, unlinkSync, mkdtempSync } from "node:fs";
+import { existsSync, unlinkSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -286,6 +286,100 @@ describe("daemon integration", () => {
 
     // Clean up
     await rpc(sock, { type: "delete-session", name: sessionName });
+  });
+});
+
+// ─── Daemon security tests (separate daemon instance) ────────────────────────
+
+describe("daemon security", () => {
+  describe("socket permissions", () => {
+    const SEC_SOCKET = `/tmp/katulong-test-${process.pid}-sec.sock`;
+    const SEC_DATA_DIR = mkdtempSync(join(tmpdir(), "katulong-sec-test-"));
+    let secDaemon;
+
+    before(async () => {
+      if (existsSync(SEC_SOCKET)) unlinkSync(SEC_SOCKET);
+
+      secDaemon = spawn("node", [DAEMON_PATH], {
+        env: {
+          ...process.env,
+          KATULONG_SOCK: SEC_SOCKET,
+          KATULONG_DATA_DIR: SEC_DATA_DIR,
+        },
+        stdio: "pipe",
+      });
+
+      secDaemon.stderr.on("data", () => {});
+      secDaemon.stdout.on("data", () => {});
+
+      await waitForSocket(SEC_SOCKET);
+    });
+
+    after(async () => {
+      if (secDaemon) {
+        secDaemon.kill("SIGTERM");
+        await new Promise((resolve) => secDaemon.on("exit", resolve));
+      }
+      if (existsSync(SEC_SOCKET)) {
+        try { unlinkSync(SEC_SOCKET); } catch {}
+      }
+    });
+
+    it("creates socket with 0600 permissions", () => {
+      const stat = statSync(SEC_SOCKET);
+      const mode = stat.mode & 0o777;
+      assert.equal(mode, 0o600, `socket should have 0600 permissions, got 0${mode.toString(8)}`);
+    });
+
+    it("creates PID file with 0600 permissions", () => {
+      const pidPath = join(SEC_DATA_DIR, "daemon.pid");
+      assert.ok(existsSync(pidPath), "PID file should exist");
+      const stat = statSync(pidPath);
+      const mode = stat.mode & 0o777;
+      assert.equal(mode, 0o600, `PID file should have 0600 permissions, got 0${mode.toString(8)}`);
+    });
+
+    it("removes a stale socket file on startup", async () => {
+      // Write a dummy stale socket file at a new path
+      const STALE_SOCKET = `/tmp/katulong-test-${process.pid}-stale.sock`;
+      const STALE_DATA_DIR = mkdtempSync(join(tmpdir(), "katulong-stale-test-"));
+
+      // Create a file at that path to simulate a stale socket
+      writeFileSync(STALE_SOCKET, "stale");
+
+      let staleDaemon;
+      try {
+        staleDaemon = spawn("node", [DAEMON_PATH], {
+          env: {
+            ...process.env,
+            KATULONG_SOCK: STALE_SOCKET,
+            KATULONG_DATA_DIR: STALE_DATA_DIR,
+          },
+          stdio: "pipe",
+        });
+
+        staleDaemon.stderr.on("data", () => {});
+        staleDaemon.stdout.on("data", () => {});
+
+        // Daemon should start successfully, replacing the stale file
+        await waitForSocket(STALE_SOCKET);
+
+        // Verify the socket is now a real socket (connectable), not the dummy file
+        const probe = createConnection(STALE_SOCKET);
+        await new Promise((resolve, reject) => {
+          probe.on("connect", () => { probe.destroy(); resolve(); });
+          probe.on("error", (err) => reject(new Error(`Stale socket not replaced: ${err.message}`)));
+        });
+      } finally {
+        if (staleDaemon) {
+          staleDaemon.kill("SIGTERM");
+          await new Promise((resolve) => staleDaemon.on("exit", resolve));
+        }
+        if (existsSync(STALE_SOCKET)) {
+          try { unlinkSync(STALE_SOCKET); } catch {}
+        }
+      }
+    });
   });
 });
 
