@@ -67,13 +67,14 @@ describe("Setup Tokens", () => {
   });
 
   describe("findSetupToken", () => {
-    it("finds token by value", () => {
+    it("finds token by value when not expired", () => {
       const tokenData = {
         id: "token123",
         token: "abc123def456",
         name: "Test Token",
         createdAt: Date.now(),
         lastUsedAt: null,
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
       };
 
       const newState = state.addSetupToken(tokenData);
@@ -94,12 +95,80 @@ describe("Setup Tokens", () => {
         name: "Test Token",
         createdAt: Date.now(),
         lastUsedAt: null,
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
       };
 
       const newState = state.addSetupToken(tokenData);
       const found = newState.findSetupToken("");
 
       assert.strictEqual(found, null);
+    });
+
+    it("returns null for expired token (fail-closed)", () => {
+      const tokenData = {
+        id: "token123",
+        token: "abc123def456",
+        name: "Expired Token",
+        createdAt: Date.now() - 10000,
+        lastUsedAt: null,
+        expiresAt: Date.now() - 1,
+      };
+
+      const newState = state.addSetupToken(tokenData);
+      const found = newState.findSetupToken("abc123def456");
+
+      assert.strictEqual(found, null, "expired token should be rejected");
+    });
+
+    it("returns null for token without expiresAt (fail-closed)", () => {
+      const tokenData = {
+        id: "token123",
+        token: "abc123def456",
+        name: "Legacy Token",
+        createdAt: Date.now() - 10000,
+        lastUsedAt: null,
+        // No expiresAt field
+      };
+
+      const newState = state.addSetupToken(tokenData);
+      const found = newState.findSetupToken("abc123def456");
+
+      assert.strictEqual(found, null, "token without expiresAt should be rejected (fail-closed)");
+    });
+
+    it("returns null for token expiring exactly at now", () => {
+      const now = Date.now();
+      const tokenData = {
+        id: "token123",
+        token: "abc123def456",
+        name: "Just Expired",
+        createdAt: now - 10000,
+        lastUsedAt: null,
+        expiresAt: now,
+      };
+
+      const newState = state.addSetupToken(tokenData);
+      // Pass now explicitly so expiry === now (boundary: now >= expiresAt → expired)
+      const found = newState.findSetupToken("abc123def456", now);
+
+      assert.strictEqual(found, null, "token expiring exactly at now should be rejected");
+    });
+
+    it("returns token expiring 1ms in the future", () => {
+      const now = Date.now();
+      const tokenData = {
+        id: "token123",
+        token: "abc123def456",
+        name: "Almost Expired",
+        createdAt: now - 10000,
+        lastUsedAt: null,
+        expiresAt: now + 1,
+      };
+
+      const newState = state.addSetupToken(tokenData);
+      const found = newState.findSetupToken("abc123def456", now);
+
+      assert.deepStrictEqual(found, tokenData, "token expiring 1ms in the future should be valid");
     });
   });
 
@@ -216,6 +285,63 @@ describe("Setup Tokens", () => {
 
       assert.strictEqual(state2.setupTokens.length, 1);
       assert.strictEqual(state2.setupTokens[0].id, "token2");
+    });
+  });
+
+  describe("pruneExpiredTokens", () => {
+    it("removes expired tokens", () => {
+      const now = Date.now();
+      const expired = { id: "t1", token: "abc", name: "Expired", createdAt: now - 20000, lastUsedAt: null, expiresAt: now - 1 };
+      const valid = { id: "t2", token: "def", name: "Valid", createdAt: now - 10000, lastUsedAt: null, expiresAt: now + 10000 };
+
+      const state1 = state.addSetupToken(expired).addSetupToken(valid);
+      const state2 = state1.pruneExpiredTokens(now);
+
+      assert.strictEqual(state2.setupTokens.length, 1);
+      assert.strictEqual(state2.setupTokens[0].id, "t2");
+    });
+
+    it("removes tokens without expiresAt (fail-closed)", () => {
+      const legacy = { id: "t1", token: "abc", name: "Legacy", createdAt: Date.now() - 10000, lastUsedAt: null };
+      const valid = { id: "t2", token: "def", name: "Valid", createdAt: Date.now(), lastUsedAt: null, expiresAt: Date.now() + 10000 };
+
+      const state1 = state.addSetupToken(legacy).addSetupToken(valid);
+      const state2 = state1.pruneExpiredTokens();
+
+      assert.strictEqual(state2.setupTokens.length, 1);
+      assert.strictEqual(state2.setupTokens[0].id, "t2");
+    });
+
+    it("keeps all tokens when none are expired", () => {
+      const now = Date.now();
+      const token1 = { id: "t1", token: "abc", name: "Token 1", createdAt: now, lastUsedAt: null, expiresAt: now + 10000 };
+      const token2 = { id: "t2", token: "def", name: "Token 2", createdAt: now, lastUsedAt: null, expiresAt: now + 20000 };
+
+      const state1 = state.addSetupToken(token1).addSetupToken(token2);
+      const state2 = state1.pruneExpiredTokens(now);
+
+      assert.strictEqual(state2.setupTokens.length, 2);
+    });
+
+    it("returns empty array when all tokens are expired", () => {
+      const now = Date.now();
+      const token1 = { id: "t1", token: "abc", name: "Token 1", createdAt: now - 20000, lastUsedAt: null, expiresAt: now - 10000 };
+      const token2 = { id: "t2", token: "def", name: "Token 2", createdAt: now - 30000, lastUsedAt: null, expiresAt: now - 1 };
+
+      const state1 = state.addSetupToken(token1).addSetupToken(token2);
+      const state2 = state1.pruneExpiredTokens(now);
+
+      assert.strictEqual(state2.setupTokens.length, 0);
+    });
+
+    it("preserves immutability - original state unchanged", () => {
+      const now = Date.now();
+      const expired = { id: "t1", token: "abc", name: "Expired", createdAt: now - 20000, lastUsedAt: null, expiresAt: now - 1 };
+
+      const state1 = state.addSetupToken(expired);
+      state1.pruneExpiredTokens(now);
+
+      assert.strictEqual(state1.setupTokens.length, 1, "original state should be unchanged");
     });
   });
 
