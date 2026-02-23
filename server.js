@@ -36,6 +36,7 @@ import { validateMessage } from "./lib/websocket-validation.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest, getAccessMethod } from "./lib/access-method.js";
 import { serveStaticFile } from "./lib/static-files.js";
+import { createTransportBridge } from "./lib/transport-bridge.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -169,7 +170,7 @@ function connectDaemon() {
       pendingRPC.delete(msg.id);
       resolve(msg);
     } else {
-      relayBroadcast(msg);
+      bridge.relay(msg);
     }
   }));
 
@@ -1107,9 +1108,10 @@ function closeWebSocketsForCredential(credentialId) {
   }
 }
 
-let sshRelay = null;
+const bridge = createTransportBridge();
 
-function relayBroadcast(msg) {
+// Register WebSocket transport
+bridge.register((msg) => {
   switch (msg.type) {
     case "output":
       sendToSession(msg.session, { type: "output", data: msg.data }, { preferP2P: true });
@@ -1127,8 +1129,7 @@ function relayBroadcast(msg) {
       }
       break;
   }
-  sshRelay?.relayBroadcast(msg);
-}
+});
 
 wss.on("connection", (ws) => {
   const clientId = randomUUID();
@@ -1282,11 +1283,12 @@ server.listen(PORT, "0.0.0.0", () => {
   log.info("Katulong HTTP started", { port: PORT });
 });
 
-sshRelay = startSSHServer({
+startSSHServer({
   port: SSH_PORT,
   hostKey: sshHostKey,
   password: SSH_PASSWORD,
   daemonRPC,
   daemonSend,
   credentialLockout,
+  bridge,
 });
