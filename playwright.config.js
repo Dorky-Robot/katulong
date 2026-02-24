@@ -1,9 +1,14 @@
 import { defineConfig, devices } from "@playwright/test";
+import { availableParallelism } from "os";
 import { TEST_PORT, SHARD_INDEX, BASE_URL } from "./test/e2e/test-config.js";
 
+// Cap default workers to avoid overwhelming the daemon with concurrent PTY attach requests.
+// With fullyParallel, all workers attach to the shared default session simultaneously.
+// The daemon's RPC timeout (5s) can't handle 8+ simultaneous attaches on cold start.
+// 4 workers is optimal: 0 flaky in 16s vs 8 workers with 4+ flaky in 19s+ (retries).
 const workers = process.env.PW_WORKERS
   ? parseInt(process.env.PW_WORKERS, 10)
-  : "100%";
+  : Math.min(4, availableParallelism());
 
 export default defineConfig({
   testDir: "test/e2e",

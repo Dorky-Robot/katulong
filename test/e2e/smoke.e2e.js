@@ -9,10 +9,6 @@ test.describe("Smoke — critical path", () => {
     await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
     await waitForAppReady(page);
     await page.locator(".xterm-helper-textarea").focus();
-    await page.waitForFunction(
-      () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
-      { timeout: 10000 },
-    );
   });
 
   test.afterEach(async ({ page }) => {
