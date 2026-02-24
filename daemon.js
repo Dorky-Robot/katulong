@@ -8,11 +8,12 @@ import { log } from "./lib/log.js";
 import { getSafeEnv } from "./lib/env-filter.js";
 import { Session } from "./lib/session.js";
 import { loadShortcuts, saveShortcuts } from "./lib/shortcuts.js";
+import envConfig from "./lib/env-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
-const SHELL = process.env.SHELL || "/bin/zsh";
-const DATA_DIR = process.env.KATULONG_DATA_DIR || __dirname;
+const SOCKET_PATH = envConfig.socketPath;
+const SHELL = envConfig.shell;
+const DATA_DIR = envConfig.dataDir;
 const SHORTCUTS_PATH = join(DATA_DIR, "shortcuts.json");
 const PID_PATH = join(DATA_DIR, "daemon.pid");
 const MAX_BUFFER = 5000;
@@ -53,7 +54,7 @@ function spawnSession(name, cols = 120, rows = 40) {
     name: "xterm-256color",
     cols,
     rows,
-    cwd: process.env.HOME,
+    cwd: envConfig.home,
     env: {
       ...getSafeEnv(), // Filter out sensitive environment variables
       TERM: "xterm-256color",
