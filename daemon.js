@@ -77,12 +77,8 @@ function spawnSession(name, cols = 120, rows = 40) {
   sessions.set(name, session);
   log.info("Session created", { session: name, pid: session.pid });
 
-  // Clear initial prompt artifacts on spawn
-  setTimeout(() => {
-    if (session.alive) {
-      session.write("clear\n");
-    }
-  }, 100);
+  // Let shell redraw prompt with Ctrl-L (standard terminal refresh, no history pollution)
+  session.write("\x0C");
 
   return session;
 }
