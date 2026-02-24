@@ -516,7 +516,7 @@ describe("Setup Tokens", () => {
       assert.strictEqual(found.id, "tok1");
     });
 
-    it("does not set _needsMigration when tokens are already hashed", () => {
+    it("returns needsMigration=false when tokens are already hashed", () => {
       const tokenData = {
         id: "t1",
         token: "some-value",
