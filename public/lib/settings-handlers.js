@@ -63,32 +63,21 @@ export function createSettingsHandlers(options = {}) {
   /**
    * Initialize instance name input
    */
-  async function initInstanceName() {
+  async function initInstanceName(config) {
     const input = document.getElementById("instance-name-input");
     if (!input) return;
 
-    try {
-      // Load current instance name
-      const data = await api.get("/api/config");
+    if (config && config.instanceName) {
+      input.value = config.instanceName;
+      document.title = `Katulong — ${config.instanceName}`;
+    }
 
-      if (data.config && data.config.instanceName) {
-        input.value = data.config.instanceName;
+    if (config && config.instanceIcon && onInstanceIconChange) {
+      onInstanceIconChange(config.instanceIcon);
+    }
 
-        // Update document title
-        document.title = `Katulong — ${data.config.instanceName}`;
-      }
-
-      // Also load instance icon if callback provided
-      if (data.config && data.config.instanceIcon && onInstanceIconChange) {
-        onInstanceIconChange(data.config.instanceIcon);
-      }
-
-      // Also load toolbar color if callback provided
-      if (data.config && data.config.toolbarColor && onToolbarColorChange) {
-        onToolbarColorChange(data.config.toolbarColor);
-      }
-    } catch (error) {
-      console.error("Failed to load instance name:", error);
+    if (config && config.toolbarColor && onToolbarColorChange) {
+      onToolbarColorChange(config.toolbarColor);
     }
 
     // Save on blur
@@ -138,7 +127,7 @@ export function createSettingsHandlers(options = {}) {
   /**
    * Initialize instance icon picker
    */
-  async function initInstanceIcon() {
+  async function initInstanceIcon(config) {
     const iconBtn = document.getElementById("instance-icon-btn");
     const iconDisplay = document.getElementById("instance-icon-display");
     const overlay = document.getElementById("icon-picker-overlay");
@@ -148,16 +137,9 @@ export function createSettingsHandlers(options = {}) {
 
     let currentIcon = "terminal-window";
 
-    // Load current instance icon
-    try {
-      const data = await api.get("/api/config");
-
-      if (data.config && data.config.instanceIcon) {
-        currentIcon = data.config.instanceIcon.replace(/[^a-z0-9-]/g, "");
-        iconDisplay.className = `ph ph-${currentIcon}`;
-      }
-    } catch (error) {
-      console.error("Failed to load instance icon:", error);
+    if (config && config.instanceIcon) {
+      currentIcon = config.instanceIcon.replace(/[^a-z0-9-]/g, "");
+      iconDisplay.className = `ph ph-${currentIcon}`;
     }
 
     // Populate icon picker grids
@@ -230,21 +212,14 @@ export function createSettingsHandlers(options = {}) {
   /**
    * Initialize toolbar color picker
    */
-  async function initToolbarColor() {
+  async function initToolbarColor(config) {
     const picker = document.getElementById("toolbar-color-picker");
     if (!picker) return;
 
     let currentColor = "default";
 
-    // Load current toolbar color
-    try {
-      const data = await api.get("/api/config");
-
-      if (data.config && data.config.toolbarColor) {
-        currentColor = data.config.toolbarColor;
-      }
-    } catch (error) {
-      console.error("Failed to load toolbar color:", error);
+    if (config && config.toolbarColor) {
+      currentColor = config.toolbarColor;
     }
 
     // Populate color swatches
@@ -326,10 +301,17 @@ export function createSettingsHandlers(options = {}) {
     }
   }
 
-  function init() {
-    initInstanceName();
-    initInstanceIcon();
-    initToolbarColor();
+  async function init() {
+    let config = null;
+    try {
+      const data = await api.get("/api/config");
+      config = data.config;
+    } catch (error) {
+      console.error("Failed to load config:", error);
+    }
+    initInstanceName(config);
+    initInstanceIcon(config);
+    initToolbarColor(config);
     initThemeToggle();
     initLogout();
     initVersion();

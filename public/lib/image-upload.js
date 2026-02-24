@@ -31,62 +31,22 @@ export function isImageFile(file) {
 }
 
 /**
- * Upload image file
- */
-export async function uploadImage(file, options = {}) {
-  const { onProgress, showToast: toast = showToast } = options;
-
-  if (!isImageFile(file)) {
-    if (toast) toast("Not an image file", true);
-    return;
-  }
-
-  const formData = new FormData();
-  formData.append("image", file);
-
-  try {
-    const res = await fetch("/upload/image", {
-      method: "POST",
-      body: formData,
-    });
-
-    if (!res.ok) {
-      throw new Error(`Upload failed: ${res.status}`);
-    }
-
-    const { path } = await res.json();
-    if (toast) toast(`Uploaded: ${file.name}`);
-
-    if (onProgress) {
-      onProgress({ success: true, path, file });
-    }
-
-    return path;
-  } catch (err) {
-    console.error("[ImageUpload] Failed:", err);
-    if (toast) toast(`Upload failed: ${file.name}`, true);
-
-    if (onProgress) {
-      onProgress({ success: false, error: err, file });
-    }
-
-    throw err;
-  }
-}
-
-/**
  * Upload image to terminal (sends path to terminal after upload)
  */
 export async function uploadImageToTerminal(file, options = {}) {
   const { onSend, toast = showToast } = options;
 
   try {
+    const headers = {
+      "Content-Type": "application/octet-stream",
+      "X-Filename": file.name,
+    };
+    const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    if (csrfMeta) headers["x-csrf-token"] = csrfMeta.content;
+
     const res = await fetch("/upload", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/octet-stream",
-        "X-Filename": file.name
-      },
+      headers,
       body: file,
     });
 

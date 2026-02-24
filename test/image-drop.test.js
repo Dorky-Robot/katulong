@@ -21,6 +21,9 @@ function setupBrowserGlobals() {
     getElementById() {
       return null; // drop-overlay not needed for these tests
     },
+    querySelector() {
+      return null; // CSRF meta tag not present in tests
+    },
     createElement() {
       return {
         className: "",

@@ -4,7 +4,7 @@ import { readFileSync, existsSync, watch, writeFileSync, unlinkSync } from "node
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { WebSocketServer } from "ws";
-import { randomUUID, randomBytes } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import envConfig from "./lib/env-config.js";
 import { log } from "./lib/log.js";
 import { createServerPeer, destroyPeer, initP2P, p2pAvailable } from "./lib/p2p.js";
@@ -73,8 +73,6 @@ if (envConfig.noAuth) {
 
 const MAX_REQUEST_BODY_SIZE = 1024 * 1024; // 1MB limit for request bodies
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const DAEMON_RECONNECT_INITIAL_MS = 1000; // 1 second
-const DAEMON_RECONNECT_MAX_MS = 30000; // 30 seconds
 const SERVER_PID_PATH = join(DATA_DIR, "server.pid");
 const DRAIN_TIMEOUT_MS = envConfig.drainTimeout;
 
@@ -176,12 +174,13 @@ const wsClients = new Map(); // clientId -> { ws, session, sessionToken, credent
 const { auth, csrf } = createMiddleware({ isAuthenticated, json });
 
 const routeCtx = {
-  json, parseJSON, readBody, isAuthenticated, daemonRPC,
+  json, parseJSON, isAuthenticated, daemonRPC,
   storeChallenge, consumeChallenge, challenges,
-  broadcastToAll, closeWebSocketsForCredential, wsClients,
+  broadcastToAll, closeWebSocketsForCredential,
   credentialLockout, configManager,
-  __dirname, DATA_DIR, SSH_PASSWORD, SSH_PORT, APP_VERSION, RP_NAME, PORT,
-  getDraining: () => draining, getDaemonConnected: () => daemonConnected,
+  __dirname, DATA_DIR, SSH_PASSWORD, SSH_PORT, SSH_HOST: envConfig.sshHost, APP_VERSION, RP_NAME, PORT,
+  getDraining: () => draining, getDaemonConnected: () => daemon.isConnected(),
+  closeAllWebSockets,
   auth, csrf,
 };
 
@@ -383,6 +382,16 @@ function broadcastToAll(payload) {
     if (info.ws.readyState === 1) {
       info.ws.send(encoded);
     }
+  }
+}
+
+// Close all WebSocket connections (used by revoke-all)
+function closeAllWebSockets(code, reason) {
+  for (const [clientId, info] of wsClients) {
+    if (info.ws.readyState === 1) {
+      info.ws.close(code, reason);
+    }
+    wsClients.delete(clientId);
   }
 }
 

@@ -27,8 +27,6 @@ export function createSessionListComponent(store) {
   };
 
   const afterRender = (container, state) => {
-    container.innerHTML = '';
-
     for (const s of state.sessions) {
       const row = document.createElement("div");
       row.className = "session-item";
