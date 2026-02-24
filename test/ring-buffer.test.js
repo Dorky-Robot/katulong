@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { RingBuffer } from "../lib/ring-buffer.js";
+import { RingBuffer } from "../lib/session.js";
 
 describe("RingBuffer", () => {
   describe("constructor", () => {
