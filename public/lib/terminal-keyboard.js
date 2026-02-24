@@ -4,6 +4,8 @@
  * Composable keyboard event handlers for terminal input.
  */
 
+import { filterTerminalResponses, registerResponseSuppressors } from "/lib/terminal-input-filter.js";
+
 /**
  * Create terminal keyboard handlers
  */
@@ -104,19 +106,13 @@ export function createTerminalKeyboard(options = {}) {
 
   /**
    * Initialize terminal data handler
-   * Filters out focus-reporting sequences
+   * Filters out terminal query responses that xterm.js emits via onData
    */
   function initDataHandler() {
     if (!term) return;
 
     term.onData((data) => {
-      // Filter focus-reporting sequences (CSI I / CSI O) that xterm.js
-      // emits when the browser tab gains/loses focus. These leak into
-      // CLI apps like Claude Code as garbage input (issue #10375).
-      const filtered = data
-        .replace(/\x1b\[I/g, "")
-        .replace(/\x1b\[O/g, "");
-
+      const filtered = filterTerminalResponses(data);
       if (filtered && onSend) {
         onSend(filtered);
       }
@@ -130,6 +126,8 @@ export function createTerminalKeyboard(options = {}) {
     initTabHandler();
     initCustomKeyHandler();
     initDataHandler();
+    // Suppress OSC color query responses at the parser level
+    if (term) registerResponseSuppressors(term);
   }
 
   return {
