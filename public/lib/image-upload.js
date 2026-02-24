@@ -96,8 +96,8 @@ export async function uploadImageToTerminal(file, options = {}) {
       return;
     }
 
-    const { path } = await res.json();
-    if (onSend) onSend(path + " ");
+    const { path, absolutePath } = await res.json();
+    if (onSend) onSend((absolutePath || path) + " ");
   } catch (err) {
     if (toast) toast("Upload failed", true);
   }
