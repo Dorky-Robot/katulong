@@ -560,6 +560,7 @@ describe("Route Handlers auth enforcement (no KATULONG_NO_AUTH)", () => {
     ["GET", "/api/tokens"],
     ["POST", "/api/tokens"],
     ["DELETE", "/api/tokens/some-id"],
+    ["PATCH", "/api/tokens/some-id"],
     ["GET", "/api/credentials"],
     ["GET", "/api/config"],
     ["PUT", "/api/config/instance-icon"],
