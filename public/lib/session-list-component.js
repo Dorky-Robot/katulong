@@ -5,7 +5,7 @@
  */
 
 import { createComponent } from '/lib/component.js';
-import { invalidateSessions } from '/lib/session-store.js';
+import { invalidateSessions } from '/lib/stores.js';
 import { api } from '/lib/api-client.js';
 
 /**
@@ -27,8 +27,6 @@ export function createSessionListComponent(store) {
   };
 
   const afterRender = (container, state) => {
-    container.innerHTML = '';
-
     for (const s of state.sessions) {
       const row = document.createElement("div");
       row.className = "session-item";

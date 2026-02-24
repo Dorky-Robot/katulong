@@ -4,9 +4,10 @@
  * Creates fixture auth state so the server loads it on startup
  */
 
-import { writeFileSync, mkdirSync, rmSync } from 'fs';
+import { mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { TEST_DATA_DIR } from './test-config.js';
+import { writeAuthFixture } from '../helpers/auth-fixture.js';
 
 function setupFixtureAuthState() {
   console.log('[Pre-Server Setup] Creating fixture auth state...');
@@ -64,13 +65,12 @@ function setupFixtureAuthState() {
     setupTokens: [setupToken]
   };
 
-  // Write to katulong-auth.json (the actual filename the server uses)
-  const authPath = join(TEST_DATA_DIR, 'katulong-auth.json');
-  writeFileSync(authPath, JSON.stringify(authState, null, 2));
+  // Write as per-entity files (the format the server uses)
+  writeAuthFixture(TEST_DATA_DIR, authState);
 
-  console.log('[Pre-Server Setup] ✓ Created fixture auth state at', authPath);
-  console.log('[Pre-Server Setup] ✓ Fixture credential:', fixtureCredential.id);
-  console.log('[Pre-Server Setup] ✓ Fixture token:', setupToken.name);
+  console.log('[Pre-Server Setup] Created fixture auth state at', TEST_DATA_DIR);
+  console.log('[Pre-Server Setup] Fixture credential:', fixtureCredential.id);
+  console.log('[Pre-Server Setup] Fixture token:', setupToken.name);
 }
 
 // Run setup

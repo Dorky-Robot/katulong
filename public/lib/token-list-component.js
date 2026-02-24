@@ -5,7 +5,7 @@
  */
 
 import { createComponent } from '/lib/component.js';
-import { clearNewToken, invalidateTokens } from '/lib/token-store.js';
+import { clearNewToken, invalidateTokens } from '/lib/stores.js';
 import { ListRenderer } from '/lib/list-renderer.js';
 
 // Utility functions

@@ -100,8 +100,8 @@ git push origin main
 
 - **Binary:** `/usr/local/bin/katulong` (or `/opt/homebrew/bin/katulong` on Apple Silicon)
 - **App files:** `/usr/local/opt/katulong/` (or `/opt/homebrew/opt/katulong/`)
-- **Config/data:** `~/.config/katulong/`
-- **Logs:** `~/.config/katulong/daemon.log` and `server.log`
+- **Config/data:** `~/.katulong/`
+- **Logs:** `~/.katulong/daemon.log` and `server.log`
 
 ### Service Integration
 
@@ -117,12 +117,12 @@ brew services list             # Show all services
 The service runs with:
 - **Keep alive:** Service restarts if it crashes
 - **Log path:** `/usr/local/var/log/katulong.log` (or `/opt/homebrew/var/log/`)
-- **Environment:** Sets `KATULONG_DATA_DIR` to `~/.config/katulong`
+- **Environment:** Sets `KATULONG_DATA_DIR` to `~/.katulong`
 
 ### Environment Variables
 
 The wrapper script sets:
-- `KATULONG_DATA_DIR=~/.config/katulong` - Config and data directory
+- `KATULONG_DATA_DIR=~/.katulong` - Config and data directory
 
 Users can override by setting environment variables before running `katulong`:
 
@@ -153,11 +153,11 @@ echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-**Issue:** Permission denied on `~/.config/katulong`
+**Issue:** Permission denied on `~/.katulong`
 
 **Solution:** Fix directory permissions:
 ```bash
-chmod 700 ~/.config/katulong
+chmod 700 ~/.katulong
 ```
 
 **Issue:** Service won't start

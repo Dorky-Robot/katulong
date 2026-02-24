@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { waitForShellReady } from './helpers.js';
 
 test.describe("Session CRUD", () => {
   // Helper: create a session by navigating to it (triggers daemon attach/create)
@@ -6,6 +7,7 @@ test.describe("Session CRUD", () => {
     await page.goto(`/?s=${encodeURIComponent(name)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+    await waitForShellReady(page);
   }
 
   // Helper: delete a session via API (best-effort cleanup)
@@ -152,6 +154,7 @@ test.describe("Session CRUD", () => {
     await page.goto(`/?s=${encodeURIComponent(nameA)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+    await waitForShellReady(page);
     await page.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type(`echo ${markerA}`);
     await page.keyboard.press("Enter");
@@ -161,6 +164,7 @@ test.describe("Session CRUD", () => {
     await page.goto(`/?s=${encodeURIComponent(nameB)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+    await waitForShellReady(page);
     await page.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type(`echo ${markerB}`);
     await page.keyboard.press("Enter");

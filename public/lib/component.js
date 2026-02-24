@@ -91,64 +91,6 @@ export function createComponent(store, render, options = {}) {
 }
 
 /**
- * Creates a derived component that depends on multiple stores
- * @param {Array} stores - Array of store instances
- * @param {Function} render - Render function: (...states) => HTML string
- * @returns {object} Component instance
- */
-export function createDerivedComponent(stores, render) {
-  let container = null;
-  let unsubscribes = [];
-  let mounted = false;
-
-  const component = {
-    mount(element) {
-      if (mounted) {
-        console.warn('[Component] Already mounted');
-        return;
-      }
-
-      container = element;
-      mounted = true;
-
-      // Subscribe to all stores
-      stores.forEach(store => {
-        const unsub = store.subscribe(() => {
-          if (mounted) {
-            component.render();
-          }
-        });
-        unsubscribes.push(unsub);
-      });
-
-      // Initial render
-      component.render();
-    },
-
-    render() {
-      if (!container || !mounted) return;
-
-      const states = stores.map(store => store.getState());
-      const html = render(...states);
-      container.innerHTML = html;
-    },
-
-    unmount() {
-      unsubscribes.forEach(unsub => unsub());
-      unsubscribes = [];
-      mounted = false;
-      container = null;
-    },
-
-    isMounted() {
-      return mounted;
-    }
-  };
-
-  return component;
-}
-
-/**
  * Helper: Safely escape HTML to prevent XSS
  * @param {string} str - String to escape
  * @returns {string} Escaped string
@@ -159,10 +101,3 @@ export function escapeHtml(str) {
   return div.innerHTML;
 }
 
-/**
- * Helper: Create event handler that works with innerHTML re-rendering
- * Usage: <button onclick="window.handleClick('arg')">
- */
-export function registerGlobalHandler(name, handler) {
-  window[name] = handler;
-}

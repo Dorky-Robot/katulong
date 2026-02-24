@@ -5,6 +5,15 @@ dist/
 .DS_Store
 *.log
 katulong-auth.json
+katulong-auth.lock/
+user.json
+credentials/
+sessions/
+setup-tokens/
+config.json
+shortcuts.json
+server.pid
+uploads/
 test-results/
 daemon.pid
 ssh/

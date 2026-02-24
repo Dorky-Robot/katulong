@@ -5,7 +5,10 @@
  * requests and consistent JSON error handling.
  */
 
-import { getCsrfToken } from "/lib/csrf.js";
+function getCsrfToken() {
+  const meta = document.querySelector('meta[name="csrf-token"]');
+  return meta ? meta.content : null;
+}
 
 function csrfHeaders() {
   const token = getCsrfToken();

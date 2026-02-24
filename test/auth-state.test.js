@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import { AuthState } from "../lib/auth-state.js";
-import { SESSION_TTL_MS } from "../lib/constants.js";
+import { SESSION_TTL_MS } from "../lib/env-config.js";
 
 describe("AuthState", () => {
   describe("constructor", () => {

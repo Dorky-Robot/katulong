@@ -13,15 +13,26 @@ export async function setupTest({ page, context }) {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/");
   await waitForAppReady(page);
+  await page.locator(".xterm-helper-textarea").focus();
 }
 
 /**
- * Wait for app to be ready (terminal loaded)
+ * Wait for the shell prompt to appear in the terminal.
+ * Bridges the gap between "terminal DOM visible" and "shell ready to accept input".
+ */
+export async function waitForShellReady(page) {
+  await page.waitForFunction(
+    () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
+  );
+}
+
+/**
+ * Wait for app to be ready (terminal loaded and shell prompt visible)
  */
 export async function waitForAppReady(page) {
   await page.waitForSelector(".xterm", { timeout: 10000 });
-  // Wait for terminal to be interactive (not just visible)
   await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+  await waitForShellReady(page);
 }
 
 /**

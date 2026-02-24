@@ -6,7 +6,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { setupTest } from './helpers.js';
+import { setupTest, waitForAppReady, waitForShellReady } from './helpers.js';
 
 test.describe('Connection Reliability', () => {
   test.beforeEach(async ({ page, context }) => {
@@ -14,9 +14,6 @@ test.describe('Connection Reliability', () => {
   });
 
   test('should send and receive terminal data over connection', async ({ page }) => {
-    // Wait for terminal to be ready
-    await page.waitForSelector('.xterm-screen');
-
     // Type a command
     const testCommand = `echo "connection-test-${Date.now()}"`;
     await page.keyboard.type(testCommand);
@@ -36,8 +33,6 @@ test.describe('Connection Reliability', () => {
   });
 
   test('should show connection indicator states', async ({ page }) => {
-    // Verify the terminal is connected and responsive
-    await page.waitForSelector('.xterm-screen');
     const testCommand = `echo "indicator-test-${Date.now()}"`;
     await page.keyboard.type(testCommand);
     await page.keyboard.press('Enter');
@@ -65,9 +60,9 @@ test.describe('Connection Reliability', () => {
     // Reload page
     await page.reload();
 
-    // Wait for reconnection
-    await page.waitForSelector('.xterm', { timeout: 10000 });
-    await page.waitForSelector('.xterm-screen', { timeout: 5000 });
+    // Wait for reconnection and shell ready
+    await waitForAppReady(page);
+    await page.locator(".xterm-helper-textarea").focus();
 
     // Verify connection reestablished by sending command
     const testCommand = `echo "after-reload-${Date.now()}"`;
@@ -100,8 +95,7 @@ test.describe('Connection Reliability', () => {
 
     // Reload page
     await page.reload();
-    await page.waitForSelector('.xterm', { timeout: 10000 });
-    await page.waitForSelector('.xterm-screen', { timeout: 5000 });
+    await waitForAppReady(page);
 
     // Wait for buffer to be replayed - marker should appear
     await page.waitForFunction(
@@ -201,6 +195,7 @@ test.describe('Connection Reliability', () => {
   });
 
   test('should maintain connection during long idle period', async ({ page }) => {
+    test.setTimeout(30_000);
     // Send initial command
     await page.keyboard.type('echo "before idle"');
     await page.keyboard.press('Enter');
@@ -213,7 +208,8 @@ test.describe('Connection Reliability', () => {
     console.log('[Test] Idling for 10 seconds...');
     await page.waitForTimeout(10000);
 
-    // Send command after idle
+    // Re-focus terminal after idle and send command
+    await page.locator(".xterm-helper-textarea").focus();
     const testCommand = `echo "after-idle-${Date.now()}"`;
     await page.keyboard.type(testCommand);
     await page.keyboard.press('Enter');
@@ -245,8 +241,8 @@ test.describe('Connection Reliability', () => {
     // Open second tab with same session
     const page2 = await context.newPage();
     await page2.goto("/");
-    await page2.waitForSelector('.xterm', { timeout: 10000 });
-    await page2.waitForSelector('.xterm-screen', { timeout: 5000 });
+    await waitForAppReady(page2);
+    await page2.locator(".xterm-helper-textarea").focus();
 
     // Second tab should see the same session (wait for terminal buffer replay)
     await page2.waitForFunction(

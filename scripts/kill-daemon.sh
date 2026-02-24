@@ -4,7 +4,7 @@
 
 set -e
 
-DATA_DIR="${KATULONG_DATA_DIR:-.}"
+DATA_DIR="${KATULONG_DATA_DIR:-$HOME/.katulong}"
 PID_FILE="$DATA_DIR/daemon.pid"
 
 echo "Attempting to stop Katulong daemon..."

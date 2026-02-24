@@ -196,7 +196,7 @@ end
 ├── node_modules/
 └── package.json
 
-~/.config/katulong/               (user data, created on first run)
+~/.katulong/               (user data, created on first run)
 ├── daemon.log
 ├── server.log
 ├── daemon.pid
@@ -274,7 +274,7 @@ Two plist files needed (daemon and server run as separate agents):
   <key>EnvironmentVariables</key>
   <dict>
     <key>KATULONG_DATA_DIR</key>
-    <string>~/.config/katulong</string>
+    <string>~/.katulong</string>
   </dict>
 
   <key>KeepAlive</key>
@@ -284,10 +284,10 @@ Two plist files needed (daemon and server run as separate agents):
   <true/>
 
   <key>StandardOutPath</key>
-  <string>~/.config/katulong/daemon.log</string>
+  <string>~/.katulong/daemon.log</string>
 
   <key>StandardErrorPath</key>
-  <string>~/.config/katulong/daemon.log</string>
+  <string>~/.katulong/daemon.log</string>
 </dict>
 </plist>
 ```
@@ -505,7 +505,7 @@ Before release:
    - Cons: Adds complexity to formula
    - Alternative: Document `launchctl` commands
 
-3. **Should DATA_DIR default to ~/.config/katulong for Homebrew installs?**
+3. **Should DATA_DIR default to ~/.katulong for Homebrew installs?**
    - Pros: Follows XDG standards, cleaner than project directory
    - Cons: Different behavior between manual and Homebrew installs
    - Proposed: Yes, detect Homebrew install in CLI and set default

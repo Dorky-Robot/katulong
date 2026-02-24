@@ -2,19 +2,19 @@
     import { FitAddon } from "/vendor/xterm/addon-fit.esm.js";
     import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
     import { ModalRegistry } from "/lib/modal.js";
-    import { ListRenderer } from "/lib/list-renderer.js";
-    import { createStore, createReducer } from "/lib/store.js";
-    import { createSessionStore, invalidateSessions } from "/lib/session-store.js";
+    import {
+      createSessionStore, invalidateSessions,
+      createTokenStore, setNewToken, invalidateTokens, removeToken, loadTokens as reloadTokens,
+      createShortcutsStore, loadShortcuts as reloadShortcuts,
+    } from "/lib/stores.js";
     import { createSessionListComponent } from "/lib/session-list-component.js";
     import { createSessionManager } from "/lib/session-manager.js";
-    import { createTokenStore, setNewToken, invalidateTokens, removeToken, loadTokens as reloadTokens } from "/lib/token-store.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
     import { createTokenFormManager } from "/lib/token-form.js";
-    import { createShortcutsStore, loadShortcuts as reloadShortcuts } from "/lib/shortcuts-store.js";
     import { createShortcutsPopup, createShortcutsEditPanel, createAddShortcutModal } from "/lib/shortcuts-components.js";
     import { createDictationModal } from "/lib/dictation-modal.js";
     import { createDragDropManager } from "/lib/drag-drop.js";
-    import { showToast, isImageFile, uploadImage, uploadImageToTerminal as uploadImageToTerminalFn } from "/lib/image-upload.js";
+    import { showToast, isImageFile, uploadImageToTerminal as uploadImageToTerminalFn } from "/lib/image-upload.js";
     import { createJoystickManager } from "/lib/joystick.js";
     import { createPullToRefreshManager } from "/lib/pull-to-refresh.js";
     import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
@@ -24,12 +24,10 @@
     import { createShortcutBar } from "/lib/shortcut-bar.js";
     import { createPasteHandler } from "/lib/paste-handler.js";
     import { createNetworkMonitor } from "/lib/network-monitor.js";
-    import { createP2PManager } from "/lib/p2p-manager.js";
+    import { createP2PManager, createP2PIndicator } from "/lib/p2p-manager.js";
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
-    import { createP2PIndicator } from "/lib/p2p-ui.js";
-    import { initModals } from "/lib/modal-init.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
     import { createWebSocketConnection } from "/lib/websocket-connection.js";
 
@@ -161,7 +159,34 @@
     term.open(document.getElementById("terminal-container"));
 
     // Initialize modals with terminal reference
-    initModals(modals, term);
+    modals.register('shortcuts', 'shortcuts-overlay', {
+      returnFocus: term,
+      onClose: () => term.focus()
+    });
+    modals.register('edit', 'edit-overlay', {
+      returnFocus: term,
+      onClose: () => term.focus()
+    });
+    modals.register('add', 'add-modal', {
+      returnFocus: term,
+      onOpen: () => {
+        const keyInput = document.getElementById("key-composer-input");
+        if (keyInput) keyInput.focus();
+      },
+      onClose: () => term.focus()
+    });
+    modals.register('session', 'session-overlay', {
+      returnFocus: term,
+      onClose: () => term.focus()
+    });
+    modals.register('dictation', 'dictation-overlay', {
+      returnFocus: term,
+      onClose: () => term.focus()
+    });
+    modals.register('settings', 'settings-overlay', {
+      returnFocus: term,
+      onClose: () => term.focus()
+    });
 
     // Disable mobile autocorrect/suggestions on xterm's hidden textarea
     function patchTextarea() {

@@ -15,10 +15,11 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import http from "node:http";
+import { writeAuthFixture } from "./helpers/auth-fixture.js";
 
 const TEST_PORT = 3008;
 
@@ -125,11 +126,7 @@ describe("WebSocket upgrade authentication and origin validation", () => {
     testDataDir = mkdtempSync(join(tmpdir(), "katulong-ws-upgrade-test-"));
 
     // Write pre-seeded auth state so the server has known valid/expired sessions
-    writeFileSync(
-      join(testDataDir, "katulong-auth.json"),
-      JSON.stringify(makeAuthState()),
-      "utf-8"
-    );
+    writeAuthFixture(testDataDir, makeAuthState());
 
     serverProcess = spawn("node", ["server.js"], {
       env: {

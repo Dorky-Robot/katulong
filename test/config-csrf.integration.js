@@ -16,10 +16,11 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import http from "node:http";
+import { writeAuthFixture } from "./helpers/auth-fixture.js";
 
 const TEST_PORT = 3007;
 
@@ -29,7 +30,7 @@ const CSRF_TOKEN = "a".repeat(64); // 64-char CSRF token
 const CREDENTIAL_ID = "test-cred-id-abcdef";
 
 /**
- * Build a katulong-auth.json state file with a single valid session.
+ * Build an auth state with a single valid session.
  * The session has a known CSRF token so tests can set or omit it.
  */
 function buildAuthState() {
@@ -152,9 +153,8 @@ describe("CSRF protection on PUT /api/config/* (#222)", () => {
   before(async () => {
     testDataDir = mkdtempSync(join(tmpdir(), "katulong-config-csrf-"));
 
-    // Pre-seed the auth state file with a valid session
-    const authStatePath = join(testDataDir, "katulong-auth.json");
-    writeFileSync(authStatePath, JSON.stringify(buildAuthState()), "utf-8");
+    // Pre-seed the auth state as per-entity files
+    writeAuthFixture(testDataDir, buildAuthState());
 
     serverProcess = spawn("node", ["server.js"], {
       env: {

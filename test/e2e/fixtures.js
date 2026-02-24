@@ -4,9 +4,10 @@
  * Sets up test data (devices, tokens) before tests run
  */
 
-import { writeFileSync, mkdirSync } from 'fs';
+import { mkdirSync } from 'fs';
 import { join } from 'path';
 import { BASE_URL, TEST_DATA_DIR } from './test-config.js';
+import { writeAuthFixture } from '../helpers/auth-fixture.js';
 
 /**
  * Create a fixture auth state with a real credential
@@ -61,9 +62,8 @@ export function createFixtureAuthState() {
       setupTokens: [setupToken]
     };
 
-    // Write to katulong-auth.json (the actual filename the server uses)
-    const authPath = join(TEST_DATA_DIR, 'katulong-auth.json');
-    writeFileSync(authPath, JSON.stringify(authState, null, 2));
+    // Write as per-entity files (the format the server uses)
+    writeAuthFixture(TEST_DATA_DIR, authState);
 
     console.log('[Fixtures] Created fixture auth state with credential:', fixtureCredential.id);
     console.log('[Fixtures] Created fixture token:', setupToken.name);
