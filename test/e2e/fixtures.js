@@ -106,48 +106,12 @@ export async function createTestTokens(page) {
 }
 
 /**
- * Create test device via API
- * Since WebAuthn pairing is complex, we'll check if devices exist
- */
-export async function createTestDevice(page) {
-  try {
-    // The app runs with KATULONG_NO_AUTH=1, so we're already "authenticated"
-    const response = await page.request.get(`${BASE_URL}/auth/devices`);
-
-    if (response.ok()) {
-      const data = await response.json();
-      const devices = data.devices || [];
-
-      if (devices.length > 0) {
-        console.log('[Fixtures] Found existing devices:', devices.length);
-        return devices;
-      }
-    }
-
-    console.log('[Fixtures] No devices found - tests will skip device-dependent scenarios');
-  } catch (err) {
-    console.log('[Fixtures] Could not check devices:', err.message);
-  }
-
-  return [];
-}
-
-/**
  * Setup all test fixtures
  * Note: Auth state with credential should be created before this runs (by pre-server-setup.js)
  */
 export async function setupTestFixtures(page) {
   console.log('[Fixtures] Setting up test data...');
-
-  // Check what we have (devices and tokens from the auth state we created earlier)
-  const devices = await createTestDevice(page);
-
-  // Don't create additional tokens - we already have fixture token from pre-server-setup
-  // Creating a new token here would create one without a credential link
-
-  console.log('[Fixtures] Setup complete - devices:', devices.length);
-
-  return { devices };
+  console.log('[Fixtures] Setup complete');
 }
 
 /**

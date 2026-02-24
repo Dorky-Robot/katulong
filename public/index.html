@@ -76,6 +76,9 @@
       }
     }
 
+    /* NOTE: [data-theme="auto"] light values intentionally duplicate [data-theme="light"]
+       so the media query applies the light palette when the OS is in light mode. */
+
     /* --- Reset & base --- */
     * { margin: 0; padding: 0; box-sizing: border-box; }
     button, input { font-family: inherit; }
@@ -225,78 +228,24 @@
     }
     #shortcut-bar::-webkit-scrollbar { display: none; }
 
-    /* Toolbar color variants */
-    #shortcut-bar[data-toolbar-color="blue"] { background: #89b4fa; border-bottom-color: #7aa2f7; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="blue"] .session-btn { background: #7aa2f7; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="blue"] .session-btn i { color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="blue"] .shortcut-btn,
-    #shortcut-bar[data-toolbar-color="blue"] .bar-icon-btn { color: #1e1e2e; border-color: #6690e0; background: rgba(255,255,255,0.3); }
-    #shortcut-bar[data-toolbar-color="blue"] #p2p-indicator { background: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="blue"] #p2p-indicator.p2p-active { background: #40a02b; }
-    #shortcut-bar[data-toolbar-color="blue"] #p2p-indicator.p2p-relay { background: #df8e1d; }
+    /* Toolbar color variants — custom properties */
+    [data-toolbar-color="blue"]   { --tb-bg: #89b4fa; --tb-accent: #7aa2f7; --tb-btn-border: #6690e0; }
+    [data-toolbar-color="purple"] { --tb-bg: #cba6f7; --tb-accent: #b4a1e8; --tb-btn-border: #a090d6; }
+    [data-toolbar-color="green"]  { --tb-bg: #a6e3a1; --tb-accent: #94d890; --tb-btn-border: #7fc97a; }
+    [data-toolbar-color="red"]    { --tb-bg: #f38ba8; --tb-accent: #e57996; --tb-btn-border: #d66884; }
+    [data-toolbar-color="orange"] { --tb-bg: #fab387; --tb-accent: #f5a76e; --tb-btn-border: #f09955; }
+    [data-toolbar-color="pink"]   { --tb-bg: #f5c2e7; --tb-accent: #f0b3de; --tb-btn-border: #e8a4d5; }
+    [data-toolbar-color="teal"]   { --tb-bg: #94e2d5; --tb-accent: #81d8cc; --tb-btn-border: #6ec9bc; }
+    [data-toolbar-color="yellow"] { --tb-bg: #f9e2af; --tb-accent: #f5d99d; --tb-btn-border: #f0ce8b; }
 
-    #shortcut-bar[data-toolbar-color="purple"] { background: #cba6f7; border-bottom-color: #b4a1e8; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="purple"] .session-btn { background: #b4a1e8; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="purple"] .session-btn i { color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="purple"] .shortcut-btn,
-    #shortcut-bar[data-toolbar-color="purple"] .bar-icon-btn { color: #1e1e2e; border-color: #a090d6; background: rgba(255,255,255,0.3); }
-    #shortcut-bar[data-toolbar-color="purple"] #p2p-indicator { background: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="purple"] #p2p-indicator.p2p-active { background: #40a02b; }
-    #shortcut-bar[data-toolbar-color="purple"] #p2p-indicator.p2p-relay { background: #df8e1d; }
-
-    #shortcut-bar[data-toolbar-color="green"] { background: #a6e3a1; border-bottom-color: #94d890; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="green"] .session-btn { background: #94d890; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="green"] .session-btn i { color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="green"] .shortcut-btn,
-    #shortcut-bar[data-toolbar-color="green"] .bar-icon-btn { color: #1e1e2e; border-color: #7fc97a; background: rgba(255,255,255,0.3); }
-    #shortcut-bar[data-toolbar-color="green"] #p2p-indicator { background: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="green"] #p2p-indicator.p2p-active { background: #40a02b; }
-    #shortcut-bar[data-toolbar-color="green"] #p2p-indicator.p2p-relay { background: #df8e1d; }
-
-    #shortcut-bar[data-toolbar-color="red"] { background: #f38ba8; border-bottom-color: #e57996; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="red"] .session-btn { background: #e57996; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="red"] .session-btn i { color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="red"] .shortcut-btn,
-    #shortcut-bar[data-toolbar-color="red"] .bar-icon-btn { color: #1e1e2e; border-color: #d66884; background: rgba(255,255,255,0.3); }
-    #shortcut-bar[data-toolbar-color="red"] #p2p-indicator { background: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="red"] #p2p-indicator.p2p-active { background: #40a02b; }
-    #shortcut-bar[data-toolbar-color="red"] #p2p-indicator.p2p-relay { background: #df8e1d; }
-
-    #shortcut-bar[data-toolbar-color="orange"] { background: #fab387; border-bottom-color: #f5a76e; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="orange"] .session-btn { background: #f5a76e; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="orange"] .session-btn i { color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="orange"] .shortcut-btn,
-    #shortcut-bar[data-toolbar-color="orange"] .bar-icon-btn { color: #1e1e2e; border-color: #f09955; background: rgba(255,255,255,0.3); }
-    #shortcut-bar[data-toolbar-color="orange"] #p2p-indicator { background: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="orange"] #p2p-indicator.p2p-active { background: #40a02b; }
-    #shortcut-bar[data-toolbar-color="orange"] #p2p-indicator.p2p-relay { background: #df8e1d; }
-
-    #shortcut-bar[data-toolbar-color="pink"] { background: #f5c2e7; border-bottom-color: #f0b3de; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="pink"] .session-btn { background: #f0b3de; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="pink"] .session-btn i { color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="pink"] .shortcut-btn,
-    #shortcut-bar[data-toolbar-color="pink"] .bar-icon-btn { color: #1e1e2e; border-color: #e8a4d5; background: rgba(255,255,255,0.3); }
-    #shortcut-bar[data-toolbar-color="pink"] #p2p-indicator { background: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="pink"] #p2p-indicator.p2p-active { background: #40a02b; }
-    #shortcut-bar[data-toolbar-color="pink"] #p2p-indicator.p2p-relay { background: #df8e1d; }
-
-    #shortcut-bar[data-toolbar-color="teal"] { background: #94e2d5; border-bottom-color: #81d8cc; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="teal"] .session-btn { background: #81d8cc; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="teal"] .session-btn i { color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="teal"] .shortcut-btn,
-    #shortcut-bar[data-toolbar-color="teal"] .bar-icon-btn { color: #1e1e2e; border-color: #6ec9bc; background: rgba(255,255,255,0.3); }
-    #shortcut-bar[data-toolbar-color="teal"] #p2p-indicator { background: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="teal"] #p2p-indicator.p2p-active { background: #40a02b; }
-    #shortcut-bar[data-toolbar-color="teal"] #p2p-indicator.p2p-relay { background: #df8e1d; }
-
-    #shortcut-bar[data-toolbar-color="yellow"] { background: #f9e2af; border-bottom-color: #f5d99d; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="yellow"] .session-btn { background: #f5d99d; color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="yellow"] .session-btn i { color: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="yellow"] .shortcut-btn,
-    #shortcut-bar[data-toolbar-color="yellow"] .bar-icon-btn { color: #1e1e2e; border-color: #f0ce8b; background: rgba(255,255,255,0.3); }
-    #shortcut-bar[data-toolbar-color="yellow"] #p2p-indicator { background: #1e1e2e; }
-    #shortcut-bar[data-toolbar-color="yellow"] #p2p-indicator.p2p-active { background: #40a02b; }
-    #shortcut-bar[data-toolbar-color="yellow"] #p2p-indicator.p2p-relay { background: #df8e1d; }
+    #shortcut-bar[data-toolbar-color] { background: var(--tb-bg); border-bottom-color: var(--tb-accent); color: #1e1e2e; }
+    #shortcut-bar[data-toolbar-color] .session-btn { background: var(--tb-accent); color: #1e1e2e; }
+    #shortcut-bar[data-toolbar-color] .session-btn i { color: #1e1e2e; }
+    #shortcut-bar[data-toolbar-color] .shortcut-btn,
+    #shortcut-bar[data-toolbar-color] .bar-icon-btn { color: #1e1e2e; border-color: var(--tb-btn-border); background: rgba(255,255,255,0.3); }
+    #shortcut-bar[data-toolbar-color] #p2p-indicator { background: #1e1e2e; }
+    #shortcut-bar[data-toolbar-color] #p2p-indicator.p2p-active { background: #40a02b; }
+    #shortcut-bar[data-toolbar-color] #p2p-indicator.p2p-relay { background: #df8e1d; }
 
     .shortcut-btn {
       flex-shrink: 0; height: var(--height-btn-sm); padding: 0 var(--space-md);
@@ -365,15 +314,13 @@
     .shortcuts-grid .shortcut-btn {
       width: 100%; height: 3rem; justify-content: center; font-size: 0.9375rem;
     }
-    .shortcuts-footer {
-      display: flex; gap: var(--space-sm); padding: 0.75rem 0; position: sticky; bottom: 0;
-      background: var(--bg-surface); border-top: 1px solid var(--border);
+    .modal-footer {
+      display: flex; gap: var(--space-sm);
     }
-    .shortcuts-footer button,
-    .edit-actions button,
-    .modal-actions button {
-      flex: 1; /* Equal width in flex containers */
+    .modal-footer.sticky {
+      position: sticky; bottom: 0; background: var(--bg-surface);
     }
+    .modal-footer button { flex: 1; }
 
     /* --- Edit panel --- */
     #edit-overlay { z-index: var(--z-modal-bg); }
@@ -395,10 +342,6 @@
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
     .edit-item-remove:active { background: rgba(233,69,96,0.15); }
-    .edit-actions {
-      display: flex; gap: var(--space-sm); padding: 0.875rem 0; position: sticky; bottom: 0;
-      background: var(--bg-surface);
-    }
     /* Edit buttons now use .btn base classes - see Button System section */
 
     /* --- Add shortcut (tag composer) --- */
@@ -561,7 +504,6 @@
       font-family: var(--font-mono);
     }
     .key-preview-label { color: var(--text-dim); }
-    .modal-actions { display: flex; gap: var(--space-sm); padding-bottom: 1rem; }
     /* Modal action buttons now use .btn base classes - see Button System section */
 
     /* --- Session manager --- */
@@ -1086,21 +1028,6 @@
     .toast.visible { opacity: 1; }
     .toast.toast-error { border-color: var(--danger); color: var(--danger); }
 
-    /* Legacy upload toast */
-    .upload-toast {
-      position: fixed; bottom: 3rem; left: 50%; transform: translateX(-50%);
-      z-index: 20001; padding: var(--space-sm) var(--space-lg); border-radius: var(--radius-md);
-      font-size: 0.8125rem; font-family: var(--font-mono);
-      background: var(--bg-surface); color: var(--text); border: 1px solid var(--border);
-      opacity: 0; transition: opacity 0.2s;
-      pointer-events: none;
-    }
-    .upload-toast.visible { opacity: 1; }
-    .upload-toast.error { border-color: var(--danger); color: var(--danger); }
-
-    .warning {
-      color: var(--warning);
-    }
 
   </style>
 </head>
@@ -1117,7 +1044,7 @@
     <div id="edit-panel" class="modal-panel">
       <h3>Edit Shortcuts</h3>
       <div id="edit-list" role="list"></div>
-      <div class="edit-actions">
+      <div class="modal-footer sticky">
         <button class="btn btn--ghost" id="edit-add">
           <i class="ph ph-plus"></i> Add
         </button>
@@ -1142,7 +1069,7 @@
         <span class="key-preview-label">Sends:</span>
         <span id="key-preview-value"></span>
       </div>
-      <div class="modal-actions">
+      <div class="modal-footer">
         <button class="btn btn--secondary" id="modal-cancel">Cancel</button>
         <button class="btn btn--primary" id="modal-save" disabled>Add</button>
       </div>
@@ -1185,7 +1112,7 @@
     <div id="shortcuts-panel" class="modal-panel">
       <h3>Shortcuts</h3>
       <div id="shortcuts-grid" class="shortcuts-grid" role="list"></div>
-      <div class="shortcuts-footer">
+      <div class="modal-footer sticky" style="padding:0.75rem 0;border-top:1px solid var(--border)">
         <button class="btn btn--secondary" id="shortcuts-edit-btn">
           <i class="ph ph-pencil-simple"></i> Edit
         </button>
@@ -1345,6 +1272,6 @@
     </div>
   </div>
 
-  <script type="module" src="/app.js?v=16"></script>
+  <script type="module" src="/app.js?v=17"></script>
 </body>
 </html>

@@ -5,6 +5,7 @@
  */
 
 import { createStore, createReducer } from '/lib/store.js';
+import { api } from '/lib/api-client.js';
 
 const SHORTCUTS_ACTIONS = {
   LOAD: 'shortcuts/load',
@@ -41,8 +42,7 @@ export function createShortcutsStore() {
  */
 export async function loadShortcuts(store) {
   try {
-    const res = await fetch("/shortcuts");
-    const data = await res.json();
+    const data = await api.get("/shortcuts");
     store.dispatch({ type: SHORTCUTS_ACTIONS.LOAD, items: data });
   } catch {
     store.dispatch({ type: SHORTCUTS_ACTIONS.LOAD, items: [] });
@@ -54,14 +54,7 @@ export async function loadShortcuts(store) {
  */
 export async function saveShortcuts(shortcuts) {
   try {
-    await fetch("/shortcuts", {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRF-Token": document.cookie.split('; ').find(r => r.startsWith('csrf_token='))?.split('=')[1] || ''
-      },
-      body: JSON.stringify(shortcuts),
-    });
+    await api.put("/shortcuts", shortcuts);
   } catch {
     console.error('[Shortcuts] Failed to save');
   }

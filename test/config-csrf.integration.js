@@ -117,6 +117,34 @@ function localRequest(method, path, body) {
   });
 }
 
+// Minimal valid PNG header for upload tests
+const PNG_BUF = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
+  0x00, 0x00, 0x00, 0x0d,                           // IHDR length
+  0x49, 0x48, 0x44, 0x52,                           // "IHDR"
+  0x00, 0x00, 0x00, 0x01,                           // width = 1
+  0x00, 0x00, 0x00, 0x01,                           // height = 1
+  0x08, 0x02,                                        // bit depth, colour type
+  0x00, 0x00, 0x00,                                 // compression, filter, interlace
+]);
+
+/**
+ * Authenticated remote request that sends binary body (for upload tests).
+ */
+function remoteUploadRequest({ csrfToken } = {}) {
+  return rawRequest({
+    method: "POST",
+    path: "/upload",
+    headers: {
+      host: "example.ngrok.app",
+      cookie: `katulong_session=${SESSION_TOKEN}`,
+      "content-type": "application/octet-stream",
+      ...(csrfToken !== undefined ? { "x-csrf-token": csrfToken } : {}),
+    },
+    body: PNG_BUF,
+  });
+}
+
 describe("CSRF protection on PUT /api/config/* (#222)", () => {
   let serverProcess;
   let testDataDir;
@@ -279,6 +307,42 @@ describe("CSRF protection on PUT /api/config/* (#222)", () => {
         JSON.stringify({ toolbarColor: "purple" })
       );
       assert.equal(res.status, 200, `localhost request should succeed without CSRF: ${res.body}`);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /upload — CSRF required for remote requests
+  // ---------------------------------------------------------------------------
+
+  describe("POST /upload", () => {
+    it("rejects remote upload without CSRF token with 403", async () => {
+      const res = await remoteUploadRequest();
+      assert.equal(res.status, 403, `expected 403 but got ${res.status}: ${res.body}`);
+      assert.ok(res.json?.error, "should return error message");
+    });
+
+    it("rejects remote upload with wrong CSRF token with 403", async () => {
+      const res = await remoteUploadRequest({ csrfToken: "b".repeat(64) });
+      assert.equal(res.status, 403, `expected 403 but got ${res.status}: ${res.body}`);
+    });
+
+    it("accepts remote upload with valid CSRF token", async () => {
+      const res = await remoteUploadRequest({ csrfToken: CSRF_TOKEN });
+      assert.equal(res.status, 200, `expected 200 but got ${res.status}: ${res.body}`);
+      assert.ok(res.json?.path?.startsWith("/uploads/"), "should return upload path");
+    });
+
+    it("accepts localhost upload without CSRF token", async () => {
+      const res = await rawRequest({
+        method: "POST",
+        path: "/upload",
+        headers: {
+          host: `localhost:${TEST_PORT}`,
+          "content-type": "application/octet-stream",
+        },
+        body: PNG_BUF,
+      });
+      assert.equal(res.status, 200, `localhost upload should succeed without CSRF: ${res.body}`);
     });
   });
 });

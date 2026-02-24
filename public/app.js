@@ -19,7 +19,6 @@
     import { createPullToRefreshManager } from "/lib/pull-to-refresh.js";
     import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
     import { createTabManager } from "/lib/tab-manager.js";
-    import { getCsrfToken, addCsrfHeader } from "/lib/csrf.js";
     import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll } from "/lib/scroll-utils.js";
     import { keysToSequence, sendSequence, displayKey, keysLabel, keysString, VALID_KEYS, normalizeKey } from "/lib/key-mapping.js";
     import { createShortcutBar } from "/lib/shortcut-bar.js";
@@ -475,7 +474,6 @@
     const networkMonitor = createNetworkMonitor({
       onNetworkChange: () => {
         if (!state.connection.ws || state.connection.ws.readyState !== 1) return;
-        console.log("[P2P] Network change detected, re-establishing");
         p2pManager.create();
       }
     });

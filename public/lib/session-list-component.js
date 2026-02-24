@@ -6,6 +6,7 @@
 
 import { createComponent } from '/lib/component.js';
 import { invalidateSessions } from '/lib/session-store.js';
+import { api } from '/lib/api-client.js';
 
 /**
  * Create session list component
@@ -58,17 +59,7 @@ export function createSessionListComponent(store) {
         }
 
         try {
-          const res = await fetch(`/sessions/${encodeURIComponent(originalName)}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: newName }),
-          });
-
-          if (!res.ok) {
-            nameInput.value = originalName;
-            return;
-          }
-
+          await api.put(`/sessions/${encodeURIComponent(originalName)}`, { name: newName });
           invalidateSessions(store, state.currentSession);
         } catch {
           nameInput.value = originalName;
@@ -141,9 +132,7 @@ export function createSessionListComponent(store) {
         }
 
         try {
-          await fetch(`/sessions/${encodeURIComponent(s.name)}`, {
-            method: "DELETE"
-          });
+          await api.delete(`/sessions/${encodeURIComponent(s.name)}`);
           invalidateSessions(store, state.currentSession);
         } catch (err) {
           console.error('[Session] Delete failed:', err);
