@@ -326,7 +326,11 @@
       onToolbarColorChange: (color) => {
         const bar = document.getElementById("shortcut-bar");
         if (bar) {
-          bar.setAttribute("data-toolbar-color", color);
+          if (color && color !== "default") {
+            bar.setAttribute("data-toolbar-color", color);
+          } else {
+            bar.removeAttribute("data-toolbar-color");
+          }
         }
       }
     });
