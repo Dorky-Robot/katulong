@@ -454,12 +454,23 @@
 
     const dragDropManager = createDragDropManager({
       isImageFile,
-      onDrop: (imageFiles, totalFiles) => {
+      onDrop: async (imageFiles, totalFiles) => {
         if (imageFiles.length === 0) {
           if (totalFiles > 0) showToast("Not an image file", true);
           return;
         }
-        for (const file of imageFiles) uploadImageToTerminal(file);
+        for (const file of imageFiles) {
+          // Write image to system clipboard and send Ctrl+V so CLI tools
+          // (like Claude Code) detect it the same way as a native paste.
+          try {
+            const blob = new Blob([await file.arrayBuffer()], { type: file.type });
+            await navigator.clipboard.write([new ClipboardItem({ [file.type]: blob })]);
+            rawSend("\x16"); // Ctrl+V triggers clipboard read in the PTY app
+          } catch {
+            // Fallback: upload and send absolute filesystem path
+            uploadImageToTerminal(file);
+          }
+        }
       }
     });
 
