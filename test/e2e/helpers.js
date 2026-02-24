@@ -19,9 +19,10 @@ export async function setupTest({ page, context }) {
  * Wait for app to be ready (terminal loaded)
  */
 export async function waitForAppReady(page) {
-  await page.waitForSelector(".xterm", { timeout: 10000 });
-  // Wait for terminal to be interactive (not just visible)
-  await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+  // state:'visible' requires a non-zero bounding box — catches the mobile
+  // Chromium regression where visualViewport.height===0 makes xterm height 0.
+  await page.waitForSelector(".xterm", { state: "visible", timeout: 10000 });
+  await page.waitForSelector(".xterm-screen", { state: "visible", timeout: 5000 });
 }
 
 /**
