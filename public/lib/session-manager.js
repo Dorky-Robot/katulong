@@ -4,6 +4,8 @@
  * Composable session management with SSH password utilities.
  */
 
+import { api } from "/lib/api-client.js";
+
 /**
  * Create session manager
  */
@@ -14,6 +16,8 @@ export function createSessionManager(options = {}) {
     onSessionCreate,
     onError = (err) => console.error(err)
   } = options;
+
+  let ac = null;
 
   const elements = {
     newNameInput: null,
@@ -36,14 +40,11 @@ export function createSessionManager(options = {}) {
 
     // Fetch and populate SSH password
     try {
-      const res = await fetch("/ssh/password");
-      if (res.ok) {
-        const { password } = await res.json();
-        if (elements.pwInput) {
-          elements.pwInput.value = password;
-        }
+      const { password } = await api.get("/ssh/password");
+      if (elements.pwInput) {
+        elements.pwInput.value = password;
       }
-    } catch (err) {
+    } catch {
       // Ignore - SSH might not be configured
     }
   }
@@ -99,22 +100,12 @@ export function createSessionManager(options = {}) {
     if (!name) return;
 
     try {
-      const res = await fetch("/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
+      const data = await api.post("/sessions", { name });
+      elements.newNameInput.value = "";
+      window.open(`/?s=${encodeURIComponent(data.name)}`, "_blank");
 
-      if (res.ok) {
-        const data = await res.json();
-        elements.newNameInput.value = "";
-        window.open(`/?s=${encodeURIComponent(data.name)}`, "_blank");
-
-        // Notify parent via callback
-        if (onSessionCreate) onSessionCreate();
-      } else {
-        if (onError) onError(`Session create failed: ${res.status} ${res.statusText}`);
-      }
+      // Notify parent via callback
+      if (onSessionCreate) onSessionCreate();
     } catch (err) {
       if (onError) onError(`Session create error: ${err.message}`);
     }
@@ -132,6 +123,10 @@ export function createSessionManager(options = {}) {
       pwCopyBtnId = "ssh-password-copy"
     } = elementIds;
 
+    if (ac) ac.abort();
+    ac = new AbortController();
+    const { signal } = ac;
+
     // Get DOM elements
     elements.newNameInput = document.getElementById(newNameInputId);
     elements.createBtn = document.getElementById(createBtnId);
@@ -141,17 +136,17 @@ export function createSessionManager(options = {}) {
 
     // Event: SSH password reveal toggle
     if (elements.pwRevealBtn) {
-      elements.pwRevealBtn.addEventListener("click", togglePasswordVisibility);
+      elements.pwRevealBtn.addEventListener("click", togglePasswordVisibility, { signal });
     }
 
     // Event: SSH password copy
     if (elements.pwCopyBtn) {
-      elements.pwCopyBtn.addEventListener("click", copyPassword);
+      elements.pwCopyBtn.addEventListener("click", copyPassword, { signal });
     }
 
     // Event: Create new session
     if (elements.createBtn) {
-      elements.createBtn.addEventListener("click", createSession);
+      elements.createBtn.addEventListener("click", createSession, { signal });
     }
 
     // Event: Allow Enter key to create session
@@ -160,15 +155,15 @@ export function createSessionManager(options = {}) {
         if (e.key === "Enter") {
           createSession();
         }
-      });
+      }, { signal });
     }
   }
 
   /**
-   * Cleanup
+   * Cleanup all event listeners
    */
   function unmount() {
-    // Elements will be garbage collected
+    if (ac) { ac.abort(); ac = null; }
   }
 
   return {

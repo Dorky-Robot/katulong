@@ -422,6 +422,21 @@ describe("createChallengeStore", () => {
     // Calling destroy twice should not throw
     assert.doesNotThrow(() => cs.destroy());
   });
+
+  it("sweep removes non-numeric entries (e.g. userID metadata)", () => {
+    const cs = createChallengeStore(1000);
+    cs.store("challenge-1");
+    // Simulate the server.js pattern: store a userID alongside the challenge
+    cs._challenges.set("userID:challenge-1", "some-user-id-string");
+    assert.equal(cs._challenges.size, 2);
+    // Expire the challenge
+    cs._challenges.set("challenge-1", Date.now() - 1);
+    // Trigger sweep directly
+    cs._sweep();
+    // The expired challenge and its orphaned userID entry should both be swept
+    assert.equal(cs._challenges.size, 0, "sweep should clean up non-numeric (userID) entries too");
+    cs.destroy();
+  });
 });
 
 describe("getCspHeaders", () => {

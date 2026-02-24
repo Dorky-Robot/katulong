@@ -19,7 +19,6 @@
     import { createPullToRefreshManager } from "/lib/pull-to-refresh.js";
     import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
     import { createTabManager } from "/lib/tab-manager.js";
-    import { getCsrfToken, addCsrfHeader } from "/lib/csrf.js";
     import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll } from "/lib/scroll-utils.js";
     import { keysToSequence, sendSequence, displayKey, keysLabel, keysString, VALID_KEYS, normalizeKey } from "/lib/key-mapping.js";
     import { createShortcutBar } from "/lib/shortcut-bar.js";
@@ -327,7 +326,11 @@
       onToolbarColorChange: (color) => {
         const bar = document.getElementById("shortcut-bar");
         if (bar) {
-          bar.setAttribute("data-toolbar-color", color);
+          if (color && color !== "default") {
+            bar.setAttribute("data-toolbar-color", color);
+          } else {
+            bar.removeAttribute("data-toolbar-color");
+          }
         }
       }
     });
@@ -451,12 +454,23 @@
 
     const dragDropManager = createDragDropManager({
       isImageFile,
-      onDrop: (imageFiles, totalFiles) => {
+      onDrop: async (imageFiles, totalFiles) => {
         if (imageFiles.length === 0) {
           if (totalFiles > 0) showToast("Not an image file", true);
           return;
         }
-        for (const file of imageFiles) uploadImageToTerminal(file);
+        for (const file of imageFiles) {
+          // Write image to system clipboard and send Ctrl+V so CLI tools
+          // (like Claude Code) detect it the same way as a native paste.
+          try {
+            const blob = new Blob([await file.arrayBuffer()], { type: file.type });
+            await navigator.clipboard.write([new ClipboardItem({ [file.type]: blob })]);
+            rawSend("\x16"); // Ctrl+V triggers clipboard read in the PTY app
+          } catch {
+            // Fallback: upload and send absolute filesystem path
+            uploadImageToTerminal(file);
+          }
+        }
       }
     });
 
@@ -475,7 +489,6 @@
     const networkMonitor = createNetworkMonitor({
       onNetworkChange: () => {
         if (!state.connection.ws || state.connection.ws.readyState !== 1) return;
-        console.log("[P2P] Network change detected, re-establishing");
         p2pManager.create();
       }
     });

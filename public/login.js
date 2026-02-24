@@ -41,10 +41,7 @@
       loadingView.classList.add("hidden");
       if (setup) {
         // Decide which login flow based on access method
-        if (accessMethod === "lan") {
-          // LAN access → show QR pairing flow (even over HTTPS)
-          pairView.classList.remove("hidden");
-        } else if (hasWebAuthn) {
+        if (hasWebAuthn) {
           // localhost or internet with WebAuthn → passkey login/registration
           loginView.classList.remove("hidden");
 

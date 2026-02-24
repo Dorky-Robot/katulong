@@ -4,7 +4,7 @@
  * Composable settings event handlers for theme and logout.
  */
 
-import { addCsrfHeader } from "/lib/csrf.js";
+import { api } from "/lib/api-client.js";
 
 /**
  * Phosphor Icons organized by category
@@ -69,8 +69,7 @@ export function createSettingsHandlers(options = {}) {
 
     try {
       // Load current instance name
-      const response = await fetch("/api/config");
-      const data = await response.json();
+      const data = await api.get("/api/config");
 
       if (data.config && data.config.instanceName) {
         input.value = data.config.instanceName;
@@ -102,29 +101,14 @@ export function createSettingsHandlers(options = {}) {
       }
 
       try {
-        const response = await fetch("/api/config/instance-name", {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            ...addCsrfHeader()
-          },
-          body: JSON.stringify({ instanceName })
-        });
+        const data = await api.put("/api/config/instance-name", { instanceName });
+        input.dataset.previousValue = data.instanceName;
 
-        if (response.ok) {
-          const data = await response.json();
-          input.dataset.previousValue = data.instanceName;
+        // Update document title
+        document.title = `Katulong — ${data.instanceName}`;
 
-          // Update document title
-          document.title = `Katulong — ${data.instanceName}`;
-
-          if (onInstanceNameChange) {
-            onInstanceNameChange(data.instanceName);
-          }
-        } else {
-          const error = await response.json();
-          alert(`Failed to update instance name: ${error.error}`);
-          input.value = input.dataset.previousValue || "Katulong";
+        if (onInstanceNameChange) {
+          onInstanceNameChange(data.instanceName);
         }
       } catch (error) {
         console.error("Failed to save instance name:", error);
@@ -166,8 +150,7 @@ export function createSettingsHandlers(options = {}) {
 
     // Load current instance icon
     try {
-      const response = await fetch("/api/config");
-      const data = await response.json();
+      const data = await api.get("/api/config");
 
       if (data.config && data.config.instanceIcon) {
         currentIcon = data.config.instanceIcon.replace(/[^a-z0-9-]/g, "");
@@ -221,34 +204,22 @@ export function createSettingsHandlers(options = {}) {
       const selectedIcon = iconBtn.dataset.icon;
 
       try {
-        const response = await fetch("/api/config/instance-icon", {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            ...addCsrfHeader()
-          },
-          body: JSON.stringify({ instanceIcon: selectedIcon })
+        await api.put("/api/config/instance-icon", { instanceIcon: selectedIcon });
+
+        currentIcon = selectedIcon;
+        iconDisplay.className = `ph ph-${selectedIcon}`;
+
+        // Update selected state in picker
+        overlay.querySelectorAll(".icon-picker-icon").forEach(btn => {
+          btn.classList.toggle("selected", btn.dataset.icon === selectedIcon);
         });
 
-        if (response.ok) {
-          currentIcon = selectedIcon;
-          iconDisplay.className = `ph ph-${selectedIcon}`;
-
-          // Update selected state in picker
-          overlay.querySelectorAll(".icon-picker-icon").forEach(btn => {
-            btn.classList.toggle("selected", btn.dataset.icon === selectedIcon);
-          });
-
-          // Notify app of icon change
-          if (onInstanceIconChange) {
-            onInstanceIconChange(selectedIcon);
-          }
-
-          closeModal();
-        } else {
-          const error = await response.json();
-          alert(`Failed to update icon: ${error.error}`);
+        // Notify app of icon change
+        if (onInstanceIconChange) {
+          onInstanceIconChange(selectedIcon);
         }
+
+        closeModal();
       } catch (error) {
         console.error("Failed to save instance icon:", error);
         alert("Failed to save instance icon");
@@ -267,8 +238,7 @@ export function createSettingsHandlers(options = {}) {
 
     // Load current toolbar color
     try {
-      const response = await fetch("/api/config");
-      const data = await response.json();
+      const data = await api.get("/api/config");
 
       if (data.config && data.config.toolbarColor) {
         currentColor = data.config.toolbarColor;
@@ -296,30 +266,18 @@ export function createSettingsHandlers(options = {}) {
       const selectedColor = swatch.dataset.color;
 
       try {
-        const response = await fetch("/api/config/toolbar-color", {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            ...addCsrfHeader()
-          },
-          body: JSON.stringify({ toolbarColor: selectedColor })
+        await api.put("/api/config/toolbar-color", { toolbarColor: selectedColor });
+
+        currentColor = selectedColor;
+
+        // Update selected state
+        picker.querySelectorAll(".toolbar-color-swatch").forEach(btn => {
+          btn.classList.toggle("selected", btn.dataset.color === selectedColor);
         });
 
-        if (response.ok) {
-          currentColor = selectedColor;
-
-          // Update selected state
-          picker.querySelectorAll(".toolbar-color-swatch").forEach(btn => {
-            btn.classList.toggle("selected", btn.dataset.color === selectedColor);
-          });
-
-          // Notify app of color change
-          if (onToolbarColorChange) {
-            onToolbarColorChange(selectedColor);
-          }
-        } else {
-          const error = await response.json();
-          alert(`Failed to update toolbar color: ${error.error}`);
+        // Notify app of color change
+        if (onToolbarColorChange) {
+          onToolbarColorChange(selectedColor);
         }
       } catch (error) {
         console.error("Failed to save toolbar color:", error);
@@ -347,10 +305,7 @@ export function createSettingsHandlers(options = {}) {
 
     // Remote access - show logout button
     logoutBtn.addEventListener("click", async () => {
-      await fetch("/auth/logout", {
-        method: "POST",
-        headers: addCsrfHeader()
-      });
+      await api.post("/auth/logout");
 
       if (onLogout) {
         onLogout();

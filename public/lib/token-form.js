@@ -4,7 +4,7 @@
  * Generic composable form manager for token creation.
  * Follows composition pattern with callbacks for actions.
  */
-import { addCsrfHeader } from "./csrf.js";
+import { api } from "./api-client.js";
 
 /**
  * Create token form manager
@@ -16,6 +16,8 @@ export function createTokenFormManager(options = {}) {
     onRevoke,
     onError = (err) => alert(err)
   } = options;
+
+  let ac = null;
 
   const elements = {
     form: null,
@@ -69,15 +71,7 @@ export function createTokenFormManager(options = {}) {
     elements.submitBtn.textContent = "Generating...";
 
     try {
-      const res = await fetch("/api/tokens", {
-        method: "POST",
-        headers: addCsrfHeader({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ name }),
-      });
-
-      if (!res.ok) throw new Error("Failed to create token");
-
-      const data = await res.json();
+      const data = await api.post("/api/tokens", { name });
 
       // Reset form
       hideForm();
@@ -101,13 +95,7 @@ export function createTokenFormManager(options = {}) {
     if (!newName || newName.trim().length === 0) return;
 
     try {
-      const res = await fetch(`/api/tokens/${tokenId}`, {
-        method: "PATCH",
-        headers: addCsrfHeader({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ name: newName.trim() }),
-      });
-
-      if (!res.ok) throw new Error("Failed to rename token");
+      await api.patch(`/api/tokens/${tokenId}`, { name: newName.trim() });
 
       // Notify parent via callback
       if (onRename) onRename(tokenId, newName.trim());
@@ -133,15 +121,7 @@ export function createTokenFormManager(options = {}) {
     if (!confirm(message)) return;
 
     try {
-      const res = await fetch(`/api/tokens/${tokenId}`, {
-        method: "DELETE",
-        headers: addCsrfHeader({}),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to revoke token");
-      }
+      await api.delete(`/api/tokens/${tokenId}`);
 
       // Notify parent via callback
       if (onRevoke) onRevoke(tokenId);
@@ -159,15 +139,7 @@ export function createTokenFormManager(options = {}) {
     if (!confirm(message)) return;
 
     try {
-      const res = await fetch(`/api/credentials/${credentialId}`, {
-        method: "DELETE",
-        headers: addCsrfHeader({}),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to revoke credential");
-      }
+      await api.delete(`/api/credentials/${credentialId}`);
 
       if (onRevoke) onRevoke(credentialId);
 
@@ -207,32 +179,35 @@ export function createTokenFormManager(options = {}) {
       return;
     }
 
+    if (ac) ac.abort();
+    ac = new AbortController();
+    const { signal } = ac;
+
     // Event: Show form when "Generate New Token" clicked
-    elements.createBtn.addEventListener("click", showForm);
+    elements.createBtn.addEventListener("click", showForm, { signal });
 
     // Event: Hide form when "Cancel" clicked
-    elements.cancelBtn.addEventListener("click", hideForm);
+    elements.cancelBtn.addEventListener("click", hideForm, { signal });
 
     // Event: Update submit button state on input
-    elements.nameInput.addEventListener("input", updateSubmitButtonState);
+    elements.nameInput.addEventListener("input", updateSubmitButtonState, { signal });
 
     // Event: Submit form
-    elements.submitBtn.addEventListener("click", handleSubmit);
+    elements.submitBtn.addEventListener("click", handleSubmit, { signal });
 
     // Event: Allow Enter key to submit
     elements.nameInput.addEventListener("keypress", (e) => {
       if (e.key === "Enter" && elements.nameInput.value.trim().length > 0) {
         handleSubmit();
       }
-    });
+    }, { signal });
   }
 
   /**
-   * Cleanup event listeners
+   * Cleanup all event listeners
    */
   function unmount() {
-    // Elements will be garbage collected, no explicit cleanup needed
-    // since we're using the elements directly
+    if (ac) { ac.abort(); ac = null; }
   }
 
   return {
