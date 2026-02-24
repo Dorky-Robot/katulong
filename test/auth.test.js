@@ -5,7 +5,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSession, validateSession, pruneExpiredSessions, loadState, saveState, _invalidateCache, refreshSessionActivity } from "../lib/auth.js";
 import { AuthState } from "../lib/auth-state.js";
-import { SESSION_TTL_MS } from "../lib/constants.js";
+import { SESSION_TTL_MS } from "../lib/env-config.js";
 import envConfig from "../lib/env-config.js";
 import { writeAuthFixture } from "./helpers/auth-fixture.js";
 
