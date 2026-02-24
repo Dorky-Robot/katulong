@@ -281,10 +281,9 @@
     .bar-icon-btn:active { background: var(--accent); }
     .bar-spacer { margin-left: auto; }
 
-    /* Tablet / wider viewports — keep elements grouped instead of spread across full width */
+    /* Tablet / wider viewports — larger touch targets */
     @media (min-width: 768px) {
       #shortcut-bar { padding: 0 var(--space-lg); gap: var(--space-sm); }
-      .bar-spacer { flex: 0 0 var(--space-xl); margin-left: 0; }
       .session-btn { font-size: var(--text-sm); padding: 0 var(--space-md); }
       .shortcut-btn { font-size: var(--text-sm); padding: 0 var(--space-lg); }
       .bar-icon-btn { width: 2.5rem; font-size: 1.25rem; }
