@@ -5,7 +5,7 @@
  */
 
 import { createComponent } from '/lib/component.js';
-import { invalidateSessions } from '/lib/session-store.js';
+import { invalidateSessions } from '/lib/stores.js';
 import { api } from '/lib/api-client.js';
 
 /**

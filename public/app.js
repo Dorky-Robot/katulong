@@ -4,13 +4,15 @@
     import { ModalRegistry } from "/lib/modal.js";
     import { ListRenderer } from "/lib/list-renderer.js";
     import { createStore, createReducer } from "/lib/store.js";
-    import { createSessionStore, invalidateSessions } from "/lib/session-store.js";
+    import {
+      createSessionStore, invalidateSessions,
+      createTokenStore, setNewToken, invalidateTokens, removeToken, loadTokens as reloadTokens,
+      createShortcutsStore, loadShortcuts as reloadShortcuts,
+    } from "/lib/stores.js";
     import { createSessionListComponent } from "/lib/session-list-component.js";
     import { createSessionManager } from "/lib/session-manager.js";
-    import { createTokenStore, setNewToken, invalidateTokens, removeToken, loadTokens as reloadTokens } from "/lib/token-store.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
     import { createTokenFormManager } from "/lib/token-form.js";
-    import { createShortcutsStore, loadShortcuts as reloadShortcuts } from "/lib/shortcuts-store.js";
     import { createShortcutsPopup, createShortcutsEditPanel, createAddShortcutModal } from "/lib/shortcuts-components.js";
     import { createDictationModal } from "/lib/dictation-modal.js";
     import { createDragDropManager } from "/lib/drag-drop.js";
