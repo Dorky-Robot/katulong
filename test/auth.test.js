@@ -1,11 +1,24 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, readFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { writeFileSync, readFileSync, unlinkSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSession, validateSession, pruneExpiredSessions, loadState, saveState, _invalidateCache, refreshSessionActivity } from "../lib/auth.js";
 import { AuthState } from "../lib/auth-state.js";
 import { SESSION_TTL_MS } from "../lib/constants.js";
+import envConfig from "../lib/env-config.js";
+import { writeAuthFixture } from "./helpers/auth-fixture.js";
+
+const DATA_DIR = envConfig.dataDir;
+const USER_PATH = join(DATA_DIR, "user.json");
+
+// Remove all per-entity auth files from the data dir
+function clearAuthFiles() {
+  try { unlinkSync(USER_PATH); } catch {}
+  for (const sub of ["credentials", "sessions", "setup-tokens"]) {
+    try { rmSync(join(DATA_DIR, sub), { recursive: true, force: true }); } catch {}
+  }
+}
 
 describe("createSession", () => {
   it("returns a token that is 64 hex characters", () => {
@@ -157,31 +170,24 @@ describe("pruneExpiredSessions", () => {
 });
 
 describe("loadState caching", () => {
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const DATA_DIR = process.env.KATULONG_DATA_DIR || join(__dirname, "..");
-  const STATE_PATH = join(DATA_DIR, "katulong-auth.json");
-  let originalExists = false;
-  let originalContent;
+  let backupState;
 
   beforeEach(() => {
-    // Back up existing state file if present
-    try {
-      originalContent = require("node:fs").readFileSync(STATE_PATH, "utf-8");
-      originalExists = true;
-    } catch {
-      originalExists = false;
-    }
+    // Back up existing state
+    _invalidateCache();
+    backupState = loadState();
     _invalidateCache();
   });
 
   afterEach(() => {
     // Restore original state
     _invalidateCache();
-    if (originalExists) {
-      writeFileSync(STATE_PATH, originalContent);
+    if (backupState) {
+      saveState(backupState);
     } else {
-      try { unlinkSync(STATE_PATH); } catch {}
+      clearAuthFiles();
     }
+    _invalidateCache();
   });
 
   it("returns cached value on second call without re-reading disk", () => {
@@ -189,8 +195,8 @@ describe("loadState caching", () => {
     saveState(state);
 
     const first = loadState();
-    // Overwrite the file directly — loadState should still return the cached value
-    writeFileSync(STATE_PATH, JSON.stringify({ user: { id: "changed", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] }));
+    // Overwrite user.json directly — loadState should still return the cached value
+    writeFileSync(USER_PATH, JSON.stringify({ id: "changed", name: "owner" }));
     const second = loadState();
 
     assert.deepEqual(first.toJSON(), state);
@@ -213,9 +219,9 @@ describe("loadState caching", () => {
     saveState(original);
     assert.deepEqual(loadState().toJSON(), original);
 
-    // Write different data directly to disk
+    // Write different user.json directly to disk
     const updated = { user: { id: "2", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] };
-    writeFileSync(STATE_PATH, JSON.stringify(updated));
+    writeAuthFixture(DATA_DIR, updated);
 
     // Cache still holds old value
     assert.deepEqual(loadState().toJSON(), original);
@@ -225,19 +231,19 @@ describe("loadState caching", () => {
     assert.deepEqual(loadState().toJSON(), updated, "should re-read from disk after cache invalidation");
   });
 
-  it("loadState returns null and caches it when file does not exist", () => {
-    try { unlinkSync(STATE_PATH); } catch {}
+  it("loadState returns null and caches it when user.json does not exist", () => {
+    clearAuthFiles();
     _invalidateCache();
 
     assert.equal(loadState(), null);
-    // Write a file — but cache should still return null
-    writeFileSync(STATE_PATH, JSON.stringify({ user: { id: "test", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] }));
+    // Write state files — but cache should still return null
+    writeAuthFixture(DATA_DIR, { user: { id: "test", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] });
     assert.equal(loadState(), null, "null should be cached too");
 
     _invalidateCache();
     const loaded = loadState();
     assert.ok(loaded, "should load state after invalidation");
-    assert.deepEqual(loaded.toJSON(), { user: { id: "test", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] }, "after invalidation should read new file");
+    assert.deepEqual(loaded.toJSON(), { user: { id: "test", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] }, "after invalidation should read new files");
   });
 
   it("loadState migrates and cleans up orphaned sessions", () => {
@@ -253,16 +259,12 @@ describe("loadState caching", () => {
         "token1": { expiry: now + 10000, credentialId: "cred1" },
         // Orphaned session for removed credential
         "token2": { expiry: now + 10000, credentialId: "cred999" },
-        // Old format session (should be removed)
-        "token3": now + 10000,
-        // Old object format without credentialId property (should be removed)
-        "token4": { expiry: now + 10000 },
         // Old pairing session (credentialId: null - should be removed, pairing now creates credentials)
         "token5": { expiry: now + 10000, credentialId: null }
       }
     };
 
-    writeFileSync(STATE_PATH, JSON.stringify(state));
+    writeAuthFixture(DATA_DIR, state);
     _invalidateCache();
 
     const loaded = loadState();
@@ -274,12 +276,6 @@ describe("loadState caching", () => {
 
     // Should remove token2 (orphaned - credential doesn't exist)
     assert.equal(sessions.token2, undefined, "should remove session for non-existent credential");
-
-    // Should remove token3 (old format - number)
-    assert.equal(sessions.token3, undefined, "should remove old format sessions");
-
-    // Should remove token4 (old format - missing credentialId property)
-    assert.equal(sessions.token4, undefined, "should remove old object format sessions");
 
     // Should remove token5 (old pairing session - pairing now creates credentials)
     assert.equal(sessions.token5, undefined, "should remove old pairing sessions");
@@ -301,7 +297,7 @@ describe("loadState caching", () => {
       ],
     };
 
-    writeFileSync(STATE_PATH, JSON.stringify(state));
+    writeAuthFixture(DATA_DIR, state);
     _invalidateCache();
 
     const loaded = loadState();
@@ -315,29 +311,22 @@ describe("loadState caching", () => {
 });
 
 describe("loadState - credential metadata migration", () => {
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const DATA_DIR = process.env.KATULONG_DATA_DIR || join(__dirname, "..");
-  const STATE_PATH = join(DATA_DIR, "katulong-auth.json");
-  let originalExists = false;
-  let originalContent;
+  let backupState;
 
   beforeEach(() => {
-    try {
-      originalContent = readFileSync(STATE_PATH, "utf-8");
-      originalExists = true;
-    } catch {
-      originalExists = false;
-    }
+    _invalidateCache();
+    backupState = loadState();
     _invalidateCache();
   });
 
   afterEach(() => {
     _invalidateCache();
-    if (originalExists) {
-      writeFileSync(STATE_PATH, originalContent);
+    if (backupState) {
+      saveState(backupState);
     } else {
-      try { unlinkSync(STATE_PATH); } catch {}
+      clearAuthFiles();
     }
+    _invalidateCache();
   });
 
   it("adds deviceId, name, createdAt, lastUsedAt, userAgent to credentials missing metadata", () => {
@@ -354,7 +343,7 @@ describe("loadState - credential metadata migration", () => {
       setupTokens: [],
     };
 
-    writeFileSync(STATE_PATH, JSON.stringify(state));
+    writeAuthFixture(DATA_DIR, state);
     _invalidateCache();
 
     const loaded = loadState();
@@ -388,7 +377,7 @@ describe("loadState - credential metadata migration", () => {
       setupTokens: [],
     };
 
-    writeFileSync(STATE_PATH, JSON.stringify(state));
+    writeAuthFixture(DATA_DIR, state);
     _invalidateCache();
 
     const loaded = loadState();
@@ -409,7 +398,7 @@ describe("loadState - credential metadata migration", () => {
       setupTokens: [],
     };
 
-    writeFileSync(STATE_PATH, JSON.stringify(state));
+    writeAuthFixture(DATA_DIR, state);
     _invalidateCache();
     loadState();
 
@@ -422,29 +411,22 @@ describe("loadState - credential metadata migration", () => {
 });
 
 describe("loadState - session lastActivityAt migration", () => {
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const DATA_DIR = process.env.KATULONG_DATA_DIR || join(__dirname, "..");
-  const STATE_PATH = join(DATA_DIR, "katulong-auth.json");
-  let originalExists = false;
-  let originalContent;
+  let backupState;
 
   beforeEach(() => {
-    try {
-      originalContent = readFileSync(STATE_PATH, "utf-8");
-      originalExists = true;
-    } catch {
-      originalExists = false;
-    }
+    _invalidateCache();
+    backupState = loadState();
     _invalidateCache();
   });
 
   afterEach(() => {
     _invalidateCache();
-    if (originalExists) {
-      writeFileSync(STATE_PATH, originalContent);
+    if (backupState) {
+      saveState(backupState);
     } else {
-      try { unlinkSync(STATE_PATH); } catch {}
+      clearAuthFiles();
     }
+    _invalidateCache();
   });
 
   it("adds lastActivityAt to sessions that are missing it", () => {
@@ -458,7 +440,7 @@ describe("loadState - session lastActivityAt migration", () => {
       setupTokens: [],
     };
 
-    writeFileSync(STATE_PATH, JSON.stringify(state));
+    writeAuthFixture(DATA_DIR, state);
     _invalidateCache();
 
     const loaded = loadState();
@@ -482,7 +464,7 @@ describe("loadState - session lastActivityAt migration", () => {
       setupTokens: [],
     };
 
-    writeFileSync(STATE_PATH, JSON.stringify(state));
+    writeAuthFixture(DATA_DIR, state);
     _invalidateCache();
 
     const loaded = loadState();
@@ -502,7 +484,7 @@ describe("loadState - session lastActivityAt migration", () => {
       setupTokens: [],
     };
 
-    writeFileSync(STATE_PATH, JSON.stringify(state));
+    writeAuthFixture(DATA_DIR, state);
     _invalidateCache();
     loadState();
 
@@ -521,13 +503,11 @@ describe("loadState - session lastActivityAt migration", () => {
       sessions: {
         // Old session without lastActivityAt (and also needs credential cleanup check)
         "tok1": { expiry: now + 10000, credentialId: "cred1" },
-        // Old format session (number) — should be removed
-        "tok2": now + 10000,
       },
       setupTokens: [],
     };
 
-    writeFileSync(STATE_PATH, JSON.stringify(state));
+    writeAuthFixture(DATA_DIR, state);
     _invalidateCache();
 
     const loaded = loadState();
@@ -536,9 +516,6 @@ describe("loadState - session lastActivityAt migration", () => {
     assert.equal(loaded.credentials[0].name, "Device 1", "credential metadata migration applied");
     assert.equal(loaded.credentials[0].deviceId, null, "deviceId set to null for old credential");
 
-    // Session cleanup applied (old number-format session removed)
-    assert.equal(loaded.sessions["tok2"], undefined, "old number-format session removed");
-
     // Session activity migration applied
     assert.ok(loaded.sessions["tok1"], "valid session preserved");
     assert.ok(loaded.sessions["tok1"].lastActivityAt >= now, "lastActivityAt added to valid session");
@@ -546,54 +523,51 @@ describe("loadState - session lastActivityAt migration", () => {
 });
 
 describe("loadState - corrupted state file handling", () => {
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const DATA_DIR = process.env.KATULONG_DATA_DIR || join(__dirname, "..");
-  const STATE_PATH = join(DATA_DIR, "katulong-auth.json");
-  let originalExists = false;
-  let originalContent;
+  let backupState;
 
   beforeEach(() => {
-    try {
-      originalContent = readFileSync(STATE_PATH, "utf-8");
-      originalExists = true;
-    } catch {
-      originalExists = false;
-    }
+    _invalidateCache();
+    backupState = loadState();
     _invalidateCache();
   });
 
   afterEach(() => {
     _invalidateCache();
-    if (originalExists) {
-      writeFileSync(STATE_PATH, originalContent);
+    if (backupState) {
+      saveState(backupState);
     } else {
-      try { unlinkSync(STATE_PATH); } catch {}
+      clearAuthFiles();
     }
+    _invalidateCache();
   });
 
-  it("returns null for corrupt JSON (unparsable content)", () => {
-    writeFileSync(STATE_PATH, "{ invalid json ::::");
+  it("returns null for corrupt user.json (unparsable content)", () => {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(USER_PATH, "{ invalid json ::::");
     _invalidateCache();
     const result = loadState();
     assert.equal(result, null, "corrupt JSON should return null rather than throw");
   });
 
-  it("returns null for truncated JSON", () => {
-    writeFileSync(STATE_PATH, '{"user": {"id": "test"'); // truncated before closing braces
+  it("returns null for truncated user.json", () => {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(USER_PATH, '{"id": "test"'); // truncated before closing brace
     _invalidateCache();
     const result = loadState();
     assert.equal(result, null, "truncated JSON should return null");
   });
 
-  it("returns null for empty state file", () => {
-    writeFileSync(STATE_PATH, "");
+  it("returns null for empty user.json", () => {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(USER_PATH, "");
     _invalidateCache();
     const result = loadState();
     assert.equal(result, null, "empty file should return null");
   });
 
-  it("returns null for file containing only whitespace", () => {
-    writeFileSync(STATE_PATH, "   \n  \t  ");
+  it("returns null for user.json containing only whitespace", () => {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(USER_PATH, "   \n  \t  ");
     _invalidateCache();
     const result = loadState();
     assert.equal(result, null, "whitespace-only file should return null");
@@ -601,13 +575,14 @@ describe("loadState - corrupted state file handling", () => {
 
   it("can recover and load valid state after corruption is fixed", () => {
     // Write corrupt file first
-    writeFileSync(STATE_PATH, "not-json");
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(USER_PATH, "not-json");
     _invalidateCache();
     assert.equal(loadState(), null, "should be null when corrupt");
 
-    // Now fix the file
+    // Now fix the files
     const validState = { user: { id: "recover", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] };
-    writeFileSync(STATE_PATH, JSON.stringify(validState));
+    writeAuthFixture(DATA_DIR, validState);
     _invalidateCache();
     const result = loadState();
     assert.ok(result, "should load successfully after fixing corruption");
@@ -691,29 +666,22 @@ describe("pruneExpiredSessions - boundary conditions", () => {
 });
 
 describe("refreshSessionActivity", () => {
-  const __dirname_test = dirname(fileURLToPath(import.meta.url));
-  const DATA_DIR_TEST = process.env.KATULONG_DATA_DIR || join(__dirname_test, "..");
-  const STATE_PATH_TEST = join(DATA_DIR_TEST, "katulong-auth.json");
-  let originalExists = false;
-  let originalContent;
+  let backupState;
 
   beforeEach(() => {
-    try {
-      originalContent = readFileSync(STATE_PATH_TEST, "utf-8");
-      originalExists = true;
-    } catch {
-      originalExists = false;
-    }
+    _invalidateCache();
+    backupState = loadState();
     _invalidateCache();
   });
 
   afterEach(() => {
     _invalidateCache();
-    if (originalExists) {
-      writeFileSync(STATE_PATH_TEST, originalContent);
+    if (backupState) {
+      saveState(backupState);
     } else {
-      try { unlinkSync(STATE_PATH_TEST); } catch {}
+      clearAuthFiles();
     }
+    _invalidateCache();
   });
 
   const credential = { id: "cred1", publicKey: "key1", counter: 0, deviceId: "dev1", name: "Test Device" };
@@ -815,12 +783,12 @@ describe("refreshSessionActivity", () => {
   });
 
   it("is a no-op when there is no auth state (null state)", async () => {
-    try { unlinkSync(STATE_PATH_TEST); } catch {}
+    clearAuthFiles();
     _invalidateCache();
 
     await assert.doesNotReject(
       () => refreshSessionActivity("sometoken"),
-      "refreshSessionActivity should not throw when no state file exists"
+      "refreshSessionActivity should not throw when no state files exist"
     );
   });
 

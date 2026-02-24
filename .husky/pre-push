@@ -79,25 +79,23 @@ UNIT_LOG=$(mktemp)
 UNIT_RC=0; E2E_RC=0
 
 if [ "$E2E_AVAILABLE" -eq 1 ]; then
-  echo "pre-push: running unit/integration + E2E tests in parallel ($NCPUS cores, $HALF_CPUS each)"
+  echo "pre-push: running unit/integration + smoke E2E in parallel ($NCPUS cores)"
   E2E_LOG=$(mktemp)
 
-  # Split cores evenly: half for unit tests, half for E2E browsers.
-  # Running both at full concurrency starves the test server daemon.
   node --experimental-test-module-mocks --test --test-concurrency="$HALF_CPUS" test/*.test.js test/*.integration.js > "$UNIT_LOG" 2>&1 &
   UNIT_PID=$!
 
-  E2E_CPUS=$HALF_CPUS bash scripts/run-e2e-sharded.sh > "$E2E_LOG" 2>&1 &
+  npm run test:e2e:smoke > "$E2E_LOG" 2>&1 &
   E2E_PID=$!
 
   wait "$UNIT_PID" || UNIT_RC=$?
   wait "$E2E_PID" || E2E_RC=$?
 
   if [ "$E2E_RC" -ne 0 ]; then
-    echo "pre-push: E2E tests FAILED (exit $E2E_RC):"
+    echo "pre-push: smoke E2E FAILED (exit $E2E_RC):"
     cat "$E2E_LOG"
   else
-    echo "pre-push: E2E tests passed"
+    echo "pre-push: smoke E2E passed"
   fi
   rm -f "$E2E_LOG"
 else

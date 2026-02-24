@@ -14,7 +14,7 @@ Dev and test environments are now **completely separate**:
 ### Dev Environment
 - **Ports:** 3001 (HTTP), 3002 (HTTPS), 2222 (SSH)
 - **Socket:** `/tmp/katulong-daemon.sock`
-- **Data:** `~/.config/katulong/` or `$KATULONG_DATA_DIR`
+- **Data:** `~/.katulong/` or `$KATULONG_DATA_DIR`
 - **Process:** Long-running, started manually
 - **Auth:** Real WebAuthn/passkeys
 

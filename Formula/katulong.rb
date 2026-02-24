@@ -17,7 +17,7 @@ class Katulong < Formula
     # Create wrapper script that sets DATA_DIR
     (bin/"katulong").write <<~EOS
       #!/bin/bash
-      export KATULONG_DATA_DIR="${HOME}/.config/katulong"
+      export KATULONG_DATA_DIR="${HOME}/.katulong"
       exec "#{Formula["node"].opt_bin}/node" "#{libexec}/bin/katulong" "$@"
     EOS
   end
@@ -34,7 +34,7 @@ class Katulong < Formula
     working_dir var
     log_path var/"log/katulong.log"
     error_log_path var/"log/katulong.log"
-    environment_variables KATULONG_DATA_DIR: "#{Dir.home}/.config/katulong"
+    environment_variables KATULONG_DATA_DIR: "#{Dir.home}/.katulong"
   end
 
   test do

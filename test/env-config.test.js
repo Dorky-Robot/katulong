@@ -9,9 +9,9 @@ describe("env-config", () => {
 
   it("has expected keys", () => {
     const expectedKeys = [
-      "port", "sshPort", "dataDir", "dataDirExplicitlySet",
+      "port", "sshPort", "dataDir",
       "socketPath", "noAuth", "sshPassword", "sshPasswordProvided",
-      "shell", "nodeEnv", "logLevel", "drainTimeout", "home",
+      "shell", "nodeEnv", "logLevel", "drainTimeout", "home", "sshHost",
     ];
     for (const key of expectedKeys) {
       assert.ok(key in envConfig, `config must have key: ${key}`);
@@ -31,10 +31,6 @@ describe("env-config", () => {
   it("dataDir is a non-empty string", () => {
     assert.equal(typeof envConfig.dataDir, "string");
     assert.ok(envConfig.dataDir.length > 0, "dataDir must be non-empty");
-  });
-
-  it("dataDirExplicitlySet is a boolean", () => {
-    assert.equal(typeof envConfig.dataDirExplicitlySet, "boolean");
   });
 
   it("socketPath is a non-empty string", () => {

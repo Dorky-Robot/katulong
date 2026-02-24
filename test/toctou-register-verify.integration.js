@@ -9,13 +9,14 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import http from "node:http";
 import { randomBytes } from "node:crypto";
 import { AuthState } from "../lib/auth-state.js";
+import { writeAuthFixture } from "./helpers/auth-fixture.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -90,10 +91,7 @@ describe("Setup token TOCTOU fix — /register/verify re-validates token under l
       expiresAt: Date.now() + 60 * 60 * 1000, // valid for 1 hour
     });
 
-    writeFileSync(
-      join(testDataDir, "katulong-auth.json"),
-      JSON.stringify(stateWithToken.toJSON())
-    );
+    writeAuthFixture(testDataDir, stateWithToken.toJSON());
 
     serverProcess = spawn("node", ["server.js"], {
       env: {

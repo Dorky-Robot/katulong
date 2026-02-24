@@ -98,7 +98,7 @@ When you first launch Katulong, **no authentication is configured**. The initial
 
 **Trust the Certificate:**
 - **One-time action** per device
-- Certificate stored in `~/.config/katulong/tls/`
+- Certificate stored in `~/.katulong/tls/`
 - Alternatively, access `/connect/trust` on HTTP port to download CA cert for system-wide trust
 
 ### 3. Internet Initial Setup
@@ -201,7 +201,7 @@ Origin: https://evil.com
 
 **TLS Certificates:**
 - Self-signed certificate auto-generated on first run
-- Stored in `~/.config/katulong/tls/`
+- Stored in `~/.katulong/tls/`
 - Browser will warn about "not private" - this is expected
 - Trust the certificate in system keychain for seamless access:
   - Access `http://192.168.1.50:3001/connect/trust`
@@ -425,7 +425,7 @@ Katulong supports multiple connection protocols:
 
 **Security:**
 - Password compared via `timingSafeEqual` (constant-time comparison)
-- Host key persisted to `~/.config/katulong/ssh/`
+- Host key persisted to `~/.katulong/ssh/`
 - SSH port should be firewalled on untrusted networks
 - No public key authentication (password only)
 

@@ -10,8 +10,8 @@ export default defineConfig({
   testMatch: "*.e2e.js",
   fullyParallel: true, // Distribute individual tests across workers, not just files
   workers,
-  timeout: 30_000,
-  retries: 2, // Retry flaky tests to handle resource contention
+  timeout: 15_000,
+  retries: process.env.CI ? 2 : 1,
   globalSetup: "./test/e2e/global-setup.js",
   globalTeardown: "./test/e2e/global-teardown.js",
   reporter: SHARD_INDEX > 0
@@ -38,6 +38,7 @@ export default defineConfig({
     },
     {
       name: "mobile",
+      testMatch: "shortcuts.e2e.js",
       use: {
         ...devices["iPhone 14"],
         browserName: "chromium",

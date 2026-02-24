@@ -59,12 +59,12 @@ Test these before merging PR #53 and creating the v0.1.0 release.
   ```bash
   katulong info
   # Should show version, Node.js version, platform
-  # Should show DATA_DIR as ~/.config/katulong
+  # Should show DATA_DIR as ~/.katulong
   ```
 
 - [ ] Logs are created in correct location
   ```bash
-  ls -la ~/.config/katulong/
+  ls -la ~/.katulong/
   # Should show daemon.log and server.log
   ```
 
@@ -148,7 +148,7 @@ Test these before merging PR #53 and creating the v0.1.0 release.
 
 - [ ] Config directory created automatically
   ```bash
-  ls -la ~/.config/katulong
+  ls -la ~/.katulong
   # Should exist with correct permissions (700)
   ```
 
@@ -162,9 +162,9 @@ Test these before merging PR #53 and creating the v0.1.0 release.
 
 - [ ] Logs persist and append correctly
   ```bash
-  wc -l ~/.config/katulong/daemon.log
+  wc -l ~/.katulong/daemon.log
   katulong restart
-  wc -l ~/.config/katulong/daemon.log
+  wc -l ~/.katulong/daemon.log
   # Line count should increase
   ```
 
@@ -179,7 +179,7 @@ Test these before merging PR #53 and creating the v0.1.0 release.
 
 - [ ] Config directory persists (expected behavior)
   ```bash
-  ls -la ~/.config/katulong
+  ls -la ~/.katulong
   # Should still exist (user data preserved)
   ```
 
@@ -232,7 +232,7 @@ Test these before merging PR #53 and creating the v0.1.0 release.
 - [ ] Log files don't grow unbounded
   ```bash
   # Let it run for a while
-  du -h ~/.config/katulong/
+  du -h ~/.katulong/
   # Should be reasonable (< 10MB for normal usage)
   ```
 
@@ -256,11 +256,11 @@ Test these before merging PR #53 and creating the v0.1.0 release.
 **When testing fails:**
 1. Check logs: `katulong logs` or `tail -f /usr/local/var/log/katulong.log`
 2. Check processes: `katulong status` and `ps aux | grep katulong`
-3. Check data dir: `ls -la ~/.config/katulong/`
-4. Uninstall and retry: `brew uninstall katulong && rm -rf ~/.config/katulong`
+3. Check data dir: `ls -la ~/.katulong/`
+4. Uninstall and retry: `brew uninstall katulong && rm -rf ~/.katulong`
 
 **Common issues:**
 - Port already in use → Check `lsof -ti:3001,3002` and kill processes
 - Daemon won't start → Check socket: `lsof /tmp/katulong-daemon.sock`
 - Logs empty → Check if running in foreground mode by accident
-- Permission denied → Check `~/.config/katulong` permissions (should be 700)
+- Permission denied → Check `~/.katulong` permissions (should be 700)

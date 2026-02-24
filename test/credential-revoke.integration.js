@@ -1,9 +1,10 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert";
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { writeAuthFixture } from "./helpers/auth-fixture.js";
 
 /**
  * Integration tests for DELETE /api/credentials/:id endpoint
@@ -54,11 +55,8 @@ describe("Credential Revoke Integration", () => {
     // Create temporary data directory
     testDataDir = mkdtempSync(join(tmpdir(), "katulong-credential-revoke-test-"));
 
-    // Write auth state with known credentials
-    writeFileSync(
-      join(testDataDir, "katulong-auth.json"),
-      JSON.stringify(AUTH_STATE)
-    );
+    // Write auth state with known credentials as per-entity files
+    writeAuthFixture(testDataDir, AUTH_STATE);
 
     // Start server with KATULONG_NO_AUTH to bypass authentication
     serverProcess = spawn("node", ["server.js"], {

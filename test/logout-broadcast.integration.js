@@ -1,9 +1,10 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { writeAuthFixture } from "./helpers/auth-fixture.js";
 
 /**
  * Integration test: credential-removed broadcast path in logout handler
@@ -73,11 +74,7 @@ describe("logout broadcast path", () => {
     testDataDir = mkdtempSync(join(tmpdir(), "katulong-logout-broadcast-test-"));
 
     // Write pre-seeded auth state so endSession() will set removedCredentialId
-    writeFileSync(
-      join(testDataDir, "katulong-auth.json"),
-      JSON.stringify(makeAuthState()),
-      "utf-8"
-    );
+    writeAuthFixture(testDataDir, makeAuthState());
 
     serverProcess = spawn("node", ["server.js"], {
       env: {

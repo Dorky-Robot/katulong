@@ -201,6 +201,7 @@ test.describe('Connection Reliability', () => {
   });
 
   test('should maintain connection during long idle period', async ({ page }) => {
+    test.setTimeout(30_000);
     // Send initial command
     await page.keyboard.type('echo "before idle"');
     await page.keyboard.press('Enter');

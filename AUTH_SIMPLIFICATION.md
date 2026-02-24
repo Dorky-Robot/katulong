@@ -65,7 +65,7 @@
 
 ### 1. Separate Setup Tokens from AuthState
 
-**Problem**: Setup tokens are stored in `katulong-auth.json` alongside credentials and sessions. This conflates bootstrap state with operational state.
+**Problem**: Setup tokens are stored alongside credentials and sessions in the auth state. This conflates bootstrap state with operational state.
 
 **Solution**: Store setup tokens separately (e.g., `katulong-setup-tokens.json` or database table if using one).
 
