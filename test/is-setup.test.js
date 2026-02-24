@@ -83,7 +83,7 @@ describe("isSetup() logic", () => {
         ],
       };
 
-      const state = AuthState.fromJSON(stateData);
+      const { state } = AuthState.fromJSON(stateData);
 
       // Simulate isSetup() check
       const hasCredentials = state.credentials && state.credentials.length > 0;
