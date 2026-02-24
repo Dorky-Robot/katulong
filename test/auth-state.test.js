@@ -743,7 +743,7 @@ describe("AuthState", () => {
         sessions: { token1: 999999 },
       };
 
-      const state = AuthState.fromJSON(data);
+      const { state } = AuthState.fromJSON(data);
 
       assert.ok(state instanceof AuthState);
       assert.deepStrictEqual(state.user, data.user);
@@ -751,13 +751,14 @@ describe("AuthState", () => {
       assert.deepStrictEqual(state.sessions, data.sessions);
     });
 
-    it("returns null for null input", () => {
-      const state = AuthState.fromJSON(null);
+    it("returns null state for null input", () => {
+      const { state, needsMigration } = AuthState.fromJSON(null);
       assert.strictEqual(state, null);
+      assert.strictEqual(needsMigration, false);
     });
 
     it("handles missing fields", () => {
-      const state = AuthState.fromJSON({});
+      const { state } = AuthState.fromJSON({});
 
       assert.strictEqual(state.user, null);
       assert.deepStrictEqual(state.credentials, []);

@@ -455,13 +455,13 @@ describe("Setup Tokens", () => {
       assert.ok(json.setupTokens[0].hash, "serialized state must contain hash");
       assert.ok(json.setupTokens[0].salt, "serialized state must contain salt");
 
-      const state2 = AuthState.fromJSON(json);
+      const { state: state2, needsMigration: migrated } = AuthState.fromJSON(json);
       // After fromJSON, findSetupToken should still work
       const found = state2.findSetupToken("plaintext-secret");
       assert.ok(found !== null, "token should be findable after serialize/deserialize");
       assert.strictEqual(found.id, "token123");
       // No migration needed (already hashed)
-      assert.strictEqual(state2._needsMigration, undefined);
+      assert.strictEqual(migrated, false);
     });
 
     it("migrates old setupToken (singular) to setupTokens (array) and hashes it", () => {
@@ -472,15 +472,15 @@ describe("Setup Tokens", () => {
         setupToken: "old-token-value",
       };
 
-      const migratedState = AuthState.fromJSON(oldFormat);
+      const { state: migratedState, needsMigration: migrated } = AuthState.fromJSON(oldFormat);
 
       assert.strictEqual(migratedState.setupTokens.length, 1);
       // Plaintext should be hashed
       assert.strictEqual(migratedState.setupTokens[0].token, undefined, "migrated token must not store plaintext");
       assert.ok(migratedState.setupTokens[0].hash, "migrated token must have hash");
       assert.strictEqual(migratedState.setupTokens[0].name, "Migrated Token");
-      // Migration flag set
-      assert.strictEqual(migratedState._needsMigration, true);
+      // Migration flag returned explicitly
+      assert.strictEqual(migrated, true);
     });
 
     it("migrates legacy plaintext token strings in setupTokens array to hashed format", () => {
@@ -501,14 +501,14 @@ describe("Setup Tokens", () => {
         ],
       };
 
-      const migratedState = AuthState.fromJSON(legacyData);
+      const { state: migratedState, needsMigration: migrated } = AuthState.fromJSON(legacyData);
 
       // Token should now be hashed
       assert.strictEqual(migratedState.setupTokens[0].token, undefined, "plaintext must be removed after migration");
       assert.ok(migratedState.setupTokens[0].hash, "hash must be present after migration");
       assert.ok(migratedState.setupTokens[0].salt, "salt must be present after migration");
-      // Migration flag set so caller knows to save
-      assert.strictEqual(migratedState._needsMigration, true);
+      // Migration flag returned explicitly so caller knows to save
+      assert.strictEqual(migrated, true);
 
       // And we can still find the token by its original value
       const found = migratedState.findSetupToken("legacy-plaintext-token");
@@ -516,7 +516,7 @@ describe("Setup Tokens", () => {
       assert.strictEqual(found.id, "tok1");
     });
 
-    it("does not set _needsMigration when tokens are already hashed", () => {
+    it("returns needsMigration=false when tokens are already hashed", () => {
       const tokenData = {
         id: "t1",
         token: "some-value",
@@ -527,8 +527,8 @@ describe("Setup Tokens", () => {
       };
       const state1 = state.addSetupToken(tokenData);
       const json = state1.toJSON();
-      const restored = AuthState.fromJSON(json);
-      assert.strictEqual(restored._needsMigration, undefined, "no migration needed for already-hashed tokens");
+      const { state: restored, needsMigration: migrated } = AuthState.fromJSON(json);
+      assert.strictEqual(migrated, false, "no migration needed for already-hashed tokens");
     });
   });
 });
