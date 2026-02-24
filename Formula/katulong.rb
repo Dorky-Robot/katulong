@@ -23,8 +23,8 @@ class Katulong < Formula
   end
 
   def post_install
-    # Create config directory
-    config_dir = Pathname.new(Dir.home) / ".config" / "katulong"
+    # Create data directory (matches wrapper's KATULONG_DATA_DIR)
+    config_dir = Pathname.new(Dir.home) / ".katulong"
     config_dir.mkpath
   end
 
