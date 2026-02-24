@@ -219,7 +219,7 @@ describe("getOriginAndRpID", () => {
     assert.equal(rpID, "localhost");
   });
 
-  it("uses https for Cloudflare Tunnel with CF-Visitor header", () => {
+  it("uses http for CF-Visitor header alone (forgeable, not a verified signal)", () => {
     const req = {
       headers: {
         host: "katulong.example.com",
@@ -227,32 +227,8 @@ describe("getOriginAndRpID", () => {
       }
     };
     const { origin, rpID } = getOriginAndRpID(req);
-    assert.equal(origin, "https://katulong.example.com");
-    assert.equal(rpID, "katulong.example.com");
-  });
-
-  it("uses http when CF-Visitor scheme is http", () => {
-    const req = {
-      headers: {
-        host: "katulong.example.com",
-        "cf-visitor": '{"scheme":"http"}'
-      }
-    };
-    const { origin, rpID } = getOriginAndRpID(req);
     assert.equal(origin, "http://katulong.example.com");
     assert.equal(rpID, "katulong.example.com");
-  });
-
-  it("ignores invalid CF-Visitor JSON", () => {
-    const req = {
-      headers: {
-        host: "example.com",
-        "cf-visitor": 'invalid json'
-      }
-    };
-    const { origin, rpID } = getOriginAndRpID(req);
-    assert.equal(origin, "http://example.com");
-    assert.equal(rpID, "example.com");
   });
 
   it("uses https for temporary Cloudflare tunnels (.trycloudflare.com)", () => {
@@ -722,12 +698,12 @@ describe("isHttpsConnection", () => {
     assert.ok(isHttpsConnection(req));
   });
 
-  it("returns true for Cloudflare custom domain via CF-Visitor header (scheme=https)", () => {
+  it("returns false for CF-Visitor header alone (forgeable, not a verified signal)", () => {
     const req = {
       headers: { host: "myapp.example.com", "cf-visitor": '{"scheme":"https"}' },
       socket: {},
     };
-    assert.ok(isHttpsConnection(req));
+    assert.ok(!isHttpsConnection(req));
   });
 
   it("returns false when CF-Visitor scheme is http", () => {
