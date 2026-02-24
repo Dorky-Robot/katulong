@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { WebSocketServer } from "ws";
 import { randomUUID } from "node:crypto";
-import envConfig from "./lib/env-config.js";
+import envConfig, { ensureDataDir } from "./lib/env-config.js";
 import { log } from "./lib/log.js";
 import { createServerPeer, destroyPeer, initP2P, p2pAvailable } from "./lib/p2p.js";
 import {
@@ -30,6 +30,8 @@ const PORT = envConfig.port;
 const SOCKET_PATH = envConfig.socketPath;
 const DATA_DIR = envConfig.dataDir;
 const SSH_PORT = envConfig.sshPort;
+
+ensureDataDir();
 
 // --- Configuration (load instance name first) ---
 

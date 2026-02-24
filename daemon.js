@@ -8,12 +8,13 @@ import { log } from "./lib/log.js";
 import { getSafeEnv } from "./lib/env-filter.js";
 import { Session } from "./lib/session.js";
 import { loadShortcuts, saveShortcuts } from "./lib/shortcuts.js";
-import envConfig from "./lib/env-config.js";
+import envConfig, { ensureDataDir } from "./lib/env-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SOCKET_PATH = envConfig.socketPath;
 const SHELL = envConfig.shell;
 const DATA_DIR = envConfig.dataDir;
+ensureDataDir();
 const SHORTCUTS_PATH = join(DATA_DIR, "shortcuts.json");
 const PID_PATH = join(DATA_DIR, "daemon.pid");
 const MAX_BUFFER = 5000;

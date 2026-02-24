@@ -2,8 +2,6 @@
     import { FitAddon } from "/vendor/xterm/addon-fit.esm.js";
     import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
     import { ModalRegistry } from "/lib/modal.js";
-    import { ListRenderer } from "/lib/list-renderer.js";
-    import { createStore, createReducer } from "/lib/store.js";
     import {
       createSessionStore, invalidateSessions,
       createTokenStore, setNewToken, invalidateTokens, removeToken, loadTokens as reloadTokens,

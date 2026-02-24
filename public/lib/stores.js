@@ -218,7 +218,7 @@ const tokenReducer = createReducer(tokenInitialState, {
 });
 
 export function createTokenStore() {
-  const store = createStore(tokenInitialState, tokenReducer, { debug: true });
+  const store = createStore(tokenInitialState, tokenReducer, { debug: false });
   loadTokens(store);
   return store;
 }
