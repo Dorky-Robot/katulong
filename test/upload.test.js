@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
-import { detectImage, readRawBody, MAX_UPLOAD_BYTES } from "../lib/upload.js";
+import { detectImage, readRawBody, MAX_UPLOAD_BYTES } from "../lib/routes/app.js";
 
 describe("detectImage", () => {
   it("detects PNG magic bytes", () => {
