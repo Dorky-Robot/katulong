@@ -27,7 +27,10 @@ export function createViewportManager(options = {}) {
   function resizeToViewport() {
     withPreservedScroll(term, () => {
       const vv = window.visualViewport;
-      const h = vv ? vv.height : window.innerHeight;
+      // In Chromium mobile emulation (isMobile: true), vv.height can be 0 during
+      // initial JS module execution before the visual viewport is fully initialised.
+      // Fall back to window.innerHeight so the terminal container gets a valid height.
+      const h = (vv && vv.height > 0) ? vv.height : window.innerHeight;
       const top = vv ? vv.offsetTop : 0;
       bar.style.top = top + "px";
       termContainer.style.height = (h - 44) + "px";
@@ -45,6 +48,9 @@ export function createViewportManager(options = {}) {
       window.visualViewport.addEventListener("scroll", resizeToViewport);
     }
     window.addEventListener("resize", resizeToViewport);
+    // Re-run after page load in case the visual viewport height was 0 during
+    // the initial module execution (mobile Chromium emulation timing issue).
+    window.addEventListener("load", resizeToViewport);
   }
 
   // Initialize terminal ResizeObserver for WebSocket resize events
