@@ -23,9 +23,7 @@ import { isLocalRequest } from "./lib/access-method.js";
 import { serveStaticFile } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createDaemonClient } from "./lib/daemon-client.js";
-import { createMiddleware } from "./lib/routes/middleware.js";
-import { createAuthRoutes } from "./lib/routes/auth.js";
-import { createAppRoutes } from "./lib/routes/app.js";
+import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/routes.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = envConfig.port;
