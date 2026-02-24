@@ -314,6 +314,237 @@ describe("loadState caching", () => {
   });
 });
 
+describe("loadState - credential metadata migration", () => {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const DATA_DIR = process.env.KATULONG_DATA_DIR || join(__dirname, "..");
+  const STATE_PATH = join(DATA_DIR, "katulong-auth.json");
+  let originalExists = false;
+  let originalContent;
+
+  beforeEach(() => {
+    try {
+      originalContent = readFileSync(STATE_PATH, "utf-8");
+      originalExists = true;
+    } catch {
+      originalExists = false;
+    }
+    _invalidateCache();
+  });
+
+  afterEach(() => {
+    _invalidateCache();
+    if (originalExists) {
+      writeFileSync(STATE_PATH, originalContent);
+    } else {
+      try { unlinkSync(STATE_PATH); } catch {}
+    }
+  });
+
+  it("adds deviceId, name, createdAt, lastUsedAt, userAgent to credentials missing metadata", () => {
+    const now = Date.now();
+    const state = {
+      user: { id: "user1", name: "owner" },
+      credentials: [
+        // Old credential without any metadata fields
+        { id: "cred1", publicKey: "key1", counter: 0 },
+        // Old credential with some but not all metadata (missing name → triggers migration)
+        { id: "cred2", publicKey: "key2", counter: 0, deviceId: "dev2" },
+      ],
+      sessions: {},
+      setupTokens: [],
+    };
+
+    writeFileSync(STATE_PATH, JSON.stringify(state));
+    _invalidateCache();
+
+    const loaded = loadState();
+    const creds = loaded.credentials;
+
+    // First credential should get all metadata
+    assert.equal(creds[0].id, "cred1");
+    assert.equal(creds[0].deviceId, null, "old credential gets null deviceId");
+    assert.equal(creds[0].name, "Device 1", "old credential gets index-based name");
+    assert.ok(creds[0].createdAt >= now, "createdAt should be set to current time");
+    assert.ok(creds[0].lastUsedAt >= now, "lastUsedAt should be set to current time");
+    assert.equal(creds[0].userAgent, "Unknown", "userAgent defaults to Unknown");
+
+    // Second credential (missing name) should get defaults too
+    assert.equal(creds[1].deviceId, "dev2", "existing deviceId is preserved");
+    assert.equal(creds[1].name, "Device 2", "missing name gets index-based default");
+  });
+
+  it("does not modify credentials that already have deviceId and name", () => {
+    const now = Date.now() - 5000;
+    const state = {
+      user: { id: "user1", name: "owner" },
+      credentials: [
+        {
+          id: "cred1", publicKey: "key1", counter: 0,
+          deviceId: "existing-dev", name: "My MacBook",
+          createdAt: now, lastUsedAt: now, userAgent: "Safari",
+        },
+      ],
+      sessions: {},
+      setupTokens: [],
+    };
+
+    writeFileSync(STATE_PATH, JSON.stringify(state));
+    _invalidateCache();
+
+    const loaded = loadState();
+    const cred = loaded.credentials[0];
+
+    assert.equal(cred.deviceId, "existing-dev", "deviceId must not change");
+    assert.equal(cred.name, "My MacBook", "name must not change");
+    assert.equal(cred.createdAt, now, "createdAt must not change");
+    assert.equal(cred.lastUsedAt, now, "lastUsedAt must not change");
+    assert.equal(cred.userAgent, "Safari", "userAgent must not change");
+  });
+
+  it("saves migrated credential metadata to disk", () => {
+    const state = {
+      user: { id: "user1", name: "owner" },
+      credentials: [{ id: "cred1", publicKey: "key1", counter: 0 }],
+      sessions: {},
+      setupTokens: [],
+    };
+
+    writeFileSync(STATE_PATH, JSON.stringify(state));
+    _invalidateCache();
+    loadState();
+
+    // Re-read from disk to confirm migration was persisted
+    _invalidateCache();
+    const reloaded = loadState();
+    assert.equal(reloaded.credentials[0].name, "Device 1", "migration should be persisted to disk");
+    assert.ok(reloaded.credentials[0].createdAt, "createdAt should be persisted");
+  });
+});
+
+describe("loadState - session lastActivityAt migration", () => {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const DATA_DIR = process.env.KATULONG_DATA_DIR || join(__dirname, "..");
+  const STATE_PATH = join(DATA_DIR, "katulong-auth.json");
+  let originalExists = false;
+  let originalContent;
+
+  beforeEach(() => {
+    try {
+      originalContent = readFileSync(STATE_PATH, "utf-8");
+      originalExists = true;
+    } catch {
+      originalExists = false;
+    }
+    _invalidateCache();
+  });
+
+  afterEach(() => {
+    _invalidateCache();
+    if (originalExists) {
+      writeFileSync(STATE_PATH, originalContent);
+    } else {
+      try { unlinkSync(STATE_PATH); } catch {}
+    }
+  });
+
+  it("adds lastActivityAt to sessions that are missing it", () => {
+    const now = Date.now();
+    const state = {
+      user: { id: "user1", name: "owner" },
+      credentials: [{ id: "cred1", publicKey: "key1", counter: 0, deviceId: "d1", name: "Device 1" }],
+      sessions: {
+        "tok1": { expiry: now + 10000, credentialId: "cred1" }, // missing lastActivityAt
+      },
+      setupTokens: [],
+    };
+
+    writeFileSync(STATE_PATH, JSON.stringify(state));
+    _invalidateCache();
+
+    const loaded = loadState();
+    const session = loaded.sessions["tok1"];
+
+    assert.ok(session, "session should still exist");
+    assert.ok(session.lastActivityAt >= now, "lastActivityAt should be set to current time");
+    assert.equal(session.credentialId, "cred1", "credentialId must be preserved");
+    assert.equal(session.expiry, now + 10000, "expiry must be preserved");
+  });
+
+  it("does not modify sessions that already have lastActivityAt", () => {
+    const past = Date.now() - 10000;
+    const now = Date.now();
+    const state = {
+      user: { id: "user1", name: "owner" },
+      credentials: [{ id: "cred1", publicKey: "key1", counter: 0, deviceId: "d1", name: "Device 1" }],
+      sessions: {
+        "tok1": { expiry: now + 10000, credentialId: "cred1", lastActivityAt: past },
+      },
+      setupTokens: [],
+    };
+
+    writeFileSync(STATE_PATH, JSON.stringify(state));
+    _invalidateCache();
+
+    const loaded = loadState();
+    const session = loaded.sessions["tok1"];
+
+    assert.equal(session.lastActivityAt, past, "existing lastActivityAt must not be changed");
+  });
+
+  it("saves migrated lastActivityAt to disk", () => {
+    const now = Date.now();
+    const state = {
+      user: { id: "user1", name: "owner" },
+      credentials: [{ id: "cred1", publicKey: "key1", counter: 0, deviceId: "d1", name: "Device 1" }],
+      sessions: {
+        "tok1": { expiry: now + 10000, credentialId: "cred1" },
+      },
+      setupTokens: [],
+    };
+
+    writeFileSync(STATE_PATH, JSON.stringify(state));
+    _invalidateCache();
+    loadState();
+
+    // Re-read from disk
+    _invalidateCache();
+    const reloaded = loadState();
+    assert.ok(reloaded.sessions["tok1"].lastActivityAt >= now, "lastActivityAt should be persisted to disk");
+  });
+
+  it("applies credential and session migrations together on a very old state file", () => {
+    const now = Date.now();
+    const state = {
+      user: { id: "user1", name: "owner" },
+      // Old credentials without metadata
+      credentials: [{ id: "cred1", publicKey: "key1", counter: 0 }],
+      sessions: {
+        // Old session without lastActivityAt (and also needs credential cleanup check)
+        "tok1": { expiry: now + 10000, credentialId: "cred1" },
+        // Old format session (number) — should be removed
+        "tok2": now + 10000,
+      },
+      setupTokens: [],
+    };
+
+    writeFileSync(STATE_PATH, JSON.stringify(state));
+    _invalidateCache();
+
+    const loaded = loadState();
+
+    // Credential migration applied
+    assert.equal(loaded.credentials[0].name, "Device 1", "credential metadata migration applied");
+    assert.equal(loaded.credentials[0].deviceId, null, "deviceId set to null for old credential");
+
+    // Session cleanup applied (old number-format session removed)
+    assert.equal(loaded.sessions["tok2"], undefined, "old number-format session removed");
+
+    // Session activity migration applied
+    assert.ok(loaded.sessions["tok1"], "valid session preserved");
+    assert.ok(loaded.sessions["tok1"].lastActivityAt >= now, "lastActivityAt added to valid session");
+  });
+});
+
 describe("loadState - corrupted state file handling", () => {
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const DATA_DIR = process.env.KATULONG_DATA_DIR || join(__dirname, "..");
