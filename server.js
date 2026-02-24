@@ -5,7 +5,8 @@ import { readFileSync, existsSync, watch, mkdirSync, writeFileSync, unlinkSync }
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { WebSocketServer } from "ws";
-import { randomUUID, randomBytes } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import envConfig from "./lib/env-config.js";
 import { encode, decoder } from "./lib/ndjson.js";
 import { log } from "./lib/log.js";
 import { createServerPeer, destroyPeer, initP2P, p2pAvailable } from "./lib/p2p.js";
@@ -40,10 +41,10 @@ import { serveStaticFile } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PORT = parseInt(process.env.PORT || "3001", 10);
-const SOCKET_PATH = process.env.KATULONG_SOCK || "/tmp/katulong-daemon.sock";
-const DATA_DIR = process.env.KATULONG_DATA_DIR || __dirname;
-const SSH_PORT = parseInt(process.env.SSH_PORT || "2222", 10);
+const PORT = envConfig.port;
+const SOCKET_PATH = envConfig.socketPath;
+const DATA_DIR = envConfig.dataDir;
+const SSH_PORT = envConfig.sshPort;
 
 // --- Configuration (load instance name first) ---
 
@@ -60,8 +61,8 @@ const sshHostKey = ensureHostKey(DATA_DIR);
 
 // --- Authentication tokens ---
 // Setup token is now stored in AuthState (managed via API)
-// SSH access token is still generated here
-const SSH_PASSWORD = process.env.SSH_PASSWORD || randomBytes(16).toString("hex");
+// SSH access token is still generated here (or read from SSH_PASSWORD env var)
+const SSH_PASSWORD = envConfig.sshPassword;
 const RP_NAME = "Katulong";
 
 // --- Rate limiting ---
@@ -73,11 +74,11 @@ const authRateLimit = rateLimit(10, 60000, (req) => {
   return `${addr}:${ua}:${origin}`;
 });
 
-if (!process.env.SSH_PASSWORD) {
+if (!envConfig.sshPasswordProvided) {
   log.info("SSH password generated (retrieve via GET /ssh/password)");
 }
 
-if (process.env.KATULONG_NO_AUTH === "1") {
+if (envConfig.noAuth) {
   log.warn("WARNING: KATULONG_NO_AUTH=1 — authentication is DISABLED. All requests are treated as authenticated. Do NOT use this in production or on untrusted networks.");
 }
 
@@ -88,7 +89,7 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const DAEMON_RECONNECT_INITIAL_MS = 1000; // 1 second
 const DAEMON_RECONNECT_MAX_MS = 30000; // 30 seconds
 const SERVER_PID_PATH = join(DATA_DIR, "server.pid");
-const DRAIN_TIMEOUT_MS = parseInt(process.env.DRAIN_TIMEOUT || "30000", 10);
+const DRAIN_TIMEOUT_MS = envConfig.drainTimeout;
 
 // --- Graceful shutdown state ---
 
@@ -107,7 +108,7 @@ const credentialLockout = new CredentialLockout({
 });
 
 function isAuthenticated(req) {
-  if (process.env.KATULONG_NO_AUTH === "1") {
+  if (envConfig.noAuth) {
     log.debug("Auth bypassed: KATULONG_NO_AUTH=1");
     return true;
   }
@@ -1092,7 +1093,7 @@ async function handleRequest(req, res) {
 
   // Refresh session activity for authenticated requests (sliding expiry)
   // Skip for localhost (auto-authenticated) and public paths
-  if (!isPublicPath(pathname) && !isLocalRequest(req) && process.env.KATULONG_NO_AUTH !== "1") {
+  if (!isPublicPath(pathname) && !isLocalRequest(req) && !envConfig.noAuth) {
     const cookies = parseCookies(req.headers.cookie);
     const token = cookies.get("katulong_session");
     if (token) {
@@ -1443,7 +1444,7 @@ wss.on("connection", (ws) => {
 });
 
 // Live-reload (dev only)
-if (process.env.NODE_ENV !== "production") {
+if (envConfig.nodeEnv !== "production") {
   const watcher = watch(join(__dirname, "public"), { recursive: true }, () => {
     for (const client of wss.clients) {
       if (client.readyState === 1) client.send(JSON.stringify({ type: "reload" }));
