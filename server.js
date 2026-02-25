@@ -18,7 +18,7 @@ import { ConfigManager } from "./lib/config.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest } from "./lib/access-method.js";
-import { serveStaticFile } from "./lib/static-files.js";
+import { serveStaticFile, clearFileCache } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createDaemonClient } from "./lib/daemon-client.js";
 import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/routes.js";
@@ -355,6 +355,7 @@ wss.on("connection", (ws) => wsManager.handleConnection(ws));
 // Live-reload (dev only)
 if (envConfig.nodeEnv !== "production") {
   const watcher = watch(join(__dirname, "public"), { recursive: true }, () => {
+    clearFileCache();
     for (const client of wss.clients) {
       if (client.readyState === 1) client.send(JSON.stringify({ type: "reload" }));
     }
