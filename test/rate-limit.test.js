@@ -153,6 +153,27 @@ describe("rateLimit (default instance — backward compat)", () => {
     });
   });
 
+  it("check() returns exceeded:false under limit", () => {
+    const keyFn = uniqueKey();
+    const middleware = rateLimit(3, 60000, keyFn);
+    const req = makeReq();
+
+    const result = middleware.check(req);
+    assert.equal(result.exceeded, false);
+    assert.equal(result.retryAfter, 0);
+  });
+
+  it("check() returns exceeded:true over limit", () => {
+    const keyFn = uniqueKey();
+    const middleware = rateLimit(1, 60000, keyFn);
+    const req = makeReq();
+
+    middleware.check(req); // count=1, allowed
+    const result = middleware.check(req); // count=2, exceeded
+    assert.equal(result.exceeded, true);
+    assert.ok(result.retryAfter > 0);
+  });
+
   it("Content-Type header is application/json on 429", () => {
     const keyFn = uniqueKey();
     const middleware = rateLimit(0, 60000, keyFn);
