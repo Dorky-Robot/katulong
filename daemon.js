@@ -1,5 +1,6 @@
 import { createServer, createConnection } from "node:net";
 import { readFileSync, writeFileSync, unlinkSync, existsSync, chmodSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import pty from "node-pty";
@@ -29,6 +30,40 @@ process.title = "katulong-daemon";
 const sessions = new Map();
 const clients = new Map();   // clientId -> { session: string, socket }
 const uiSockets = new Set();
+
+// --- Async child process counting ---
+
+function countDescendantsAsync(pid) {
+  return new Promise((resolve) => {
+    if (!/^\d+$/.test(String(pid))) return resolve(0);
+    execFile("pgrep", ["-P", String(pid)], (err, stdout) => {
+      if (err || !stdout.trim()) return resolve(0);
+      const children = stdout.trim().split("\n").filter(Boolean);
+      if (children.length === 0) return resolve(0);
+      let remaining = children.length;
+      let total = children.length;
+      for (const childPid of children) {
+        if (!/^\d+$/.test(childPid)) { remaining--; if (remaining === 0) resolve(total); continue; }
+        countDescendantsAsync(parseInt(childPid, 10)).then((sub) => {
+          total += sub;
+          remaining--;
+          if (remaining === 0) resolve(total);
+        });
+      }
+    });
+  });
+}
+
+const CHILD_COUNT_INTERVAL_MS = 5000;
+const childCountTimer = setInterval(async () => {
+  for (const [name, session] of sessions) {
+    if (!session.alive) continue;
+    const count = await countDescendantsAsync(session.pid);
+    session.lastKnownChildCount = count;
+    broadcast({ type: "child-count-update", session: name, count });
+  }
+}, CHILD_COUNT_INTERVAL_MS);
+childCountTimer.unref();
 
 // --- Pure-ish helpers ---
 
