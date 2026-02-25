@@ -530,7 +530,7 @@ describe("daemon error scenarios", () => {
     it("RPC with missing type field returns error without crashing daemon", async () => {
       const result = await rpc(errSock, { data: "no-type-field" });
       assert.ok(result.error, "missing type should return an error");
-      assert.match(result.error, /unknown/i);
+      assert.match(result.error, /type/i);
 
       const list = await rpc(errSock, { type: "list-sessions" });
       assert.ok(Array.isArray(list.sessions), "daemon should still be alive");
