@@ -4,26 +4,25 @@ import { readFileSync, existsSync, watch, writeFileSync, unlinkSync } from "node
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { WebSocketServer } from "ws";
-import { randomUUID } from "node:crypto";
 import envConfig, { ensureDataDir } from "./lib/env-config.js";
 import { log } from "./lib/log.js";
-import { createServerPeer, destroyPeer, initP2P, p2pAvailable } from "./lib/p2p.js";
+import { initP2P } from "./lib/p2p.js";
 import {
   loadState, validateSession, refreshSessionActivity,
 } from "./lib/auth.js";
 import {
-  parseCookies, isPublicPath, createChallengeStore, validateCsrfToken,
+  parseCookies, isPublicPath, createChallengeStore,
 } from "./lib/http-util.js";
 import { rateLimit, getClientIp } from "./lib/rate-limit.js";
 import { ConfigManager } from "./lib/config.js";
 import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
-import { validateMessage } from "./lib/websocket-validation.js";
 import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest } from "./lib/access-method.js";
 import { serveStaticFile } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createDaemonClient } from "./lib/daemon-client.js";
 import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/routes.js";
+import { createWebSocketManager } from "./lib/ws-manager.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = envConfig.port;
@@ -167,8 +166,9 @@ function setSecurityHeaders(res) {
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
 }
 
-// --- WebSocket client tracking (declared early so route factories can reference it) ---
-const wsClients = new Map(); // clientId -> { ws, session, sessionToken, credentialId, p2pPeer, p2pConnected }
+// --- WebSocket manager (extracted from inline code) ---
+const wsManager = createWebSocketManager({ bridge, daemonRPC, daemonSend });
+const { wsClients, broadcastToAll, closeAllWebSockets, closeWebSocketsForCredential } = wsManager;
 
 // --- HTTP routes (assembled from lib/routes/) ---
 
@@ -230,15 +230,13 @@ async function handleRequest(req, res) {
   const match = matchRoute(req.method, pathname);
 
   if (match) {
-    // Apply rate limiting to auth endpoints
-    const authPaths = ["/auth/register/options", "/auth/register/verify", "/auth/login/options", "/auth/login/verify"];
-
-    if (authPaths.includes(pathname)) {
-      // Check auth rate limit
-      const rateLimitResult = await new Promise((resolve) => {
-        authRateLimit(req, res, () => resolve(true));
-      });
-      if (!rateLimitResult) return; // Rate limit exceeded, response already sent
+    if (match.route.rateLimit) {
+      const result = authRateLimit.check(req);
+      if (result.exceeded) {
+        res.setHeader("Retry-After", String(result.retryAfter));
+        json(res, 429, { error: "Too many requests", retryAfter: result.retryAfter });
+        return;
+      }
     }
 
     try {
@@ -286,7 +284,6 @@ function handleUpgrade(req, socket, head) {
     host: req.headers.host
   });
 
-  // Validate session cookie on WebSocket upgrade and extract session info
   if (!isAuthenticated(req)) {
     log.warn("WebSocket rejected: not authenticated", { ip: req.socket.remoteAddress });
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
@@ -294,7 +291,6 @@ function handleUpgrade(req, socket, head) {
     return;
   }
 
-  // Extract session token and validate credential
   const cookies = parseCookies(req.headers.cookie);
   const sessionToken = cookies.get("katulong_session");
   let credentialId = null;
@@ -313,8 +309,6 @@ function handleUpgrade(req, socket, head) {
 
   log.info("WebSocket authenticated", { ip: req.socket.remoteAddress, credentialId });
 
-  // Origin check to prevent Cross-Site WebSocket Hijacking (CSWSH)
-  // Localhost bypasses this since browsers may omit Origin for local pages
   if (!isLocalRequest(req)) {
     const origin = req.headers.origin;
     const host = req.headers.host;
@@ -340,8 +334,6 @@ function handleUpgrade(req, socket, head) {
   }
 
   wss.handleUpgrade(req, socket, head, (ws) => {
-    // Re-validate session to close TOCTOU race between initial check and upgrade completion.
-    // A credential/session could be revoked between the check above and this callback.
     if (sessionToken && !isLocalRequest(req)) {
       const freshState = loadState();
       if (!freshState || !freshState.isValidSession(sessionToken)) {
@@ -350,7 +342,6 @@ function handleUpgrade(req, socket, head) {
         return;
       }
     }
-    // Attach session info to WebSocket for tracking
     ws.sessionToken = sessionToken;
     ws.credentialId = credentialId;
     wss.emit("connection", ws, req);
@@ -359,212 +350,7 @@ function handleUpgrade(req, socket, head) {
 
 server.on("upgrade", handleUpgrade);
 
-// Relay daemon broadcasts to matching browser clients
-function sendToSession(sessionName, payload, { preferP2P = false } = {}) {
-  const encoded = JSON.stringify(payload);
-  for (const [, info] of wsClients) {
-    if (info.session !== sessionName) continue;
-    if (preferP2P && info.p2pConnected && info.p2pPeer) {
-      try {
-        info.p2pPeer.send(encoded);
-        continue; // Only skip WS if P2P send succeeded
-      } catch { /* fall through to WS */ }
-    }
-    if (info.ws.readyState === 1) {
-      info.ws.send(encoded);
-    }
-  }
-}
-
-// Broadcast to all connected WebSocket clients
-function broadcastToAll(payload) {
-  const encoded = JSON.stringify(payload);
-  for (const [, info] of wsClients) {
-    if (info.ws.readyState === 1) {
-      info.ws.send(encoded);
-    }
-  }
-}
-
-// Close all WebSocket connections (used by revoke-all)
-function closeAllWebSockets(code, reason) {
-  for (const [clientId, info] of wsClients) {
-    if (info.ws.readyState === 1) {
-      info.ws.close(code, reason);
-    }
-    wsClients.delete(clientId);
-  }
-}
-
-/**
- * Close all WebSocket connections for a revoked credential
- * SECURITY: This ensures that revoking a device/credential immediately
- * disconnects all active sessions using that credential.
- * @param {string} credentialId - Credential ID to revoke
- */
-function closeWebSocketsForCredential(credentialId) {
-  let closedCount = 0;
-  for (const [clientId, info] of wsClients) {
-    if (info.credentialId === credentialId) {
-      log.info("Closing WebSocket for revoked credential", { clientId, credentialId });
-
-      // Close P2P connection if exists
-      if (info.p2pPeer) {
-        try { destroyPeer(info.p2pPeer); } catch (err) {
-          log.warn("Error destroying P2P peer", { error: err.message });
-        }
-      }
-
-      // Close WebSocket with appropriate code
-      if (info.ws.readyState === 1) { // OPEN
-        info.ws.close(1008, "Credential revoked"); // 1008 = Policy Violation
-      }
-
-      wsClients.delete(clientId);
-      closedCount++;
-    }
-  }
-
-  if (closedCount > 0) {
-    log.info("Closed WebSocket connections for revoked credential", { credentialId, count: closedCount });
-  }
-}
-
-// Register WebSocket transport
-bridge.register((msg) => {
-  switch (msg.type) {
-    case "output":
-      sendToSession(msg.session, { type: "output", data: msg.data }, { preferP2P: true });
-      break;
-    case "exit":
-      sendToSession(msg.session, { type: "exit", code: msg.code });
-      break;
-    case "session-removed":
-      sendToSession(msg.session, { type: "session-removed" });
-      break;
-    case "session-renamed":
-      sendToSession(msg.session, { type: "session-renamed", name: msg.newName });
-      for (const [, info] of wsClients) {
-        if (info.session === msg.session) info.session = msg.newName;
-      }
-      break;
-    case "child-count-update":
-      // Daemon periodically broadcasts child process counts — relay to attached clients
-      sendToSession(msg.session, { type: "child-count-update", count: msg.count });
-      break;
-  }
-});
-
-wss.on("connection", (ws) => {
-  const clientId = randomUUID();
-  log.debug("Client connected", { clientId });
-
-  ws.on("message", async (raw) => {
-    let msg;
-    try { msg = JSON.parse(raw.toString()); } catch { return; }
-
-    // Validate message structure and types
-    const validation = validateMessage(msg);
-    if (!validation.valid) {
-      log.warn("Invalid WebSocket message", { clientId, error: validation.error, type: msg?.type });
-      ws.send(JSON.stringify({ type: "error", message: "Invalid message format" }));
-      return;
-    }
-
-    // SECURITY: Validate session is still valid before processing message
-    // This catches cases where a credential was revoked after the WebSocket connected
-    if (ws.sessionToken) {
-      const state = loadState();
-      if (!state || !state.isValidSession(ws.sessionToken)) {
-        log.warn("WebSocket message rejected: session no longer valid", { clientId, credentialId: ws.credentialId });
-        ws.close(1008, "Session invalidated"); // 1008 = Policy Violation
-        wsClients.delete(clientId);
-        return;
-      }
-    }
-
-    const wsMessageHandlers = {
-      async attach() {
-        const name = msg.session || "default";
-        try {
-          const result = await daemonRPC({ type: "attach", clientId, session: name, cols: msg.cols, rows: msg.rows });
-          wsClients.set(clientId, {
-            ws, session: name, sessionToken: ws.sessionToken,
-            credentialId: ws.credentialId, p2pPeer: null, p2pConnected: false,
-          });
-          log.debug("Client attached", { clientId, session: name });
-          ws.send(JSON.stringify({ type: "attached" }));
-          if (result.buffer) ws.send(JSON.stringify({ type: "output", data: result.buffer }));
-          if (!result.alive) ws.send(JSON.stringify({ type: "exit", code: -1 }));
-        } catch (err) {
-          log.error("Attach failed", { clientId, error: err.message });
-          ws.send(JSON.stringify({ type: "error", message: "Daemon not available" }));
-        }
-      },
-      input() {
-        daemonSend({ type: "input", clientId, data: msg.data });
-      },
-      resize() {
-        daemonSend({ type: "resize", clientId, cols: msg.cols, rows: msg.rows });
-      },
-      "p2p-signal"() {
-        const info = wsClients.get(clientId);
-        if (!info) return;
-        if (!p2pAvailable) {
-          ws.send(JSON.stringify({ type: "p2p-unavailable" }));
-          return;
-        }
-        if (msg.data?.type === "offer" && info.p2pPeer) {
-          destroyPeer(info.p2pPeer);
-          info.p2pPeer = null;
-          info.p2pConnected = false;
-        }
-        if (!info.p2pPeer) {
-          info.p2pPeer = createServerPeer(
-            (data) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "p2p-signal", data })); },
-            (chunk) => {
-              try {
-                const str = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-                const p2pMsg = JSON.parse(str);
-                if (p2pMsg.type === "input") daemonSend({ type: "input", clientId, data: p2pMsg.data });
-              } catch (err) { log.warn("Malformed P2P data", { clientId, error: err.message }); }
-            },
-            () => {
-              const cur = wsClients.get(clientId);
-              if (cur) { cur.p2pPeer = null; cur.p2pConnected = false; }
-              if (ws.readyState === 1) ws.send(JSON.stringify({ type: "p2p-closed" }));
-            }
-          );
-          info.p2pPeer.on("connect", () => {
-            const cur = wsClients.get(clientId);
-            if (cur) cur.p2pConnected = true;
-            if (ws.readyState === 1) ws.send(JSON.stringify({ type: "p2p-ready" }));
-          });
-        }
-        info.p2pPeer.signal(msg.data);
-      },
-    };
-
-    const handler = wsMessageHandlers[msg.type];
-    if (handler) await handler();
-  });
-
-  ws.on("error", (err) => {
-    log.error("WebSocket client error", { clientId, error: err.message });
-    const info = wsClients.get(clientId);
-    if (info?.p2pPeer) destroyPeer(info.p2pPeer);
-    wsClients.delete(clientId);
-    daemonSend({ type: "detach", clientId });
-  });
-
-  ws.on("close", () => {
-    log.debug("Client disconnected", { clientId });
-    const info = wsClients.get(clientId);
-    if (info?.p2pPeer) destroyPeer(info.p2pPeer);
-    wsClients.delete(clientId);
-    daemonSend({ type: "detach", clientId });
-  });
-});
+wss.on("connection", (ws) => wsManager.handleConnection(ws));
 
 // Live-reload (dev only)
 if (envConfig.nodeEnv !== "production") {
@@ -619,13 +405,7 @@ async function gracefulShutdown(signal) {
 
   // 1. Notify all WebSocket clients that this server is draining
   //    (triggers fast reconnect on the frontend)
-  for (const [, info] of wsClients) {
-    if (info.ws.readyState === 1) {
-      try {
-        info.ws.send(JSON.stringify({ type: "server-draining" }));
-      } catch { /* client may already be closing */ }
-    }
-  }
+  broadcastToAll({ type: "server-draining" });
 
   // 2. Stop accepting new HTTP connections — releases the port immediately
   server.close(() => {
@@ -635,16 +415,7 @@ async function gracefulShutdown(signal) {
   // 3. Wait briefly for clients to receive the draining message, then close WebSockets
   await new Promise((resolve) => setTimeout(resolve, 500));
 
-  for (const [clientId, info] of wsClients) {
-    if (info.ws.readyState === 1) {
-      info.ws.close(1001, "Server shutting down"); // 1001 = Going Away
-    }
-    if (info.p2pPeer) {
-      try { destroyPeer(info.p2pPeer); } catch { /* ignore */ }
-    }
-    wsClients.delete(clientId);
-    daemonSend({ type: "detach", clientId });
-  }
+  closeAllWebSockets(1001, "Server shutting down");
 
   // 4. Wait for WebSocket connections to drain (up to DRAIN_TIMEOUT_MS)
   const drainDeadline = Date.now() + DRAIN_TIMEOUT_MS;
