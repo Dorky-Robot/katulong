@@ -448,6 +448,10 @@ bridge.register((msg) => {
         if (info.session === msg.session) info.session = msg.newName;
       }
       break;
+    case "child-count-update":
+      // Daemon periodically broadcasts child process counts — relay to attached clients
+      sendToSession(msg.session, { type: "child-count-update", count: msg.count });
+      break;
   }
 });
 

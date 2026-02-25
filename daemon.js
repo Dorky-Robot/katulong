@@ -1,5 +1,6 @@
 import { createServer, createConnection } from "node:net";
 import { readFileSync, writeFileSync, unlinkSync, existsSync, chmodSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import pty from "node-pty";
@@ -8,6 +9,7 @@ import { log } from "./lib/log.js";
 import { getSafeEnv } from "./lib/env-filter.js";
 import { Session } from "./lib/session.js";
 import { loadShortcuts, saveShortcuts } from "./lib/shortcuts.js";
+import { validateMessage } from "./lib/daemon-protocol.js";
 import envConfig, { ensureDataDir } from "./lib/env-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -29,6 +31,33 @@ process.title = "katulong-daemon";
 const sessions = new Map();
 const clients = new Map();   // clientId -> { session: string, socket }
 const uiSockets = new Set();
+
+// --- Async child process counting ---
+
+function countDescendantsAsync(pid) {
+  return new Promise((resolve) => {
+    if (!/^\d+$/.test(String(pid))) return resolve(0);
+    execFile("pgrep", ["-P", String(pid)], (err, stdout) => {
+      if (err || !stdout.trim()) return resolve(0);
+      const children = stdout.trim().split("\n").filter(p => /^\d+$/.test(p));
+      if (children.length === 0) return resolve(0);
+      Promise.all(children.map(p => countDescendantsAsync(parseInt(p, 10)))).then((counts) => {
+        resolve(children.length + counts.reduce((a, b) => a + b, 0));
+      });
+    });
+  });
+}
+
+const CHILD_COUNT_INTERVAL_MS = 5000;
+const childCountTimer = setInterval(async () => {
+  for (const [name, session] of sessions) {
+    if (!session.alive) continue;
+    const count = await countDescendantsAsync(session.pid);
+    session.lastKnownChildCount = count;
+    broadcast({ type: "child-count-update", session: name, count });
+  }
+}, CHILD_COUNT_INTERVAL_MS);
+childCountTimer.unref();
 
 // --- Pure-ish helpers ---
 
@@ -165,6 +194,12 @@ const rpcHandlers = {
 // --- Message dispatch (boundary) ---
 
 function handleMessage(msg, socket) {
+  const { valid, error } = validateMessage(msg);
+  if (!valid) {
+    if (msg?.id) socket.write(encode({ id: msg.id, error }));
+    return;
+  }
+
   const { id, type } = msg;
 
   // Fire-and-forget: no response needed
