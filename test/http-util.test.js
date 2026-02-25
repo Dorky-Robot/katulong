@@ -439,6 +439,43 @@ describe("createChallengeStore", () => {
   });
 });
 
+describe("challengeStore metadata", () => {
+  it("setMeta/getMeta round-trip succeeds", () => {
+    const cs = createChallengeStore(60000);
+    cs.store("challenge-1");
+    cs.setMeta("challenge-1", "userID", "user-abc");
+    assert.equal(cs.getMeta("challenge-1", "userID"), "user-abc");
+    cs.destroy();
+  });
+
+  it("getMeta returns undefined for unknown key", () => {
+    const cs = createChallengeStore(60000);
+    cs.store("challenge-1");
+    assert.equal(cs.getMeta("challenge-1", "userID"), undefined);
+    cs.destroy();
+  });
+
+  it("deleteMeta removes metadata entry", () => {
+    const cs = createChallengeStore(60000);
+    cs.store("challenge-1");
+    cs.setMeta("challenge-1", "userID", "user-abc");
+    cs.deleteMeta("challenge-1", "userID");
+    assert.equal(cs.getMeta("challenge-1", "userID"), undefined);
+    cs.destroy();
+  });
+
+  it("sweep cleans up expired challenge metadata", () => {
+    const cs = createChallengeStore(1000);
+    cs.store("challenge-1");
+    cs.setMeta("challenge-1", "userID", "user-abc");
+    // Expire the challenge
+    cs._challenges.set("challenge-1", Date.now() - 1);
+    cs._sweep();
+    assert.equal(cs.getMeta("challenge-1", "userID"), undefined);
+    cs.destroy();
+  });
+});
+
 describe("getCspHeaders", () => {
   it("returns enforce mode CSP header by default", () => {
     const headers = getCspHeaders();

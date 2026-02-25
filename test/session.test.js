@@ -482,14 +482,35 @@ describe("Session", () => {
       assert.strictEqual(result, false);
     });
 
-    it("returns boolean for alive session", () => {
+    it("returns false when lastKnownChildCount is not set", () => {
       const pty = new MockPTY();
       const session = new Session("test", pty);
 
-      const result = session.hasChildProcesses();
+      assert.strictEqual(session.hasChildProcesses(), false);
+    });
 
-      // Should return boolean (actual value depends on system state)
-      assert.strictEqual(typeof result, "boolean");
+    it("returns false when lastKnownChildCount is 0", () => {
+      const pty = new MockPTY();
+      const session = new Session("test", pty);
+      session.lastKnownChildCount = 0;
+
+      assert.strictEqual(session.hasChildProcesses(), false);
+    });
+
+    it("returns false when lastKnownChildCount is 1", () => {
+      const pty = new MockPTY();
+      const session = new Session("test", pty);
+      session.lastKnownChildCount = 1;
+
+      assert.strictEqual(session.hasChildProcesses(), false);
+    });
+
+    it("returns true when lastKnownChildCount > 1", () => {
+      const pty = new MockPTY();
+      const session = new Session("test", pty);
+      session.lastKnownChildCount = 2;
+
+      assert.strictEqual(session.hasChildProcesses(), true);
     });
 
     it("includes hasChildProcesses in toJSON", () => {
