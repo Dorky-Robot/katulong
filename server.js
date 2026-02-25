@@ -233,6 +233,7 @@ async function handleRequest(req, res) {
     if (match.route.rateLimit) {
       const result = authRateLimit.check(req);
       if (result.exceeded) {
+        res.setHeader("Retry-After", String(result.retryAfter));
         json(res, 429, { error: "Too many requests", retryAfter: result.retryAfter });
         return;
       }
