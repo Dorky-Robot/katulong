@@ -82,7 +82,8 @@ let draining = false;
 
 // --- Challenge storage (in-memory, 5-min expiry) ---
 
-const { store: storeChallenge, consume: consumeChallenge, _challenges: challenges } = createChallengeStore(CHALLENGE_TTL_MS);
+const challengeStore = createChallengeStore(CHALLENGE_TTL_MS);
+const { store: storeChallenge, consume: consumeChallenge } = challengeStore;
 
 // --- Credential lockout (in-memory, 15 min window) ---
 
@@ -175,7 +176,7 @@ const { auth, csrf } = createMiddleware({ isAuthenticated, json });
 
 const routeCtx = {
   json, parseJSON, isAuthenticated, daemonRPC,
-  storeChallenge, consumeChallenge, challenges,
+  storeChallenge, consumeChallenge, challengeStore,
   broadcastToAll, closeWebSocketsForCredential,
   credentialLockout, configManager,
   __dirname, DATA_DIR, SSH_PASSWORD, SSH_PORT, SSH_HOST: envConfig.sshHost, APP_VERSION, RP_NAME, PORT,
