@@ -23,15 +23,7 @@ if [ -f "$PID_FILE" ]; then
   fi
 fi
 
-# Method 2: Use process title
-if pkill -0 katulong-daemon 2>/dev/null; then
-  echo "Killing daemon by process name..."
-  pkill katulong-daemon || pkill -9 katulong-daemon
-  echo "Daemon stopped."
-  exit 0
-fi
-
-# Method 3: Use socket file
+# Method 2: Use socket file
 SOCKET_PATH="${KATULONG_SOCK:-/tmp/katulong-daemon.sock}"
 if [ -e "$SOCKET_PATH" ]; then
   PID=$(lsof -t "$SOCKET_PATH" 2>/dev/null || true)
