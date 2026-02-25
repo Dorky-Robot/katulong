@@ -126,4 +126,4 @@ Tests live in `test/`. The test suite covers auth, session management, cookie pa
 
 ## Security history
 
-See `SECURITY_IMPROVEMENTS.md` for documentation of major security hardening completed in February 2026, which addressed 86 code review findings including request body DoS protection, header trust removal, atomic file operations, path traversal protection, session race conditions, input validation, environment filtering, and supply chain security via self-hosted dependencies.
+See `docs/SECURITY_IMPROVEMENTS.md` for documentation of major security hardening completed in February 2026, which addressed 86 code review findings including request body DoS protection, header trust removal, atomic file operations, path traversal protection, session race conditions, input validation, environment filtering, and supply chain security via self-hosted dependencies.
