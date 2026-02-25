@@ -296,13 +296,13 @@ describe("ConfigManager", () => {
       configManager.initialize();
     });
 
-    it("should update instance name", () => {
-      configManager.setInstanceName("My New Name");
+    it("should update instance name", async () => {
+      await configManager.setInstanceName("My New Name");
       assert.strictEqual(configManager.getInstanceName(), "My New Name", "Instance name should be updated");
     });
 
-    it("should trim whitespace", () => {
-      configManager.setInstanceName("  Spaces  ");
+    it("should trim whitespace", async () => {
+      await configManager.setInstanceName("  Spaces  ");
       assert.strictEqual(configManager.getInstanceName(), "Spaces", "Should trim whitespace");
     });
 
@@ -311,7 +311,7 @@ describe("ConfigManager", () => {
 
       // Wait a tiny bit to ensure timestamp changes
       await new Promise(resolve => setTimeout(resolve, 10));
-      configManager.setInstanceName("New Name");
+      await configManager.setInstanceName("New Name");
 
       assert.notStrictEqual(
         configManager.config.updatedAt,
@@ -320,127 +320,127 @@ describe("ConfigManager", () => {
       );
     });
 
-    it("should persist to file", () => {
-      configManager.setInstanceName("Persisted Name");
+    it("should persist to file", async () => {
+      await configManager.setInstanceName("Persisted Name");
 
       const content = JSON.parse(readFileSync(join(testDir, "config.json"), "utf-8"));
       assert.strictEqual(content.instanceName, "Persisted Name", "Should save to file");
     });
 
-    it("should reject empty string", () => {
-      assert.throws(
-        () => configManager.setInstanceName(""),
+    it("should reject empty string", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceName(""),
         /non-empty string/,
         "Should reject empty string"
       );
     });
 
-    it("should reject whitespace-only string", () => {
-      assert.throws(
-        () => configManager.setInstanceName("   "),
+    it("should reject whitespace-only string", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceName("   "),
         /non-empty string/,
         "Should reject whitespace-only string"
       );
     });
 
-    it("should reject non-string values", () => {
-      assert.throws(
-        () => configManager.setInstanceName(123),
+    it("should reject non-string values", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceName(123),
         /non-empty string/,
         "Should reject number"
       );
 
-      assert.throws(
-        () => configManager.setInstanceName(null),
+      await assert.rejects(
+        async () => configManager.setInstanceName(null),
         /non-empty string/,
         "Should reject null"
       );
 
-      assert.throws(
-        () => configManager.setInstanceName(undefined),
+      await assert.rejects(
+        async () => configManager.setInstanceName(undefined),
         /non-empty string/,
         "Should reject undefined"
       );
     });
 
-    it("should reject names longer than 100 characters", () => {
+    it("should reject names longer than 100 characters", async () => {
       const longName = "a".repeat(101);
-      assert.throws(
-        () => configManager.setInstanceName(longName),
+      await assert.rejects(
+        async () => configManager.setInstanceName(longName),
         /100 characters or less/,
         "Should reject names over 100 chars"
       );
     });
 
-    it("should accept names exactly 100 characters", () => {
+    it("should accept names exactly 100 characters", async () => {
       const name100 = "a".repeat(100);
-      configManager.setInstanceName(name100);
+      await configManager.setInstanceName(name100);
       assert.strictEqual(configManager.getInstanceName(), name100, "Should accept 100 char name");
     });
 
-    it("should reject names with HTML injection characters", () => {
-      assert.throws(
-        () => configManager.setInstanceName('<script>alert(1)</script>'),
+    it("should reject names with HTML injection characters", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceName('<script>alert(1)</script>'),
         /letters, digits, spaces, hyphens, underscores, and periods/,
         "Should reject HTML injection in instance name"
       );
     });
 
-    it("should reject names with quotes", () => {
-      assert.throws(
-        () => configManager.setInstanceName('name"with"quotes'),
+    it("should reject names with quotes", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceName('name"with"quotes'),
         /letters, digits, spaces, hyphens, underscores, and periods/,
         "Should reject quotes in instance name"
       );
     });
 
-    it("should reject names with ampersands and semicolons", () => {
-      assert.throws(
-        () => configManager.setInstanceName("name&amp;injected"),
+    it("should reject names with ampersands and semicolons", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceName("name&amp;injected"),
         /letters, digits, spaces, hyphens, underscores, and periods/,
         "Should reject ampersands in instance name"
       );
     });
 
-    it("should reject XSS script tag payload", () => {
-      assert.throws(
-        () => configManager.setInstanceName("<script>alert(1)</script>"),
+    it("should reject XSS script tag payload", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceName("<script>alert(1)</script>"),
         /letters, digits, spaces, hyphens, underscores, and periods/,
         "Should reject XSS script tag"
       );
     });
 
-    it("should reject HTML attribute injection payload", () => {
-      assert.throws(
-        () => configManager.setInstanceName('"><img src=x onerror=alert(1)>'),
+    it("should reject HTML attribute injection payload", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceName('"><img src=x onerror=alert(1)>'),
         /letters, digits, spaces, hyphens, underscores, and periods/,
         "Should reject HTML injection"
       );
     });
 
-    it("should reject names with angle brackets", () => {
-      assert.throws(
-        () => configManager.setInstanceName("My <Terminal>"),
+    it("should reject names with angle brackets", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceName("My <Terminal>"),
         /letters, digits, spaces, hyphens, underscores, and periods/,
         "Should reject angle brackets"
       );
     });
 
-    it("should accept names with allowed special characters", () => {
-      configManager.setInstanceName("My Server 2.0");
+    it("should accept names with allowed special characters", async () => {
+      await configManager.setInstanceName("My Server 2.0");
       assert.strictEqual(configManager.getInstanceName(), "My Server 2.0");
 
-      configManager.setInstanceName("my-server_v1");
+      await configManager.setInstanceName("my-server_v1");
       assert.strictEqual(configManager.getInstanceName(), "my-server_v1");
     });
 
-    it("should accept normal names with spaces", () => {
-      configManager.setInstanceName("My Terminal");
+    it("should accept normal names with spaces", async () => {
+      await configManager.setInstanceName("My Terminal");
       assert.strictEqual(configManager.getInstanceName(), "My Terminal");
     });
 
-    it("should accept names with hyphens, underscores, and periods", () => {
-      configManager.setInstanceName("my-server_1.0");
+    it("should accept names with hyphens, underscores, and periods", async () => {
+      await configManager.setInstanceName("my-server_1.0");
       assert.strictEqual(configManager.getInstanceName(), "my-server_1.0");
     });
   });
@@ -450,109 +450,109 @@ describe("ConfigManager", () => {
       configManager.initialize();
     });
 
-    it("should accept valid icon names", () => {
-      configManager.setInstanceIcon("terminal-window");
+    it("should accept valid icon names", async () => {
+      await configManager.setInstanceIcon("terminal-window");
       assert.strictEqual(configManager.getInstanceIcon(), "terminal-window");
 
-      configManager.setInstanceIcon("code");
+      await configManager.setInstanceIcon("code");
       assert.strictEqual(configManager.getInstanceIcon(), "code");
 
-      configManager.setInstanceIcon("gear");
+      await configManager.setInstanceIcon("gear");
       assert.strictEqual(configManager.getInstanceIcon(), "gear");
 
-      configManager.setInstanceIcon("file-text");
+      await configManager.setInstanceIcon("file-text");
       assert.strictEqual(configManager.getInstanceIcon(), "file-text");
     });
 
-    it("should reject icon names with HTML injection characters", () => {
-      assert.throws(
-        () => configManager.setInstanceIcon('terminal"><img src=x onerror=alert(1)'),
+    it("should reject icon names with HTML injection characters", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceIcon('terminal"><img src=x onerror=alert(1)'),
         /lowercase letters, digits, and hyphens/,
         "Should reject icon names with HTML injection"
       );
     });
 
-    it("should reject icon names with uppercase letters", () => {
-      assert.throws(
-        () => configManager.setInstanceIcon("Terminal"),
+    it("should reject icon names with uppercase letters", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceIcon("Terminal"),
         /lowercase letters, digits, and hyphens/,
         "Should reject uppercase letters"
       );
     });
 
-    it("should reject icon names with spaces", () => {
-      assert.throws(
-        () => configManager.setInstanceIcon("terminal window"),
+    it("should reject icon names with spaces", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceIcon("terminal window"),
         /lowercase letters, digits, and hyphens/,
         "Should reject spaces"
       );
     });
 
-    it("should reject icon names with special characters", () => {
-      assert.throws(
-        () => configManager.setInstanceIcon("terminal_window"),
+    it("should reject icon names with special characters", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceIcon("terminal_window"),
         /lowercase letters, digits, and hyphens/,
         "Should reject underscores"
       );
 
-      assert.throws(
-        () => configManager.setInstanceIcon("terminal.window"),
+      await assert.rejects(
+        async () => configManager.setInstanceIcon("terminal.window"),
         /lowercase letters, digits, and hyphens/,
         "Should reject dots"
       );
     });
 
-    it("should reject empty string", () => {
-      assert.throws(
-        () => configManager.setInstanceIcon(""),
+    it("should reject empty string", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceIcon(""),
         /non-empty string/,
         "Should reject empty string"
       );
     });
 
-    it("should reject whitespace-only string", () => {
-      assert.throws(
-        () => configManager.setInstanceIcon("   "),
+    it("should reject whitespace-only string", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceIcon("   "),
         /non-empty string/,
         "Should reject whitespace-only string"
       );
     });
 
-    it("should reject icons longer than 50 characters", () => {
+    it("should reject icons longer than 50 characters", async () => {
       const longIcon = "a".repeat(51);
-      assert.throws(
-        () => configManager.setInstanceIcon(longIcon),
+      await assert.rejects(
+        async () => configManager.setInstanceIcon(longIcon),
         /50 characters or less/,
         "Should reject icon names over 50 chars"
       );
     });
 
-    it("should persist to file", () => {
-      configManager.setInstanceIcon("code");
+    it("should persist to file", async () => {
+      await configManager.setInstanceIcon("code");
       const content = JSON.parse(readFileSync(join(testDir, "config.json"), "utf-8"));
       assert.strictEqual(content.instanceIcon, "code", "Should save to file");
     });
 
-    it("should trim whitespace", () => {
-      configManager.setInstanceIcon("  code  ");
+    it("should trim whitespace", async () => {
+      await configManager.setInstanceIcon("  code  ");
       assert.strictEqual(configManager.getInstanceIcon(), "code", "Should trim whitespace");
     });
 
-    it("should reject non-string values", () => {
-      assert.throws(
-        () => configManager.setInstanceIcon(123),
+    it("should reject non-string values", async () => {
+      await assert.rejects(
+        async () => configManager.setInstanceIcon(123),
         /non-empty string/,
         "Should reject number"
       );
 
-      assert.throws(
-        () => configManager.setInstanceIcon(null),
+      await assert.rejects(
+        async () => configManager.setInstanceIcon(null),
         /non-empty string/,
         "Should reject null"
       );
 
-      assert.throws(
-        () => configManager.setInstanceIcon(undefined),
+      await assert.rejects(
+        async () => configManager.setInstanceIcon(undefined),
         /non-empty string/,
         "Should reject undefined"
       );
@@ -562,7 +562,7 @@ describe("ConfigManager", () => {
       const originalUpdatedAt = configManager.config.updatedAt;
 
       await new Promise(resolve => setTimeout(resolve, 10));
-      configManager.setInstanceIcon("laptop");
+      await configManager.setInstanceIcon("laptop");
 
       assert.notStrictEqual(
         configManager.config.updatedAt,
@@ -571,17 +571,17 @@ describe("ConfigManager", () => {
       );
     });
 
-    it("should persist icon across config reload", () => {
-      configManager.setInstanceIcon("laptop");
+    it("should persist icon across config reload", async () => {
+      await configManager.setInstanceIcon("laptop");
 
       const configManager2 = new ConfigManager(testDir);
       configManager2.initialize();
       assert.strictEqual(configManager2.getInstanceIcon(), "laptop", "Icon should persist across reload");
     });
 
-    it("should accept icon names exactly 50 characters", () => {
+    it("should accept icon names exactly 50 characters", async () => {
       const icon50 = "a".repeat(50);
-      configManager.setInstanceIcon(icon50);
+      await configManager.setInstanceIcon(icon50);
       assert.strictEqual(configManager.getInstanceIcon(), icon50, "Should accept 50 char icon name");
     });
   });
@@ -591,27 +591,38 @@ describe("ConfigManager", () => {
       configManager.initialize();
     });
 
-    it("should update toolbar color", () => {
-      configManager.setToolbarColor("blue");
+    it("should update toolbar color", async () => {
+      await configManager.setToolbarColor("blue");
       assert.strictEqual(configManager.getToolbarColor(), "blue", "Toolbar color should be updated");
     });
 
-    it("should accept common color values", () => {
-      configManager.setToolbarColor("default");
+    it("should accept common color values", async () => {
+      await configManager.setToolbarColor("default");
       assert.strictEqual(configManager.getToolbarColor(), "default");
 
-      configManager.setToolbarColor("red");
+      await configManager.setToolbarColor("red");
       assert.strictEqual(configManager.getToolbarColor(), "red");
 
-      configManager.setToolbarColor("#ff0000");
-      assert.strictEqual(configManager.getToolbarColor(), "#ff0000");
+      await configManager.setToolbarColor("blue");
+      assert.strictEqual(configManager.getToolbarColor(), "blue");
 
-      configManager.setToolbarColor("rgb(255, 0, 0)");
-      assert.strictEqual(configManager.getToolbarColor(), "rgb(255, 0, 0)");
+      await configManager.setToolbarColor("teal-500");
+      assert.strictEqual(configManager.getToolbarColor(), "teal-500");
     });
 
-    it("should trim whitespace", () => {
-      configManager.setToolbarColor("  blue  ");
+    it("should reject invalid color characters", async () => {
+      await assert.rejects(
+        async () => configManager.setToolbarColor("#ff0000"),
+        { message: /lowercase letters, digits, and hyphens/ }
+      );
+      await assert.rejects(
+        async () => configManager.setToolbarColor("rgb(255, 0, 0)"),
+        { message: /lowercase letters, digits, and hyphens/ }
+      );
+    });
+
+    it("should trim whitespace", async () => {
+      await configManager.setToolbarColor("  blue  ");
       assert.strictEqual(configManager.getToolbarColor(), "blue", "Should trim whitespace");
     });
 
@@ -619,7 +630,7 @@ describe("ConfigManager", () => {
       const originalUpdatedAt = configManager.config.updatedAt;
 
       await new Promise(resolve => setTimeout(resolve, 10));
-      configManager.setToolbarColor("green");
+      await configManager.setToolbarColor("green");
 
       assert.notStrictEqual(
         configManager.config.updatedAt,
@@ -628,69 +639,69 @@ describe("ConfigManager", () => {
       );
     });
 
-    it("should persist to file", () => {
-      configManager.setToolbarColor("purple");
+    it("should persist to file", async () => {
+      await configManager.setToolbarColor("purple");
 
       const content = JSON.parse(readFileSync(join(testDir, "config.json"), "utf-8"));
       assert.strictEqual(content.toolbarColor, "purple", "Should save to file");
     });
 
-    it("should persist color across config reload", () => {
-      configManager.setToolbarColor("teal");
+    it("should persist color across config reload", async () => {
+      await configManager.setToolbarColor("teal");
 
       const configManager2 = new ConfigManager(testDir);
       configManager2.initialize();
       assert.strictEqual(configManager2.getToolbarColor(), "teal", "Color should persist across reload");
     });
 
-    it("should reject empty string", () => {
-      assert.throws(
-        () => configManager.setToolbarColor(""),
+    it("should reject empty string", async () => {
+      await assert.rejects(
+        async () => configManager.setToolbarColor(""),
         /non-empty string/,
         "Should reject empty string"
       );
     });
 
-    it("should reject whitespace-only string", () => {
-      assert.throws(
-        () => configManager.setToolbarColor("   "),
+    it("should reject whitespace-only string", async () => {
+      await assert.rejects(
+        async () => configManager.setToolbarColor("   "),
         /non-empty string/,
         "Should reject whitespace-only string"
       );
     });
 
-    it("should reject non-string values", () => {
-      assert.throws(
-        () => configManager.setToolbarColor(123),
+    it("should reject non-string values", async () => {
+      await assert.rejects(
+        async () => configManager.setToolbarColor(123),
         /non-empty string/,
         "Should reject number"
       );
 
-      assert.throws(
-        () => configManager.setToolbarColor(null),
+      await assert.rejects(
+        async () => configManager.setToolbarColor(null),
         /non-empty string/,
         "Should reject null"
       );
 
-      assert.throws(
-        () => configManager.setToolbarColor(undefined),
+      await assert.rejects(
+        async () => configManager.setToolbarColor(undefined),
         /non-empty string/,
         "Should reject undefined"
       );
     });
 
-    it("should reject colors longer than 50 characters", () => {
+    it("should reject colors longer than 50 characters", async () => {
       const longColor = "a".repeat(51);
-      assert.throws(
-        () => configManager.setToolbarColor(longColor),
+      await assert.rejects(
+        async () => configManager.setToolbarColor(longColor),
         /50 characters or less/,
         "Should reject colors over 50 chars"
       );
     });
 
-    it("should accept colors exactly 50 characters", () => {
+    it("should accept colors exactly 50 characters", async () => {
       const color50 = "a".repeat(50);
-      configManager.setToolbarColor(color50);
+      await configManager.setToolbarColor(color50);
       assert.strictEqual(configManager.getToolbarColor(), color50, "Should accept 50 char color");
     });
   });
@@ -719,9 +730,9 @@ describe("ConfigManager", () => {
   });
 
   describe("save", () => {
-    it("should use atomic writes (temp file + rename)", () => {
+    it("should use atomic writes (temp file + rename)", async () => {
       configManager.initialize();
-      configManager.setInstanceName("Atomic Test");
+      await configManager.setInstanceName("Atomic Test");
 
       // Check that the final file exists and temp file doesn't
       const configPath = join(testDir, "config.json");
@@ -732,6 +743,46 @@ describe("ConfigManager", () => {
 
       const content = JSON.parse(readFileSync(configPath, "utf-8"));
       assert.strictEqual(content.instanceName, "Atomic Test", "Content should be correct");
+    });
+  });
+
+  describe("withLock", () => {
+    beforeEach(() => {
+      configManager.initialize();
+    });
+
+    it("should serialize concurrent operations", async () => {
+      const order = [];
+
+      const op1 = configManager.withLock(async () => {
+        order.push("op1-start");
+        await new Promise(resolve => setTimeout(resolve, 50));
+        order.push("op1-end");
+      });
+
+      const op2 = configManager.withLock(async () => {
+        order.push("op2-start");
+        await new Promise(resolve => setTimeout(resolve, 10));
+        order.push("op2-end");
+      });
+
+      await Promise.all([op1, op2]);
+
+      assert.deepStrictEqual(order, ["op1-start", "op1-end", "op2-start", "op2-end"],
+        "Operations should run sequentially, not interleaved");
+    });
+
+    it("should continue after error in locked operation", async () => {
+      // First operation throws
+      await assert.rejects(
+        () => configManager.withLock(async () => { throw new Error("fail"); }),
+        /fail/
+      );
+
+      // Second operation should still work
+      let ran = false;
+      await configManager.withLock(async () => { ran = true; });
+      assert.ok(ran, "Lock should recover after error");
     });
   });
 });

@@ -7,7 +7,8 @@ import {
   serveStaticFile,
   isStaticFileRequest,
   getMimeType,
-  isSafePathname
+  isSafePathname,
+  clearFileCache
 } from '../lib/static-files.js';
 
 function mockResponse() {
@@ -66,6 +67,7 @@ describe('static-files', () => {
   });
 
   afterEach(() => {
+    clearFileCache();
     // Clean up test directory
     rmSync(testDir, { recursive: true, force: true });
   });
@@ -306,6 +308,55 @@ describe('static-files', () => {
     it('allows extensions (dots at end)', () => {
       assert.strictEqual(isSafePathname('/test.html'), true);
       assert.strictEqual(isSafePathname('/sub/file.css'), true);
+    });
+  });
+
+  describe('in-memory cache', () => {
+    afterEach(() => {
+      clearFileCache();
+    });
+
+    it('serves cached content on repeated requests', () => {
+      const res1 = mockResponse();
+      serveStaticFile(res1, publicDir, '/test.html');
+      const body1 = res1.getBody();
+
+      const res2 = mockResponse();
+      serveStaticFile(res2, publicDir, '/test.html');
+      const body2 = res2.getBody();
+
+      assert.deepStrictEqual(body1, body2, "Second request should return same content");
+    });
+
+    it('invalidates cache when file mtime changes', async () => {
+      const res1 = mockResponse();
+      serveStaticFile(res1, publicDir, '/test.html');
+      const body1 = res1.getBody().toString();
+
+      // Wait to ensure mtime differs, then update file
+      await new Promise(resolve => setTimeout(resolve, 50));
+      writeFileSync(join(publicDir, 'test.html'), '<html>updated</html>');
+
+      const res2 = mockResponse();
+      serveStaticFile(res2, publicDir, '/test.html');
+      const body2 = res2.getBody().toString();
+
+      assert.ok(body2.includes('updated'), "Should serve updated content after file change");
+      assert.notStrictEqual(body1, body2, "Content should differ after file change");
+    });
+
+    it('clearFileCache empties the cache', () => {
+      // Populate the cache
+      const res1 = mockResponse();
+      serveStaticFile(res1, publicDir, '/test.html');
+
+      // Clear it
+      clearFileCache();
+
+      // Should still serve the file (re-reads from disk)
+      const res2 = mockResponse();
+      const served = serveStaticFile(res2, publicDir, '/test.html');
+      assert.strictEqual(served, true, "Should still serve after cache clear");
     });
   });
 
