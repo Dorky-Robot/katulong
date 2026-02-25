@@ -34,14 +34,14 @@ const uiSockets = new Set();
 
 // --- Async child process counting ---
 
-function countDescendantsAsync(pid) {
+function countDescendants(pid) {
   return new Promise((resolve) => {
     if (!/^\d+$/.test(String(pid))) return resolve(0);
     execFile("pgrep", ["-P", String(pid)], (err, stdout) => {
       if (err || !stdout.trim()) return resolve(0);
       const children = stdout.trim().split("\n").filter(p => /^\d+$/.test(p));
       if (children.length === 0) return resolve(0);
-      Promise.all(children.map(p => countDescendantsAsync(parseInt(p, 10)))).then((counts) => {
+      Promise.all(children.map(p => countDescendants(parseInt(p, 10)))).then((counts) => {
         resolve(children.length + counts.reduce((a, b) => a + b, 0));
       });
     });
@@ -52,7 +52,7 @@ const CHILD_COUNT_INTERVAL_MS = 5000;
 const childCountTimer = setInterval(async () => {
   for (const [name, session] of sessions) {
     if (!session.alive) continue;
-    const count = await countDescendantsAsync(session.pid);
+    const count = await countDescendants(session.pid);
     session.lastKnownChildCount = count;
     broadcast({ type: "child-count-update", session: name, count });
   }
