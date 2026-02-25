@@ -603,11 +603,22 @@ describe("ConfigManager", () => {
       await configManager.setToolbarColor("red");
       assert.strictEqual(configManager.getToolbarColor(), "red");
 
-      await configManager.setToolbarColor("#ff0000");
-      assert.strictEqual(configManager.getToolbarColor(), "#ff0000");
+      await configManager.setToolbarColor("blue");
+      assert.strictEqual(configManager.getToolbarColor(), "blue");
 
-      await configManager.setToolbarColor("rgb(255, 0, 0)");
-      assert.strictEqual(configManager.getToolbarColor(), "rgb(255, 0, 0)");
+      await configManager.setToolbarColor("teal-500");
+      assert.strictEqual(configManager.getToolbarColor(), "teal-500");
+    });
+
+    it("should reject invalid color characters", async () => {
+      await assert.rejects(
+        async () => configManager.setToolbarColor("#ff0000"),
+        { message: /lowercase letters, digits, and hyphens/ }
+      );
+      await assert.rejects(
+        async () => configManager.setToolbarColor("rgb(255, 0, 0)"),
+        { message: /lowercase letters, digits, and hyphens/ }
+      );
     });
 
     it("should trim whitespace", async () => {
