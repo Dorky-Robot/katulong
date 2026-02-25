@@ -195,6 +195,26 @@
       overscroll-behavior: contain;
     }
 
+    /* --- Search bar --- */
+    #search-bar {
+      display: none;
+      position: fixed; top: 0; right: 0; z-index: 20;
+      padding: 0.4rem 0.5rem;
+      background: var(--bg-surface); border-bottom: 1px solid var(--border);
+      border-left: 1px solid var(--border);
+      border-radius: 0 0 0 0.5rem;
+      gap: 0.35rem; align-items: center;
+    }
+    #search-bar.visible { display: flex; }
+    #search-input {
+      width: 14rem; padding: 0.3rem 0.5rem;
+      background: var(--bg-input); color: var(--text);
+      border: 1px solid var(--border); border-radius: 0.25rem;
+      font-size: 0.8rem; font-family: var(--font-mono);
+      outline: none;
+    }
+    #search-input:focus { border-color: var(--accent-active); }
+
     /* --- Scroll to bottom --- */
     #scroll-bottom {
       position: fixed; bottom: 1rem; left: 1rem; z-index: 10;
@@ -1041,6 +1061,12 @@
 </head>
 <body>
   <div id="terminal-container"></div>
+  <div id="search-bar" role="search" aria-label="Find in terminal">
+    <input id="search-input" type="text" placeholder="Find..." aria-label="Search terminal">
+    <button id="search-close" class="btn btn--icon-only btn--sm" aria-label="Close search">
+      <i class="ph ph-x"></i>
+    </button>
+  </div>
   <div id="drop-overlay" class="drop-overlay">Drop image here</div>
   <button id="scroll-bottom" aria-label="Scroll to bottom">
     <i class="ph ph-caret-down"></i>

@@ -1,6 +1,9 @@
     import { Terminal } from "/vendor/xterm/xterm.esm.js";
     import { FitAddon } from "/vendor/xterm/addon-fit.esm.js";
     import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
+    import { WebglAddon } from "/vendor/xterm/addon-webgl.esm.js";
+    import { SearchAddon } from "/vendor/xterm/addon-search.esm.js";
+    import { ClipboardAddon } from "/vendor/xterm/addon-clipboard.esm.js";
     import { ModalRegistry } from "/lib/modal.js";
     import {
       createSessionStore, invalidateSessions,
@@ -152,11 +155,66 @@
       cursorBlink: true,
       scrollback: 10000,
       convertEol: true,
+      macOptionIsMeta: true,
+      minimumContrastRatio: 4.5,
+      cursorInactiveStyle: 'outline',
+      rightClickSelectsWord: true,
+      rescaleOverlappingGlyphs: true,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
+    const searchAddon = new SearchAddon();
+    term.loadAddon(searchAddon);
+    term.loadAddon(new ClipboardAddon());
     term.open(document.getElementById("terminal-container"));
+
+    // WebGL renderer (GPU-accelerated) with graceful fallback
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        webgl.dispose();
+      });
+      term.loadAddon(webgl);
+    } catch (e) {
+      console.warn("WebGL renderer unavailable, using default canvas renderer");
+    }
+
+    // --- Search bar ---
+    const searchBar = document.getElementById("search-bar");
+    const searchInput = document.getElementById("search-input");
+    const searchClose = document.getElementById("search-close");
+
+    function toggleSearchBar() {
+      const visible = searchBar.classList.toggle("visible");
+      if (visible) {
+        searchInput.focus();
+        searchInput.select();
+      } else {
+        searchInput.value = "";
+        term.focus();
+      }
+    }
+
+    searchInput.addEventListener("input", () => {
+      if (searchInput.value) {
+        searchAddon.findNext(searchInput.value);
+      }
+    });
+    searchInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") {
+        toggleSearchBar();
+        ev.preventDefault();
+      } else if (ev.key === "Enter") {
+        if (ev.shiftKey) {
+          searchAddon.findPrevious(searchInput.value);
+        } else {
+          searchAddon.findNext(searchInput.value);
+        }
+        ev.preventDefault();
+      }
+    });
+    searchClose.addEventListener("click", toggleSearchBar);
 
     // Initialize modals with terminal reference
     modals.register('shortcuts', 'shortcuts-overlay', {
@@ -231,7 +289,8 @@
     // Initialize terminal keyboard handlers
     const terminalKeyboard = createTerminalKeyboard({
       term,
-      onSend: rawSend
+      onSend: rawSend,
+      onToggleSearch: toggleSearchBar
     });
     terminalKeyboard.init();
 
