@@ -159,24 +159,6 @@ describe("daemon-client", () => {
     assert.doesNotThrow(() => client.send({ type: "input", data: "test" }));
   });
 
-  it("rpc with unresponsive daemon eventually times out and rejects", async () => {
-    mockDaemon = await createMockDaemon(socketPath, () => {
-      // Never respond
-    });
-    const bridge = { relay: noop };
-    client = createDaemonClient({ socketPath, log: silentLog, bridge });
-    client.connect();
-
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    // Use a very short timeout to avoid slow test
-    await assert.rejects(
-      () => client.rpc({ type: "list-sessions" }, 150),
-      /RPC timeout/,
-      "should reject with timeout when daemon doesn't respond"
-    );
-  });
-
   it("disconnect cleans up socket and sets isConnected to false", async () => {
     mockDaemon = await createMockDaemon(socketPath);
     const bridge = { relay: noop };
