@@ -53,12 +53,12 @@ async function shutdown() {
   const HARD_KILL_MS = 15000;
   const SERVER_DRAIN_MS = 10000;
 
-  // Find server and daemon children
-  const serverChild = children.find(c => c.spawnargs?.includes("server.js")) || children[1];
-  const daemonChild = children.find(c => c.spawnargs?.includes("daemon.js")) || children[0];
+  // Find server and daemon children by spawn script name
+  const serverChild = children.find(c => c.spawnargs?.includes("server.js"));
+  const daemonChild = children.find(c => c.spawnargs?.includes("daemon.js"));
 
   // 1. SIGTERM server first (it drains WebSockets)
-  if (serverChild && !serverChild.killed) {
+  if (serverChild && serverChild.exitCode === null) {
     serverChild.kill("SIGTERM");
 
     // Wait for server to exit (up to SERVER_DRAIN_MS)
@@ -69,14 +69,14 @@ async function shutdown() {
   }
 
   // 2. Then SIGTERM daemon
-  if (daemonChild && !daemonChild.killed) {
+  if (daemonChild && daemonChild.exitCode === null) {
     daemonChild.kill("SIGTERM");
   }
 
   // 3. Hard SIGKILL timeout
   const hardKillTimer = setTimeout(() => {
     for (const child of children) {
-      if (!child.killed) {
+      if (child.exitCode === null) {
         try { child.kill("SIGKILL"); } catch { /* already exited */ }
       }
     }
