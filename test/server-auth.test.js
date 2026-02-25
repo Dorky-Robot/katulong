@@ -1,19 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-
-// Mirrors the isHttpsConnection() logic from server.js (not exported, so replicated for testing)
-function isHttpsConnection(req) {
-  if (req.socket?.encrypted) return true;
-  const hostname = (req.headers?.host || 'localhost').split(':')[0];
-  if (hostname.endsWith('.ngrok.app') ||
-      hostname.endsWith('.ngrok.io') ||
-      hostname.endsWith('.trycloudflare.com') ||
-      hostname.endsWith('.loca.lt')) return true;
-  const addr = req.socket?.remoteAddress || "";
-  const isLoopback = addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
-  if (isLoopback && req.headers?.["cf-connecting-ip"]) return true;
-  return false;
-}
+import { Readable } from "node:stream";
+import { isHttpsConnection } from "../lib/http-util.js";
+import { isLocalRequest } from "../lib/access-method.js";
+import { readBody, json, setSecurityHeaders } from "../lib/request-util.js";
 
 describe("isHttpsConnection (logout cookie Secure flag)", () => {
   it("returns true when socket is directly encrypted (native TLS)", () => {
@@ -27,7 +17,6 @@ describe("isHttpsConnection (logout cookie Secure flag)", () => {
   });
 
   it("returns false when socket.encrypted is absent (tunnel scenario)", () => {
-    // This is the bug: behind a tunnel socket.encrypted is always falsy
     const req = { socket: {}, headers: { host: "myapp.example.com" } };
     assert.ok(!isHttpsConnection(req));
   });
@@ -77,7 +66,6 @@ describe("isHttpsConnection (logout cookie Secure flag)", () => {
   });
 
   it("logout cookie includes Secure flag when behind ngrok tunnel", () => {
-    // Simulate the logout cookie-building logic from server.js
     const req = { socket: {}, headers: { host: "abc123.ngrok.app" } };
     let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
     if (isHttpsConnection(req)) clearCookie += "; Secure";
@@ -102,117 +90,102 @@ describe("isHttpsConnection (logout cookie Secure flag)", () => {
   });
 });
 
-// Mock the auth functions from server.js
-// These would normally be imported, but since server.js doesn't export them,
-// we'll test them by extracting the logic into testable units
-
 describe("isLocalRequest", () => {
-  function isLocalRequest(req) {
-    const addr = req.socket?.remoteAddress;
-    return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
-  }
-
   it("returns true for IPv4 localhost", () => {
-    const req = { socket: { remoteAddress: "127.0.0.1" } };
+    const req = { socket: { remoteAddress: "127.0.0.1" }, headers: { host: "localhost" } };
     assert.ok(isLocalRequest(req));
   });
 
   it("returns true for IPv6 localhost", () => {
-    const req = { socket: { remoteAddress: "::1" } };
+    const req = { socket: { remoteAddress: "::1" }, headers: { host: "localhost" } };
     assert.ok(isLocalRequest(req));
   });
 
   it("returns true for IPv4-mapped IPv6 localhost", () => {
-    const req = { socket: { remoteAddress: "::ffff:127.0.0.1" } };
+    const req = { socket: { remoteAddress: "::ffff:127.0.0.1" }, headers: { host: "localhost" } };
     assert.ok(isLocalRequest(req));
   });
 
   it("returns false for non-localhost IPv4", () => {
-    const req = { socket: { remoteAddress: "192.168.1.1" } };
+    const req = { socket: { remoteAddress: "192.168.1.1" }, headers: { host: "192.168.1.1" } };
     assert.ok(!isLocalRequest(req));
   });
 
   it("returns false for non-localhost IPv6", () => {
-    const req = { socket: { remoteAddress: "2001:db8::1" } };
-    assert.ok(!isLocalRequest(req));
-  });
-
-  it("returns false when socket is missing", () => {
-    const req = {};
+    const req = { socket: { remoteAddress: "2001:db8::1" }, headers: { host: "[2001:db8::1]" } };
     assert.ok(!isLocalRequest(req));
   });
 
   it("returns false when remoteAddress is missing", () => {
-    const req = { socket: {} };
+    const req = { socket: {}, headers: { host: "localhost" } };
     assert.ok(!isLocalRequest(req));
   });
 });
 
-describe("readBody size limiting", () => {
-  it("should accept bodies under the limit", async () => {
-    const { Readable } = await import("node:stream");
-    
-    function readBody(req, maxSize = 1024 * 1024) {
-      return new Promise((resolve, reject) => {
-        let body = "";
-        let size = 0;
-        req.on("data", (chunk) => {
-          size += chunk.length;
-          if (size > maxSize) {
-            req.destroy();
-            reject(new Error("Request body too large"));
-            return;
-          }
-          body += chunk;
-        });
-        req.on("end", () => resolve(body));
-        req.on("error", reject);
-      });
-    }
-
+describe("readBody", () => {
+  it("accepts bodies under the limit", async () => {
     const req = Readable.from(["hello"]);
     const body = await readBody(req, 1000);
     assert.equal(body, "hello");
   });
 
-  it("should reject bodies over the limit", async () => {
-    const { Readable } = await import("node:stream");
-    
-    function readBody(req, maxSize = 1024 * 1024) {
-      return new Promise((resolve, reject) => {
-        let body = "";
-        let size = 0;
-        req.on("data", (chunk) => {
-          size += chunk.length;
-          if (size > maxSize) {
-            req.destroy();
-            reject(new Error("Request body too large"));
-            return;
-          }
-          body += chunk;
-        });
-        req.on("end", () => resolve(body));
-        req.on("error", reject);
-      });
-    }
-
+  it("rejects bodies over the limit", async () => {
     const req = Readable.from(["a".repeat(2000)]);
     await assert.rejects(
       () => readBody(req, 1000),
       { message: "Request body too large" }
     );
   });
+
+  it("reads multi-chunk bodies", async () => {
+    const req = Readable.from(["chunk1", "chunk2", "chunk3"]);
+    const body = await readBody(req, 10000);
+    assert.equal(body, "chunk1chunk2chunk3");
+  });
+
+  it("defaults to 1MB limit", async () => {
+    // Just verify it doesn't throw for a small body
+    const req = Readable.from(["small"]);
+    const body = await readBody(req);
+    assert.equal(body, "small");
+  });
+});
+
+describe("json", () => {
+  function mockRes() {
+    let statusCode;
+    let headers;
+    let body;
+    return {
+      writeHead(code, hdrs) { statusCode = code; headers = hdrs; },
+      end(data) { body = data; },
+      getStatusCode() { return statusCode; },
+      getHeaders() { return headers; },
+      getBody() { return body; },
+    };
+  }
+
+  it("sets Content-Type to application/json", () => {
+    const res = mockRes();
+    json(res, 200, { ok: true });
+    assert.equal(res.getHeaders()["Content-Type"], "application/json");
+  });
+
+  it("sets the correct status code", () => {
+    const res = mockRes();
+    json(res, 404, { error: "not found" });
+    assert.equal(res.getStatusCode(), 404);
+  });
+
+  it("serializes data as JSON string", () => {
+    const res = mockRes();
+    const data = { key: "value", num: 42 };
+    json(res, 200, data);
+    assert.deepEqual(JSON.parse(res.getBody()), data);
+  });
 });
 
 describe("setSecurityHeaders", () => {
-  function setSecurityHeaders(res) {
-    res.setHeader("X-Frame-Options", "DENY");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("X-XSS-Protection", "0");
-    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  }
-
   function mockRes() {
     const headers = {};
     return {

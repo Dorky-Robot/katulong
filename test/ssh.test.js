@@ -4,7 +4,7 @@ import { mkdirSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
-import { ensureHostKey, safeCompare } from "../lib/ssh.js";
+import { ensureHostKey, safeCompare, startSSHServer } from "../lib/ssh.js";
 
 describe("ensureHostKey", () => {
   let testDir;
@@ -72,7 +72,6 @@ describe("safeCompare", () => {
 
 describe("username to session mapping", () => {
   it("username becomes the session name", () => {
-    // This tests the convention: ssh username = daemon session name
     const username = "my-session";
     const sessionName = username || "default";
     assert.equal(sessionName, "my-session");
@@ -88,5 +87,80 @@ describe("username to session mapping", () => {
     const username = null;
     const sessionName = username || "default";
     assert.equal(sessionName, "default");
+  });
+});
+
+describe("startSSHServer", () => {
+  let testDir;
+  let hostKey;
+  let sshServer;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `katulong-ssh-server-test-${randomBytes(8).toString("hex")}`);
+    mkdirSync(testDir, { recursive: true });
+    hostKey = ensureHostKey(testDir);
+  });
+
+  afterEach(() => {
+    if (sshServer) {
+      sshServer.server.close();
+      sshServer = null;
+    }
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it("returns a server object", () => {
+    const daemonRPC = async () => ({ alive: true, buffer: "" });
+    const daemonSend = () => {};
+    const bridge = { register: () => {} };
+
+    sshServer = startSSHServer({
+      port: 0,
+      hostKey,
+      password: "testpass",
+      daemonRPC,
+      daemonSend,
+      credentialLockout: null,
+      bridge,
+    });
+
+    assert.ok(sshServer.server, "should return a server object");
+    assert.ok(typeof sshServer.server.close === "function", "server should have a close method");
+  });
+
+  it("registers a bridge subscriber", () => {
+    let registered = false;
+    const bridge = { register: () => { registered = true; } };
+    const daemonRPC = async () => ({ alive: true });
+    const daemonSend = () => {};
+
+    sshServer = startSSHServer({
+      port: 0,
+      hostKey,
+      password: "testpass",
+      daemonRPC,
+      daemonSend,
+      credentialLockout: null,
+      bridge,
+    });
+
+    assert.ok(registered, "should register a bridge subscriber");
+  });
+
+  it("handles null bridge gracefully", () => {
+    const daemonRPC = async () => ({ alive: true });
+    const daemonSend = () => {};
+
+    assert.doesNotThrow(() => {
+      sshServer = startSSHServer({
+        port: 0,
+        hostKey,
+        password: "testpass",
+        daemonRPC,
+        daemonSend,
+        credentialLockout: null,
+        bridge: null,
+      });
+    }, "should handle null bridge without throwing");
   });
 });
