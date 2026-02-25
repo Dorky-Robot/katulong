@@ -175,9 +175,10 @@ Once the review loop completes with APPROVE:
    gh pr merge <PR_NUMBER> --squash --delete-branch
    ```
 
-3. Switch back to main and pull:
+3. Switch back to main, pull, and delete the local branch:
    ```
-   git checkout main && git pull
+   BRANCH=$(git branch --show-current)
+   git checkout main && git pull && git branch -d "$BRANCH"
    ```
 
-4. Tell the user the PR has been merged and the branch cleaned up. Include the PR URL in the final message.
+4. Tell the user the PR has been merged and the branch cleaned up (both remote and local). Include the PR URL in the final message.

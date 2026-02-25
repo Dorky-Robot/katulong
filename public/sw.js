@@ -1,4 +1,4 @@
-const CACHE_NAME = "katulong-v4";
+const CACHE_NAME = "katulong-v5";
 const PRECACHE = [
   "/",
   "/icon-192.png",
@@ -55,6 +55,9 @@ self.addEventListener("fetch", (e) => {
     );
     return;
   }
+
+  // Only cache GET requests (Cache API doesn't support POST/PUT/etc.)
+  if (e.request.method !== "GET") return;
 
   // Cache-first for static assets (icons, fonts)
   e.respondWith(
