@@ -1,9 +1,8 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, readFileSync, unlinkSync, mkdirSync, existsSync, rmSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createSession, validateSession, pruneExpiredSessions, loadState, saveState, _invalidateCache, refreshSessionActivity } from "../lib/auth.js";
+import { writeFileSync, unlinkSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { createSession, validateSession, pruneExpiredSessions, loadState, saveState, _invalidateCache, refreshSessionActivity, withStateLock } from "../lib/auth.js";
 import { AuthState } from "../lib/auth-state.js";
 import { SESSION_TTL_MS } from "../lib/env-config.js";
 import envConfig from "../lib/env-config.js";
@@ -814,5 +813,167 @@ describe("refreshSessionActivity", () => {
       updated.sessions[token].expiry >= now + SESSION_TTL_MS - 1000,
       "expiry should be approximately 30 days from now"
     );
+  });
+});
+
+describe("withStateLock", () => {
+  let backupState;
+
+  beforeEach(() => {
+    _invalidateCache();
+    backupState = loadState();
+    _invalidateCache();
+  });
+
+  afterEach(() => {
+    _invalidateCache();
+    if (backupState) {
+      saveState(backupState);
+    } else {
+      clearAuthFiles();
+    }
+    _invalidateCache();
+  });
+
+  it("saves state when modifier returns a state key", async () => {
+    const initial = new AuthState({
+      user: { id: "user1", name: "owner" },
+      credentials: [{ id: "cred1", publicKey: "key1", counter: 0, deviceId: "d1", name: "Device 1" }],
+      sessions: {},
+      setupTokens: [],
+    });
+    saveState(initial);
+
+    await withStateLock(async (state) => {
+      const { token, expiry, csrfToken, lastActivityAt } = createSession();
+      const newState = new AuthState({
+        user: state.user,
+        credentials: state.credentials,
+        sessions: { ...state.sessions, [token]: { expiry, credentialId: "cred1", csrfToken, lastActivityAt } },
+        setupTokens: state.setupTokens,
+      });
+      return { state: newState };
+    });
+
+    _invalidateCache();
+    const loaded = loadState();
+    assert.ok(Object.keys(loaded.sessions).length > 0, "session should be persisted");
+  });
+
+  it("does not save when modifier returns without a state key (read-only)", async () => {
+    const initial = new AuthState({
+      user: { id: "user1", name: "owner" },
+      credentials: [{ id: "cred1", publicKey: "key1", counter: 0, deviceId: "d1", name: "Device 1" }],
+      sessions: {},
+      setupTokens: [],
+    });
+    saveState(initial);
+
+    const result = await withStateLock(async (state) => {
+      return { hasCredentials: state.credentials.length > 0 };
+    });
+
+    assert.strictEqual(result.hasCredentials, true, "modifier return value should be passed through");
+
+    _invalidateCache();
+    const loaded = loadState();
+    assert.deepEqual(Object.keys(loaded.sessions), [], "no sessions should be created for read-only operation");
+  });
+
+  it("serializes concurrent operations (mutex behavior)", async () => {
+    const initial = new AuthState({
+      user: { id: "user1", name: "owner" },
+      credentials: [{ id: "cred1", publicKey: "key1", counter: 0, deviceId: "d1", name: "Device 1" }],
+      sessions: {},
+      setupTokens: [],
+    });
+    saveState(initial);
+
+    const order = [];
+
+    const op1 = withStateLock(async () => {
+      order.push("op1-start");
+      await new Promise(resolve => setTimeout(resolve, 50));
+      order.push("op1-end");
+      return {};
+    });
+
+    const op2 = withStateLock(async () => {
+      order.push("op2-start");
+      await new Promise(resolve => setTimeout(resolve, 10));
+      order.push("op2-end");
+      return {};
+    });
+
+    await Promise.all([op1, op2]);
+
+    assert.deepEqual(order, ["op1-start", "op1-end", "op2-start", "op2-end"],
+      "operations should be serialized, not interleaved");
+  });
+
+  it("continues after error in modifier (mutex chain not broken)", async () => {
+    const initial = new AuthState({
+      user: { id: "user1", name: "owner" },
+      credentials: [],
+      sessions: {},
+      setupTokens: [],
+    });
+    saveState(initial);
+
+    // First operation throws
+    await assert.rejects(
+      () => withStateLock(async () => { throw new Error("modifier error"); }),
+      /modifier error/
+    );
+
+    // Second operation should still work
+    let ran = false;
+    await withStateLock(async () => {
+      ran = true;
+      return {};
+    });
+    assert.ok(ran, "mutex should recover after error in previous operation");
+  });
+
+  it("returns the full result object from the modifier", async () => {
+    const initial = new AuthState({
+      user: { id: "user1", name: "owner" },
+      credentials: [{ id: "cred1", publicKey: "key1", counter: 0, deviceId: "d1", name: "Device 1" }],
+      sessions: {},
+      setupTokens: [],
+    });
+    saveState(initial);
+
+    const result = await withStateLock(async (state) => {
+      return { found: true, count: state.credentials.length };
+    });
+
+    assert.strictEqual(result.found, true);
+    assert.strictEqual(result.count, 1);
+  });
+
+  it("invalidates cache before each operation to prevent stale reads", async () => {
+    const initial = new AuthState({
+      user: { id: "user1", name: "owner" },
+      credentials: [{ id: "cred1", publicKey: "key1", counter: 0, deviceId: "d1", name: "Device 1" }],
+      sessions: {},
+      setupTokens: [],
+    });
+    saveState(initial);
+
+    // Direct disk write outside of cache
+    writeAuthFixture(DATA_DIR, {
+      user: { id: "user-changed", name: "owner" },
+      credentials: [{ id: "cred1", publicKey: "key1", counter: 0, deviceId: "d1", name: "Device 1" }],
+      sessions: {},
+      setupTokens: [],
+    });
+
+    const result = await withStateLock(async (state) => {
+      return { userId: state.user.id };
+    });
+
+    assert.strictEqual(result.userId, "user-changed",
+      "withStateLock should invalidate cache and read fresh state from disk");
   });
 });

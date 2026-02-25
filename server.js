@@ -23,6 +23,7 @@ import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createDaemonClient } from "./lib/daemon-client.js";
 import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/routes.js";
 import { createWebSocketManager } from "./lib/ws-manager.js";
+import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = envConfig.port;
@@ -70,7 +71,6 @@ if (envConfig.noAuth) {
 
 // --- Constants ---
 
-const MAX_REQUEST_BODY_SIZE = 1024 * 1024; // 1MB limit for request bodies
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const SERVER_PID_PATH = join(DATA_DIR, "server.pid");
 const DRAIN_TIMEOUT_MS = envConfig.drainTimeout;
@@ -126,45 +126,7 @@ const daemonRPC = daemon.rpc;
 const daemonSend = daemon.send;
 daemon.connect();
 
-// --- Helpers ---
-
-function readBody(req, maxSize = MAX_REQUEST_BODY_SIZE) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    let size = 0;
-    req.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > maxSize) {
-        req.destroy();
-        reject(new Error("Request body too large"));
-        return;
-      }
-      body += chunk;
-    });
-    req.on("end", () => resolve(body));
-    req.on("error", reject);
-  });
-}
-
-function json(res, status, data) {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(data));
-}
-
-async function parseJSON(req, maxSize = MAX_REQUEST_BODY_SIZE) {
-  const body = await readBody(req, maxSize);
-  return JSON.parse(body);
-}
-
-// --- Security headers middleware ---
-
-function setSecurityHeaders(res) {
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-XSS-Protection", "0");
-  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-}
+// --- Helpers (readBody, parseJSON, json, setSecurityHeaders imported from lib/request-util.js) ---
 
 // --- WebSocket manager (extracted from inline code) ---
 const wsManager = createWebSocketManager({ bridge, daemonRPC, daemonSend });
