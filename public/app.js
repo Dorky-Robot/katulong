@@ -169,13 +169,17 @@
     term.loadAddon(new ClipboardAddon());
     term.open(document.getElementById("terminal-container"));
 
-    // WebGL renderer (GPU-accelerated) with graceful fallback
+    // WebGL renderer (GPU-accelerated) with graceful fallback.
+    // Only loads when a real GPU is available — skips software renderers
+    // (SwiftShader in headless browsers) that break xterm's DOM rendering.
     try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => {
-        webgl.dispose();
-      });
-      term.loadAddon(webgl);
+      const testCanvas = document.createElement("canvas");
+      const gl = testCanvas.getContext("webgl2", { failIfMajorPerformanceCaveat: true });
+      if (gl) {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => webgl.dispose());
+        term.loadAddon(webgl);
+      }
     } catch (e) {
       console.warn("WebGL renderer unavailable, using default canvas renderer");
     }
