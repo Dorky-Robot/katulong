@@ -12,7 +12,8 @@ import { filterTerminalResponses, registerResponseSuppressors } from "/lib/termi
 export function createTerminalKeyboard(options = {}) {
   const {
     term,
-    onSend
+    onSend,
+    onToggleSearch
   } = options;
 
   /**
@@ -69,6 +70,11 @@ export function createTerminalKeyboard(options = {}) {
 
       // Cmd/Meta key shortcuts
       if (ev.metaKey && ev.type === "keydown") {
+        if (ev.key === "f" && onToggleSearch) {
+          ev.preventDefault();
+          onToggleSearch();
+          return false;
+        }
         if (ev.key === "k") {
           term.clear();
           return false;
@@ -89,7 +95,6 @@ export function createTerminalKeyboard(options = {}) {
       // Alt/Option key shortcuts
       if (ev.altKey && ev.type === "keydown") {
         const altSeq = {
-          Backspace: "\x1b\x7f", // Alt+Backspace: delete word
           ArrowLeft: "\x1bb",    // Alt+Left: word back
           ArrowRight: "\x1bf"    // Alt+Right: word forward
         }[ev.key];
