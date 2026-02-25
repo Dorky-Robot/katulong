@@ -180,7 +180,7 @@
         webgl.onContextLoss(() => webgl.dispose());
         term.loadAddon(webgl);
       }
-    } catch (e) {
+    } catch {
       console.warn("WebGL renderer unavailable, using default canvas renderer");
     }
 
@@ -196,6 +196,7 @@
         searchInput.select();
       } else {
         searchInput.value = "";
+        searchAddon.clearDecorations();
         term.focus();
       }
     }
@@ -203,6 +204,8 @@
     searchInput.addEventListener("input", () => {
       if (searchInput.value) {
         searchAddon.findNext(searchInput.value);
+      } else {
+        searchAddon.clearDecorations();
       }
     });
     searchInput.addEventListener("keydown", (ev) => {

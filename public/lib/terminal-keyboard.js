@@ -71,6 +71,7 @@ export function createTerminalKeyboard(options = {}) {
       // Cmd/Meta key shortcuts
       if (ev.metaKey && ev.type === "keydown") {
         if (ev.key === "f" && onToggleSearch) {
+          ev.preventDefault();
           onToggleSearch();
           return false;
         }
