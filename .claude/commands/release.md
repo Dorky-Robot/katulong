@@ -34,13 +34,13 @@ Determine the bump type from `$ARGUMENTS`:
 
 Read the new version from `package.json` and store it as `NEW_VERSION`. Tell the user: "Bumping to vX.Y.Z"
 
-### Step 3: Commit, tag, and push
-
-First, check if the tag already exists:
+Check if the tag already exists **before** modifying any files:
 ```
 git tag -l "v$NEW_VERSION"
 ```
-If the tag already exists, stop and tell the user: "Tag v$NEW_VERSION already exists. Delete it with `git tag -d v$NEW_VERSION && git push origin :refs/tags/v$NEW_VERSION` if you want to re-release, or choose a different version."
+If the tag already exists, revert the version bump (`git checkout package.json package-lock.json`) and stop. Tell the user: "Tag v$NEW_VERSION already exists. Delete it with `git tag -d v$NEW_VERSION && git push origin :refs/tags/v$NEW_VERSION` if you want to re-release, or choose a different version."
+
+### Step 3: Commit, tag, and push
 
 Run these commands sequentially:
 ```
