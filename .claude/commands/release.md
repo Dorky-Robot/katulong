@@ -34,7 +34,7 @@ Determine the bump type from `$ARGUMENTS`:
 
 Read the new version from `package.json` and store it as `NEW_VERSION`. Tell the user: "Bumping to vX.Y.Z"
 
-Check if the tag already exists **before** modifying any files:
+Check if the tag already exists before proceeding — if it does, revert the version bump and stop:
 ```
 git tag -l "v$NEW_VERSION"
 ```
