@@ -30,15 +30,21 @@ You are orchestrating a Homebrew release for katulong. The argument `$ARGUMENTS`
 Determine the bump type from `$ARGUMENTS`:
 - If empty or one of `patch`, `minor`, `major`: run `npm version <type> --no-git-tag-version` (default to `patch`)
 - If it looks like a semver (e.g., `1.2.3`): run `npm version $ARGUMENTS --no-git-tag-version`
-- Otherwise, stop and tell the user the argument is not recognized.
+- Otherwise, stop and tell the user: "Unrecognized argument '$ARGUMENTS'. Expected patch, minor, major, or a semver like 1.2.3."
 
 Read the new version from `package.json` and store it as `NEW_VERSION`. Tell the user: "Bumping to vX.Y.Z"
 
 ### Step 3: Commit, tag, and push
 
+First, check if the tag already exists:
+```
+git tag -l "v$NEW_VERSION"
+```
+If the tag already exists, stop and tell the user: "Tag v$NEW_VERSION already exists. Delete it with `git tag -d v$NEW_VERSION && git push origin :refs/tags/v$NEW_VERSION` if you want to re-release, or choose a different version."
+
 Run these commands sequentially:
 ```
-git add package.json
+git add package.json package-lock.json
 git commit -m "release: v$NEW_VERSION"
 git tag "v$NEW_VERSION"
 git push origin main --tags
@@ -50,15 +56,17 @@ If any command fails, stop and report the error.
 
 GitHub needs a moment to create the tarball from the new tag.
 
-1. Wait 5 seconds, then download the tarball:
+1. Download the tarball, retrying on any error (including HTTP 404 while GitHub builds it):
    ```
-   curl -sL --retry 3 --retry-delay 5 "https://github.com/dorky-robot/katulong/archive/refs/tags/v${NEW_VERSION}.tar.gz" -o "/tmp/katulong-v${NEW_VERSION}.tar.gz"
+   curl -sL --retry 5 --retry-delay 5 --retry-all-errors -f "https://github.com/dorky-robot/katulong/archive/refs/tags/v${NEW_VERSION}.tar.gz" -o "/tmp/katulong-v${NEW_VERSION}.tar.gz"
    ```
+   The `-f` flag makes curl return a non-zero exit code on HTTP errors, and `--retry-all-errors` retries on those failures.
 
-2. Verify the download succeeded (file should be > 1KB):
+2. Verify the download is a valid gzip archive:
    ```
-   ls -la "/tmp/katulong-v${NEW_VERSION}.tar.gz"
+   file "/tmp/katulong-v${NEW_VERSION}.tar.gz"
    ```
+   If the output does not contain "gzip compressed data", stop and tell the user: "Tarball download failed — the file is not a valid gzip archive. GitHub may not have generated it yet. Try again in a minute."
 
 3. Compute the SHA:
    ```
@@ -79,6 +87,7 @@ Use the Edit tool to make these changes.
 
 Commit and push:
 ```
+git pull origin main
 git add Formula/katulong.rb
 git commit -m "formula: update to v${NEW_VERSION}"
 git push origin main
@@ -104,7 +113,7 @@ brew update
 
 Then check the currently installed version:
 ```
-brew info katulong --json | node -e "process.stdin.setEncoding('utf8');let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const info=JSON.parse(d);console.log('formula:',info[0].versions.stable);console.log('installed:',info[0].installed.map(i=>i.version).join(','))})"
+brew info katulong --json | jq -r '.[0] | "formula: \(.versions.stable)\ninstalled: \([.installed[].version] | join(","))"'
 ```
 
 If the installed version already matches `NEW_VERSION`, run:
@@ -125,16 +134,24 @@ brew upgrade katulong
    ```
    Confirm it outputs the new version. If it doesn't match, warn the user.
 
-2. Start katulong in the background, verify HTTP is responding, then stop it:
+2. Start katulong, verify HTTP is responding, then stop it:
    ```
-   katulong start &
-   KATULONG_PID=$!
-   sleep 3
+   katulong start
+   ```
+   Wait 3 seconds for the server to be ready, then:
+   ```
    curl -s -o /dev/null -w "%{http_code}" http://localhost:3001
-   kill $KATULONG_PID 2>/dev/null
-   wait $KATULONG_PID 2>/dev/null
    ```
    Expect HTTP 200 or 302. If the curl fails or returns an unexpected status, warn the user.
+
+   Stop katulong:
+   ```
+   katulong stop
+   ```
+   If `katulong stop` is not available, find and kill the server process:
+   ```
+   lsof -ti:3001 | xargs kill -9 2>/dev/null
+   ```
 
 3. Clean up the temp tarball:
    ```
