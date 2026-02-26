@@ -296,6 +296,7 @@ describe("loadState caching", () => {
       ],
     };
 
+    clearAuthFiles();
     writeAuthFixture(DATA_DIR, state);
     _invalidateCache();
 
