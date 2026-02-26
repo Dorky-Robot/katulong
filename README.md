@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="katulong.jpg" alt="Katulong mascot" width="300">
+<img src="katulong.png" alt="Katulong mascot" width="300">
 
 </div>
 
