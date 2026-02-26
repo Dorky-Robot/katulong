@@ -76,6 +76,20 @@ SSH is great. Katulong actually includes an SSH server. But SSH alone has fricti
 
 SSH is the right tool when you have a proper terminal, a configured client, and network access. Katulong is for everything else — the phone in your pocket, the tablet on the couch, the browser tab you can open anywhere.
 
+## When SSH is the better choice
+
+Katulong doesn't replace SSH — it fills a different gap. There are situations where SSH is clearly the right tool:
+
+- **You're already at a terminal.** If you have iTerm, Alacritty, or any real terminal emulator open, SSH gives you native performance with zero overhead. No browser, no web server, no daemon — just a direct encrypted connection.
+- **You need to transfer files.** `scp`, `rsync`, and SFTP are battle-tested. Katulong doesn't do file transfer — it's a terminal, not a file manager.
+- **You're scripting or automating.** SSH is composable. `ssh host 'command'` in a script, piping output, running Ansible playbooks — the entire ops ecosystem is built on SSH as a primitive. Katulong is interactive-first.
+- **You're accessing many machines.** SSH scales to hundreds of hosts with `~/.ssh/config`, jump hosts, and agent forwarding. Katulong runs on one machine and gives you a terminal to that machine.
+- **You need port forwarding or tunneling.** SSH tunnels (`-L`, `-R`, `-D`) are a core feature. Katulong doesn't forward ports — it's focused on terminal access.
+- **You want minimal attack surface.** SSH is a single well-audited binary with decades of hardening. Katulong is a Node.js web application with a broader surface area — HTTP server, WebSocket, browser frontend, and auth middleware. If you're hardening a production server, SSH with key-only auth and fail2ban is the simpler security story.
+- **You want something that just works.** SSH is a single binary with no moving parts. Katulong has a daemon, a web server, and a browser frontend — more things that can clunk out, need restarting, or get into a weird state. SSH connects or it doesn't. There's no daemon to babysit.
+
+The honest summary: if you have SSH access and a proper terminal, use SSH. Katulong is for when you don't — when you're on your phone, on a borrowed machine, or you want persistent sessions without tmux and shared access without credential management.
+
 ## Install
 
 ### Homebrew (macOS)
