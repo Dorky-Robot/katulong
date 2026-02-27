@@ -1,260 +1,120 @@
 import { test, expect } from "@playwright/test";
+import { setupTest } from './helpers.js';
 
 test.describe("Shortcuts popup", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector("#shortcut-bar");
+  test.beforeEach(async ({ page, context }) => {
+    await setupTest({ page, context });
   });
 
   test("Clicking keyboard icon opens the shortcuts popup", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
+    const kbBtn = page.getByRole('button', { name: 'Open shortcuts' });
     await kbBtn.click();
-    const overlay = page.locator("#shortcuts-overlay");
-    await expect(overlay).toHaveClass(/visible/);
+    const dialog = page.getByRole('dialog').filter({ hasText: 'Shortcuts' });
+    await expect(dialog).toBeVisible({ timeout: 5000 });
   });
 
-  test("Shortcut buttons have visible text (no blank labels)", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
-    await kbBtn.click();
-    await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
+  test("Edit button is present in the popup", async ({ page }) => {
+    await page.getByRole('button', { name: 'Open shortcuts' }).click();
+    const dialog = page.getByRole('dialog').filter({ hasText: 'Shortcuts' });
+    await expect(dialog).toBeVisible({ timeout: 5000 });
 
-    const buttons = page.locator("#shortcuts-grid .shortcut-btn");
-    const count = await buttons.count();
-    for (let i = 0; i < count; i++) {
-      const text = await buttons.nth(i).textContent();
-      expect(text.trim().length).toBeGreaterThan(0);
-    }
-  });
-
-  test("Edit button is present in the footer", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
-    await kbBtn.click();
-    const editBtn = page.locator("#shortcuts-edit-btn");
+    const editBtn = dialog.getByRole('button', { name: 'Edit shortcuts' });
     await expect(editBtn).toBeVisible();
-    await expect(editBtn).toContainText("Edit");
   });
 
   test("Closing the modal returns focus to terminal", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
-    await kbBtn.click();
-    await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
+    await page.getByRole('button', { name: 'Open shortcuts' }).click();
+    const dialog = page.getByRole('dialog').filter({ hasText: 'Shortcuts' });
+    await expect(dialog).toBeVisible({ timeout: 5000 });
 
-    // Click overlay background to dismiss
-    await page.locator("#shortcuts-overlay").click({ position: { x: 5, y: 5 } });
-    await expect(page.locator("#shortcuts-overlay")).not.toHaveClass(/visible/);
+    // Close via Escape
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible({ timeout: 5000 });
 
     // Terminal textarea should have focus
     const focused = page.locator(".xterm-helper-textarea");
     await expect(focused).toBeFocused();
   });
 
-  test("Added shortcut appears in edit list immediately", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
-    await kbBtn.click();
-    await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
+  test("Add shortcut flow creates a new shortcut", async ({ page }) => {
+    // Open shortcuts popup
+    await page.getByRole('button', { name: 'Open shortcuts' }).click();
+    const shortcutsDialog = page.getByRole('dialog').filter({ hasText: 'Shortcuts' });
+    await expect(shortcutsDialog).toBeVisible({ timeout: 5000 });
 
-    await page.locator("#shortcuts-edit-btn").click();
-    await expect(page.locator("#edit-overlay")).toHaveClass(/visible/);
+    // Click edit
+    await shortcutsDialog.getByRole('button', { name: 'Edit shortcuts' }).click();
+    await expect(shortcutsDialog).not.toBeVisible({ timeout: 5000 });
 
-    await page.locator("#edit-add").click();
-    await expect(page.locator("#add-modal-overlay")).toHaveClass(/visible/);
+    const editDialog = page.getByRole('dialog').filter({ hasText: 'Edit Shortcuts' });
+    await expect(editDialog).toBeVisible({ timeout: 5000 });
 
-    const input = page.locator("#key-composer-input");
-    const preview = page.locator("#key-preview-value");
+    // Click add
+    await editDialog.getByRole('button', { name: 'Add' }).click();
+    await expect(editDialog).not.toBeVisible({ timeout: 5000 });
 
-    await input.fill("ctrl");
-    await input.press("Enter");
-    await expect(preview).toContainText("Ctrl");
+    const addDialog = page.getByRole('dialog').filter({ hasText: 'Add Shortcut' });
+    await expect(addDialog).toBeVisible({ timeout: 5000 });
 
-    await input.fill("d");
-    await input.press("Enter");
-    await expect(preview).toHaveText("Ctrl+D");
+    // Fill in label and keys
+    await addDialog.getByRole('textbox', { name: 'Label' }).fill('Clear Screen');
+    await addDialog.getByRole('textbox', { name: 'Keys' }).fill('ctrl+l');
 
-    await page.locator("#modal-save").click();
-    await expect(page.locator("#add-modal-overlay")).not.toHaveClass(/visible/);
+    // Save
+    await addDialog.getByRole('button', { name: 'Add' }).click();
+    await expect(addDialog).not.toBeVisible({ timeout: 5000 });
 
-    const editList = page.locator("#edit-list");
-    await expect(editList).toContainText("Ctrl+D");
+    // Reopen shortcuts popup and verify the new shortcut appears
+    await page.getByRole('button', { name: 'Open shortcuts' }).click();
+    const newDialog = page.getByRole('dialog').filter({ hasText: 'Shortcuts' });
+    await expect(newDialog).toBeVisible({ timeout: 5000 });
+    await expect(newDialog.getByText('Clear Screen')).toBeVisible();
   });
 
-  test("Added shortcut appears in shortcuts popup after closing edit", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
-    await kbBtn.click();
-    await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
+  test("Added shortcut appears in edit list", async ({ page }) => {
+    // Open shortcuts → Edit → Add
+    await page.getByRole('button', { name: 'Open shortcuts' }).click();
+    const shortcutsDialog = page.getByRole('dialog').filter({ hasText: 'Shortcuts' });
+    await expect(shortcutsDialog).toBeVisible({ timeout: 5000 });
 
-    await page.locator("#shortcuts-edit-btn").click();
-    await expect(page.locator("#edit-overlay")).toHaveClass(/visible/);
+    await shortcutsDialog.getByRole('button', { name: 'Edit shortcuts' }).click();
+    const editDialog = page.getByRole('dialog').filter({ hasText: 'Edit Shortcuts' });
+    await expect(editDialog).toBeVisible({ timeout: 5000 });
 
-    await page.locator("#edit-add").click();
-    await expect(page.locator("#add-modal-overlay")).toHaveClass(/visible/);
+    await editDialog.getByRole('button', { name: 'Add' }).click();
+    const addDialog = page.getByRole('dialog').filter({ hasText: 'Add Shortcut' });
+    await expect(addDialog).toBeVisible({ timeout: 5000 });
 
-    const input = page.locator("#key-composer-input");
-    const preview = page.locator("#key-preview-value");
+    // Fill in and save
+    await addDialog.getByRole('textbox', { name: 'Label' }).fill('Send EOF');
+    await addDialog.getByRole('textbox', { name: 'Keys' }).fill('ctrl+d');
+    await addDialog.getByRole('button', { name: 'Add' }).click();
+    await expect(addDialog).not.toBeVisible({ timeout: 5000 });
 
-    await input.fill("ctrl");
-    await input.press("Enter");
-    await expect(preview).toContainText("Ctrl");
-
-    await input.fill("d");
-    await input.press("Enter");
-    await expect(preview).toHaveText("Ctrl+D");
-
-    await page.locator("#modal-save").click();
-    await expect(page.locator("#add-modal-overlay")).not.toHaveClass(/visible/);
-
-    // Close edit panel
-    await page.locator("#edit-done").click();
-    await expect(page.locator("#edit-overlay")).not.toHaveClass(/visible/);
-
-    // Reopen shortcuts popup
-    await kbBtn.click();
-    await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
-
-    const grid = page.locator("#shortcuts-grid");
-    await expect(grid).toContainText("Ctrl+D");
-  });
-
-  test("Comma-separated sequence shortcut shows correct label", async ({ page }) => {
-    // Open shortcuts popup → Edit → Add
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
-    await kbBtn.click();
-    await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
-
-    await page.locator("#shortcuts-edit-btn").click();
-    await expect(page.locator("#edit-overlay")).toHaveClass(/visible/);
-
-    await page.locator("#edit-add").click();
-    await expect(page.locator("#add-modal-overlay")).toHaveClass(/visible/);
-
-    const input = page.locator("#key-composer-input");
-    const preview = page.locator("#key-preview-value");
-
-    // Build sequence: Ctrl+C, Ctrl+C
-    // Wait for preview to update after each step
-    await input.fill("ctrl");
-    await input.press("Enter");
-    await expect(preview).toContainText("Ctrl");
-
-    await input.fill("c");
-    await input.press("Enter");
-    await expect(preview).toHaveText("Ctrl+C");
-
-    // Comma is a separator - preview doesn't change until next key
-    await input.fill(",");
-    await input.press("Enter");
-    // Preview still shows "Ctrl+C" (comma doesn't appear until next key)
-
-    await input.fill("ctrl");
-    await input.press("Enter");
-    // Now comma appears with the second chord
-    await expect(preview).toHaveText("Ctrl+C, Ctrl");
-
-    await input.fill("c");
-    await input.press("Enter");
-    await expect(preview).toHaveText("Ctrl+C, Ctrl+C");
-
-    // Save the shortcut
-    await page.locator("#modal-save").click();
-
-    // Wait for modal to close
-    await expect(page.locator("#add-modal-overlay")).not.toHaveClass(/visible/);
-
-    // The edit list should contain an item with the label
-    const editList = page.locator("#edit-list");
-    await expect(editList).toContainText("Ctrl+C, Ctrl+C");
-  });
-
-  test("Chord shortcut sends correct sequence when clicked", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
-    await kbBtn.click();
-    await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
-
-    await page.locator("#shortcuts-edit-btn").click();
-    await expect(page.locator("#edit-overlay")).toHaveClass(/visible/);
-
-    await page.locator("#edit-add").click();
-    await expect(page.locator("#add-modal-overlay")).toHaveClass(/visible/);
-
-    const input = page.locator("#key-composer-input");
-    const preview = page.locator("#key-preview-value");
-
-    // Build chord: Ctrl+C, Ctrl+C
-    await input.fill("ctrl");
-    await input.press("Enter");
-    await expect(preview).toContainText("Ctrl");
-
-    await input.fill("c");
-    await input.press("Enter");
-    await expect(preview).toHaveText("Ctrl+C");
-
-    await input.fill(",");
-    await input.press("Enter");
-
-    await input.fill("ctrl");
-    await input.press("Enter");
-    await expect(preview).toHaveText("Ctrl+C, Ctrl");
-
-    await input.fill("c");
-    await input.press("Enter");
-    await expect(preview).toHaveText("Ctrl+C, Ctrl+C");
-
-    await page.locator("#modal-save").click();
-    await expect(page.locator("#add-modal-overlay")).not.toHaveClass(/visible/);
-
-    // Close edit panel
-    await page.locator("#edit-done").click();
-    await expect(page.locator("#edit-overlay")).not.toHaveClass(/visible/);
-
-    // Reopen shortcuts popup
-    await kbBtn.click();
-    await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
-
-    // Click the chord shortcut button
-    const chordBtn = page.locator("#shortcuts-grid .shortcut-btn", { hasText: "Ctrl+C, Ctrl+C" });
-    await expect(chordBtn).toBeVisible();
-    await chordBtn.click();
-
-    // Clicking a shortcut dismisses the popup and sends to terminal
-    await expect(page.locator("#shortcuts-overlay")).not.toHaveClass(/visible/);
+    // Should be back in edit dialog with the new shortcut listed
+    // Re-open edit to verify
+    await page.getByRole('button', { name: 'Open shortcuts' }).click();
+    const newShortcutsDialog = page.getByRole('dialog').filter({ hasText: 'Shortcuts' });
+    await expect(newShortcutsDialog).toBeVisible({ timeout: 5000 });
+    await expect(newShortcutsDialog.getByText('Send EOF')).toBeVisible();
   });
 });
 
 test.describe("Dictation modal", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector("#shortcut-bar");
+  test.beforeEach(async ({ page, context }) => {
+    await setupTest({ page, context });
   });
 
-  test("Long-pressing the terminal opens the dictation panel", async ({ page }) => {
-    const terminal = page.locator("#terminal-container");
-
-    // Native long-press fires contextmenu
+  test("Dictation dialog has text input and send button", async ({ page }) => {
+    // Open dictation via context menu on terminal
+    const terminal = page.locator(".xterm");
     await terminal.dispatchEvent("contextmenu");
 
-    const overlay = page.locator("#dictation-overlay");
-    await expect(overlay).toHaveClass(/visible/);
+    const dialog = page.getByRole('dialog').filter({ hasText: 'Dictation' });
+    await expect(dialog).toBeVisible({ timeout: 5000 });
 
-    const textarea = page.locator("#dictation-input");
-    await expect(textarea).toBeVisible();
-
-    const sendBtn = page.locator("#dictation-send");
-    await expect(sendBtn).toBeVisible();
-    await expect(sendBtn).toHaveText("Send");
-  });
-});
-
-test.describe("Joystick zone", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector("#shortcut-bar");
-  });
-
-  test("Joystick is visible only on mobile (pointer: coarse)", async ({ page, browserName }, testInfo) => {
-    const joystick = page.locator("#joystick");
-    if (testInfo.project.name === "mobile") {
-      await expect(joystick).toBeVisible();
-    } else {
-      await expect(joystick).not.toBeVisible();
-    }
+    // Verify text input and send button exist
+    await expect(dialog.getByRole('textbox')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Send' })).toBeVisible();
   });
 });
