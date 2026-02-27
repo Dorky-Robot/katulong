@@ -193,7 +193,7 @@ class _RemoteTabState extends ConsumerState<_RemoteTab> {
     final name = _nameController.text.trim();
     if (name.isEmpty) return;
     try {
-      final token = await ref.read(tokenStoreProvider.notifier).create(label: name);
+      final token = await ref.read(tokenStoreProvider.notifier).create(name: name);
       setState(() {
         _showCreateForm = false;
         _newlyCreatedToken = token;
@@ -338,7 +338,7 @@ class _RemoteTabState extends ConsumerState<_RemoteTab> {
                     container: true,
                     child: Column(
                       children: list.map((t) {
-                        final displayName = t.label ?? t.id;
+                        final displayName = t.name ?? t.id;
                         return Semantics(
                           label: 'Token: $displayName',
                           container: true,

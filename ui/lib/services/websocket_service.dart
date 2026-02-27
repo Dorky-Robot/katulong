@@ -83,7 +83,11 @@ class WebSocketService {
       _messageController.add(data);
     }).toJS;
 
+    final thisWs = _ws!;
     _ws!.onclose = ((web.CloseEvent e) {
+      // Ignore onclose from stale sockets (e.g. after forceReconnect)
+      if (_ws != thisWs) return;
+
       _isConnecting = false;
       _setState(ConnectionState.reconnecting);
 
@@ -135,7 +139,10 @@ class WebSocketService {
 
   /// Force reconnect (e.g. after visibility change).
   void forceReconnect({required String session, required int cols, required int rows}) {
-    _ws?.close();
+    final oldWs = _ws;
+    _ws = null; // Detach so stale onclose is ignored
+    _isConnecting = false; // Allow connect() to proceed
+    oldWs?.close();
     _reconnectDelay = 500;
     connect(session: session, cols: cols, rows: rows);
   }

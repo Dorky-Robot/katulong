@@ -50,21 +50,24 @@ class ConfigNotifier extends StateNotifier<AsyncValue<AppConfig>> {
   }
 
   Future<void> setInstanceName(String name) async {
-    await ApiClient.put('/api/config/instance-name', {'instanceName': name});
+    final res = await ApiClient.put('/api/config/instance-name', {'instanceName': name});
+    if (!res.ok) throw Exception('Failed to update instance name');
     state = AsyncValue.data(
       (state.valueOrNull ?? const AppConfig()).copyWith(instanceName: name),
     );
   }
 
   Future<void> setInstanceIcon(String icon) async {
-    await ApiClient.put('/api/config/instance-icon', {'instanceIcon': icon});
+    final res = await ApiClient.put('/api/config/instance-icon', {'instanceIcon': icon});
+    if (!res.ok) throw Exception('Failed to update instance icon');
     state = AsyncValue.data(
       (state.valueOrNull ?? const AppConfig()).copyWith(instanceIcon: icon),
     );
   }
 
   Future<void> setToolbarColor(String color) async {
-    await ApiClient.put('/api/config/toolbar-color', {'toolbarColor': color});
+    final res = await ApiClient.put('/api/config/toolbar-color', {'toolbarColor': color});
+    if (!res.ok) throw Exception('Failed to update toolbar color');
     state = AsyncValue.data(
       (state.valueOrNull ?? const AppConfig()).copyWith(toolbarColor: color),
     );
