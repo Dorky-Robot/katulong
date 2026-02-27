@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { setupTest, waitForShellReady } from './helpers.js';
+import { waitForShellReady } from './helpers.js';
 
 test.describe("Session CRUD", () => {
   // Helper: create a session by navigating to it (triggers daemon attach/create)
@@ -20,20 +20,18 @@ test.describe("Session CRUD", () => {
 
   test("Create session via modal", async ({ page, context }) => {
     const name = `test-create-${Date.now()}`;
-    await setupTest({ page, context });
+    await page.goto("/");
+    await page.waitForSelector("#shortcut-bar");
 
-    // Open session modal
-    const sessionBtn = page.getByLabel(/Session:/);
-    await sessionBtn.click();
-    const dialog = page.getByRole('dialog').filter({ hasText: 'Sessions' });
-    await expect(dialog).toBeVisible({ timeout: 5000 });
-
-    // Fill name and create
-    await dialog.getByRole('textbox').fill(name);
+    // Open session modal and create
+    await page.locator("#shortcut-bar .session-btn").click();
+    await expect(page.locator("#session-overlay")).toHaveClass(/visible/);
+    await page.locator("#session-new-name").fill(name);
 
     // Capture the new tab that opens on create
+    // window.open may be blocked in headless browsers, so handle both cases
     const pagePromise = context.waitForEvent("page", { timeout: 5000 }).catch(() => null);
-    await dialog.getByRole('button', { name: 'Create' }).click();
+    await page.locator("#session-new-create").click();
     const newPage = await pagePromise;
 
     if (newPage) {
@@ -57,41 +55,71 @@ test.describe("Session CRUD", () => {
     await deleteSession(page, name);
   });
 
-  test("Delete session via modal", async ({ page, context }) => {
+  test("Delete session via modal", async ({ page }) => {
     const name = `test-delete-${Date.now()}`;
-    await setupTest({ page, context });
+    await page.goto("/");
+    await page.waitForSelector("#shortcut-bar");
 
     // Create session by navigating to it (triggers daemon create on attach)
     await createSessionByNav(page, name);
 
     // Go back to default session
     await page.goto("/");
-    await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+    await page.waitForSelector("#shortcut-bar");
 
-    // Open session modal
-    const sessionBtn = page.getByLabel(/Session:/);
-    await sessionBtn.click();
-    const dialog = page.getByRole('dialog').filter({ hasText: 'Sessions' });
-    await expect(dialog).toBeVisible({ timeout: 5000 });
+    // Open session modal — list fetches on open
+    await page.locator("#shortcut-bar .session-btn").click();
+    await expect(page.locator("#session-overlay")).toHaveClass(/visible/);
 
-    // Wait for the session to appear in the list
-    const sessionItem = dialog.getByText(name);
-    await expect(sessionItem).toBeVisible({ timeout: 10000 });
+    // Wait for the session list to load and find the row
+    const row = page.locator(".session-item", {
+      has: page.getByLabel(`Session name: ${name}`),
+    });
+    await expect(row).toBeVisible({ timeout: 10000 });
 
-    // Click delete button for this session's row
-    // The delete button is a trash icon in the trailing position of the ListTile
-    const row = dialog.locator(`[role="listitem"], li`).filter({ hasText: name });
-    const deleteBtn = row.getByRole('button').last();
-    await deleteBtn.click();
+    // Handle potential confirmation dialog
+    page.on("dialog", (dialog) => dialog.accept());
+
+    await row.locator(".session-icon-btn.delete").click();
 
     // Verify removed from list
-    await expect(sessionItem).not.toBeVisible({ timeout: 5000 });
+    await expect(row).not.toBeVisible();
   });
 
-  test("Switch session via URL", async ({ page, context }) => {
+  test("Rename session via modal", async ({ page }) => {
+    const name = `test-rename-${Date.now()}`;
+    const newName = `renamed-${Date.now()}`;
+    await page.goto("/");
+    await page.waitForSelector("#shortcut-bar");
+
+    // Create session by navigating to it (triggers daemon create on attach)
+    await createSessionByNav(page, name);
+
+    // Go back to default session
+    await page.goto("/");
+    await page.waitForSelector("#shortcut-bar");
+
+    // Open session modal and rename
+    await page.locator("#shortcut-bar .session-btn").click();
+    await expect(page.locator("#session-overlay")).toHaveClass(/visible/);
+
+    // Wait for session list to load
+    const nameInput = page.getByLabel(`Session name: ${name}`);
+    await expect(nameInput).toBeVisible({ timeout: 10000 });
+    await nameInput.fill(newName);
+    await nameInput.press("Enter");
+
+    // Verify new name appears in list (re-rendered after rename)
+    await expect(page.getByLabel(`Session name: ${newName}`)).toBeVisible({ timeout: 10000 });
+
+    // Cleanup
+    await deleteSession(page, newName);
+  });
+
+  test("Switch session via URL", async ({ page }) => {
     const name = `test-switch-${Date.now()}`;
-    await setupTest({ page, context });
+    await page.goto("/");
+    await page.waitForSelector("#shortcut-bar");
 
     // Navigate to session (creates it via daemon attach)
     await page.goto(`/?s=${encodeURIComponent(name)}`);
@@ -100,7 +128,9 @@ test.describe("Session CRUD", () => {
     await page.locator(".xterm-helper-textarea").focus();
 
     // Verify session button shows the session name
-    await expect(page.getByLabel(`Session: ${name}`)).toBeVisible();
+    await expect(page.locator("#shortcut-bar .session-btn")).toContainText(
+      name,
+    );
 
     // Verify terminal is functional
     await expect(page.locator(".xterm-rows")).not.toHaveText("");
@@ -110,14 +140,15 @@ test.describe("Session CRUD", () => {
   });
 
   test("Session isolation — markers do not bleed across sessions", async ({
-    page, context,
+    page,
   }) => {
     const nameA = `iso-a-${Date.now()}`;
     const nameB = `iso-b-${Date.now()}`;
     const markerA = `ISOA_${Date.now()}`;
     const markerB = `ISOB_${Date.now()}`;
 
-    await setupTest({ page, context });
+    await page.goto("/");
+    await page.waitForSelector("#shortcut-bar");
 
     // Type marker in session A (creates it via daemon attach)
     await page.goto(`/?s=${encodeURIComponent(nameA)}`);

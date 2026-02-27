@@ -1,69 +1,73 @@
 import { test, expect } from "@playwright/test";
-import { setupTest, openSettings, switchSettingsTab, waitForDialogClose } from './helpers.js';
 
 test.describe("Settings modal", () => {
-  test.beforeEach(async ({ page, context }) => {
-    await setupTest({ page, context });
-    await openSettings(page);
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("#shortcut-bar");
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await expect(page.locator("#settings-overlay")).toHaveClass(/visible/);
   });
 
   test("Opens when gear icon is clicked", async ({ page }) => {
-    // openSettings already verified the dialog is visible
-    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    // beforeEach already verified this
+    await expect(page.locator("#settings-view-main h3")).toHaveText("Settings");
   });
 
   test("Theme toggle has Auto, Light, and Dark buttons", async ({ page }) => {
-    const dialog = page.getByRole('dialog');
-    await expect(dialog.getByRole('button', { name: 'Auto' })).toBeVisible();
-    await expect(dialog.getByRole('button', { name: 'Light' })).toBeVisible();
-    await expect(dialog.getByRole('button', { name: 'Dark' })).toBeVisible();
+    const toggle = page.locator(".theme-toggle");
+    await expect(toggle.locator("button[data-theme-val='auto']")).toBeVisible();
+    await expect(toggle.locator("button[data-theme-val='light']")).toBeVisible();
+    await expect(toggle.locator("button[data-theme-val='dark']")).toBeVisible();
+  });
+
+  test("Theme toggle marks the active theme", async ({ page }) => {
+    const activeBtn = page.locator(".theme-toggle button.active");
+    await expect(activeBtn).toHaveCount(1);
   });
 
   test("Switching theme updates the active button", async ({ page }) => {
-    const dialog = page.getByRole('dialog');
-    await dialog.getByRole('button', { name: 'Light' }).click();
-
-    // Light should now be selected (pressed)
-    await expect(dialog.getByRole('button', { name: 'Light' })).toHaveAttribute('aria-pressed', 'true');
-    await expect(dialog.getByRole('button', { name: 'Auto' })).not.toHaveAttribute('aria-pressed', 'true');
+    await page.locator("button[data-theme-val='light']").click();
+    await expect(page.locator("button[data-theme-val='light']")).toHaveClass(/active/);
+    await expect(page.locator("button[data-theme-val='auto']")).not.toHaveClass(/active/);
   });
 
   test("End Session button is hidden on localhost", async ({ page }) => {
-    // Switch to Remote tab
-    await switchSettingsTab(page, 'Remote');
-
     // E2E tests run on localhost, so logout button should be hidden
     // (localhost bypasses auth - it's root/admin access)
-    const logout = page.getByRole('button', { name: 'End Session' });
+    const logout = page.locator("#settings-logout");
     await expect(logout).toBeHidden();
+    await expect(logout).toHaveText("End Session");
   });
 
-  test("Pressing Escape closes the modal", async ({ page }) => {
-    const dialog = page.getByRole('dialog').filter({ hasText: 'Settings' });
-    await expect(dialog).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(dialog).not.toBeVisible({ timeout: 5000 });
+  test("No Done button exists", async ({ page }) => {
+    const done = page.locator("#settings-done");
+    await expect(done).toHaveCount(0);
+  });
+
+  test("Clicking outside closes the modal", async ({ page }) => {
+    await page.locator("#settings-overlay").click({ position: { x: 5, y: 5 } });
+    await expect(page.locator("#settings-overlay")).not.toHaveClass(/visible/);
   });
 
   test("Theme persists after reload", async ({ page }) => {
-    const dialog = page.getByRole('dialog');
-
     // Switch to light theme
-    await dialog.getByRole('button', { name: 'Light' }).click();
+    await page.locator("button[data-theme-val='light']").click();
+    await expect(page.locator("button[data-theme-val='light']")).toHaveClass(/active/);
 
     // Close modal and reload
-    await page.keyboard.press('Escape');
-    await waitForDialogClose(page, 'Settings');
+    await page.locator("#settings-overlay").click({ position: { x: 5, y: 5 } });
     await page.reload();
-    await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+    await page.waitForSelector("#shortcut-bar");
 
-    // Re-open settings and verify light is still active
-    await openSettings(page);
-    const newDialog = page.getByRole('dialog');
-    await expect(newDialog.getByRole('button', { name: 'Light' })).toHaveAttribute('aria-pressed', 'true');
+    // Verify theme attribute persisted
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+
+    // Re-open settings and verify active button state
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await expect(page.locator("#settings-overlay")).toHaveClass(/visible/);
+    await expect(page.locator("button[data-theme-val='light']")).toHaveClass(/active/);
 
     // Reset to auto
-    await newDialog.getByRole('button', { name: 'Auto' }).click();
+    await page.locator("button[data-theme-val='auto']").click();
   });
 });

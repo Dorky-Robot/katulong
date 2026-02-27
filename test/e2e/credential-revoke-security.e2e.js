@@ -8,6 +8,9 @@
  * 2. User cannot reconnect with revoked credential
  * 3. API requests are blocked (401 Unauthorized)
  * 4. User is redirected to login page
+ *
+ * This prevents the vulnerability where revoked devices can still access
+ * the terminal because their session cookie remains valid.
  */
 
 import { test, expect } from '@playwright/test';
@@ -20,92 +23,137 @@ test.describe('Credential Revocation Security', () => {
     await setupTest({ page, context });
   });
 
-  test('should immediately block access when credential is revoked', async ({ page }) => {
+  test('should immediately block access when credential is revoked', async ({ page, context }) => {
     console.log('[Security Test] Testing credential revocation flow...');
 
     // Step 1: Verify we can access the terminal initially
     await page.waitForSelector('.xterm', { timeout: 10000 });
-    console.log('[Security Test] Initial access confirmed - terminal loaded');
+    console.log('[Security Test] ✓ Initial access confirmed - terminal loaded');
 
     // Step 2: Open settings to see current tokens
     await openSettings(page);
-    await switchSettingsTab(page, 'Remote');
-
-    const dialog = page.getByRole('dialog');
+    await switchSettingsTab(page, 'remote');
 
     // Step 3: Find the fixture token that has a linked credential
+    // This token was created in pre-server-setup.js with a real credential
     const FIXTURE_TOKEN_NAME = 'E2E Test Token';
 
-    // Wait for tokens to load
-    const tokenItems = page.getByLabel(/Token:/);
-    const hasTokens = await tokenItems.count().then(c => c > 0).catch(() => false);
-
-    if (!hasTokens) {
-      console.log('[Security Test] No tokens found - fixture may have been deleted by previous test run');
+    // Wait for tokens to load, or detect if none exist
+    try {
+      await page.waitForSelector('.token-item', { timeout: 5000 });
+    } catch (timeoutError) {
+      // No tokens exist - this can happen on test retries after the first run deleted the credential
+      console.log('[Security Test] ⚠️  No tokens found - fixture may have been deleted by previous test run');
       console.log('[Security Test] This is expected on test retries. Skipping to avoid false failure.');
       return;
     }
 
-    const initialTokenCount = await tokenItems.count();
+    const initialTokenCount = await page.locator('.token-item').count();
     console.log(`[Security Test] Found ${initialTokenCount} tokens before revoke`);
 
     // Step 4: Find the fixture token
-    const fixtureToken = page.getByLabel(`Token: ${FIXTURE_TOKEN_NAME}`);
-    const hasFixture = await fixtureToken.count() > 0;
+    const fixtureToken = await page.evaluate((targetName) => {
+      const items = Array.from(document.querySelectorAll('.token-item'));
+      for (const item of items) {
+        const nameEl = item.querySelector('.token-name');
+        const name = nameEl ? nameEl.textContent.trim() : null;
+        if (name === targetName) {
+          const tokenId = item.dataset.tokenId;
+          return {
+            name,
+            id: tokenId,
+            hasCredential: item.textContent.includes('Active device')
+          };
+        }
+      }
+      return null;
+    }, FIXTURE_TOKEN_NAME);
 
-    if (!hasFixture) {
-      console.log('[Security Test] Fixture token not found');
+    if (!fixtureToken) {
+      console.log('[Security Test] ⚠️  Fixture token not found');
       console.log('[Security Test] Expected:', FIXTURE_TOKEN_NAME);
       console.log('[Security Test] This test requires fixture auth state to be created in global-setup');
       console.log('[Security Test] Skipping to avoid false negatives');
       return;
     }
 
-    const hasCredential = await fixtureToken.getByText('Active device').count() > 0;
-
-    if (!hasCredential) {
-      console.log('[Security Test] Fixture token found but no linked credential detected');
+    if (!fixtureToken.hasCredential) {
+      console.log('[Security Test] ⚠️  Fixture token found but no linked credential detected');
+      console.log('[Security Test] Token may not be properly linked to credential in UI');
       console.log('[Security Test] Continuing anyway - backend should still enforce security');
     }
 
-    console.log(`[Security Test] Testing with fixture token: ${FIXTURE_TOKEN_NAME}`);
+    console.log(`[Security Test] Testing with fixture token: ${fixtureToken.name} (ID: ${fixtureToken.id})`);
 
-    // Step 5: Close settings before revoking (to monitor terminal state)
-    await page.keyboard.press('Escape');
+    // Step 5: Set up WebSocket monitoring
+    // Track WebSocket close events
+    const wsClosePromise = page.evaluate(() => {
+      return new Promise((resolve) => {
+        // Monitor for WebSocket close via connection state changes
+        const checkInterval = setInterval(() => {
+          // Check if terminal shows connection error
+          const errorMsg = document.querySelector('.connection-error');
+          if (errorMsg && errorMsg.textContent.includes('Connection')) {
+            clearInterval(checkInterval);
+            resolve({ closed: true, reason: 'connection-error-displayed' });
+          }
+        }, 100);
 
-    // Step 6: Revoke via API (more reliable than UI for security testing)
-    const fixtureTokenId = await page.evaluate(async (targetName) => {
-      const res = await fetch('/api/tokens');
-      const data = await res.json();
-      const token = (data.tokens || []).find(t => t.label === targetName || t.id === targetName);
-      return token?.id;
-    }, FIXTURE_TOKEN_NAME);
-
-    if (fixtureTokenId) {
-      // Set up dialog handler
-      page.once('dialog', async dialog => {
-        await dialog.accept();
+        // Timeout after 5 seconds
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          resolve({ closed: false, reason: 'timeout' });
+        }, 5000);
       });
+    });
 
-      // Re-open settings to revoke via UI
-      await openSettings(page);
-      await switchSettingsTab(page, 'Remote');
+    // Step 6: Revoke the token with the fixture credential
+    const tokenItem = page.locator('.token-item').filter({ hasText: fixtureToken.name });
+    await expect(tokenItem).toBeVisible();
 
-      const tokenItem = page.getByLabel(`Token: ${FIXTURE_TOKEN_NAME}`);
-      if (await tokenItem.count() > 0) {
-        page.once('dialog', async d => d.accept());
-        await tokenItem.getByRole('button', { name: 'Revoke token' }).click();
+    // Set up dialog handler for confirmation
+    page.once('dialog', async dialog => {
+      expect(dialog.type()).toBe('confirm');
+      expect(dialog.message()).toContain('device');
+      expect(dialog.message()).toContain('lose access');
+      await dialog.accept(); // Confirm the revoke
+    });
 
-        // Wait for token to be removed from UI
-        await expect(tokenItem).not.toBeVisible({ timeout: 5000 });
-        console.log('[Security Test] Token removed from UI');
-      }
-    }
+    // Click Revoke button
+    console.log('[Security Test] Revoking credential...');
+    await tokenItem.locator('button[data-action="revoke"]').click();
 
-    // Step 7: Wait for potential WebSocket disconnection
-    await page.waitForTimeout(1000);
+    // Step 7: Wait for WebSocket to close
+    const wsResult = await wsClosePromise;
+    console.log('[Security Test] WebSocket close result:', wsResult);
 
-    // Step 8: Try to make an authenticated API request
+    // Step 8: Verify token is removed from UI
+    // Give it more time as the UI needs to reload from store
+    await expect(tokenItem).not.toBeVisible({ timeout: 5000 });
+    console.log('[Security Test] ✓ Token removed from UI');
+
+    // Step 9: Verify we cannot access the terminal anymore
+    // The WebSocket should be closed and reconnection should fail
+    await page.waitForTimeout(1000); // Give it time to try reconnecting
+
+    // Check for authentication failure
+    // The app should either:
+    // 1. Show a connection error
+    // 2. Redirect to login
+    // 3. Show "not authenticated" message
+    const pageState = await page.evaluate(() => {
+      return {
+        hasTerminal: !!document.querySelector('.xterm'),
+        hasError: !!document.querySelector('.connection-error, .error-message'),
+        url: window.location.pathname,
+        wsConnected: window.wsConnected || false
+      };
+    });
+
+    console.log('[Security Test] Page state after revocation:', pageState);
+
+    // Step 10: Try to make an authenticated API request
+    // This should fail with 401 Unauthorized
     const apiResponse = await page.evaluate(async () => {
       try {
         const res = await fetch('/api/tokens');
@@ -115,7 +163,9 @@ test.describe('Credential Revocation Security', () => {
           statusText: res.statusText
         };
       } catch (err) {
-        return { error: err.message };
+        return {
+          error: err.message
+        };
       }
     });
 
@@ -128,19 +178,21 @@ test.describe('Credential Revocation Security', () => {
     });
 
     if (!isLocalhost) {
+      // Non-localhost access should be blocked after credential revoked
       expect(apiResponse.status).toBe(401);
-      console.log('[Security Test] API requests blocked (401 Unauthorized)');
+      console.log('[Security Test] ✓ API requests blocked (401 Unauthorized)');
     } else {
-      console.log('[Security Test] Running on localhost - auth bypassed');
+      console.log('[Security Test] ℹ️  Running on localhost - auth bypassed');
     }
 
-    // Step 9: Reload page and verify we're redirected to login or blocked
+    // Step 11: Reload page and verify we're redirected to login or blocked
     await page.reload();
     await page.waitForLoadState('networkidle');
 
     const afterReloadState = await page.evaluate(() => {
       return {
         hasTerminal: !!document.querySelector('.xterm'),
+        hasLoginForm: !!document.querySelector('#login-form, [class*="login"]'),
         url: window.location.pathname,
         title: document.title
       };
@@ -149,11 +201,12 @@ test.describe('Credential Revocation Security', () => {
     console.log('[Security Test] State after reload:', afterReloadState);
 
     if (!isLocalhost) {
+      // Should not have terminal access
       expect(afterReloadState.hasTerminal).toBe(false);
-      console.log('[Security Test] Terminal access blocked after reload');
+      console.log('[Security Test] ✓ Terminal access blocked after reload');
     }
 
-    console.log('[Security Test] Credential revocation security test complete');
+    console.log('[Security Test] ✅ Credential revocation security test complete');
   });
 
   test('should close WebSocket when session becomes invalid', async ({ page }) => {
@@ -170,11 +223,16 @@ test.describe('Credential Revocation Security', () => {
       ws.on('close', () => wsMessages.push({ type: 'close' }));
     });
 
-    // Try to send a message to trigger session validation
+    // Invalidate session by manipulating it
+    // (In real scenario, this would be done by revoking the credential)
     const sessionInvalidated = await page.evaluate(async () => {
+      // Try to send a message to trigger session validation
+      // The server will check if session is valid on every message
       return new Promise((resolve) => {
         setTimeout(() => {
-          resolve({ checked: true });
+          // Check if we got disconnected
+          const isConnected = window.wsConnected || false;
+          resolve({ invalidated: !isConnected });
         }, 2000);
       });
     });
@@ -221,7 +279,7 @@ test.describe('Credential Revocation Security', () => {
     });
 
     if (isLocalhost) {
-      console.log('[Security Test] Running on localhost - auth is bypassed');
+      console.log('[Security Test] ℹ️  Running on localhost - auth is bypassed');
       console.log('[Security Test] This test is most meaningful when run against remote server');
       return;
     }
@@ -229,9 +287,11 @@ test.describe('Credential Revocation Security', () => {
     // All endpoints should be accessible initially (we have a valid session)
     const allAccessible = Object.values(initialAccess).every(r => r.accessible);
     if (!allAccessible) {
-      console.log('[Security Test] Not all endpoints accessible initially - may not be authenticated');
+      console.log('[Security Test] ⚠️  Not all endpoints accessible initially - may not be authenticated');
     }
 
-    console.log('[Security Test] Endpoint access control test complete');
+    // Note: Full revocation test would require actually revoking a credential
+    // and then testing access - this is covered in the main test above
+    console.log('[Security Test] ✅ Endpoint access control test complete');
   });
 });

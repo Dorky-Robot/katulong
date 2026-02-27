@@ -1,134 +1,193 @@
 import { test, expect } from "@playwright/test";
-import { setupTest, openSettings } from './helpers.js';
 
 test.describe("Instance Icon Picker", () => {
-  test.beforeEach(async ({ page, context }) => {
-    await setupTest({ page, context });
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("#shortcut-bar");
   });
 
-  test("Instance icon Change button exists in Settings > Theme tab", async ({ page }) => {
-    await openSettings(page);
-    const dialog = page.getByRole('dialog');
+  test("Instance icon button exists in Settings > Theme tab", async ({ page }) => {
+    // Open settings
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await expect(page.locator("#settings-overlay")).toHaveClass(/visible/);
 
-    // Theme tab is active by default — verify Change button exists
-    const changeBtn = dialog.getByRole('button', { name: 'Change' });
-    await expect(changeBtn).toBeVisible();
+    // Verify Theme tab is active by default
+    await expect(page.locator("#settings-tab-theme")).toHaveClass(/active/);
+
+    // Verify instance icon button exists
+    const iconBtn = page.locator("#instance-icon-btn");
+    await expect(iconBtn).toBeVisible();
+    await expect(iconBtn).toContainText("Change");
   });
 
   test("Clicking Change opens icon picker modal", async ({ page }) => {
-    await openSettings(page);
-    const dialog = page.getByRole('dialog');
+    // Open settings
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await expect(page.locator("#settings-overlay")).toHaveClass(/visible/);
 
-    await dialog.getByRole('button', { name: 'Change' }).click();
+    // Click Change button
+    await page.locator("#instance-icon-btn").click();
 
-    // Verify icon picker dialog appears
-    const pickerDialog = page.getByRole('dialog').filter({ hasText: 'Choose Icon' });
-    await expect(pickerDialog).toBeVisible({ timeout: 5000 });
+    // Verify icon picker modal appears
+    const overlay = page.locator("#icon-picker-overlay");
+    await expect(overlay).toBeVisible();
+    await expect(page.locator(".icon-picker-modal h3")).toHaveText("Choose an Icon");
   });
 
-  test("Icon picker displays icons", async ({ page }) => {
-    await openSettings(page);
-    const dialog = page.getByRole('dialog');
-    await dialog.getByRole('button', { name: 'Change' }).click();
+  test("Icon picker displays all categories with icons", async ({ page }) => {
+    // Open settings and icon picker
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#instance-icon-btn").click();
 
-    const pickerDialog = page.getByRole('dialog').filter({ hasText: 'Choose Icon' });
-    await expect(pickerDialog).toBeVisible({ timeout: 5000 });
+    // Verify categories
+    await expect(page.locator(".icon-picker-category")).toHaveCount(3);
+    await expect(page.getByRole("heading", { name: "Computers & Devices" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Locations" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Objects & Symbols" })).toBeVisible();
 
-    // Verify icons are present (check for a few known ones)
-    await expect(page.getByLabel('Icon: laptop')).toBeVisible();
-    await expect(page.getByLabel('Icon: house')).toBeVisible();
-    await expect(page.getByLabel('Icon: terminal-window')).toBeVisible();
+    // Verify each category has icons
+    const categories = await page.locator(".icon-picker-category").all();
+    for (const category of categories) {
+      const icons = await category.locator(".icon-picker-icon").count();
+      expect(icons).toBeGreaterThan(0);
+    }
   });
 
-  test("Pressing Escape closes the icon picker", async ({ page }) => {
-    await openSettings(page);
-    const dialog = page.getByRole('dialog');
-    await dialog.getByRole('button', { name: 'Change' }).click();
+  test("Clicking close button closes the modal", async ({ page }) => {
+    // Open settings and icon picker
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#instance-icon-btn").click();
 
-    const pickerDialog = page.getByRole('dialog').filter({ hasText: 'Choose Icon' });
-    await expect(pickerDialog).toBeVisible({ timeout: 5000 });
+    // Verify modal is open
+    await expect(page.locator("#icon-picker-overlay")).toBeVisible();
 
-    await page.keyboard.press('Escape');
-    await expect(pickerDialog).not.toBeVisible({ timeout: 5000 });
+    // Click close button
+    await page.locator("#icon-picker-close").click();
+
+    // Verify modal is closed
+    await expect(page.locator("#icon-picker-overlay")).toBeHidden();
   });
 
-  test("Selecting an icon closes the picker", async ({ page }) => {
-    await openSettings(page);
-    const dialog = page.getByRole('dialog');
-    await dialog.getByRole('button', { name: 'Change' }).click();
+  test("Clicking outside modal closes it", async ({ page }) => {
+    // Open settings and icon picker
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#instance-icon-btn").click();
 
-    const pickerDialog = page.getByRole('dialog').filter({ hasText: 'Choose Icon' });
-    await expect(pickerDialog).toBeVisible({ timeout: 5000 });
+    // Verify modal is open
+    await expect(page.locator("#icon-picker-overlay")).toBeVisible();
 
-    // Select laptop icon
-    await page.getByLabel('Icon: laptop').click();
+    // Click outside (on overlay background)
+    await page.locator("#icon-picker-overlay").click({ position: { x: 5, y: 5 } });
 
-    // Picker should close
-    await expect(pickerDialog).not.toBeVisible({ timeout: 5000 });
+    // Verify modal is closed
+    await expect(page.locator("#icon-picker-overlay")).toBeHidden();
+  });
+
+  test("Selecting an icon updates the display and closes modal", async ({ page }) => {
+    // Open settings and icon picker
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#instance-icon-btn").click();
+
+    // Get the initial icon
+    const iconDisplay = page.locator("#instance-icon-display");
+    const initialClass = await iconDisplay.getAttribute("class");
+
+    // Select a different icon (laptop from Computers & Devices)
+    const laptopIcon = page.locator(".icon-picker-icon[data-icon='laptop']");
+    await laptopIcon.click();
+
+    // Wait for modal to close
+    await expect(page.locator("#icon-picker-overlay")).toBeHidden();
+
+    // Verify icon updated in settings
+    const newClass = await iconDisplay.getAttribute("class");
+    expect(newClass).not.toBe(initialClass);
+    expect(newClass).toContain("ph-laptop");
+  });
+
+  test("Selected icon appears in shortcut bar session button", async ({ page }) => {
+    // Open settings and icon picker
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#instance-icon-btn").click();
+
+    // Select house icon
+    await page.locator(".icon-picker-icon[data-icon='house']").click();
+
+    // Close settings modal
+    await page.locator("#settings-overlay").click({ position: { x: 5, y: 5 } });
+
+    // Verify house icon appears in session button
+    const sessionBtn = page.locator(".session-btn");
+    await expect(sessionBtn.locator(".ph-house")).toBeVisible();
   });
 
   test("Selected icon persists after page reload", async ({ page }) => {
-    // Open settings and select an icon
-    await openSettings(page);
-    let dialog = page.getByRole('dialog');
-    await dialog.getByRole('button', { name: 'Change' }).click();
-
-    const pickerDialog = page.getByRole('dialog').filter({ hasText: 'Choose Icon' });
-    await expect(pickerDialog).toBeVisible({ timeout: 5000 });
+    // Open settings and icon picker
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#instance-icon-btn").click();
 
     // Select desktop icon
-    await page.getByLabel('Icon: desktop').click();
-    await expect(pickerDialog).not.toBeVisible({ timeout: 5000 });
+    await page.locator(".icon-picker-icon[data-icon='desktop-tower']").click();
 
-    // Close settings
-    await page.keyboard.press('Escape');
-
-    // Reload
+    // Reload page
     await page.reload();
-    await page.waitForSelector(".xterm", { timeout: 10000 });
-    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+    await page.waitForSelector("#shortcut-bar");
 
-    // Re-open settings and verify the icon is still selected
-    await openSettings(page);
-    dialog = page.getByRole('dialog');
-    await dialog.getByRole('button', { name: 'Change' }).click();
+    // Verify desktop icon appears in session button
+    const sessionBtn = page.locator(".session-btn");
+    await expect(sessionBtn.locator(".ph-desktop-tower")).toBeVisible();
 
-    const newPickerDialog = page.getByRole('dialog').filter({ hasText: 'Choose Icon' });
-    await expect(newPickerDialog).toBeVisible({ timeout: 5000 });
+    // Open settings again and verify icon is still selected
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    const iconDisplay = page.locator("#instance-icon-display");
+    const iconClass = await iconDisplay.getAttribute("class");
+    expect(iconClass).toContain("ph-desktop-tower");
 
-    // Desktop icon should be marked as selected
-    const desktopIcon = page.getByLabel('Icon: desktop');
-    await expect(desktopIcon).toBeVisible();
-
-    // Reset to default
-    await page.getByLabel('Icon: terminal-window').click();
+    // Reset to default (terminal-window)
+    await page.locator("#instance-icon-btn").click();
+    await page.locator(".icon-picker-icon[data-icon='terminal-window']").click();
   });
 
   test("Current icon is marked as selected in picker", async ({ page }) => {
-    // Select laptop icon first
-    await openSettings(page);
-    let dialog = page.getByRole('dialog');
-    await dialog.getByRole('button', { name: 'Change' }).click();
-
-    let pickerDialog = page.getByRole('dialog').filter({ hasText: 'Choose Icon' });
-    await expect(pickerDialog).toBeVisible({ timeout: 5000 });
-    await page.getByLabel('Icon: laptop').click();
-    await expect(pickerDialog).not.toBeVisible({ timeout: 5000 });
+    // Set an icon first
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#instance-icon-btn").click();
+    await page.locator(".icon-picker-icon[data-icon='laptop']").click();
 
     // Re-open icon picker
-    await dialog.getByRole('button', { name: 'Change' }).click();
-    pickerDialog = page.getByRole('dialog').filter({ hasText: 'Choose Icon' });
-    await expect(pickerDialog).toBeVisible({ timeout: 5000 });
+    await page.locator("#instance-icon-btn").click();
 
-    // Laptop icon should have selected state
-    const laptopIcon = page.getByLabel('Icon: laptop');
-    await expect(laptopIcon).toHaveAttribute('aria-selected', 'true');
+    // Verify laptop icon has selected class
+    const laptopIcon = page.locator(".icon-picker-icon[data-icon='laptop']");
+    await expect(laptopIcon).toHaveClass(/selected/);
 
-    // House icon should not be selected
-    const houseIcon = page.getByLabel('Icon: house');
-    await expect(houseIcon).not.toHaveAttribute('aria-selected', 'true');
+    // Verify other icons don't have selected class
+    const houseIcon = page.locator(".icon-picker-icon[data-icon='house']");
+    await expect(houseIcon).not.toHaveClass(/selected/);
 
     // Reset to default
-    await page.getByLabel('Icon: terminal-window').click();
+    await page.locator(".icon-picker-icon[data-icon='terminal-window']").click();
+  });
+
+  test("Icon picker modal has higher z-index than settings modal", async ({ page }) => {
+    // Open settings
+    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await expect(page.locator("#settings-overlay")).toHaveClass(/visible/);
+
+    // Get z-index of settings overlay
+    const settingsZIndex = await page.locator("#settings-overlay").evaluate(
+      el => window.getComputedStyle(el).zIndex
+    );
+
+    // Open icon picker
+    await page.locator("#instance-icon-btn").click();
+
+    // Get z-index of icon picker overlay
+    const pickerZIndex = await page.locator("#icon-picker-overlay").evaluate(
+      el => window.getComputedStyle(el).zIndex
+    );
+
+    // Verify icon picker is above settings modal
+    expect(parseInt(pickerZIndex)).toBeGreaterThan(parseInt(settingsZIndex));
   });
 });
