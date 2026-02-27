@@ -2,7 +2,6 @@
  * E2E test for token revoke functionality
  *
  * Tests that revoking a token actually removes it from the UI and server.
- * Regression test for bug where revoked tokens still appeared in the list.
  */
 
 import { test, expect } from '@playwright/test';
@@ -16,111 +15,83 @@ test.describe('Token Revoke', () => {
   test('should remove revoked token from UI and server', async ({ page }) => {
     // Navigate to Remote tab
     await openSettings(page);
-    await switchSettingsTab(page, 'remote');
+    await switchSettingsTab(page, 'Remote');
 
-    // Wait for token list to load
-    await page.waitForFunction(
-      () => document.querySelector('#tokens-list') !== null,
-      { timeout: 5000 }
-    );
-
-    // Get all tokens and pick the first one that's not linked to a credential
-    const initialCount = await page.locator('.token-item').count();
+    const dialog = page.getByRole('dialog');
 
     // If there are no tokens, create one via API first
-    if (initialCount === 0) {
+    const initialTokens = await page.evaluate(async () => {
+      const res = await fetch('/api/tokens');
+      const data = await res.json();
+      return data.tokens || [];
+    });
+
+    if (initialTokens.length === 0) {
+      // Create a token
       const testToken = await page.evaluate(async () => {
         const res = await fetch('/api/tokens', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: `revoke-test-${Date.now()}` })
+          body: JSON.stringify({ label: `revoke-test-${Date.now()}` })
         });
         return res.json();
       });
 
-      // Trigger a reload of the token store
-      await page.evaluate(() => {
-        window.location.reload();
-      });
+      // Reload to refresh the token list
+      await page.reload();
       await page.waitForSelector('.xterm', { timeout: 10000 });
       await openSettings(page);
-      await switchSettingsTab(page, 'remote');
-      await page.waitForFunction(
-        () => document.querySelectorAll('.token-item').length > 0,
-        { timeout: 5000 }
-      );
+      await switchSettingsTab(page, 'Remote');
     }
 
-    // Get a token to revoke (preferably one without a credential)
-    const tokenToRevoke = await page.evaluate(() => {
-      const items = Array.from(document.querySelectorAll('.token-item'));
-      for (const item of items) {
-        // Skip tokens with "Active device" (they're linked to credentials)
-        if (!item.textContent.includes('Active device')) {
-          const nameEl = item.querySelector('.token-name');
-          const revokeBtn = item.querySelector('button[data-action="revoke"]');
-          if (nameEl && revokeBtn) {
-            return nameEl.textContent.trim();
-          }
-        }
-      }
-      return null;
-    });
+    // Find a token to revoke (use ARIA selectors)
+    const tokenItems = page.getByLabel(/Token:/);
+    const initialCount = await tokenItems.count();
 
-    // If no suitable token found, skip test
-    if (!tokenToRevoke) {
-      console.log('[Test] No suitable token found for revoke test - skipping');
+    if (initialCount === 0) {
+      console.log('[Test] No tokens found - skipping');
       return;
     }
 
-    const tokenName = tokenToRevoke;
-    const countBeforeRevoke = await page.locator('.token-item').count();
+    // Get the first token's name
+    const firstToken = tokenItems.first();
+    const tokenLabel = await firstToken.getAttribute('aria-label');
+    const tokenName = tokenLabel?.replace('Token: ', '') || '';
 
     // Set up dialog handler for confirm
     page.once('dialog', async dialog => {
       expect(dialog.type()).toBe('confirm');
-      await dialog.accept(); // Confirm the revoke
+      await dialog.accept();
     });
 
-    // Find and click Revoke button for the token
-    const tokenItem = page.locator('.token-item').filter({ hasText: tokenName });
-    await tokenItem.locator('button[data-action="revoke"]').click();
+    // Click revoke (trash) button for the first token
+    const revokeBtn = firstToken.getByRole('button', { name: 'Revoke token' });
+    await revokeBtn.click();
 
-    // Wait for token to be removed from UI (optimistic update)
-    await expect(tokenItem).not.toBeVisible({ timeout: 3000 });
+    // Wait for token to be removed from UI
+    await expect(firstToken).not.toBeVisible({ timeout: 5000 });
 
     // Verify token count decreased
-    const countAfterRevoke = await page.locator('.token-item').count();
-    expect(countAfterRevoke).toBe(countBeforeRevoke - 1);
+    const afterCount = await tokenItems.count();
+    expect(afterCount).toBe(initialCount - 1);
 
-    // Reload page and verify token is still gone (server-side deletion worked)
+    // Reload and verify token is still gone (server-side deletion worked)
     await page.reload();
     await page.waitForSelector('.xterm', { timeout: 10000 });
     await openSettings(page);
-    await switchSettingsTab(page, 'remote');
-
-    // Wait for token list to finish loading
-    await page.waitForFunction(
-      () => document.querySelector('#tokens-list') !== null,
-      { timeout: 5000 }
-    );
+    await switchSettingsTab(page, 'Remote');
 
     // Token should not reappear after reload
-    const tokenExists = await page.locator('.token-item').filter({ hasText: tokenName }).count();
+    const tokenExists = await page.getByLabel(`Token: ${tokenName}`).count();
     expect(tokenExists).toBe(0);
-
-    console.log('[Test] Token revoke successful - removed from UI and server');
   });
 
-  test('should handle revoke of token that was used for device registration', async ({ page }) => {
-    // This test would need a way to create a token and use it to register a device
-    // For now, we'll just verify the confirm dialog shows the right message
-
+  test('should handle revoke of token with linked device', async ({ page }) => {
     await openSettings(page);
-    await switchSettingsTab(page, 'remote');
+    await switchSettingsTab(page, 'Remote');
 
-    // Look for a token that has "Active device" status
-    const activeToken = page.locator('.token-item').filter({ hasText: 'Active device' }).first();
+    // Look for a token with "Active device" text
+    const activeToken = page.getByLabel(/Token:/).filter({ hasText: 'Active device' }).first();
     const hasActiveToken = await activeToken.count() > 0;
 
     if (hasActiveToken) {
@@ -132,7 +103,7 @@ test.describe('Token Revoke', () => {
         await dialog.dismiss(); // Cancel - don't actually revoke
       });
 
-      await activeToken.locator('button[data-action="revoke"]').click();
+      await activeToken.getByRole('button', { name: 'Revoke token' }).click();
 
       // Token should still be there since we cancelled
       await expect(activeToken).toBeVisible();

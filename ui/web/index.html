@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base href="/">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1e1e2e">
+  <title>Katulong</title>
+  <link rel="icon" href="/favicon.ico" sizes="32x32">
+  <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.json">
+
+  <!-- Self-hosted dependencies (xterm.js, fonts, simple-peer, simplewebauthn) -->
+  <link rel="stylesheet" href="/vendor/fonts/fonts.css">
+  <link rel="stylesheet" href="/vendor/xterm/xterm.min.css">
+  <script async src="/vendor/simple-peer/simplepeer.min.js"></script>
+
+  <!-- JS interop bridges (ES modules — loaded before Flutter bootstrap) -->
+  <script type="module" src="/js/xterm_bridge.js"></script>
+  <script type="module" src="/js/webauthn_bridge.js"></script>
+  <script defer src="/js/p2p_bridge.js"></script>
+
+  <style>
+    /* Loading indicator while Flutter bootstraps */
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #1e1e2e;
+      overflow: hidden;
+    }
+    .loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      color: #cdd6f4;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="loading" id="loading">Loading…</div>
+
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

@@ -1,4 +1,13 @@
-# -- Build stage: compile node-pty native addon --
+# -- Flutter build stage: compile Flutter Web frontend --
+FROM ghcr.io/cirruslabs/flutter:3.41.2 AS flutter-build
+
+WORKDIR /app/ui
+COPY ui/pubspec.yaml ui/pubspec.lock* ./
+RUN flutter pub get
+COPY ui/ .
+RUN flutter build web --release --dart-define=FLUTTER_WEB_CANVASKIT_URL=/canvaskit/
+
+# -- Node build stage: compile node-pty native addon --
 FROM node:22-bookworm-slim AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -9,6 +18,18 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
+
+# Copy Flutter build output into public/
+# Preserve vendor assets, icons, manifest that are not part of Flutter build
+COPY --from=flutter-build /app/ui/build/web/ /tmp/flutter-build/
+RUN cp -a public/vendor /tmp/flutter-build/vendor && \
+    cp -a public/favicon.ico public/icon-192.png public/icon-512.png \
+          public/icon-512-maskable.png public/apple-touch-icon.png \
+          public/manifest.json public/logo.webp /tmp/flutter-build/ 2>/dev/null || true && \
+    rm -rf public/* && \
+    cp -a /tmp/flutter-build/. public/ && \
+    mkdir -p public/js && \
+    cp -a ui/web/js/xterm_bridge.js ui/web/js/webauthn_bridge.js ui/web/js/p2p_bridge.js public/js/
 
 # -- Runtime stage --
 FROM node:22-bookworm-slim
