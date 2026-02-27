@@ -6,7 +6,7 @@ class SetupToken {
   final String token;
   final String? label;
   final bool used;
-  final String createdAt;
+  final int createdAt;
 
   const SetupToken({
     required this.id,
@@ -20,9 +20,9 @@ class SetupToken {
     return SetupToken(
       id: json['id'] as String,
       token: json['token'] as String? ?? '',
-      label: json['label'] as String?,
-      used: json['used'] as bool? ?? false,
-      createdAt: json['createdAt'] as String? ?? '',
+      label: json['name'] as String?,
+      used: json['credential'] != null,
+      createdAt: json['createdAt'] as int? ?? 0,
     );
   }
 }
@@ -52,7 +52,7 @@ class TokenStore extends StateNotifier<AsyncValue<List<SetupToken>>> {
 
   Future<String> create({String? label}) async {
     final res = await ApiClient.post('/api/tokens', {
-      if (label != null) 'label': label,
+      if (label != null) 'name': label,
     });
     if (!res.ok) throw Exception(res.json['error'] ?? 'Failed to create token');
     final token = res.json['token'] as String;

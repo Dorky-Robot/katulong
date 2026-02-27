@@ -37,11 +37,12 @@ class ConfigNotifier extends StateNotifier<AsyncValue<AppConfig>> {
         state = const AsyncValue.data(AppConfig());
         return;
       }
-      final data = res.json;
+      final data = res.json as Map<String, dynamic>;
+      final config = data['config'] as Map<String, dynamic>? ?? {};
       state = AsyncValue.data(AppConfig(
-        instanceName: data['instanceName'] as String? ?? 'katulong',
-        instanceIcon: data['instanceIcon'] as String? ?? 'terminal-window',
-        toolbarColor: data['toolbarColor'] as String? ?? 'default',
+        instanceName: config['instanceName'] as String? ?? 'katulong',
+        instanceIcon: config['instanceIcon'] as String? ?? 'terminal-window',
+        toolbarColor: config['toolbarColor'] as String? ?? 'default',
       ));
     } catch (e, st) {
       state = AsyncValue.error(e, st);

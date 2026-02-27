@@ -25,8 +25,7 @@ class SessionStore extends StateNotifier<AsyncValue<List<SessionInfo>>> {
     try {
       final res = await ApiClient.get('/sessions');
       if (!res.ok) throw Exception('Failed to load sessions');
-      final data = res.json;
-      final sessions = (data['sessions'] as List)
+      final sessions = (res.json as List)
           .map((s) => SessionInfo.fromJson(s as Map<String, dynamic>))
           .toList();
       state = AsyncValue.data(sessions);

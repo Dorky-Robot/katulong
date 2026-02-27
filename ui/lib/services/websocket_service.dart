@@ -19,6 +19,11 @@ class WebSocketService {
   Timer? _reconnectTimer;
   bool _isConnecting = false;
 
+  // Track current session params for reconnect with latest values
+  String? _currentSession;
+  int _currentCols = 80;
+  int _currentRows = 24;
+
   final _messageController = StreamController<Map<String, dynamic>>.broadcast();
   final _stateController = StreamController<ConnectionState>.broadcast();
 
@@ -38,6 +43,11 @@ class WebSocketService {
   /// Connect to the WebSocket server and attach to the given session.
   void connect({required String session, required int cols, required int rows}) {
     if (_isConnecting) return;
+
+    // Track current params so reconnect uses latest values
+    _currentSession = session;
+    _currentCols = cols;
+    _currentRows = rows;
 
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
@@ -84,7 +94,7 @@ class WebSocketService {
       }
 
       _reconnectTimer = Timer(Duration(milliseconds: _reconnectDelay), () {
-        connect(session: session, cols: cols, rows: rows);
+        connect(session: _currentSession!, cols: _currentCols, rows: _currentRows);
       });
       _reconnectDelay = (_reconnectDelay * 2).clamp(1000, 10000);
     }).toJS;
@@ -109,6 +119,8 @@ class WebSocketService {
 
   /// Send terminal resize.
   void sendResize(int cols, int rows) {
+    _currentCols = cols;
+    _currentRows = rows;
     send({'type': 'resize', 'cols': cols, 'rows': rows});
   }
 

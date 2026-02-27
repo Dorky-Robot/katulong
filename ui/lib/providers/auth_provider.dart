@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web/web.dart' as web;
-import 'dart:js_interop';
 import '../services/api_client.dart';
 import '../services/webauthn_interop.dart';
 
@@ -48,7 +47,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> _checkStatus() async {
     try {
-      final res = await ApiClient.post('/auth/status');
+      final res = await ApiClient.get('/auth/status');
       final data = res.json;
       final isSetup = data['setup'] as bool? ?? false;
 
@@ -108,78 +107,44 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   /// First-time registration (setup view).
   Future<void> register({String? setupToken}) async {
-    state = state.copyWith(isProcessing: true, clearError: true);
-
     final isLocalhost = web.window.location.hostname == 'localhost' ||
         web.window.location.hostname == '127.0.0.1';
 
     if ((setupToken == null || setupToken.isEmpty) && !isLocalhost) {
       state = state.copyWith(
-        isProcessing: false,
         error: 'Setup token is required for remote registration.',
       );
       return;
     }
 
-    try {
-      // Get registration options
-      final optsRes = await ApiClient.post('/auth/register/options', {
-        'setupToken': setupToken ?? '',
-      });
-      if (!optsRes.ok) {
-        final err = optsRes.json;
-        throw Exception(err['error'] ?? 'Failed to get registration options');
-      }
-      final opts = optsRes.json;
-
-      // Start WebAuthn ceremony
-      final credential = await WebAuthnInterop.startRegistration(opts);
-
-      // Verify with server
-      final verifyRes = await ApiClient.post('/auth/register/verify', {
-        'credential': credential,
-        'setupToken': setupToken ?? '',
-        'deviceName': _generateDeviceName(),
-        'userAgent': web.window.navigator.userAgent,
-      });
-      if (!verifyRes.ok) {
-        final err = verifyRes.json;
-        throw Exception(err['error'] ?? 'Registration failed');
-      }
-
-      // Success — redirect to main app
-      web.window.location.href = '/';
-    } catch (e) {
-      state = state.copyWith(
-        isProcessing: false,
-        error: _formatWebAuthnError(e),
-      );
-    }
+    await _performRegistration(setupToken ?? '');
   }
 
   /// Register new passkey on already-setup instance (login view).
   Future<void> registerNew({required String setupToken}) async {
-    state = state.copyWith(isProcessing: true, clearError: true);
-
     if (setupToken.isEmpty) {
       state = state.copyWith(
-        isProcessing: false,
         error: 'Setup token is required.',
       );
       return;
     }
 
+    await _performRegistration(setupToken);
+  }
+
+  Future<void> _performRegistration(String setupToken) async {
+    state = state.copyWith(isProcessing: true, clearError: true);
+
     try {
       final optsRes = await ApiClient.post('/auth/register/options', {
         'setupToken': setupToken,
       });
       if (!optsRes.ok) {
-        final err = optsRes.json;
+        final err = optsRes.json as Map<String, dynamic>;
         throw Exception(err['error'] ?? 'Failed to get registration options');
       }
-      final opts = optsRes.json;
 
-      final credential = await WebAuthnInterop.startRegistration(opts);
+      final credential = await WebAuthnInterop.startRegistration(optsRes.json);
 
       final verifyRes = await ApiClient.post('/auth/register/verify', {
         'credential': credential,
@@ -188,7 +153,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         'userAgent': web.window.navigator.userAgent,
       });
       if (!verifyRes.ok) {
-        final err = verifyRes.json;
+        final err = verifyRes.json as Map<String, dynamic>;
         throw Exception(err['error'] ?? 'Registration failed');
       }
 

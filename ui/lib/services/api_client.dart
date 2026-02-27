@@ -67,5 +67,5 @@ class ApiResponse {
 
   bool get ok => status >= 200 && status < 300;
 
-  Map<String, dynamic> get json => jsonDecode(body) as Map<String, dynamic>;
+  dynamic get json => jsonDecode(body);
 }

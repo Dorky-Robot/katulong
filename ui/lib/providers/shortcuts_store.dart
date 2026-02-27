@@ -27,8 +27,7 @@ class ShortcutsStore extends StateNotifier<AsyncValue<List<ShortcutItem>>> {
     try {
       final res = await ApiClient.get('/shortcuts');
       if (!res.ok) throw Exception('Failed to load shortcuts');
-      final data = res.json;
-      final shortcuts = (data['shortcuts'] as List)
+      final shortcuts = (res.json as List)
           .map((s) => ShortcutItem.fromJson(s as Map<String, dynamic>))
           .toList();
       state = AsyncValue.data(shortcuts);
