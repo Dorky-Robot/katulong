@@ -62,7 +62,18 @@ katulong stop    # Stop services
 
 Run `katulong --help` to see all available commands.
 
-### 4. Pair Additional Devices
+### 4. Manage Tokens and Sessions
+
+```bash
+katulong token create "My Phone"  # Create a setup token for pairing
+katulong token list               # List tokens
+katulong credential list          # List registered passkeys
+katulong session list             # List active terminal sessions
+```
+
+See the [CLI Reference](cli-reference.md) for all available commands.
+
+### 5. Pair Additional Devices
 
 From Settings > "Pair New Device", scan the QR code on your mobile device
 and enter the PIN to pair securely.

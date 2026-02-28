@@ -19,6 +19,9 @@ const COMMANDS = {
   open: "Open Katulong in your browser",
   info: "Show system information and configuration",
   update: "Update Katulong to the latest version",
+  token: "Manage setup tokens (create, list, revoke)",
+  credential: "Manage passkey credentials (list, revoke)",
+  session: "Manage PTY sessions (list, create, kill, rename)",
 };
 
 function showHelp() {
@@ -48,6 +51,11 @@ EXAMPLES:
   katulong update             Update to latest version
   katulong update --check     Check if update is available
   katulong update --no-restart Update code but skip restart
+  katulong token create "My Phone"  Create a setup token
+  katulong token list         List setup tokens
+  katulong credential list    List registered passkeys
+  katulong session list       List active PTY sessions
+  katulong session kill dev   Kill a PTY session
 
 For more information, visit: https://github.com/dorky-robot/katulong
 `);
