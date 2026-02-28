@@ -363,7 +363,7 @@ describe("katulong session list", () => {
     ctx.daemonRPC = async () => { throw new Error("Daemon not connected"); };
     const result = await executeCommand("katulong session list", ctx);
     assert.equal(result.exitCode, 1);
-    assert.ok(result.output.includes("Daemon not connected"));
+    assert.ok(result.output.includes("Internal error"));
   });
 });
 
@@ -389,6 +389,20 @@ describe("katulong session create", () => {
     const result = await executeCommand("katulong session create work", ctx);
     assert.equal(result.exitCode, 1);
     assert.ok(result.output.includes("already exists"));
+  });
+
+  it("rejects invalid session names", async () => {
+    const { ctx } = createMockCtx();
+    const result = await executeCommand("katulong session create '../../etc'", ctx);
+    // SessionName strips invalid chars, so "../../etc" becomes "etc"
+    assert.equal(result.exitCode, 0);
+  });
+
+  it("rejects empty session name after sanitization", async () => {
+    const { ctx } = createMockCtx();
+    const result = await executeCommand("katulong session create '...'", ctx);
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.output.includes("Invalid session name"));
   });
 });
 
@@ -437,6 +451,13 @@ describe("katulong session rename", () => {
     assert.equal(result.exitCode, 0);
     const data = JSON.parse(result.output);
     assert.equal(data.name, "new");
+  });
+
+  it("rejects invalid new session name", async () => {
+    const { ctx } = createMockCtx();
+    const result = await executeCommand("katulong session rename old '...'", ctx);
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.output.includes("Invalid session name"));
   });
 });
 
