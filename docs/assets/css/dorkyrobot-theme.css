@@ -109,7 +109,7 @@
   color: #8b949e;
 }
 
-[data-md-color-scheme="slate"] .md-typeset .tabbed-labels > label--active,
+[data-md-color-scheme="slate"] .md-typeset .tabbed-labels > label:has(+ input:checked),
 [data-md-color-scheme="slate"] .md-typeset .tabbed-labels > label:hover {
   color: #58a6ff;
 }

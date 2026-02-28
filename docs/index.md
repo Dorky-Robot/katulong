@@ -11,10 +11,8 @@ brew install katulong
 katulong start
 ```
 
-<div style="display: flex; justify-content: center; gap: 1rem; margin: 2rem 0;">
-  <a href="getting-started/" style="display: inline-block; padding: 0.75rem 1.5rem; background: #58a6ff; color: #0d1117; border-radius: 0.5rem; font-weight: 600; text-decoration: none;">Get Started</a>
-  <a href="https://github.com/Dorky-Robot/katulong" target="_blank" style="display: inline-block; padding: 0.75rem 1.5rem; border: 1px solid #30363d; color: #e6edf3; border-radius: 0.5rem; font-weight: 600; text-decoration: none;">View on GitHub</a>
-</div>
+[Get Started](getting-started.md){ .md-button .md-button--primary }
+[View on GitHub](https://github.com/Dorky-Robot/katulong){ .md-button }
 
 ---
 
