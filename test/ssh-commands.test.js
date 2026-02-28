@@ -180,6 +180,14 @@ describe("katulong token create", () => {
     assert.ok(data.id);
     assert.ok(data.expiresAt);
   });
+
+  it("rejects token name exceeding 128 characters", async () => {
+    const { ctx } = createMockCtx();
+    const longName = "a".repeat(129);
+    const result = await executeCommand(`katulong token create ${longName}`, ctx);
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.output.includes("too long"));
+  });
 });
 
 describe("katulong token list", () => {
@@ -428,6 +436,13 @@ describe("katulong session kill", () => {
     assert.equal(result.exitCode, 1);
     assert.ok(result.output.includes("not found"));
   });
+
+  it("rejects invalid session name", async () => {
+    const { ctx } = createMockCtx();
+    const result = await executeCommand("katulong session kill '...'", ctx);
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.output.includes("Invalid session name"));
+  });
 });
 
 describe("katulong session rename", () => {
@@ -456,6 +471,13 @@ describe("katulong session rename", () => {
   it("rejects invalid new session name", async () => {
     const { ctx } = createMockCtx();
     const result = await executeCommand("katulong session rename old '...'", ctx);
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.output.includes("Invalid session name"));
+  });
+
+  it("rejects invalid old session name", async () => {
+    const { ctx } = createMockCtx();
+    const result = await executeCommand("katulong session rename '...' new", ctx);
     assert.equal(result.exitCode, 1);
     assert.ok(result.output.includes("Invalid session name"));
   });
