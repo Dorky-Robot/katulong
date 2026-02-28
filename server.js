@@ -8,7 +8,7 @@ import envConfig, { ensureDataDir } from "./lib/env-config.js";
 import { log } from "./lib/log.js";
 import { initP2P } from "./lib/p2p.js";
 import {
-  loadState, validateSession, refreshSessionActivity,
+  loadState, validateSession, refreshSessionActivity, withStateLock,
 } from "./lib/auth.js";
 import {
   parseCookies, isPublicPath, createChallengeStore,
@@ -412,4 +412,5 @@ startSSHServer({
   daemonSend,
   credentialLockout,
   bridge,
+  authContext: { loadState, withStateLock },
 });

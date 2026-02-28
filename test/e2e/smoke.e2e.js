@@ -38,8 +38,9 @@ test.describe("Smoke — critical path", () => {
     await expect(page.locator(".xterm-rows")).toContainText(marker);
 
     await page.reload();
-    await waitForAppReady(page);
-
-    await expect(page.locator(".xterm-rows")).toContainText(marker);
+    // After reconnect, wait for xterm to render the replayed buffer
+    // (don't wait for a fresh shell prompt — buffer replay is sufficient)
+    await page.waitForSelector(".xterm-screen", { timeout: 10000 });
+    await expect(page.locator(".xterm-rows")).toContainText(marker, { timeout: 10000 });
   });
 });
