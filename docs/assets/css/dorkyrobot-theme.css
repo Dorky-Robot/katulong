@@ -1,0 +1,125 @@
+/*
+ * Dorky Robot dark theme for MkDocs Material
+ * Matches dorkyrobot.com design system
+ */
+
+[data-md-color-scheme="slate"] {
+  /* Background */
+  --md-default-bg-color: #0d1117;
+  --md-default-bg-color--light: #161b22;
+  --md-default-bg-color--lighter: #1c2128;
+  --md-default-bg-color--lightest: #21262d;
+
+  /* Foreground / text */
+  --md-default-fg-color: #e6edf3;
+  --md-default-fg-color--light: #8b949e;
+  --md-default-fg-color--lighter: #6e7681;
+  --md-default-fg-color--lightest: #484f58;
+
+  /* Primary (header, sidebar active) */
+  --md-primary-fg-color: #161b22;
+  --md-primary-fg-color--light: #1c2128;
+  --md-primary-fg-color--dark: #0d1117;
+  --md-primary-bg-color: #e6edf3;
+  --md-primary-bg-color--light: #8b949e;
+
+  /* Accent (links, highlights) */
+  --md-accent-fg-color: #58a6ff;
+  --md-accent-fg-color--transparent: rgba(88, 166, 255, 0.1);
+  --md-accent-bg-color: #58a6ff;
+  --md-accent-bg-color--light: rgba(88, 166, 255, 0.1);
+
+  /* Code */
+  --md-code-fg-color: #e6edf3;
+  --md-code-bg-color: #161b22;
+  --md-code-hl-color: rgba(88, 166, 255, 0.15);
+
+  /* Typeset */
+  --md-typeset-color: #e6edf3;
+  --md-typeset-a-color: #58a6ff;
+
+  /* Footer */
+  --md-footer-bg-color: #0d1117;
+  --md-footer-bg-color--dark: #010409;
+  --md-footer-fg-color: #8b949e;
+  --md-footer-fg-color--light: #6e7681;
+  --md-footer-fg-color--lighter: #484f58;
+}
+
+/* System font stack matching dorkyrobot.com */
+:root {
+  --md-text-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue",
+    sans-serif;
+  --md-code-font: "SF Mono", SFMono-Regular, Consolas, "Liberation Mono",
+    Menlo, monospace;
+}
+
+/* Header border */
+[data-md-color-scheme="slate"] .md-header {
+  border-bottom: 1px solid #30363d;
+  background-color: #161b22;
+}
+
+/* Sidebar */
+[data-md-color-scheme="slate"] .md-sidebar {
+  border-right: 1px solid #30363d;
+}
+
+/* Navigation items */
+[data-md-color-scheme="slate"] .md-nav__link--active,
+[data-md-color-scheme="slate"] .md-nav__link:is(:focus, :hover) {
+  color: #58a6ff;
+}
+
+/* Tables */
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) {
+  border: 1px solid #30363d;
+}
+
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) th {
+  background-color: #161b22;
+  border-bottom: 1px solid #30363d;
+}
+
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) td {
+  border-top: 1px solid #21262d;
+}
+
+/* Admonitions */
+[data-md-color-scheme="slate"] .md-typeset .admonition,
+[data-md-color-scheme="slate"] .md-typeset details {
+  border-color: #30363d;
+  background-color: #161b22;
+}
+
+/* Code blocks */
+[data-md-color-scheme="slate"] .md-typeset pre > code {
+  border: 1px solid #30363d;
+}
+
+/* Search */
+[data-md-color-scheme="slate"] .md-search__form {
+  background-color: #161b22;
+  border: 1px solid #30363d;
+}
+
+/* Tabs */
+[data-md-color-scheme="slate"] .md-typeset .tabbed-labels > label {
+  color: #8b949e;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .tabbed-labels > label:has(+ input:checked),
+[data-md-color-scheme="slate"] .md-typeset .tabbed-labels > label:hover {
+  color: #58a6ff;
+}
+
+/* Content area border */
+[data-md-color-scheme="slate"] .md-content {
+  border-left: 1px solid #30363d;
+}
+
+/* Horizontal rules */
+[data-md-color-scheme="slate"] .md-typeset hr {
+  border-bottom-color: #30363d;
+}

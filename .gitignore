@@ -21,3 +21,4 @@ daemon.pid
 ssh/
 tls/
 homebrew-katulong/
+site/
