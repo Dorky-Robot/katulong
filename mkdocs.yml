@@ -47,6 +47,7 @@ nav:
   - Home: index.md
   - Getting Started: getting-started.md
   - Features: features.md
+  - CLI Reference: cli-reference.md
   - Security:
       - Overview: security/index.md
       - Improvements: security/improvements.md
