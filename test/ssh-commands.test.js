@@ -83,7 +83,6 @@ function createMockCtx(stateOverrides = {}) {
   });
 
   const ctx = {
-    AuthState,
     loadState: () => currentState,
     withStateLock: async (modifier) => {
       const result = await modifier(currentState);
