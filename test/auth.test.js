@@ -317,6 +317,8 @@ describe("loadState - credential metadata migration", () => {
     _invalidateCache();
     backupState = loadState();
     _invalidateCache();
+    clearAuthFiles();
+    _invalidateCache();
   });
 
   afterEach(() => {
@@ -416,6 +418,8 @@ describe("loadState - session lastActivityAt migration", () => {
   beforeEach(() => {
     _invalidateCache();
     backupState = loadState();
+    _invalidateCache();
+    clearAuthFiles();
     _invalidateCache();
   });
 
