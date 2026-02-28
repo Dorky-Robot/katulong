@@ -1,0 +1,68 @@
+site_name: Katulong
+site_url: https://dorkyrobot.com/katulong/
+site_description: A secure, self-hosted web terminal with passwordless authentication.
+site_author: Dorky-Robot
+
+repo_url: https://github.com/Dorky-Robot/katulong
+repo_name: Dorky-Robot/katulong
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    scheme: slate
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Features: features.md
+  - Security:
+      - Overview: security/index.md
+      - Improvements: security/improvements.md
+  - Access Guide:
+      - Overview: access-guide/index.md
+      - Localhost: access-guide/localhost.md
+      - LAN: access-guide/lan.md
+      - Internet: access-guide/internet.md
+      - Troubleshooting: access-guide/troubleshooting.md
+  - Architecture: architecture.md
+  - Use Cases: use-cases.md
+  - Screenshots: screenshots.md
+
+extra_css:
+  - assets/css/dorkyrobot-theme.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Dorky-Robot/katulong
