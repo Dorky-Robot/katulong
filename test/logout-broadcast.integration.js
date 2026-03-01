@@ -7,21 +7,15 @@ import { tmpdir } from "node:os";
 import { writeAuthFixture } from "./helpers/auth-fixture.js";
 
 /**
- * Integration test: credential-removed broadcast path in logout handler
+ * Integration test: /auth/logout invalidates session without removing credential
  *
- * Regression test for: broadcast() ReferenceError in /auth/logout
- *
- * The logout handler calls broadcastToAll() when a credential is removed
- * (newState.removedCredentialId is set). A previous bug used broadcast()
- * which does not exist in server.js, causing a ReferenceError and 500 response.
- *
- * This test exercises that exact path to prevent regression.
+ * Verifies that logout removes the session token but keeps the credential
+ * intact, so users can log back in with their passkey.
  */
 
 const TEST_PORT = 3004;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 
-// Pre-seeded auth state: two credentials so removing one doesn't hit last-credential lock
 const SESSION_TOKEN = "test-session-token-abc123";
 const CSRF_TOKEN = "test-csrf-token-xyz789";
 const CREDENTIAL_ID = "cred-1";
@@ -33,21 +27,11 @@ function makeAuthState() {
     user: { id: "test-user-id", name: "Test User" },
     credentials: [
       {
-        id: "cred-1",
+        id: CREDENTIAL_ID,
         publicKey: Buffer.from("test-key-1").toString("base64url"),
         counter: 0,
         deviceId: "device-1",
         name: "Device 1",
-        createdAt: now,
-        lastUsedAt: now,
-        userAgent: "Test/1.0",
-      },
-      {
-        id: "cred-2",
-        publicKey: Buffer.from("test-key-2").toString("base64url"),
-        counter: 0,
-        deviceId: "device-2",
-        name: "Device 2",
         createdAt: now,
         lastUsedAt: now,
         userAgent: "Test/1.0",
@@ -66,14 +50,13 @@ function makeAuthState() {
   };
 }
 
-describe("logout broadcast path", () => {
+describe("logout session invalidation", () => {
   let serverProcess;
   let testDataDir;
 
   before(async () => {
-    testDataDir = mkdtempSync(join(tmpdir(), "katulong-logout-broadcast-test-"));
+    testDataDir = mkdtempSync(join(tmpdir(), "katulong-logout-test-"));
 
-    // Write pre-seeded auth state so endSession() will set removedCredentialId
     writeAuthFixture(testDataDir, makeAuthState());
 
     serverProcess = spawn("node", ["server.js"], {
@@ -105,7 +88,6 @@ describe("logout broadcast path", () => {
       const startTime = Date.now();
       const checkReady = async () => {
         try {
-          // Any 2xx or 4xx means server is up (401 is expected without auth)
           const res = await fetch(`${BASE_URL}/`);
           if (res.status < 500) {
             clearTimeout(timeout);
@@ -128,12 +110,7 @@ describe("logout broadcast path", () => {
     try { rmSync(testDataDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
-  it("returns 200 (not 500) when logout removes a credential", async () => {
-    // This request exercises the path:
-    //   endSession() → removedCredentialId set → broadcastToAll() called
-    //
-    // If broadcast() (the old bug) were used, this would throw ReferenceError → 500.
-    // broadcastToAll() is correct and should succeed → 200.
+  it("returns 200 and invalidates the session without removing the credential", async () => {
     const res = await fetch(`${BASE_URL}/auth/logout`, {
       method: "POST",
       headers: {
@@ -148,7 +125,7 @@ describe("logout broadcast path", () => {
     assert.strictEqual(
       res.status,
       200,
-      `Expected 200 but got ${res.status} — a 500 here likely means broadcast() ReferenceError`
+      `Expected 200 but got ${res.status}`
     );
 
     const body = await res.json();

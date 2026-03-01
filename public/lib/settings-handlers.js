@@ -280,7 +280,11 @@ export function createSettingsHandlers(options = {}) {
 
     // Remote access - show logout button
     logoutBtn.addEventListener("click", async () => {
-      await api.post("/auth/logout");
+      try {
+        await api.post("/auth/logout");
+      } catch {
+        // Cookie may have been cleared even if the request failed — redirect anyway
+      }
 
       if (onLogout) {
         onLogout();
