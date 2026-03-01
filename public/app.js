@@ -570,7 +570,6 @@
     // --- Global paste ---
 
     const pasteHandler = createPasteHandler({
-      onText: (text) => rawSend(text),
       onImage: (file) => uploadImageToTerminal(file)
     });
     pasteHandler.init();
