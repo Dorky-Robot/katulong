@@ -278,7 +278,7 @@ describe("drag-drop image clipboard behavior", () => {
 });
 
 // ===================================================================
-// 2. uploadImageToTerminal — absolutePath vs path preference
+// 2. uploadImageToTerminal — path handling
 // ===================================================================
 
 describe("uploadImageToTerminal", () => {
@@ -290,10 +290,10 @@ describe("uploadImageToTerminal", () => {
     teardownBrowserGlobals();
   });
 
-  it("sends absolutePath (with trailing space) when server returns both absolutePath and path", async () => {
+  it("sends path (with trailing space) from server response", async () => {
     globalThis.fetch = mock.fn(async () => ({
       ok: true,
-      json: async () => ({ path: "uploads/photo.png", absolutePath: "/home/user/uploads/photo.png" }),
+      json: async () => ({ path: "/uploads/photo.png" }),
     }));
 
     const { uploadImageToTerminal } = await import("../public/lib/image-upload.js");
@@ -307,48 +307,7 @@ describe("uploadImageToTerminal", () => {
     });
 
     assert.equal(sent.length, 1);
-    assert.equal(sent[0], "/home/user/uploads/photo.png ");
-  });
-
-  it("falls back to path (with trailing space) when absolutePath is missing", async () => {
-    globalThis.fetch = mock.fn(async () => ({
-      ok: true,
-      json: async () => ({ path: "uploads/photo.png" }),
-    }));
-
-    const { uploadImageToTerminal } = await import("../public/lib/image-upload.js");
-
-    const sent = [];
-    const file = fakeFile("photo.png", "image/png");
-
-    await uploadImageToTerminal(file, {
-      onSend: (val) => sent.push(val),
-      toast: () => {},
-    });
-
-    assert.equal(sent.length, 1);
-    assert.equal(sent[0], "uploads/photo.png ");
-  });
-
-  it("falls back to path when absolutePath is empty string", async () => {
-    globalThis.fetch = mock.fn(async () => ({
-      ok: true,
-      json: async () => ({ path: "uploads/photo.png", absolutePath: "" }),
-    }));
-
-    const { uploadImageToTerminal } = await import("../public/lib/image-upload.js");
-
-    const sent = [];
-    const file = fakeFile("photo.png", "image/png");
-
-    await uploadImageToTerminal(file, {
-      onSend: (val) => sent.push(val),
-      toast: () => {},
-    });
-
-    assert.equal(sent.length, 1);
-    // absolutePath is "" (falsy), so it should fall back to path
-    assert.equal(sent[0], "uploads/photo.png ");
+    assert.equal(sent[0], "/uploads/photo.png ");
   });
 
   it("does not call onSend when upload fails with non-ok response", async () => {
@@ -397,7 +356,7 @@ describe("uploadImageToTerminal", () => {
   it("sends correct headers and body in the upload request", async () => {
     globalThis.fetch = mock.fn(async () => ({
       ok: true,
-      json: async () => ({ path: "uploads/test.png", absolutePath: "/tmp/uploads/test.png" }),
+      json: async () => ({ path: "/uploads/test.png" }),
     }));
 
     const { uploadImageToTerminal } = await import("../public/lib/image-upload.js");

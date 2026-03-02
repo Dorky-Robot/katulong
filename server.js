@@ -166,8 +166,8 @@ function matchRoute(method, pathname) {
 async function handleRequest(req, res) {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
 
-  // Apply security headers to every response
-  setSecurityHeaders(res);
+  // Apply security headers to every response (pass req for HSTS detection)
+  setSecurityHeaders(res, req);
 
   // Auth middleware: redirect unauthenticated requests
   if (!isPublicPath(pathname) && !isAuthenticated(req)) {
@@ -331,8 +331,9 @@ process.on("unhandledRejection", (err) => {
   log.error("Unhandled rejection", { error: err?.message || String(err) });
 });
 
-server.listen(PORT, "0.0.0.0", () => {
-  log.info("Katulong HTTP started", { port: PORT });
+const BIND_HOST = process.env.KATULONG_BIND_HOST || "127.0.0.1";
+server.listen(PORT, BIND_HOST, () => {
+  log.info("Katulong HTTP started", { port: PORT, host: BIND_HOST });
   // Write PID file so CLI commands can find us
   try {
     writeFileSync(SERVER_PID_PATH, String(process.pid), { encoding: "utf-8" });
