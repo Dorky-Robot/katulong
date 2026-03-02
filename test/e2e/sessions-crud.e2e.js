@@ -18,44 +18,34 @@ test.describe("Session CRUD", () => {
     );
   }
 
-  test("Create session via modal", async ({ page, context }) => {
-    const name = `test-create-${Date.now()}`;
+  test("Create session via + button", async ({ page }) => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Open session modal and create
+    // Open session sidebar
     await page.locator("#shortcut-bar .session-btn").click();
-    await expect(page.locator("#session-overlay")).toHaveClass(/visible/);
-    await page.locator("#session-new-name").fill(name);
+    await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
 
-    // Capture the new tab that opens on create
-    // window.open may be blocked in headless browsers, so handle both cases
-    const pagePromise = context.waitForEvent("page", { timeout: 5000 }).catch(() => null);
-    await page.locator("#session-new-create").click();
-    const newPage = await pagePromise;
+    // Click + to create new session
+    await page.locator("#sidebar-add-btn").click();
 
-    if (newPage) {
-      await newPage.waitForLoadState();
-      expect(newPage.url()).toContain(`?s=${encodeURIComponent(name)}`);
+    // URL should change to include the new session name (starts with "session-")
+    await page.waitForFunction(
+      () => window.location.search.includes("s=session-"),
+      { timeout: 5000 }
+    );
+    const newName = new URL(page.url()).searchParams.get("s");
+    expect(newName).toBeTruthy();
+    expect(newName).toMatch(/^session-/);
 
-      // Verify terminal is functional in new tab
-      await newPage.waitForSelector(".xterm-helper-textarea");
-      await newPage.waitForSelector(".xterm-screen", { timeout: 5000 });
-      await newPage.locator(".xterm-helper-textarea").focus();
-      await expect(newPage.locator(".xterm-rows")).not.toHaveText("");
-      await newPage.close();
-    } else {
-      // Popup blocked — verify session was created via daemon list
-      const res = await page.evaluate(() => fetch("/sessions").then(r => r.json()));
-      const created = res.some(s => s.name === name);
-      expect(created).toBe(true);
-    }
+    // Terminal should be functional
+    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
 
     // Cleanup
-    await deleteSession(page, name);
+    await deleteSession(page, newName);
   });
 
-  test("Delete session via modal", async ({ page }) => {
+  test("Delete session via sidebar", async ({ page }) => {
     const name = `test-delete-${Date.now()}`;
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
@@ -67,26 +57,28 @@ test.describe("Session CRUD", () => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Open session modal — list fetches on open
+    // Open session sidebar — list fetches on open
     await page.locator("#shortcut-bar .session-btn").click();
-    await expect(page.locator("#session-overlay")).toHaveClass(/visible/);
+    await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
 
-    // Wait for the session list to load and find the row
-    const row = page.locator(".session-item", {
+    // Wait for the session list to load and find the card
+    const card = page.locator(".session-card", {
       has: page.getByLabel(`Session name: ${name}`),
     });
-    await expect(row).toBeVisible({ timeout: 10000 });
+    await expect(card).toBeVisible({ timeout: 10000 });
 
     // Handle potential confirmation dialog
     page.on("dialog", (dialog) => dialog.accept());
 
-    await row.locator(".session-icon-btn.delete").click();
+    // Hover to reveal action buttons, then click delete
+    await card.hover();
+    await card.locator(".session-card-action.delete").click();
 
     // Verify removed from list
-    await expect(row).not.toBeVisible();
+    await expect(card).not.toBeVisible();
   });
 
-  test("Rename session via modal", async ({ page }) => {
+  test("Rename session via sidebar", async ({ page }) => {
     const name = `test-rename-${Date.now()}`;
     const newName = `renamed-${Date.now()}`;
     await page.goto("/");
@@ -99,13 +91,14 @@ test.describe("Session CRUD", () => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Open session modal and rename
+    // Open session sidebar and rename
     await page.locator("#shortcut-bar .session-btn").click();
-    await expect(page.locator("#session-overlay")).toHaveClass(/visible/);
+    await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
 
-    // Wait for session list to load
+    // Wait for session list to load, double-click to enable editing
     const nameInput = page.getByLabel(`Session name: ${name}`);
     await expect(nameInput).toBeVisible({ timeout: 10000 });
+    await nameInput.dblclick();
     await nameInput.fill(newName);
     await nameInput.press("Enter");
 

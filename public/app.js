@@ -12,6 +12,7 @@
     } from "/lib/stores.js";
     import { createSessionListComponent } from "/lib/session-list-component.js";
     import { createSessionManager } from "/lib/session-manager.js";
+    import { api } from "/lib/api-client.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
     import { createTokenFormManager } from "/lib/token-form.js";
     import { createShortcutsPopup, createShortcutsEditPanel, createAddShortcutModal } from "/lib/shortcuts-components.js";
@@ -240,10 +241,7 @@
       },
       onClose: () => term.focus()
     });
-    modals.register('session', 'session-overlay', {
-      returnFocus: term,
-      onClose: () => term.focus()
-    });
+    // Session sidebar (no longer a modal)
     modals.register('dictation', 'dictation-overlay', {
       returnFocus: term,
       onClose: () => term.focus()
@@ -391,22 +389,130 @@
     const sessionStore = createSessionStore(state.session.name);
 
     // Create session list component
-    const sessionListComponent = createSessionListComponent(sessionStore);
+    // switchSession is defined below but the callback is only invoked on click, not during init
+    const sessionListComponent = createSessionListComponent(sessionStore, {
+      onSessionSwitch: (name) => switchSession(name)
+    });
     const sessionListEl = document.getElementById("session-list");
     if (sessionListEl) {
       sessionListComponent.mount(sessionListEl);
     }
 
-    // Create session manager with callbacks
-    const sessionManager = createSessionManager({
-      modals,
-      sessionStore,
-      onSessionCreate: () => invalidateSessions(sessionStore, state.session.name)
-    });
+    // SSH password reveal/copy (sidebar)
+    const sessionManager = createSessionManager();
     sessionManager.init();
 
-    // Expose openSessionManager for external use
-    const openSessionManager = () => sessionManager.openSessionManager(state.session.name);
+    // --- Sidebar toggle ---
+    const sidebar = document.getElementById("sidebar");
+    const sidebarToggleBtn = document.getElementById("sidebar-toggle");
+    const sidebarAddBtn = document.getElementById("sidebar-add-btn");
+    const sidebarBackdrop = document.getElementById("sidebar-backdrop");
+
+    const isMobile = () => window.matchMedia("(max-width: 767px)").matches;
+
+    function loadSidebarData() {
+      invalidateSessions(sessionStore, state.session.name);
+      api.get("/ssh/password").then(({ password }) => {
+        const pwInput = document.getElementById("ssh-password-value");
+        if (pwInput) pwInput.value = password;
+      }).catch(() => {});
+    }
+
+    function setMobileSidebar(open) {
+      if (!sidebar) return;
+      sidebar.classList.toggle("mobile-open", open);
+      sidebarBackdrop?.classList.toggle("visible", open);
+      if (open) loadSidebarData();
+    }
+
+    function setSidebarCollapsed(collapsed) {
+      if (!sidebar) return;
+      sidebar.classList.toggle("collapsed", collapsed);
+      localStorage.setItem("sidebar-collapsed", collapsed ? "1" : "0");
+      const icon = sidebarToggleBtn?.querySelector("i");
+      if (icon) {
+        icon.className = collapsed ? "ph ph-caret-right" : "ph ph-caret-left";
+      }
+    }
+
+    function toggleSidebar() {
+      if (!sidebar) return;
+      if (isMobile()) {
+        setMobileSidebar(!sidebar.classList.contains("mobile-open"));
+        return;
+      }
+      const isCollapsed = sidebar.classList.contains("collapsed");
+      setSidebarCollapsed(!isCollapsed);
+      if (isCollapsed) loadSidebarData();
+    }
+
+    if (sidebarBackdrop) {
+      sidebarBackdrop.addEventListener("click", () => setMobileSidebar(false));
+    }
+
+    // Restore sidebar state from localStorage (desktop only)
+    const savedCollapsed = localStorage.getItem("sidebar-collapsed");
+    const isInitiallyCollapsed = savedCollapsed !== "0";
+    if (!isInitiallyCollapsed && sidebar) {
+      sidebar.classList.remove("collapsed");
+    }
+    const toggleIcon = sidebarToggleBtn?.querySelector("i");
+    if (toggleIcon) {
+      toggleIcon.className = isInitiallyCollapsed ? "ph ph-caret-right" : "ph ph-caret-left";
+    }
+
+    if (sidebarToggleBtn) {
+      sidebarToggleBtn.addEventListener("click", toggleSidebar);
+    }
+
+    // --- New session creation (shared by sidebar + and shortcut bar +) ---
+    async function createNewSession() {
+      try {
+        const name = `session-${Date.now().toString(36)}`;
+        const data = await api.post("/sessions", { name, copyFrom: state.session.name });
+        if (sidebar?.classList.contains("collapsed")) {
+          setSidebarCollapsed(false);
+        }
+        switchSession(data.name);
+      } catch (err) {
+        console.error("Failed to create session:", err);
+      }
+    }
+
+    if (sidebarAddBtn) {
+      sidebarAddBtn.addEventListener("click", createNewSession);
+    }
+
+    if (!isInitiallyCollapsed) loadSidebarData();
+
+    // --- Session switching (no page reload) ---
+    function activateSession(name) {
+      state.update('session.name', name);
+      document.title = name;
+      term.clear();
+      term.reset();
+      if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
+        state.connection.ws.close();
+      }
+      if (shortcutBarInstance) shortcutBarInstance.render(name);
+      invalidateSessions(sessionStore, name);
+    }
+
+    function switchSession(name) {
+      if (name === state.session.name) return;
+      const url = new URL(window.location);
+      url.searchParams.set("s", name);
+      history.pushState(null, "", url);
+      activateSession(name);
+      if (isMobile()) setMobileSidebar(false);
+    }
+
+    window.addEventListener("popstate", () => {
+      const name = new URLSearchParams(location.search).get("s") || "default";
+      if (name !== state.session.name) activateSession(name);
+    });
+
+    const openSessionManager = () => toggleSidebar();
     
 
     // --- Settings ---
@@ -514,6 +620,7 @@
         { label: "Tab", keys: "tab" }
       ],
       onSessionClick: openSessionManager,
+      onNewSessionClick: createNewSession,
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
       onSettingsClick: () => modals.open('settings'),
       sendFn: rawSend,

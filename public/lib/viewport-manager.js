@@ -23,6 +23,8 @@ export function createViewportManager(options = {}) {
   const scrollBtn = document.getElementById("scroll-bottom");
   const viewport = document.querySelector(".xterm-viewport");
 
+  const appLayout = document.getElementById("app-layout");
+
   // Resize viewport to match visual viewport (handles mobile keyboard)
   function resizeToViewport() {
     withPreservedScroll(term, () => {
@@ -31,12 +33,15 @@ export function createViewportManager(options = {}) {
       // initial JS module execution before the visual viewport is fully initialised.
       // Fall back to window.innerHeight so the terminal container gets a valid height.
       const h = (vv && vv.height > 0) ? vv.height : window.innerHeight;
-      const top = vv ? vv.offsetTop : 0;
-      bar.style.top = top + "px";
-      termContainer.style.height = (h - 44) + "px";
+      const layoutHeight = h + "px";
+      if (appLayout) {
+        appLayout.style.height = layoutHeight;
+      } else {
+        termContainer.style.height = layoutHeight;
+      }
       const s = document.documentElement.style;
       s.setProperty("--viewport-h", h + "px");
-      s.setProperty("--viewport-top", top + "px");
+      s.setProperty("--viewport-top", (vv ? vv.offsetTop : 0) + "px");
     });
   }
 

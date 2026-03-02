@@ -187,8 +187,12 @@
       width: var(--height-btn-sm);
     }
 
+    /* --- Main stage (terminal column) --- */
+    #main-stage {
+      flex: 1; min-width: 0; display: flex; flex-direction: column;
+    }
     /* --- Terminal --- */
-    #terminal-container { width: 100%; margin-top: 2.75rem; position: relative; z-index: 1; }
+    #terminal-container { flex: 1; min-width: 0; position: relative; z-index: 1; }
     #terminal-container .xterm { height: 100%; }
     #terminal-container .xterm-viewport {
       -webkit-overflow-scrolling: touch;
@@ -239,9 +243,8 @@
 
     /* --- Shortcut bar --- */
     #shortcut-bar {
-      position: fixed; top: 0; left: 0; right: 0; z-index: var(--z-bar);
+      flex-shrink: 0; z-index: var(--z-bar);
       height: var(--height-btn-md); background: var(--bg-surface); border-bottom: 1px solid var(--border);
-      transform: translate3d(0,0,0);
       display: flex; align-items: center; padding: 0 var(--space-1_5); gap: var(--space-xs);
       overflow-x: auto; overflow-y: hidden;
       -webkit-overflow-scrolling: touch;
@@ -282,6 +285,20 @@
       cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 0.375rem;
     }
     .session-btn:active { background: var(--accent-active); }
+
+    /* New session button in shortcut bar — mobile only */
+    .bar-new-session-btn {
+      display: none;
+      flex-shrink: 0; height: 2rem; width: 2rem;
+      border: none; border-radius: var(--radius-sm); background: transparent;
+      color: var(--text-muted); font-size: 1.125rem; cursor: pointer;
+      align-items: center; justify-content: center;
+    }
+    .bar-new-session-btn:hover { color: var(--text); }
+    .bar-new-session-btn:active { background: rgba(255,255,255,0.08); }
+    @media (max-width: 767px) {
+      .bar-new-session-btn { display: flex; }
+    }
 
     /* P2P status indicator */
     #p2p-indicator {
@@ -534,85 +551,190 @@
     .key-preview-label { color: var(--text-dim); }
     /* Modal action buttons now use .btn base classes - see Button System section */
 
-    /* --- Session manager --- */
-    #session-overlay { z-index: var(--z-modal-bg); }
-    .session-item {
-      display: flex; align-items: center; gap: 0.625rem; padding: 0.625rem 0;
+    /* --- Sidebar --- */
+    #app-layout {
+      display: flex; width: 100%; position: relative;
+    }
+    #sidebar {
+      width: 240px; min-width: 240px; background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      transition: width 0.15s ease, min-width 0.15s ease;
+    }
+    #sidebar.collapsed {
+      width: 56px; min-width: 56px;
+    }
+    #sidebar.collapsed #sidebar-toolbar {
+      flex-direction: column; justify-content: center;
+      height: auto; padding: 0.5rem 0; gap: 0.25rem;
       border-bottom: 1px solid var(--border);
     }
-    .session-status { width: 0.5rem; height: 0.5rem; border-radius: 50%; flex-shrink: 0; }
-    .session-status.alive { background: var(--success); }
-    .session-status.dead { background: var(--text-muted); }
-    .session-name-input {
-      flex: 1; min-width: 0; height: 2.25rem; border: 1px solid transparent; border-radius: var(--radius-sm);
-      background: transparent; color: var(--text); padding: 0 var(--space-sm);
-      font-size: 0.875rem; font-family: var(--font-mono);
+    #sidebar-toolbar {
+      display: flex; align-items: center; gap: var(--space-xs);
+      padding: 0 0.5rem; flex-shrink: 0;
+      height: var(--height-btn-md); border-bottom: 1px solid var(--border);
     }
-    .session-name-input:focus {
-      outline: none; border-color: var(--border); background: var(--bg-input);
+    .sidebar-icon-btn {
+      width: 2rem; height: 2rem; border: none; border-radius: var(--radius-sm);
+      background: transparent; color: var(--text-muted); font-size: 1.125rem;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
     }
-    .session-current-tag {
-      color: var(--success); font-size: 0.625rem; flex-shrink: 0;
+    .sidebar-icon-btn:hover { color: var(--text); }
+    .sidebar-icon-btn:active { background: rgba(255,255,255,0.08); }
+    .sidebar-spacer { margin-left: auto; }
+    #sidebar-content {
+      flex: 1; min-height: 0; overflow-y: auto; padding: 0.5rem 0.5rem 0.5rem;
+    }
+    /* --- Collapsed sidebar: mini session pills --- */
+    #sidebar.collapsed #sidebar-content {
+      overflow-y: auto; overflow-x: hidden;
+      padding: 0.75rem 0; display: flex; flex-direction: column; align-items: center; gap: 0.75rem;
+    }
+    #sidebar.collapsed .sidebar-spacer,
+    #sidebar.collapsed .sidebar-hide-collapsed { display: none; }
+    /* Transform cards into small clickable pills */
+    #sidebar.collapsed .session-card {
+      width: 2.5rem; min-width: 2.5rem; height: 2.5rem; min-height: 2.5rem;
+      margin: 0 0 0.75rem 0; border-radius: var(--radius-md); border-width: 2px;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+    #sidebar.collapsed .session-card-preview,
+    #sidebar.collapsed .session-card-footer,
+    #sidebar.collapsed .session-card-actions { display: none; }
+    /* Show first-letter pill via ::after */
+    #sidebar.collapsed .session-card::after {
+      content: attr(data-initial);
+      font-family: var(--font-mono); font-size: 0.8125rem; font-weight: 600;
+      color: var(--text-muted); text-transform: uppercase;
+      pointer-events: none;
+    }
+    #sidebar.collapsed .session-card.active::after { color: var(--accent-active); }
+    /* --- Mobile: sidebar as floating overlay --- */
+    @media (max-width: 767px) {
+      #sidebar {
+        position: fixed; top: var(--height-btn-md); left: 0; bottom: 0; z-index: 100;
+        width: 280px; min-width: 280px;
+        transform: translateX(-100%);
+        transition: transform 0.2s ease;
+        margin-top: 0;
+      }
+      #sidebar.mobile-open {
+        transform: translateX(0);
+      }
+      #sidebar.collapsed {
+        width: 280px; min-width: 280px;
+        transform: translateX(-100%);
+      }
+      #sidebar.collapsed.mobile-open {
+        transform: translateX(0);
+      }
+      /* Reset collapsed styles on mobile — always show expanded view */
+      #sidebar.collapsed #sidebar-content { overflow-y: auto; padding: 0 0.5rem 0.5rem; display: block; }
+      #sidebar.collapsed .session-card { width: auto; min-width: auto; height: auto; min-height: auto; margin: 0 0 0.5rem 0; border-radius: var(--radius-lg); border-width: 2px; display: block; }
+      #sidebar.collapsed .session-card::after { display: none; }
+      #sidebar.collapsed .session-card-preview { display: block; }
+      #sidebar.collapsed .session-card-footer { display: flex; }
+      #sidebar.collapsed .sidebar-hide-collapsed { display: initial; }
+      #sidebar #sidebar-toolbar, #sidebar.collapsed #sidebar-toolbar {
+        display: none;
+      }
+      /* Backdrop */
+      #sidebar-backdrop {
+        display: none; position: fixed; inset: 0; z-index: 99;
+        background: var(--overlay-bg);
+      }
+      #sidebar-backdrop.visible { display: block; }
+    }
+    @media (min-width: 768px) {
+      #sidebar-backdrop { display: none !important; }
+    }
+
+    .session-list-status {
+      padding: 0.5rem; color: var(--text-dim); font-size: 0.75rem;
       font-family: var(--font-mono);
     }
-    .session-icon-btn {
-      width: 2.25rem; height: 2.25rem; border: none; border-radius: var(--radius-sm);
-      background: transparent; font-size: 1.125rem; cursor: pointer; flex-shrink: 0;
-      display: flex; align-items: center; justify-content: center;
+
+    /* --- Session cards --- */
+    .session-card {
+      position: relative;
+      border: 2px solid var(--border); border-radius: var(--radius-lg);
+      background: var(--bg); cursor: pointer;
+      margin-bottom: 0.5rem;
+      transition: border-color 0.15s ease;
+      overflow: hidden;
     }
-    .session-icon-btn.open { color: var(--text-muted); }
-    .session-icon-btn.open:active { background: rgba(255,255,255,0.1); }
-    .session-icon-btn.ssh { color: var(--text-muted); }
-    .session-icon-btn.ssh:active { background: rgba(255,255,255,0.1); }
-    .session-icon-btn.delete { color: var(--danger); }
-    .session-icon-btn.delete:active { background: rgba(233,69,96,0.15); }
+    .session-card:hover { border-color: var(--text-dim); }
+    .session-card.active { border-color: var(--accent-active); }
+    .session-card-preview {
+      padding: 0.5rem 0.625rem;
+      height: 5.5rem;
+      overflow: hidden;
+      font-family: var(--font-mono); font-size: 0.5rem; line-height: 1.35;
+      color: var(--text-dim); white-space: pre; pointer-events: none;
+    }
+    .session-card-footer {
+      display: flex; align-items: center; justify-content: flex-end;
+      padding: 0 0.5rem 0.375rem;
+    }
+    .session-card-name {
+      font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-muted);
+      background: var(--bg-surface); padding: 0.125rem 0.375rem;
+      border-radius: var(--radius-sm); border: 1px solid transparent;
+      max-width: 100%; min-width: 0; text-align: right; cursor: default;
+    }
+    .session-card-name:not([readonly]) {
+      border-color: var(--border); background: var(--bg-input);
+      cursor: text; outline: none;
+    }
+    .session-card.active .session-card-name { color: var(--accent-active); }
+    /* Session card actions on hover */
+    .session-card-actions {
+      position: absolute; top: 0.25rem; right: 0.25rem;
+      display: none; gap: 0.125rem;
+    }
+    .session-card:hover .session-card-actions { display: flex; }
+    .session-card-action {
+      width: 1.5rem; height: 1.5rem; border: none; border-radius: var(--radius-sm);
+      background: var(--bg-surface); color: var(--text-muted); font-size: 0.75rem;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    .session-card-action:hover { color: var(--text); }
+    .session-card-action.delete:hover { color: var(--danger); }
+    /* SSH info section */
+    .sidebar-ssh-section {
+      padding: 0.5rem 0; border-top: 1px solid var(--border); margin-top: 0.25rem;
+    }
     .ssh-password-row {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 0.625rem 0; border-top: 1px solid var(--border); margin-top: 0.25rem;
+      padding: 0.25rem 0;
     }
     .ssh-password-label {
-      font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); flex-shrink: 0;
+      font-size: 0.625rem; color: var(--text-dim); font-family: var(--font-mono); flex-shrink: 0;
     }
-    .ssh-password-field { display: flex; align-items: center; gap: var(--space-xs); }
+    .ssh-password-field { display: flex; align-items: center; gap: 2px; }
     .ssh-password-input {
-      width: 8rem; height: var(--height-btn-sm); border: 1px solid var(--border); border-radius: var(--radius-sm);
-      background: var(--bg-input); color: var(--text); padding: 0 var(--space-sm);
-      font-size: 0.75rem; font-family: var(--font-mono); letter-spacing: 0.1em;
+      width: 5.5rem; height: 1.5rem; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg-input); color: var(--text); padding: 0 var(--space-xs);
+      font-size: 0.625rem; font-family: var(--font-mono); letter-spacing: 0.05em;
     }
     .ssh-password-input:focus { outline: none; }
-    .session-icon-btn.ssh-reveal { color: var(--text-muted); }
-    .session-icon-btn.ssh-reveal:active { background: rgba(255,255,255,0.1); }
-    .session-icon-btn.ssh-copy-pw { color: var(--text-muted); }
-    .session-icon-btn.ssh-copy-pw:active { background: rgba(255,255,255,0.1); }
+    .session-icon-btn {
+      width: 1.5rem; height: 1.5rem; border: none; border-radius: var(--radius-sm);
+      background: transparent; font-size: 0.75rem; cursor: pointer; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center; color: var(--text-muted);
+    }
+    .session-icon-btn:active { background: rgba(255,255,255,0.1); }
     .ssh-hint {
-      font-size: 0.6875rem; color: var(--text-muted); font-family: var(--font-mono);
-      padding: 0.375rem 0 0;
+      font-size: 0.5625rem; color: var(--text-dim); font-family: var(--font-mono);
+      padding: 0.25rem 0 0;
     }
     .ssh-hint kbd {
-      display: inline-block; padding: 0.05rem 0.35rem; border: 1px solid var(--border);
-      border-radius: 0.25rem; font-size: 0.625rem; font-family: var(--font-mono);
-      background: var(--bg-input); line-height: 1.4;
-    }
-    .session-new-row {
-      display: flex; gap: var(--space-sm); padding: 0.875rem 0;
-      background: var(--bg-surface);
-    }
-    .session-new-input {
-      flex: 1; height: var(--height-btn-md); border: 1px solid var(--border); border-radius: var(--radius-md);
-      background: var(--bg-input); color: var(--text); padding: 0 var(--space-md); font-size: 0.875rem;
-      font-family: var(--font-mono);
-    }
-    .session-new-btn {
-      height: var(--height-btn-md); padding: 0 1rem; border: none; border-radius: var(--radius-md);
-      background: var(--accent); color: var(--text); font-size: 0.875rem; cursor: pointer;
-      display: flex; align-items: center; gap: 0.375rem;
-    }
-    .session-new-btn:active { background: var(--accent-active); }
-    #session-panel {
-      display: flex; flex-direction: column; max-height: min(80vh, 100%);
-    }
-    .session-scroll-area {
-      overflow-y: auto; flex: 1; min-height: 0;
+      display: inline-block; padding: 0.05rem 0.25rem; border: 1px solid var(--border);
+      border-radius: 0.2rem; font-size: 0.5rem; font-family: var(--font-mono);
+      background: var(--bg-input); line-height: 1.3;
     }
 
     /* --- Settings modal --- */
@@ -1060,7 +1182,41 @@
   </style>
 </head>
 <body>
-  <div id="terminal-container"></div>
+  <div id="app-layout">
+    <aside id="sidebar" class="collapsed" role="complementary" aria-label="Sessions">
+      <div id="sidebar-toolbar">
+        <button class="sidebar-icon-btn" id="sidebar-toggle" aria-label="Toggle sidebar">
+          <i class="ph ph-caret-right"></i>
+        </button>
+        <button class="sidebar-icon-btn" id="sidebar-add-btn" aria-label="New session">
+          <i class="ph ph-plus"></i>
+        </button>
+      </div>
+      <div id="sidebar-content">
+        <div id="session-list" role="list"></div>
+        <div class="sidebar-ssh-section sidebar-hide-collapsed" id="ssh-password-row">
+          <div class="ssh-password-row">
+            <span class="ssh-password-label">SSH password</span>
+            <div class="ssh-password-field">
+              <input type="password" id="ssh-password-value" readonly class="ssh-password-input" value="" aria-label="SSH password">
+              <button class="session-icon-btn" id="ssh-password-reveal" aria-label="Toggle password visibility">
+                <i class="ph ph-eye"></i>
+              </button>
+              <button class="session-icon-btn" id="ssh-password-copy" aria-label="Copy SSH password">
+                <i class="ph ph-copy"></i>
+              </button>
+            </div>
+          </div>
+          <div class="ssh-hint">Disconnect: <kbd>Enter</kbd> <kbd>~</kbd> <kbd>.</kbd></div>
+        </div>
+      </div>
+    </aside>
+    <div id="sidebar-backdrop"></div>
+    <div id="main-stage">
+      <nav id="shortcut-bar" role="toolbar" aria-label="Shortcut bar"></nav>
+      <div id="terminal-container"></div>
+    </div>
+  </div>
   <div id="search-bar" role="search" aria-label="Find in terminal">
     <input id="search-input" type="text" placeholder="Find..." aria-label="Search terminal">
     <button id="search-close" class="btn btn--icon-only btn--sm" aria-label="Close search">
@@ -1071,8 +1227,6 @@
   <button id="scroll-bottom" aria-label="Scroll to bottom">
     <i class="ph ph-caret-down"></i>
   </button>
-  <nav id="shortcut-bar" role="toolbar" aria-label="Shortcut bar"></nav>
-
   <!-- Edit shortcuts -->
   <div id="edit-overlay" class="modal-overlay" role="dialog" aria-label="Edit shortcuts">
     <div id="edit-panel" class="modal-panel">
@@ -1106,37 +1260,6 @@
       <div class="modal-footer">
         <button class="btn btn--secondary" id="modal-cancel">Cancel</button>
         <button class="btn btn--primary" id="modal-save" disabled>Add</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Sessions -->
-  <div id="session-overlay" class="modal-overlay" role="dialog" aria-label="Session manager">
-    <div id="session-panel" class="modal-panel">
-      <h3>Sessions</h3>
-      <div class="session-scroll-area">
-      <div id="session-list" role="list"></div>
-      <div class="ssh-password-row" id="ssh-password-row">
-        <span class="ssh-password-label">SSH password</span>
-        <div class="ssh-password-field">
-          <input type="password" id="ssh-password-value" readonly class="ssh-password-input" value="" aria-label="SSH password">
-          <button class="session-icon-btn ssh-reveal" id="ssh-password-reveal" aria-label="Toggle password visibility">
-            <i class="ph ph-eye"></i>
-          </button>
-          <button class="session-icon-btn ssh-copy-pw" id="ssh-password-copy" aria-label="Copy SSH password">
-            <i class="ph ph-copy"></i>
-          </button>
-        </div>
-      </div>
-      <div class="ssh-hint">Disconnect: <kbd>Enter</kbd> <kbd>~</kbd> <kbd>.</kbd></div>
-      </div>
-      <div class="session-new-row">
-        <input type="text" class="session-new-input" id="session-new-name"
-          placeholder="new-session-name" autocorrect="off" autocapitalize="off"
-          spellcheck="false" aria-label="New session name">
-        <button class="session-new-btn" id="session-new-create">
-          <i class="ph ph-plus"></i> New
-        </button>
       </div>
     </div>
   </div>
