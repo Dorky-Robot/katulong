@@ -268,7 +268,42 @@ test.describe("Sidebar", () => {
   });
 
   test.describe("New session", () => {
-    test("+ button expands sidebar and shows new session input", async ({ page }) => {
+    test("+ button creates new session and switches to it", async ({ page }) => {
+      await page.goto("/");
+      await waitForAppReady(page);
+
+      // Expand sidebar first
+      await page.locator("#sidebar-toggle").click();
+      await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
+
+      // Count existing sessions
+      const cardsBefore = await page.locator(".session-card").count();
+
+      // Click + button
+      await page.locator("#sidebar-add-btn").click();
+
+      // URL should change to the new session (auto-named)
+      await page.waitForFunction(
+        () => !window.location.search.includes("s=default"),
+        { timeout: 5000 }
+      );
+
+      // Should have one more card
+      await expect(page.locator(".session-card")).toHaveCount(cardsBefore + 1, { timeout: 10000 });
+
+      // The new session should be the active card
+      const activeCard = page.locator(".session-card.active");
+      await expect(activeCard).toBeVisible();
+
+      // Sidebar should still be open
+      await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
+
+      // Cleanup — delete the new session
+      const newName = new URL(page.url()).searchParams.get("s");
+      if (newName) await deleteSession(page, newName);
+    });
+
+    test("+ button expands sidebar if it was collapsed", async ({ page }) => {
       await page.goto("/");
       await waitForAppReady(page);
 
@@ -281,27 +316,12 @@ test.describe("Sidebar", () => {
       // Click + button
       await page.locator("#sidebar-add-btn").click();
 
-      // Sidebar should expand
-      await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
+      // Should expand and create a new session
+      await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/, { timeout: 5000 });
 
-      // New session row should be visible
-      await expect(page.locator("#session-new-row")).toBeVisible();
-
-      // New session input should get focus
-      await expect(page.locator("#session-new-name")).toBeFocused({ timeout: 1000 });
-    });
-
-    test("new session row is visible when sidebar is expanded", async ({ page }) => {
-      await page.goto("/");
-      await waitForAppReady(page);
-
-      // Expand
-      await page.locator("#sidebar-toggle").click();
-      await expect(page.locator("#session-new-row")).toBeVisible();
-
-      // Collapse
-      await page.locator("#sidebar-toggle").click();
-      await expect(page.locator("#session-new-row")).not.toBeVisible();
+      // Cleanup
+      const newName = new URL(page.url()).searchParams.get("s");
+      if (newName && newName !== "default") await deleteSession(page, newName);
     });
   });
 

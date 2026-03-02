@@ -18,41 +18,31 @@ test.describe("Session CRUD", () => {
     );
   }
 
-  test("Create session via sidebar", async ({ page, context }) => {
-    const name = `test-create-${Date.now()}`;
+  test("Create session via + button", async ({ page }) => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Open session sidebar and create
+    // Open session sidebar
     await page.locator("#shortcut-bar .session-btn").click();
     await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
-    await page.locator("#session-new-name").fill(name);
 
-    // Capture the new tab that opens on create
-    // window.open may be blocked in headless browsers, so handle both cases
-    const pagePromise = context.waitForEvent("page", { timeout: 5000 }).catch(() => null);
-    await page.locator("#session-new-create").click();
-    const newPage = await pagePromise;
+    // Click + to create new session
+    await page.locator("#sidebar-add-btn").click();
 
-    if (newPage) {
-      await newPage.waitForLoadState();
-      expect(newPage.url()).toContain(`?s=${encodeURIComponent(name)}`);
+    // URL should change to include the new session name (starts with "session-")
+    await page.waitForFunction(
+      () => window.location.search.includes("s=session-"),
+      { timeout: 5000 }
+    );
+    const newName = new URL(page.url()).searchParams.get("s");
+    expect(newName).toBeTruthy();
+    expect(newName).toMatch(/^session-/);
 
-      // Verify terminal is functional in new tab
-      await newPage.waitForSelector(".xterm-helper-textarea");
-      await newPage.waitForSelector(".xterm-screen", { timeout: 5000 });
-      await newPage.locator(".xterm-helper-textarea").focus();
-      await expect(newPage.locator(".xterm-rows")).not.toHaveText("");
-      await newPage.close();
-    } else {
-      // Popup blocked — verify session was created via daemon list
-      const res = await page.evaluate(() => fetch("/sessions").then(r => r.json()));
-      const created = res.some(s => s.name === name);
-      expect(created).toBe(true);
-    }
+    // Terminal should be functional
+    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
 
     // Cleanup
-    await deleteSession(page, name);
+    await deleteSession(page, newName);
   });
 
   test("Delete session via sidebar", async ({ page }) => {

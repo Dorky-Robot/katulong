@@ -79,12 +79,12 @@ function broadcast(msg) {
   for (const sock of uiSockets) sock.write(line);
 }
 
-function spawnSession(name, cols = 120, rows = 40) {
+function spawnSession(name, cols = 120, rows = 40, cwd = null) {
   const p = pty.spawn(SHELL, ["-l"], {
     name: "xterm-256color",
     cols,
     rows,
-    cwd: envConfig.home,
+    cwd: cwd || envConfig.home,
     env: {
       ...getSafeEnv(), // Filter out sensitive environment variables
       TERM: "xterm-256color",
@@ -151,12 +151,17 @@ const rpcHandlers = {
   "list-sessions": () =>
     ({ sessions: sessionList() }),
 
-  "create-session": (msg) =>
-    sessions.size >= MAX_SESSIONS
-      ? { error: `Maximum session limit (${MAX_SESSIONS}) reached` }
-      : sessions.has(msg.name)
-        ? { error: "Session already exists" }
-        : (spawnSession(msg.name), { name: msg.name }),
+  "create-session": async (msg) => {
+    if (sessions.size >= MAX_SESSIONS) return { error: `Maximum session limit (${MAX_SESSIONS}) reached` };
+    if (sessions.has(msg.name)) return { error: "Session already exists" };
+    let cwd = null;
+    if (msg.copyFrom) {
+      const source = sessions.get(msg.copyFrom);
+      if (source) cwd = await source.getCwd();
+    }
+    spawnSession(msg.name, 120, 40, cwd);
+    return { name: msg.name };
+  },
 
   "delete-session": (msg) =>
     removeSession(msg.name) ? { ok: true } : { error: "Not found" },
@@ -193,7 +198,7 @@ const rpcHandlers = {
 
 // --- Message dispatch (boundary) ---
 
-function handleMessage(msg, socket) {
+async function handleMessage(msg, socket) {
   const { valid, error } = validateMessage(msg);
   if (!valid) {
     if (msg?.id) socket.write(encode({ id: msg.id, error }));
@@ -214,7 +219,7 @@ function handleMessage(msg, socket) {
 
   // RPC: dispatch to handler, send response
   const handler = rpcHandlers[type];
-  const response = handler ? handler(msg, socket) : { error: "Unknown message type" };
+  const response = handler ? await handler(msg, socket) : { error: "Unknown message type" };
   socket.write(encode({ id, ...response }));
 }
 

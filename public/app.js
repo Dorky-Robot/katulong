@@ -410,20 +410,14 @@
     const sidebar = document.getElementById("sidebar");
     const sidebarToggleBtn = document.getElementById("sidebar-toggle");
     const sidebarAddBtn = document.getElementById("sidebar-add-btn");
-    const sessionNewRow = document.getElementById("session-new-row");
 
     function setSidebarCollapsed(collapsed) {
       if (!sidebar) return;
       sidebar.classList.toggle("collapsed", collapsed);
       localStorage.setItem("sidebar-collapsed", collapsed ? "1" : "0");
-      // Update chevron direction
       const icon = sidebarToggleBtn?.querySelector("i");
       if (icon) {
         icon.className = collapsed ? "ph ph-caret-right" : "ph ph-caret-left";
-      }
-      // Show/hide new session row
-      if (sessionNewRow) {
-        sessionNewRow.classList.toggle("visible", !collapsed);
       }
     }
 
@@ -432,7 +426,6 @@
       const isCollapsed = sidebar.classList.contains("collapsed");
       setSidebarCollapsed(!isCollapsed);
       if (isCollapsed) {
-        // Opening — load sessions and SSH password
         invalidateSessions(sessionStore, state.session.name);
         api.get("/ssh/password").then(({ password }) => {
           const pwInput = document.getElementById("ssh-password-value");
@@ -442,34 +435,34 @@
     }
 
     // Restore sidebar state from localStorage
-    // HTML defaults to class="collapsed". If stored as expanded, remove the class.
     const savedCollapsed = localStorage.getItem("sidebar-collapsed");
     const isInitiallyCollapsed = savedCollapsed !== "0";
     if (!isInitiallyCollapsed && sidebar) {
       sidebar.classList.remove("collapsed");
     }
-    // Sync chevron and new-session-row to match
     const toggleIcon = sidebarToggleBtn?.querySelector("i");
     if (toggleIcon) {
       toggleIcon.className = isInitiallyCollapsed ? "ph ph-caret-right" : "ph ph-caret-left";
-    }
-    if (sessionNewRow) {
-      sessionNewRow.classList.toggle("visible", !isInitiallyCollapsed);
     }
 
     if (sidebarToggleBtn) {
       sidebarToggleBtn.addEventListener("click", toggleSidebar);
     }
 
-    // + button: expand sidebar if collapsed, then toggle new session row
+    // + button: create new session in same cwd as current, then switch to it
     if (sidebarAddBtn) {
-      sidebarAddBtn.addEventListener("click", () => {
-        if (sidebar?.classList.contains("collapsed")) {
-          toggleSidebar();
+      sidebarAddBtn.addEventListener("click", async () => {
+        try {
+          const name = `session-${Date.now().toString(36)}`;
+          const data = await api.post("/sessions", { name, copyFrom: state.session.name });
+          // Expand sidebar if collapsed
+          if (sidebar?.classList.contains("collapsed")) {
+            setSidebarCollapsed(false);
+          }
+          switchSession(data.name);
+        } catch (err) {
+          console.error("Failed to create session:", err);
         }
-        // Focus the new session input
-        const nameInput = document.getElementById("session-new-name");
-        if (nameInput) setTimeout(() => nameInput.focus(), 200);
       });
     }
 
