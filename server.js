@@ -11,7 +11,7 @@ import {
   loadState, validateSession, refreshSessionActivity, withStateLock,
 } from "./lib/auth.js";
 import {
-  parseCookies, isPublicPath, createChallengeStore,
+  parseCookies, isPublicPath, createChallengeStore, isHttpsConnection,
 } from "./lib/http-util.js";
 import { rateLimit, getClientIp } from "./lib/rate-limit.js";
 import { ConfigManager } from "./lib/config.js";
@@ -168,6 +168,10 @@ async function handleRequest(req, res) {
 
   // Apply security headers to every response
   setSecurityHeaders(res);
+  // HSTS: instruct browsers to always use HTTPS for this domain
+  if (isHttpsConnection(req)) {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
 
   // Auth middleware: redirect unauthenticated requests
   if (!isPublicPath(pathname) && !isAuthenticated(req)) {
@@ -331,8 +335,8 @@ process.on("unhandledRejection", (err) => {
   log.error("Unhandled rejection", { error: err?.message || String(err) });
 });
 
-server.listen(PORT, "0.0.0.0", () => {
-  log.info("Katulong HTTP started", { port: PORT });
+server.listen(PORT, envConfig.bindHost, () => {
+  log.info("Katulong HTTP started", { port: PORT, host: envConfig.bindHost });
   // Write PID file so CLI commands can find us
   try {
     writeFileSync(SERVER_PID_PATH, String(process.pid), { encoding: "utf-8" });
