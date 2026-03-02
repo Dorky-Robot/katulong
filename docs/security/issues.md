@@ -1,6 +1,6 @@
 # Security Audit Findings — March 2026
 
-Audit performed on `katulong-mini.felixflor.es` and `katulong-og.felixflor.es`.
+Audit performed on two production Katulong instances.
 
 **Result: No critical vulnerabilities.** An unauthenticated attacker cannot gain terminal access. All findings below are hardening improvements.
 

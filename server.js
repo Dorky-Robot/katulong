@@ -11,7 +11,7 @@ import {
   loadState, validateSession, refreshSessionActivity, withStateLock,
 } from "./lib/auth.js";
 import {
-  parseCookies, isPublicPath, createChallengeStore,
+  parseCookies, isPublicPath, createChallengeStore, isHttpsConnection,
 } from "./lib/http-util.js";
 import { rateLimit, getClientIp } from "./lib/rate-limit.js";
 import { ConfigManager } from "./lib/config.js";
@@ -166,8 +166,12 @@ function matchRoute(method, pathname) {
 async function handleRequest(req, res) {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
 
-  // Apply security headers to every response (pass req for HSTS detection)
-  setSecurityHeaders(res, req);
+  // Apply security headers to every response
+  setSecurityHeaders(res);
+  // HSTS: instruct browsers to always use HTTPS for this domain
+  if (isHttpsConnection(req)) {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
 
   // Auth middleware: redirect unauthenticated requests
   if (!isPublicPath(pathname) && !isAuthenticated(req)) {
@@ -331,9 +335,8 @@ process.on("unhandledRejection", (err) => {
   log.error("Unhandled rejection", { error: err?.message || String(err) });
 });
 
-const BIND_HOST = process.env.KATULONG_BIND_HOST || "127.0.0.1";
-server.listen(PORT, BIND_HOST, () => {
-  log.info("Katulong HTTP started", { port: PORT, host: BIND_HOST });
+server.listen(PORT, envConfig.bindHost, () => {
+  log.info("Katulong HTTP started", { port: PORT, host: envConfig.bindHost });
   // Write PID file so CLI commands can find us
   try {
     writeFileSync(SERVER_PID_PATH, String(process.pid), { encoding: "utf-8" });
