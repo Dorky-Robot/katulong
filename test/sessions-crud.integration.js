@@ -1,9 +1,15 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createConnection } from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DAEMON_PATH = join(__dirname, "..", "daemon.js");
+const SERVER_PATH = join(__dirname, "..", "server.js");
 
 /**
  * Integration tests for Sessions CRUD via HTTP routes.
@@ -21,8 +27,11 @@ const TEST_PORT = 3010;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 
 async function request(method, path, body) {
-  const opts = { method, headers: { "Content-Type": "application/json" } };
-  if (body !== undefined) opts.body = JSON.stringify(body);
+  const opts = { method };
+  if (body !== undefined) {
+    opts.headers = { "Content-Type": "application/json" };
+    opts.body = JSON.stringify(body);
+  }
   const res = await fetch(`${BASE_URL}${path}`, opts);
   const text = await res.text();
   let parsed = null;
@@ -53,7 +62,7 @@ describe("Sessions CRUD Integration", () => {
 
     // Spawn daemon first, then server (mirrors entrypoint.js but with
     // separate processes for consistency with daemon.integration.js)
-    daemonProcess = spawn("node", ["daemon.js"], {
+    daemonProcess = spawn("node", [DAEMON_PATH], {
       env: minimalEnv,
       stdio: "pipe",
     });
@@ -61,7 +70,6 @@ describe("Sessions CRUD Integration", () => {
     daemonProcess.stdout.on("data", () => {});
 
     // Wait for daemon socket
-    const { createConnection } = await import("node:net");
     await new Promise((resolve, reject) => {
       const deadline = Date.now() + 10000;
       function attempt() {
@@ -74,7 +82,7 @@ describe("Sessions CRUD Integration", () => {
     });
 
     // Spawn server
-    serverProcess = spawn("node", ["server.js"], {
+    serverProcess = spawn("node", [SERVER_PATH], {
       env: minimalEnv,
       stdio: "pipe",
     });
@@ -83,21 +91,20 @@ describe("Sessions CRUD Integration", () => {
     serverProcess.stderr.on("data", (data) => { serverOutput += data.toString(); });
     serverProcess.stdout.on("data", (data) => { serverOutput += data.toString(); });
 
-    // Wait for server to be ready (with cancellation guard)
-    let cancelled = false;
+    // Wait for server to be ready
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        cancelled = true;
-        reject(new Error(`Server failed to start:\n${serverOutput}`));
-      }, 15000);
+      const timeout = setTimeout(
+        () => reject(new Error(`Server failed to start:\n${serverOutput}`)),
+        15000,
+      );
+      const startTime = Date.now();
       const check = async () => {
-        if (cancelled) return;
         try {
           const response = await fetch(`${BASE_URL}/sessions`);
           if (response.ok) { clearTimeout(timeout); resolve(); }
-          else if (!cancelled) setTimeout(check, 100);
+          else setTimeout(check, 100);
         } catch {
-          if (!cancelled) setTimeout(check, 100);
+          if (Date.now() - startTime < 15000) setTimeout(check, 100);
         }
       };
       check();
@@ -105,13 +112,11 @@ describe("Sessions CRUD Integration", () => {
   });
 
   after(async () => {
-    if (serverProcess) {
-      serverProcess.kill("SIGTERM");
-      await new Promise((resolve) => serverProcess.on("exit", resolve));
-    }
-    if (daemonProcess) {
-      daemonProcess.kill("SIGTERM");
-      await new Promise((resolve) => daemonProcess.on("exit", resolve));
+    for (const proc of [serverProcess, daemonProcess]) {
+      if (proc && proc.exitCode === null) {
+        proc.kill("SIGTERM");
+        await new Promise((resolve) => proc.on("exit", resolve));
+      }
     }
     if (testDataDir) rmSync(testDataDir, { recursive: true, force: true });
   });
