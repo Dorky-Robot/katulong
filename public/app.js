@@ -410,6 +410,22 @@
     const sidebar = document.getElementById("sidebar");
     const sidebarToggleBtn = document.getElementById("sidebar-toggle");
     const sidebarAddBtn = document.getElementById("sidebar-add-btn");
+    const sidebarBackdrop = document.getElementById("sidebar-backdrop");
+
+    const isMobile = () => window.matchMedia("(max-width: 767px)").matches;
+
+    function setMobileSidebar(open) {
+      if (!sidebar) return;
+      sidebar.classList.toggle("mobile-open", open);
+      sidebarBackdrop?.classList.toggle("visible", open);
+      if (open) {
+        invalidateSessions(sessionStore, state.session.name);
+        api.get("/ssh/password").then(({ password }) => {
+          const pwInput = document.getElementById("ssh-password-value");
+          if (pwInput) pwInput.value = password;
+        }).catch(() => {});
+      }
+    }
 
     function setSidebarCollapsed(collapsed) {
       if (!sidebar) return;
@@ -423,6 +439,10 @@
 
     function toggleSidebar() {
       if (!sidebar) return;
+      if (isMobile()) {
+        setMobileSidebar(!sidebar.classList.contains("mobile-open"));
+        return;
+      }
       const isCollapsed = sidebar.classList.contains("collapsed");
       setSidebarCollapsed(!isCollapsed);
       if (isCollapsed) {
@@ -434,7 +454,12 @@
       }
     }
 
-    // Restore sidebar state from localStorage
+    // Close mobile sidebar on backdrop click
+    if (sidebarBackdrop) {
+      sidebarBackdrop.addEventListener("click", () => setMobileSidebar(false));
+    }
+
+    // Restore sidebar state from localStorage (desktop only)
     const savedCollapsed = localStorage.getItem("sidebar-collapsed");
     const isInitiallyCollapsed = savedCollapsed !== "0";
     if (!isInitiallyCollapsed && sidebar) {
@@ -500,6 +525,9 @@
 
       // Refresh session list to update active card
       invalidateSessions(sessionStore, name);
+
+      // Close mobile sidebar after switching
+      if (isMobile()) setMobileSidebar(false);
     }
 
     // Handle browser back/forward
@@ -626,6 +654,15 @@
         { label: "Tab", keys: "tab" }
       ],
       onSessionClick: openSessionManager,
+      onNewSessionClick: async () => {
+        try {
+          const name = `session-${Date.now().toString(36)}`;
+          const data = await api.post("/sessions", { name, copyFrom: state.session.name });
+          switchSession(data.name);
+        } catch (err) {
+          console.error("Failed to create session:", err);
+        }
+      },
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
       onSettingsClick: () => modals.open('settings'),
       sendFn: rawSend,

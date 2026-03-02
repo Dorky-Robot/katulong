@@ -286,6 +286,20 @@
     }
     .session-btn:active { background: var(--accent-active); }
 
+    /* New session button in shortcut bar — mobile only */
+    .bar-new-session-btn {
+      display: none;
+      flex-shrink: 0; height: 2rem; width: 2rem;
+      border: none; border-radius: var(--radius-sm); background: transparent;
+      color: var(--text-muted); font-size: 1.125rem; cursor: pointer;
+      align-items: center; justify-content: center;
+    }
+    .bar-new-session-btn:hover { color: var(--text); }
+    .bar-new-session-btn:active { background: rgba(255,255,255,0.08); }
+    @media (max-width: 767px) {
+      .bar-new-session-btn { display: flex; }
+    }
+
     /* P2P status indicator */
     #p2p-indicator {
       flex-shrink: 0; width: 0.5rem; height: 0.5rem; border-radius: 50%;
@@ -571,7 +585,7 @@
     .sidebar-icon-btn:active { background: rgba(255,255,255,0.08); }
     .sidebar-spacer { margin-left: auto; }
     #sidebar-content {
-      flex: 1; min-height: 0; overflow-y: auto; padding: 0 0.5rem 0.5rem;
+      flex: 1; min-height: 0; overflow-y: auto; padding: 0.5rem 0.5rem 0.5rem;
     }
     /* --- Collapsed sidebar: mini session pills --- */
     #sidebar.collapsed #sidebar-content {
@@ -598,8 +612,44 @@
       pointer-events: none;
     }
     #sidebar.collapsed .session-card.active::after { color: var(--accent-active); }
+    /* --- Mobile: sidebar as floating overlay --- */
     @media (max-width: 767px) {
-      #sidebar { display: none; }
+      #sidebar {
+        position: fixed; top: var(--height-btn-md); left: 0; bottom: 0; z-index: 100;
+        width: 280px; min-width: 280px;
+        transform: translateX(-100%);
+        transition: transform 0.2s ease;
+        margin-top: 0;
+      }
+      #sidebar.mobile-open {
+        transform: translateX(0);
+      }
+      #sidebar.collapsed {
+        width: 280px; min-width: 280px;
+        transform: translateX(-100%);
+      }
+      #sidebar.collapsed.mobile-open {
+        transform: translateX(0);
+      }
+      /* Reset collapsed styles on mobile — always show expanded view */
+      #sidebar.collapsed #sidebar-content { overflow-y: auto; padding: 0 0.5rem 0.5rem; display: block; }
+      #sidebar.collapsed .session-card { width: auto; min-width: auto; height: auto; min-height: auto; margin: 0 0 0.5rem 0; border-radius: var(--radius-lg); border-width: 2px; display: block; }
+      #sidebar.collapsed .session-card::after { display: none; }
+      #sidebar.collapsed .session-card-preview { display: block; }
+      #sidebar.collapsed .session-card-footer { display: flex; }
+      #sidebar.collapsed .sidebar-hide-collapsed { display: initial; }
+      #sidebar #sidebar-toolbar, #sidebar.collapsed #sidebar-toolbar {
+        display: none;
+      }
+      /* Backdrop */
+      #sidebar-backdrop {
+        display: none; position: fixed; inset: 0; z-index: 99;
+        background: var(--overlay-bg);
+      }
+      #sidebar-backdrop.visible { display: block; }
+    }
+    @media (min-width: 768px) {
+      #sidebar-backdrop { display: none !important; }
     }
 
     /* --- Session cards --- */
@@ -1156,6 +1206,7 @@
         </div>
       </div>
     </aside>
+    <div id="sidebar-backdrop"></div>
     <div id="main-stage">
       <nav id="shortcut-bar" role="toolbar" aria-label="Shortcut bar"></nav>
       <div id="terminal-container"></div>

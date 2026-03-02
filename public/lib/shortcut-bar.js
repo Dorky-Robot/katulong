@@ -17,6 +17,7 @@ export function createShortcutBar(options = {}) {
       { label: "Tab", keys: "tab" }
     ],
     onSessionClick,
+    onNewSessionClick,
     onShortcutsClick,
     onSettingsClick,
     sendFn,
@@ -58,6 +59,17 @@ export function createShortcutBar(options = {}) {
       sessBtn.addEventListener("click", onSessionClick);
     }
     container.appendChild(sessBtn);
+
+    // New session button (visible on mobile only via CSS)
+    const newSessBtn = document.createElement("button");
+    newSessBtn.className = "bar-new-session-btn";
+    newSessBtn.tabIndex = -1;
+    newSessBtn.setAttribute("aria-label", "New session");
+    newSessBtn.innerHTML = '<i class="ph ph-plus"></i>';
+    if (onNewSessionClick) {
+      newSessBtn.addEventListener("click", onNewSessionClick);
+    }
+    container.appendChild(newSessBtn);
 
     // Spacer
     const spacer = document.createElement("span");
