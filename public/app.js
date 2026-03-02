@@ -12,6 +12,7 @@
     } from "/lib/stores.js";
     import { createSessionListComponent } from "/lib/session-list-component.js";
     import { createSessionManager } from "/lib/session-manager.js";
+    import { api } from "/lib/api-client.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
     import { createTokenFormManager } from "/lib/token-form.js";
     import { createShortcutsPopup, createShortcutsEditPanel, createAddShortcutModal } from "/lib/shortcuts-components.js";
@@ -240,10 +241,7 @@
       },
       onClose: () => term.focus()
     });
-    modals.register('session', 'session-overlay', {
-      returnFocus: term,
-      onClose: () => term.focus()
-    });
+    // Session sidebar (no longer a modal)
     modals.register('dictation', 'dictation-overlay', {
       returnFocus: term,
       onClose: () => term.focus()
@@ -391,22 +389,143 @@
     const sessionStore = createSessionStore(state.session.name);
 
     // Create session list component
-    const sessionListComponent = createSessionListComponent(sessionStore);
+    // switchSession is defined below but the callback is only invoked on click, not during init
+    const sessionListComponent = createSessionListComponent(sessionStore, {
+      onSessionSwitch: (name) => switchSession(name)
+    });
     const sessionListEl = document.getElementById("session-list");
     if (sessionListEl) {
       sessionListComponent.mount(sessionListEl);
     }
 
-    // Create session manager with callbacks
+    // Create session manager with callbacks (no modal needed — sidebar is always in DOM)
     const sessionManager = createSessionManager({
-      modals,
+      modals: null,
       sessionStore,
       onSessionCreate: () => invalidateSessions(sessionStore, state.session.name)
     });
     sessionManager.init();
 
-    // Expose openSessionManager for external use
-    const openSessionManager = () => sessionManager.openSessionManager(state.session.name);
+    // --- Sidebar toggle ---
+    const sidebar = document.getElementById("sidebar");
+    const sidebarToggleBtn = document.getElementById("sidebar-toggle");
+    const sidebarAddBtn = document.getElementById("sidebar-add-btn");
+    const sessionNewRow = document.getElementById("session-new-row");
+
+    function setSidebarCollapsed(collapsed) {
+      if (!sidebar) return;
+      sidebar.classList.toggle("collapsed", collapsed);
+      localStorage.setItem("sidebar-collapsed", collapsed ? "1" : "0");
+      // Update chevron direction
+      const icon = sidebarToggleBtn?.querySelector("i");
+      if (icon) {
+        icon.className = collapsed ? "ph ph-caret-right" : "ph ph-caret-left";
+      }
+      // Show/hide new session row
+      if (sessionNewRow) {
+        sessionNewRow.classList.toggle("visible", !collapsed);
+      }
+    }
+
+    function toggleSidebar() {
+      if (!sidebar) return;
+      const isCollapsed = sidebar.classList.contains("collapsed");
+      setSidebarCollapsed(!isCollapsed);
+      if (isCollapsed) {
+        // Opening — load sessions and SSH password
+        invalidateSessions(sessionStore, state.session.name);
+        api.get("/ssh/password").then(({ password }) => {
+          const pwInput = document.getElementById("ssh-password-value");
+          if (pwInput) pwInput.value = password;
+        }).catch(() => {});
+      }
+    }
+
+    // Restore sidebar state from localStorage
+    // HTML defaults to class="collapsed". If stored as expanded, remove the class.
+    const savedCollapsed = localStorage.getItem("sidebar-collapsed");
+    const isInitiallyCollapsed = savedCollapsed !== "0";
+    if (!isInitiallyCollapsed && sidebar) {
+      sidebar.classList.remove("collapsed");
+    }
+    // Sync chevron and new-session-row to match
+    const toggleIcon = sidebarToggleBtn?.querySelector("i");
+    if (toggleIcon) {
+      toggleIcon.className = isInitiallyCollapsed ? "ph ph-caret-right" : "ph ph-caret-left";
+    }
+    if (sessionNewRow) {
+      sessionNewRow.classList.toggle("visible", !isInitiallyCollapsed);
+    }
+
+    if (sidebarToggleBtn) {
+      sidebarToggleBtn.addEventListener("click", toggleSidebar);
+    }
+
+    // + button: expand sidebar if collapsed, then toggle new session row
+    if (sidebarAddBtn) {
+      sidebarAddBtn.addEventListener("click", () => {
+        if (sidebar?.classList.contains("collapsed")) {
+          toggleSidebar();
+        }
+        // Focus the new session input
+        const nameInput = document.getElementById("session-new-name");
+        if (nameInput) setTimeout(() => nameInput.focus(), 200);
+      });
+    }
+
+    // If sidebar is open on page load, fetch sessions + SSH password
+    if (!isInitiallyCollapsed) {
+      invalidateSessions(sessionStore, state.session.name);
+      api.get("/ssh/password").then(({ password }) => {
+        const pwInput = document.getElementById("ssh-password-value");
+        if (pwInput) pwInput.value = password;
+      }).catch(() => {});
+    }
+
+    // --- Session switching (no page reload) ---
+    function switchSession(name) {
+      if (name === state.session.name) return;
+
+      // Update state
+      state.update('session.name', name);
+
+      // Update URL without reload
+      const url = new URL(window.location);
+      url.searchParams.set("s", name);
+      history.pushState(null, "", url);
+      document.title = name;
+
+      // Clear terminal and reconnect to new session
+      term.clear();
+      term.reset();
+      if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
+        state.connection.ws.close();
+      }
+
+      // Update shortcut bar
+      if (shortcutBarInstance) shortcutBarInstance.render(name);
+
+      // Refresh session list to update active card
+      invalidateSessions(sessionStore, name);
+    }
+
+    // Handle browser back/forward
+    window.addEventListener("popstate", () => {
+      const name = new URLSearchParams(location.search).get("s") || "default";
+      if (name !== state.session.name) {
+        state.update('session.name', name);
+        document.title = name;
+        term.clear();
+        term.reset();
+        if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
+          state.connection.ws.close();
+        }
+        if (shortcutBarInstance) shortcutBarInstance.render(name);
+        invalidateSessions(sessionStore, name);
+      }
+    });
+
+    const openSessionManager = () => toggleSidebar();
     
 
     // --- Settings ---

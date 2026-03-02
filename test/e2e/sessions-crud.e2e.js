@@ -18,14 +18,14 @@ test.describe("Session CRUD", () => {
     );
   }
 
-  test("Create session via modal", async ({ page, context }) => {
+  test("Create session via sidebar", async ({ page, context }) => {
     const name = `test-create-${Date.now()}`;
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Open session modal and create
+    // Open session sidebar and create
     await page.locator("#shortcut-bar .session-btn").click();
-    await expect(page.locator("#session-overlay")).toHaveClass(/visible/);
+    await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
     await page.locator("#session-new-name").fill(name);
 
     // Capture the new tab that opens on create
@@ -55,7 +55,7 @@ test.describe("Session CRUD", () => {
     await deleteSession(page, name);
   });
 
-  test("Delete session via modal", async ({ page }) => {
+  test("Delete session via sidebar", async ({ page }) => {
     const name = `test-delete-${Date.now()}`;
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
@@ -67,26 +67,28 @@ test.describe("Session CRUD", () => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Open session modal — list fetches on open
+    // Open session sidebar — list fetches on open
     await page.locator("#shortcut-bar .session-btn").click();
-    await expect(page.locator("#session-overlay")).toHaveClass(/visible/);
+    await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
 
-    // Wait for the session list to load and find the row
-    const row = page.locator(".session-item", {
+    // Wait for the session list to load and find the card
+    const card = page.locator(".session-card", {
       has: page.getByLabel(`Session name: ${name}`),
     });
-    await expect(row).toBeVisible({ timeout: 10000 });
+    await expect(card).toBeVisible({ timeout: 10000 });
 
     // Handle potential confirmation dialog
     page.on("dialog", (dialog) => dialog.accept());
 
-    await row.locator(".session-icon-btn.delete").click();
+    // Hover to reveal action buttons, then click delete
+    await card.hover();
+    await card.locator(".session-card-action.delete").click();
 
     // Verify removed from list
-    await expect(row).not.toBeVisible();
+    await expect(card).not.toBeVisible();
   });
 
-  test("Rename session via modal", async ({ page }) => {
+  test("Rename session via sidebar", async ({ page }) => {
     const name = `test-rename-${Date.now()}`;
     const newName = `renamed-${Date.now()}`;
     await page.goto("/");
@@ -99,13 +101,14 @@ test.describe("Session CRUD", () => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Open session modal and rename
+    // Open session sidebar and rename
     await page.locator("#shortcut-bar .session-btn").click();
-    await expect(page.locator("#session-overlay")).toHaveClass(/visible/);
+    await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
 
-    // Wait for session list to load
+    // Wait for session list to load, double-click to enable editing
     const nameInput = page.getByLabel(`Session name: ${name}`);
     await expect(nameInput).toBeVisible({ timeout: 10000 });
+    await nameInput.dblclick();
     await nameInput.fill(newName);
     await nameInput.press("Enter");
 
