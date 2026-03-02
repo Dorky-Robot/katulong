@@ -253,7 +253,13 @@ async function start() {
   const server = createServer((socket) => {
     log.info("UI server connected");
     uiSockets.add(socket);
-    socket.on("data", decoder((msg) => handleMessage(msg, socket)));
+    // Serialize async message handling per socket to preserve ordering
+    let messageQueue = Promise.resolve();
+    socket.on("data", decoder((msg) => {
+      messageQueue = messageQueue.then(() => handleMessage(msg, socket)).catch((err) => {
+        log.error("handleMessage error", { error: err?.message || String(err) });
+      });
+    }));
     socket.on("close", () => {
       log.info("UI server disconnected");
       uiSockets.delete(socket);

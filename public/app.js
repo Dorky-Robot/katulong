@@ -398,12 +398,8 @@
       sessionListComponent.mount(sessionListEl);
     }
 
-    // Create session manager with callbacks (no modal needed — sidebar is always in DOM)
-    const sessionManager = createSessionManager({
-      modals: null,
-      sessionStore,
-      onSessionCreate: () => invalidateSessions(sessionStore, state.session.name)
-    });
+    // SSH password reveal/copy (sidebar)
+    const sessionManager = createSessionManager();
     sessionManager.init();
 
     // --- Sidebar toggle ---
@@ -414,17 +410,19 @@
 
     const isMobile = () => window.matchMedia("(max-width: 767px)").matches;
 
+    function loadSidebarData() {
+      invalidateSessions(sessionStore, state.session.name);
+      api.get("/ssh/password").then(({ password }) => {
+        const pwInput = document.getElementById("ssh-password-value");
+        if (pwInput) pwInput.value = password;
+      }).catch(() => {});
+    }
+
     function setMobileSidebar(open) {
       if (!sidebar) return;
       sidebar.classList.toggle("mobile-open", open);
       sidebarBackdrop?.classList.toggle("visible", open);
-      if (open) {
-        invalidateSessions(sessionStore, state.session.name);
-        api.get("/ssh/password").then(({ password }) => {
-          const pwInput = document.getElementById("ssh-password-value");
-          if (pwInput) pwInput.value = password;
-        }).catch(() => {});
-      }
+      if (open) loadSidebarData();
     }
 
     function setSidebarCollapsed(collapsed) {
@@ -445,16 +443,9 @@
       }
       const isCollapsed = sidebar.classList.contains("collapsed");
       setSidebarCollapsed(!isCollapsed);
-      if (isCollapsed) {
-        invalidateSessions(sessionStore, state.session.name);
-        api.get("/ssh/password").then(({ password }) => {
-          const pwInput = document.getElementById("ssh-password-value");
-          if (pwInput) pwInput.value = password;
-        }).catch(() => {});
-      }
+      if (isCollapsed) loadSidebarData();
     }
 
-    // Close mobile sidebar on backdrop click
     if (sidebarBackdrop) {
       sidebarBackdrop.addEventListener("click", () => setMobileSidebar(false));
     }
@@ -474,76 +465,51 @@
       sidebarToggleBtn.addEventListener("click", toggleSidebar);
     }
 
-    // + button: create new session in same cwd as current, then switch to it
-    if (sidebarAddBtn) {
-      sidebarAddBtn.addEventListener("click", async () => {
-        try {
-          const name = `session-${Date.now().toString(36)}`;
-          const data = await api.post("/sessions", { name, copyFrom: state.session.name });
-          // Expand sidebar if collapsed
-          if (sidebar?.classList.contains("collapsed")) {
-            setSidebarCollapsed(false);
-          }
-          switchSession(data.name);
-        } catch (err) {
-          console.error("Failed to create session:", err);
+    // --- New session creation (shared by sidebar + and shortcut bar +) ---
+    async function createNewSession() {
+      try {
+        const name = `session-${Date.now().toString(36)}`;
+        const data = await api.post("/sessions", { name, copyFrom: state.session.name });
+        if (sidebar?.classList.contains("collapsed")) {
+          setSidebarCollapsed(false);
         }
-      });
+        switchSession(data.name);
+      } catch (err) {
+        console.error("Failed to create session:", err);
+      }
     }
 
-    // If sidebar is open on page load, fetch sessions + SSH password
-    if (!isInitiallyCollapsed) {
-      invalidateSessions(sessionStore, state.session.name);
-      api.get("/ssh/password").then(({ password }) => {
-        const pwInput = document.getElementById("ssh-password-value");
-        if (pwInput) pwInput.value = password;
-      }).catch(() => {});
+    if (sidebarAddBtn) {
+      sidebarAddBtn.addEventListener("click", createNewSession);
     }
+
+    if (!isInitiallyCollapsed) loadSidebarData();
 
     // --- Session switching (no page reload) ---
-    function switchSession(name) {
-      if (name === state.session.name) return;
-
-      // Update state
+    function activateSession(name) {
       state.update('session.name', name);
-
-      // Update URL without reload
-      const url = new URL(window.location);
-      url.searchParams.set("s", name);
-      history.pushState(null, "", url);
       document.title = name;
-
-      // Clear terminal and reconnect to new session
       term.clear();
       term.reset();
       if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
         state.connection.ws.close();
       }
-
-      // Update shortcut bar
       if (shortcutBarInstance) shortcutBarInstance.render(name);
-
-      // Refresh session list to update active card
       invalidateSessions(sessionStore, name);
+    }
 
-      // Close mobile sidebar after switching
+    function switchSession(name) {
+      if (name === state.session.name) return;
+      const url = new URL(window.location);
+      url.searchParams.set("s", name);
+      history.pushState(null, "", url);
+      activateSession(name);
       if (isMobile()) setMobileSidebar(false);
     }
 
-    // Handle browser back/forward
     window.addEventListener("popstate", () => {
       const name = new URLSearchParams(location.search).get("s") || "default";
-      if (name !== state.session.name) {
-        state.update('session.name', name);
-        document.title = name;
-        term.clear();
-        term.reset();
-        if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
-          state.connection.ws.close();
-        }
-        if (shortcutBarInstance) shortcutBarInstance.render(name);
-        invalidateSessions(sessionStore, name);
-      }
+      if (name !== state.session.name) activateSession(name);
     });
 
     const openSessionManager = () => toggleSidebar();
@@ -654,15 +620,7 @@
         { label: "Tab", keys: "tab" }
       ],
       onSessionClick: openSessionManager,
-      onNewSessionClick: async () => {
-        try {
-          const name = `session-${Date.now().toString(36)}`;
-          const data = await api.post("/sessions", { name, copyFrom: state.session.name });
-          switchSession(data.name);
-        } catch (err) {
-          console.error("Failed to create session:", err);
-        }
-      },
+      onNewSessionClick: createNewSession,
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
       onSettingsClick: () => modals.open('settings'),
       sendFn: rawSend,

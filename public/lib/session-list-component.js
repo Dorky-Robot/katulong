@@ -16,11 +16,11 @@ export function createSessionListComponent(store, options = {}) {
   const { onSessionSwitch } = options;
   const render = (state) => {
     if (state.loading && state.sessions.length === 0) {
-      return '<div style="padding:0.5rem;color:var(--text-dim);font-size:0.75rem">Loading...</div>';
+      return '<div class="session-list-status">Loading...</div>';
     }
 
     if (state.sessions.length === 0) {
-      return '<div style="padding:0.5rem;color:var(--text-dim);font-size:0.75rem">No sessions</div>';
+      return '<div class="session-list-status">No sessions</div>';
     }
 
     // Render will happen in afterRender via DOM manipulation
