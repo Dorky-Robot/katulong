@@ -35,6 +35,8 @@ export function createSessionListComponent(store, options = {}) {
       card.className = `session-card${isCurrent ? " active" : ""}`;
       card.setAttribute("role", "listitem");
       card.setAttribute("aria-label", `Session: ${s.name}`);
+      card.setAttribute("data-initial", s.name.charAt(0));
+      card.title = s.name;
 
       // Click to switch session
       if (!isCurrent) {

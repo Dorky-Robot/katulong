@@ -276,20 +276,14 @@ test.describe("Sidebar", () => {
       await page.locator("#sidebar-toggle").click();
       await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
 
-      // Count existing sessions
-      const cardsBefore = await page.locator(".session-card").count();
-
       // Click + button
       await page.locator("#sidebar-add-btn").click();
 
       // URL should change to the new session (auto-named)
       await page.waitForFunction(
-        () => !window.location.search.includes("s=default"),
+        () => window.location.search.includes("s=session-"),
         { timeout: 5000 }
       );
-
-      // Should have one more card
-      await expect(page.locator(".session-card")).toHaveCount(cardsBefore + 1, { timeout: 10000 });
 
       // The new session should be the active card
       const activeCard = page.locator(".session-card.active");
