@@ -34,6 +34,8 @@
     import { createInputSender } from "/lib/input-sender.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
     import { createWebSocketConnection } from "/lib/websocket-connection.js";
+    import { createFileBrowserStore, loadRoot } from "/lib/file-browser/file-browser-store.js";
+    import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -622,6 +624,7 @@
       onSessionClick: openSessionManager,
       onNewSessionClick: createNewSession,
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
+      onFilesClick: () => toggleFileBrowser(),
       onSettingsClick: () => modals.open('settings'),
       sendFn: rawSend,
       term,
@@ -680,6 +683,45 @@
       onImage: (file) => uploadImageToTerminal(file)
     });
     pasteHandler.init();
+
+    // --- File Browser ---
+
+    const fileBrowserStore = createFileBrowserStore();
+    const fileBrowserEl = document.getElementById("file-browser");
+    let fileBrowserMounted = false;
+    let fileBrowserComponent = null;
+
+    function toggleFileBrowser() {
+      const isActive = fileBrowserEl.classList.contains("active");
+      if (isActive) {
+        // Switch back to terminal
+        fileBrowserEl.classList.remove("active");
+        termContainer.classList.remove("fb-hidden");
+        term.focus();
+        withPreservedScroll(term, () => fit.fit());
+      } else {
+        // Switch to file browser
+        if (!fileBrowserMounted) {
+          fileBrowserComponent = createFileBrowserComponent(fileBrowserStore, {
+            onClose: () => toggleFileBrowser(),
+          });
+          fileBrowserComponent.mount(fileBrowserEl);
+          fileBrowserMounted = true;
+          // Load home directory as first column
+          loadRoot(fileBrowserStore, "");
+        }
+        termContainer.classList.add("fb-hidden");
+        fileBrowserEl.classList.add("active");
+        fileBrowserComponent.focus();
+      }
+      // Close mobile sidebar when toggling
+      if (isMobile()) setMobileSidebar(false);
+    }
+
+    const sidebarFilesBtn = document.getElementById("sidebar-files-btn");
+    if (sidebarFilesBtn) {
+      sidebarFilesBtn.addEventListener("click", toggleFileBrowser);
+    }
 
     // --- Network change monitoring ---
 
