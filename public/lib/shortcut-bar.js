@@ -1,7 +1,8 @@
 /**
  * Shortcut Bar Renderer
  *
- * Composable shortcut bar with P2P indicator, session button, and shortcuts.
+ * Composable shortcut bar with session button, shortcuts, and files toggle.
+ * P2P indicator and settings have moved to the sidebar footer.
  */
 
 import { keysToSequence, sendSequence } from "/lib/key-mapping.js";
@@ -19,7 +20,6 @@ export function createShortcutBar(options = {}) {
     onSessionClick,
     onNewSessionClick,
     onShortcutsClick,
-    onSettingsClick,
     onFilesClick,
     sendFn,
     term,
@@ -35,10 +35,10 @@ export function createShortcutBar(options = {}) {
 
     container.innerHTML = "";
 
-    // P2P indicator
+    // P2P indicator (hidden span — keeps the ID alive for P2P manager updates)
     const p2pDot = document.createElement("span");
     p2pDot.id = "p2p-indicator";
-    p2pDot.title = "P2P: connecting...";
+    p2pDot.style.display = "none";
     container.appendChild(p2pDot);
 
     // Update P2P indicator if callback provided
@@ -114,17 +114,6 @@ export function createShortcutBar(options = {}) {
       filesBtn.addEventListener("click", onFilesClick);
       container.appendChild(filesBtn);
     }
-
-    // Settings button
-    const setBtn = document.createElement("button");
-    setBtn.className = "bar-icon-btn";
-    setBtn.tabIndex = -1;
-    setBtn.setAttribute("aria-label", "Settings");
-    setBtn.innerHTML = '<i class="ph ph-gear"></i>';
-    if (onSettingsClick) {
-      setBtn.addEventListener("click", onSettingsClick);
-    }
-    container.appendChild(setBtn);
   }
 
   return {

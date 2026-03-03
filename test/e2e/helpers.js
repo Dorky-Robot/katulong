@@ -39,7 +39,7 @@ export async function waitForAppReady(page) {
  * Open settings modal and wait for it to be ready
  */
 export async function openSettings(page) {
-  await page.click('button[aria-label="Settings"]');
+  await page.click('#sidebar-settings-btn');
   const modal = page.locator('#settings-overlay');
   await expect(modal).toBeVisible();
   return modal;

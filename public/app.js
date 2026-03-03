@@ -145,7 +145,18 @@
       p2pManager,
       getConnectionState: () => ({ attached: state.connection.attached })
     });
-    const updateP2PIndicator = () => p2pIndicator.update();
+    const updateP2PIndicator = () => {
+      p2pIndicator.update();
+      // Sync sidebar connection dot
+      const sidebarDot = document.getElementById("sidebar-p2p-dot");
+      if (sidebarDot) {
+        const attached = state.connection.attached;
+        const p2pConnected = state.p2p.connected;
+        sidebarDot.classList.toggle("connected", attached || p2pConnected);
+        sidebarDot.classList.toggle("disconnected", !attached && !p2pConnected);
+        sidebarDot.title = p2pConnected ? "Connected (direct)" : attached ? "Connected (relay)" : "Disconnected";
+      }
+    };
 
     document.title = state.session.name;
 
@@ -625,7 +636,6 @@
       onNewSessionClick: createNewSession,
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
       onFilesClick: () => toggleFileBrowser(),
-      onSettingsClick: () => modals.open('settings'),
       sendFn: rawSend,
       term,
       updateP2PIndicator,
@@ -723,6 +733,11 @@
     const sidebarFilesBtn = document.getElementById("sidebar-files-btn");
     if (sidebarFilesBtn) {
       sidebarFilesBtn.addEventListener("click", toggleFileBrowser);
+    }
+
+    const sidebarSettingsBtn = document.getElementById("sidebar-settings-btn");
+    if (sidebarSettingsBtn) {
+      sidebarSettingsBtn.addEventListener("click", () => modals.open('settings'));
     }
 
     // --- Network change monitoring ---

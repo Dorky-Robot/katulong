@@ -584,6 +584,23 @@
     .sidebar-icon-btn:hover { color: var(--text); }
     .sidebar-icon-btn:active { background: rgba(255,255,255,0.08); }
     .sidebar-spacer { margin-left: auto; }
+    #sidebar-footer {
+      display: flex; align-items: center; gap: var(--space-xs);
+      padding: 0.5rem; flex-shrink: 0;
+      border-top: 1px solid var(--border);
+    }
+    #sidebar.collapsed #sidebar-footer {
+      flex-direction: column; padding: 0.5rem 0; gap: 0.25rem;
+      justify-content: center; align-items: center;
+    }
+    .sidebar-p2p-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--text-dim); flex-shrink: 0;
+      margin-left: auto;
+    }
+    #sidebar.collapsed .sidebar-p2p-dot { margin-left: 0; }
+    .sidebar-p2p-dot.connected { background: var(--success); }
+    .sidebar-p2p-dot.disconnected { background: var(--warning); }
     #sidebar-content {
       flex: 1; min-height: 0; overflow-y: auto; padding: 0.5rem 0.5rem 0.5rem;
     }
@@ -1240,10 +1257,6 @@
         <button class="sidebar-icon-btn" id="sidebar-add-btn" aria-label="New session">
           <i class="ph ph-plus"></i>
         </button>
-        <span class="sidebar-spacer"></span>
-        <button class="sidebar-icon-btn" id="sidebar-files-btn" aria-label="Open file browser" title="Files">
-          <i class="ph ph-folder-open"></i>
-        </button>
       </div>
       <div id="sidebar-content">
         <div id="session-list" role="list"></div>
@@ -1262,6 +1275,15 @@
           </div>
           <div class="ssh-hint">Disconnect: <kbd>Enter</kbd> <kbd>~</kbd> <kbd>.</kbd></div>
         </div>
+      </div>
+      <div id="sidebar-footer">
+        <button class="sidebar-icon-btn" id="sidebar-files-btn" aria-label="Open file browser" title="Files">
+          <i class="ph ph-folder-open"></i>
+        </button>
+        <button class="sidebar-icon-btn" id="sidebar-settings-btn" aria-label="Settings" title="Settings">
+          <i class="ph ph-gear"></i>
+        </button>
+        <span id="sidebar-p2p-dot" class="sidebar-p2p-dot" title="Connection status"></span>
       </div>
     </aside>
     <div id="sidebar-backdrop"></div>
@@ -1483,6 +1505,6 @@
     </div>
   </div>
 
-  <script type="module" src="/app.js?v=24"></script>
+  <script type="module" src="/app.js?v=25"></script>
 </body>
 </html>

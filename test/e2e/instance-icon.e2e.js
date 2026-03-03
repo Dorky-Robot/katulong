@@ -8,7 +8,7 @@ test.describe("Instance Icon Picker", () => {
 
   test("Instance icon button exists in Settings > Theme tab", async ({ page }) => {
     // Open settings
-    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#sidebar-settings-btn").click();
     await expect(page.locator("#settings-overlay")).toHaveClass(/visible/);
 
     // Verify Theme tab is active by default
@@ -22,7 +22,7 @@ test.describe("Instance Icon Picker", () => {
 
   test("Clicking Change opens icon picker modal", async ({ page }) => {
     // Open settings
-    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#sidebar-settings-btn").click();
     await expect(page.locator("#settings-overlay")).toHaveClass(/visible/);
 
     // Click Change button
@@ -36,7 +36,7 @@ test.describe("Instance Icon Picker", () => {
 
   test("Icon picker displays all categories with icons", async ({ page }) => {
     // Open settings and icon picker
-    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#sidebar-settings-btn").click();
     await page.locator("#instance-icon-btn").click();
 
     // Verify categories
@@ -55,7 +55,7 @@ test.describe("Instance Icon Picker", () => {
 
   test("Clicking close button closes the modal", async ({ page }) => {
     // Open settings and icon picker
-    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#sidebar-settings-btn").click();
     await page.locator("#instance-icon-btn").click();
 
     // Verify modal is open
@@ -70,7 +70,7 @@ test.describe("Instance Icon Picker", () => {
 
   test("Clicking outside modal closes it", async ({ page }) => {
     // Open settings and icon picker
-    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#sidebar-settings-btn").click();
     await page.locator("#instance-icon-btn").click();
 
     // Verify modal is open
@@ -85,7 +85,7 @@ test.describe("Instance Icon Picker", () => {
 
   test("Selecting an icon updates the display and closes modal", async ({ page }) => {
     // Open settings and icon picker
-    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#sidebar-settings-btn").click();
     await page.locator("#instance-icon-btn").click();
 
     // Get the initial icon
@@ -107,7 +107,7 @@ test.describe("Instance Icon Picker", () => {
 
   test("Selected icon appears in shortcut bar session button", async ({ page }) => {
     // Open settings and icon picker
-    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#sidebar-settings-btn").click();
     await page.locator("#instance-icon-btn").click();
 
     // Select house icon
@@ -123,7 +123,7 @@ test.describe("Instance Icon Picker", () => {
 
   test("Selected icon persists after page reload", async ({ page }) => {
     // Open settings and icon picker
-    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#sidebar-settings-btn").click();
     await page.locator("#instance-icon-btn").click();
 
     // Select desktop icon
@@ -138,7 +138,7 @@ test.describe("Instance Icon Picker", () => {
     await expect(sessionBtn.locator(".ph-desktop-tower")).toBeVisible();
 
     // Open settings again and verify icon is still selected
-    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#sidebar-settings-btn").click();
     const iconDisplay = page.locator("#instance-icon-display");
     const iconClass = await iconDisplay.getAttribute("class");
     expect(iconClass).toContain("ph-desktop-tower");
@@ -150,7 +150,7 @@ test.describe("Instance Icon Picker", () => {
 
   test("Current icon is marked as selected in picker", async ({ page }) => {
     // Set an icon first
-    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#sidebar-settings-btn").click();
     await page.locator("#instance-icon-btn").click();
     await page.locator(".icon-picker-icon[data-icon='laptop']").click();
 
@@ -171,7 +171,7 @@ test.describe("Instance Icon Picker", () => {
 
   test("Icon picker modal has higher z-index than settings modal", async ({ page }) => {
     // Open settings
-    await page.locator("#shortcut-bar .bar-icon-btn[aria-label='Settings']").click();
+    await page.locator("#sidebar-settings-btn").click();
     await expect(page.locator("#settings-overlay")).toHaveClass(/visible/);
 
     // Get z-index of settings overlay
