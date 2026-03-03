@@ -89,6 +89,13 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
+    'p2p-lan-candidates': (msg) => ({
+      stateUpdates: {},
+      effects: [
+        { type: 'logServerLanIPs', addresses: msg.addresses }
+      ]
+    }),
+
     'p2p-closed': () => ({
       stateUpdates: { 'p2p.connected': false },
       effects: [
@@ -120,6 +127,9 @@ export function createWebSocketConnection(deps = {}) {
         break;
       case 'log':
         console.log(effect.message);
+        break;
+      case 'logServerLanIPs':
+        console.log('[P2P] Server LAN addresses:', effect.addresses);
         break;
       case 'scrollToBottomIfNeeded':
         if (effect.condition) {

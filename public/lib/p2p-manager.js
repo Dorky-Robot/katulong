@@ -85,6 +85,11 @@ export function createP2PManager(config = {}) {
 
     // Handle signaling
     newPeer.on("signal", (data) => {
+      if (data.candidate) {
+        console.log("[P2P] Local candidate:", data.candidate.candidate);
+      } else if (data.type) {
+        console.log("[P2P] Signal:", data.type);
+      }
       const currentWS = getWS ? getWS() : null;
       if (currentWS?.readyState === 1) {
         currentWS.send(JSON.stringify({ type: "p2p-signal", data }));
@@ -129,6 +134,21 @@ export function createP2PManager(config = {}) {
       }
       scheduleRetry();
     });
+
+    // Log ICE connection state changes for diagnostics
+    try {
+      const pc = newPeer._pc;
+      if (pc) {
+        pc.oniceconnectionstatechange = () => {
+          console.log("[P2P] ICE connection state:", pc.iceConnectionState);
+        };
+        pc.onicegatheringstatechange = () => {
+          console.log("[P2P] ICE gathering state:", pc.iceGatheringState);
+        };
+      }
+    } catch {
+      // SimplePeer internals not accessible — skip
+    }
 
     peer = newPeer;
     if (onStateChange) {
