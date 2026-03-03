@@ -123,3 +123,34 @@
 [data-md-color-scheme="slate"] .md-typeset hr {
   border-bottom-color: #30363d;
 }
+
+/* Smooth scrolling for TOC anchor links */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Offset anchors below the fixed header */
+:target {
+  scroll-margin-top: 4rem;
+}
+
+/* Integrated TOC: visually separate page sections from nav items */
+[data-md-color-scheme="slate"] .md-nav--integrated .md-nav__link {
+  font-size: 0.7rem;
+}
+
+/* Show left sidebar at narrower widths (default is 76.25em / ~1220px) */
+@media screen and (min-width: 48em) {
+  .md-sidebar--primary {
+    display: block;
+    position: sticky;
+    top: 0;
+  }
+  .md-header__button[for="__drawer"] {
+    display: none;
+  }
+  .md-grid {
+    display: grid;
+    grid-template-columns: 12.1rem minmax(0, 1fr);
+  }
+}
