@@ -500,6 +500,10 @@
 
     // --- Session switching (no page reload) ---
     function activateSession(name) {
+      // Clear any pending snapshot timer to avoid writing stale content
+      // under the new session name (snapshotTimer is declared later but
+      // initialized before this function is ever called).
+      if (snapshotTimer) { clearTimeout(snapshotTimer); snapshotTimer = null; }
       state.update('session.name', name);
       document.title = name;
       term.clear();

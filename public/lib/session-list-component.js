@@ -12,7 +12,7 @@ import { api } from '/lib/api-client.js';
 /**
  * Create session list component
  */
-// Shared snapshot cache: sessionName → dataURL
+// Shared snapshot cache: sessionName → plain text from xterm buffer
 const snapshotCache = new Map();
 
 /**
