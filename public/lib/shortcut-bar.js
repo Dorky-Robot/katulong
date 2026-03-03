@@ -104,16 +104,6 @@ export function createShortcutBar(options = {}) {
     }
     container.appendChild(kbBtn);
 
-    // Files button
-    if (onFilesClick) {
-      const filesBtn = document.createElement("button");
-      filesBtn.className = "bar-icon-btn";
-      filesBtn.tabIndex = -1;
-      filesBtn.setAttribute("aria-label", "Open file browser");
-      filesBtn.innerHTML = '<i class="ph ph-folder-open"></i>';
-      filesBtn.addEventListener("click", onFilesClick);
-      container.appendChild(filesBtn);
-    }
   }
 
   return {
