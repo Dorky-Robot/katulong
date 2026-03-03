@@ -22,6 +22,7 @@ import { serveStaticFile, clearFileCache } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createDaemonClient } from "./lib/daemon-client.js";
 import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/routes.js";
+import { createFileBrowserRoutes } from "./lib/file-browser.js";
 import { createWebSocketManager } from "./lib/ws-manager.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 
@@ -150,6 +151,7 @@ const routeCtx = {
 const routes = [
   ...createAuthRoutes(routeCtx),
   ...createAppRoutes(routeCtx),
+  ...createFileBrowserRoutes(routeCtx),
 ];
 
 function matchRoute(method, pathname) {

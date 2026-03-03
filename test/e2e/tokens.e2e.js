@@ -8,7 +8,7 @@ test.describe("Setup Tokens", () => {
 
   test("Create token - should appear in list immediately", async ({ page }) => {
     // Open settings modal
-    const settingsBtn = page.locator('#shortcut-bar button[aria-label="Settings"]');
+    const settingsBtn = page.locator('#sidebar-settings-btn');
     await settingsBtn.click();
     await expect(page.locator("#settings-overlay")).toHaveClass(/visible/);
 
@@ -67,7 +67,7 @@ test.describe("Setup Tokens", () => {
 
   test("Cancel token creation", async ({ page }) => {
     // Open settings and Remote tab
-    await page.locator('#shortcut-bar button[aria-label="Settings"]').click();
+    await page.locator('#sidebar-settings-btn').click();
     await page.locator('.settings-tab[data-tab="remote"]').click();
 
     // Click "Generate New Token"
@@ -94,7 +94,7 @@ test.describe("Setup Tokens", () => {
   // Button validation is not implemented - submit button is always enabled
 
   test("Press Enter to submit form", async ({ page }) => {
-    await page.locator('#shortcut-bar button[aria-label="Settings"]').click();
+    await page.locator('#sidebar-settings-btn').click();
     await page.locator('.settings-tab[data-tab="remote"]').click();
     await page.locator("#settings-create-token").click();
 

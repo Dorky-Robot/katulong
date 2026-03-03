@@ -61,6 +61,10 @@ export function createViewportManager(options = {}) {
   // Initialize terminal ResizeObserver for WebSocket resize events
   function initTerminalResizeObserver() {
     const ro = new ResizeObserver(() => {
+      // Skip when terminal is hidden (e.g. file browser is active).
+      // fit.fit() on a display:none element produces 0 dimensions which
+      // corrupts the PTY session via an invalid resize message.
+      if (termContainer.offsetParent === null) return;
       withPreservedScroll(term, () => fit.fit());
       if (onWebSocketResize) {
         onWebSocketResize(term.cols, term.rows);

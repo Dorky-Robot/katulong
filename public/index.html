@@ -584,6 +584,23 @@
     .sidebar-icon-btn:hover { color: var(--text); }
     .sidebar-icon-btn:active { background: rgba(255,255,255,0.08); }
     .sidebar-spacer { margin-left: auto; }
+    #sidebar-footer {
+      display: flex; align-items: center; gap: var(--space-xs);
+      padding: 0.5rem; flex-shrink: 0;
+      border-top: 1px solid var(--border);
+    }
+    #sidebar.collapsed #sidebar-footer {
+      flex-direction: column; padding: 0.5rem 0; gap: 0.25rem;
+      justify-content: center; align-items: center;
+    }
+    .sidebar-p2p-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--text-dim); flex-shrink: 0;
+      margin-left: auto;
+    }
+    #sidebar.collapsed .sidebar-p2p-dot { margin-left: 0; }
+    .sidebar-p2p-dot.connected { background: var(--success); }
+    .sidebar-p2p-dot.disconnected { background: var(--warning); }
     #sidebar-content {
       flex: 1; min-height: 0; overflow-y: auto; padding: 0.5rem 0.5rem 0.5rem;
     }
@@ -1178,6 +1195,55 @@
     .toast.visible { opacity: 1; }
     .toast.toast-error { border-color: var(--danger); color: var(--danger); }
 
+    /* --- File Browser --- */
+    #file-browser { display: none; flex: 1; min-height: 0; overflow: hidden; }
+    #file-browser.active { display: flex; }
+    #terminal-container.fb-hidden { display: none !important; }
+    .file-browser { display: flex; flex-direction: column; height: 100%; width: 100%; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: var(--text-sm); }
+    .fb-toolbar { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg-surface); }
+    .fb-toolbar-nav { display: flex; gap: 2px; }
+    .fb-toolbar-actions { display: flex; gap: var(--space-xs); align-items: center; margin-left: auto; }
+    .fb-btn { width: var(--height-btn-sm); height: var(--height-btn-sm); border: none; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .fb-btn:hover:not(:disabled) { color: var(--text); background: var(--accent); }
+    .fb-btn:disabled { opacity: var(--opacity-disabled); cursor: default; }
+    .fb-breadcrumb { display: flex; align-items: center; gap: 0; overflow-x: auto; flex: 1; min-width: 0; white-space: nowrap; padding: 0 var(--space-xs); }
+    .fb-crumb { cursor: pointer; padding: 2px 4px; border-radius: var(--radius-sm); color: var(--text-muted); }
+    .fb-crumb:hover { color: var(--text); background: var(--accent); }
+    .fb-crumb:last-child { color: var(--text); font-weight: var(--font-medium); }
+    .fb-crumb-sep { color: var(--text-dim); padding: 0 1px; }
+    /* Miller columns layout */
+    .fb-columns { flex: 1; display: flex; overflow-x: auto; overflow-y: hidden; outline: none; scroll-behavior: smooth; }
+    .fb-miller-col { min-width: 240px; max-width: 300px; flex: 0 0 auto; width: 260px; overflow-y: auto; border-right: 1px solid var(--border); }
+    .fb-miller-col:last-child { flex: 1; min-width: 240px; max-width: none; }
+    .fb-miller-row { display: flex; align-items: center; gap: var(--space-xs); padding: 5px var(--space-sm); cursor: default; user-select: none; border-bottom: 1px solid transparent; position: relative; }
+    .fb-miller-row:hover { background: var(--accent); }
+    .fb-miller-selected { background: var(--accent-active) !important; color: #fff !important; }
+    .fb-miller-selected .fb-miller-chevron { color: #fff; }
+    .fb-miller-icon { flex-shrink: 0; font-size: var(--text-base); }
+    .fb-miller-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
+    .fb-miller-chevron { flex-shrink: 0; color: var(--text-dim); font-size: 0.75rem; margin-left: auto; }
+    .fb-miller-loading { display: flex; align-items: center; justify-content: center; padding: var(--space-xl); }
+    .fb-miller-empty { padding: var(--space-lg); text-align: center; color: var(--text-dim); font-size: var(--text-sm); }
+    .fb-status { padding: var(--space-xs) var(--space-sm); border-top: 1px solid var(--border); font-size: var(--text-xs); color: var(--text-dim); flex-shrink: 0; background: var(--bg-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fb-error { color: var(--danger); }
+    .fb-loading-spinner { display: inline-block; width: 1rem; height: 1rem; border: 2px solid var(--border); border-top-color: var(--accent-active); border-radius: 50%; animation: fb-spin 0.6s linear infinite; }
+    @keyframes fb-spin { to { transform: rotate(360deg); } }
+    /* Drop target highlights */
+    .fb-drop-target { background: color-mix(in srgb, var(--accent-active) 25%, transparent) !important; }
+    .fb-drop-target-col { background: color-mix(in srgb, var(--accent-active) 8%, transparent); }
+    /* Context menu */
+    .fb-context-menu { position: fixed; z-index: var(--z-modal-panel); background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-xs) 0; min-width: 180px; box-shadow: var(--shadow-lg); }
+    .fb-context-item { padding: var(--space-xs) var(--space-md); cursor: pointer; display: flex; align-items: center; gap: var(--space-sm); font-size: var(--text-sm); color: var(--text); font-family: var(--font-mono); }
+    .fb-context-item:hover { background: var(--accent); }
+    .fb-context-item.danger { color: var(--danger); }
+    .fb-context-sep { height: 1px; background: var(--border); margin: var(--space-xs) 0; }
+    /* Inline rename */
+    .fb-rename-input { background: var(--bg-input); color: var(--text); border: 1px solid var(--accent-active); border-radius: var(--radius-sm); padding: 1px 4px; font-size: var(--text-sm); font-family: var(--font-mono); outline: none; width: 100%; }
+    /* Mobile: narrower columns */
+    @media (max-width: 767px) {
+      .fb-miller-col { min-width: 200px; width: 220px; }
+    }
+
 
   </style>
 </head>
@@ -1210,11 +1276,21 @@
           <div class="ssh-hint">Disconnect: <kbd>Enter</kbd> <kbd>~</kbd> <kbd>.</kbd></div>
         </div>
       </div>
+      <div id="sidebar-footer">
+        <button class="sidebar-icon-btn" id="sidebar-files-btn" aria-label="Open file browser" title="Files">
+          <i class="ph ph-folder-open"></i>
+        </button>
+        <button class="sidebar-icon-btn" id="sidebar-settings-btn" aria-label="Settings" title="Settings">
+          <i class="ph ph-gear"></i>
+        </button>
+        <span id="sidebar-p2p-dot" class="sidebar-p2p-dot" title="Connection status"></span>
+      </div>
     </aside>
     <div id="sidebar-backdrop"></div>
     <div id="main-stage">
       <nav id="shortcut-bar" role="toolbar" aria-label="Shortcut bar"></nav>
       <div id="terminal-container"></div>
+      <div id="file-browser"></div>
     </div>
   </div>
   <div id="search-bar" role="search" aria-label="Find in terminal">
@@ -1429,6 +1505,6 @@
     </div>
   </div>
 
-  <script type="module" src="/app.js?v=17"></script>
+  <script type="module" src="/app.js?v=27"></script>
 </body>
 </html>

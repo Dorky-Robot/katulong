@@ -34,6 +34,8 @@
     import { createInputSender } from "/lib/input-sender.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
     import { createWebSocketConnection } from "/lib/websocket-connection.js";
+    import { createFileBrowserStore, loadRoot } from "/lib/file-browser/file-browser-store.js";
+    import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -143,7 +145,18 @@
       p2pManager,
       getConnectionState: () => ({ attached: state.connection.attached })
     });
-    const updateP2PIndicator = () => p2pIndicator.update();
+    const updateP2PIndicator = () => {
+      p2pIndicator.update();
+      // Sync sidebar connection dot
+      const sidebarDot = document.getElementById("sidebar-p2p-dot");
+      if (sidebarDot) {
+        const attached = state.connection.attached;
+        const p2pConnected = state.p2p.connected;
+        sidebarDot.classList.toggle("connected", attached || p2pConnected);
+        sidebarDot.classList.toggle("disconnected", !attached && !p2pConnected);
+        sidebarDot.title = p2pConnected ? "Connected (direct)" : attached ? "Connected (relay)" : "Disconnected";
+      }
+    };
 
     document.title = state.session.name;
 
@@ -622,7 +635,6 @@
       onSessionClick: openSessionManager,
       onNewSessionClick: createNewSession,
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
-      onSettingsClick: () => modals.open('settings'),
       sendFn: rawSend,
       term,
       updateP2PIndicator,
@@ -652,6 +664,7 @@
 
     const dragDropManager = createDragDropManager({
       isImageFile,
+      shouldIgnore: (e) => fileBrowserEl.classList.contains("active"),
       onDrop: async (imageFiles, totalFiles) => {
         if (imageFiles.length === 0) {
           if (totalFiles > 0) showToast("Not an image file", true);
@@ -680,6 +693,51 @@
       onImage: (file) => uploadImageToTerminal(file)
     });
     pasteHandler.init();
+
+    // --- File Browser ---
+
+    const fileBrowserStore = createFileBrowserStore();
+    const fileBrowserEl = document.getElementById("file-browser");
+    let fileBrowserMounted = false;
+    let fileBrowserComponent = null;
+
+    function toggleFileBrowser() {
+      const isActive = fileBrowserEl.classList.contains("active");
+      if (isActive) {
+        // Switch back to terminal
+        fileBrowserEl.classList.remove("active");
+        termContainer.classList.remove("fb-hidden");
+        term.focus();
+        // Wait one frame for layout to recalculate before fitting
+        requestAnimationFrame(() => withPreservedScroll(term, () => fit.fit()));
+      } else {
+        // Switch to file browser
+        if (!fileBrowserMounted) {
+          fileBrowserComponent = createFileBrowserComponent(fileBrowserStore, {
+            onClose: () => toggleFileBrowser(),
+          });
+          fileBrowserComponent.mount(fileBrowserEl);
+          fileBrowserMounted = true;
+          // Load home directory as first column
+          loadRoot(fileBrowserStore, "");
+        }
+        termContainer.classList.add("fb-hidden");
+        fileBrowserEl.classList.add("active");
+        fileBrowserComponent.focus();
+      }
+      // Close mobile sidebar when toggling
+      if (isMobile()) setMobileSidebar(false);
+    }
+
+    const sidebarFilesBtn = document.getElementById("sidebar-files-btn");
+    if (sidebarFilesBtn) {
+      sidebarFilesBtn.addEventListener("click", toggleFileBrowser);
+    }
+
+    const sidebarSettingsBtn = document.getElementById("sidebar-settings-btn");
+    if (sidebarSettingsBtn) {
+      sidebarSettingsBtn.addEventListener("click", () => modals.open('settings'));
+    }
 
     // --- Network change monitoring ---
 

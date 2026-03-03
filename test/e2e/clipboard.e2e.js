@@ -17,7 +17,7 @@ test.describe('Clipboard - Copy Buttons', () => {
 
   test('should copy token value with feedback', async ({ page }) => {
     // Open Settings → Remote tab
-    await page.click('button[aria-label="Settings"]');
+    await page.click('#sidebar-settings-btn');
     await page.click('.settings-tab[data-tab="remote"]');
 
     // Create a token
@@ -57,7 +57,7 @@ test.describe('Clipboard - Copy Buttons', () => {
     await context.clearPermissions();
 
     // Try to copy a token
-    await page.click('button[aria-label="Settings"]');
+    await page.click('#sidebar-settings-btn');
     await page.click('.settings-tab[data-tab="remote"]');
     await page.click('#settings-create-token');
 
