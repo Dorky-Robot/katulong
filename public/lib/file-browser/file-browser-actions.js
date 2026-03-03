@@ -27,6 +27,20 @@ function findEntryColumn(store, entryName) {
   return null;
 }
 
+/**
+ * Upload a single file to a target directory.
+ */
+export async function uploadFile(targetPath, file) {
+  const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+  const headers = { "X-Target-Dir": targetPath, "X-Filename": file.name };
+  if (csrfMeta?.content) headers["X-CSRF-Token"] = csrfMeta.content;
+  const res = await fetch("/api/files/upload", { method: "POST", headers, body: file });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Upload failed" }));
+    throw new Error(err.error || `Upload failed (${res.status})`);
+  }
+}
+
 export function createFileBrowserActions(store) {
 
   function startRename(container, entryName) {
@@ -54,7 +68,10 @@ export function createFileBrowserActions(store) {
       input.select();
     }
 
+    let committed = false;
     async function commit() {
+      if (committed) return;
+      committed = true;
       const newName = input.value.trim();
       if (!newName || newName === originalText) {
         await refreshAll(store);
@@ -131,10 +148,7 @@ export function createFileBrowserActions(store) {
       const targetPath = getTargetPath(store);
       for (const file of input.files) {
         try {
-          const csrfMeta = document.querySelector('meta[name="csrf-token"]');
-          const headers = { "X-Target-Dir": targetPath, "X-Filename": file.name };
-          if (csrfMeta?.content) headers["X-CSRF-Token"] = csrfMeta.content;
-          await fetch("/api/files/upload", { method: "POST", headers, body: file });
+          await uploadFile(targetPath, file);
         } catch (err) {
           alert(`Upload failed for ${file.name}: ${err.message}`);
         }
@@ -142,6 +156,8 @@ export function createFileBrowserActions(store) {
       await refreshAll(store);
       input.remove();
     });
+    // Clean up if user cancels the file picker
+    input.addEventListener("cancel", () => input.remove());
 
     input.click();
   }

@@ -9,6 +9,7 @@
 
 import { api } from "/lib/api-client.js";
 import { refreshAll } from "/lib/file-browser/file-browser-store.js";
+import { uploadFile } from "/lib/file-browser/file-browser-actions.js";
 
 export function initColumnDnD(columnsEl, store) {
   let internalDrag = null; // { items: [path, ...] }
@@ -119,10 +120,7 @@ export function initColumnDnD(columnsEl, store) {
 
     for (const file of files) {
       try {
-        const csrfMeta = document.querySelector('meta[name="csrf-token"]');
-        const headers = { "X-Target-Dir": targetPath, "X-Filename": file.name };
-        if (csrfMeta?.content) headers["X-CSRF-Token"] = csrfMeta.content;
-        await fetch("/api/files/upload", { method: "POST", headers, body: file });
+        await uploadFile(targetPath, file);
       } catch (err) {
         alert(`Upload failed for ${file.name}: ${err.message}`);
       }

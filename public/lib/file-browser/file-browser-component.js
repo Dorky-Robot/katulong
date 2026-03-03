@@ -7,7 +7,7 @@
  */
 
 import { selectItem, goBack, refreshAll, getDeepestPath, loadRoot } from "/lib/file-browser/file-browser-store.js";
-import { getFileIcon, formatSize, formatDate } from "/lib/file-browser/file-browser-types.js";
+import { getFileIcon } from "/lib/file-browser/file-browser-types.js";
 import { createContextMenu } from "/lib/file-browser/file-browser-context-menu.js";
 import { createFileBrowserActions } from "/lib/file-browser/file-browser-actions.js";
 import { initColumnDnD } from "/lib/file-browser/file-browser-dnd.js";
@@ -299,7 +299,7 @@ export function createFileBrowserComponent(store, options = {}) {
     const html = col.entries.map(entry => {
       const selected = col.selected === entry.name;
       const isDir = entry.type === "directory";
-      return `<div class="fb-miller-row${selected ? " fb-miller-selected" : ""}" data-name="${escapeAttr(entry.name)}" data-type="${entry.type}" data-col="${colIndex}">
+      return `<div class="fb-miller-row${selected ? " fb-miller-selected" : ""}" data-name="${escapeAttr(entry.name)}" data-type="${entry.type}" data-col="${colIndex}" draggable="true">
         <span class="fb-miller-icon">${getFileIcon(entry)}</span>
         <span class="fb-miller-name">${escapeHtml(entry.name)}</span>
         ${isDir ? '<span class="fb-miller-chevron"><i class="ph ph-caret-right"></i></span>' : ''}

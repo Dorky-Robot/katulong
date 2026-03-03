@@ -635,7 +635,6 @@
       onSessionClick: openSessionManager,
       onNewSessionClick: createNewSession,
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
-      onFilesClick: () => toggleFileBrowser(),
       sendFn: rawSend,
       term,
       updateP2PIndicator,

@@ -18,7 +18,7 @@ export function createContextMenu(options = {}) {
     e.preventDefault();
     close();
 
-    const row = e.target.closest(".fb-row");
+    const row = e.target.closest(".fb-miller-row");
     const entryName = row ? row.dataset.name : null;
     const entryType = row ? row.dataset.type : null;
     const selection = state.selection;

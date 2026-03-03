@@ -20,7 +20,6 @@ export function createShortcutBar(options = {}) {
     onSessionClick,
     onNewSessionClick,
     onShortcutsClick,
-    onFilesClick,
     sendFn,
     term,
     updateP2PIndicator,

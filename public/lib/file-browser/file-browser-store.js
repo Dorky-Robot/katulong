@@ -124,23 +124,6 @@ export function goBack(store) {
 }
 
 /**
- * Refresh a specific column.
- */
-export async function refreshColumn(store, columnIndex) {
-  const state = store.getState();
-  const col = state.columns[columnIndex];
-  if (!col) return;
-
-  store.dispatch({ type: "SET_COLUMN_LOADING", index: columnIndex, path: col.path });
-  try {
-    const data = await api.get(`/api/files?path=${encodeURIComponent(col.path)}`);
-    store.dispatch({ type: "SET_COLUMN", index: columnIndex, path: data.path, entries: sortEntries(data.entries) });
-  } catch (err) {
-    store.dispatch({ type: "SET_COLUMN_ERROR", index: columnIndex, error: err.message });
-  }
-}
-
-/**
  * Refresh all columns (re-fetch each in sequence).
  */
 export async function refreshAll(store) {
@@ -169,19 +152,3 @@ export function getDeepestPath(state) {
   return columns[columns.length - 1].path;
 }
 
-/**
- * Get the path of the currently "active" column (the deepest one with a selection, or the last).
- */
-export function getActivePath(state) {
-  const { columns } = state;
-  for (let i = columns.length - 1; i >= 0; i--) {
-    if (columns[i].selected) {
-      const entry = columns[i].entries.find(e => e.name === columns[i].selected);
-      if (entry?.type === "file") {
-        return columns[i].path;
-      }
-      return columns[i].path + "/" + columns[i].selected;
-    }
-  }
-  return columns.length > 0 ? columns[columns.length - 1].path : "/";
-}
