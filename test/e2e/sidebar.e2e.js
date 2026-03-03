@@ -188,29 +188,31 @@ test.describe("Sidebar", () => {
     });
 
     test("session cards show terminal preview text", async ({ page }) => {
+      const marker = `PREVIEW_MARKER_${Date.now()}`;
+
       await page.goto("/");
       await waitForAppReady(page);
 
-      // Type something in the terminal to generate buffer content
-      await page.locator(".xterm-helper-textarea").focus();
-      await page.keyboard.type("echo SIDEBAR_PREVIEW_TEST");
-      await page.keyboard.press("Enter");
-      await page.waitForFunction(
-        () => document.querySelector(".xterm-screen")?.textContent?.includes("SIDEBAR_PREVIEW_TEST"),
-        { timeout: 5000 }
-      );
-
-      // Expand sidebar — should fetch fresh data including previews
+      // Expand sidebar first so preview divs exist
       await page.locator("#sidebar-toggle").click();
       await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
 
-      // Wait for card with preview content
-      const preview = page.locator(".session-card.active .session-card-preview");
-      await expect(preview).toBeVisible({ timeout: 5000 });
+      // Type a unique marker in the terminal
+      await page.locator(".xterm-helper-textarea").focus();
+      await page.keyboard.type(`echo ${marker}`);
+      await page.keyboard.press("Enter");
 
-      // Preview should contain some text (buffer content)
-      const text = await preview.textContent();
-      expect(text.length).toBeGreaterThan(0);
+      // Wait for the marker to appear in the xterm screen
+      await page.waitForFunction(
+        (m) => document.querySelector(".xterm-screen")?.textContent?.includes(m),
+        marker,
+        { timeout: 5000 }
+      );
+
+      // Poll the session card preview until it contains the marker
+      // (updateSnapshot fires on term.onRender every 3s, then must push to DOM)
+      const preview = page.locator(".session-card.active .session-card-preview");
+      await expect(preview).toContainText(marker, { timeout: 10000 });
     });
 
     test("session card shows session name", async ({ page }) => {

@@ -12,6 +12,37 @@ import { api } from '/lib/api-client.js';
 /**
  * Create session list component
  */
+// Shared snapshot cache: sessionName → plain text from xterm buffer
+const snapshotCache = new Map();
+
+/**
+ * Capture the terminal's text content from xterm's buffer API.
+ * This reads the already-parsed text (no ANSI codes) directly from xterm.js.
+ */
+export function updateSnapshot(sessionName, term) {
+  if (!term?.buffer?.active) return;
+  try {
+    const buf = term.buffer.active;
+    const lines = [];
+    // Read the last N visible lines from the active buffer
+    const startLine = Math.max(0, buf.baseY);
+    const endLine = startLine + term.rows;
+    for (let i = startLine; i < endLine; i++) {
+      const line = buf.getLine(i);
+      if (line) lines.push(line.translateToString(true));
+    }
+    // Trim trailing empty lines
+    while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+    const text = lines.join("\n");
+    if (text.trim()) {
+      snapshotCache.set(sessionName, text);
+      // Push directly into any visible preview div for this session
+      document.querySelectorAll(`.session-card[title="${sessionName}"] .session-card-preview`)
+        .forEach(el => { el.textContent = text; });
+    }
+  } catch { /* buffer not ready */ }
+}
+
 export function createSessionListComponent(store, options = {}) {
   const { onSessionSwitch } = options;
   const render = (state) => {
@@ -51,10 +82,13 @@ export function createSessionListComponent(store, options = {}) {
         });
       }
 
-      // Terminal preview area
+      // Terminal preview — cached text from xterm buffer
       const preview = document.createElement("div");
       preview.className = "session-card-preview";
-      preview.textContent = s.preview || "";
+      const cached = snapshotCache.get(s.name);
+      if (cached) {
+        preview.textContent = cached;
+      }
       card.appendChild(preview);
 
       // Footer with editable name
