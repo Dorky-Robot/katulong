@@ -10,7 +10,7 @@
       createTokenStore, setNewToken, invalidateTokens, removeToken, loadTokens as reloadTokens,
       createShortcutsStore, loadShortcuts as reloadShortcuts,
     } from "/lib/stores.js";
-    import { createSessionListComponent } from "/lib/session-list-component.js";
+    import { createSessionListComponent, updateSnapshot } from "/lib/session-list-component.js";
     import { createSessionManager } from "/lib/session-manager.js";
     import { api } from "/lib/api-client.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
@@ -761,6 +761,30 @@
       renderBar
     });
     wsConnection.initVisibilityReconnect();
+
+    // --- Terminal preview for session cards ---
+    // Read xterm's text buffer after renders (throttled) for sidebar previews.
+    // Uses a trailing-edge timer so the last render in a burst is always captured,
+    // even if the terminal goes idle before the throttle window expires.
+    let lastSnapshotTime = 0;
+    let snapshotTimer = null;
+    term.onRender(() => {
+      const now = Date.now();
+      const elapsed = now - lastSnapshotTime;
+      if (elapsed < 3000) {
+        if (!snapshotTimer) {
+          snapshotTimer = setTimeout(() => {
+            snapshotTimer = null;
+            lastSnapshotTime = Date.now();
+            updateSnapshot(state.session.name, term);
+          }, 3000 - elapsed);
+        }
+        return;
+      }
+      if (snapshotTimer) { clearTimeout(snapshotTimer); snapshotTimer = null; }
+      lastSnapshotTime = now;
+      updateSnapshot(state.session.name, term);
+    });
 
     // --- Boot ---
 
