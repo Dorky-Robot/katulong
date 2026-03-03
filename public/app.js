@@ -655,6 +655,7 @@
 
     const dragDropManager = createDragDropManager({
       isImageFile,
+      shouldIgnore: (e) => fileBrowserEl.classList.contains("active"),
       onDrop: async (imageFiles, totalFiles) => {
         if (imageFiles.length === 0) {
           if (totalFiles > 0) showToast("Not an image file", true);
@@ -698,7 +699,8 @@
         fileBrowserEl.classList.remove("active");
         termContainer.classList.remove("fb-hidden");
         term.focus();
-        withPreservedScroll(term, () => fit.fit());
+        // Wait one frame for layout to recalculate before fitting
+        requestAnimationFrame(() => withPreservedScroll(term, () => fit.fit()));
       } else {
         // Switch to file browser
         if (!fileBrowserMounted) {

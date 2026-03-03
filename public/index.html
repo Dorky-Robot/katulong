@@ -1211,6 +1211,9 @@
     .fb-error { color: var(--danger); }
     .fb-loading-spinner { display: inline-block; width: 1rem; height: 1rem; border: 2px solid var(--border); border-top-color: var(--accent-active); border-radius: 50%; animation: fb-spin 0.6s linear infinite; }
     @keyframes fb-spin { to { transform: rotate(360deg); } }
+    /* Drop target highlights */
+    .fb-drop-target { background: color-mix(in srgb, var(--accent-active) 25%, transparent) !important; }
+    .fb-drop-target-col { background: color-mix(in srgb, var(--accent-active) 8%, transparent); }
     /* Context menu */
     .fb-context-menu { position: fixed; z-index: var(--z-modal-panel); background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-xs) 0; min-width: 180px; box-shadow: var(--shadow-lg); }
     .fb-context-item { padding: var(--space-xs) var(--space-md); cursor: pointer; display: flex; align-items: center; gap: var(--space-sm); font-size: var(--text-sm); color: var(--text); font-family: var(--font-mono); }
@@ -1480,6 +1483,6 @@
     </div>
   </div>
 
-  <script type="module" src="/app.js?v=19"></script>
+  <script type="module" src="/app.js?v=24"></script>
 </body>
 </html>

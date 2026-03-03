@@ -39,7 +39,7 @@ const dragDropReducer = (state, action) => {
  * Create drag-drop manager
  */
 export function createDragDropManager(options = {}) {
-  const { onDrop, isImageFile } = options;
+  const { onDrop, isImageFile, shouldIgnore } = options;
   let dragState = { dragCounter: 0, isDragging: false };
   const dropOverlay = document.getElementById("drop-overlay");
 
@@ -61,6 +61,7 @@ export function createDragDropManager(options = {}) {
     init() {
       document.addEventListener("dragenter", (e) => {
         e.preventDefault();
+        if (shouldIgnore && shouldIgnore(e)) return;
         dispatch({ type: DRAG_DROP_ACTIONS.DRAG_ENTER });
       });
 
@@ -70,12 +71,15 @@ export function createDragDropManager(options = {}) {
 
       document.addEventListener("dragleave", (e) => {
         e.preventDefault();
+        if (shouldIgnore && shouldIgnore(e)) return;
         dispatch({ type: DRAG_DROP_ACTIONS.DRAG_LEAVE });
       });
 
       document.addEventListener("drop", (e) => {
         e.preventDefault();
         dispatch({ type: DRAG_DROP_ACTIONS.DROP });
+
+        if (shouldIgnore && shouldIgnore(e)) return;
 
         if (onDrop) {
           const files = [...(e.dataTransfer?.files || [])];

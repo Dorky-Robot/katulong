@@ -6,10 +6,11 @@
  * Double-click on a file downloads it.
  */
 
-import { selectItem, goBack, refreshAll, getDeepestPath, sortEntries, loadRoot } from "/lib/file-browser/file-browser-store.js";
+import { selectItem, goBack, refreshAll, getDeepestPath, loadRoot } from "/lib/file-browser/file-browser-store.js";
 import { getFileIcon, formatSize, formatDate } from "/lib/file-browser/file-browser-types.js";
 import { createContextMenu } from "/lib/file-browser/file-browser-context-menu.js";
 import { createFileBrowserActions } from "/lib/file-browser/file-browser-actions.js";
+import { initColumnDnD } from "/lib/file-browser/file-browser-dnd.js";
 
 export function createFileBrowserComponent(store, options = {}) {
   const { onClose } = options;
@@ -113,32 +114,40 @@ export function createFileBrowserComponent(store, options = {}) {
     if (closeBtn && onClose) closeBtn.addEventListener("click", onClose);
     refreshBtn.addEventListener("click", () => refreshAll(store));
 
+    // Event delegation for all column interactions (click, dblclick, contextmenu)
+    columnsEl.addEventListener("click", (e) => {
+      const row = e.target.closest(".fb-miller-row");
+      if (!row) return;
+      const colIndex = parseInt(row.dataset.col, 10);
+      selectItem(store, colIndex, row.dataset.name);
+    });
+
+    columnsEl.addEventListener("dblclick", (e) => {
+      const row = e.target.closest(".fb-miller-row");
+      if (!row || row.dataset.type !== "file") return;
+      const colIndex = parseInt(row.dataset.col, 10);
+      const state = store.getState();
+      const col = state.columns[colIndex];
+      if (!col) return;
+      const filePath = col.path + "/" + row.dataset.name;
+      window.open(`/api/files/download?path=${encodeURIComponent(filePath)}`, "_blank");
+    });
+
+    columnsEl.addEventListener("contextmenu", (e) => {
+      const row = e.target.closest(".fb-miller-row");
+      const entryName = row?.dataset.name || null;
+      const menuState = {
+        selection: entryName ? [entryName] : [],
+        clipboard: store.getState().clipboard,
+      };
+      contextMenu.show(e, menuState);
+    });
+
     // Keyboard navigation on the columns container
     columnsEl.addEventListener("keydown", (e) => handleKeyDown(e));
 
-    // External drop (upload files from OS)
-    columnsEl.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
-    });
-    columnsEl.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      const files = e.dataTransfer.files;
-      if (files.length === 0) return;
-      const state = store.getState();
-      const targetPath = getDeepestPath(state);
-      for (const file of files) {
-        try {
-          const csrfMeta = document.querySelector('meta[name="csrf-token"]');
-          const headers = { "X-Target-Dir": targetPath, "X-Filename": file.name };
-          if (csrfMeta?.content) headers["X-CSRF-Token"] = csrfMeta.content;
-          await fetch("/api/files/upload", { method: "POST", headers, body: file });
-        } catch (err) {
-          alert(`Upload failed for ${file.name}: ${err.message}`);
-        }
-      }
-      await refreshAll(store);
-    });
+    // All drag-and-drop (external upload + internal move/copy)
+    initColumnDnD(columnsEl, store);
 
     unsubscribe = store.subscribe(() => render());
     render();
@@ -240,51 +249,37 @@ export function createFileBrowserComponent(store, options = {}) {
     status.textContent = `${deepest}  —  ${count} item${count !== 1 ? "s" : ""}`;
   }
 
+  let prevColumnCount = 0;
+
   function renderColumns(state) {
     const { columns } = state;
 
-    // Diff: only re-render columns that changed
-    const existingCols = columnsEl.querySelectorAll(".fb-miller-col");
-
-    // Remove extra columns
-    while (existingCols.length > columns.length) {
-      columnsEl.removeChild(columnsEl.lastElementChild);
-    }
-
-    for (let i = 0; i < columns.length; i++) {
-      const col = columns[i];
-      let colEl = columnsEl.children[i];
-
-      if (!colEl || colEl.dataset.path !== col.path) {
-        // Create or replace column
-        if (colEl) colEl.remove();
-        colEl = document.createElement("div");
-        colEl.className = "fb-miller-col";
-        colEl.dataset.path = col.path;
-        colEl.dataset.index = i;
-        if (i < columns.length) {
-          columnsEl.insertBefore(colEl, columnsEl.children[i] || null);
-        } else {
-          columnsEl.appendChild(colEl);
-        }
-      }
-
-      // Render column content
-      renderSingleColumn(colEl, col, i);
-    }
-
-    // Remove any trailing extra
+    // Ensure correct number of column elements
     while (columnsEl.children.length > columns.length) {
       columnsEl.removeChild(columnsEl.lastElementChild);
     }
+    while (columnsEl.children.length < columns.length) {
+      const colEl = document.createElement("div");
+      colEl.className = "fb-miller-col";
+      columnsEl.appendChild(colEl);
+    }
 
-    // Auto-scroll to the rightmost column
-    if (columns.length > 0) {
+    // Update each column
+    for (let i = 0; i < columns.length; i++) {
+      const colEl = columnsEl.children[i];
+      colEl.dataset.path = columns[i].path;
+      colEl.dataset.index = i;
+      renderSingleColumn(colEl, columns[i], i);
+    }
+
+    // Auto-scroll to the rightmost column when a new column was added
+    if (columns.length > prevColumnCount && columns.length > 0) {
       const lastColEl = columnsEl.lastElementChild;
       if (lastColEl) {
         lastColEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "end" });
       }
     }
+    prevColumnCount = columns.length;
   }
 
   function renderSingleColumn(colEl, col, colIndex) {
@@ -312,36 +307,6 @@ export function createFileBrowserComponent(store, options = {}) {
     }).join("");
 
     colEl.innerHTML = html;
-
-    // Event delegation for clicks
-    colEl.addEventListener("click", (e) => {
-      const row = e.target.closest(".fb-miller-row");
-      if (!row) return;
-      const name = row.dataset.name;
-      selectItem(store, colIndex, name);
-    });
-
-    // Double-click for file download
-    colEl.addEventListener("dblclick", (e) => {
-      const row = e.target.closest(".fb-miller-row");
-      if (!row) return;
-      if (row.dataset.type === "file") {
-        const filePath = col.path + "/" + row.dataset.name;
-        window.open(`/api/files/download?path=${encodeURIComponent(filePath)}`, "_blank");
-      }
-    });
-
-    // Context menu
-    colEl.addEventListener("contextmenu", (e) => {
-      const row = e.target.closest(".fb-miller-row");
-      const entryName = row?.dataset.name || null;
-      // Build a pseudo state for context menu
-      const menuState = {
-        selection: entryName ? [entryName] : [],
-        clipboard: store.getState().clipboard,
-      };
-      contextMenu.show(e, menuState);
-    });
 
     // Scroll selected row into view
     if (col.selected) {
