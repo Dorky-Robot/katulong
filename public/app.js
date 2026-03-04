@@ -36,6 +36,7 @@
     import { createWebSocketConnection } from "/lib/websocket-connection.js";
     import { createFileBrowserStore, loadRoot } from "/lib/file-browser/file-browser-store.js";
     import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
+    import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -705,37 +706,77 @@
     let fileBrowserMounted = false;
     let fileBrowserComponent = null;
 
+    function closePortForward() {
+      portForwardEl.classList.remove("active");
+      termContainer.classList.remove("pf-hidden");
+    }
+
+    function closeFileBrowser() {
+      fileBrowserEl.classList.remove("active");
+      termContainer.classList.remove("fb-hidden");
+    }
+
     function toggleFileBrowser() {
       const isActive = fileBrowserEl.classList.contains("active");
       if (isActive) {
-        // Switch back to terminal
-        fileBrowserEl.classList.remove("active");
-        termContainer.classList.remove("fb-hidden");
+        closeFileBrowser();
         term.focus();
-        // Wait one frame for layout to recalculate before fitting
         requestAnimationFrame(() => withPreservedScroll(term, () => fit.fit()));
       } else {
-        // Switch to file browser
+        // Close port forward if open (mutual exclusion)
+        if (portForwardEl.classList.contains("active")) closePortForward();
         if (!fileBrowserMounted) {
           fileBrowserComponent = createFileBrowserComponent(fileBrowserStore, {
             onClose: () => toggleFileBrowser(),
           });
           fileBrowserComponent.mount(fileBrowserEl);
           fileBrowserMounted = true;
-          // Load home directory as first column
           loadRoot(fileBrowserStore, "");
         }
         termContainer.classList.add("fb-hidden");
         fileBrowserEl.classList.add("active");
         fileBrowserComponent.focus();
       }
-      // Close mobile sidebar when toggling
+      if (isMobile()) setMobileSidebar(false);
+    }
+
+    // --- Port Forward ---
+
+    const portForwardEl = document.getElementById("port-forward");
+    let portForwardMounted = false;
+    let portForwardComponent = null;
+
+    function togglePortForward() {
+      const isActive = portForwardEl.classList.contains("active");
+      if (isActive) {
+        closePortForward();
+        term.focus();
+        requestAnimationFrame(() => withPreservedScroll(term, () => fit.fit()));
+      } else {
+        // Close file browser if open (mutual exclusion)
+        if (fileBrowserEl.classList.contains("active")) closeFileBrowser();
+        if (!portForwardMounted) {
+          portForwardComponent = createPortForwardComponent({
+            onClose: () => togglePortForward(),
+          });
+          portForwardComponent.mount(portForwardEl);
+          portForwardMounted = true;
+        }
+        termContainer.classList.add("pf-hidden");
+        portForwardEl.classList.add("active");
+        portForwardComponent.focus();
+      }
       if (isMobile()) setMobileSidebar(false);
     }
 
     const sidebarFilesBtn = document.getElementById("sidebar-files-btn");
     if (sidebarFilesBtn) {
       sidebarFilesBtn.addEventListener("click", toggleFileBrowser);
+    }
+
+    const sidebarPortfwdBtn = document.getElementById("sidebar-portfwd-btn");
+    if (sidebarPortfwdBtn) {
+      sidebarPortfwdBtn.addEventListener("click", togglePortForward);
     }
 
     const sidebarSettingsBtn = document.getElementById("sidebar-settings-btn");
