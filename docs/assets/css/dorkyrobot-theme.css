@@ -1,6 +1,9 @@
 /*
  * Dorky Robot dark theme for MkDocs Material
  * Matches dorkyrobot.com design system
+ *
+ * Canonical source: dorky_robot/docs-shared/dorkyrobot-theme.css
+ * Sync to projects: ../scripts/sync-docs.sh
  */
 
 [data-md-color-scheme="slate"] {
@@ -145,18 +148,12 @@ html {
     display: block;
     position: sticky;
     top: 0;
-    width: 15rem;
-    overflow: visible;
-  }
-  .md-sidebar--primary .md-sidebar__inner {
-    width: 15rem;
-    padding: 1.2rem 0.6rem;
   }
   .md-header__button[for="__drawer"] {
     display: none;
   }
   .md-grid {
     display: grid;
-    grid-template-columns: 15rem minmax(0, 1fr);
+    grid-template-columns: 12.1rem minmax(0, 1fr);
   }
 }

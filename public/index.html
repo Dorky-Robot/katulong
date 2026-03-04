@@ -189,10 +189,10 @@
 
     /* --- Main stage (terminal column) --- */
     #main-stage {
-      flex: 1; min-width: 0; display: flex; flex-direction: column;
+      flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
     }
     /* --- Terminal --- */
-    #terminal-container { flex: 1; min-width: 0; position: relative; z-index: 1; }
+    #terminal-container { flex: 1; min-width: 0; position: relative; z-index: 1; overflow: hidden; }
     #terminal-container .xterm { height: 100%; }
     #terminal-container .xterm-viewport {
       -webkit-overflow-scrolling: touch;
@@ -786,6 +786,20 @@
     .instance-icon-btn i {
       font-size: 1.25rem;
     }
+    /* Toggle switch */
+    .toggle-switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; cursor: pointer; inset: 0;
+      background: var(--border); border-radius: 11px; transition: background 200ms ease;
+    }
+    .toggle-slider::before {
+      content: ""; position: absolute; left: 3px; top: 3px;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--text); transition: transform 200ms ease;
+    }
+    .toggle-switch input:checked + .toggle-slider { background: var(--accent); }
+    .toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
     .icon-picker-overlay {
       position: fixed; top: 0; left: 0; right: 0; bottom: 0;
       background: rgba(0, 0, 0, 0.5); z-index: var(--z-modal-nested);
@@ -1244,6 +1258,25 @@
       .fb-miller-col { min-width: 200px; width: 220px; }
     }
 
+    /* --- Port Forward --- */
+    #port-forward { display: none; flex: 1; min-height: 0; overflow: hidden; }
+    #port-forward.active { display: flex; }
+    #terminal-container.pf-hidden { display: none !important; }
+    .port-forward { display: flex; flex-direction: column; height: 100%; width: 100%; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: var(--text-sm); }
+    .pf-toolbar { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg-surface); }
+    .pf-toolbar-form { display: flex; align-items: center; gap: var(--space-xs); }
+    .pf-toolbar-actions { display: flex; gap: var(--space-xs); align-items: center; margin-left: auto; }
+    .pf-label { font-size: var(--text-sm); color: var(--text-muted); flex-shrink: 0; }
+    .pf-port-input { width: 5rem; padding: 3px 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text); font-size: var(--text-sm); font-family: var(--font-mono); outline: none; }
+    .pf-port-input:focus { border-color: var(--accent-active); }
+    .pf-btn { width: var(--height-btn-sm); height: var(--height-btn-sm); border: none; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .pf-btn:hover:not(:disabled) { color: var(--text); background: var(--accent); }
+    .pf-btn:disabled { opacity: var(--opacity-disabled); cursor: default; }
+    .pf-go-btn { width: auto; padding: 0 var(--space-sm); font-size: var(--text-sm); font-family: var(--font-mono); }
+    .pf-content { flex: 1; min-height: 0; overflow: hidden; }
+    .pf-iframe { width: 100%; height: 100%; border: none; }
+    .pf-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-dim); gap: var(--space-sm); }
+    .pf-placeholder p { margin: 0; font-size: var(--text-sm); }
 
   </style>
 </head>
@@ -1280,6 +1313,9 @@
         <button class="sidebar-icon-btn" id="sidebar-files-btn" aria-label="Open file browser" title="Files">
           <i class="ph ph-folder-open"></i>
         </button>
+        <button class="sidebar-icon-btn" id="sidebar-portfwd-btn" aria-label="Port forward" title="Port Forward">
+          <i class="ph ph-plug"></i>
+        </button>
         <button class="sidebar-icon-btn" id="sidebar-settings-btn" aria-label="Settings" title="Settings">
           <i class="ph ph-gear"></i>
         </button>
@@ -1291,6 +1327,7 @@
       <nav id="shortcut-bar" role="toolbar" aria-label="Shortcut bar"></nav>
       <div id="terminal-container"></div>
       <div id="file-browser"></div>
+      <div id="port-forward"></div>
     </div>
   </div>
   <div id="search-bar" role="search" aria-label="Find in terminal">
@@ -1444,7 +1481,16 @@
 
           <!-- Remote tab content -->
           <div class="settings-tab-content" id="settings-tab-remote">
-            <p class="tab-description">Manage setup tokens for pairing devices remotely (e.g., via ngrok).</p>
+            <div class="settings-row">
+              <span class="settings-label">Port Proxy</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="port-proxy-toggle">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <p class="tab-description">Preview localhost services through Katulong.</p>
+
+            <p class="tab-description" style="margin-top: var(--space-lg);">Manage setup tokens for pairing devices remotely (e.g., via ngrok).</p>
 
             <!-- Inline token creation form (GitHub-style) -->
             <div class="token-create-form" id="token-create-form" style="display: none;">

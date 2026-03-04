@@ -194,10 +194,10 @@ describe("setSecurityHeaders", () => {
     };
   }
 
-  it("sets X-Frame-Options to DENY", () => {
+  it("sets X-Frame-Options to SAMEORIGIN", () => {
     const res = mockRes();
     setSecurityHeaders(res);
-    assert.equal(res.headers["x-frame-options"], "DENY");
+    assert.equal(res.headers["x-frame-options"], "SAMEORIGIN");
   });
 
   it("sets X-Content-Type-Options to nosniff", () => {

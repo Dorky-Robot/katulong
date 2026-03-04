@@ -23,6 +23,7 @@ import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createDaemonClient } from "./lib/daemon-client.js";
 import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/routes.js";
 import { createFileBrowserRoutes } from "./lib/file-browser.js";
+import { createPortProxyRoutes, proxyWebSocket } from "./lib/port-proxy.js";
 import { createWebSocketManager } from "./lib/ws-manager.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 
@@ -152,6 +153,7 @@ const routes = [
   ...createAuthRoutes(routeCtx),
   ...createAppRoutes(routeCtx),
   ...createFileBrowserRoutes(routeCtx),
+  ...createPortProxyRoutes(routeCtx),
 ];
 
 function matchRoute(method, pathname) {
@@ -276,6 +278,18 @@ function handleUpgrade(req, socket, head) {
   }
 
   log.info("WebSocket authenticated", { ip: req.socket.remoteAddress, credentialId });
+
+  // Port proxy WebSocket — intercept before terminal WS handling
+  const { pathname: wsPathname } = new URL(req.url, `http://${req.headers.host}`);
+  if (wsPathname.startsWith("/_proxy/")) {
+    if (configManager.getPortProxyEnabled() === false) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    proxyWebSocket(req, socket, head, wsPathname);
+    return;
+  }
 
   if (!isLocalRequest(req)) {
     const origin = req.headers.origin;
