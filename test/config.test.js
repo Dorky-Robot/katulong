@@ -785,4 +785,52 @@ describe("ConfigManager", () => {
       assert.ok(ran, "Lock should recover after error");
     });
   });
+
+  describe("portProxyEnabled", () => {
+    beforeEach(() => {
+      configManager.initialize();
+    });
+
+    it("should default to true", () => {
+      assert.strictEqual(configManager.getPortProxyEnabled(), true);
+    });
+
+    it("should accept true", async () => {
+      await configManager.setPortProxyEnabled(true);
+      assert.strictEqual(configManager.getPortProxyEnabled(), true);
+    });
+
+    it("should accept false", async () => {
+      await configManager.setPortProxyEnabled(false);
+      assert.strictEqual(configManager.getPortProxyEnabled(), false);
+    });
+
+    it("should reject non-boolean values", async () => {
+      await assert.rejects(
+        async () => configManager.setPortProxyEnabled("true"),
+        /must be a boolean/
+      );
+      await assert.rejects(
+        async () => configManager.setPortProxyEnabled(1),
+        /must be a boolean/
+      );
+      await assert.rejects(
+        async () => configManager.setPortProxyEnabled(null),
+        /must be a boolean/
+      );
+    });
+
+    it("should persist to file", async () => {
+      await configManager.setPortProxyEnabled(false);
+      const content = JSON.parse(readFileSync(join(testDir, "config.json"), "utf-8"));
+      assert.strictEqual(content.portProxyEnabled, false);
+    });
+
+    it("should persist across config reload", async () => {
+      await configManager.setPortProxyEnabled(false);
+      const configManager2 = new ConfigManager(testDir);
+      configManager2.initialize();
+      assert.strictEqual(configManager2.getPortProxyEnabled(), false);
+    });
+  });
 });

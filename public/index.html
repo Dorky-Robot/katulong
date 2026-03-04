@@ -786,6 +786,20 @@
     .instance-icon-btn i {
       font-size: 1.25rem;
     }
+    /* Toggle switch */
+    .toggle-switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; cursor: pointer; inset: 0;
+      background: var(--border); border-radius: 11px; transition: background 200ms ease;
+    }
+    .toggle-slider::before {
+      content: ""; position: absolute; left: 3px; top: 3px;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--text); transition: transform 200ms ease;
+    }
+    .toggle-switch input:checked + .toggle-slider { background: var(--accent); }
+    .toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
     .icon-picker-overlay {
       position: fixed; top: 0; left: 0; right: 0; bottom: 0;
       background: rgba(0, 0, 0, 0.5); z-index: var(--z-modal-nested);
@@ -1467,7 +1481,16 @@
 
           <!-- Remote tab content -->
           <div class="settings-tab-content" id="settings-tab-remote">
-            <p class="tab-description">Manage setup tokens for pairing devices remotely (e.g., via ngrok).</p>
+            <div class="settings-row">
+              <span class="settings-label">Port Proxy</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="port-proxy-toggle">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <p class="tab-description">Preview localhost services through Katulong.</p>
+
+            <p class="tab-description" style="margin-top: var(--space-lg);">Manage setup tokens for pairing devices remotely (e.g., via ngrok).</p>
 
             <!-- Inline token creation form (GitHub-style) -->
             <div class="token-create-form" id="token-create-form" style="display: none;">

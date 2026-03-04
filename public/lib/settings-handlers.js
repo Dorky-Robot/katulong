@@ -57,7 +57,8 @@ export function createSettingsHandlers(options = {}) {
     onLogout,
     onInstanceNameChange,
     onInstanceIconChange,
-    onToolbarColorChange
+    onToolbarColorChange,
+    onPortProxyChange
   } = options;
 
   /**
@@ -262,6 +263,29 @@ export function createSettingsHandlers(options = {}) {
   }
 
   /**
+   * Initialize port proxy toggle
+   */
+  function initPortProxyToggle(config) {
+    const toggle = document.getElementById("port-proxy-toggle");
+    if (!toggle) return;
+
+    const enabled = config ? config.portProxyEnabled !== false : true;
+    toggle.checked = enabled;
+
+    if (onPortProxyChange) onPortProxyChange(enabled);
+
+    toggle.addEventListener("change", async () => {
+      try {
+        await api.put("/api/config/port-proxy-enabled", { portProxyEnabled: toggle.checked });
+        if (onPortProxyChange) onPortProxyChange(toggle.checked);
+      } catch (error) {
+        console.error("Failed to save port proxy setting:", error);
+        toggle.checked = !toggle.checked;
+      }
+    });
+  }
+
+  /**
    * Initialize logout button
    */
   function initLogout() {
@@ -316,6 +340,7 @@ export function createSettingsHandlers(options = {}) {
     initInstanceName(config);
     initInstanceIcon(config);
     initToolbarColor(config);
+    initPortProxyToggle(config);
     initThemeToggle();
     initLogout();
     initVersion();

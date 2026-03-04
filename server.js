@@ -282,6 +282,11 @@ function handleUpgrade(req, socket, head) {
   // Port proxy WebSocket — intercept before terminal WS handling
   const { pathname: wsPathname } = new URL(req.url, `http://${req.headers.host}`);
   if (wsPathname.startsWith("/_proxy/")) {
+    if (configManager.getPortProxyEnabled() === false) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
     proxyWebSocket(req, socket, head, wsPathname);
     return;
   }

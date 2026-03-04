@@ -34,9 +34,6 @@ export function createPortForwardComponent(options = {}) {
           <button class="pf-btn pf-open-btn" aria-label="Open in new tab" disabled>
             <i class="ph ph-arrow-square-out"></i>
           </button>
-          <button class="pf-btn pf-close-btn" aria-label="Close port forward">
-            <i class="ph ph-x"></i>
-          </button>
         </div>
       </div>
       <div class="pf-content">

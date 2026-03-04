@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { validatePort, stripKatulongCookies, rewriteProxiedHtml } from "../lib/port-proxy.js";
+import { validatePort, stripKatulongCookies, rewriteProxiedHtml, rewriteLocation } from "../lib/port-proxy.js";
 
 describe("validatePort", () => {
   it("accepts valid ports", () => {
@@ -76,13 +76,73 @@ describe("stripKatulongCookies", () => {
   });
 });
 
+describe("rewriteLocation", () => {
+  const prefix = "/_proxy/7070/";
+
+  it("rewrites root-relative paths", () => {
+    assert.equal(rewriteLocation("/login", 7070, prefix), "/_proxy/7070/login");
+  });
+
+  it("rewrites root-relative path with query string", () => {
+    assert.equal(rewriteLocation("/search?q=test", 7070, prefix), "/_proxy/7070/search?q=test");
+  });
+
+  it("rewrites absolute URL pointing at target", () => {
+    assert.equal(
+      rewriteLocation("http://127.0.0.1:7070/login", 7070, prefix),
+      "/_proxy/7070/login"
+    );
+  });
+
+  it("rewrites absolute URL with path, query, and hash", () => {
+    assert.equal(
+      rewriteLocation("http://127.0.0.1:7070/app?foo=bar#section", 7070, prefix),
+      "/_proxy/7070/app?foo=bar#section"
+    );
+  });
+
+  it("rewrites https absolute URL pointing at target", () => {
+    assert.equal(
+      rewriteLocation("https://127.0.0.1:7070/login", 7070, prefix),
+      "/_proxy/7070/login"
+    );
+  });
+
+  it("does not rewrite absolute URL pointing at a different host", () => {
+    assert.equal(
+      rewriteLocation("http://example.com/login", 7070, prefix),
+      "http://example.com/login"
+    );
+  });
+
+  it("does not rewrite absolute URL pointing at a different port", () => {
+    assert.equal(
+      rewriteLocation("http://127.0.0.1:9090/login", 7070, prefix),
+      "http://127.0.0.1:9090/login"
+    );
+  });
+
+  it("handles bare root redirect", () => {
+    assert.equal(rewriteLocation("/", 7070, prefix), "/_proxy/7070/");
+  });
+
+  it("passes through relative paths unchanged", () => {
+    assert.equal(rewriteLocation("next-page", 7070, prefix), "next-page");
+  });
+
+  it("passes through garbage strings unchanged", () => {
+    assert.equal(rewriteLocation("not a url at all", 7070, prefix), "not a url at all");
+  });
+});
+
 describe("rewriteProxiedHtml", () => {
   const prefix = "/_proxy/7070/";
 
-  it("injects <base> tag after <head>", () => {
+  it("injects <base> tag and navigation script after <head>", () => {
     const html = "<html><head><title>Test</title></head><body></body></html>";
     const result = rewriteProxiedHtml(html, prefix);
-    assert.ok(result.includes(`<head><base href="/_proxy/7070/"><title>Test</title>`));
+    assert.ok(result.includes(`<head><base href="/_proxy/7070/"><script>`));
+    assert.ok(result.includes(`</script><title>Test</title>`));
   });
 
   it("injects <base> tag after <head> with attributes", () => {
@@ -91,7 +151,7 @@ describe("rewriteProxiedHtml", () => {
     assert.ok(result.includes(`<head lang="en"><base href="/_proxy/7070/">`));
   });
 
-  it("injects <base> at start if no <head>", () => {
+  it("injects at start if no <head>", () => {
     const html = "<div>Hello</div>";
     const result = rewriteProxiedHtml(html, prefix);
     assert.ok(result.startsWith(`<base href="/_proxy/7070/">`));

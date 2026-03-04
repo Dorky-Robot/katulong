@@ -505,6 +505,9 @@
       // under the new session name (snapshotTimer is declared later but
       // initialized before this function is ever called).
       if (snapshotTimer) { clearTimeout(snapshotTimer); snapshotTimer = null; }
+      // Close port forward / file browser — switching sessions returns to terminal
+      if (portForwardEl?.classList.contains("active")) closePortForward();
+      if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
       state.update('session.name', name);
       document.title = name;
       term.clear();
@@ -546,6 +549,15 @@
           } else {
             bar.removeAttribute("data-toolbar-color");
           }
+        }
+      },
+      onPortProxyChange: (enabled) => {
+        const btn = document.getElementById("sidebar-portfwd-btn");
+        if (btn) btn.style.display = enabled ? "" : "none";
+        if (!enabled && portForwardEl.classList.contains("active")) {
+          closePortForward();
+          term.focus();
+          requestAnimationFrame(() => withPreservedScroll(term, () => fit.fit()));
         }
       }
     });
@@ -706,9 +718,13 @@
     let fileBrowserMounted = false;
     let fileBrowserComponent = null;
 
+    const joystickEl = document.getElementById("joystick");
+
     function closePortForward() {
       portForwardEl.classList.remove("active");
       termContainer.classList.remove("pf-hidden");
+      bar.style.display = "";
+      if (joystickEl) joystickEl.style.display = "";
     }
 
     function closeFileBrowser() {
@@ -764,6 +780,8 @@
         }
         termContainer.classList.add("pf-hidden");
         portForwardEl.classList.add("active");
+        bar.style.display = "none";
+        if (joystickEl) joystickEl.style.display = "none";
         portForwardComponent.focus();
       }
       if (isMobile()) setMobileSidebar(false);
