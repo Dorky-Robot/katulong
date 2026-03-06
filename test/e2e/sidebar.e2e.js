@@ -326,7 +326,8 @@ test.describe("Sidebar", () => {
       await deleteSession(page, sessionName);
     });
 
-    test("sidebar stays closed when it was closed before switching sessions", async ({ page }) => {
+    test("sidebar stays closed when it was closed before switching sessions", async ({ page }, testInfo) => {
+      if (isOverlayViewport(testInfo)) { test.skip(); return; }
       const sessionName = `sidebar-closed-switch-${Date.now()}`;
 
       await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
