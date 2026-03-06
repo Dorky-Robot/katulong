@@ -422,7 +422,8 @@
     const sidebarAddBtn = document.getElementById("sidebar-add-btn");
     const sidebarBackdrop = document.getElementById("sidebar-backdrop");
 
-    const isMobile = () => window.matchMedia("(max-width: 767px)").matches;
+    // Overlay breakpoint: 1024px — must match @media queries in index.html
+    const isOverlayViewport = () => window.matchMedia("(max-width: 1023px)").matches;
 
     function loadSidebarData() {
       invalidateSessions(sessionStore, state.session.name);
@@ -432,7 +433,7 @@
       }).catch(() => {});
     }
 
-    function setMobileSidebar(open) {
+    function setOverlaySidebar(open) {
       if (!sidebar) return;
       sidebar.classList.toggle("mobile-open", open);
       sidebarBackdrop?.classList.toggle("visible", open);
@@ -451,8 +452,8 @@
 
     function toggleSidebar() {
       if (!sidebar) return;
-      if (isMobile()) {
-        setMobileSidebar(!sidebar.classList.contains("mobile-open"));
+      if (isOverlayViewport()) {
+        setOverlaySidebar(!sidebar.classList.contains("mobile-open"));
         return;
       }
       const isCollapsed = sidebar.classList.contains("collapsed");
@@ -461,7 +462,7 @@
     }
 
     if (sidebarBackdrop) {
-      sidebarBackdrop.addEventListener("click", () => setMobileSidebar(false));
+      sidebarBackdrop.addEventListener("click", () => setOverlaySidebar(false));
     }
 
     // Restore sidebar state from localStorage (desktop only)
@@ -525,7 +526,7 @@
       url.searchParams.set("s", name);
       history.pushState(null, "", url);
       activateSession(name);
-      if (isMobile()) setMobileSidebar(false);
+      if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
     window.addEventListener("popstate", () => {
@@ -753,7 +754,7 @@
         fileBrowserEl.classList.add("active");
         fileBrowserComponent.focus();
       }
-      if (isMobile()) setMobileSidebar(false);
+      if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
     // --- Port Forward ---
@@ -784,7 +785,7 @@
         if (joystickEl) joystickEl.style.display = "none";
         portForwardComponent.focus();
       }
-      if (isMobile()) setMobileSidebar(false);
+      if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
     const sidebarFilesBtn = document.getElementById("sidebar-files-btn");

@@ -296,7 +296,7 @@
     }
     .bar-new-session-btn:hover { color: var(--text); }
     .bar-new-session-btn:active { background: rgba(255,255,255,0.08); }
-    @media (max-width: 767px) {
+    @media (max-width: 1023px) {
       .bar-new-session-btn { display: flex; }
     }
 
@@ -629,8 +629,8 @@
       pointer-events: none;
     }
     #sidebar.collapsed .session-card.active::after { color: var(--accent-active); }
-    /* --- Mobile: sidebar as floating overlay --- */
-    @media (max-width: 767px) {
+    /* --- Mobile/Tablet: sidebar as floating overlay (overlay breakpoint: 1024px) --- */
+    @media (max-width: 1023px) {
       #sidebar {
         position: fixed; top: var(--height-btn-md); left: 0; bottom: 0; z-index: 100;
         width: 280px; min-width: 280px;
@@ -665,7 +665,7 @@
       }
       #sidebar-backdrop.visible { display: block; }
     }
-    @media (min-width: 768px) {
+    @media (min-width: 1024px) {
       #sidebar-backdrop { display: none !important; }
     }
 

@@ -43,9 +43,17 @@ export default defineConfig({
     },
     {
       name: "mobile",
-      testMatch: "shortcuts.e2e.js",
+      testMatch: ["shortcuts.e2e.js", "sidebar.e2e.js"],
       use: {
         ...devices["iPhone 14"],
+        browserName: "chromium",
+      },
+    },
+    {
+      name: "tablet",
+      testMatch: "sidebar.e2e.js",
+      use: {
+        ...devices["iPad (gen 7)"],
         browserName: "chromium",
       },
     },

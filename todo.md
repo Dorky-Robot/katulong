@@ -1,0 +1,6 @@
+- we should hang on to our terminal connections so that switching amongst them is quicker. we can set a max connections of 5 or something. 
+- the mobile sidebar vs desktop sidebar is still janky. we need to really clean that up
+- the joystick should not show up on the port proxy view on mobile. (dedicated-page.png)
+- the buttons on mobile look funky (funky-sidebar-buttons.png). we should flow them horizontally, not vertically
+- we're still treating the port proxy as an overlay rather than a separate dedicated page. it should have no "x" (dedicated-page.png)
+- we should be using tmux to manage session under the hood
