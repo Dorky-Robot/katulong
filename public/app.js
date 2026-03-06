@@ -422,7 +422,7 @@
     const sidebarAddBtn = document.getElementById("sidebar-add-btn");
     const sidebarBackdrop = document.getElementById("sidebar-backdrop");
 
-    const isMobile = () => window.matchMedia("(max-width: 767px)").matches;
+    const isMobile = () => window.matchMedia("(max-width: 1023px)").matches;
 
     function loadSidebarData() {
       invalidateSessions(sessionStore, state.session.name);
