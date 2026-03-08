@@ -3,11 +3,13 @@ import { readFileSync, writeFileSync, unlinkSync, existsSync, chmodSync } from "
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import pty from "node-pty";
 import { encode, decoder } from "./lib/ndjson.js";
 import { log } from "./lib/log.js";
 import { getSafeEnv } from "./lib/env-filter.js";
-import { Session } from "./lib/session.js";
+import {
+  Session, tmuxSessionName, tmuxNewSession, tmuxHasSession,
+  tmuxKillSession, applyTmuxSessionOptions, captureScrollback, checkTmux,
+} from "./lib/session.js";
 import { loadShortcuts, saveShortcuts } from "./lib/shortcuts.js";
 import { validateMessage } from "./lib/daemon-protocol.js";
 import envConfig, { ensureDataDir } from "./lib/env-config.js";
@@ -32,17 +34,18 @@ const sessions = new Map();
 const clients = new Map();   // clientId -> { session: string, socket }
 const uiSockets = new Set();
 
-// --- Async child process counting ---
+// --- Async child process counting via tmux ---
 
-function countDescendants(pid) {
+function countTmuxPaneProcesses(tmuxName) {
   return new Promise((resolve) => {
-    if (!/^\d+$/.test(String(pid))) return resolve(0);
-    execFile("pgrep", ["-P", String(pid)], (err, stdout) => {
+    execFile("tmux", ["list-panes", "-t", tmuxName, "-F", "#{pane_pid}"], { timeout: 5000 }, (err, stdout) => {
       if (err || !stdout.trim()) return resolve(0);
-      const children = stdout.trim().split("\n").filter(p => /^\d+$/.test(p));
-      if (children.length === 0) return resolve(0);
-      Promise.all(children.map(p => countDescendants(parseInt(p, 10)))).then((counts) => {
-        resolve(children.length + counts.reduce((a, b) => a + b, 0));
+      const panePid = stdout.trim().split("\n")[0];
+      if (!/^\d+$/.test(panePid)) return resolve(0);
+      execFile("pgrep", ["-P", panePid], (err2, stdout2) => {
+        if (err2 || !stdout2.trim()) return resolve(0);
+        const children = stdout2.trim().split("\n").filter(p => /^\d+$/.test(p));
+        resolve(children.length);
       });
     });
   });
@@ -52,7 +55,7 @@ const CHILD_COUNT_INTERVAL_MS = 5000;
 const childCountTimer = setInterval(async () => {
   for (const [name, session] of sessions) {
     if (!session.alive) continue;
-    const count = await countDescendants(session.pid);
+    const count = await countTmuxPaneProcesses(session.tmuxName);
     session.lastKnownChildCount = count;
     broadcast({ type: "child-count-update", session: name, count });
   }
@@ -79,21 +82,29 @@ function broadcast(msg) {
   for (const sock of uiSockets) sock.write(line);
 }
 
-function spawnSession(name, cols = 120, rows = 40, cwd = null) {
-  const p = pty.spawn(SHELL, ["-l"], {
-    name: "xterm-256color",
-    cols,
-    rows,
-    cwd: cwd || envConfig.home,
-    env: {
-      ...getSafeEnv(), // Filter out sensitive environment variables
+async function spawnSession(name, cols = 120, rows = 40, cwd = null) {
+  const tmuxName = tmuxSessionName(name);
+
+  // Check if tmux session already exists (e.g. daemon restart)
+  const exists = await tmuxHasSession(tmuxName);
+
+  if (!exists) {
+    // Build safe environment for the tmux session
+    const safeEnv = getSafeEnv();
+    const env = {
+      ...safeEnv,
       TERM: "xterm-256color",
       TERM_PROGRAM: "katulong",
       COLORTERM: "truecolor",
-    },
-  });
+    };
 
-  const session = new Session(name, p, {
+    await tmuxNewSession(tmuxName, cols, rows, SHELL, env, cwd || envConfig.home);
+  } else {
+    // Reattaching to existing tmux session — apply options
+    await applyTmuxSessionOptions(tmuxName);
+  }
+
+  const session = new Session(name, tmuxName, {
     maxBufferItems: MAX_BUFFER,
     maxBufferBytes: MAX_BUFFER_BYTES,
     onData: (sessionName, data) => {
@@ -105,17 +116,27 @@ function spawnSession(name, cols = 120, rows = 40, cwd = null) {
     },
   });
 
-  sessions.set(name, session);
-  log.info("Session created", { session: name, pid: session.pid });
+  // Attach control mode
+  session.attachControlMode(cols, rows);
 
-  // Let shell redraw prompt with Ctrl-L (standard terminal refresh, no history pollution)
-  session.write("\x0C");
+  // If reattaching, restore scrollback from tmux
+  if (exists) {
+    const scrollback = await captureScrollback(tmuxName);
+    if (scrollback) {
+      session.outputBuffer.push(scrollback);
+    }
+  }
+
+  sessions.set(name, session);
+  log.info("Session created", { session: name, tmux: tmuxName, reattached: exists });
 
   return session;
 }
 
 function ensureSession(name, cols, rows) {
-  return sessions.get(name) || spawnSession(name, cols, rows);
+  const existing = sessions.get(name);
+  if (existing) return Promise.resolve(existing);
+  return spawnSession(name, cols, rows);
 }
 
 function removeSession(name) {
@@ -157,9 +178,18 @@ const rpcHandlers = {
     let cwd = null;
     if (msg.copyFrom) {
       const source = sessions.get(msg.copyFrom);
-      if (source) cwd = await source.getCwd();
+      if (source) {
+        // Get cwd from tmux pane
+        const result = await new Promise((resolve) => {
+          execFile("tmux", ["display-message", "-t", source.tmuxName, "-p", "#{pane_current_path}"],
+            { timeout: 5000 }, (err, stdout) => {
+              resolve(err ? null : stdout.trim());
+            });
+        });
+        cwd = result;
+      }
     }
-    spawnSession(msg.name, 120, 40, cwd);
+    await spawnSession(msg.name, 120, 40, cwd);
     return { name: msg.name };
   },
 
@@ -171,9 +201,9 @@ const rpcHandlers = {
       ? { name: msg.newName }
       : { error: "Not found or name taken" },
 
-  "attach": (msg, socket) => {
+  "attach": async (msg, socket) => {
     const name = msg.session || "default";
-    const session = ensureSession(name, msg.cols, msg.rows);
+    const session = await ensureSession(name, msg.cols, msg.rows);
     clients.set(msg.clientId, { session: name, socket });
     return { buffer: session.getBuffer(), alive: session.alive };
   },
@@ -237,6 +267,13 @@ function probeSocket() {
 // --- Start ---
 
 async function start() {
+  // Verify tmux is available
+  const hasTmux = await checkTmux();
+  if (!hasTmux) {
+    log.error("tmux is required but not found. Install with: brew install tmux");
+    process.exit(1);
+  }
+
   if (await probeSocket()) {
     log.error("Another daemon is already running", { socket: SOCKET_PATH });
     process.exit(1);
@@ -272,8 +309,14 @@ async function start() {
 
   function cleanup() {
     log.info("Shutting down daemon");
+    // Close control mode processes but leave tmux sessions alive for persistence
     for (const [, session] of sessions) {
-      if (session.alive) session.pty.kill();
+      if (session.controlProc) {
+        try {
+          session.controlProc.stdin.end();
+          session.controlProc.kill();
+        } catch { /* already dead */ }
+      }
     }
     try { unlinkSync(SOCKET_PATH); } catch {}
     try { unlinkSync(PID_PATH); } catch {}

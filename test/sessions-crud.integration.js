@@ -179,14 +179,14 @@ describe("Sessions CRUD Integration", () => {
     await request("DELETE", "/sessions/list-test");
   });
 
-  it("GET /sessions returns alive and pid for each session", async () => {
+  it("GET /sessions returns alive and tmuxSession for each session", async () => {
     // Setup
     await request("POST", "/sessions", { name: "fields-test" });
 
     const { body } = await request("GET", "/sessions");
     const session = body.find((s) => s.name === "fields-test");
     assert.ok(session, "fields-test should exist in session list");
-    assert.equal(typeof session.pid, "number");
+    assert.equal(typeof session.tmuxSession, "string");
     assert.equal(typeof session.alive, "boolean");
 
     // Cleanup
