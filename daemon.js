@@ -119,12 +119,17 @@ async function spawnSession(name, cols = 120, rows = 40, cwd = null) {
   // Attach control mode
   session.attachControlMode(cols, rows);
 
-  // If reattaching, restore scrollback from tmux
-  if (exists) {
-    const scrollback = await captureScrollback(tmuxName);
-    if (scrollback) {
-      session.outputBuffer.push(scrollback);
-    }
+  // Restore scrollback: the shell prompt renders inside tmux before control
+  // mode attaches, so we always capture the current screen. For existing
+  // sessions this restores full history; for fresh sessions it catches the
+  // initial prompt that was rendered before we attached.
+  // Small delay lets the shell initialize and render its prompt.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const scrollback = await captureScrollback(tmuxName);
+  if (scrollback) {
+    session.outputBuffer.push(scrollback);
+    // Broadcast the captured scrollback so already-connected clients see it
+    broadcast({ type: "output", session: name, data: scrollback });
   }
 
   sessions.set(name, session);
