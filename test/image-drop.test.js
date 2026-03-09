@@ -293,7 +293,7 @@ describe("uploadImageToTerminal", () => {
   it("sends path (with trailing space) from server response", async () => {
     globalThis.fetch = mock.fn(async () => ({
       ok: true,
-      json: async () => ({ path: "/uploads/photo.png" }),
+      json: async () => ({ fsPath: "/uploads/photo.png" }),
     }));
 
     const { uploadImageToTerminal } = await import("../public/lib/image-upload.js");
