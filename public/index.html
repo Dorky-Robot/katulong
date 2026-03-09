@@ -193,10 +193,15 @@
     }
     /* --- Terminal --- */
     #terminal-container { flex: 1; min-width: 0; position: relative; z-index: 1; overflow: hidden; }
-    #terminal-container .xterm { height: 100%; }
+    #terminal-container .xterm { height: 100%; overflow: hidden; }
     #terminal-container .xterm-viewport {
       -webkit-overflow-scrolling: touch;
       overscroll-behavior: contain;
+    }
+    /* Hide xterm's helper textarea caret so it never renders outside the terminal box */
+    #terminal-container .xterm-helper-textarea {
+      opacity: 0 !important;
+      caret-color: transparent !important;
     }
 
     /* --- Search bar --- */
@@ -658,6 +663,11 @@
       #sidebar #sidebar-toolbar, #sidebar.collapsed #sidebar-toolbar {
         display: none;
       }
+      /* Reset collapsed footer to horizontal layout on mobile */
+      #sidebar.collapsed #sidebar-footer {
+        flex-direction: row; padding: 0.5rem; align-items: center;
+      }
+      #sidebar.collapsed .sidebar-p2p-dot { margin-left: auto; }
       /* Backdrop */
       #sidebar-backdrop {
         display: none; position: fixed; inset: 0; z-index: 99;

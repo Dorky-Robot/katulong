@@ -20,7 +20,7 @@ import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest } from "./lib/access-method.js";
 import { serveStaticFile, clearFileCache } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
-import { createSessionManager, checkTmux } from "./lib/session-manager.js";
+import { createSessionManager, checkTmux, cleanTmuxServerEnv } from "./lib/session-manager.js";
 import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/routes.js";
 import { createFileBrowserRoutes } from "./lib/file-browser.js";
 import { createPortProxyRoutes, proxyWebSocket } from "./lib/port-proxy.js";
@@ -114,6 +114,10 @@ if (!hasTmux) {
   log.error("tmux is required but not found. Install with: brew install tmux");
   process.exit(1);
 }
+
+// Strip SENSITIVE_ENV_VARS from the tmux server's global environment
+// so they don't leak into terminal sessions (defense-in-depth).
+await cleanTmuxServerEnv();
 
 // --- Session manager (replaces daemon IPC) ---
 
