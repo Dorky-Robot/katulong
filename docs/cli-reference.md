@@ -6,32 +6,27 @@ Katulong provides a command-line interface for managing the server, tokens, cred
 
 ### start
 
-Start the daemon and/or server.
+Start the Katulong server.
 
 ```bash
-katulong start              # Start both daemon and server
-katulong start server       # Start only the server
-katulong start daemon       # Start only the daemon
+katulong start              # Start the server
 katulong start --foreground # Run in foreground (don't daemonize)
 ```
 
 ### stop
 
-Stop the daemon and/or server.
+Stop the Katulong server.
 
 ```bash
-katulong stop               # Stop both
-katulong stop server        # Stop only the server
-katulong stop daemon        # Stop only the daemon
+katulong stop
 ```
 
 ### restart
 
-Restart the daemon and/or server.
+Restart the Katulong server.
 
 ```bash
-katulong restart            # Restart both
-katulong restart server     # Restart only the server
+katulong restart            # Restart the server
 katulong restart --rolling  # Rolling restart (zero-downtime)
 ```
 
@@ -45,12 +40,10 @@ katulong status
 
 ### logs
 
-Stream logs from the daemon, server, or both.
+Stream server logs.
 
 ```bash
-katulong logs               # Stream all logs
-katulong logs daemon        # Stream daemon logs only
-katulong logs server        # Stream server logs only
+katulong logs
 ```
 
 ### open
@@ -142,11 +135,11 @@ katulong credential revoke abc123def456 --json
 
 ## Session Management
 
-Sessions are PTY (terminal) sessions managed by the daemon.
+Sessions are terminal sessions managed via tmux.
 
 ### session list
 
-List active PTY sessions.
+List active terminal sessions.
 
 ```bash
 katulong session list
@@ -155,7 +148,7 @@ katulong session list --json
 
 ### session create
 
-Create a new named PTY session.
+Create a new named terminal session.
 
 ```bash
 katulong session create dev
@@ -164,7 +157,7 @@ katulong session create "my-project" --json
 
 ### session kill
 
-Kill a PTY session by name.
+Kill a terminal session by name.
 
 ```bash
 katulong session kill dev
@@ -173,7 +166,7 @@ katulong session kill dev --json
 
 ### session rename
 
-Rename a PTY session.
+Rename a terminal session.
 
 ```bash
 katulong session rename dev production

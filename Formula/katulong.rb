@@ -6,6 +6,7 @@ class Katulong < Formula
   license "MIT"
 
   depends_on "node"
+  depends_on "tmux"
 
   def install
     # Install npm dependencies (prepare script now handles missing husky gracefully)

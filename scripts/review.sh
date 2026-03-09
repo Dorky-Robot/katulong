@@ -76,7 +76,7 @@ gather_all_context
 
 CONTEXT="You are reviewing code changes in the katulong project ($HOOK hook).
 
-Katulong is a self-hosted web terminal that gives remote shell access to the host machine over HTTP/HTTPS + WebSocket. It multiplexes PTY sessions via a Unix socket daemon and serves a single-page xterm.js frontend.
+Katulong is a self-hosted web terminal that gives remote shell access to the host machine over HTTP/HTTPS + WebSocket. It manages terminal sessions via tmux and serves a single-page xterm.js frontend.
 
 PROJECT CONVENTIONS:
 $PROJECT_INSTRUCTIONS

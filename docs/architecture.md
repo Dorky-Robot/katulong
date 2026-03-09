@@ -2,26 +2,24 @@
 
 ```
 Phone browser  ──WebSocket──┐
-                              ├── UI Server (server.js) ──Unix Socket──  Daemon (daemon.js)
-Desktop browser ──WebSocket──┘                                           PTY sessions
-                                                                         Output buffers
+                              ├── Server (server.js) ── tmux sessions
+Desktop browser ──WebSocket──┘   Session manager         PTY processes
+                                 Auth middleware          Output buffers
 ```
 
-The daemon owns the PTY sessions. The web server is stateless — restart it freely, your sessions survive. The browser reconnects and the daemon replays the output buffer. You pick up exactly where you left off.
+Sessions are backed by tmux. Restart the server freely — your sessions survive. The browser reconnects and replays the output buffer. You pick up exactly where you left off.
 
 ## Components
 
 | Component | Description |
 |---|---|
-| **`daemon.js`** | Long-lived process that owns PTY sessions. Communicates over a Unix domain socket via newline-delimited JSON. |
-| **`server.js`** | HTTP/HTTPS + WebSocket server. Routes, auth middleware, daemon IPC, device pairing. |
+| **`server.js`** | HTTP + WebSocket server. Routes, auth middleware, session management. |
+| **`lib/session-manager.js`** | Terminal session lifecycle via tmux control mode. Runs in-process with the server. |
+| **`lib/session.js`** | Session class, tmux helpers, RingBuffer. |
 | **`public/index.html`** | SPA frontend. xterm.js terminal, shortcut bar, settings, inline pairing wizard. |
 | **`lib/auth.js`** | WebAuthn registration/login, session token management, passkey storage. |
-| **`lib/tls.js`** | Auto-generated CA + server certificates for LAN HTTPS. |
-| **`lib/p2p.js`** | WebRTC DataChannel for low-latency terminal I/O. |
 
-
-The daemon owns all PTY processes. The UI server is stateless — restart it freely without losing terminal sessions. On restart, the browser's reconnect logic kicks in and the daemon replays the output buffer.
+Sessions are managed via tmux control mode. The session manager runs in the server process — no separate daemon or IPC needed.
 
 ## REST API
 
@@ -38,6 +36,5 @@ The daemon owns all PTY processes. The UI server is stateless — restart it fre
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `3001` | UI server port |
+| `PORT` | `3001` | Server port |
 | `SHELL` | `/bin/zsh` | Shell to spawn in sessions |
-| `KATULONG_SOCK` | `/tmp/katulong-daemon.sock` | Unix socket path for daemon IPC |

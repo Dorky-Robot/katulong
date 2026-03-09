@@ -79,9 +79,6 @@ After running tests, check your dev server:
 # Should show processes on ports 3001/3002
 lsof -ti:3001,3002
 
-# Should show daemon socket
-ls -la /tmp/katulong-daemon.sock
-
 # Or just visit in browser:
 open http://localhost:3001
 ```

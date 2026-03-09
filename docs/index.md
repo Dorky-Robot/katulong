@@ -23,7 +23,7 @@ katulong start
 
 ## How It Works
 
-1. **Start katulong** — a single binary launches a daemon (PTY owner) and an HTTP/WebSocket server
+1. **Start katulong** — launches an HTTP/WebSocket server that manages tmux sessions
 2. **Open in browser** — an xterm.js frontend connects via WebSocket
 3. **Register a passkey** — first visit registers your device with WebAuthn
 4. **Access from anywhere** — use a tunnel (ngrok, Cloudflare) for remote access
@@ -35,20 +35,19 @@ Traditional remote access tools force you to choose between convenience and secu
 - **Self-hosted** — runs on your machine, your data stays yours
 - **Passwordless** — WebAuthn passkeys, no passwords ever
 - **Multi-access** — browser, phone, tablet — whatever's handy
-- **Single binary** — daemon + server + embedded frontend, nothing else to install
-- **Session persistence** — the daemon survives server restarts; your sessions stay alive
+- **Session persistence** — backed by tmux; sessions survive server restarts
 - **Tunnel-friendly** — designed for ngrok, Cloudflare Tunnel, or any reverse proxy
 
 ## Architecture at a Glance
 
 ```
-Browser (xterm.js) ──WebSocket──→ Server (HTTP/WS) ──Unix Socket──→ Daemon
-                                  katulong serve      NDJSON         katulong daemon
-                                  stateless                          PTY sessions
-                                                                     ring buffers
+Browser (xterm.js) ──WebSocket──→ Server (server.js)
+                                  Session manager ── tmux sessions
+                                  Auth middleware     PTY processes
+                                                     ring buffers
 ```
 
-The daemon owns all sessions. The server is stateless — restart it freely, your sessions survive. The browser reconnects and the daemon replays the output buffer. You pick up exactly where you left off.
+The session manager runs in-process. Sessions are backed by tmux — restart the server freely, your sessions survive. The browser reconnects and replays the output buffer. You pick up exactly where you left off.
 
 ## Quick Links
 
@@ -59,5 +58,5 @@ The daemon owns all sessions. The server is stateless — restart it freely, you
 | [CLI Reference](cli-reference.md) | All commands and flags |
 | [Security](security/index.md) | Auth model, hardening, threat surface |
 | [Access Guide](access-guide/index.md) | Localhost, LAN, internet access setup |
-| [Architecture](architecture.md) | Daemon/server split, WebSocket protocol |
+| [Architecture](architecture.md) | Server architecture, WebSocket protocol |
 | [Use Cases](use-cases.md) | Real-world scenarios |

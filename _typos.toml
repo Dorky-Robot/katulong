@@ -4,5 +4,8 @@ xterm = "xterm"
 loca = "loca"
 ue = "ue"
 
+[default.extend-identifiers]
+PNGf = "PNGf"
+
 [files]
 extend-exclude = ["public/vendor/", "node_modules/", "*.min.js"]

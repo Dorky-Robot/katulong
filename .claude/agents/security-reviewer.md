@@ -17,7 +17,7 @@ You review code changes for security vulnerabilities using the STRIDE threat mod
 Apply each category to katulong's attack surfaces:
 
 - **Spoofing** — Can an attacker bypass `isAuthenticated()` or `isLocalRequest()`? Are WebAuthn registration/login flows correctly validated? Can WebSocket upgrades happen without auth? Can the pairing flow be exploited to register unauthorized devices?
-- **Tampering** — Can crafted input (HTTP bodies, WebSocket messages, NDJSON over Unix socket) alter server behavior? Are `readBody()` size limits enforced on all public endpoints? Is `escapeAttr()` used for HTML attribute injection?
+- **Tampering** — Can crafted input (HTTP bodies, WebSocket messages) alter server behavior? Are `readBody()` size limits enforced on all public endpoints? Is `escapeAttr()` used for HTML attribute injection?
 - **Repudiation** — Are security-relevant actions (login, registration, pairing, session creation/revocation) logged with enough context for audit?
 - **Information disclosure** — Are secrets (SETUP_TOKEN, KATULONG_NO_AUTH, session tokens) leaked in error responses, logs, or PTY environments? Are stack traces or internal paths exposed?
 - **Denial of service** — Can unbounded request bodies, WebSocket messages, or concurrent connections exhaust memory? Are all public endpoints protected by `readBody()` size limits?
