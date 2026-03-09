@@ -553,14 +553,14 @@
 
     /* --- Sidebar --- */
     #app-layout {
-      display: flex; width: 100%; position: relative;
+      display: flex; width: 100%; height: 100%; position: relative; overflow: hidden;
     }
     #sidebar {
       width: 240px; min-width: 240px; background: var(--bg-surface);
       border-right: 1px solid var(--border);
       display: flex; flex-direction: column;
       overflow: hidden;
-      transition: width 0.15s ease, min-width 0.15s ease;
+      /* No width transition — instant resize prevents xterm scroll jumps during reflow */
     }
     #sidebar.collapsed {
       width: 56px; min-width: 56px;
@@ -722,6 +722,46 @@
     .session-card-action.delete:hover { color: var(--danger); }
     .session-card.external { border-style: dashed; opacity: 0.75; }
     .session-card.external:hover { opacity: 1; }
+
+    /* tmux session browser */
+    #tmux-browser { padding: 0 var(--space-sm); }
+    .tmux-browse-btn {
+      display: flex; align-items: center; gap: var(--space-xs);
+      width: 100%; padding: var(--space-xs) var(--space-sm);
+      border: none; border-radius: var(--radius-sm);
+      background: transparent; color: var(--text-muted); cursor: pointer;
+      font-size: var(--text-sm); margin-bottom: var(--space-xs);
+    }
+    .tmux-browse-btn:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+    .tmux-browse-btn--active { color: var(--text); }
+    .tmux-browse-btn i { font-size: 1.125rem; flex-shrink: 0; }
+    .tmux-session-list { display: flex; flex-direction: column; gap: var(--space-xs); margin-bottom: var(--space-sm); }
+    .tmux-session-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: var(--space-xs) var(--space-sm);
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      font-size: var(--text-sm); color: var(--text-muted);
+    }
+    .tmux-session-item:hover { border-color: var(--text-muted); }
+    .tmux-session-item button {
+      border: none; background: transparent; color: var(--accent-active);
+      cursor: pointer; font-size: var(--text-sm); padding: var(--space-xs);
+      border-radius: var(--radius-sm);
+    }
+    .tmux-session-item button:hover { background: var(--accent); color: var(--bg); }
+    .tmux-no-sessions { font-size: var(--text-sm); color: var(--text-dim); padding: var(--space-xs) var(--space-sm); }
+    /* Collapsed sidebar: icon-only tmux browse button */
+    #sidebar.collapsed #tmux-browser { padding: 0; display: flex; justify-content: center; }
+    #sidebar.collapsed .tmux-browse-btn {
+      width: 2.5rem; height: 2.5rem; min-width: 2.5rem; min-height: 2.5rem;
+      padding: 0; justify-content: center; margin-bottom: 0;
+      border-radius: var(--radius-md); overflow: hidden;
+      font-size: 0; /* hide any text not in a span */
+    }
+    #sidebar.collapsed .tmux-browse-btn i { font-size: 1.125rem; } /* restore icon size */
+    #sidebar.collapsed .tmux-browse-label { display: none; }
+    #sidebar.collapsed .tmux-session-list,
+    #sidebar.collapsed .tmux-no-sessions { display: none; }
     .session-icon-btn {
       width: 1.5rem; height: 1.5rem; border: none; border-radius: var(--radius-sm);
       background: transparent; font-size: 0.75rem; cursor: pointer; flex-shrink: 0;
@@ -1267,6 +1307,7 @@
       </div>
       <div id="sidebar-content">
         <div id="session-list" role="list"></div>
+        <div id="tmux-browser"></div>
       </div>
       <div id="sidebar-footer">
         <button class="sidebar-icon-btn" id="sidebar-files-btn" aria-label="Open file browser" title="Files">

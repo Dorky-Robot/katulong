@@ -11,6 +11,7 @@
       createShortcutsStore, loadShortcuts as reloadShortcuts,
     } from "/lib/stores.js";
     import { createSessionListComponent, updateSnapshot } from "/lib/session-list-component.js";
+    import { createTmuxBrowserComponent } from "/lib/tmux-browser-component.js";
     import { api } from "/lib/api-client.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
     import { createTokenFormManager } from "/lib/token-form.js";
@@ -409,6 +410,15 @@
     const sessionListEl = document.getElementById("session-list");
     if (sessionListEl) {
       sessionListComponent.mount(sessionListEl);
+    }
+
+    // tmux session browser
+    const tmuxBrowserEl = document.getElementById("tmux-browser");
+    if (tmuxBrowserEl) {
+      const tmuxBrowser = createTmuxBrowserComponent(sessionStore, {
+        onSessionSwitch: (name) => switchSession(name)
+      });
+      tmuxBrowser.mount(tmuxBrowserEl);
     }
 
     // --- Sidebar toggle ---
