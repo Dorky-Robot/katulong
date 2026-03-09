@@ -15,7 +15,7 @@ import {
 } from "./lib/http-util.js";
 import { rateLimit, getClientIp } from "./lib/rate-limit.js";
 import { ConfigManager } from "./lib/config.js";
-import { ensureHostKey, startSSHServer } from "./lib/ssh.js";
+
 import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest } from "./lib/access-method.js";
 import { serveStaticFile, clearFileCache } from "./lib/static-files.js";
@@ -30,8 +30,6 @@ import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-uti
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = envConfig.port;
 const DATA_DIR = envConfig.dataDir;
-const SSH_PORT = envConfig.sshPort;
-
 ensureDataDir();
 
 // --- Configuration (load instance name first) ---
@@ -45,12 +43,6 @@ log.info("Configuration loaded", { instanceName, instanceId, version: APP_VERSIO
 
 await initP2P();
 
-const sshHostKey = ensureHostKey(DATA_DIR);
-
-// --- Authentication tokens ---
-// Setup token is now stored in AuthState (managed via API)
-// SSH access token is still generated here (or read from SSH_PASSWORD env var)
-const SSH_PASSWORD = envConfig.sshPassword;
 const RP_NAME = "Katulong";
 
 // --- Rate limiting ---
@@ -61,10 +53,6 @@ const authRateLimit = rateLimit(10, 60000, (req) => {
   const origin = req.headers['origin'] || req.headers['host'] || '';
   return `${addr}:${ua}:${origin}`;
 });
-
-if (!envConfig.sshPasswordProvided) {
-  log.info("SSH password generated (retrieve via GET /ssh/password)");
-}
 
 if (envConfig.noAuth) {
   log.warn("WARNING: KATULONG_NO_AUTH=1 — authentication is DISABLED. All requests are treated as authenticated. Do NOT use this in production or on untrusted networks.");
@@ -150,7 +138,7 @@ const routeCtx = {
   storeChallenge, consumeChallenge, challengeStore,
   broadcastToAll, closeWebSocketsForCredential,
   credentialLockout, configManager,
-  __dirname, DATA_DIR, SSH_PASSWORD, SSH_PORT, SSH_HOST: envConfig.sshHost, APP_VERSION, RP_NAME, PORT,
+  __dirname, DATA_DIR, APP_VERSION, RP_NAME, PORT,
   getDraining: () => draining,
   closeAllWebSockets,
   auth, csrf,
@@ -429,12 +417,3 @@ async function gracefulShutdown(signal) {
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
-startSSHServer({
-  port: SSH_PORT,
-  hostKey: sshHostKey,
-  password: SSH_PASSWORD,
-  sessionManager,
-  credentialLockout,
-  bridge,
-  authContext: { loadState, withStateLock },
-});

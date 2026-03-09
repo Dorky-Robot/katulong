@@ -17,7 +17,7 @@ The project has three layers with clear separation of concerns:
 ```
 server.js — HTTP/HTTPS + WebSocket server
   Routes, auth middleware, daemon IPC, device pairing, static file serving
-  Depends on: lib/auth.js, lib/http-util.js, lib/tls.js, lib/p2p.js, lib/ssh.js, lib/ndjson.js
+  Depends on: lib/auth.js, lib/http-util.js, lib/tls.js, lib/p2p.js, lib/ndjson.js
 
 daemon.js — Long-lived PTY session manager
   Owns PTY sessions, communicates over Unix socket via NDJSON
@@ -32,7 +32,6 @@ lib/ — Shared modules
   http-util.js — Cookie parsing, public path allowlist, session cookies
   tls.js      — Auto-generated CA + server certificates
   p2p.js      — WebRTC DataChannel for low-latency terminal I/O
-  ssh.js      — SSH server bridging to daemon PTY sessions
   ndjson.js   — NDJSON encode/decode for daemon IPC
   log.js      — Structured logging
 ```

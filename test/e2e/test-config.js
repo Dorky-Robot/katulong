@@ -11,7 +11,6 @@
 const SHARD_INDEX = parseInt(process.env.TEST_SHARD_INDEX || '0', 10);
 
 const TEST_PORT     = 3099 + SHARD_INDEX * 10;
-const TEST_SSH_PORT = 2223 + SHARD_INDEX * 10;
 const BASE_URL        = `http://localhost:${TEST_PORT}`;
 
 const TEST_DATA_DIR = SHARD_INDEX === 0
@@ -21,7 +20,6 @@ const TEST_DATA_DIR = SHARD_INDEX === 0
 export {
   SHARD_INDEX,
   TEST_PORT,
-  TEST_SSH_PORT,
   BASE_URL,
   TEST_DATA_DIR,
 };

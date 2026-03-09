@@ -160,7 +160,6 @@ describe("CSRF protection on PUT /api/config/* (#222)", () => {
       env: {
         ...process.env,
         PORT: String(TEST_PORT),
-        SSH_PORT: String(TEST_PORT + 10),
         KATULONG_DATA_DIR: testDataDir,
         // No KATULONG_NO_AUTH — real auth enforcement required
       },

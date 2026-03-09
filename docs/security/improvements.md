@@ -35,7 +35,7 @@ This document summarizes all security improvements made based on the comprehensi
 - **Impact**: Prevents invalid input from reaching backend logic
 
 ### 7. Environment Variable Exposure
-- **Issue**: Sensitive vars (SSH_PASSWORD, SETUP_TOKEN) passed to PTY
+- **Issue**: Sensitive vars (SETUP_TOKEN) passed to PTY
 - **Fix**: Filter sensitive vars before spawning PTY processes
 - **Impact**: Prevents credential leakage to shell processes
 
@@ -57,10 +57,6 @@ This document summarizes all security improvements made based on the comprehensi
 ### 11. HTTPS Enforcement
 - **Status**: Already comprehensive across all routes
 - **Verification**: Confirmed enforcement except for cert installation paths
-
-### 12. SSH Endpoint Protection
-- **Status**: Already protected via auth middleware
-- **Verification**: Confirmed `/ssh/password` requires authentication
 
 ## Code Quality Improvements
 

@@ -6,7 +6,6 @@ services:
         required: false
     ports:
       - "${PORT:-3001}:3001"
-      - "${SSH_PORT:-2222}:2222"
     volumes:
       - katulong-data:/data
     environment:

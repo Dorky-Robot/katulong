@@ -107,20 +107,6 @@ Low-latency terminal I/O that bypasses server for data:
 | Internet P2P | Varies |
 | WebSocket fallback | +20-50ms overhead |
 
-### SSH Access
-
-**Port:** `2222`
-
-```bash
-ssh default@192.168.1.50 -p 2222
-```
-
-- **Password:** `SSH_PASSWORD` env var or `SETUP_TOKEN` env var
-- **Username:** Maps to terminal session name
-- Password compared via `timingSafeEqual` (constant-time comparison)
-- Host key persisted to `~/.katulong/ssh/`
-- Sensitive env vars filtered from PTY environments
-
 ## Session Management
 
 ### Session Lifecycle

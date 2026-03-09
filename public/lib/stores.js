@@ -21,7 +21,6 @@ const SESSION_ACTIONS = {
 
 const sessionInitialState = {
   sessions: [],
-  sshInfo: { sshPort: 2222, sshHost: "localhost" },
   currentSession: null,
   loading: false,
   error: null,
@@ -38,7 +37,6 @@ const sessionReducer = createReducer(sessionInitialState, {
   [SESSION_ACTIONS.LOAD_SUCCESS]: (state, action) => ({
     ...state,
     sessions: action.sessions,
-    sshInfo: action.sshInfo || state.sshInfo,
     currentSession: action.currentSession,
     loading: false,
     error: null,
@@ -71,23 +69,11 @@ export async function loadSessions(store, currentSession = null) {
   store.dispatch({ type: SESSION_ACTIONS.LOAD_START });
 
   try {
-    const [sessRes, infoRes] = await Promise.all([
-      fetch("/sessions"),
-      fetch("/connect/info")
-    ]);
-
-    const sessions = await sessRes.json();
-    let sshInfo = store.getState().sshInfo;
-
-    if (infoRes.ok) {
-      const info = await infoRes.json();
-      sshInfo = { ...sshInfo, ...info };
-    }
+    const sessions = await api.get("/sessions");
 
     store.dispatch({
       type: SESSION_ACTIONS.LOAD_SUCCESS,
       sessions,
-      sshInfo,
       currentSession: currentSession || store.getState().currentSession
     });
   } catch (err) {

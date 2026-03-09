@@ -12,7 +12,7 @@ pkill -f "node.*server.js"  # ❌ KILLS BOTH DEV AND TEST!
 Dev and test environments are now **completely separate**:
 
 ### Dev Environment
-- **Ports:** 3001 (HTTP), 2222 (SSH)
+- **Ports:** 3001 (HTTP)
 - **Data:** `~/.katulong/` or `$KATULONG_DATA_DIR`
 - **Process:** Long-running, started manually
 - **Auth:** Real WebAuthn/passkeys

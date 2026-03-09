@@ -88,14 +88,6 @@ ngrok http 3002
 
 Access your terminal from anywhere using ngrok or Cloudflare Tunnel.
 
-### SSH Access
-
-```bash
-ssh -p 2222 session-name@localhost
-```
-
-Native SSH access using auto-generated password (shown in logs).
-
 ### LAN Access
 
 ```

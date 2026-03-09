@@ -5,7 +5,6 @@ Phone browser  ──WebSocket──┐
                               ├── UI Server (server.js) ──Unix Socket──  Daemon (daemon.js)
 Desktop browser ──WebSocket──┘                                           PTY sessions
                                                                          Output buffers
-SSH client ─────────────────────SSH server──────────────────────────────┘
 ```
 
 The daemon owns the PTY sessions. The web server is stateless — restart it freely, your sessions survive. The browser reconnects and the daemon replays the output buffer. You pick up exactly where you left off.
@@ -20,7 +19,7 @@ The daemon owns the PTY sessions. The web server is stateless — restart it fre
 | **`lib/auth.js`** | WebAuthn registration/login, session token management, passkey storage. |
 | **`lib/tls.js`** | Auto-generated CA + server certificates for LAN HTTPS. |
 | **`lib/p2p.js`** | WebRTC DataChannel for low-latency terminal I/O. |
-| **`lib/ssh.js`** | SSH server bridging native terminals to daemon PTY sessions. |
+
 
 The daemon owns all PTY processes. The UI server is stateless — restart it freely without losing terminal sessions. On restart, the browser's reconnect logic kicks in and the daemon replays the output buffer.
 

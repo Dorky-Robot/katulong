@@ -63,7 +63,6 @@ describe("Credential Revoke Integration", () => {
       env: {
         ...process.env,
         PORT: TEST_PORT,
-        SSH_PORT: TEST_PORT + 10, // Use 3019 for SSH
         KATULONG_DATA_DIR: testDataDir,
         KATULONG_NO_AUTH: "1"
       },

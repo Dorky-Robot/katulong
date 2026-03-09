@@ -14,7 +14,7 @@ A self-hosted web terminal that gives you shell access from any device over HTTP
 
 Not assistant, not agent, not copilot — helper. The word carries a specific weight in Filipino culture: a katulong is someone who shows up, does the work alongside you, and makes the hard parts easier. They don't take over. They don't need to be managed. They're just there when you need them.
 
-That's what this project is. You're already doing the work — building, deploying, debugging. Katulong just makes sure your terminal is there when you reach for it, whether you're at your desk, on the couch with your phone, or SSH'd in from across the house.
+That's what this project is. You're already doing the work — building, deploying, debugging. Katulong just makes sure your terminal is there when you reach for it, whether you're at your desk, on the couch with your phone, or on a tablet across the house.
 
 The name is a reminder of the intent: serve the person doing the work, don't get in their way.
 
@@ -24,9 +24,9 @@ Your terminal is trapped on your laptop.
 
 You start a long build. You go make coffee. You want to check if it's done from your phone — but you can't, because your terminal doesn't leave the machine it's running on.
 
-You SSH into a server, start debugging, realize you need to context-switch to your desktop for the bigger screen. You open a new SSH session, re-navigate to the directory, try to remember where you were. The flow is broken.
+You start debugging on your laptop, realize you need to context-switch to your desktop for the bigger screen. You try to pick up where you left off, re-navigate to the directory, try to remember where you were. The flow is broken.
 
-Every solution involves tradeoffs: tmux requires SSH, which requires port forwarding, which requires a static IP or a VPN or a tunnel service. Cloud terminals require trusting a third party with shell access to your machine. Screen sharing works but it's slow and coarse.
+Every solution involves tradeoffs: tmux requires port forwarding, which requires a static IP or a VPN or a tunnel service. Cloud terminals require trusting a third party with shell access to your machine. Screen sharing works but it's slow and coarse.
 
 The core issue: there's no simple way to access your shell sessions from wherever you happen to be, on whatever device you happen to have.
 
@@ -45,14 +45,11 @@ Phone browser  ──WebSocket──┐
                              ├── UI Server (server.js) ──Unix Socket──  Daemon (daemon.js)
 Desktop browser ──WebSocket──┘                                          PTY sessions
                                                                         Output buffers
-SSH client ─────────────────────SSH server──────────────────────────────┘
 ```
 
 The daemon owns the PTY sessions. The web server is stateless — restart it freely, your sessions survive. The browser reconnects and the daemon replays the output buffer. You pick up exactly where you left off.
 
 Sessions are named. `/?s=deploy` connects to a session called "deploy". Open the same URL in two windows and you're sharing the session in real-time. Close all windows, come back tomorrow — the session is still there.
-
-Prefer a raw terminal? SSH directly into any session. Same daemon, same PTYs, different transport.
 
 ### Security
 
@@ -61,34 +58,6 @@ This application provides direct terminal access to your machine. Security isn't
 First device registers via WebAuthn passkey. Subsequent devices pair via QR code + 6-digit PIN. Localhost bypasses auth. LAN and remote connections require a valid session cookie. Sessions are 30-day tokens, server-side, pruned on expiry.
 
 No passwords to manage. No tokens in URLs. No `X-Forwarded-*` header trust. The only thing that proves identity is a cryptographic passkey or a physically-proximate pairing flow.
-
-## Why not just SSH?
-
-SSH is great. Katulong actually includes an SSH server. But SSH alone has friction that adds up:
-
-- **You need a client.** Your phone doesn't have one. Your partner's laptop doesn't have one. A Chromebook at a coffee shop doesn't have one. A browser is universal.
-- **You need keys or passwords.** SSH key management is a chore — generating keys, copying them to servers, rotating them, dealing with `Permission denied (publickey)`. Katulong uses WebAuthn passkeys. Register once with your fingerprint, done.
-- **You need network plumbing.** SSH requires an open port, which means firewall rules, port forwarding, dynamic DNS, or a VPN. Katulong works over HTTPS through any tunnel — same port, same protocol as every other website.
-- **Sessions require tmux.** SSH doesn't persist sessions on its own. You need tmux or screen, which means learning keybindings, configuring `.tmux.conf`, and remembering to attach. Katulong sessions persist by default. Close your browser, open it tomorrow, your session is there.
-- **Mobile is painful.** Even with an SSH app, typing commands on a phone keyboard without Ctrl, Tab, or arrow keys is miserable. Katulong has swipe navigation, a shortcut toolbar, and a full-screen text area that works with speech-to-text.
-- **Drag-and-drop doesn't work.** Try dragging an image into Claude Code over SSH — you get a file path dumped into the input, not the image. A browser terminal handles drag-and-drop, clipboard, and file uploads natively because it's a browser.
-- **Sharing is hard.** Showing someone your terminal over SSH means giving them credentials and hoping they have a client. With Katulong, you share a URL. Multiple people can join the same session instantly — open the same link and you're pair programming in real time.
-
-SSH is the right tool when you have a proper terminal, a configured client, and network access. Katulong is for everything else — the phone in your pocket, the tablet on the couch, the browser tab you can open anywhere.
-
-## When SSH is the better choice
-
-Katulong doesn't replace SSH — it fills a different gap. There are situations where SSH is clearly the right tool:
-
-- **You're already at a terminal.** If you have iTerm, Alacritty, or any real terminal emulator open, SSH gives you native performance with zero overhead. No browser, no web server, no daemon — just a direct encrypted connection.
-- **You need to transfer files.** `scp`, `rsync`, and SFTP are battle-tested. Katulong doesn't do file transfer — it's a terminal, not a file manager.
-- **You're scripting or automating.** SSH is composable. `ssh host 'command'` in a script, piping output, running Ansible playbooks — the entire ops ecosystem is built on SSH as a primitive. Katulong is interactive-first.
-- **You're accessing many machines.** SSH scales to hundreds of hosts with `~/.ssh/config`, jump hosts, and agent forwarding. Katulong runs on one machine and gives you a terminal to that machine.
-- **You need port forwarding or tunneling.** SSH tunnels (`-L`, `-R`, `-D`) are a core feature. Katulong doesn't forward ports — it's focused on terminal access.
-- **You want minimal attack surface.** SSH is a single well-audited binary with decades of hardening. Katulong is a Node.js web application with a broader surface area — HTTP server, WebSocket, browser frontend, and auth middleware. If you're hardening a production server, SSH with key-only auth and fail2ban is the simpler security story.
-- **You want something that just works.** SSH is a single binary with no moving parts. Katulong has a daemon, a web server, and a browser frontend — more things that can clunk out, need restarting, or get into a weird state. SSH connects or it doesn't. There's no daemon to babysit.
-
-The honest summary: if you have SSH access and a proper terminal, use SSH. Katulong is for when you don't — when you're on your phone, on a borrowed machine, or you want persistent sessions without tmux and shared access without credential management.
 
 ## Install
 
@@ -157,15 +126,7 @@ The deploy is running. You grab your phone, walk to the kitchen, open `https://y
 
 Back at your desk, you notice a bug in staging. You open `/?s=debug` on your desktop's bigger monitor. You start digging. Your laptop still has `/?s=deploy` open — two sessions, two devices, no conflict.
 
-Later that night, you're on the couch. You SSH in from your iPad:
-
-```bash
-ssh -p 2222 debug@your-machine
-# Password: your setup token
-# You're in the "debug" session — same PTY, same scrollback
-```
-
-One daemon. Multiple transports. Your work follows you.
+One daemon. Multiple windows. Your work follows you.
 
 ## Features
 
@@ -221,7 +182,7 @@ Browser  <──WebSocket──>  UI Server (server.js)  <──Unix Socket─�
 - **`lib/auth.js`** — WebAuthn registration/login, session token management, passkey storage.
 - **`lib/tls.js`** — Auto-generated CA + server certificates for LAN HTTPS.
 - **`lib/p2p.js`** — WebRTC DataChannel for low-latency terminal I/O.
-- **`lib/ssh.js`** — SSH server bridging native terminals to daemon PTY sessions.
+
 
 The daemon owns all PTY processes. The UI server is stateless — restart it freely without losing terminal sessions. On restart, the browser's reconnect logic kicks in and the daemon replays the output buffer.
 

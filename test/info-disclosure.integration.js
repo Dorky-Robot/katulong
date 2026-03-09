@@ -89,7 +89,6 @@ describe("Info-disclosure security (#151, #126)", () => {
       env: {
         ...process.env,
         PORT: String(TEST_PORT),
-        SSH_PORT: String(TEST_PORT + 10),
         KATULONG_DATA_DIR: testDataDir,
         // No KATULONG_NO_AUTH — we want real auth enforcement
       },
@@ -165,42 +164,6 @@ describe("Info-disclosure security (#151, #126)", () => {
     it("authenticated localhost request is not rejected with 401", async () => {
       const res = await localRequest("GET", "/sessions");
       assert.notEqual(res.status, 401, "localhost requests should bypass auth");
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // GET /connect/info — SSH connection details
-  // ---------------------------------------------------------------------------
-
-  describe("GET /connect/info", () => {
-    it("rejects unauthenticated remote request", async () => {
-      const res = await remoteRequest("GET", "/connect/info");
-      assert.ok(
-        res.status === 302 || res.status === 401,
-        `expected 302 or 401, got ${res.status}`
-      );
-    });
-
-    it("returns 200 for authenticated localhost request", async () => {
-      const res = await localRequest("GET", "/connect/info");
-      assert.equal(res.status, 200);
-    });
-
-    it("returns JSON with sshPort and sshHost", async () => {
-      const res = await localRequest("GET", "/connect/info");
-      assert.ok(res.json, "response should be valid JSON");
-      assert.equal(typeof res.json.sshPort, "number");
-      assert.equal(typeof res.json.sshHost, "string");
-    });
-
-    it("sshPort matches the SSH_PORT environment variable", async () => {
-      const res = await localRequest("GET", "/connect/info");
-      assert.equal(res.json.sshPort, TEST_PORT + 10);
-    });
-
-    it("sshHost defaults to localhost", async () => {
-      const res = await localRequest("GET", "/connect/info");
-      assert.equal(res.json.sshHost, "localhost");
     });
   });
 

@@ -10,7 +10,7 @@ Audit performed on two production Katulong instances.
 
 - **File:** `server.js:334`
 - **Status:** Fixed
-- **Issue:** HTTP server binds to all interfaces (`0.0.0.0`), exposing it on LAN. SSH server correctly binds to `127.0.0.1`.
+- **Issue:** HTTP server binds to all interfaces (`0.0.0.0`), exposing it on LAN.
 - **Fix:** Bind to `127.0.0.1` by default. Add `KATULONG_BIND_HOST` env var for explicit override.
 
 ## MEDIUM-2: Session Tokens Used as Filenames

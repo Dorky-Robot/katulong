@@ -1,7 +1,7 @@
 # Your Terminal, Everywhere
 
 Self-hosted web terminal with passwordless authentication.
-Access your shell from any device — desktop browser, phone, SSH — over LAN or internet.
+Access your shell from any device — desktop browser, phone, or tablet — over LAN or internet.
 
 *Katulong* (kah-too-LONG) means "helper" in Tagalog — your always-ready terminal assistant.
 
@@ -26,15 +26,15 @@ katulong start
 1. **Start katulong** — a single binary launches a daemon (PTY owner) and an HTTP/WebSocket server
 2. **Open in browser** — an xterm.js frontend connects via WebSocket
 3. **Register a passkey** — first visit registers your device with WebAuthn
-4. **Access from anywhere** — use a tunnel (ngrok, Cloudflare) for remote access, or SSH directly
+4. **Access from anywhere** — use a tunnel (ngrok, Cloudflare) for remote access
 
 ## Why Katulong
 
-Traditional remote access tools force you to choose between convenience and security. SSH is secure but clunky on mobile. Web terminals are convenient but usually cloud-hosted. Katulong combines both:
+Traditional remote access tools force you to choose between convenience and security. Web terminals are convenient but usually cloud-hosted. Katulong gives you both:
 
 - **Self-hosted** — runs on your machine, your data stays yours
 - **Passwordless** — WebAuthn passkeys, no passwords ever
-- **Multi-access** — browser, phone, SSH — whatever's handy
+- **Multi-access** — browser, phone, tablet — whatever's handy
 - **Single binary** — daemon + server + embedded frontend, nothing else to install
 - **Session persistence** — the daemon survives server restarts; your sessions stay alive
 - **Tunnel-friendly** — designed for ngrok, Cloudflare Tunnel, or any reverse proxy

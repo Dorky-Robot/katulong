@@ -10,7 +10,7 @@ Katulong is a self-hosted web terminal that gives remote shell access to the hos
 - `public/index.html` — SPA frontend (xterm.js terminal, shortcut bar, settings)
 - `lib/auth.js` — WebAuthn registration/login, session token management, passkey storage
 - `lib/http-util.js` — Cookie parsing, public path allowlist, session cookies, challenge store
-- `lib/ssh.js` — SSH server bridging native terminals to tmux sessions
+
 
 Remote access model: the server binds to localhost and an external tunnel tool (ngrok, Cloudflare Tunnel, etc.) forwards HTTPS traffic to it. TLS termination and external certificate management are handled by the tunnel, not by Katulong itself.
 
@@ -74,7 +74,7 @@ This ensures:
 - Localhost requests (`127.0.0.1`, `::1`) bypass auth (auto-authenticated).
 - Remote requests via tunnel require a valid `katulong_session` cookie.
 - Sessions are 30-day tokens stored server-side. Expired sessions are pruned.
-- SSH access authenticates via password (`SSH_PASSWORD` or `SETUP_TOKEN`). Username maps to session name.
+
 
 ### Authorization boundaries
 - `isPublicPath()` in `lib/http-util.js` controls which routes skip auth. Any change here is security-critical.
@@ -84,11 +84,11 @@ This ensures:
 ### Threat surface
 - **Auth bypass**: Any route that serves content or accepts input without checking `isAuthenticated()` is a direct shell access vulnerability.
 - **Session hijacking**: Cookie flags (HttpOnly, SameSite=Lax) must be maintained. No session tokens in URLs or localStorage. Auth state files use atomic writes (temp + rename) to prevent corruption. All session state mutations must use `withStateLock()` to prevent race conditions.
-- **Command injection**: Terminal input goes directly to a PTY. The server must never interpolate user data into shell commands on the server side. Sensitive env vars (SSH_PASSWORD, SETUP_TOKEN) are filtered from PTY environments.
+- **Command injection**: Terminal input goes directly to a PTY. The server must never interpolate user data into shell commands on the server side. Sensitive env vars (SETUP_TOKEN) are filtered from PTY environments.
 - **Path traversal**: Static file serving resolves paths against `public/` and checks the prefix. `isPublicPath()` rejects paths with `..`, `//`, or leading dots to prevent traversal. Changes to static file handling must maintain these checks.
 - **WebAuthn registration**: First device registers via passkey. Additional devices register via setup token (remote access flow).
 - **XSS**: The frontend is a single HTML file with no templating. Any server-side HTML injection (e.g., `data-` attribute interpolation) must escape user-controlled values via `escapeAttr()`.
-- **SSH access**: Password compared via `timingSafeEqual`. Host key persisted to `DATA_DIR/ssh/`. SSH port should be firewalled on untrusted networks.
+
 - **WebSocket origin**: Origin header validated on WS upgrade. For localhost connections, both socket address and Host/Origin headers are checked — a loopback socket address alone is not sufficient (tunnels like ngrok forward traffic from loopback). Rejects missing or mismatched origins on non-localhost requests.
 - **Tunnel security**: Remote access relies on an external tunnel (ngrok, Cloudflare Tunnel, etc.) for TLS termination. The tunnel URL must be kept private; anyone with the URL can reach the login page. Katulong never trusts `X-Forwarded-Proto` or similar headers for security decisions — only actual socket state.
 - **Request body size**: All public auth endpoints enforce 1MB request body limit to prevent DoS attacks.
@@ -109,7 +109,7 @@ When reviewing PRs, pay close attention to:
 9. **WebAuthn flow**: Registration challenges must remain time-limited, single-use, and format-validated.
 10. **Error handling**: Error responses must not leak internal paths, stack traces, or secrets.
 11. **File I/O**: Auth state writes must be atomic (temp + rename). Add error handling for corrupt JSON.
-12. **Environment variables**: Never expose sensitive env vars (SSH_PASSWORD, SETUP_TOKEN, KATULONG_NO_AUTH) to PTY processes.
+12. **Environment variables**: Never expose sensitive env vars (SETUP_TOKEN, KATULONG_NO_AUTH) to PTY processes.
 13. **Header trust**: Never trust request headers (`X-Forwarded-*`, `X-Forwarded-Proto`, etc.) for security decisions. Only trust actual socket state. This is especially important for tunnel-based access (ngrok, Cloudflare Tunnel) where reverse-proxy headers are trivially forgeable.
 14. **Localhost detection**: `isLocalRequest()` in `lib/access-method.js` is security-critical — it gates auth bypass. It must check Host and Origin headers in addition to socket address to prevent tunnel traffic from being classified as local.
 15. **State mutations**: All auth state mutations must use `withStateLock()` from `lib/auth.js` to prevent race conditions.
