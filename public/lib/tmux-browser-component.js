@@ -37,8 +37,8 @@ export function createTmuxBrowserComponent(sessionStore, options = {}) {
     const btn = document.createElement("button");
     btn.className = "tmux-browse-btn tmux-browse-btn--active";
     btn.title = "Hide tmux sessions";
-    const label = loading ? "Loading\u2026" : "tmux sessions";
-    btn.innerHTML = `<i class="ph ph-stack"></i><span class="tmux-browse-label"> ${label}</span>`;
+    const btnLabel = loading ? "Loading\u2026" : "tmux sessions";
+    btn.innerHTML = `<i class="ph ph-stack"></i><span class="tmux-browse-label"> ${btnLabel}</span>`;
     btn.addEventListener("click", () => {
       expanded = false;
       render();
