@@ -125,6 +125,27 @@ const sessionManager = createSessionManager({
   dataDir: DATA_DIR,
 });
 
+// --- Periodic expired session pruning (1 hour) ---
+const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+const pruneTimer = setInterval(async () => {
+  try {
+    await withStateLock((state) => {
+      if (!state) return {};
+      const pruned = state.pruneExpired();
+      if (Object.keys(pruned.sessions).length < Object.keys(state.sessions).length) {
+        log.info("Pruned expired auth sessions", {
+          removed: Object.keys(state.sessions).length - Object.keys(pruned.sessions).length,
+        });
+        return { state: pruned };
+      }
+      return {};
+    });
+  } catch (err) {
+    log.warn("Session pruning failed", { error: err.message });
+  }
+}, PRUNE_INTERVAL_MS);
+pruneTimer.unref();
+
 // --- WebSocket manager ---
 const wsManager = createWebSocketManager({ bridge, sessionManager });
 const { wsClients, broadcastToAll, closeAllWebSockets, closeWebSocketsForCredential } = wsManager;
@@ -133,22 +154,25 @@ const { wsClients, broadcastToAll, closeAllWebSockets, closeWebSocketsForCredent
 
 const { auth, csrf } = createMiddleware({ isAuthenticated, json });
 
-const routeCtx = {
-  json, parseJSON, isAuthenticated, sessionManager,
-  storeChallenge, consumeChallenge, challengeStore,
-  broadcastToAll, closeWebSocketsForCredential,
-  credentialLockout, configManager,
-  __dirname, DATA_DIR, APP_VERSION, RP_NAME, PORT,
-  getDraining: () => draining,
-  closeAllWebSockets,
-  auth, csrf,
-};
-
 const routes = [
-  ...createAuthRoutes(routeCtx),
-  ...createAppRoutes(routeCtx),
-  ...createFileBrowserRoutes(routeCtx),
-  ...createPortProxyRoutes(routeCtx),
+  ...createAuthRoutes({
+    json, parseJSON, isAuthenticated,
+    storeChallenge, consumeChallenge, challengeStore,
+    broadcastToAll, closeWebSocketsForCredential, closeAllWebSockets,
+    credentialLockout,
+    RP_NAME, PORT,
+    auth, csrf,
+  }),
+  ...createAppRoutes({
+    json, parseJSON, isAuthenticated, sessionManager,
+    configManager,
+    __dirname, DATA_DIR, APP_VERSION,
+    getDraining: () => draining,
+    shortcutsPath: join(DATA_DIR, "shortcuts.json"),
+    auth, csrf,
+  }),
+  ...createFileBrowserRoutes({ json, parseJSON, auth, csrf }),
+  ...createPortProxyRoutes({ auth, PORT, configManager }),
 ];
 
 function matchRoute(method, pathname) {
@@ -240,19 +264,13 @@ const server = createServer(handleRequest);
 
 const wss = new WebSocketServer({ noServer: true });
 
-function handleUpgrade(req, socket, head) {
-  log.info("WebSocket upgrade attempt", {
-    ip: req.socket.remoteAddress,
-    origin: req.headers.origin,
-    host: req.headers.host
-  });
+function rejectUpgrade(socket, status) {
+  socket.write(`HTTP/1.1 ${status}\r\n\r\n`);
+  socket.destroy();
+}
 
-  if (!isAuthenticated(req)) {
-    log.warn("WebSocket rejected: not authenticated", { ip: req.socket.remoteAddress });
-    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-    socket.destroy();
-    return;
-  }
+function authenticateUpgrade(req) {
+  if (!isAuthenticated(req)) return null;
 
   const cookies = parseCookies(req.headers.cookie);
   const sessionToken = cookies.get("katulong_session");
@@ -261,53 +279,54 @@ function handleUpgrade(req, socket, head) {
   if (sessionToken && !isLocalRequest(req)) {
     const state = loadState();
     const session = state?.getSession(sessionToken);
-    if (!state || !session || !state.isValidSession(sessionToken)) {
-      log.warn("WebSocket rejected: invalid session", { ip: req.socket.remoteAddress });
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-      socket.destroy();
-      return;
-    }
+    if (!state || !session || !state.isValidSession(sessionToken)) return null;
     credentialId = session.credentialId;
   }
 
-  log.info("WebSocket authenticated", { ip: req.socket.remoteAddress, credentialId });
+  return { sessionToken, credentialId };
+}
+
+function validateUpgradeOrigin(req) {
+  if (isLocalRequest(req)) return true;
+  const origin = req.headers.origin;
+  const host = req.headers.host;
+  if (!origin) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+function handleUpgrade(req, socket, head) {
+  log.info("WebSocket upgrade attempt", {
+    ip: req.socket.remoteAddress,
+    origin: req.headers.origin,
+    host: req.headers.host
+  });
+
+  const auth = authenticateUpgrade(req);
+  if (!auth) {
+    log.warn("WebSocket rejected: not authenticated", { ip: req.socket.remoteAddress });
+    return rejectUpgrade(socket, "401 Unauthorized");
+  }
 
   // Port proxy WebSocket — intercept before terminal WS handling
   const { pathname: wsPathname } = new URL(req.url, `http://${req.headers.host}`);
   if (wsPathname.startsWith("/_proxy/")) {
     if (configManager.getPortProxyEnabled() === false) {
-      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-      socket.destroy();
-      return;
+      return rejectUpgrade(socket, "403 Forbidden");
     }
     proxyWebSocket(req, socket, head, wsPathname);
     return;
   }
 
-  if (!isLocalRequest(req)) {
-    const origin = req.headers.origin;
-    const host = req.headers.host;
-    if (!origin) {
-      log.warn("WebSocket rejected: missing Origin header");
-      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-    try {
-      const originHost = new URL(origin).host;
-      if (originHost !== host) {
-        log.warn("WebSocket origin mismatch", { origin, host });
-        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-    } catch {
-      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-      socket.destroy();
-      return;
-    }
+  if (!validateUpgradeOrigin(req)) {
+    log.warn("WebSocket rejected: origin validation failed", { origin: req.headers.origin, host: req.headers.host });
+    return rejectUpgrade(socket, "403 Forbidden");
   }
 
+  const { sessionToken, credentialId } = auth;
   wss.handleUpgrade(req, socket, head, (ws) => {
     if (sessionToken && !isLocalRequest(req)) {
       const freshState = loadState();
@@ -341,7 +360,8 @@ if (envConfig.nodeEnv !== "production") {
 }
 
 process.on("unhandledRejection", (err) => {
-  log.error("Unhandled rejection", { error: err?.message || String(err) });
+  log.error("Unhandled rejection — crashing to allow clean restart", { error: err?.message || String(err), stack: err?.stack });
+  process.exit(1);
 });
 
 server.listen(PORT, envConfig.bindHost, () => {
