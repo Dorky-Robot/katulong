@@ -24,4 +24,13 @@ for SHARD in 0 1 2 3; do
   fi
 done
 
+# Kill leftover smoke test tmux sessions
+SMOKE_SESSIONS=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^smoke-' || true)
+if [ -n "$SMOKE_SESSIONS" ]; then
+  echo "  Killing leftover smoke test tmux sessions..."
+  echo "$SMOKE_SESSIONS" | while read -r sess; do
+    tmux kill-session -t "$sess" 2>/dev/null && echo "    killed: $sess"
+  done
+fi
+
 echo "✓ Test cleanup complete (dev server untouched)"
