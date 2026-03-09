@@ -63,9 +63,9 @@ export function createSessionListComponent(store, options = {}) {
       const isCurrent = s.name === state.currentSession;
 
       const card = document.createElement("div");
-      card.className = `session-card${isCurrent ? " active" : ""}`;
+      card.className = `session-card${isCurrent ? " active" : ""}${s.external ? " external" : ""}`;
       card.setAttribute("role", "listitem");
-      card.setAttribute("aria-label", `Session: ${s.name}`);
+      card.setAttribute("aria-label", `Session: ${s.name}${s.external ? " (external tmux session)" : ""}`);
       card.setAttribute("data-initial", s.name.charAt(0));
       card.title = s.name;
 
@@ -143,27 +143,45 @@ export function createSessionListComponent(store, options = {}) {
       const actions = document.createElement("div");
       actions.className = "session-card-actions";
 
-      // Delete
-      const delBtn = document.createElement("button");
-      delBtn.className = "session-card-action delete";
-      delBtn.setAttribute("aria-label", `Delete session ${s.name}`);
-      delBtn.innerHTML = '<i class="ph ph-trash"></i>';
-      delBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        if (s.hasChildProcesses) {
-          const confirmed = confirm(
-            `Session "${s.name}" contains running processes or important content (like Claude Code history). Deleting it will lose this data.\n\nAre you sure you want to delete this session?`
-          );
-          if (!confirmed) return;
-        }
-        try {
-          await api.delete(`/sessions/${encodeURIComponent(s.name)}`);
-          invalidateSessions(store, state.currentSession);
-        } catch (err) {
-          console.error('[Session] Delete failed:', err);
-        }
-      });
-      actions.appendChild(delBtn);
+      if (s.external) {
+        // External tmux session — show eject button (detach from katulong, keep tmux session)
+        const ejectBtn = document.createElement("button");
+        ejectBtn.className = "session-card-action";
+        ejectBtn.setAttribute("aria-label", `Detach session ${s.name} from katulong`);
+        ejectBtn.innerHTML = '<i class="ph ph-eject"></i>';
+        ejectBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          try {
+            await api.delete(`/sessions/${encodeURIComponent(s.name)}`);
+            invalidateSessions(store, state.currentSession);
+          } catch (err) {
+            console.error('[Session] Detach failed:', err);
+          }
+        });
+        actions.appendChild(ejectBtn);
+      } else {
+        // Katulong-managed session — show delete button
+        const delBtn = document.createElement("button");
+        delBtn.className = "session-card-action delete";
+        delBtn.setAttribute("aria-label", `Delete session ${s.name}`);
+        delBtn.innerHTML = '<i class="ph ph-trash"></i>';
+        delBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          if (s.hasChildProcesses) {
+            const confirmed = confirm(
+              `Session "${s.name}" contains running processes or important content (like Claude Code history). Deleting it will lose this data.\n\nAre you sure you want to delete this session?`
+            );
+            if (!confirmed) return;
+          }
+          try {
+            await api.delete(`/sessions/${encodeURIComponent(s.name)}`);
+            invalidateSessions(store, state.currentSession);
+          } catch (err) {
+            console.error('[Session] Delete failed:', err);
+          }
+        });
+        actions.appendChild(delBtn);
+      }
 
       card.appendChild(actions);
       container.appendChild(card);
