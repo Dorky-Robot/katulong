@@ -64,7 +64,7 @@ describe("readRawBody", () => {
     const req = fakeReq([Buffer.alloc(100)]);
     await assert.rejects(
       () => readRawBody(req, 50),
-      { message: "Body too large" }
+      { message: "Request body too large" }
     );
   });
 

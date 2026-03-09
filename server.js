@@ -122,7 +122,6 @@ const sessionManager = createSessionManager({
   bridge,
   shell: envConfig.shell,
   home: envConfig.home,
-  dataDir: DATA_DIR,
 });
 
 // --- Periodic expired session pruning (1 hour) ---
@@ -132,9 +131,9 @@ const pruneTimer = setInterval(async () => {
     await withStateLock((state) => {
       if (!state) return {};
       const pruned = state.pruneExpired();
-      if (Object.keys(pruned.sessions).length < Object.keys(state.sessions).length) {
+      if (pruned.sessionCount() < state.sessionCount()) {
         log.info("Pruned expired auth sessions", {
-          removed: Object.keys(state.sessions).length - Object.keys(pruned.sessions).length,
+          removed: state.sessionCount() - pruned.sessionCount(),
         });
         return { state: pruned };
       }
@@ -311,6 +310,11 @@ function handleUpgrade(req, socket, head) {
     return rejectUpgrade(socket, "401 Unauthorized");
   }
 
+  if (!validateUpgradeOrigin(req)) {
+    log.warn("WebSocket rejected: origin validation failed", { origin: req.headers.origin, host: req.headers.host });
+    return rejectUpgrade(socket, "403 Forbidden");
+  }
+
   // Port proxy WebSocket — intercept before terminal WS handling
   const { pathname: wsPathname } = new URL(req.url, `http://${req.headers.host}`);
   if (wsPathname.startsWith("/_proxy/")) {
@@ -319,11 +323,6 @@ function handleUpgrade(req, socket, head) {
     }
     proxyWebSocket(req, socket, head, wsPathname);
     return;
-  }
-
-  if (!validateUpgradeOrigin(req)) {
-    log.warn("WebSocket rejected: origin validation failed", { origin: req.headers.origin, host: req.headers.host });
-    return rejectUpgrade(socket, "403 Forbidden");
   }
 
   const { sessionToken, credentialId } = auth;
