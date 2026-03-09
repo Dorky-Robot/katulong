@@ -18,15 +18,10 @@ const TEST_DATA_DIR = SHARD_INDEX === 0
   ? '/tmp/katulong-e2e-data'
   : `/tmp/katulong-e2e-data-${SHARD_INDEX}`;
 
-const TEST_SOCK_PATH = SHARD_INDEX === 0
-  ? '/tmp/katulong-test.sock'
-  : `/tmp/katulong-test-${SHARD_INDEX}.sock`;
-
 export {
   SHARD_INDEX,
   TEST_PORT,
   TEST_SSH_PORT,
   BASE_URL,
   TEST_DATA_DIR,
-  TEST_SOCK_PATH,
 };

@@ -12,15 +12,13 @@ pkill -f "node.*server.js"  # ❌ KILLS BOTH DEV AND TEST!
 Dev and test environments are now **completely separate**:
 
 ### Dev Environment
-- **Ports:** 3001 (HTTP), 3002 (HTTPS), 2222 (SSH)
-- **Socket:** `/tmp/katulong-daemon.sock`
+- **Ports:** 3001 (HTTP), 2222 (SSH)
 - **Data:** `~/.katulong/` or `$KATULONG_DATA_DIR`
 - **Process:** Long-running, started manually
 - **Auth:** Real WebAuthn/passkeys
 
-### Test Environment  
+### Test Environment
 - **Port:** 3099
-- **Socket:** `/tmp/katulong-test.sock`
 - **Data:** `/tmp/katulong-e2e-data`
 - **Process:** Started/stopped by Playwright
 - **Auth:** `KATULONG_NO_AUTH=1` (bypassed for testing)
@@ -37,13 +35,11 @@ bash test/e2e/cleanup-test-server.sh
 
 # Or very specifically:
 lsof -ti:3099 | xargs kill -9  # Only test port
-rm -f /tmp/katulong-test.sock  # Only test socket
 ```
 
 ### ❌ DANGEROUS (Kills dev processes too!):
 ```bash
 pkill -f "node.*server.js"     # Kills BOTH!
-pkill -f "node entrypoint.js"  # Kills BOTH!
 pkill -f katulong              # Kills EVERYTHING!
 pkill node                     # Kills ALL node processes!
 ```
@@ -99,12 +95,10 @@ open http://localhost:3001
 ps aux | grep katulong
 
 # Dev processes will show:
-#   node entrypoint.js (no PORT env var, or PORT=3001)
-#   Socket: /tmp/katulong-daemon.sock
+#   node server.js (no PORT env var, or PORT=3001)
 
 # Test processes will show:
 #   PORT=3099
-#   KATULONG_SOCK=/tmp/katulong-test.sock
 #   KATULONG_DATA_DIR=/tmp/katulong-e2e-data
 ```
 
@@ -121,13 +115,12 @@ Playwright's `webServer` config uses:
 
 When the test completes, Playwright:
 1. Only kills processes it started (on port 3099)
-2. Doesn't touch other ports (3001/3002 = safe)
-3. Only removes test socket (not dev socket)
+2. Doesn't touch other ports (3001 = safe)
 
 ## Hot Reload in Dev
 
 While tests run, your dev environment:
-- ✅ Keeps running on port 3001/3002
+- ✅ Keeps running on port 3001
 - ✅ Can still reload code changes
 - ✅ Completely independent
 - ✅ No interference from tests
@@ -139,8 +132,7 @@ While tests run, your dev environment:
 
 **Fix:**
 ```bash
-# Restart dev services (safe script coming soon)
-node daemon.js > /tmp/katulong-daemon.log 2>&1 &
+# Restart dev server
 node server.js > /tmp/katulong-server.log 2>&1 &
 ```
 
@@ -155,9 +147,9 @@ npm run test:e2e:clean
 ### "Can't tell which process is which"
 ```bash
 # Show full command line
-ps aux | grep -E "(3001|3002|3099)" 
+ps aux | grep -E "(3001|3099)"
 
-# Dev will be on 3001/3002
+# Dev will be on 3001
 # Test will be on 3099
 ```
 
