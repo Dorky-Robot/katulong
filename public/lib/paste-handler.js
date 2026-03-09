@@ -46,10 +46,15 @@ export function createPasteHandler(options = {}) {
       e.preventDefault();
       // If no paste event fires within 200ms (e.g. empty clipboard),
       // send the original Ctrl+V through.
-      _fallbackTimer = setTimeout(() => {
+      _fallbackTimer = setTimeout(async () => {
         if (_blocked) {
           _blocked = false;
           _fallbackTimer = null;
+          // Try reading clipboard directly (paste event may not fire on some browsers)
+          try {
+            const text = await navigator.clipboard.readText();
+            if (text && onTextPaste) { onTextPaste(text); return; }
+          } catch { /* clipboard API not available */ }
           if (onTextPaste) onTextPaste("\x16");
         }
       }, 200);
