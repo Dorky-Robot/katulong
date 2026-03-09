@@ -1,7 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
-import { detectImage, readRawBody, MAX_UPLOAD_BYTES } from "../lib/routes.js";
+import { detectImage, MAX_UPLOAD_BYTES } from "../lib/routes.js";
+import { readRawBody } from "../lib/request-util.js";
 
 describe("detectImage", () => {
   it("detects PNG magic bytes", () => {
@@ -63,7 +64,7 @@ describe("readRawBody", () => {
     const req = fakeReq([Buffer.alloc(100)]);
     await assert.rejects(
       () => readRawBody(req, 50),
-      { message: "Body too large" }
+      { message: "Request body too large" }
     );
   });
 
