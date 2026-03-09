@@ -56,8 +56,16 @@ export async function uploadImageToTerminal(file, options = {}) {
       return;
     }
 
-    const { path } = await res.json();
-    if (onSend) onSend(path + " ");
+    const data = await res.json();
+    if (onSend) {
+      if (data.clipboard) {
+        // Image is on host clipboard — send Ctrl+V so CLI tools detect it
+        onSend("\x16");
+      } else {
+        // Fallback: type the filesystem path
+        onSend(data.fsPath + " ");
+      }
+    }
   } catch (err) {
     if (toast) toast("Upload failed", true);
   }

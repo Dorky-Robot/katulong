@@ -91,20 +91,11 @@ function createMockCtx(stateOverrides = {}) {
       }
       return result;
     },
-    daemonRPC: async (msg) => {
-      if (msg.type === "list-sessions") {
-        return { sessions: stateOverrides.ptySessions || [] };
-      }
-      if (msg.type === "create-session") {
-        return { name: msg.name };
-      }
-      if (msg.type === "delete-session") {
-        return { ok: true };
-      }
-      if (msg.type === "rename-session") {
-        return { name: msg.newName };
-      }
-      return {};
+    sessionManager: {
+      listSessions: () => ({ sessions: stateOverrides.ptySessions || [] }),
+      createSession: async (name) => ({ name }),
+      deleteSession: (name) => ({ ok: true }),
+      renameSession: async (oldName, newName) => ({ name: newName }),
     },
   };
 
@@ -366,9 +357,9 @@ describe("katulong session list", () => {
     assert.equal(data.sessions[0].name, "default");
   });
 
-  it("handles daemon error gracefully", async () => {
+  it("handles session manager error gracefully", async () => {
     const { ctx } = createMockCtx();
-    ctx.daemonRPC = async () => { throw new Error("Daemon not connected"); };
+    ctx.sessionManager.listSessions = () => { throw new Error("Internal failure"); };
     const result = await executeCommand("katulong session list", ctx);
     assert.equal(result.exitCode, 1);
     assert.ok(result.output.includes("Internal error"));
@@ -391,9 +382,9 @@ describe("katulong session create", () => {
     assert.ok(result.output.includes("Usage:"));
   });
 
-  it("returns error on daemon conflict", async () => {
+  it("returns error on session conflict", async () => {
     const { ctx } = createMockCtx();
-    ctx.daemonRPC = async () => ({ error: "Session already exists" });
+    ctx.sessionManager.createSession = async () => ({ error: "Session already exists" });
     const result = await executeCommand("katulong session create work", ctx);
     assert.equal(result.exitCode, 1);
     assert.ok(result.output.includes("already exists"));
@@ -429,9 +420,9 @@ describe("katulong session kill", () => {
     assert.ok(result.output.includes("Usage:"));
   });
 
-  it("returns error on daemon failure", async () => {
+  it("returns error when session not found", async () => {
     const { ctx } = createMockCtx();
-    ctx.daemonRPC = async () => ({ error: "Session not found" });
+    ctx.sessionManager.deleteSession = () => ({ error: "Session not found" });
     const result = await executeCommand("katulong session kill nonexistent", ctx);
     assert.equal(result.exitCode, 1);
     assert.ok(result.output.includes("not found"));
@@ -495,15 +486,6 @@ describe("katulong status", () => {
     assert.equal(result.exitCode, 0);
     assert.ok(result.output.includes("Credentials:"));
     assert.ok(result.output.includes("1"));
-    assert.ok(result.output.includes("connected"));
-  });
-
-  it("shows disconnected when daemon is down", async () => {
-    const { ctx } = createMockCtx();
-    ctx.daemonRPC = async () => { throw new Error("Daemon not connected"); };
-    const result = await executeCommand("katulong status", ctx);
-    assert.equal(result.exitCode, 0);
-    assert.ok(result.output.includes("disconnected"));
   });
 
   it("supports --json output", async () => {
@@ -512,6 +494,6 @@ describe("katulong status", () => {
     assert.equal(result.exitCode, 0);
     const data = JSON.parse(result.output);
     assert.equal(typeof data.credentials, "number");
-    assert.equal(typeof data.daemon, "string");
+    assert.equal(typeof data.ptySessions, "number");
   });
 });

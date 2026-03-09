@@ -1,16 +1,16 @@
 # Katulong
 
-Katulong is a self-hosted web terminal that gives remote shell access to the host machine over HTTP + WebSocket. It runs locally (localhost-only) and remote access is provided via an external tunnel (ngrok, Cloudflare Tunnel, etc.). It multiplexes PTY sessions via a Unix socket daemon and serves a single-page xterm.js frontend.
+Katulong is a self-hosted web terminal that gives remote shell access to the host machine over HTTP + WebSocket. It runs locally (localhost-only) and remote access is provided via an external tunnel (ngrok, Cloudflare Tunnel, etc.). It manages terminal sessions via tmux and serves a single-page xterm.js frontend.
 
 ## Architecture
 
-- `server.js` — HTTP + WebSocket server (routes, auth middleware, daemon IPC)
-- `daemon.js` — Long-lived process that owns PTY sessions, communicates over a Unix socket via NDJSON
+- `server.js` — HTTP + WebSocket server (routes, auth middleware, session management)
+- `lib/session-manager.js` — Terminal session lifecycle via tmux control mode
+- `lib/session.js` — Session class, tmux helpers, RingBuffer
 - `public/index.html` — SPA frontend (xterm.js terminal, shortcut bar, settings)
 - `lib/auth.js` — WebAuthn registration/login, session token management, passkey storage
 - `lib/http-util.js` — Cookie parsing, public path allowlist, session cookies, challenge store
-- `lib/ssh.js` — SSH server bridging native terminals to daemon PTY sessions
-- `lib/ndjson.js` — Newline-delimited JSON encode/decode for daemon IPC
+- `lib/ssh.js` — SSH server bridging native terminals to tmux sessions
 
 Remote access model: the server binds to localhost and an external tunnel tool (ngrok, Cloudflare Tunnel, etc.) forwards HTTPS traffic to it. TLS termination and external certificate management are handled by the tunnel, not by Katulong itself.
 
@@ -79,7 +79,7 @@ This ensures:
 ### Authorization boundaries
 - `isPublicPath()` in `lib/http-util.js` controls which routes skip auth. Any change here is security-critical.
 - WebSocket upgrade validates the session cookie. Unauthenticated upgrades are rejected.
-- The daemon trusts all messages from the server process (no per-message auth on the Unix socket).
+- The session manager runs in-process with the server (no IPC boundary).
 
 ### Threat surface
 - **Auth bypass**: Any route that serves content or accepts input without checking `isAuthenticated()` is a direct shell access vulnerability.
@@ -119,10 +119,10 @@ When reviewing PRs, pay close attention to:
 ```
 npm test          # all tests
 npm run test:unit # unit tests only
-npm run test:integration # daemon integration tests
+npm run test:integration # integration tests
 ```
 
-Tests live in `test/`. The test suite covers auth, session management, cookie parsing, daemon IPC, and the NDJSON protocol.
+Tests live in `test/`. The test suite covers auth, session management, cookie parsing, and tmux session lifecycle.
 
 ## Security history
 

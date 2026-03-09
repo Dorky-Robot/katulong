@@ -12,10 +12,8 @@ SSH_PORT=$(( 2223 + SHARD * 10 ))
 
 if [ "$SHARD" -eq 0 ]; then
   DATA_DIR="/tmp/katulong-e2e-data"
-  SOCK_PATH="/tmp/katulong-test.sock"
 else
   DATA_DIR="/tmp/katulong-e2e-data-${SHARD}"
-  SOCK_PATH="/tmp/katulong-test-${SHARD}.sock"
 fi
 
 # Run pre-server setup to create fixture auth state
@@ -25,6 +23,5 @@ TEST_SHARD_INDEX=$SHARD node test/e2e/pre-server-setup.js
 PORT=$HTTP_PORT \
 SSH_PORT=$SSH_PORT \
 KATULONG_NO_AUTH=1 \
-KATULONG_SOCK="$SOCK_PATH" \
 KATULONG_DATA_DIR="$DATA_DIR" \
-node entrypoint.js
+node server.js

@@ -8,15 +8,13 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DAEMON_PATH = join(__dirname, "..", "daemon.js");
 const SERVER_PATH = join(__dirname, "..", "server.js");
 
 /**
  * Integration tests for Sessions CRUD via HTTP routes.
  *
- * Spins up a real daemon + server with an isolated socket and data dir,
- * then exercises the session endpoints the same way the frontend
- * session-manager.js does:
+ * Spins up a real server with an isolated data dir, then exercises
+ * the session endpoints the same way the frontend session-manager.js does:
  *   POST   /sessions          — create
  *   GET    /sessions          — list
  *   PUT    /sessions/:name    — rename
@@ -42,10 +40,8 @@ async function request(method, path, body) {
 }
 
 describe("Sessions CRUD Integration", () => {
-  let daemonProcess;
   let serverProcess;
   let testDataDir;
-  const testSocket = `/tmp/katulong-test-sessions-${process.pid}.sock`;
 
   before(async () => {
     testDataDir = mkdtempSync(join(tmpdir(), "katulong-sessions-test-"));
@@ -54,34 +50,12 @@ describe("Sessions CRUD Integration", () => {
       PATH: process.env.PATH,
       HOME: process.env.HOME,
       KATULONG_DATA_DIR: testDataDir,
-      KATULONG_SOCK: testSocket,
       KATULONG_NO_AUTH: "1",
       PORT: String(TEST_PORT),
       SSH_PORT: String(TEST_PORT + 10),
     };
 
-    // Spawn daemon first, then server (mirrors entrypoint.js but with
-    // separate processes for consistency with daemon.integration.js)
-    daemonProcess = spawn("node", [DAEMON_PATH], {
-      env: minimalEnv,
-      stdio: "pipe",
-    });
-    daemonProcess.stderr.on("data", () => {});
-    daemonProcess.stdout.on("data", () => {});
-
-    // Wait for daemon socket
-    await new Promise((resolve, reject) => {
-      const deadline = Date.now() + 10000;
-      function attempt() {
-        if (Date.now() > deadline) return reject(new Error("Daemon socket timeout"));
-        const probe = createConnection(testSocket);
-        probe.on("connect", () => { probe.destroy(); resolve(); });
-        probe.on("error", () => setTimeout(attempt, 100));
-      }
-      attempt();
-    });
-
-    // Spawn server
+    // Spawn server (now manages sessions directly, no daemon needed)
     serverProcess = spawn("node", [SERVER_PATH], {
       env: minimalEnv,
       stdio: "pipe",
@@ -112,11 +86,9 @@ describe("Sessions CRUD Integration", () => {
   });
 
   after(async () => {
-    for (const proc of [serverProcess, daemonProcess]) {
-      if (proc && proc.exitCode === null) {
-        proc.kill("SIGTERM");
-        await new Promise((resolve) => proc.on("exit", resolve));
-      }
+    if (serverProcess && serverProcess.exitCode === null) {
+      serverProcess.kill("SIGTERM");
+      await new Promise((resolve) => serverProcess.on("exit", resolve));
     }
     if (testDataDir) rmSync(testDataDir, { recursive: true, force: true });
   });
@@ -179,14 +151,14 @@ describe("Sessions CRUD Integration", () => {
     await request("DELETE", "/sessions/list-test");
   });
 
-  it("GET /sessions returns alive and pid for each session", async () => {
+  it("GET /sessions returns alive and tmuxSession for each session", async () => {
     // Setup
     await request("POST", "/sessions", { name: "fields-test" });
 
     const { body } = await request("GET", "/sessions");
     const session = body.find((s) => s.name === "fields-test");
     assert.ok(session, "fields-test should exist in session list");
-    assert.equal(typeof session.pid, "number");
+    assert.equal(typeof session.tmuxSession, "string");
     assert.equal(typeof session.alive, "boolean");
 
     // Cleanup

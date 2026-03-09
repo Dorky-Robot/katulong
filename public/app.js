@@ -689,16 +689,8 @@
           return;
         }
         for (const file of imageFiles) {
-          // Write image to system clipboard and send Ctrl+V so CLI tools
-          // (like Claude Code) detect it the same way as a native paste.
-          try {
-            const blob = new Blob([await file.arrayBuffer()], { type: file.type });
-            await navigator.clipboard.write([new ClipboardItem({ [file.type]: blob })]);
-            rawSend("\x16"); // Ctrl+V triggers clipboard read in the PTY app
-          } catch {
-            // Fallback: upload and send absolute filesystem path
-            uploadImageToTerminal(file);
-          }
+          // Upload and send absolute filesystem path to terminal
+          uploadImageToTerminal(file);
         }
       }
     });
@@ -708,7 +700,8 @@
     // --- Global paste ---
 
     const pasteHandler = createPasteHandler({
-      onImage: (file) => uploadImageToTerminal(file)
+      onImage: (file) => uploadImageToTerminal(file),
+      onTextPaste: (text) => rawSend(text),
     });
     pasteHandler.init();
 

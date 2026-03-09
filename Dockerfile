@@ -1,9 +1,5 @@
-# -- Build stage: compile node-pty native addon --
+# -- Build stage: install dependencies --
 FROM node:22-bookworm-slim AS build
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential python3 cmake \
-  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -14,7 +10,7 @@ COPY . .
 FROM node:22-bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash zsh curl \
+    bash zsh curl tmux \
   && rm -rf /var/lib/apt/lists/*
 
 RUN adduser --disabled-password --gecos '' katulong
@@ -34,4 +30,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD curl -f http://localhost:3001/auth/status || exit 1
 
 USER katulong
-ENTRYPOINT ["node", "entrypoint.js"]
+ENTRYPOINT ["node", "server.js"]

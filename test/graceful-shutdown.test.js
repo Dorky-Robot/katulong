@@ -48,23 +48,22 @@ describe("graceful shutdown", () => {
   describe("draining flag behavior", () => {
     it("health response differs based on draining state", () => {
       // Simulate the health endpoint logic
-      function healthResponse(draining, daemonConnected) {
+      function healthResponse(draining) {
         if (draining) {
           return { status: 503, body: { status: "draining", pid: process.pid } };
         }
         return {
           status: 200,
-          body: { status: "ok", pid: process.pid, uptime: process.uptime(), daemonConnected },
+          body: { status: "ok", pid: process.pid, uptime: process.uptime() },
         };
       }
 
-      const normal = healthResponse(false, true);
+      const normal = healthResponse(false);
       assert.equal(normal.status, 200);
       assert.equal(normal.body.status, "ok");
-      assert.equal(normal.body.daemonConnected, true);
       assert.equal(typeof normal.body.uptime, "number");
 
-      const draining = healthResponse(true, true);
+      const draining = healthResponse(true);
       assert.equal(draining.status, 503);
       assert.equal(draining.body.status, "draining");
     });

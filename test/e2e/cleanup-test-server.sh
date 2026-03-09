@@ -1,6 +1,6 @@
 #!/bin/bash
 # Cleanup test server processes for all shards (0-3)
-# Does NOT touch dev server (port 3001/3002)
+# Does NOT touch dev server (port 3001)
 
 echo "Cleaning up test server processes..."
 
@@ -13,16 +13,9 @@ for SHARD in 0 1 2 3; do
   fi
 
   if [ "$SHARD" -eq 0 ]; then
-    SOCK_PATH="/tmp/katulong-test.sock"
     DATA_DIR="/tmp/katulong-e2e-data"
   else
-    SOCK_PATH="/tmp/katulong-test-${SHARD}.sock"
     DATA_DIR="/tmp/katulong-e2e-data-${SHARD}"
-  fi
-
-  if [ -f "$SOCK_PATH" ]; then
-    echo "  Removing test socket $SOCK_PATH..."
-    rm -f "$SOCK_PATH"
   fi
 
   if [ -d "$DATA_DIR" ]; then

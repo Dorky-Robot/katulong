@@ -91,12 +91,6 @@ describe("env-config", () => {
     }
   });
 
-  it("defaults: socketPath is /tmp/katulong-daemon.sock when KATULONG_SOCK is not set", () => {
-    if (!process.env.KATULONG_SOCK) {
-      assert.equal(envConfig.socketPath, "/tmp/katulong-daemon.sock");
-    }
-  });
-
   it("defaults: noAuth is false when KATULONG_NO_AUTH is not set to '1'", () => {
     if (process.env.KATULONG_NO_AUTH !== "1") {
       assert.equal(envConfig.noAuth, false);
