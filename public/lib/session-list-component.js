@@ -145,8 +145,8 @@ export function createSessionListComponent(store, options = {}) {
 
       // Helper: after removing a session, switch to the closest remaining one
       function switchAfterRemove(removedName) {
-        const isCurrent = removedName === state.currentSession;
-        if (!isCurrent) {
+        const removingCurrent = removedName === state.currentSession;
+        if (!removingCurrent) {
           invalidateSessions(store, state.currentSession);
           return;
         }
@@ -159,7 +159,8 @@ export function createSessionListComponent(store, options = {}) {
           return;
         }
         // Pick the next session, or the previous if we were last
-        const next = remaining[Math.min(idx, remaining.length - 1)];
+        const safeIdx = idx === -1 ? 0 : idx;
+        const next = remaining[Math.min(safeIdx, remaining.length - 1)];
         location.href = `/?s=${encodeURIComponent(next.name)}`;
       }
 
