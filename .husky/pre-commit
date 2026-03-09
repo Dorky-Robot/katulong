@@ -31,7 +31,6 @@ fi
 
 map_to_test() {
   case "$1" in
-    lib/ndjson.js)    echo "test/ndjson.test.js" ;;
     lib/http-util.js) echo "test/http-util.test.js" ;;
     lib/auth.js)      echo "test/auth.test.js" ;;
     lib/log.js)       echo "test/log.test.js" ;;

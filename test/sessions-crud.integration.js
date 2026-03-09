@@ -14,7 +14,7 @@ const SERVER_PATH = join(__dirname, "..", "server.js");
  * Integration tests for Sessions CRUD via HTTP routes.
  *
  * Spins up a real server with an isolated data dir, then exercises
- * the session endpoints the same way the frontend session-manager.js does:
+ * the session endpoints:
  *   POST   /sessions          — create
  *   GET    /sessions          — list
  *   PUT    /sessions/:name    — rename

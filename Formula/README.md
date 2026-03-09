@@ -101,7 +101,7 @@ git push origin main
 - **Binary:** `/usr/local/bin/katulong` (or `/opt/homebrew/bin/katulong` on Apple Silicon)
 - **App files:** `/usr/local/opt/katulong/` (or `/opt/homebrew/opt/katulong/`)
 - **Config/data:** `~/.katulong/`
-- **Logs:** `~/.katulong/daemon.log` and `server.log`
+- **Logs:** `~/.katulong/server.log`
 
 ### Service Integration
 

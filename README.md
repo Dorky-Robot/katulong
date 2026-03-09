@@ -32,7 +32,7 @@ The core issue: there's no simple way to access your shell sessions from whereve
 
 ## The idea
 
-Katulong takes a different approach. Your terminal sessions live in a daemon process on your machine. A web server sits in front of them, serving an xterm.js terminal over HTTP and WebSocket. Open a browser — any browser, any device — and you're connected.
+Katulong takes a different approach. Your terminal sessions live in tmux on your machine. A web server manages them in-process, serving an xterm.js terminal over HTTP and WebSocket. Open a browser — any browser, any device — and you're connected.
 
 ```bash
 katulong start
@@ -42,12 +42,12 @@ That's it. Your terminal is now available at `https://your-machine:3001` from an
 
 ```
 Phone browser  ──WebSocket──┐
-                             ├── UI Server (server.js) ──Unix Socket──  Daemon (daemon.js)
-Desktop browser ──WebSocket──┘                                          PTY sessions
-                                                                        Output buffers
+                             ├── Server (server.js) ── tmux sessions
+Desktop browser ──WebSocket──┘   Session manager         PTY processes
+                                 Auth middleware          Output buffers
 ```
 
-The daemon owns the PTY sessions. The web server is stateless — restart it freely, your sessions survive. The browser reconnects and the daemon replays the output buffer. You pick up exactly where you left off.
+Sessions are backed by tmux, so they persist independently of the server. Restart the server, your sessions survive. The browser reconnects and replays the output buffer. You pick up exactly where you left off.
 
 Sessions are named. `/?s=deploy` connects to a session called "deploy". Open the same URL in two windows and you're sharing the session in real-time. Close all windows, come back tomorrow — the session is still there.
 
@@ -95,12 +95,12 @@ katulong update --check       # Check if an update is available without applying
 katulong update --no-restart  # Update the code but skip the rolling restart
 ```
 
-Sessions live in the daemon process, which is independent of the web server. During a rolling restart, the browser automatically reconnects to the new server and the daemon replays your scrollback. Typical downtime is 2-5 seconds.
+Sessions live in tmux, which is independent of the server process. During a rolling restart, the browser automatically reconnects to the new server and replays your scrollback. Typical downtime is 2-5 seconds.
 
 ## Quick start
 
 ```bash
-katulong start        # Start the daemon + web server
+katulong start        # Start the server
 katulong status       # Check if it's running
 katulong open         # Open in your default browser
 katulong logs         # View logs
@@ -126,7 +126,7 @@ The deploy is running. You grab your phone, walk to the kitchen, open `https://y
 
 Back at your desk, you notice a bug in staging. You open `/?s=debug` on your desktop's bigger monitor. You start digging. Your laptop still has `/?s=deploy` open — two sessions, two devices, no conflict.
 
-One daemon. Multiple windows. Your work follows you.
+One server. Multiple windows. Your work follows you.
 
 ## Features
 
@@ -138,7 +138,7 @@ One daemon. Multiple windows. Your work follows you.
 
 ### Session management
 - **Named sessions via URL** — `/?s=myproject` connects to a session called "myproject"
-- **Sessions survive restarts** — Daemon owns PTYs. Restart the server, your sessions are still there.
+- **Sessions survive restarts** — Backed by tmux. Restart the server, your sessions are still there.
 - **Shared sessions** — Same URL in multiple windows = shared terminal
 - **Session manager** — Create, rename, delete sessions from the UI
 
@@ -170,21 +170,19 @@ One daemon. Multiple windows. Your work follows you.
 ## Architecture
 
 ```
-Browser  <──WebSocket──>  UI Server (server.js)  <──Unix Socket──>  Daemon (daemon.js)
-                          HTTP + static files                        PTY sessions
-                          Auth middleware                             Output buffers
-                          Device pairing                             Shortcuts I/O
+Browser  <──WebSocket──>  Server (server.js)
+                          HTTP + static files
+                          Auth middleware
+                          Session manager ── tmux sessions
 ```
 
-- **`daemon.js`** — Long-lived process that owns PTY sessions. Communicates over a Unix domain socket via newline-delimited JSON.
-- **`server.js`** — HTTP/HTTPS + WebSocket server. Routes, auth middleware, daemon IPC, device pairing.
-- **`public/index.html`** — SPA frontend. xterm.js terminal, shortcut bar, settings, inline pairing wizard.
+- **`server.js`** — HTTP + WebSocket server. Routes, auth middleware, session management.
+- **`lib/session-manager.js`** — Terminal session lifecycle via tmux control mode.
+- **`lib/session.js`** — Session class, tmux helpers, RingBuffer.
+- **`public/index.html`** — SPA frontend. xterm.js terminal, shortcut bar, settings.
 - **`lib/auth.js`** — WebAuthn registration/login, session token management, passkey storage.
-- **`lib/tls.js`** — Auto-generated CA + server certificates for LAN HTTPS.
-- **`lib/p2p.js`** — WebRTC DataChannel for low-latency terminal I/O.
 
-
-The daemon owns all PTY processes. The UI server is stateless — restart it freely without losing terminal sessions. On restart, the browser's reconnect logic kicks in and the daemon replays the output buffer.
+Sessions are backed by tmux — restart the server freely without losing terminal sessions. On restart, the browser reconnects and replays the output buffer.
 
 ### REST API
 
@@ -201,15 +199,14 @@ The daemon owns all PTY processes. The UI server is stateless — restart it fre
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `3001` | UI server port |
+| `PORT` | `3001` | Server port |
 | `SHELL` | `/bin/zsh` | Shell to spawn in sessions |
-| `KATULONG_SOCK` | `/tmp/katulong-daemon.sock` | Unix socket path for daemon IPC |
 
 ## Development
 
 ```bash
 npm install           # Install dependencies
-npm run dev           # Run daemon + server with auto-reload
+npm run dev           # Run server with auto-reload
 npm test              # All tests
 npm run test:unit     # Unit tests only
 npm run test:e2e      # End-to-end tests (Playwright)

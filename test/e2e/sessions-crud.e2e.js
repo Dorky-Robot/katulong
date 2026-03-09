@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { waitForShellReady } from './helpers.js';
 
 test.describe("Session CRUD", () => {
-  // Helper: create a session by navigating to it (triggers daemon attach/create)
+  // Helper: create a session by navigating to it (triggers session create/attach)
   async function createSessionByNav(page, name) {
     await page.goto(`/?s=${encodeURIComponent(name)}`);
     await page.waitForSelector(".xterm-helper-textarea");
@@ -50,7 +50,7 @@ test.describe("Session CRUD", () => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Create session by navigating to it (triggers daemon create on attach)
+    // Create session by navigating to it (triggers session create on attach)
     await createSessionByNav(page, name);
 
     // Go back to default session
@@ -84,7 +84,7 @@ test.describe("Session CRUD", () => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Create session by navigating to it (triggers daemon create on attach)
+    // Create session by navigating to it (triggers session create on attach)
     await createSessionByNav(page, name);
 
     // Go back to default session
@@ -114,7 +114,7 @@ test.describe("Session CRUD", () => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Navigate to session (creates it via daemon attach)
+    // Navigate to session (creates it via session attach)
     await page.goto(`/?s=${encodeURIComponent(name)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
@@ -143,7 +143,7 @@ test.describe("Session CRUD", () => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
 
-    // Type marker in session A (creates it via daemon attach)
+    // Type marker in session A (creates it via session attach)
     await page.goto(`/?s=${encodeURIComponent(nameA)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
@@ -153,7 +153,7 @@ test.describe("Session CRUD", () => {
     await page.keyboard.press("Enter");
     await expect(page.locator(".xterm-rows")).toContainText(markerA);
 
-    // Type marker in session B (creates it via daemon attach)
+    // Type marker in session B (creates it via session attach)
     await page.goto(`/?s=${encodeURIComponent(nameB)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });

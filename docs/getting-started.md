@@ -41,7 +41,7 @@ Simple installation with Homebrew or npm.
 katulong start
 ```
 
-Starts daemon and server on ports 3001 (HTTP) and 3002 (HTTPS).
+Starts the server on port 3001 (HTTP).
 
 ### 2. Open in Browser
 

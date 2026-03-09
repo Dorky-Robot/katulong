@@ -17,7 +17,6 @@ uploads/
 test-results/
 test-results.txt
 blob-report/
-daemon.pid
 ssh/
 tls/
 homebrew-katulong/
