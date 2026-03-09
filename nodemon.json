@@ -1,9 +1,7 @@
 {
   "verbose": false,
   "watch": [
-    "daemon.js",
-    "server.js", 
-    "entrypoint.js",
+    "server.js",
     "lib/**/*.js",
     "public/**/*.js"
   ],

@@ -110,16 +110,19 @@ describe("startSSHServer", () => {
   });
 
   it("returns a server object", () => {
-    const daemonRPC = async () => ({ alive: true, buffer: "" });
-    const daemonSend = () => {};
+    const sessionManager = {
+      attachClient: async () => ({ alive: true, buffer: "" }),
+      writeInput: () => {},
+      resizeClient: () => {},
+      detachClient: () => {},
+    };
     const bridge = { register: () => {} };
 
     sshServer = startSSHServer({
       port: 0,
       hostKey,
       password: "testpass",
-      daemonRPC,
-      daemonSend,
+      sessionManager,
       credentialLockout: null,
       bridge,
     });
@@ -131,15 +134,18 @@ describe("startSSHServer", () => {
   it("registers a bridge subscriber", () => {
     let registered = false;
     const bridge = { register: () => { registered = true; } };
-    const daemonRPC = async () => ({ alive: true });
-    const daemonSend = () => {};
+    const sessionManager = {
+      attachClient: async () => ({ alive: true }),
+      writeInput: () => {},
+      resizeClient: () => {},
+      detachClient: () => {},
+    };
 
     sshServer = startSSHServer({
       port: 0,
       hostKey,
       password: "testpass",
-      daemonRPC,
-      daemonSend,
+      sessionManager,
       credentialLockout: null,
       bridge,
     });
@@ -148,16 +154,19 @@ describe("startSSHServer", () => {
   });
 
   it("handles null bridge gracefully", () => {
-    const daemonRPC = async () => ({ alive: true });
-    const daemonSend = () => {};
+    const sessionManager = {
+      attachClient: async () => ({ alive: true }),
+      writeInput: () => {},
+      resizeClient: () => {},
+      detachClient: () => {},
+    };
 
     assert.doesNotThrow(() => {
       sshServer = startSSHServer({
         port: 0,
         hostKey,
         password: "testpass",
-        daemonRPC,
-        daemonSend,
+        sessionManager,
         credentialLockout: null,
         bridge: null,
       });

@@ -20,7 +20,7 @@ import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest } from "./lib/access-method.js";
 import { serveStaticFile, clearFileCache } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
-import { createDaemonClient } from "./lib/daemon-client.js";
+import { createSessionManager, checkTmux } from "./lib/session-manager.js";
 import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/routes.js";
 import { createFileBrowserRoutes } from "./lib/file-browser.js";
 import { createPortProxyRoutes, proxyWebSocket } from "./lib/port-proxy.js";
@@ -29,7 +29,6 @@ import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-uti
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = envConfig.port;
-const SOCKET_PATH = envConfig.socketPath;
 const DATA_DIR = envConfig.dataDir;
 const SSH_PORT = envConfig.sshPort;
 
@@ -120,18 +119,26 @@ function isAuthenticated(req) {
   return valid;
 }
 
-// --- IPC client to daemon ---
+// --- Verify tmux is available ---
+
+const hasTmux = await checkTmux();
+if (!hasTmux) {
+  log.error("tmux is required but not found. Install with: brew install tmux");
+  process.exit(1);
+}
+
+// --- Session manager (replaces daemon IPC) ---
 
 const bridge = createTransportBridge();
-const daemon = createDaemonClient({ socketPath: SOCKET_PATH, log, bridge });
-const daemonRPC = daemon.rpc;
-const daemonSend = daemon.send;
-daemon.connect();
+const sessionManager = createSessionManager({
+  bridge,
+  shell: envConfig.shell,
+  home: envConfig.home,
+  dataDir: DATA_DIR,
+});
 
-// --- Helpers (readBody, parseJSON, json, setSecurityHeaders imported from lib/request-util.js) ---
-
-// --- WebSocket manager (extracted from inline code) ---
-const wsManager = createWebSocketManager({ bridge, daemonRPC, daemonSend });
+// --- WebSocket manager ---
+const wsManager = createWebSocketManager({ bridge, sessionManager });
 const { wsClients, broadcastToAll, closeAllWebSockets, closeWebSocketsForCredential } = wsManager;
 
 // --- HTTP routes (assembled from lib/routes/) ---
@@ -139,12 +146,12 @@ const { wsClients, broadcastToAll, closeAllWebSockets, closeWebSocketsForCredent
 const { auth, csrf } = createMiddleware({ isAuthenticated, json });
 
 const routeCtx = {
-  json, parseJSON, isAuthenticated, daemonRPC,
+  json, parseJSON, isAuthenticated, sessionManager,
   storeChallenge, consumeChallenge, challengeStore,
   broadcastToAll, closeWebSocketsForCredential,
   credentialLockout, configManager,
   __dirname, DATA_DIR, SSH_PASSWORD, SSH_PORT, SSH_HOST: envConfig.sshHost, APP_VERSION, RP_NAME, PORT,
-  getDraining: () => draining, getDaemonConnected: () => daemon.isConnected(),
+  getDraining: () => draining,
   closeAllWebSockets,
   auth, csrf,
 };
@@ -216,8 +223,6 @@ async function handleRequest(req, res) {
         json(res, 400, { error: "Invalid JSON" });
       } else if (err.message === "Request body too large") {
         json(res, 413, { error: "Request body too large" });
-      } else if (err.message === "Daemon not connected") {
-        json(res, 503, { error: "Service temporarily unavailable" });
       } else {
         // Log the actual error for debugging, but return generic message to client
         log.error("Request handler error", { path: req.url, error: err.message, stack: err.stack });
@@ -267,8 +272,8 @@ function handleUpgrade(req, socket, head) {
 
   if (sessionToken && !isLocalRequest(req)) {
     const state = loadState();
-    const session = state.getSession(sessionToken);
-    if (!session || !state.isValidSession(sessionToken)) {
+    const session = state?.getSession(sessionToken);
+    if (!state || !session || !state.isValidSession(sessionToken)) {
       log.warn("WebSocket rejected: invalid session", { ip: req.socket.remoteAddress });
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
@@ -411,8 +416,8 @@ async function gracefulShutdown(signal) {
     client.terminate();
   }
 
-  // 6. Disconnect from daemon (don't kill it — other servers may be connected)
-  daemon.disconnect();
+  // 6. Shutdown session manager (close control mode procs, leave tmux sessions alive)
+  sessionManager.shutdown();
 
   // 7. Clean up PID file
   cleanupPidFile();
@@ -428,8 +433,7 @@ startSSHServer({
   port: SSH_PORT,
   hostKey: sshHostKey,
   password: SSH_PASSWORD,
-  daemonRPC,
-  daemonSend,
+  sessionManager,
   credentialLockout,
   bridge,
   authContext: { loadState, withStateLock },
