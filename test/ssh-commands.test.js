@@ -95,7 +95,7 @@ function createMockCtx(stateOverrides = {}) {
       listSessions: () => ({ sessions: stateOverrides.ptySessions || [] }),
       createSession: async (name) => ({ name }),
       deleteSession: (name) => ({ ok: true }),
-      renameSession: (oldName, newName) => ({ name: newName }),
+      renameSession: async (oldName, newName) => ({ name: newName }),
     },
   };
 

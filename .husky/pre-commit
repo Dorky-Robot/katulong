@@ -36,7 +36,7 @@ map_to_test() {
     lib/auth.js)      echo "test/auth.test.js" ;;
     lib/log.js)       echo "test/log.test.js" ;;
     server.js)        echo "test/http-util.test.js" ;;
-    daemon.js)        echo "test/daemon.integration.js" ;;
+    lib/session-manager.js) echo "test/sessions-crud.integration.js" ;;
     test/*.test.js|test/*.integration.js) echo "$1" ;;
   esac
 }

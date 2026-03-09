@@ -1,8 +1,7 @@
 /**
  * Paste Handler
  *
- * Capture-phase paste handler for images only.
- * Text paste is handled natively by xterm.js (bracket paste mode).
+ * Intercepts paste events for image uploads and text forwarding.
  *
  * Uses capture phase (third arg = true) so the handler fires before
  * xterm.js's bubble-phase handler calls stopPropagation().
@@ -28,6 +27,7 @@ export function createPasteHandler(options = {}) {
   // Flag: when true, we blocked a Ctrl+V keydown and are waiting
   // for the paste event to decide what to do.
   let _blocked = false;
+  let _fallbackTimer = null;
 
   /**
    * Handle keydown — block Ctrl+V / Cmd+V so xterm doesn't send \x16
@@ -46,9 +46,10 @@ export function createPasteHandler(options = {}) {
       e.preventDefault();
       // If no paste event fires within 200ms (e.g. empty clipboard),
       // send the original Ctrl+V through.
-      setTimeout(() => {
+      _fallbackTimer = setTimeout(() => {
         if (_blocked) {
           _blocked = false;
+          _fallbackTimer = null;
           if (onTextPaste) onTextPaste("\x16");
         }
       }, 200);
@@ -56,9 +57,14 @@ export function createPasteHandler(options = {}) {
   }
 
   /**
-   * Handle paste event — images only
+   * Handle paste event
    */
   function handlePaste(e) {
+    // Clear the fallback timer to prevent double-send
+    if (_fallbackTimer) {
+      clearTimeout(_fallbackTimer);
+      _fallbackTimer = null;
+    }
     _blocked = false;
 
     // Let native paste work in input/textarea elements (e.g., dictation modal)
@@ -80,15 +86,15 @@ export function createPasteHandler(options = {}) {
         }
       }
     } else {
-      // Text paste — we blocked the keydown, so forward text to terminal
-      // Wrap in bracket paste sequences (\x1b[200~ ... \x1b[201~) so that
-      // programs using bracket paste mode (zsh, vim, Claude Code) handle
-      // multi-line pastes correctly.
+      // Text paste — we blocked the keydown, so forward text to terminal.
+      // Send raw text without bracket paste wrapping — xterm.js's onData
+      // handler will pick it up and the terminal application negotiates
+      // bracket paste mode on its own via DEC private mode 2004.
       const text = e.clipboardData?.getData("text/plain");
       e.stopImmediatePropagation();
       e.preventDefault();
       if (text && onTextPaste) {
-        onTextPaste(`\x1b[200~${text}\x1b[201~`);
+        onTextPaste(text);
       }
     }
   }
@@ -107,6 +113,10 @@ export function createPasteHandler(options = {}) {
   function unmount() {
     document.removeEventListener("keydown", handleKeydown, true);
     document.removeEventListener("paste", handlePaste, true);
+    if (_fallbackTimer) {
+      clearTimeout(_fallbackTimer);
+      _fallbackTimer = null;
+    }
   }
 
   return {

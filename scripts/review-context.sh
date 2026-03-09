@@ -41,7 +41,7 @@ gather_related_files() {
     fi
 
     # Find files that require/import this module
-    refs=$(grep -rlw --include='*.js' "$base" lib/ server.js daemon.js 2>/dev/null | grep -v "$f" | grep -v node_modules | head -5 || true)
+    refs=$(grep -rlw --include='*.js' "$base" lib/ server.js 2>/dev/null | grep -v "$f" | grep -v node_modules | head -5 || true)
     while IFS= read -r ref; do
       if [ -n "$ref" ] && ! echo "$RELATED_FILES" | grep -Fq "$ref"; then
         RELATED_FILES+="
