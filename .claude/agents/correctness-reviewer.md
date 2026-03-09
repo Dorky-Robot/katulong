@@ -15,10 +15,9 @@ You review code changes for logic errors and correctness issues. You focus exclu
 - **Logic errors** — Off-by-one errors, incorrect boolean logic, wrong operator, missing negation, swapped arguments, wrong comparison (`==` vs `===`).
 - **Async errors** — Missing `await` on promises, unhandled promise rejections, callback/promise mixing, race conditions in concurrent operations. Katulong uses Node.js async patterns extensively.
 - **Error handling** — Missing try/catch around async operations, swallowed errors, incorrect error types. Are error paths tested? Do error responses include appropriate status codes?
-- **Race conditions** — TOCTOU bugs in file operations, concurrent state mutations without `withStateLock()`, WebSocket message ordering assumptions, daemon IPC ordering.
+- **Race conditions** — TOCTOU bugs in file operations, concurrent state mutations without `withStateLock()`, WebSocket message ordering assumptions.
 - **Edge cases** — Empty inputs, undefined/null values, zero-length buffers, boundary conditions, disconnection during in-flight operations. Does the code handle the degenerate case?
 - **Resource leaks** — Unclosed file descriptors, WebSocket connections not cleaned up on error, PTY sessions not destroyed on disconnect, event listeners not removed.
-- **NDJSON protocol** — Are messages correctly framed? Does the parser handle partial reads, empty lines, and malformed JSON? Are new message types handled in all switch/if branches?
 - **Consistency with adjacent code** — Do new functions match the error handling, naming, and patterns of adjacent functions in the same file? Do new tests follow existing test patterns?
 - **Broken callers** — If a public function signature changed, are all callers updated? Will the change break anything that imports the changed code?
 

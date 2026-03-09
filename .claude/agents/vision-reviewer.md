@@ -18,7 +18,7 @@ Katulong is a **lightweight, self-hosted remote terminal** that prioritizes:
 2. **Self-contained** — Everything runs on the user's machine. All vendor dependencies are self-hosted (`public/vendor/`). No CDN, no cloud services, no telemetry. The user owns their data.
 3. **Security by default** — WebAuthn/passkey auth, no passwords. HttpOnly cookies. Localhost bypass is the only shortcut. The threat model assumes the terminal is a high-value target.
 4. **Zero-config experience** — Should work out of the box with `npx katulong` or `brew install katulong`. TLS auto-generated. Tunneling handled by the user's choice of tool.
-5. **Unix philosophy** — Each component does one thing. Daemon manages PTYs. Server handles HTTP/WS. Frontend renders terminal. They communicate through well-defined interfaces (NDJSON, WebSocket).
+5. **Unix philosophy** — Each component does one thing. Server handles HTTP/WS and session management via tmux. Frontend renders terminal. They communicate through well-defined interfaces (WebSocket).
 
 ## What to check
 

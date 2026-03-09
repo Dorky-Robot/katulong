@@ -69,7 +69,7 @@ Update Katulong to the latest version.
 ```bash
 katulong update             # Update and restart
 katulong update --check     # Check if update is available
-katulung update --no-restart # Update code but skip restart
+katulong update --no-restart # Update code but skip restart
 ```
 
 ## Token Management
