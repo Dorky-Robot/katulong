@@ -69,8 +69,7 @@ export async function loadSessions(store, currentSession = null) {
   store.dispatch({ type: SESSION_ACTIONS.LOAD_START });
 
   try {
-    const sessRes = await fetch("/sessions");
-    const sessions = await sessRes.json();
+    const sessions = await api.get("/sessions");
 
     store.dispatch({
       type: SESSION_ACTIONS.LOAD_SUCCESS,

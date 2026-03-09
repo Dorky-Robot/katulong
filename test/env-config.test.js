@@ -9,7 +9,7 @@ describe("env-config", () => {
 
   it("has expected keys", () => {
     const expectedKeys = [
-      "port", "dataDir",
+      "port", "bindHost", "dataDir",
       "noAuth",
       "shell", "nodeEnv", "logLevel", "drainTimeout", "home",
     ];
