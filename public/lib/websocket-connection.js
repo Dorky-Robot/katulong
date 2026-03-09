@@ -57,7 +57,7 @@ export function createWebSocketConnection(deps = {}) {
 
     'session-removed': () => ({
       stateUpdates: {},
-      effects: [{ type: 'terminalWrite', data: '\r\n[session deleted]\r\n' }]
+      effects: [{ type: 'sessionRemoved' }]
     }),
 
     'session-renamed': (msg) => ({
@@ -166,6 +166,16 @@ export function createWebSocketConnection(deps = {}) {
         const createTokenBtn = document.getElementById("settings-create-token");
         if (tokenCreateForm) tokenCreateForm.style.display = "none";
         if (createTokenBtn) createTokenBtn.style.display = "block";
+        break;
+      case 'sessionRemoved':
+        // Current session was removed — navigate to closest remaining session
+        fetch("/sessions").then(r => r.json()).then(sessions => {
+          if (sessions.length > 0) {
+            location.href = `/?s=${encodeURIComponent(sessions[0].name)}`;
+          } else {
+            location.href = "/";
+          }
+        }).catch(() => { location.href = "/"; });
         break;
       case 'fastReconnect':
         // Reset reconnect delay for fast reconnection to new server

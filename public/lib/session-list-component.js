@@ -143,6 +143,26 @@ export function createSessionListComponent(store, options = {}) {
       const actions = document.createElement("div");
       actions.className = "session-card-actions";
 
+      // Helper: after removing a session, switch to the closest remaining one
+      function switchAfterRemove(removedName) {
+        const isCurrent = removedName === state.currentSession;
+        if (!isCurrent) {
+          invalidateSessions(store, state.currentSession);
+          return;
+        }
+        // Find the closest session to switch to
+        const idx = state.sessions.findIndex(x => x.name === removedName);
+        const remaining = state.sessions.filter(x => x.name !== removedName);
+        if (remaining.length === 0) {
+          // No sessions left — navigate to home to create a new one
+          location.href = "/";
+          return;
+        }
+        // Pick the next session, or the previous if we were last
+        const next = remaining[Math.min(idx, remaining.length - 1)];
+        location.href = `/?s=${encodeURIComponent(next.name)}`;
+      }
+
       if (s.external) {
         // External tmux session — show eject button (detach from katulong, keep tmux session)
         const ejectBtn = document.createElement("button");
@@ -153,7 +173,7 @@ export function createSessionListComponent(store, options = {}) {
           e.stopPropagation();
           try {
             await api.delete(`/sessions/${encodeURIComponent(s.name)}`);
-            invalidateSessions(store, state.currentSession);
+            switchAfterRemove(s.name);
           } catch (err) {
             console.error('[Session] Detach failed:', err);
           }
@@ -175,7 +195,7 @@ export function createSessionListComponent(store, options = {}) {
           }
           try {
             await api.delete(`/sessions/${encodeURIComponent(s.name)}`);
-            invalidateSessions(store, state.currentSession);
+            switchAfterRemove(s.name);
           } catch (err) {
             console.error('[Session] Delete failed:', err);
           }

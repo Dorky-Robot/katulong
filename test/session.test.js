@@ -99,6 +99,33 @@ describe("stripDaResponses", () => {
     // ESC[?1049h (alt screen) — NOT a DA response
     assert.strictEqual(stripDaResponses("\x1b[?1049h"), "\x1b[?1049h");
   });
+
+  it("strips CPR response (cursor position report)", () => {
+    // ESC[35;1R — response to DSR 6 (ESC[6n)
+    assert.strictEqual(stripDaResponses("\x1b[35;1R"), "");
+  });
+
+  it("strips CPR mixed with text", () => {
+    assert.strictEqual(stripDaResponses("hello\x1b[25;80Rworld"), "helloworld");
+  });
+
+  it("strips CPR with large row/col values", () => {
+    assert.strictEqual(stripDaResponses("\x1b[999;999R"), "");
+  });
+
+  it("preserves CSI sequences ending in R without semicolon (not CPR)", () => {
+    // ESC[1R is a scroll-down sequence, not a CPR (no semicolon)
+    assert.strictEqual(stripDaResponses("\x1b[1R"), "\x1b[1R");
+  });
+
+  it("strips both DA and CPR in same input", () => {
+    assert.strictEqual(stripDaResponses("\x1b[?1;2c\x1b[35;1R"), "");
+  });
+
+  it("preserves cursor movement sequences (ESC[row;colH)", () => {
+    // ESC[1;3H (cursor position) — NOT a CPR
+    assert.strictEqual(stripDaResponses("\x1b[1;3H"), "\x1b[1;3H");
+  });
 });
 
 // --- RingBuffer tests ---

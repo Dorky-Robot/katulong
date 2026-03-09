@@ -1,184 +1,158 @@
-Push changes, create a PR, review-fix until clean, and merge. End-to-end ship.
+Commit, push, create a PR, run review agents, fix issues, and merge for katulong.
 
-## Instructions
+## Step 1: Prepare the branch
 
-You are orchestrating the full ship workflow: push → PR → review-fix loop → merge. The argument $ARGUMENTS is optional context (e.g., a PR title hint or branch name).
+Check the current git state:
 
-### Step 1: Ensure we're on a feature branch
+```bash
+git status
+git branch --show-current
+```
 
-Check the current branch with `git branch --show-current`.
-
-- If on `main`, stop and tell the user: "You're on main. Create a feature branch first (`git checkout -b feat/...`) and commit your changes."
-- If on a feature branch, continue.
-
-### Step 2: Push changes and create the PR
-
-1. Check for uncommitted changes with `git status`. If there are staged or unstaged changes, stop and tell the user: "You have uncommitted changes. Commit them first, then re-run /ship-it."
-
-2. Push the branch to origin:
+**If on main/master:**
+1. Create a feature branch from the changes:
+   ```bash
+   git checkout -b <descriptive-branch-name>
    ```
-   git push -u origin $(git branch --show-current)
-   ```
+2. Stage and commit all changes with a clear commit message.
 
-3. Check if a PR already exists for this branch:
-   ```
-   gh pr list --head $(git branch --show-current) --json number,url -q '.[0]'
-   ```
+**If on a feature branch:**
+1. Stage and commit any uncommitted changes.
+2. If there are no uncommitted changes, continue to Step 2.
 
-4. If no PR exists, create one:
-   - Gather the commit log for the PR body: `git log main..HEAD --oneline`
-   - Create the PR:
-     ```
-     gh pr create --title "<descriptive title>" --body "$(cat <<'EOF'
-     ## Summary
-     <1-3 bullet points summarizing the changes based on commit history>
+## Step 2: Push and create (or update) the PR
 
-     ## Test plan
-     - [ ] `npm test` passes
-     - [ ] Manual verification of changed functionality
+```bash
+git push -u origin <branch-name>
+```
 
-     🤖 Generated with [Claude Code](https://claude.com/claude-code)
-     EOF
-     )"
-     ```
-   - If `$ARGUMENTS` is provided and looks like a title (not a number), use it as the PR title.
-   - Otherwise, derive the title from the branch name and commits.
+Check if a PR already exists for this branch:
 
-5. Store the PR number for subsequent steps.
+```bash
+gh pr view <branch-name> --json number,url 2>/dev/null
+```
 
-### Step 3: Run the review-fix loop
+**If no PR exists**, create one:
 
-This is identical to the `/review-pr` workflow. Execute the full loop:
+```bash
+gh pr create --title "<concise title>" --body "$(cat <<'EOF'
+## Summary
 
-#### Step 3a: Gather the diff
+<1-3 bullet points describing the changes>
 
-Fetch the diff: `gh pr diff <PR_NUMBER>`
-Fetch the PR description: `gh pr view <PR_NUMBER>`
+## Test plan
 
-#### Step 3b: Identify changed files
+- [ ] `npm test` passes (unit + integration)
+- [ ] Manual verification of changed functionality
+EOF
+)"
+```
+
+**If a PR already exists**, note its number and continue.
+
+## Step 3: Review-fix loop
+
+Repeat until all agents approve:
+
+### 3a. Gather the diff
+
+```bash
+gh pr diff <PR-number>
+```
+
+Also fetch the PR description for context:
+
+```bash
+gh pr view <PR-number> --json title,body
+```
+
+### 3b. Identify changed files
 
 List all files changed in the diff. Read the full content of each changed file (not just the diff hunks) so reviewers have complete context.
 
-#### Step 3c: Launch parallel review agents
+### 3c. Launch review agents in parallel
 
-Launch ALL of the following review agents in parallel using the Task tool. Each agent should receive:
-1. The full diff
-2. The list of changed files
-3. The full content of each changed file
+Send a **single message** with Task tool calls so they run concurrently. Each agent receives the PR description, full diff, and full contents of changed files.
 
-**Agents to launch:**
+Launch these review agents:
 
-1. **Architecture Review** (subagent_type: "general-purpose")
-   - Prompt: Review these changes as an architecture reviewer. Check layer boundaries, module responsibilities, IPC protocol adherence, API contracts, and ripple effects. Use the architecture-reviewer agent guidelines from `.claude/agents/architecture-reviewer.md`. Here is the diff: [include diff]. Here are the full file contents: [include file contents]. Respond with LGTM if no issues, otherwise list issues as `[severity: high|medium|low] file:line — description`.
+1. **Security reviewer** (`security-reviewer` agent) — Scan for auth bypass, injection risks, credential leaks, session hijacking, path traversal, XSS, header trust, WebSocket origin validation. This app provides direct terminal access — any auth bypass is a full shell vulnerability.
 
-2. **Security Review** (subagent_type: "general-purpose")
-   - Prompt: Review these changes as a security reviewer using STRIDE and OWASP. Check for auth bypass, injection, session hijacking, path traversal, XSS, header trust, WebSocket origin validation, and credential exposure. Use the security-reviewer agent guidelines from `.claude/agents/security-reviewer.md`. Here is the diff: [include diff]. Here are the full file contents: [include file contents]. Respond with LGTM if no issues, otherwise list issues as `[severity: high|medium|low] file:line — description`.
+2. **Architecture reviewer** (`architecture-reviewer` agent) — Check layer boundaries (server.js vs lib/ vs public/), module responsibilities, API contracts, ripple effects on callers.
 
-3. **Correctness Review** (subagent_type: "general-purpose")
-   - Prompt: Review these changes for correctness. Check for logic errors, async bugs, race conditions, resource leaks, error handling gaps, edge cases, and broken callers. Use the correctness-reviewer agent guidelines from `.claude/agents/correctness-reviewer.md`. Here is the diff: [include diff]. Here are the full file contents: [include file contents]. Respond with LGTM if no issues, otherwise list issues as `[severity: high|medium|low] file:line — description`.
+3. **Correctness reviewer** (`correctness-reviewer` agent) — Check for logic errors, async bugs (missing await), race conditions, resource leaks, TOCTOU bugs, broken callers.
 
-4. **Code Quality Review** (subagent_type: "general-purpose")
-   - Prompt: Review these changes for code quality. Check naming, complexity, duplication, dead code, error messages, consistency with adjacent code, and API design. Use the code-quality-reviewer agent guidelines from `.claude/agents/code-quality-reviewer.md`. Here is the diff: [include diff]. Here are the full file contents: [include file contents]. Respond with LGTM if no issues, otherwise list issues as `[severity: high|medium|low] file:line — description`.
+4. **Code quality reviewer** (`code-quality-reviewer` agent) — Evaluate naming, complexity, duplication, dead code, error messages, consistency with adjacent code, API design.
 
-5. **Vision Alignment Review** (subagent_type: "general-purpose")
-   - Prompt: Review these changes for alignment with katulong's vision: simplicity, self-contained, security by default, zero-config, Unix philosophy. Check for feature creep, unnecessary dependencies, UX regressions, scope deviation, and complexity growth. Use the vision-reviewer agent guidelines from `.claude/agents/vision-reviewer.md`. Here is the diff: [include diff]. Here are the full file contents: [include file contents]. Respond with LGTM if no issues, otherwise list issues as `[severity: high|medium|low] — description`.
+5. **Vision alignment reviewer** (`vision-reviewer` agent) — Check alignment with katulong's vision: simplicity, self-contained, security by default, zero-config, Unix philosophy. Flag feature creep, unnecessary dependencies, scope deviation.
 
-#### Step 3d: Compile and post the review
-
-Once all agents complete, compile a unified review report in this format and post it as a comment on the PR using `gh pr comment`:
+Each agent must end with a verdict:
 
 ```
-## PR Review: [PR title or branch name]
+VERDICT: APPROVE
+VERDICT: APPROVE_WITH_NOTES
+VERDICT: REQUEST_CHANGES
+```
 
-### Summary
-[1-2 sentence summary of what the PR does]
+### 3d. Compile and post the review
 
-### Architecture
-[Agent findings or LGTM]
+Combine all agent responses into a review summary:
+
+```
+## Review Summary for PR #<N>
 
 ### Security
-[Agent findings or LGTM]
+<verdict> — <key findings or "No issues">
+
+### Architecture
+<verdict> — <key findings or "No issues">
 
 ### Correctness
-[Agent findings or LGTM]
+<verdict> — <key findings or "No issues">
 
 ### Code Quality
-[Agent findings or LGTM]
+<verdict> — <key findings or "No issues">
 
 ### Vision Alignment
-[Agent findings or LGTM]
+<verdict> — <key findings or "No issues">
 
-### Verdict
-[APPROVE / REQUEST CHANGES / DISCUSS]
-[1-2 sentence overall assessment]
-
-### Issues by Severity
-#### High
-- [list all high severity issues across all reviewers, if any]
-
-#### Medium
-- [list all medium severity issues across all reviewers, if any]
-
-#### Low
-- [list all low severity issues across all reviewers, if any]
+### Overall
+<APPROVE / APPROVE_WITH_NOTES / REQUEST_CHANGES>
+<1-2 sentence summary>
 ```
 
-Use a HEREDOC to pass the review body:
-```
-gh pr comment <PR_NUMBER> --body "$(cat <<'REVIEW_EOF'
-<compiled review markdown>
+Post as a PR comment:
+
+```bash
+gh pr comment <PR-number> --body "$(cat <<'REVIEW_EOF'
+<the review summary>
 REVIEW_EOF
 )"
 ```
 
-If all reviewers say LGTM, the verdict is APPROVE.
-If any reviewer has HIGH severity issues, the verdict is REQUEST CHANGES.
-Otherwise, the verdict is DISCUSS.
+### 3e. Fix any issues
 
-#### Step 3e: Fix all issues
+If any agent returned `REQUEST_CHANGES`:
+1. Fix the issues they identified.
+2. Run `npm test` to ensure nothing is broken.
+3. Commit and push the fixes.
+4. Return to step 3a.
 
-If the verdict is APPROVE (all LGTM), skip to Step 4.
+To prevent infinite loops: if the same issue appears in 3 consecutive review rounds, stop, post a comment explaining the unresolved issue, and ask the user for guidance.
 
-Otherwise, fix every issue found by the reviewers — high, medium, and low. For each issue:
-1. Read the relevant file(s) to understand the context
-2. Make the fix using Edit/Write tools
-3. Keep fixes minimal and focused — don't refactor beyond what the issue requires
+If all agents returned `APPROVE` or `APPROVE_WITH_NOTES`, continue to Step 4.
 
-After fixing all issues, run the test suite (`npm test`) to make sure nothing is broken. If tests fail, fix them before proceeding.
+## Step 4: Merge
 
-Commit all fixes in a single commit with a message summarizing what was addressed:
-```
-fix: address review findings — [brief list of what was fixed]
+```bash
+gh pr merge <PR-number> --squash --delete-branch
 ```
 
-Push the commit to the PR branch.
+Switch back to main and clean up:
 
-#### Step 3f: Re-review (loop)
+```bash
+BRANCH=$(git branch --show-current)
+git checkout main && git pull && git branch -d "$BRANCH"
+```
 
-Go back to Step 3a: gather the fresh diff, identify changed files, launch all 5 review agents again in parallel, compile the new review, and post it as a new comment on the PR.
-
-**Keep looping Steps 3a–3f until the verdict is APPROVE** (all agents return LGTM or only have findings that are intentional/acknowledged).
-
-To prevent infinite loops: if the same issue appears in 3 consecutive review rounds, stop the loop, post a comment explaining the unresolved issue, and ask the user for guidance.
-
-### Step 4: Merge the PR
-
-Once the review loop completes with APPROVE:
-
-1. Post a final comment:
-   ```
-   gh pr comment <PR_NUMBER> --body "✅ All review agents report LGTM. Merging."
-   ```
-
-2. Merge the PR using squash merge to keep history clean:
-   ```
-   gh pr merge <PR_NUMBER> --squash --delete-branch
-   ```
-
-3. Switch back to main, pull, and delete the local branch:
-   ```
-   BRANCH=$(git branch --show-current)
-   git checkout main && git pull && git branch -d "$BRANCH"
-   ```
-
-4. Tell the user the PR has been merged and the branch cleaned up (both remote and local). Include the PR URL in the final message.
+Print the merged PR URL.

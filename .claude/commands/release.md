@@ -1,166 +1,146 @@
-Automate the full Homebrew release workflow for katulong. Bump version, tag, push, update formulas, and verify the install.
+Cut a new release for katulong — bump version, tag, push, update Homebrew formulas, and verify the install.
 
-## Instructions
+## Step 1: Pre-flight checks
 
-You are orchestrating a Homebrew release for katulong. The argument `$ARGUMENTS` is an optional version bump type (`patch`, `minor`, `major`) or an explicit semver (e.g., `0.7.0`). Defaults to `patch` if empty.
+Verify the release environment is ready:
 
-### Step 1: Pre-flight checks
-
-1. Verify you're on `main`:
-   ```
-   git branch --show-current
-   ```
-   If not on `main`, stop and tell the user: "You must be on `main` to release. Switch branches first."
-
-2. Verify the working tree is clean:
-   ```
-   git status --porcelain
-   ```
-   If there are uncommitted changes, stop and tell the user: "Working tree is dirty. Commit or stash changes first."
-
-3. Pull latest to avoid conflicts:
-   ```
-   git pull origin main
-   ```
-
-4. Read the current version from `package.json` and tell the user: "Current version: X.Y.Z"
-
-### Step 2: Bump version
-
-Determine the bump type from `$ARGUMENTS`:
-- If empty or one of `patch`, `minor`, `major`: run `npm version <type> --no-git-tag-version` (default to `patch`)
-- If it looks like a semver (e.g., `1.2.3`): run `npm version $ARGUMENTS --no-git-tag-version`
-- Otherwise, stop and tell the user: "Unrecognized argument '$ARGUMENTS'. Expected patch, minor, major, or a semver like 1.2.3."
-
-Read the new version from `package.json` and store it as `NEW_VERSION`. Tell the user: "Bumping to vX.Y.Z"
-
-Check if the tag already exists before proceeding — if it does, revert the version bump and stop:
+```bash
+git branch --show-current
+git status --porcelain
 ```
+
+**Abort if:**
+- Not on `main` — switch first or confirm with the user
+- Working tree is dirty — commit or stash first
+
+Pull latest to avoid conflicts:
+
+```bash
+git pull origin main
+```
+
+Show the current version:
+
+```bash
+node -e "console.log(JSON.parse(require('fs').readFileSync('package.json')).version)"
+```
+
+## Step 2: Determine bump type
+
+Check `$ARGUMENTS` for the bump type.
+
+- If `$ARGUMENTS` contains `patch`, `minor`, `major`, or an explicit semver like `1.2.3`, use that.
+- If `$ARGUMENTS` is empty or unclear, ask the user:
+  - **patch** — bug fixes, docs, small tweaks
+  - **minor** — new features, backward-compatible changes
+  - **major** — breaking changes
+
+Default to `patch` if empty.
+
+## Step 3: Bump version
+
+```bash
+npm version <bump-type> --no-git-tag-version
+```
+
+Read the new version from package.json and store it as `NEW_VERSION`.
+
+Check if the tag already exists:
+
+```bash
 git tag -l "v$NEW_VERSION"
 ```
-If the tag already exists, revert the version bump (`git checkout package.json package-lock.json`) and stop. Tell the user: "Tag v$NEW_VERSION already exists. Delete it with `git tag -d v$NEW_VERSION && git push origin :refs/tags/v$NEW_VERSION` if you want to re-release, or choose a different version."
 
-### Step 3: Commit, tag, and push
+If the tag exists, revert the bump (`git checkout package.json package-lock.json`) and stop. Tell the user to delete the existing tag or choose a different version.
 
-Run these commands sequentially:
-```
+## Step 4: Commit, tag, and push
+
+```bash
 git add package.json package-lock.json
 git commit -m "release: v$NEW_VERSION"
 git tag "v$NEW_VERSION"
 git push origin main --tags
 ```
 
-If any command fails, stop and report the error.
+## Step 5: Compute SHA256
 
-### Step 4: Compute SHA256
+Download the tarball with retries (GitHub needs time to create it):
 
-GitHub needs a moment to create the tarball from the new tag.
+```bash
+curl -sL --retry 5 --retry-delay 5 --retry-all-errors -f \
+  "https://github.com/dorky-robot/katulong/archive/refs/tags/v${NEW_VERSION}.tar.gz" \
+  -o "/tmp/katulong-v${NEW_VERSION}.tar.gz"
+```
 
-1. Download the tarball, retrying on any error (including HTTP 404 while GitHub builds it):
-   ```
-   curl -sL --retry 5 --retry-delay 5 --retry-all-errors -f "https://github.com/dorky-robot/katulong/archive/refs/tags/v${NEW_VERSION}.tar.gz" -o "/tmp/katulong-v${NEW_VERSION}.tar.gz"
-   ```
-   The `-f` flag makes curl return a non-zero exit code on HTTP errors, and `--retry-all-errors` retries on those failures.
+Verify it's valid gzip:
 
-2. Verify the download is a valid gzip archive:
-   ```
-   file "/tmp/katulong-v${NEW_VERSION}.tar.gz"
-   ```
-   If the output does not contain "gzip compressed data", stop and tell the user: "Tarball download failed — the file is not a valid gzip archive. GitHub may not have generated it yet. Try again in a minute."
+```bash
+file "/tmp/katulong-v${NEW_VERSION}.tar.gz"
+```
 
-3. Compute the SHA:
-   ```
-   shasum -a 256 "/tmp/katulong-v${NEW_VERSION}.tar.gz"
-   ```
+Compute the SHA:
 
-Store the SHA256 value. Tell the user: "SHA256: <hash>"
+```bash
+shasum -a 256 "/tmp/katulong-v${NEW_VERSION}.tar.gz"
+```
 
-### Step 5: Update both formula files
+## Step 6: Update both formula files
 
-#### 5a: Local formula (`Formula/katulong.rb`)
+### 6a: Local formula (`Formula/katulong.rb`)
 
-Read the file, then update the `url` and `sha256` lines:
-- `url` → `"https://github.com/dorky-robot/katulong/archive/refs/tags/v${NEW_VERSION}.tar.gz"`
-- `sha256` → the value computed in Step 4
-
-Use the Edit tool to make these changes.
+Read the file, then update the `url` and `sha256` lines using the Edit tool.
 
 Commit and push:
-```
+
+```bash
 git pull origin main
 git add Formula/katulong.rb
 git commit -m "formula: update to v${NEW_VERSION}"
 git push origin main
 ```
 
-#### 5b: Tap formula (`homebrew-katulong/Formula/katulong.rb`)
+### 6b: Tap formula (`homebrew-katulong/Formula/katulong.rb`)
 
-Read the tap formula file, then update the `url` and `sha256` lines with the same values.
+Read the tap formula file, update `url` and `sha256` with the same values.
 
-Use the Edit tool to make these changes.
+Commit and push. **Note**: the tap repo uses `master` as its default branch:
 
-Commit and push from the tap repo. **Note**: the tap repo uses `master` as its default branch, not `main`.
-```
+```bash
 cd homebrew-katulong && git pull origin master && git add Formula/katulong.rb && git commit -m "formula: update to v${NEW_VERSION}" && git push origin master
 ```
 
-### Step 6: Brew upgrade
+## Step 7: Brew upgrade
 
-Run:
-```
+```bash
 brew update
-```
-
-Then check the currently installed version:
-```
 brew info katulong --json | jq -r '.[0] | "formula: \(.versions.stable)\ninstalled: \([.installed[].version] | join(","))"'
 ```
 
-If the installed version already matches `NEW_VERSION`, run:
-```
-brew reinstall katulong
-```
+If installed version matches NEW_VERSION, `brew reinstall katulong`. Otherwise `brew upgrade katulong`.
 
-Otherwise:
-```
-brew upgrade katulong
-```
+## Step 8: Verify
 
-### Step 7: Verify
-
-1. Check the CLI version:
-   ```
+1. Check CLI version:
+   ```bash
    katulong --version
    ```
-   Confirm it outputs the new version. If it doesn't match, warn the user.
 
-2. Start katulong, verify HTTP is responding, then stop it:
-   ```
+2. Start, verify HTTP, stop:
+   ```bash
    katulong start
-   ```
-   Wait 3 seconds for the server to be ready, then:
-   ```
+   sleep 3
    curl -s -o /dev/null -w "%{http_code}" http://localhost:3001
-   ```
-   Expect HTTP 200 or 302. If the curl fails or returns an unexpected status, warn the user.
-
-   Stop katulong:
-   ```
    katulong stop
    ```
-   If `katulong stop` is not available, find and kill the server process:
-   ```
-   lsof -ti:3001 | xargs kill -9 2>/dev/null
-   ```
 
-3. Clean up the temp tarball:
-   ```
+3. Clean up:
+   ```bash
    rm -f "/tmp/katulong-v${NEW_VERSION}.tar.gz"
    ```
 
-4. Report success:
+4. Report:
    ```
-   ✅ Released katulong v${NEW_VERSION}
+   Released katulong v${NEW_VERSION}
    - Git tag: v${NEW_VERSION}
    - Formula: updated (local + tap)
    - Homebrew: installed and verified
