@@ -806,7 +806,8 @@
       updateP2PIndicator,
       loadTokens,
       isAtBottom,
-      renderBar
+      renderBar,
+      fit: () => withPreservedScroll(term, () => fit.fit())
     });
     wsConnection.initVisibilityReconnect();
 

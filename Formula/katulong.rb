@@ -14,10 +14,11 @@ class Katulong < Formula
     # Install everything to libexec
     libexec.install Dir["*"]
 
-    # Create wrapper script that sets DATA_DIR
+    # Create wrapper script that sets DATA_DIR and ensures Homebrew bin is in PATH
     (bin/"katulong").write <<~EOS
       #!/bin/bash
       export KATULONG_DATA_DIR="${HOME}/.katulong"
+      export PATH="#{HOMEBREW_PREFIX}/bin:#{HOMEBREW_PREFIX}/sbin:$PATH"
       exec "#{Formula["node"].opt_bin}/node" "#{libexec}/bin/katulong" "$@"
     EOS
   end

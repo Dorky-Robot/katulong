@@ -33,6 +33,7 @@ export function createWebSocketConnection(deps = {}) {
       effects: [
         { type: 'updateP2PIndicator' },
         { type: 'initP2P' },
+        { type: 'fit' },
         { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect }
       ]
     }),
@@ -121,6 +122,9 @@ export function createWebSocketConnection(deps = {}) {
         break;
       case 'initP2P':
         if (p2pManager) p2pManager.create();
+        break;
+      case 'fit':
+        if (deps.fit) requestAnimationFrame(() => deps.fit());
         break;
       case 'p2pSignal':
         if (p2pManager) p2pManager.signal(effect.data);
