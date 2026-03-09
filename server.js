@@ -115,8 +115,8 @@ if (!hasTmux) {
   process.exit(1);
 }
 
-// Strip sensitive env vars (CLAUDECODE, SETUP_TOKEN, etc.) from the tmux server's
-// global environment so they don't leak into terminal sessions.
+// Strip SENSITIVE_ENV_VARS from the tmux server's global environment
+// so they don't leak into terminal sessions (defense-in-depth).
 await cleanTmuxServerEnv();
 
 // --- Session manager (replaces daemon IPC) ---
