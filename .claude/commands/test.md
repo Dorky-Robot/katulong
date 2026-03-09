@@ -1,20 +1,15 @@
 Run the test suite for katulong. Accepts an optional scope: unit, integration, e2e, smoke, or all.
 
-## Instructions
+## Step 1: Kill conflicting processes
 
-You are running tests for katulong. The argument `$ARGUMENTS` is an optional test scope. If empty, run the default suite (`npm test` — unit + integration).
-
-### Step 1: Kill conflicting processes
-
-E2E tests start their own server on ports 3001/3002. Check for and kill any processes occupying those ports:
+E2E tests start their own server. Check for and kill any processes on test ports:
 
 ```bash
 lsof -ti:3001 | xargs kill -9 2>/dev/null || true
 lsof -ti:3002 | xargs kill -9 2>/dev/null || true
 ```
 
-
-### Step 2: Determine which tests to run
+## Step 2: Determine which tests to run
 
 Parse `$ARGUMENTS`:
 
@@ -29,11 +24,11 @@ Parse `$ARGUMENTS`:
 
 Tell the user which suite you're running before starting.
 
-### Step 3: Run the tests
+## Step 3: Run the tests
 
 Execute the appropriate test command. Let it run to completion — do not interrupt.
 
-### Step 4: Report results
+## Step 4: Report results
 
 If all tests pass, report success with the count of passing tests.
 
@@ -49,7 +44,7 @@ If tests fail:
 
 Do NOT automatically fix failing tests. Present the diagnosis and ask the user whether to fix the tests, fix the code, or skip.
 
-### Step 5: Handle port conflicts
+## Step 5: Handle port conflicts
 
 If tests fail with `EADDRINUSE`:
 

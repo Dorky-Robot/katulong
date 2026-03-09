@@ -57,7 +57,7 @@ export function createWebSocketConnection(deps = {}) {
 
     'session-removed': () => ({
       stateUpdates: {},
-      effects: [{ type: 'terminalWrite', data: '\r\n[session deleted]\r\n' }]
+      effects: [{ type: 'sessionRemoved' }]
     }),
 
     'session-renamed': (msg) => ({
@@ -167,6 +167,16 @@ export function createWebSocketConnection(deps = {}) {
         if (tokenCreateForm) tokenCreateForm.style.display = "none";
         if (createTokenBtn) createTokenBtn.style.display = "block";
         break;
+      case 'sessionRemoved':
+        // Current session was removed — navigate to closest remaining session
+        fetch("/sessions").then(r => r.json()).then(sessions => {
+          if (sessions.length > 0) {
+            location.href = `/?s=${encodeURIComponent(sessions[0].name)}`;
+          } else {
+            location.href = "/";
+          }
+        }).catch(() => { location.href = "/"; });
+        break;
       case 'fastReconnect':
         // Reset reconnect delay for fast reconnection to new server
         state.connection.reconnectDelay = 500;
@@ -260,7 +270,7 @@ export function createWebSocketConnection(deps = {}) {
         }
 
         // If was hidden for more than 5 seconds, force reconnect
-        if (hiddenDuration > 5000 && state.connection.ws && !isConnecting) {
+        if (hiddenDuration > 5000 && state.connection.ws) {
           state.connection.ws.close();
         } else if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
           // Quick test - send resize to verify connection is alive
