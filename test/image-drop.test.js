@@ -356,7 +356,7 @@ describe("uploadImageToTerminal", () => {
   it("sends correct headers and body in the upload request", async () => {
     globalThis.fetch = mock.fn(async () => ({
       ok: true,
-      json: async () => ({ path: "/uploads/test.png" }),
+      json: async () => ({ fsPath: "/uploads/test.png" }),
     }));
 
     const { uploadImageToTerminal } = await import("../public/lib/image-upload.js");
