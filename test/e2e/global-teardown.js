@@ -4,7 +4,7 @@
  */
 
 import { rmSync } from 'fs';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { TEST_DATA_DIR } from './test-config.js';
 
 export default async function globalTeardown() {
@@ -23,7 +23,7 @@ export default async function globalTeardown() {
     const sessions = execSync('tmux list-sessions -F "#{session_name}" 2>/dev/null', { encoding: 'utf8' })
       .trim().split('\n').filter(s => s.startsWith('smoke-'));
     for (const sess of sessions) {
-      execSync(`tmux kill-session -t "${sess}" 2>/dev/null`);
+      try { execFileSync('tmux', ['kill-session', '-t', sess]); } catch { /* already dead */ }
     }
     if (sessions.length > 0) {
       console.log(`[Global Teardown] Killed ${sessions.length} smoke tmux sessions`);
