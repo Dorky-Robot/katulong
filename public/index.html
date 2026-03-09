@@ -720,40 +720,12 @@
     }
     .session-card-action:hover { color: var(--text); }
     .session-card-action.delete:hover { color: var(--danger); }
-    /* SSH info section */
-    .sidebar-ssh-section {
-      padding: 0.5rem 0; border-top: 1px solid var(--border); margin-top: 0.25rem;
-    }
-    .ssh-password-row {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 0.25rem 0;
-    }
-    .ssh-password-label {
-      font-size: 0.625rem; color: var(--text-dim); font-family: var(--font-mono); flex-shrink: 0;
-    }
-    .ssh-password-field { display: flex; align-items: center; gap: 2px; }
-    .ssh-password-input {
-      width: 5.5rem; height: 1.5rem; border: 1px solid var(--border); border-radius: var(--radius-sm);
-      background: var(--bg-input); color: var(--text); padding: 0 var(--space-xs);
-      font-size: 0.625rem; font-family: var(--font-mono); letter-spacing: 0.05em;
-    }
-    .ssh-password-input:focus { outline: none; }
     .session-icon-btn {
       width: 1.5rem; height: 1.5rem; border: none; border-radius: var(--radius-sm);
       background: transparent; font-size: 0.75rem; cursor: pointer; flex-shrink: 0;
       display: flex; align-items: center; justify-content: center; color: var(--text-muted);
     }
     .session-icon-btn:active { background: rgba(255,255,255,0.1); }
-    .ssh-hint {
-      font-size: 0.5625rem; color: var(--text-dim); font-family: var(--font-mono);
-      padding: 0.25rem 0 0;
-    }
-    .ssh-hint kbd {
-      display: inline-block; padding: 0.05rem 0.25rem; border: 1px solid var(--border);
-      border-radius: 0.2rem; font-size: 0.5rem; font-family: var(--font-mono);
-      background: var(--bg-input); line-height: 1.3;
-    }
-
     /* --- Settings modal --- */
     #settings-overlay { z-index: var(--z-modal-bg); }
     .settings-row {
@@ -1293,21 +1265,6 @@
       </div>
       <div id="sidebar-content">
         <div id="session-list" role="list"></div>
-        <div class="sidebar-ssh-section sidebar-hide-collapsed" id="ssh-password-row">
-          <div class="ssh-password-row">
-            <span class="ssh-password-label">SSH password</span>
-            <div class="ssh-password-field">
-              <input type="password" id="ssh-password-value" readonly class="ssh-password-input" value="" aria-label="SSH password">
-              <button class="session-icon-btn" id="ssh-password-reveal" aria-label="Toggle password visibility">
-                <i class="ph ph-eye"></i>
-              </button>
-              <button class="session-icon-btn" id="ssh-password-copy" aria-label="Copy SSH password">
-                <i class="ph ph-copy"></i>
-              </button>
-            </div>
-          </div>
-          <div class="ssh-hint">Disconnect: <kbd>Enter</kbd> <kbd>~</kbd> <kbd>.</kbd></div>
-        </div>
       </div>
       <div id="sidebar-footer">
         <button class="sidebar-icon-btn" id="sidebar-files-btn" aria-label="Open file browser" title="Files">

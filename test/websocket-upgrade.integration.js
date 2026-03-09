@@ -132,7 +132,6 @@ describe("WebSocket upgrade authentication and origin validation", () => {
       env: {
         ...process.env,
         PORT: String(TEST_PORT),
-        SSH_PORT: String(TEST_PORT + 10),
         KATULONG_DATA_DIR: testDataDir,
       },
       stdio: "pipe",

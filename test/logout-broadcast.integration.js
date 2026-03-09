@@ -63,7 +63,6 @@ describe("logout session invalidation", () => {
       env: {
         ...process.env,
         PORT: TEST_PORT,
-        SSH_PORT: TEST_PORT + 10,
         KATULONG_DATA_DIR: testDataDir,
       },
       stdio: "pipe",

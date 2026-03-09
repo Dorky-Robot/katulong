@@ -9,9 +9,9 @@ describe("env-config", () => {
 
   it("has expected keys", () => {
     const expectedKeys = [
-      "port", "sshPort", "dataDir",
-      "socketPath", "noAuth", "sshPassword", "sshPasswordProvided",
-      "shell", "nodeEnv", "logLevel", "drainTimeout", "home", "sshHost",
+      "port", "dataDir",
+      "noAuth",
+      "shell", "nodeEnv", "logLevel", "drainTimeout", "home",
     ];
     for (const key of expectedKeys) {
       assert.ok(key in envConfig, `config must have key: ${key}`);
@@ -23,32 +23,13 @@ describe("env-config", () => {
     assert.ok(envConfig.port > 0, "port must be positive");
   });
 
-  it("sshPort is a number", () => {
-    assert.equal(typeof envConfig.sshPort, "number");
-    assert.ok(envConfig.sshPort > 0, "sshPort must be positive");
-  });
-
   it("dataDir is a non-empty string", () => {
     assert.equal(typeof envConfig.dataDir, "string");
     assert.ok(envConfig.dataDir.length > 0, "dataDir must be non-empty");
   });
 
-  it("socketPath is a non-empty string", () => {
-    assert.equal(typeof envConfig.socketPath, "string");
-    assert.ok(envConfig.socketPath.length > 0, "socketPath must be non-empty");
-  });
-
   it("noAuth is a boolean", () => {
     assert.equal(typeof envConfig.noAuth, "boolean");
-  });
-
-  it("sshPassword is a non-empty string", () => {
-    assert.equal(typeof envConfig.sshPassword, "string");
-    assert.ok(envConfig.sshPassword.length > 0, "sshPassword must be non-empty");
-  });
-
-  it("sshPasswordProvided is a boolean", () => {
-    assert.equal(typeof envConfig.sshPasswordProvided, "boolean");
   });
 
   it("shell is a non-empty string", () => {
@@ -82,12 +63,6 @@ describe("env-config", () => {
     // Only assert default when PORT is not explicitly overridden in the environment
     if (!process.env.PORT) {
       assert.equal(envConfig.port, 3001);
-    }
-  });
-
-  it("defaults: sshPort is 2222 when SSH_PORT env var is not set", () => {
-    if (!process.env.SSH_PORT) {
-      assert.equal(envConfig.sshPort, 2222);
     }
   });
 

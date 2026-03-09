@@ -143,28 +143,6 @@ export function createSessionListComponent(store, options = {}) {
       const actions = document.createElement("div");
       actions.className = "session-card-actions";
 
-      // SSH copy
-      const sshBtn = document.createElement("button");
-      sshBtn.className = "session-card-action";
-      sshBtn.setAttribute("aria-label", `Copy SSH command for ${s.name}`);
-      sshBtn.innerHTML = '<i class="ph ph-terminal"></i>';
-      sshBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        const cmd = `ssh ${s.name}@${state.sshInfo.sshHost} -p ${state.sshInfo.sshPort}`;
-        try {
-          await navigator.clipboard.writeText(cmd);
-          sshBtn.innerHTML = '<i class="ph ph-check"></i>';
-          sshBtn.style.color = "var(--success)";
-          setTimeout(() => {
-            sshBtn.innerHTML = '<i class="ph ph-terminal"></i>';
-            sshBtn.style.color = "";
-          }, 1500);
-        } catch {
-          /* clipboard not available */
-        }
-      });
-      actions.appendChild(sshBtn);
-
       // Delete
       const delBtn = document.createElement("button");
       delBtn.className = "session-card-action delete";

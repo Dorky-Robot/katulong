@@ -138,7 +138,7 @@ katulong credential revoke abc123def456 --json
 ```
 
 !!! warning
-    Revoking the last credential from a remote connection will lock you out. Use localhost or SSH to recover.
+    Revoking the last credential from a remote connection will lock you out. Use localhost to recover.
 
 ## Session Management
 
@@ -179,21 +179,6 @@ Rename a PTY session.
 katulong session rename dev production
 katulong session rename old-name new-name --json
 ```
-
-## SSH CLI
-
-All token, credential, and session commands are also available over SSH for remote management:
-
-```bash
-ssh -p 2222 user@host "katulong token create 'My Phone'"
-ssh -p 2222 user@host "katulong token list --json"
-ssh -p 2222 user@host "katulong credential list"
-ssh -p 2222 user@host "katulong session list"
-ssh -p 2222 user@host "katulong status"
-ssh -p 2222 user@host "katulong help"
-```
-
-The SSH CLI also supports a `status` command that shows credential, token, session, and daemon status.
 
 ## Global Options
 

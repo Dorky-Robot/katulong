@@ -37,7 +37,7 @@ Built with security at every layer: CSP headers, CSRF protection, atomic file op
 
 ## Multiple Access Methods
 
-Web (HTTP/HTTPS), SSH, or remote tunneling (ngrok/Cloudflare). Choose what works for you.
+Web (HTTP/HTTPS) or remote tunneling (ngrok/Cloudflare). Choose what works for you.
 
 ## Multi-Session Support
 

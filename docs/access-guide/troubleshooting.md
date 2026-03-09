@@ -116,30 +116,3 @@ tail -f /tmp/server.log | grep pair
 # Example: "Pairing failed: invalid PIN"
 ```
 
-## SSH connection refused
-
-**Causes:**
-
-1. **SSH Server Not Running:**
-    ```bash
-    tail -f /tmp/server.log | grep SSH
-    # Should see: "Katulong SSH started on port 2222"
-    ```
-
-2. **Firewall Blocking Port 2222:**
-    ```bash
-    nc -zv localhost 2222
-    ```
-
-3. **Wrong Password:** SSH password is `SSH_PASSWORD` env var or `SETUP_TOKEN` env var
-
-**Solution:**
-
-```bash
-# Set SSH password explicitly
-export SSH_PASSWORD="your-secure-password"
-node server.js
-
-# Connect
-ssh default@localhost -p 2222
-```

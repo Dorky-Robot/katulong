@@ -3,10 +3,6 @@ import assert from "node:assert/strict";
 import { SENSITIVE_ENV_VARS, getSafeEnv } from "../lib/env-filter.js";
 
 describe("SENSITIVE_ENV_VARS", () => {
-  it("contains SSH_PASSWORD", () => {
-    assert.ok(SENSITIVE_ENV_VARS.has("SSH_PASSWORD"));
-  });
-
   it("contains SETUP_TOKEN", () => {
     assert.ok(SENSITIVE_ENV_VARS.has("SETUP_TOKEN"));
   });
@@ -23,7 +19,7 @@ describe("SENSITIVE_ENV_VARS", () => {
 describe("getSafeEnv", () => {
   // Stash and restore any pre-existing values
   let saved = {};
-  const TEST_VARS = ["SSH_PASSWORD", "SETUP_TOKEN", "KATULONG_NO_AUTH", "CLAUDECODE"];
+  const TEST_VARS = ["SETUP_TOKEN", "KATULONG_NO_AUTH", "CLAUDECODE"];
 
   beforeEach(() => {
     saved = {};
@@ -40,12 +36,6 @@ describe("getSafeEnv", () => {
         process.env[k] = saved[k];
       }
     }
-  });
-
-  it("filters SSH_PASSWORD from the returned environment", () => {
-    process.env.SSH_PASSWORD = "super-secret";
-    const env = getSafeEnv();
-    assert.ok(!("SSH_PASSWORD" in env), "SSH_PASSWORD must not appear in safe env");
   });
 
   it("filters SETUP_TOKEN from the returned environment", () => {
@@ -82,9 +72,9 @@ describe("getSafeEnv", () => {
   });
 
   it("does not mutate process.env", () => {
-    process.env.SSH_PASSWORD = "should-stay";
+    process.env.SETUP_TOKEN = "should-stay";
     getSafeEnv();
-    assert.equal(process.env.SSH_PASSWORD, "should-stay", "process.env must not be mutated");
+    assert.equal(process.env.SETUP_TOKEN, "should-stay", "process.env must not be mutated");
   });
 
   it("returns a new object on each call", () => {
@@ -94,13 +84,11 @@ describe("getSafeEnv", () => {
   });
 
   it("filters all sensitive vars simultaneously when all are set", () => {
-    process.env.SSH_PASSWORD = "pw";
     process.env.SETUP_TOKEN = "tok";
     process.env.KATULONG_NO_AUTH = "1";
     process.env.CLAUDECODE = "1";
 
     const env = getSafeEnv();
-    assert.ok(!("SSH_PASSWORD" in env));
     assert.ok(!("SETUP_TOKEN" in env));
     assert.ok(!("KATULONG_NO_AUTH" in env));
     assert.ok(!("CLAUDECODE" in env));

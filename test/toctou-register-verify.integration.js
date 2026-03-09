@@ -97,7 +97,6 @@ describe("Setup token TOCTOU fix — /register/verify re-validates token under l
       env: {
         ...process.env,
         PORT: String(TEST_PORT),
-        SSH_PORT: String(TEST_PORT + 10),
         KATULONG_DATA_DIR: testDataDir,
       },
       cwd: ROOT,

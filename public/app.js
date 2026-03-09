@@ -11,7 +11,6 @@
       createShortcutsStore, loadShortcuts as reloadShortcuts,
     } from "/lib/stores.js";
     import { createSessionListComponent, updateSnapshot } from "/lib/session-list-component.js";
-    import { createSessionManager } from "/lib/session-manager.js";
     import { api } from "/lib/api-client.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
     import { createTokenFormManager } from "/lib/token-form.js";
@@ -412,10 +411,6 @@
       sessionListComponent.mount(sessionListEl);
     }
 
-    // SSH password reveal/copy (sidebar)
-    const sessionManager = createSessionManager();
-    sessionManager.init();
-
     // --- Sidebar toggle ---
     const sidebar = document.getElementById("sidebar");
     const sidebarToggleBtn = document.getElementById("sidebar-toggle");
@@ -427,10 +422,6 @@
 
     function loadSidebarData() {
       invalidateSessions(sessionStore, state.session.name);
-      api.get("/ssh/password").then(({ password }) => {
-        const pwInput = document.getElementById("ssh-password-value");
-        if (pwInput) pwInput.value = password;
-      }).catch(() => {});
     }
 
     function setOverlaySidebar(open) {

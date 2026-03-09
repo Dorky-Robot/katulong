@@ -52,7 +52,6 @@ describe("Sessions CRUD Integration", () => {
       KATULONG_DATA_DIR: testDataDir,
       KATULONG_NO_AUTH: "1",
       PORT: String(TEST_PORT),
-      SSH_PORT: String(TEST_PORT + 10),
     };
 
     // Spawn server (now manages sessions directly, no daemon needed)
