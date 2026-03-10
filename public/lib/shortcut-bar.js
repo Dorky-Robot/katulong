@@ -176,18 +176,20 @@ export function createShortcutBar(options = {}) {
   // ── Tab actions ────────────────────────────────────────────────────
 
   /** After removing a tab, navigate to the nearest remaining tab or "/" */
-  function navigateAfterRemoval(removedName) {
+  function navigateAfterRemoval(removedName, priorIndex) {
     const remaining = windowTabSet ? windowTabSet.getTabs() : [];
     if (removedName !== currentSessionName) { render(currentSessionName); return; }
     if (remaining.length === 0) { location.href = "/"; return; }
-    if (onTabClick) onTabClick(remaining[Math.min(remaining.indexOf(removedName), remaining.length - 1)] || remaining[0]);
+    const idx = typeof priorIndex === "number" ? priorIndex : 0;
+    if (onTabClick) onTabClick(remaining[Math.min(idx, remaining.length - 1)]);
   }
 
   /** Close tab: remove from this window's tab set only (session stays managed on server) */
   function closeTab(sessionName) {
     if (!windowTabSet) return;
+    const idx = windowTabSet.getTabs().indexOf(sessionName);
     windowTabSet.removeTab(sessionName);
-    navigateAfterRemoval(sessionName);
+    navigateAfterRemoval(sessionName, idx);
   }
 
   async function detachTab(sessionName) {
@@ -197,8 +199,9 @@ export function createShortcutBar(options = {}) {
       console.error("[Tab] Detach failed:", err);
       return;
     }
+    const idx = windowTabSet ? windowTabSet.getTabs().indexOf(sessionName) : 0;
     if (windowTabSet) windowTabSet.removeTab(sessionName);
-    navigateAfterRemoval(sessionName);
+    navigateAfterRemoval(sessionName, idx);
   }
 
   async function killTab(sessionName) {
@@ -209,8 +212,9 @@ export function createShortcutBar(options = {}) {
       console.error("[Tab] Kill failed:", err);
       return;
     }
+    const idx = windowTabSet ? windowTabSet.getTabs().indexOf(sessionName) : 0;
     if (windowTabSet) windowTabSet.onSessionKilled(sessionName);
-    navigateAfterRemoval(sessionName);
+    navigateAfterRemoval(sessionName, idx);
   }
 
   /**
