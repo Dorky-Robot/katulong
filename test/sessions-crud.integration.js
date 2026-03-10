@@ -278,6 +278,42 @@ describe("Sessions CRUD Integration", () => {
     }
   });
 
+  it("POST /tmux-sessions/adopt returns 409 for nonexistent tmux session", async () => {
+    const { status, body } = await request("POST", "/tmux-sessions/adopt", { name: "no-such-session-xyz" });
+    assert.equal(status, 409);
+    assert.ok(body.error);
+  });
+
+  it("POST /tmux-sessions/adopt returns 409 for already-managed session", async () => {
+    // POST /sessions creates both a katulong session and an underlying tmux session,
+    // so the name is both managed and exists as a tmux session.
+    const setup = await request("POST", "/sessions", { name: "already-managed" });
+    assert.equal(setup.status, 201);
+
+    try {
+      const { status, body } = await request("POST", "/tmux-sessions/adopt", { name: "already-managed" });
+      assert.equal(status, 409);
+      assert.match(body.error, /already managed/i);
+    } finally {
+      await request("DELETE", "/sessions/already-managed");
+    }
+  });
+
+  it("POST /tmux-sessions/adopt returns 400 for missing name", async () => {
+    const { status, body } = await request("POST", "/tmux-sessions/adopt", {});
+    assert.equal(status, 400);
+    assert.ok(body.error);
+  });
+
+  it("POST /tmux-sessions/adopt returns 409 for invalid name with special chars", async () => {
+    // Names with : . / are rejected by session manager validation.
+    // Note: semantically this should be 400, but the route returns 409 for all
+    // session manager errors. Tracked as a future improvement.
+    const { status, body } = await request("POST", "/tmux-sessions/adopt", { name: "foo:bar" });
+    assert.equal(status, 409);
+    assert.match(body.error, /invalid/i);
+  });
+
   // --- Full lifecycle (mirrors what the UI "+ New" button does) ---
 
   it("full lifecycle: create → list → rename → delete", async () => {
