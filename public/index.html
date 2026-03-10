@@ -587,6 +587,15 @@
       padding: 0 0.5rem; flex-shrink: 0;
       height: var(--height-btn-md); border-bottom: 1px solid var(--border);
     }
+    /* iPadOS Stage Manager: window controls overlay top-left corner */
+    @supports (-webkit-touch-callout: none) {
+      @media (pointer: coarse) {
+        :root { --bar-top-pad: 1rem; }
+        #sidebar-toolbar { height: calc(var(--height-btn-md) + var(--bar-top-pad)); padding-top: var(--bar-top-pad); }
+        #sidebar.collapsed #sidebar-toolbar { padding-top: calc(var(--bar-top-pad) + 0.5rem); }
+        #shortcut-bar { height: calc(var(--height-btn-md) + var(--bar-top-pad)); padding-top: var(--bar-top-pad); }
+      }
+    }
     .sidebar-icon-btn {
       width: 2rem; height: 2rem; border: none; border-radius: var(--radius-sm);
       background: transparent; color: var(--text-muted); font-size: 1.125rem;
@@ -644,7 +653,7 @@
     /* --- Mobile/Tablet: sidebar as floating overlay (overlay breakpoint: 1024px) --- */
     @media (max-width: 1023px) {
       #sidebar {
-        position: fixed; top: var(--height-btn-md); left: 0; bottom: 0; z-index: 100;
+        position: fixed; top: calc(var(--height-btn-md) + var(--bar-top-pad, 0px)); left: 0; bottom: 0; z-index: 100;
         width: 280px; min-width: 280px;
         transform: translateX(-100%);
         transition: transform 0.2s ease;
@@ -724,15 +733,14 @@
       cursor: text; outline: none;
     }
     .session-card.active .session-card-name { color: var(--accent-active); }
-    /* Session card actions on hover */
+    /* Session card actions — always visible (mobile-friendly) */
     .session-card-actions {
-      position: absolute; top: 0.25rem; right: 0.25rem;
-      display: none; gap: 0.125rem;
+      display: flex; gap: 0.125rem;
+      margin-left: auto; flex-shrink: 0;
     }
-    .session-card:hover .session-card-actions { display: flex; }
     .session-card-action {
       width: 1.5rem; height: 1.5rem; border: none; border-radius: var(--radius-sm);
-      background: var(--bg-surface); color: var(--text-muted); font-size: 0.75rem;
+      background: transparent; color: var(--text-muted); font-size: 0.75rem;
       cursor: pointer; display: flex; align-items: center; justify-content: center;
     }
     .session-card-action:hover { color: var(--text); }
