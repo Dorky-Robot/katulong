@@ -10,6 +10,8 @@ import { scrollToBottom, terminalWriteWithScroll } from "/lib/scroll-utils.js";
 /**
  * Create WebSocket connection manager with injected dependencies
  */
+const REDRAW_SCROLL_DELAYS_MS = [300, 800];
+
 export function createWebSocketConnection(deps = {}) {
   const {
     term,
@@ -158,11 +160,12 @@ export function createWebSocketConnection(deps = {}) {
       case 'terminalReset':
         term.clear();
         term.reset();
-        // Scroll to bottom after the deferred resize-triggered redraw arrives.
-        // TUI apps like Claude Code take variable time to redraw, so we
-        // schedule multiple scroll attempts to catch the content.
-        setTimeout(() => scrollToBottom(term), 300);
-        setTimeout(() => scrollToBottom(term), 800);
+        // Scroll to bottom after the server-side SIGWINCH-triggered redraw
+        // arrives. Two attempts at staggered delays to handle variable
+        // TUI redraw times (Claude Code, vim) and network latency.
+        for (const ms of REDRAW_SCROLL_DELAYS_MS) {
+          setTimeout(() => scrollToBottom(term), ms);
+        }
         break;
       case 'terminalWrite':
         if (effect.preserveScroll) {

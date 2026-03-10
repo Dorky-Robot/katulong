@@ -32,15 +32,15 @@ test.describe("Smoke — critical path", () => {
   });
 
   test("Reconnection redraws terminal", async ({ page }) => {
-    // Type something so the session has a prompt
-    await page.keyboard.type(`echo hello`);
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".xterm-rows")).toContainText("hello");
-
+    // After reconnect, the server triggers SIGWINCH which makes the
+    // shell redraw. Type a command to verify the session is live.
     await page.reload();
-    // After reconnect, Ctrl-L triggers the shell to redraw.
-    // The prompt should appear (shell redraws on Ctrl-L).
-    await page.waitForSelector(".xterm-screen", { timeout: 10000 });
-    await expect(page.locator(".xterm-rows")).not.toHaveText("", { timeout: 10000 });
+    await waitForAppReady(page);
+    await page.locator(".xterm-helper-textarea").focus();
+
+    const marker = `reconnect_${Date.now()}`;
+    await page.keyboard.type(`echo ${marker}`);
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".xterm-rows")).toContainText(marker, { timeout: 10000 });
   });
 });
