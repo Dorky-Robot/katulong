@@ -1,4 +1,4 @@
-const CACHE_NAME = "katulong-v8";
+const CACHE_NAME = "katulong-v9";
 const PRECACHE = [
   "/",
   "/icon-192.png",
@@ -59,17 +59,16 @@ self.addEventListener("fetch", (e) => {
   // Only cache GET requests (Cache API doesn't support POST/PUT/etc.)
   if (e.request.method !== "GET") return;
 
-  // Cache-first for static assets (icons, fonts)
+  // Network-first for all static assets — always get latest, fall back to cache offline
   e.respondWith(
-    caches.match(e.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(e.request).then((res) => {
+    fetch(e.request)
+      .then((res) => {
         if (res.ok && url.origin === self.location.origin) {
           const clone = res.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));
         }
         return res;
-      });
-    })
+      })
+      .catch(() => caches.match(e.request))
   );
 });
