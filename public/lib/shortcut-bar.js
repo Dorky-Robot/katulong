@@ -249,7 +249,7 @@ export function createShortcutBar(options = {}) {
   }
 
   /**
-   * Show + button dropdown: new session + unmanaged tmux sessions
+   * Show + button dropdown: new session, managed sessions not in this window, unmanaged tmux sessions
    */
   async function showAddMenu(addBtn) {
     // Fetch fresh unmanaged tmux sessions with attached status
@@ -266,6 +266,26 @@ export function createShortcutBar(options = {}) {
         action: () => { if (onNewSessionClick) onNewSessionClick(); }
       }
     ];
+
+    // Managed sessions not open as tabs in this window
+    if (sessionStore && windowTabSet) {
+      const allManaged = (sessionStore.getState().sessions || []).map(s => s.name);
+      const openTabs = new Set(windowTabSet.getTabs());
+      const closed = allManaged.filter(n => !openTabs.has(n));
+      if (closed.length > 0) {
+        items.push({ divider: true, label: "Open sessions" });
+        for (const name of closed) {
+          items.push({
+            icon: "terminal-window",
+            label: name,
+            action: () => {
+              if (windowTabSet) windowTabSet.addTab(name);
+              if (onTabClick) onTabClick(name);
+            },
+          });
+        }
+      }
+    }
 
     // Unmanaged tmux sessions
     if (unmanaged.length > 0) {
