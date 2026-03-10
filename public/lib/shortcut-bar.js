@@ -93,6 +93,7 @@ export function createShortcutBar(options = {}) {
 
       const iconEl = document.createElement("i");
       iconEl.className = `ph ph-${item.icon}`;
+      if (item.iconColor) iconEl.style.color = item.iconColor;
       row.appendChild(iconEl);
 
       const label = document.createElement("span");
@@ -249,15 +250,22 @@ export function createShortcutBar(options = {}) {
   }
 
   /**
-   * Show + button dropdown: new session, managed sessions not in this window, unmanaged tmux sessions
+   * Show + button dropdown: new session + all tmux sessions not open as tabs
    */
   async function showAddMenu(addBtn) {
-    // Fetch fresh unmanaged tmux sessions with attached status
+    // Fetch managed sessions and unmanaged tmux sessions in parallel
+    let managed = [];
     let unmanaged = [];
     try {
-      const data = await api.get(`/tmux-sessions?_t=${Date.now()}`);
-      unmanaged = (data || []).map(s => typeof s === "string" ? { name: s, attached: false } : s);
+      const [sessData, tmuxData] = await Promise.all([
+        api.get(`/sessions?_t=${Date.now()}`),
+        api.get(`/tmux-sessions?_t=${Date.now()}`),
+      ]);
+      managed = sessData || [];
+      unmanaged = (tmuxData || []).map(s => typeof s === "string" ? { name: s, attached: false } : s);
     } catch (err) { console.error("[showAddMenu] fetch error:", err); }
+
+    const openTabs = windowTabSet ? new Set(windowTabSet.getTabs()) : new Set();
 
     const items = [
       {
@@ -268,28 +276,28 @@ export function createShortcutBar(options = {}) {
     ];
 
     // Managed sessions not open as tabs in this window
-    if (sessionStore && windowTabSet) {
-      const allManaged = (sessionStore.getState().sessions || []).map(s => s.name);
-      const openTabs = new Set(windowTabSet.getTabs());
-      const closed = allManaged.filter(n => !openTabs.has(n));
-      if (closed.length > 0) {
-        items.push({ divider: true, label: "Open sessions" });
-        for (const name of closed) {
-          items.push({
-            icon: "terminal-window",
-            label: name,
-            action: () => {
-              if (windowTabSet) windowTabSet.addTab(name);
-              if (onTabClick) onTabClick(name);
-            },
-          });
-        }
+    const closedManaged = managed.filter(s => !openTabs.has(s.name));
+    // Unmanaged tmux sessions (not managed by katulong)
+    if (closedManaged.length > 0 || unmanaged.length > 0) {
+      items.push({ divider: true, label: "Sessions" });
+      for (const s of closedManaged) {
+        items.push({
+          icon: "terminal-window",
+          iconColor: "var(--success)",
+          label: s.name,
+          action: () => {
+            if (windowTabSet) windowTabSet.addTab(s.name);
+            if (onTabClick) onTabClick(s.name);
+          },
+          deleteAction: () => {
+            if (!confirm(`Kill session "${s.name}"?\n\nThis will terminate the tmux session and all its processes.`)) return;
+            api.delete(`/sessions/${encodeURIComponent(s.name)}`).then(() => {
+              if (windowTabSet) windowTabSet.onSessionKilled(s.name);
+              if (sessionStore) invalidateSessions(sessionStore, currentSessionName);
+            }).catch(err => console.error("[Session] Kill failed:", err));
+          },
+        });
       }
-    }
-
-    // Unmanaged tmux sessions
-    if (unmanaged.length > 0) {
-      items.push({ divider: true, label: "Detached tmux sessions" });
       for (const s of unmanaged) {
         const item = {
           icon: s.attached ? "link" : "plug",
@@ -298,10 +306,13 @@ export function createShortcutBar(options = {}) {
             if (onAdoptSession) onAdoptSession(s.name);
           },
         };
-        // Only allow delete on sessions with no external clients attached
-        if (!s.attached) {
-          item.deleteAction = () => deleteUnmanagedSession(s.name);
-        }
+        item.deleteAction = () => {
+          const msg = s.attached
+            ? `"${s.name}" has attached clients. Kill it anyway?`
+            : `Kill tmux session "${s.name}"?`;
+          if (!confirm(msg)) return;
+          deleteUnmanagedSession(s.name);
+        };
         items.push(item);
       }
     }
