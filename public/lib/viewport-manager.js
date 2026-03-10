@@ -4,7 +4,7 @@
  * Handles viewport resizing, scroll button UI, and terminal gesture handlers.
  */
 
-import { withPreservedScroll, activeViewport } from "/lib/scroll-utils.js";
+import { withPreservedScroll, activeViewport, isAtBottom } from "/lib/scroll-utils.js";
 
 /**
  * Create viewport manager for responsive terminal layout
@@ -93,8 +93,6 @@ export function createViewportManager(options = {}) {
   function initScrollButton() {
     if (!scrollBtn) return;
 
-    // Re-bind scroll listener when active terminal changes
-    let currentViewport = null;
     let scrollRaf = 0;
     function onScroll() {
       if (!scrollRaf) {
@@ -102,8 +100,7 @@ export function createViewportManager(options = {}) {
           scrollRaf = 0;
           const vp = getViewport();
           if (!vp) return;
-          const atBottom = vp.scrollTop >= vp.scrollHeight - vp.clientHeight - 10;
-          scrollBtn.style.display = atBottom ? "none" : "flex";
+          scrollBtn.style.display = isAtBottom(vp) ? "none" : "flex";
         });
       }
     }
