@@ -249,9 +249,45 @@ function createSimpleTestSession(name, options = {}) {
   session.alive = true;
 
   mockProc.on("close", (code) => {
+    session._flushCoalesced();
     if (session.alive) {
       session.alive = false;
       if (session._onExit) session._onExit(session.name, code ?? 0);
+    }
+  });
+
+  return { session, mockProc };
+}
+
+/**
+ * Create a test session with the stdout output parser wired up,
+ * so simulateOutput() goes through the real %output parsing + coalescing path.
+ */
+function createWiredTestSession(name, options = {}) {
+  const { session, mockProc } = createSimpleTestSession(name, options);
+
+  // Wire up the stdout data handler (mirrors attachControlMode parsing)
+  let lineBuf = "";
+  mockProc.stdout.on("data", (chunk) => {
+    lineBuf += chunk.toString();
+    let nlPos;
+    while ((nlPos = lineBuf.indexOf("\n")) !== -1) {
+      const line = lineBuf.slice(0, nlPos);
+      lineBuf = lineBuf.slice(nlPos + 1);
+
+      if (line.startsWith("%output ")) {
+        const rest = line.slice(8);
+        const spacePos = rest.indexOf(" ");
+        if (spacePos !== -1) {
+          const escaped = rest.slice(spacePos + 1);
+          const data = unescapeTmuxOutput(escaped);
+          session.outputBuffer.push(data);
+          session._coalesceBuffer += data;
+          if (!session._coalesceTimer) {
+            session._coalesceTimer = setTimeout(() => session._flushCoalesced(), session._coalesceIntervalMs);
+          }
+        }
+      }
     }
   });
 
@@ -555,6 +591,146 @@ describe("Session", () => {
       assert.ok(buffer.includes("line3"));
       assert.ok(buffer.includes("line4"));
     });
+  });
+});
+
+describe("output coalescing", () => {
+  it("does not dispatch onData synchronously", () => {
+    const dataEvents = [];
+    const { mockProc } = createWiredTestSession("test", {
+      onData: (name, data) => dataEvents.push({ name, data }),
+    });
+
+    mockProc.simulateOutput("%0", "hello");
+    // onData should NOT have been called yet (coalesced)
+    assert.strictEqual(dataEvents.length, 0);
+  });
+
+  it("dispatches onData after the coalesce timer fires", async () => {
+    const dataEvents = [];
+    const { session, mockProc } = createWiredTestSession("test", {
+      onData: (name, data) => dataEvents.push({ name, data }),
+    });
+
+    mockProc.simulateOutput("%0", "hello");
+    assert.strictEqual(dataEvents.length, 0);
+
+    // Wait for the timer to fire
+    await new Promise(r => setTimeout(r, session._coalesceIntervalMs + 10));
+    assert.strictEqual(dataEvents.length, 1);
+    assert.strictEqual(dataEvents[0].data, "hello");
+  });
+
+  it("coalesces multiple rapid outputs into one onData call", async () => {
+    const dataEvents = [];
+    const { session, mockProc } = createWiredTestSession("test", {
+      onData: (name, data) => dataEvents.push({ name, data }),
+    });
+
+    mockProc.simulateOutput("%0", "aaa");
+    mockProc.simulateOutput("%0", "bbb");
+    mockProc.simulateOutput("%0", "ccc");
+
+    // Wait for the timer
+    await new Promise(r => setTimeout(r, session._coalesceIntervalMs + 10));
+    assert.strictEqual(dataEvents.length, 1);
+    assert.strictEqual(dataEvents[0].data, "aaabbbccc");
+  });
+
+  it("preserves individual chunks in the RingBuffer", async () => {
+    const { session, mockProc } = createWiredTestSession("test", {
+      onData: () => {},
+    });
+
+    mockProc.simulateOutput("%0", "aaa");
+    mockProc.simulateOutput("%0", "bbb");
+
+    await new Promise(r => setTimeout(r, session._coalesceIntervalMs + 10));
+    // RingBuffer stores each chunk individually
+    assert.strictEqual(session.outputBuffer.items.length, 2);
+    // But concatenated content is the same
+    assert.strictEqual(session.getBuffer(), "aaabbb");
+  });
+
+  it("flushes pending output on detach", () => {
+    const dataEvents = [];
+    const { session, mockProc } = createWiredTestSession("test", {
+      onData: (name, data) => dataEvents.push({ name, data }),
+    });
+
+    mockProc.simulateOutput("%0", "pending");
+    assert.strictEqual(dataEvents.length, 0);
+
+    session.detach();
+    assert.strictEqual(dataEvents.length, 1);
+    assert.strictEqual(dataEvents[0].data, "pending");
+  });
+
+  it("flushes pending output on kill", () => {
+    const dataEvents = [];
+    const { session, mockProc } = createWiredTestSession("test", {
+      onData: (name, data) => dataEvents.push({ name, data }),
+    });
+
+    mockProc.simulateOutput("%0", "pending");
+    session.kill();
+    assert.strictEqual(dataEvents.length, 1);
+    assert.strictEqual(dataEvents[0].data, "pending");
+  });
+
+  it("flushes pending output on process close", () => {
+    const dataEvents = [];
+    const { mockProc } = createWiredTestSession("test", {
+      onData: (name, data) => dataEvents.push({ name, data }),
+    });
+
+    mockProc.simulateOutput("%0", "pending");
+    mockProc.simulateClose(0);
+    assert.strictEqual(dataEvents.length, 1);
+    assert.strictEqual(dataEvents[0].data, "pending");
+  });
+
+  it("does not call onData when buffer is empty", () => {
+    const dataEvents = [];
+    const { session } = createWiredTestSession("test", {
+      onData: (name, data) => dataEvents.push({ name, data }),
+    });
+
+    session._flushCoalesced();
+    assert.strictEqual(dataEvents.length, 0);
+  });
+
+  it("clears the timer after flush", () => {
+    const { session, mockProc } = createWiredTestSession("test", {
+      onData: () => {},
+    });
+
+    mockProc.simulateOutput("%0", "data");
+    assert.ok(session._coalesceTimer !== null);
+
+    session._flushCoalesced();
+    assert.strictEqual(session._coalesceTimer, null);
+  });
+
+  it("handles sequential bursts independently", async () => {
+    const dataEvents = [];
+    const { session, mockProc } = createWiredTestSession("test", {
+      onData: (name, data) => dataEvents.push({ name, data }),
+    });
+
+    // First burst
+    mockProc.simulateOutput("%0", "aaa");
+    mockProc.simulateOutput("%0", "bbb");
+    await new Promise(r => setTimeout(r, session._coalesceIntervalMs + 10));
+    assert.strictEqual(dataEvents.length, 1);
+    assert.strictEqual(dataEvents[0].data, "aaabbb");
+
+    // Second burst
+    mockProc.simulateOutput("%0", "ccc");
+    mockProc.simulateOutput("%0", "ddd");
+    await new Promise(r => setTimeout(r, session._coalesceIntervalMs + 10));
+    assert.strictEqual(dataEvents.length, 2);
+    assert.strictEqual(dataEvents[1].data, "cccddd");
   });
 });
 
