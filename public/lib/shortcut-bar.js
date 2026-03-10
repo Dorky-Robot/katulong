@@ -265,7 +265,6 @@ export function createShortcutBar(options = {}) {
       unmanaged = (tmuxData || []).map(s => typeof s === "string" ? { name: s, attached: false } : s);
     } catch (err) { console.error("[showAddMenu] fetch error:", err); }
 
-    const managedNames = new Set(managed.map(s => s.name));
     const openTabs = windowTabSet ? new Set(windowTabSet.getTabs()) : new Set();
 
     const items = [
@@ -284,7 +283,7 @@ export function createShortcutBar(options = {}) {
       for (const s of closedManaged) {
         items.push({
           icon: "terminal-window",
-          iconColor: "var(--green, #40a02b)",
+          iconColor: "var(--success)",
           label: s.name,
           action: () => {
             if (windowTabSet) windowTabSet.addTab(s.name);
@@ -308,7 +307,10 @@ export function createShortcutBar(options = {}) {
           },
         };
         item.deleteAction = () => {
-          if (s.attached && !confirm(`"${s.name}" has attached clients. Kill it anyway?`)) return;
+          const msg = s.attached
+            ? `"${s.name}" has attached clients. Kill it anyway?`
+            : `Kill tmux session "${s.name}"?`;
+          if (!confirm(msg)) return;
           deleteUnmanagedSession(s.name);
         };
         items.push(item);
