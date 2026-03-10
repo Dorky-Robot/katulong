@@ -82,7 +82,7 @@ export function createWebSocketConnection(deps = {}) {
 
     exit: () => ({
       stateUpdates: {},
-      effects: [{ type: 'terminalWrite', data: '\r\n[shell exited]\r\n' }]
+      effects: [{ type: 'terminalWrite', data: '\r\n[shell exited]\r\n', useOutputTerm: true }]
     }),
 
     'session-removed': () => ({
@@ -298,6 +298,7 @@ export function createWebSocketConnection(deps = {}) {
       }
 
       // Normal disconnect - attempt reconnection with exponential backoff
+      switchPendingTerm = null; // Clear stale switch state on disconnect
       const viewport = activeViewport();
       state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
       state.connection.attached = false;
