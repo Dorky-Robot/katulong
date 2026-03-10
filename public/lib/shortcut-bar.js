@@ -21,7 +21,6 @@ export function createShortcutBar(options = {}) {
     onNewSessionClick,
     onShortcutsClick,
     sendFn,
-    term,
     updateP2PIndicator,
     getInstanceIcon
   } = options;
@@ -87,7 +86,7 @@ export function createShortcutBar(options = {}) {
         if (sendFn) {
           sendSequence(keysToSequence(s.keys), sendFn);
         }
-        if (term) term.focus();
+        if (options.term) options.term.focus();
       });
       container.appendChild(btn);
     }

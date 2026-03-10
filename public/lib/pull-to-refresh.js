@@ -17,7 +17,8 @@ export function createPullToRefreshManager(options = {}) {
       if (!container || !indicator) return;
 
       container.addEventListener("touchstart", (e) => {
-        const viewport = document.querySelector(".xterm-viewport");
+        const viewport = document.querySelector(".terminal-pane.active .xterm-viewport")
+          || document.querySelector(".xterm-viewport");
         // Only allow pull-up if at bottom of scrollback
         if (isAtBottom && isAtBottom(viewport)) {
           pullStartY = e.touches[0].clientY;

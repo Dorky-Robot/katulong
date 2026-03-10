@@ -11,22 +11,27 @@ import { withPreservedScroll } from "/lib/scroll-utils.js";
  */
 export function createViewportManager(options = {}) {
   const {
-    term,
-    fit,
     termContainer,
     bar,
     onWebSocketResize,
     onDictationOpen
   } = options;
 
+  // Support both direct references and getter functions for pooled terminals
+  const getTerm = typeof options.term === "function" ? options.term : () => options.term;
+  const getFit = typeof options.fit === "function" ? options.fit : () => options.fit;
+
   // Scroll button elements
   const scrollBtn = document.getElementById("scroll-bottom");
-  const viewport = document.querySelector(".xterm-viewport");
+  const getViewport = () => document.querySelector(".terminal-pane.active .xterm-viewport")
+    || document.querySelector(".xterm-viewport");
 
   const appLayout = document.getElementById("app-layout");
 
   // Resize viewport to match visual viewport (handles mobile keyboard)
   function resizeToViewport() {
+    const term = getTerm();
+    if (!term) return;
     withPreservedScroll(term, () => {
       const vv = window.visualViewport;
       // In Chromium mobile emulation (isMobile: true), vv.height can be 0 during
@@ -73,6 +78,9 @@ export function createViewportManager(options = {}) {
       // fit.fit() on a display:none element produces 0 dimensions which
       // corrupts the PTY session via an invalid resize message.
       if (termContainer.offsetParent === null) return;
+      const term = getTerm();
+      const fit = getFit();
+      if (!term || !fit) return;
       withPreservedScroll(term, () => fit.fit());
       if (onWebSocketResize) {
         onWebSocketResize(term.cols, term.rows);
@@ -84,21 +92,29 @@ export function createViewportManager(options = {}) {
 
   // Initialize scroll-to-bottom button
   function initScrollButton() {
-    if (!viewport || !scrollBtn) return;
+    if (!scrollBtn) return;
 
+    // Re-bind scroll listener when active terminal changes
+    let currentViewport = null;
     let scrollRaf = 0;
-    viewport.addEventListener("scroll", () => {
+    function onScroll() {
       if (!scrollRaf) {
         scrollRaf = requestAnimationFrame(() => {
           scrollRaf = 0;
-          const atBottom = viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 10;
+          const vp = getViewport();
+          if (!vp) return;
+          const atBottom = vp.scrollTop >= vp.scrollHeight - vp.clientHeight - 10;
           scrollBtn.style.display = atBottom ? "none" : "flex";
         });
       }
-    }, { passive: true });
+    }
+
+    // Use event delegation on termContainer for scroll events
+    termContainer.addEventListener("scroll", onScroll, { passive: true, capture: true });
 
     scrollBtn.addEventListener("click", () => {
-      term.scrollToBottom(term);
+      const term = getTerm();
+      if (term) term.scrollToBottom();
       scrollBtn.style.display = "none";
     });
   }
@@ -112,7 +128,8 @@ export function createViewportManager(options = {}) {
 
     // Focus terminal on tap
     termContainer.addEventListener("touchstart", (e) => {
-      term.focus();
+      const term = getTerm();
+      if (term) term.focus();
 
       // Start long-press timer
       touchStartPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
