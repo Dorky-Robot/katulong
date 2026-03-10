@@ -109,7 +109,7 @@ When reviewing PRs, pay close attention to:
 9. **WebAuthn flow**: Registration challenges must remain time-limited, single-use, and format-validated.
 10. **Error handling**: Error responses must not leak internal paths, stack traces, or secrets.
 11. **File I/O**: Auth state writes must be atomic (temp + rename). Add error handling for corrupt JSON.
-12. **Environment variables**: Never expose sensitive env vars (SETUP_TOKEN, KATULONG_NO_AUTH) to PTY processes.
+12. **Environment variables**: Never expose sensitive env vars (SETUP_TOKEN) to PTY processes.
 13. **Header trust**: Never trust request headers (`X-Forwarded-*`, `X-Forwarded-Proto`, etc.) for security decisions. Only trust actual socket state. This is especially important for tunnel-based access (ngrok, Cloudflare Tunnel) where reverse-proxy headers are trivially forgeable.
 14. **Localhost detection**: `isLocalRequest()` in `lib/access-method.js` is security-critical — it gates auth bypass. It must check Host and Origin headers in addition to socket address to prevent tunnel traffic from being classified as local.
 15. **State mutations**: All auth state mutations must use `withStateLock()` from `lib/auth.js` to prevent race conditions.

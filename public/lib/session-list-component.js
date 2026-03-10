@@ -47,7 +47,7 @@ export function updateSnapshot(sessionName, term) {
 }
 
 export function createSessionListComponent(store, options = {}) {
-  const { onSessionSwitch } = options;
+  const { onSessionSwitch, windowTabSet } = options;
   const render = (state) => {
     if (state.loading && state.sessions.length === 0) {
       return '<div class="session-list-status">Loading...</div>';
@@ -176,6 +176,7 @@ export function createSessionListComponent(store, options = {}) {
         e.stopPropagation();
         try {
           await api.delete(`/sessions/${encodeURIComponent(s.name)}?action=detach`);
+          if (windowTabSet) windowTabSet.onSessionKilled(s.name);
           switchAfterRemove(s.name);
         } catch (err) {
           console.error('[Session] Detach failed:', err);
@@ -196,6 +197,7 @@ export function createSessionListComponent(store, options = {}) {
         if (!confirm(message)) return;
         try {
           await api.delete(`/sessions/${encodeURIComponent(s.name)}`);
+          if (windowTabSet) windowTabSet.onSessionKilled(s.name);
           switchAfterRemove(s.name);
         } catch (err) {
           console.error('[Session] Delete failed:', err);

@@ -96,7 +96,7 @@ CI=1 npm run test:e2e -- credential-revoke-security --workers=1
 **Security Validation:**
 - Unit tests (11/11 passing) verify core session/credential logic
 - E2E tests verify full flow with UI, WebSocket, and API interactions
-- Tests properly log when localhost auth bypass is active (`KATULONG_NO_AUTH=1`)
+- Tests use localhost auth bypass (requests from localhost are auto-authenticated)
 
 **Related Files:**
 - `../credential-revoke-security.test.js` - Unit tests (11 tests)

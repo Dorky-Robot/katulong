@@ -19,7 +19,7 @@ fi
 TEST_SHARD_INDEX=$SHARD node test/e2e/pre-server-setup.js
 
 # Start the server with test configuration
+# Auth is bypassed automatically for localhost requests (isLocalRequest check)
 PORT=$HTTP_PORT \
-KATULONG_NO_AUTH=1 \
 KATULONG_DATA_DIR="$DATA_DIR" \
 node server.js

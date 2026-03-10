@@ -4,8 +4,9 @@
   "description": "Web terminal with tmux-style session management",
   "start_url": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay"],
   "background_color": "#1e1e2e",
-  "theme_color": "#1e1e2e",
+  "theme_color": "#313244",
   "icons": [
     {
       "src": "/icon-192.png",

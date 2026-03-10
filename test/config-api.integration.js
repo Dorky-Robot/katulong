@@ -26,13 +26,12 @@ describe("Config API Integration", () => {
     // Create temporary data directory
     testDataDir = mkdtempSync(join(tmpdir(), "katulong-config-api-test-"));
 
-    // Start server with KATULONG_NO_AUTH to bypass authentication
+    // Start server — localhost requests are auto-authenticated
     serverProcess = spawn("node", ["server.js"], {
       env: {
         ...process.env,
         PORT: TEST_PORT,
-        KATULONG_DATA_DIR: testDataDir, // Use correct env var name
-        KATULONG_NO_AUTH: "1" // Bypass auth for testing
+        KATULONG_DATA_DIR: testDataDir,
       },
       stdio: "pipe"
     });

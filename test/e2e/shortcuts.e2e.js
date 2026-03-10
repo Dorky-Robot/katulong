@@ -1,7 +1,9 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("Shortcuts popup", () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
+    // Keyboard shortcuts button only exists on mobile/tablet (not desktop)
+    if (testInfo.project.name === "desktop") test.skip();
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
   });

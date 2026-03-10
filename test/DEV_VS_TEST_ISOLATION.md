@@ -21,7 +21,7 @@ Dev and test environments are now **completely separate**:
 - **Port:** 3099
 - **Data:** `/tmp/katulong-e2e-data`
 - **Process:** Started/stopped by Playwright
-- **Auth:** `KATULONG_NO_AUTH=1` (bypassed for testing)
+- **Auth:** Localhost auto-bypass (requests from localhost are auto-authenticated)
 
 ## Safe Test Commands
 
@@ -95,8 +95,7 @@ ps aux | grep katulong
 #   node server.js (no PORT env var, or PORT=3001)
 
 # Test processes will show:
-#   PORT=3099
-#   KATULONG_DATA_DIR=/tmp/katulong-e2e-data
+#   PORT=3099  KATULONG_DATA_DIR=/tmp/katulong-e2e-data
 ```
 
 ## Why Playwright Doesn't Kill Dev
