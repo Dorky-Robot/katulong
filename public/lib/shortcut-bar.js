@@ -18,28 +18,6 @@ const DESKTOP_MQ = "(pointer: fine)";
 const TABLET_MQ = "(pointer: coarse) and (min-width: 768px)";
 const DRAG_OUT_THRESHOLD = 60; // px below bar to trigger tear-off
 const DRAG_DEAD_ZONE = 5; // px before drag starts
-const TAB_ORDER_KEY = "katulong-tab-order";
-
-/**
- * Sort sessions by a saved tab order (localStorage).
- * Sessions not in the saved order appear at the end.
- */
-function applySavedOrder(sessions) {
-  try {
-    const saved = JSON.parse(localStorage.getItem(TAB_ORDER_KEY));
-    if (!Array.isArray(saved) || saved.length === 0) return sessions;
-    const orderMap = new Map(saved.map((name, i) => [name, i]));
-    return [...sessions].sort((a, b) => {
-      const ai = orderMap.has(a.name) ? orderMap.get(a.name) : Infinity;
-      const bi = orderMap.has(b.name) ? orderMap.get(b.name) : Infinity;
-      return ai - bi;
-    });
-  } catch { return sessions; }
-}
-
-function saveTabOrder(names) {
-  try { localStorage.setItem(TAB_ORDER_KEY, JSON.stringify(names)); } catch {}
-}
 
 /**
  * Create shortcut bar renderer
@@ -54,7 +32,6 @@ export function createShortcutBar(options = {}) {
     onSessionClick,
     onNewSessionClick,
     onTabClick,
-    onTabClose,
     onAdoptSession,
     onFilesClick,
     onPortForwardClick,
@@ -95,7 +72,7 @@ export function createShortcutBar(options = {}) {
     }
   }
 
-  function showMenu(items, anchorEl, alignRight = false) {
+  function showMenu(items, anchorEl) {
     closeMenu();
     const menu = document.createElement("div");
     menu.className = "tab-context-menu";
@@ -165,11 +142,7 @@ export function createShortcutBar(options = {}) {
       if (left + menuRect.width > window.innerWidth - 8) {
         left = window.innerWidth - menuRect.width - 8;
       }
-      if (alignRight) {
-        menu.style.right = (window.innerWidth - rect.right) + "px";
-      } else {
-        menu.style.left = Math.max(8, left) + "px";
-      }
+      menu.style.left = Math.max(8, left) + "px";
       menu.style.top = rect.bottom + 4 + "px";
 
       document.addEventListener("click", onDocClickCloseMenu, true);
@@ -202,25 +175,19 @@ export function createShortcutBar(options = {}) {
 
   // ── Tab actions ────────────────────────────────────────────────────
 
+  /** After removing a tab, navigate to the nearest remaining tab or "/" */
+  function navigateAfterRemoval(removedName) {
+    const remaining = windowTabSet ? windowTabSet.getTabs() : [];
+    if (removedName !== currentSessionName) { render(currentSessionName); return; }
+    if (remaining.length === 0) { location.href = "/"; return; }
+    if (onTabClick) onTabClick(remaining[Math.min(remaining.indexOf(removedName), remaining.length - 1)] || remaining[0]);
+  }
+
   /** Close tab: remove from this window's tab set only (session stays managed on server) */
   function closeTab(sessionName) {
     if (!windowTabSet) return;
-    const tabNames = windowTabSet.getTabs();
-    const isActive = sessionName === currentSessionName;
     windowTabSet.removeTab(sessionName);
-
-    if (isActive) {
-      const remaining = tabNames.filter(n => n !== sessionName);
-      if (remaining.length === 0) {
-        location.href = "/";
-        return;
-      }
-      const idx = tabNames.indexOf(sessionName);
-      const next = remaining[Math.min(idx, remaining.length - 1)];
-      if (onTabClick) onTabClick(next);
-    } else {
-      render(currentSessionName);
-    }
+    navigateAfterRemoval(sessionName);
   }
 
   async function detachTab(sessionName) {
@@ -231,14 +198,7 @@ export function createShortcutBar(options = {}) {
       return;
     }
     if (windowTabSet) windowTabSet.removeTab(sessionName);
-    const tabNames = windowTabSet ? windowTabSet.getTabs() : [];
-    if (sessionName === currentSessionName) {
-      if (tabNames.length === 0) { location.href = "/"; return; }
-      const idx = tabNames.indexOf(sessionName);
-      if (onTabClick) onTabClick(tabNames[Math.min(Math.max(idx, 0), tabNames.length - 1)]);
-    } else {
-      render(currentSessionName);
-    }
+    navigateAfterRemoval(sessionName);
   }
 
   async function killTab(sessionName) {
@@ -250,13 +210,7 @@ export function createShortcutBar(options = {}) {
       return;
     }
     if (windowTabSet) windowTabSet.onSessionKilled(sessionName);
-    const tabNames = windowTabSet ? windowTabSet.getTabs() : [];
-    if (sessionName === currentSessionName) {
-      if (tabNames.length === 0) { location.href = "/"; return; }
-      if (onTabClick) onTabClick(tabNames[0]);
-    } else {
-      render(currentSessionName);
-    }
+    navigateAfterRemoval(sessionName);
   }
 
   /**
@@ -420,7 +374,7 @@ export function createShortcutBar(options = {}) {
     document.addEventListener("touchcancel", onEnd);
   }
 
-  function beginDrag(tab, name, startX, isTouch) {
+  function beginDrag(tab, name, startX, fromTouch) {
     const tabs = [...container.querySelectorAll(".tab-bar-tab")];
     const dragIndex = tabs.indexOf(tab);
 
@@ -448,7 +402,7 @@ export function createShortcutBar(options = {}) {
       currentIndex: dragIndex,
       grabOffset,
       tornOff: false,
-      isTouch: !!isTouch,
+      isTouch: !!fromTouch,
     };
   }
 
@@ -531,8 +485,6 @@ export function createShortcutBar(options = {}) {
       names.splice(currentIndex, 0, moved);
       if (windowTabSet) {
         windowTabSet.reorderTabs(names);
-      } else {
-        saveTabOrder(names);
       }
     }
 
@@ -728,7 +680,7 @@ export function createShortcutBar(options = {}) {
         // Use placeholder for tabs not yet in the store (e.g. just-created sessions)
         sessions = tabNames.map(n => sessionMap.get(n) || { name: n }).filter(Boolean);
       } else {
-        sessions = applySavedOrder(allSessions);
+        sessions = allSessions;
       }
 
       renderDesktopTabs(sessionName, sessions);

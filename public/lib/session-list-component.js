@@ -176,7 +176,7 @@ export function createSessionListComponent(store, options = {}) {
         e.stopPropagation();
         try {
           await api.delete(`/sessions/${encodeURIComponent(s.name)}?action=detach`);
-          if (windowTabSet) windowTabSet.onSessionKilled(s.name);
+          if (windowTabSet) windowTabSet.removeTab(s.name);
           switchAfterRemove(s.name);
         } catch (err) {
           console.error('[Session] Detach failed:', err);
