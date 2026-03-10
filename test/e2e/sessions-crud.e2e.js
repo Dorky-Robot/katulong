@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { execSync } from "child_process";
 import { waitForShellReady } from './helpers.js';
 
 test.describe("Session CRUD", () => {
@@ -130,6 +131,44 @@ test.describe("Session CRUD", () => {
 
     // Cleanup
     await deleteSession(page, name);
+  });
+
+  test("Unmanaged tmux sessions appear in sidebar and can be adopted", async ({ page }) => {
+    const tmuxName = `unmanaged-e2e-${Date.now()}`;
+
+    // Create a tmux session outside of katulong
+    execSync(`tmux new-session -d -s ${tmuxName}`);
+
+    try {
+      await page.goto("/");
+      await page.waitForSelector("#shortcut-bar");
+
+      // Open sidebar
+      await page.locator("#shortcut-bar .session-btn").click();
+      await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
+
+      // Unmanaged session should appear with .unmanaged class
+      const unmanagedCard = page.locator(`.session-card.unmanaged`, {
+        has: page.locator(`text=${tmuxName}`),
+      });
+      await expect(unmanagedCard).toBeVisible({ timeout: 10000 });
+
+      // Click to adopt
+      await unmanagedCard.click();
+
+      // After adoption, it should appear as a managed session (no .unmanaged class)
+      const managedCard = page.locator(`.session-card:not(.unmanaged)`, {
+        has: page.getByLabel(`Session name: ${tmuxName}`),
+      });
+      await expect(managedCard).toBeVisible({ timeout: 10000 });
+
+      // The unmanaged card should be gone
+      await expect(unmanagedCard).not.toBeVisible();
+    } finally {
+      // Cleanup: delete via katulong API first, then kill tmux session as fallback
+      await deleteSession(page, tmuxName);
+      try { execSync(`tmux kill-session -t ${tmuxName} 2>/dev/null`); } catch {}
+    }
   });
 
   test("Session isolation — markers do not bleed across sessions", async ({

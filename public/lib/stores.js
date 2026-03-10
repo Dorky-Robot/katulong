@@ -21,6 +21,7 @@ const SESSION_ACTIONS = {
 
 const sessionInitialState = {
   sessions: [],
+  unmanagedSessions: [],
   currentSession: null,
   loading: false,
   error: null,
@@ -37,6 +38,7 @@ const sessionReducer = createReducer(sessionInitialState, {
   [SESSION_ACTIONS.LOAD_SUCCESS]: (state, action) => ({
     ...state,
     sessions: action.sessions,
+    unmanagedSessions: action.unmanagedSessions || state.unmanagedSessions,
     currentSession: action.currentSession,
     loading: false,
     error: null,
@@ -69,11 +71,17 @@ export async function loadSessions(store, currentSession = null) {
   store.dispatch({ type: SESSION_ACTIONS.LOAD_START });
 
   try {
-    const sessions = await api.get("/sessions");
+    const [sessions, unmanagedNames] = await Promise.all([
+      api.get("/sessions"),
+      api.get("/tmux-sessions").catch(() => [])
+    ]);
+
+    const unmanagedSessions = unmanagedNames.map(name => ({ name }));
 
     store.dispatch({
       type: SESSION_ACTIONS.LOAD_SUCCESS,
       sessions,
+      unmanagedSessions,
       currentSession: currentSession || store.getState().currentSession
     });
   } catch (err) {

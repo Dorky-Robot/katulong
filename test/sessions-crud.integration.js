@@ -1,6 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { createConnection } from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -219,6 +219,63 @@ describe("Sessions CRUD Integration", () => {
   it("DELETE /sessions/:name returns 404 for nonexistent session", async () => {
     const { status } = await request("DELETE", "/sessions/nonexistent-xyz");
     assert.equal(status, 404);
+  });
+
+  // --- Unmanaged tmux sessions ---
+
+  it("GET /tmux-sessions lists tmux sessions not managed by katulong", async () => {
+    const tmuxName = `unmanaged-integ-${Date.now()}`;
+    execSync(`tmux new-session -d -s ${tmuxName}`);
+
+    try {
+      const { status, body } = await request("GET", "/tmux-sessions");
+      assert.equal(status, 200);
+      assert.ok(Array.isArray(body));
+      assert.ok(body.includes(tmuxName), `Expected ${tmuxName} in unmanaged list: ${JSON.stringify(body)}`);
+    } finally {
+      try { execSync(`tmux kill-session -t ${tmuxName}`); } catch {}
+    }
+  });
+
+  it("GET /tmux-sessions excludes managed sessions", async () => {
+    // Create a managed session
+    await request("POST", "/sessions", { name: "managed-excl" });
+
+    const { body } = await request("GET", "/tmux-sessions");
+    // The managed session's tmux name should not appear in unmanaged list
+    const managedList = await request("GET", "/sessions");
+    const managedTmuxNames = managedList.body.map(s => s.tmuxSession);
+    for (const tmuxName of managedTmuxNames) {
+      assert.ok(!body.includes(tmuxName), `Managed tmux session ${tmuxName} should not appear in unmanaged list`);
+    }
+
+    await request("DELETE", "/sessions/managed-excl");
+  });
+
+  it("POST /tmux-sessions/adopt adopts an unmanaged tmux session", async () => {
+    const tmuxName = `adopt-integ-${Date.now()}`;
+    execSync(`tmux new-session -d -s ${tmuxName}`);
+
+    try {
+      const { status, body } = await request("POST", "/tmux-sessions/adopt", { name: tmuxName });
+      assert.equal(status, 201);
+      assert.equal(body.name, tmuxName);
+
+      // Should now appear in managed sessions
+      const list = await request("GET", "/sessions");
+      const names = list.body.map(s => s.name);
+      assert.ok(names.includes(tmuxName), `Adopted session should appear in managed list`);
+
+      // Should no longer appear in unmanaged list
+      const unmanaged = await request("GET", "/tmux-sessions");
+      assert.ok(!unmanaged.body.includes(tmuxName), `Adopted session should not appear in unmanaged list`);
+
+      // Cleanup
+      await request("DELETE", `/sessions/${encodeURIComponent(tmuxName)}`);
+    } catch (err) {
+      try { execSync(`tmux kill-session -t ${tmuxName}`); } catch {}
+      throw err;
+    }
   });
 
   // --- Full lifecycle (mirrors what the UI "+ New" button does) ---
