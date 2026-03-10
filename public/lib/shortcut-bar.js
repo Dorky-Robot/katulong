@@ -172,9 +172,13 @@ export function createShortcutBar(options = {}) {
     const savedWindowId = sessionStorage.getItem("katulong-window-id");
     sessionStorage.setItem("katulong-window-tabs", JSON.stringify([name]));
     sessionStorage.removeItem("katulong-window-id");
-    window.open(url, "_blank", "width=900,height=600");
-    if (savedTabs) sessionStorage.setItem("katulong-window-tabs", savedTabs);
-    if (savedWindowId) sessionStorage.setItem("katulong-window-id", savedWindowId);
+    try {
+      window.open(url, "_blank", "width=900,height=600");
+    } finally {
+      if (savedTabs) sessionStorage.setItem("katulong-window-tabs", savedTabs);
+      else sessionStorage.removeItem("katulong-window-tabs");
+      if (savedWindowId) sessionStorage.setItem("katulong-window-id", savedWindowId);
+    }
   }
 
   // ── Tab actions ────────────────────────────────────────────────────
@@ -369,9 +373,9 @@ export function createShortcutBar(options = {}) {
 
     // Long-press to drag: short touches allow native horizontal scroll of the tab area.
     // After LONG_PRESS_MS without significant movement, we enter drag mode.
-    const touch = e.touches[0];
-    const startX = touch.clientX;
-    const startY = touch.clientY;
+    const initialTouch = e.touches[0];
+    const startX = initialTouch.clientX;
+    const startY = initialTouch.clientY;
     let longPressed = false;
     let started = false;
     let cancelled = false;
@@ -495,7 +499,6 @@ export function createShortcutBar(options = {}) {
       const r = t.getBoundingClientRect();
       return { left: r.left, width: r.width, center: r.left + r.width / 2 };
     });
-    drag.rects = rects;
 
     const barRect = container.getBoundingClientRect();
     // Tear-off only for mouse — touch can't open new windows (Safari blocks popups)
@@ -544,7 +547,7 @@ export function createShortcutBar(options = {}) {
   }
 
   function getGap() {
-    const area = drag?.scrollArea || container.querySelector(".tab-scroll-area") || container;
+    const area = drag?.scrollArea || container;
     return parseFloat(getComputedStyle(area).gap) || 0;
   }
 
