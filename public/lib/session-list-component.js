@@ -39,7 +39,8 @@ export function updateSnapshot(sessionName, term) {
     if (text.trim()) {
       snapshotCache.set(sessionName, text);
       // Push directly into any visible preview div for this session
-      document.querySelectorAll(`.session-card[title="${sessionName}"] .session-card-preview`)
+      const escaped = CSS.escape(sessionName);
+      document.querySelectorAll(`.session-card[title="${escaped}"] .session-card-preview`)
         .forEach(el => { el.textContent = text; });
     }
   } catch { /* buffer not ready */ }

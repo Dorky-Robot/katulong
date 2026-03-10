@@ -88,7 +88,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
       }
     }
 
-    const entry = { term, fit, searchAddon, container, lastUsed: Date.now() };
+    const entry = { term, fit, searchAddon, container, sessionName, lastUsed: Date.now() };
     pool.set(sessionName, entry);
 
     if (onTerminalCreated) onTerminalCreated(sessionName, entry);
@@ -116,8 +116,10 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     activeSession = sessionName;
     entry.lastUsed = Date.now();
 
-    // Fit after visibility change (needs to be visible for correct dimensions)
+    // Fit after visibility change (needs to be visible for correct dimensions).
+    // Guard against the entry being disposed before the rAF fires.
     requestAnimationFrame(() => {
+      if (!pool.has(sessionName)) return;
       entry.fit.fit();
       entry.term.focus();
     });
@@ -151,6 +153,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     const entry = pool.get(oldName);
     if (!entry) return;
     pool.delete(oldName);
+    entry.sessionName = newName;
     entry.container.dataset.session = newName;
     pool.set(newName, entry);
     if (activeSession === oldName) activeSession = newName;

@@ -188,6 +188,7 @@
         kb.init();
 
         // Terminal preview snapshots (throttled per-terminal)
+        // Read entry.sessionName dynamically so renames are reflected
         let lastSnapshotTime = 0;
         let timer = null;
         entry.term.onRender(() => {
@@ -198,14 +199,14 @@
               timer = setTimeout(() => {
                 timer = null;
                 lastSnapshotTime = Date.now();
-                updateSnapshot(sessionName, entry.term);
+                updateSnapshot(entry.sessionName, entry.term);
               }, 3000 - elapsed);
             }
             return;
           }
           if (timer) { clearTimeout(timer); timer = null; }
           lastSnapshotTime = now;
-          updateSnapshot(sessionName, entry.term);
+          updateSnapshot(entry.sessionName, entry.term);
         });
       }
     });
@@ -517,6 +518,15 @@
       if (portForwardEl?.classList.contains("active")) closePortForward();
       if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
 
+      // Capture the current terminal before switching so output that arrives
+      // during the switch window (before the server confirms) goes to the old terminal.
+      const oldTerm = getTerm();
+      const ws = state.connection.ws;
+      const wsOpen = ws && ws.readyState === WebSocket.OPEN;
+      if (wsOpen && oldTerm) {
+        wsConnection.setSwitchPendingTerm(oldTerm);
+      }
+
       const wasCached = terminalPool.has(name);
       const entry = terminalPool.activate(name);
 
@@ -531,8 +541,7 @@
       state.update('session.name', name);
       document.title = name;
 
-      const ws = state.connection.ws;
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      if (wsOpen) {
         // Switch session over the existing WebSocket — no disconnect/reconnect needed
         ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows }));
       }

@@ -23,6 +23,14 @@ export function createWebSocketConnection(deps = {}) {
 
   // Support both direct terminal reference and getter function for pooled terminals
   const getTerm = typeof deps.term === "function" ? deps.term : () => deps.term;
+  // During a session switch, output may still arrive for the previous session
+  // before the server confirms the switch. getOutputTerm() resolves to the
+  // correct terminal by checking the switchPending flag.
+  const getOutputTerm = () => {
+    if (switchPendingTerm) return switchPendingTerm;
+    return getTerm();
+  };
+  let switchPendingTerm = null;
 
   let isConnecting = false;
   let reconnectTimeout = null;
@@ -43,23 +51,27 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
-    switched: (msg) => ({
-      stateUpdates: {
-        'connection.attached': true,
-        'session.name': msg.session,
-      },
-      effects: [
-        { type: 'updateSessionUI', name: msg.session },
-        { type: 'invalidateSessions', name: msg.session },
-        { type: 'fit' },
-        { type: 'scrollToBottomIfNeeded', condition: true }
-      ]
-    }),
+    switched: (msg) => {
+      // Server confirmed the switch — output now flows for the new session
+      switchPendingTerm = null;
+      return {
+        stateUpdates: {
+          'connection.attached': true,
+          'session.name': msg.session,
+        },
+        effects: [
+          { type: 'updateSessionUI', name: msg.session },
+          { type: 'invalidateSessions', name: msg.session },
+          { type: 'fit' },
+          { type: 'scrollToBottomIfNeeded', condition: true }
+        ]
+      };
+    },
 
     output: (msg) => ({
       stateUpdates: {},
       effects: [
-        { type: 'terminalWrite', data: msg.data, preserveScroll: true }
+        { type: 'terminalWrite', data: msg.data, preserveScroll: true, useOutputTerm: true }
       ]
     }),
 
@@ -177,7 +189,7 @@ export function createWebSocketConnection(deps = {}) {
         break;
       }
       case 'terminalWrite': {
-        const term = getTerm();
+        const term = effect.useOutputTerm ? getOutputTerm() : getTerm();
         if (!term) break;
         if (effect.preserveScroll) {
           terminalWriteWithScroll(term, effect.data);
@@ -339,6 +351,8 @@ export function createWebSocketConnection(deps = {}) {
     connect,
     initVisibilityReconnect,
     wsMessageHandlers,
-    executeEffect
+    executeEffect,
+    /** Set the terminal that should receive output during a session switch window */
+    setSwitchPendingTerm(term) { switchPendingTerm = term; },
   };
 }
