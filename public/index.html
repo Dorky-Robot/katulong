@@ -261,10 +261,16 @@
       flex-shrink: 0; z-index: var(--z-bar);
       height: var(--height-btn-md); background: var(--bg); border-bottom: 1px solid var(--border);
       display: flex; align-items: center; padding: 0 var(--space-1_5); gap: var(--space-xs);
-      overflow-x: auto; overflow-y: hidden;
-      -webkit-overflow-scrolling: touch;
+      overflow: hidden;
     }
-    #shortcut-bar::-webkit-scrollbar { display: none; }
+    .tab-scroll-area {
+      display: flex; align-items: center; gap: var(--space-xs);
+      overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+      flex: 1 1 0; min-width: 0;
+      padding-left: var(--space-xs);
+      scrollbar-width: none;
+    }
+    .tab-scroll-area::-webkit-scrollbar { display: none; }
 
     /* --- Window Controls Overlay (PWA title bar integration) --- */
     @media (display-mode: window-controls-overlay) {
@@ -399,6 +405,8 @@
     .tab-bar-tab:hover .tab-close { opacity: 1; }
     .tab-close:hover { color: var(--text); background: rgba(255,255,255,0.1); }
     .tab-bar-tab.active .tab-close:hover { color: var(--danger); }
+
+    .tab-bar-tab.tab-long-press { transform: scale(1.05); transition: transform 0.15s; }
 
     /* Drag ghost (follows cursor while dragging) */
     .tab-drag-ghost {
@@ -1749,6 +1757,6 @@
     </div>
   </div>
 
-  <script type="module" src="/app.js?v=69"></script>
+  <script type="module" src="/app.js?v=70"></script>
 </body>
 </html>

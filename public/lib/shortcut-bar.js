@@ -361,23 +361,41 @@ export function createShortcutBar(options = {}) {
     document.addEventListener("mouseup", onUp);
   }
 
+  const LONG_PRESS_MS = 300;
+
   function onTabTouchStart(e, tab, name) {
     if (e.target.closest(".tab-close")) return;
 
-    // Claim the touch immediately so Safari doesn't start page scrolling.
-    // Taps still work — we fire onTabClick in onEnd if there was no movement.
-    e.preventDefault();
-
+    // Long-press to drag: short touches allow native horizontal scroll of the tab area.
+    // After LONG_PRESS_MS without significant movement, we enter drag mode.
     const touch = e.touches[0];
     const startX = touch.clientX;
     const startY = touch.clientY;
+    let longPressed = false;
     let started = false;
+    let cancelled = false;
+
+    const longPressTimer = setTimeout(() => {
+      longPressed = true;
+      tab.classList.add("tab-long-press");
+    }, LONG_PRESS_MS);
 
     const onMove = (te) => {
       const t = te.touches[0];
       const dx = t.clientX - startX;
       const dy = t.clientY - startY;
 
+      if (!longPressed) {
+        // Movement before long press — cancel drag, allow native scroll
+        if (Math.abs(dx) > DRAG_DEAD_ZONE || Math.abs(dy) > DRAG_DEAD_ZONE) {
+          clearTimeout(longPressTimer);
+          cancelled = true;
+          cleanup();
+        }
+        return;
+      }
+
+      // Long press active — enter drag mode
       if (!started) {
         if (Math.abs(dx) < DRAG_DEAD_ZONE && Math.abs(dy) < DRAG_DEAD_ZONE) return;
         started = true;
@@ -389,7 +407,11 @@ export function createShortcutBar(options = {}) {
     };
 
     const onEnd = () => {
+      clearTimeout(longPressTimer);
+      tab.classList.remove("tab-long-press");
       cleanup();
+
+      if (cancelled) return;
 
       if (!started) {
         if (name !== currentSessionName && onTabClick) onTabClick(name);
@@ -442,12 +464,26 @@ export function createShortcutBar(options = {}) {
     };
   }
 
+  const SCROLL_EDGE_PX = 40;
+  const SCROLL_SPEED = 8;
+
   function updateDrag(cx, cy) {
     if (!drag) return;
     const { ghost, tabs, rects, dragIndex, grabOffset } = drag;
 
     ghost.style.left = (cx - grabOffset) + "px";
     ghost.style.top = (cy - ghost.offsetHeight / 2) + "px";
+
+    // Auto-scroll the tab area when dragging near edges
+    const scrollArea = container.querySelector(".tab-scroll-area");
+    if (scrollArea) {
+      const scrollRect = scrollArea.getBoundingClientRect();
+      if (cx < scrollRect.left + SCROLL_EDGE_PX) {
+        scrollArea.scrollLeft -= SCROLL_SPEED;
+      } else if (cx > scrollRect.right - SCROLL_EDGE_PX) {
+        scrollArea.scrollLeft += SCROLL_SPEED;
+      }
+    }
 
     const barRect = container.getBoundingClientRect();
     // Tear-off only for mouse — touch can't open new windows (Safari blocks popups)
@@ -496,7 +532,8 @@ export function createShortcutBar(options = {}) {
   }
 
   function getGap() {
-    return parseFloat(getComputedStyle(container).gap) || 0;
+    const scrollArea = container.querySelector(".tab-scroll-area");
+    return parseFloat(getComputedStyle(scrollArea || container).gap) || 0;
   }
 
   function endDrag() {
@@ -532,6 +569,10 @@ export function createShortcutBar(options = {}) {
   // ── Render ─────────────────────────────────────────────────────────
 
   function renderDesktopTabs(sessionName, sessions) {
+
+    // Scrollable tab area
+    const tabScroll = document.createElement("div");
+    tabScroll.className = "tab-scroll-area";
 
     // Session tabs
     for (const s of sessions) {
@@ -570,8 +611,16 @@ export function createShortcutBar(options = {}) {
       tab.addEventListener("mousedown", (e) => onTabMouseDown(e, tab, s.name));
       tab.addEventListener("touchstart", (e) => onTabTouchStart(e, tab, s.name), { passive: false });
 
-      container.appendChild(tab);
+      tabScroll.appendChild(tab);
     }
+
+    container.appendChild(tabScroll);
+
+    // Scroll active tab into view
+    requestAnimationFrame(() => {
+      const activeTab = tabScroll.querySelector(".tab-bar-tab.active");
+      if (activeTab) activeTab.scrollIntoView({ inline: "nearest", block: "nearest" });
+    });
 
     // New session + button (dropdown if unmanaged sessions exist)
     const addBtn = document.createElement("button");
@@ -581,11 +630,6 @@ export function createShortcutBar(options = {}) {
     addBtn.innerHTML = '<i class="ph ph-plus-circle"></i>';
     addBtn.addEventListener("click", () => showAddMenu(addBtn));
     container.appendChild(addBtn);
-
-    // Spacer
-    const spacer = document.createElement("span");
-    spacer.className = "bar-spacer";
-    container.appendChild(spacer);
 
     // Utility buttons: Files
     if (onFilesClick) {
