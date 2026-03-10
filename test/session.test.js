@@ -266,30 +266,8 @@ function createSimpleTestSession(name, options = {}) {
 function createWiredTestSession(name, options = {}) {
   const { session, mockProc } = createSimpleTestSession(name, options);
 
-  // Wire up the stdout data handler (mirrors attachControlMode parsing)
-  let lineBuf = "";
-  mockProc.stdout.on("data", (chunk) => {
-    lineBuf += chunk.toString();
-    let nlPos;
-    while ((nlPos = lineBuf.indexOf("\n")) !== -1) {
-      const line = lineBuf.slice(0, nlPos);
-      lineBuf = lineBuf.slice(nlPos + 1);
-
-      if (line.startsWith("%output ")) {
-        const rest = line.slice(8);
-        const spacePos = rest.indexOf(" ");
-        if (spacePos !== -1) {
-          const escaped = rest.slice(spacePos + 1);
-          const data = unescapeTmuxOutput(escaped);
-          session.outputBuffer.push(data);
-          session._coalesceBuffer += data;
-          if (!session._coalesceTimer) {
-            session._coalesceTimer = setTimeout(() => session._flushCoalesced(), session._coalesceIntervalMs);
-          }
-        }
-      }
-    }
-  });
+  // Wire up the real _handleStdoutData method (same path as attachControlMode)
+  mockProc.stdout.on("data", (chunk) => session._handleStdoutData(chunk));
 
   return { session, mockProc };
 }
