@@ -31,6 +31,7 @@ export function createWebSocketConnection(deps = {}) {
         'scroll.userScrolledUpBeforeDisconnect': false
       },
       effects: [
+        { type: 'terminalReset' },
         { type: 'updateP2PIndicator' },
         { type: 'initP2P' },
         { type: 'fit' },
@@ -44,6 +45,7 @@ export function createWebSocketConnection(deps = {}) {
         'session.name': msg.session,
       },
       effects: [
+        { type: 'terminalReset' },
         { type: 'updateSessionUI', name: msg.session },
         { type: 'invalidateSessions', name: msg.session },
         { type: 'fit' },
@@ -152,6 +154,10 @@ export function createWebSocketConnection(deps = {}) {
         if (effect.condition) {
           scrollToBottom(term);
         }
+        break;
+      case 'terminalReset':
+        term.clear();
+        term.reset();
         break;
       case 'terminalWrite':
         if (effect.preserveScroll) {
