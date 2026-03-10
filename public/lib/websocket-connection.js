@@ -38,6 +38,19 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
+    switched: (msg) => ({
+      stateUpdates: {
+        'connection.attached': true,
+        'session.name': msg.session,
+      },
+      effects: [
+        { type: 'updateSessionUI', name: msg.session },
+        { type: 'invalidateSessions', name: msg.session },
+        { type: 'fit' },
+        { type: 'scrollToBottomIfNeeded', condition: true }
+      ]
+    }),
+
     output: (msg) => ({
       stateUpdates: {},
       effects: [
@@ -149,6 +162,9 @@ export function createWebSocketConnection(deps = {}) {
         break;
       case 'reload':
         location.reload();
+        break;
+      case 'invalidateSessions':
+        if (deps.invalidateSessions) deps.invalidateSessions(effect.name);
         break;
       case 'updateSessionUI':
         document.title = effect.name;

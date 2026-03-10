@@ -510,12 +510,16 @@
       // Close port forward / file browser — switching sessions returns to terminal
       if (portForwardEl?.classList.contains("active")) closePortForward();
       if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
-      state.update('session.name', name);
-      document.title = name;
       term.clear();
       term.reset();
-      if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
-        state.connection.ws.close();
+      const ws = state.connection.ws;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        // Switch session over the existing WebSocket — no disconnect/reconnect needed
+        ws.send(JSON.stringify({ type: "switch", session: name, cols: term.cols, rows: term.rows }));
+      } else {
+        // No open connection — update state and let reconnect handle it
+        state.update('session.name', name);
+        document.title = name;
       }
       if (shortcutBarInstance) shortcutBarInstance.render(name);
       invalidateSessions(sessionStore, name);
@@ -817,6 +821,7 @@
       loadTokens,
       isAtBottom,
       renderBar,
+      invalidateSessions: (name) => invalidateSessions(sessionStore, name),
       fit: () => withPreservedScroll(term, () => fit.fit())
     });
     wsConnection.initVisibilityReconnect();

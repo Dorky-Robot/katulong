@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   validateAttach,
+  validateSwitch,
   validateInput,
   validateResize,
   validateP2PSignal,
@@ -94,6 +95,42 @@ describe("validateAttach", () => {
     const result = validateAttach(null);
     assert.strictEqual(result.valid, false);
     assert.match(result.error, /object/i);
+  });
+});
+
+describe("validateSwitch", () => {
+  it("accepts valid switch message", () => {
+    const msg = { type: "switch", session: "my-session", cols: 80, rows: 24 };
+    const result = validateSwitch(msg);
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("rejects when session is missing", () => {
+    const msg = { type: "switch", cols: 80, rows: 24 };
+    const result = validateSwitch(msg);
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /session/i);
+  });
+
+  it("rejects when session is not a string", () => {
+    const msg = { type: "switch", session: 123, cols: 80, rows: 24 };
+    const result = validateSwitch(msg);
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /session/i);
+  });
+
+  it("rejects when cols is missing", () => {
+    const msg = { type: "switch", session: "test" };
+    const result = validateSwitch(msg);
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /cols/i);
+  });
+
+  it("rejects when dimensions exceed limit", () => {
+    const msg = { type: "switch", session: "test", cols: 1001, rows: 24 };
+    const result = validateSwitch(msg);
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /1000/);
   });
 });
 
@@ -231,6 +268,12 @@ describe("validateP2PSignal", () => {
 describe("validateMessage", () => {
   it("routes to validateAttach for attach messages", () => {
     const msg = { type: "attach", cols: 80, rows: 24 };
+    const result = validateMessage(msg);
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("routes to validateSwitch for switch messages", () => {
+    const msg = { type: "switch", session: "test", cols: 80, rows: 24 };
     const result = validateMessage(msg);
     assert.strictEqual(result.valid, true);
   });

@@ -139,7 +139,7 @@ export function createSessionListComponent(store, options = {}) {
 
       card.appendChild(footer);
 
-      // Action buttons (shown on hover)
+      // Action buttons — always visible (mobile-friendly)
       const actions = document.createElement("div");
       actions.className = "session-card-actions";
 
@@ -164,47 +164,43 @@ export function createSessionListComponent(store, options = {}) {
         location.href = `/?s=${encodeURIComponent(next.name)}`;
       }
 
-      if (s.external) {
-        // External tmux session — show eject button (detach from katulong, keep tmux session)
-        const ejectBtn = document.createElement("button");
-        ejectBtn.className = "session-card-action";
-        ejectBtn.setAttribute("aria-label", `Detach session ${s.name} from katulong`);
-        ejectBtn.innerHTML = '<i class="ph ph-eject"></i>';
-        ejectBtn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          try {
-            await api.delete(`/sessions/${encodeURIComponent(s.name)}`);
-            switchAfterRemove(s.name);
-          } catch (err) {
-            console.error('[Session] Detach failed:', err);
-          }
-        });
-        actions.appendChild(ejectBtn);
-      } else {
-        // Katulong-managed session — show delete button
-        const delBtn = document.createElement("button");
-        delBtn.className = "session-card-action delete";
-        delBtn.setAttribute("aria-label", `Delete session ${s.name}`);
-        delBtn.innerHTML = '<i class="ph ph-trash"></i>';
-        delBtn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          if (s.hasChildProcesses) {
-            const confirmed = confirm(
-              `Session "${s.name}" contains running processes or important content (like Claude Code history). Deleting it will lose this data.\n\nAre you sure you want to delete this session?`
-            );
-            if (!confirmed) return;
-          }
-          try {
-            await api.delete(`/sessions/${encodeURIComponent(s.name)}`);
-            switchAfterRemove(s.name);
-          } catch (err) {
-            console.error('[Session] Delete failed:', err);
-          }
-        });
-        actions.appendChild(delBtn);
-      }
+      // Detach button — removes from katulong but keeps tmux session alive
+      const detachBtn = document.createElement("button");
+      detachBtn.className = "session-card-action";
+      detachBtn.setAttribute("aria-label", `Detach session ${s.name}`);
+      detachBtn.innerHTML = '<i class="ph ph-eject"></i>';
+      detachBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        try {
+          await api.delete(`/sessions/${encodeURIComponent(s.name)}?action=detach`);
+          switchAfterRemove(s.name);
+        } catch (err) {
+          console.error('[Session] Detach failed:', err);
+        }
+      });
+      actions.appendChild(detachBtn);
 
-      card.appendChild(actions);
+      // Delete button — kills the tmux session (always confirms)
+      const delBtn = document.createElement("button");
+      delBtn.className = "session-card-action delete";
+      delBtn.setAttribute("aria-label", `Delete session ${s.name}`);
+      delBtn.innerHTML = '<i class="ph ph-trash"></i>';
+      delBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const message = s.hasChildProcesses
+          ? `Session "${s.name}" has running processes. Deleting it will lose this data.\n\nAre you sure?`
+          : `Delete session "${s.name}"?\n\nThis will kill the tmux session.`;
+        if (!confirm(message)) return;
+        try {
+          await api.delete(`/sessions/${encodeURIComponent(s.name)}`);
+          switchAfterRemove(s.name);
+        } catch (err) {
+          console.error('[Session] Delete failed:', err);
+        }
+      });
+      actions.appendChild(delBtn);
+
+      footer.appendChild(actions);
       container.appendChild(card);
     }
   };
