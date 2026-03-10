@@ -8,6 +8,7 @@
 
 const WINDOW_ID_KEY = "katulong-window-id";
 const WINDOW_TABS_KEY = "katulong-window-tabs";
+const LAST_TABS_KEY = "katulong-last-tabs"; // localStorage fallback for restoring after all windows close
 const CHANNEL_NAME = "katulong-tabs";
 
 function generateId() {
@@ -62,17 +63,24 @@ export function createWindowTabSet({ sessionStore, getCurrentSession }) {
   }
 
   function loadTabs() {
+    // 1. sessionStorage — same window/tab surviving a reload
     try {
       const saved = JSON.parse(sessionStorage.getItem(WINDOW_TABS_KEY));
       if (Array.isArray(saved) && saved.length > 0) return saved;
     } catch { /* ignore */ }
-    // Seed with the current session from URL
+    // 2. localStorage — restore from last session after all windows closed
+    try {
+      const last = JSON.parse(localStorage.getItem(LAST_TABS_KEY));
+      if (Array.isArray(last) && last.length > 0) return last;
+    } catch { /* ignore */ }
+    // 3. Seed with the current session from URL
     const session = getCurrentSession ? getCurrentSession() : "default";
     return [session];
   }
 
   function saveTabs() {
     sessionStorage.setItem(WINDOW_TABS_KEY, JSON.stringify(tabs));
+    try { localStorage.setItem(LAST_TABS_KEY, JSON.stringify(tabs)); } catch { /* ignore */ }
   }
 
   function notify() {
