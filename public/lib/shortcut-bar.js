@@ -18,6 +18,9 @@ const DESKTOP_MQ = "(pointer: fine)";
 const TABLET_MQ = "(pointer: coarse) and (min-width: 768px)";
 const DRAG_OUT_THRESHOLD = 60; // px below bar to trigger tear-off
 const DRAG_DEAD_ZONE = 5; // px before drag starts
+const LONG_PRESS_MS = 300; // ms before touch becomes drag
+const SCROLL_EDGE_PX = 40; // px from edge to trigger auto-scroll
+const SCROLL_SPEED = 8; // px per frame during auto-scroll
 
 /**
  * Create shortcut bar renderer
@@ -361,8 +364,6 @@ export function createShortcutBar(options = {}) {
     document.addEventListener("mouseup", onUp);
   }
 
-  const LONG_PRESS_MS = 300;
-
   function onTabTouchStart(e, tab, name) {
     if (e.target.closest(".tab-close")) return;
 
@@ -381,9 +382,9 @@ export function createShortcutBar(options = {}) {
     }, LONG_PRESS_MS);
 
     const onMove = (te) => {
-      const t = te.touches[0];
-      const dx = t.clientX - startX;
-      const dy = t.clientY - startY;
+      const touch = te.touches[0];
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
 
       if (!longPressed) {
         // Movement before long press — cancel drag, allow native scroll
@@ -403,7 +404,7 @@ export function createShortcutBar(options = {}) {
       }
 
       te.preventDefault();
-      updateDrag(t.clientX, t.clientY);
+      updateDrag(touch.clientX, touch.clientY);
     };
 
     const onEnd = () => {
@@ -435,6 +436,7 @@ export function createShortcutBar(options = {}) {
   function beginDrag(tab, name, startX, fromTouch) {
     const tabs = [...container.querySelectorAll(".tab-bar-tab")];
     const dragIndex = tabs.indexOf(tab);
+    const scrollArea = container.querySelector(".tab-scroll-area");
 
     const rects = tabs.map(t => {
       const r = t.getBoundingClientRect();
@@ -461,21 +463,18 @@ export function createShortcutBar(options = {}) {
       grabOffset,
       tornOff: false,
       isTouch: !!fromTouch,
+      scrollArea,
     };
   }
 
-  const SCROLL_EDGE_PX = 40;
-  const SCROLL_SPEED = 8;
-
   function updateDrag(cx, cy) {
     if (!drag) return;
-    const { ghost, tabs, rects, dragIndex, grabOffset } = drag;
+    const { ghost, tabs, dragIndex, grabOffset, scrollArea } = drag;
 
     ghost.style.left = (cx - grabOffset) + "px";
     ghost.style.top = (cy - ghost.offsetHeight / 2) + "px";
 
     // Auto-scroll the tab area when dragging near edges
-    const scrollArea = container.querySelector(".tab-scroll-area");
     if (scrollArea) {
       const scrollRect = scrollArea.getBoundingClientRect();
       if (cx < scrollRect.left + SCROLL_EDGE_PX) {
@@ -484,6 +483,13 @@ export function createShortcutBar(options = {}) {
         scrollArea.scrollLeft += SCROLL_SPEED;
       }
     }
+
+    // Refresh rects — auto-scroll shifts tab positions
+    const rects = tabs.map(t => {
+      const r = t.getBoundingClientRect();
+      return { left: r.left, width: r.width, center: r.left + r.width / 2 };
+    });
+    drag.rects = rects;
 
     const barRect = container.getBoundingClientRect();
     // Tear-off only for mouse — touch can't open new windows (Safari blocks popups)
@@ -532,8 +538,8 @@ export function createShortcutBar(options = {}) {
   }
 
   function getGap() {
-    const scrollArea = container.querySelector(".tab-scroll-area");
-    return parseFloat(getComputedStyle(scrollArea || container).gap) || 0;
+    const area = drag?.scrollArea || container.querySelector(".tab-scroll-area") || container;
+    return parseFloat(getComputedStyle(area).gap) || 0;
   }
 
   function endDrag() {
