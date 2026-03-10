@@ -31,16 +31,15 @@ test.describe("Smoke — critical path", () => {
     await expect(page.locator(".xterm-rows")).toContainText(marker);
   });
 
-  test("Reconnection repaints terminal", async ({ page }) => {
-    // Type something so the session has content
-    await page.keyboard.type(`echo hello`);
+  test("Reconnection replays buffer", async ({ page }) => {
+    const marker = `reconnect_${Date.now()}`;
+    await page.keyboard.type(`echo ${marker}`);
     await page.keyboard.press("Enter");
-    await expect(page.locator(".xterm-rows")).toContainText("hello");
+    await expect(page.locator(".xterm-rows")).toContainText(marker);
 
     await page.reload();
-    // After reconnect, tmux repaints the current visible screen.
-    // The prompt should be visible (tmux redraws via resize).
+    // After reconnect, capture-pane snapshot should contain the marker
     await page.waitForSelector(".xterm-screen", { timeout: 10000 });
-    await expect(page.locator(".xterm-rows")).not.toHaveText("", { timeout: 10000 });
+    await expect(page.locator(".xterm-rows")).toContainText(marker, { timeout: 10000 });
   });
 });
