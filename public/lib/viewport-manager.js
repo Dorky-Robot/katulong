@@ -4,7 +4,7 @@
  * Handles viewport resizing, scroll button UI, and terminal gesture handlers.
  */
 
-import { withPreservedScroll } from "/lib/scroll-utils.js";
+import { withPreservedScroll, activeViewport } from "/lib/scroll-utils.js";
 
 /**
  * Create viewport manager for responsive terminal layout
@@ -23,8 +23,7 @@ export function createViewportManager(options = {}) {
 
   // Scroll button elements
   const scrollBtn = document.getElementById("scroll-bottom");
-  const getViewport = () => document.querySelector(".terminal-pane.active .xterm-viewport")
-    || document.querySelector(".xterm-viewport");
+  const getViewport = () => activeViewport();
 
   const appLayout = document.getElementById("app-layout");
 

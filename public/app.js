@@ -215,6 +215,14 @@
     const getFit = () => terminalPool.getActive()?.fit;
     const getSearchAddon = () => terminalPool.getActive()?.searchAddon;
 
+    /** Fit the active terminal after a visibility change (e.g. closing file browser/port forward) */
+    function fitActiveTerminal() {
+      requestAnimationFrame(() => {
+        const active = terminalPool.getActive();
+        if (active) withPreservedScroll(active.term, () => active.fit.fit());
+      });
+    }
+
     // --- Search bar ---
     const searchBar = document.getElementById("search-bar");
     const searchInput = document.getElementById("search-input");
@@ -518,14 +526,15 @@
         entry.term.reset();
       }
 
+      // Update state optimistically so state.session.name and pool.getActiveName()
+      // stay in sync (the server's "switched" confirmation will set it again, harmlessly).
+      state.update('session.name', name);
+      document.title = name;
+
       const ws = state.connection.ws;
       if (ws && ws.readyState === WebSocket.OPEN) {
         // Switch session over the existing WebSocket — no disconnect/reconnect needed
         ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows }));
-      } else {
-        // No open connection — update state and let reconnect handle it
-        state.update('session.name', name);
-        document.title = name;
       }
       if (shortcutBarInstance) shortcutBarInstance.render(name);
       invalidateSessions(sessionStore, name);
@@ -569,7 +578,7 @@
         if (!enabled && portForwardEl.classList.contains("active")) {
           closePortForward();
           getTerm()?.focus();
-          requestAnimationFrame(() => { const a = terminalPool.getActive(); if (a) withPreservedScroll(a.term, () => a.fit.fit()); });
+          fitActiveTerminal();
         }
       }
     });
@@ -742,7 +751,7 @@
       if (isActive) {
         closeFileBrowser();
         getTerm()?.focus();
-        requestAnimationFrame(() => { const a = terminalPool.getActive(); if (a) withPreservedScroll(a.term, () => a.fit.fit()); });
+        fitActiveTerminal();
       } else {
         // Close port forward if open (mutual exclusion)
         if (portForwardEl.classList.contains("active")) closePortForward();
@@ -772,7 +781,7 @@
       if (isActive) {
         closePortForward();
         getTerm()?.focus();
-        requestAnimationFrame(() => { const a = terminalPool.getActive(); if (a) withPreservedScroll(a.term, () => a.fit.fit()); });
+        fitActiveTerminal();
       } else {
         // Close file browser if open (mutual exclusion)
         if (fileBrowserEl.classList.contains("active")) closeFileBrowser();
@@ -829,10 +838,7 @@
       renderBar,
       invalidateSessions: (name) => invalidateSessions(sessionStore, name),
       poolRename: (oldName, newName) => terminalPool.rename(oldName, newName),
-      fit: () => {
-        const active = terminalPool.getActive();
-        if (active) withPreservedScroll(active.term, () => active.fit.fit());
-      }
+      fit: fitActiveTerminal
     });
     wsConnection.initVisibilityReconnect();
 

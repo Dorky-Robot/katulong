@@ -5,7 +5,7 @@
  * Uses functional core / imperative shell pattern with dependency injection.
  */
 
-import { scrollToBottom, terminalWriteWithScroll } from "/lib/scroll-utils.js";
+import { scrollToBottom, terminalWriteWithScroll, activeViewport } from "/lib/scroll-utils.js";
 
 /**
  * Create WebSocket connection manager with injected dependencies
@@ -286,8 +286,7 @@ export function createWebSocketConnection(deps = {}) {
       }
 
       // Normal disconnect - attempt reconnection with exponential backoff
-      const viewport = document.querySelector(".terminal-pane.active .xterm-viewport")
-        || document.querySelector(".xterm-viewport");
+      const viewport = activeViewport();
       state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
       state.connection.attached = false;
       if (p2pManager) p2pManager.destroy();

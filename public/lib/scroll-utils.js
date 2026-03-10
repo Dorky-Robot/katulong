@@ -5,7 +5,7 @@
  */
 
 /** Find the viewport element for the active terminal pane */
-function activeViewport() {
+export function activeViewport() {
   return document.querySelector(".terminal-pane.active .xterm-viewport")
     || document.querySelector(".xterm-viewport");
 }

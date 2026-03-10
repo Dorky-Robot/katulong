@@ -88,15 +88,6 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
       }
     }
 
-    // Patch hidden textarea for mobile
-    const ta = container.querySelector(".xterm-helper-textarea");
-    if (ta) {
-      ta.setAttribute("autocorrect", "off");
-      ta.setAttribute("autocapitalize", "none");
-      ta.setAttribute("autocomplete", "new-password");
-      ta.setAttribute("spellcheck", "false");
-    }
-
     const entry = { term, fit, searchAddon, container, lastUsed: Date.now() };
     pool.set(sessionName, entry);
 
