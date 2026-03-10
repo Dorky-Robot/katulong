@@ -176,63 +176,11 @@ export function createShortcutBar(options = {}) {
     });
   }
 
-  // ── Undo toast ─────────────────────────────────────────────────────
-
-  function showUndoToast(message, onUndo) {
-    // Remove any existing undo toast
-    document.querySelector(".toast.toast-undo")?.remove();
-
-    const el = document.createElement("div");
-    el.className = "toast toast-undo";
-
-    const msg = document.createElement("span");
-    msg.textContent = message;
-    el.appendChild(msg);
-
-    const btn = document.createElement("button");
-    btn.className = "toast-undo-btn";
-    btn.textContent = "Undo";
-    el.appendChild(btn);
-
-    let undone = false;
-    btn.addEventListener("click", () => {
-      undone = true;
-      el.classList.remove("visible");
-      setTimeout(() => el.remove(), 300);
-      onUndo();
-    });
-
-    document.body.appendChild(el);
-    requestAnimationFrame(() => el.classList.add("visible"));
-
-    setTimeout(() => {
-      if (!undone) {
-        el.classList.remove("visible");
-        setTimeout(() => el.remove(), 300);
-      }
-    }, 5000);
-  }
-
-  function deleteSessionWithUndo(name, menuRow, { unmanaged = false } = {}) {
-    const endpoint = unmanaged
-      ? `/tmux-sessions/${encodeURIComponent(name)}`
-      : `/sessions/${encodeURIComponent(name)}`;
-
-    api.delete(endpoint).then(() => {
-      if (windowTabSet) windowTabSet.onSessionKilled(name);
+  function deleteUnmanagedSession(name) {
+    api.delete(`/tmux-sessions/${encodeURIComponent(name)}`).then(() => {
       if (sessionStore) invalidateSessions(sessionStore, currentSessionName);
     }).catch(err => {
       console.error("[Session] Delete failed:", err);
-    });
-
-    showUndoToast(`Deleted "${name}"`, () => {
-      // Re-create by adopting or creating
-      const restore = unmanaged
-        ? api.post("/sessions", { name })
-        : api.post("/sessions", { name });
-      restore.then(() => {
-        if (sessionStore) invalidateSessions(sessionStore, currentSessionName);
-      }).catch(err => console.error("[Session] Undo failed:", err));
     });
   }
 
@@ -283,12 +231,11 @@ export function createShortcutBar(options = {}) {
       return;
     }
     if (windowTabSet) windowTabSet.removeTab(sessionName);
-    // Broadcast so other windows remove this tab too (session is unmanaged now)
-    if (windowTabSet) windowTabSet.onSessionKilled(sessionName);
     const tabNames = windowTabSet ? windowTabSet.getTabs() : [];
     if (sessionName === currentSessionName) {
       if (tabNames.length === 0) { location.href = "/"; return; }
-      if (onTabClick) onTabClick(tabNames[Math.min(0, tabNames.length - 1)]);
+      const idx = tabNames.indexOf(sessionName);
+      if (onTabClick) onTabClick(tabNames[Math.min(Math.max(idx, 0), tabNames.length - 1)]);
     } else {
       render(currentSessionName);
     }
@@ -350,8 +297,7 @@ export function createShortcutBar(options = {}) {
     // Fetch fresh unmanaged tmux sessions with attached status
     let unmanaged = [];
     try {
-      const resp = await fetch(`/tmux-sessions?_t=${Date.now()}`);
-      const data = resp.ok ? await resp.json() : [];
+      const data = await api.get(`/tmux-sessions?_t=${Date.now()}`);
       unmanaged = (data || []).map(s => typeof s === "string" ? { name: s, attached: false } : s);
     } catch (err) { console.error("[showAddMenu] fetch error:", err); }
 
@@ -376,7 +322,7 @@ export function createShortcutBar(options = {}) {
         };
         // Only allow delete on sessions with no external clients attached
         if (!s.attached) {
-          item.deleteAction = (row) => deleteSessionWithUndo(s.name, row, { unmanaged: true });
+          item.deleteAction = () => deleteUnmanagedSession(s.name);
         }
         items.push(item);
       }
