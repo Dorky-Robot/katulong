@@ -285,7 +285,8 @@ describe("Sessions CRUD Integration", () => {
   });
 
   it("POST /tmux-sessions/adopt returns 409 for already-managed session", async () => {
-    // Create a managed session first
+    // POST /sessions creates both a katulong session and an underlying tmux session,
+    // so the name is both managed and exists as a tmux session.
     await request("POST", "/sessions", { name: "already-managed" });
 
     // Try to adopt a tmux session with the same name — it's already managed
@@ -297,12 +298,15 @@ describe("Sessions CRUD Integration", () => {
   });
 
   it("POST /tmux-sessions/adopt returns 400 for missing name", async () => {
-    const { status } = await request("POST", "/tmux-sessions/adopt", {});
+    const { status, body } = await request("POST", "/tmux-sessions/adopt", {});
     assert.equal(status, 400);
+    assert.ok(body.error);
   });
 
   it("POST /tmux-sessions/adopt returns 409 for invalid name with special chars", async () => {
-    // Names with : . / are rejected by validation
+    // Names with : . / are rejected by session manager validation.
+    // Note: semantically this should be 400, but the route returns 409 for all
+    // session manager errors. Tracked as a future improvement.
     const { status, body } = await request("POST", "/tmux-sessions/adopt", { name: "foo:bar" });
     assert.equal(status, 409);
     assert.match(body.error, /invalid/i);
