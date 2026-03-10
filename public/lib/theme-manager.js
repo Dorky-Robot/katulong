@@ -52,11 +52,11 @@ export function createThemeManager(options = {}) {
     document.documentElement.setAttribute("data-theme", pref);
     const effective = getEffectiveTheme();
 
-    // Update theme color meta tag
-    const metaTheme = document.querySelector('meta[name="theme-color"]');
-    if (metaTheme) {
-      metaTheme.content = effective === "light" ? "#eff1f5" : "#1e1e2e";
-    }
+    // Update theme color meta tags to match the shortcut bar / PWA title bar
+    const color = effective === "light" ? "#eff1f5" : "#1e1e2e";
+    document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
+      m.content = color;
+    });
 
     // Update toggle buttons
     document.querySelectorAll(".theme-toggle button").forEach(btn => {

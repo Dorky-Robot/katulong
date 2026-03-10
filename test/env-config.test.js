@@ -10,7 +10,6 @@ describe("env-config", () => {
   it("has expected keys", () => {
     const expectedKeys = [
       "port", "bindHost", "dataDir",
-      "noAuth",
       "shell", "nodeEnv", "logLevel", "drainTimeout", "home",
     ];
     for (const key of expectedKeys) {
@@ -26,10 +25,6 @@ describe("env-config", () => {
   it("dataDir is a non-empty string", () => {
     assert.equal(typeof envConfig.dataDir, "string");
     assert.ok(envConfig.dataDir.length > 0, "dataDir must be non-empty");
-  });
-
-  it("noAuth is a boolean", () => {
-    assert.equal(typeof envConfig.noAuth, "boolean");
   });
 
   it("shell is a non-empty string", () => {
@@ -63,12 +58,6 @@ describe("env-config", () => {
     // Only assert default when PORT is not explicitly overridden in the environment
     if (!process.env.PORT) {
       assert.equal(envConfig.port, 3001);
-    }
-  });
-
-  it("defaults: noAuth is false when KATULONG_NO_AUTH is not set to '1'", () => {
-    if (process.env.KATULONG_NO_AUTH !== "1") {
-      assert.equal(envConfig.noAuth, false);
     }
   });
 

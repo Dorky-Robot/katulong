@@ -161,7 +161,7 @@ describe("CSRF protection on PUT /api/config/* (#222)", () => {
         ...process.env,
         PORT: String(TEST_PORT),
         KATULONG_DATA_DIR: testDataDir,
-        // No KATULONG_NO_AUTH — real auth enforcement required
+        // Localhost requests are auto-authenticated; remote requests require a session cookie
       },
       stdio: "pipe",
     });

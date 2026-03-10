@@ -50,7 +50,6 @@ describe("Sessions CRUD Integration", () => {
       PATH: process.env.PATH,
       HOME: process.env.HOME,
       KATULONG_DATA_DIR: testDataDir,
-      KATULONG_NO_AUTH: "1",
       PORT: String(TEST_PORT),
     };
 
@@ -231,7 +230,8 @@ describe("Sessions CRUD Integration", () => {
       const { status, body } = await request("GET", "/tmux-sessions");
       assert.equal(status, 200);
       assert.ok(Array.isArray(body));
-      assert.ok(body.includes(tmuxName), `Expected ${tmuxName} in unmanaged list: ${JSON.stringify(body)}`);
+      const names = body.map(s => typeof s === "string" ? s : s.name);
+      assert.ok(names.includes(tmuxName), `Expected ${tmuxName} in unmanaged list: ${JSON.stringify(body)}`);
     } finally {
       try { execSync(`tmux kill-session -t ${tmuxName}`); } catch {}
     }
@@ -245,8 +245,9 @@ describe("Sessions CRUD Integration", () => {
     // The managed session's tmux name should not appear in unmanaged list
     const managedList = await request("GET", "/sessions");
     const managedTmuxNames = managedList.body.map(s => s.tmuxSession);
+    const unmanagedNames = body.map(s => typeof s === "string" ? s : s.name);
     for (const tmuxName of managedTmuxNames) {
-      assert.ok(!body.includes(tmuxName), `Managed tmux session ${tmuxName} should not appear in unmanaged list`);
+      assert.ok(!unmanagedNames.includes(tmuxName), `Managed tmux session ${tmuxName} should not appear in unmanaged list`);
     }
 
     await request("DELETE", "/sessions/managed-excl");
@@ -268,7 +269,8 @@ describe("Sessions CRUD Integration", () => {
 
       // Should no longer appear in unmanaged list
       const unmanaged = await request("GET", "/tmux-sessions");
-      assert.ok(!unmanaged.body.includes(tmuxName), `Adopted session should not appear in unmanaged list`);
+      const unmanagedNames = unmanaged.body.map(s => typeof s === "string" ? s : s.name);
+      assert.ok(!unmanagedNames.includes(tmuxName), `Adopted session should not appear in unmanaged list`);
 
       // Cleanup
       await request("DELETE", `/sessions/${encodeURIComponent(tmuxName)}`);
@@ -312,6 +314,38 @@ describe("Sessions CRUD Integration", () => {
     const { status, body } = await request("POST", "/tmux-sessions/adopt", { name: "foo:bar" });
     assert.equal(status, 409);
     assert.match(body.error, /invalid/i);
+  });
+
+  it("DELETE /tmux-sessions/:name kills an unmanaged tmux session", async () => {
+    const tmuxName = `kill-integ-${Date.now()}`;
+    execSync(`tmux new-session -d -s ${tmuxName}`);
+
+    try {
+      const { status, body } = await request("DELETE", `/tmux-sessions/${tmuxName}`);
+      assert.equal(status, 200);
+      assert.ok(body.ok);
+
+      // Should no longer appear in tmux
+      const list = await request("GET", "/tmux-sessions");
+      const names = list.body.map(s => typeof s === "string" ? s : s.name);
+      assert.ok(!names.includes(tmuxName), `Killed session should not appear in list`);
+    } catch (err) {
+      try { execSync(`tmux kill-session -t ${tmuxName}`); } catch {}
+      throw err;
+    }
+  });
+
+  it("DELETE /tmux-sessions/:name refuses to kill managed sessions", async () => {
+    const setup = await request("POST", "/sessions", { name: "managed-nodelete" });
+    assert.equal(setup.status, 201);
+
+    try {
+      const { status, body } = await request("DELETE", `/tmux-sessions/managed-nodelete`);
+      assert.equal(status, 400);
+      assert.match(body.error, /managed/i);
+    } finally {
+      await request("DELETE", "/sessions/managed-nodelete");
+    }
   });
 
   // --- Full lifecycle (mirrors what the UI "+ New" button does) ---

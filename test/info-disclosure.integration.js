@@ -90,7 +90,7 @@ describe("Info-disclosure security (#151, #126)", () => {
         ...process.env,
         PORT: String(TEST_PORT),
         KATULONG_DATA_DIR: testDataDir,
-        // No KATULONG_NO_AUTH — we want real auth enforcement
+        // Localhost requests are auto-authenticated; remote requests require a session cookie
       },
       stdio: "pipe",
     });

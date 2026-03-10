@@ -7,10 +7,6 @@ describe("SENSITIVE_ENV_VARS", () => {
     assert.ok(SENSITIVE_ENV_VARS.has("SETUP_TOKEN"));
   });
 
-  it("contains KATULONG_NO_AUTH", () => {
-    assert.ok(SENSITIVE_ENV_VARS.has("KATULONG_NO_AUTH"));
-  });
-
   it("contains CLAUDECODE", () => {
     assert.ok(SENSITIVE_ENV_VARS.has("CLAUDECODE"));
   });
@@ -19,7 +15,7 @@ describe("SENSITIVE_ENV_VARS", () => {
 describe("getSafeEnv", () => {
   // Stash and restore any pre-existing values
   let saved = {};
-  const TEST_VARS = ["SETUP_TOKEN", "KATULONG_NO_AUTH", "CLAUDECODE"];
+  const TEST_VARS = ["SETUP_TOKEN", "CLAUDECODE"];
 
   beforeEach(() => {
     saved = {};
@@ -42,12 +38,6 @@ describe("getSafeEnv", () => {
     process.env.SETUP_TOKEN = "setup-secret";
     const env = getSafeEnv();
     assert.ok(!("SETUP_TOKEN" in env), "SETUP_TOKEN must not appear in safe env");
-  });
-
-  it("filters KATULONG_NO_AUTH from the returned environment", () => {
-    process.env.KATULONG_NO_AUTH = "1";
-    const env = getSafeEnv();
-    assert.ok(!("KATULONG_NO_AUTH" in env), "KATULONG_NO_AUTH must not appear in safe env");
   });
 
   it("filters CLAUDECODE from the returned environment", () => {
@@ -85,12 +75,10 @@ describe("getSafeEnv", () => {
 
   it("filters all sensitive vars simultaneously when all are set", () => {
     process.env.SETUP_TOKEN = "tok";
-    process.env.KATULONG_NO_AUTH = "1";
     process.env.CLAUDECODE = "1";
 
     const env = getSafeEnv();
     assert.ok(!("SETUP_TOKEN" in env));
-    assert.ok(!("KATULONG_NO_AUTH" in env));
     assert.ok(!("CLAUDECODE" in env));
   });
 });

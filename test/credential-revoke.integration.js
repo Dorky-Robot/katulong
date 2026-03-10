@@ -58,13 +58,12 @@ describe("Credential Revoke Integration", () => {
     // Write auth state with known credentials as per-entity files
     writeAuthFixture(testDataDir, AUTH_STATE);
 
-    // Start server with KATULONG_NO_AUTH to bypass authentication
+    // Start server — localhost requests are auto-authenticated
     serverProcess = spawn("node", ["server.js"], {
       env: {
         ...process.env,
         PORT: TEST_PORT,
         KATULONG_DATA_DIR: testDataDir,
-        KATULONG_NO_AUTH: "1"
       },
       stdio: "pipe"
     });

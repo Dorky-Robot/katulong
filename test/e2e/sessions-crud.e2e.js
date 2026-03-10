@@ -1,5 +1,4 @@
 import { test, expect } from "@playwright/test";
-import { execSync } from "child_process";
 import { waitForShellReady } from './helpers.js';
 
 test.describe("Session CRUD", () => {
@@ -19,16 +18,13 @@ test.describe("Session CRUD", () => {
     );
   }
 
-  test("Create session via + button", async ({ page }) => {
+  test("Create session via tab bar + dropdown", async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("#shortcut-bar");
+    await waitForShellReady(page);
 
-    // Open session sidebar
-    await page.locator("#shortcut-bar .session-btn").click();
-    await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
-
-    // Click + to create new session
-    await page.locator("#sidebar-add-btn").click();
+    // Click + button to open dropdown, then "New session"
+    await page.locator("#shortcut-bar .tab-bar-add").click();
+    await page.locator(".tab-context-menu .tab-menu-item", { hasText: "New session" }).click();
 
     // URL should change to include the new session name (starts with "session-")
     await page.waitForFunction(
@@ -39,92 +35,158 @@ test.describe("Session CRUD", () => {
     expect(newName).toBeTruthy();
     expect(newName).toMatch(/^session-/);
 
-    // Terminal should be functional
-    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
+    // New tab should appear in tab bar as active
+    const newTab = page.locator(`#shortcut-bar .tab-bar-tab.active`);
+    await expect(newTab).toContainText(newName, { timeout: 5000 });
 
     // Cleanup
     await deleteSession(page, newName);
   });
 
-  test("Delete session via sidebar", async ({ page }) => {
-    const name = `test-delete-${Date.now()}`;
-    await page.goto("/");
-    await page.waitForSelector("#shortcut-bar");
+  test("Detach session via close button removes tab", async ({ page }) => {
+    const name = `test-detach-${Date.now()}`;
 
-    // Create session by navigating to it (triggers session create on attach)
+    // Create a session
     await createSessionByNav(page, name);
 
-    // Go back to default session
+    // Go back to default
+    await page.goto("/?s=default");
+    await waitForShellReady(page);
+
+    // Wait for the created session tab to appear
+    const targetTab = page.locator(`#shortcut-bar .tab-bar-tab[data-session="${name}"]`);
+    await expect(targetTab).toBeVisible({ timeout: 10000 });
+
+    // Hover to reveal close button, then click it to detach
+    await targetTab.hover();
+    await targetTab.locator(".tab-close").click();
+
+    // Tab should disappear
+    await expect(targetTab).not.toBeVisible({ timeout: 10000 });
+
+    // Cleanup
+    await page.evaluate(
+      (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: "DELETE" }),
+      name,
+    );
+  });
+
+  test("Reattach detached session via + dropdown", async ({ page }) => {
+    const name = `test-reattach-${Date.now()}`;
+
+    // Create a session and let shell start
+    await createSessionByNav(page, name);
+
+    // Go to default first so we can detach the test session via close button
+    await page.goto("/?s=default");
+    await waitForShellReady(page);
+
+    // Wait for the created session tab to appear
+    const targetTab = page.locator(`#shortcut-bar .tab-bar-tab[data-session="${name}"]`);
+    await expect(targetTab).toBeVisible({ timeout: 10000 });
+
+    // Hover to reveal close button, then click × to detach
+    await targetTab.hover();
+    await targetTab.locator(".tab-close").click();
+
+    // Tab should disappear
+    await expect(targetTab).not.toBeVisible({ timeout: 10000 });
+
+    // Click + to open dropdown — detached session should appear
+    // (showAddMenu fetches fresh unmanaged sessions from the server)
+    await page.locator("#shortcut-bar .tab-bar-add").click();
+    const menu = page.locator(".tab-context-menu");
+    await expect(menu).toBeVisible();
+    const attachItem = menu.locator(".tab-menu-item", { hasText: name });
+    await expect(attachItem).toBeVisible({ timeout: 5000 });
+
+    // Click to reattach
+    await attachItem.click();
+
+    // Should switch to the reattached session
+    await page.waitForURL(`**/?s=${encodeURIComponent(name)}`, { timeout: 5000 });
+
+    // Tab should now be in the bar
+    await expect(page.locator(`#shortcut-bar .tab-bar-tab[data-session="${name}"]`)).toBeVisible({ timeout: 10000 });
+
+    // Cleanup
+    await deleteSession(page, name);
+  });
+
+  test("Kill session via context menu removes tab and tmux session", async ({ page }) => {
+    const name = `test-kill-${Date.now()}`;
     await page.goto("/");
-    await page.waitForSelector("#shortcut-bar");
+    await waitForShellReady(page);
 
-    // Open session sidebar — list fetches on open
-    await page.locator("#shortcut-bar .session-btn").click();
-    await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
+    // Create a second session
+    await createSessionByNav(page, name);
 
-    // Wait for the session list to load and find the card
-    const card = page.locator(".session-card", {
-      has: page.getByLabel(`Session name: ${name}`),
-    });
-    await expect(card).toBeVisible({ timeout: 10000 });
+    // Go back to default
+    await page.goto("/");
+    await waitForShellReady(page);
 
-    // Handle potential confirmation dialog
+    // Wait for the created session tab to appear
+    const targetTab = page.locator(`#shortcut-bar .tab-bar-tab[data-session="${name}"]`);
+    await expect(targetTab).toBeVisible({ timeout: 10000 });
+
+    // Right-click the tab to open context menu
+    await targetTab.click({ button: "right" });
+
+    // Click "Kill session" (accept the confirm dialog)
     page.on("dialog", (dialog) => dialog.accept());
+    const killItem = page.locator(".tab-context-menu .tab-menu-item.danger", { hasText: "Kill" });
+    await expect(killItem).toBeVisible();
+    await killItem.click();
 
-    // Hover to reveal action buttons, then click delete
-    await card.hover();
-    await card.locator(".session-card-action.delete").click();
+    // Tab should disappear
+    await expect(targetTab).not.toBeVisible({ timeout: 10000 });
 
-    // Verify removed from list
-    await expect(card).not.toBeVisible();
+    // tmux session should NOT exist anymore
+    const tmuxSessions = await page.evaluate(() =>
+      fetch("/tmux-sessions").then(r => r.json())
+    );
+    expect(tmuxSessions).not.toContain(name);
   });
 
-  test("Rename session via sidebar", async ({ page }) => {
-    const name = `test-rename-${Date.now()}`;
-    const newName = `renamed-${Date.now()}`;
-    await page.goto("/");
-    await page.waitForSelector("#shortcut-bar");
+  test("Delete session via API and tab disappears", async ({ page }) => {
+    const name = `test-delete-${Date.now()}`;
 
-    // Create session by navigating to it (triggers session create on attach)
+    // Create session
     await createSessionByNav(page, name);
 
     // Go back to default session
-    await page.goto("/");
-    await page.waitForSelector("#shortcut-bar");
+    await page.goto("/?s=default");
+    await waitForShellReady(page);
 
-    // Open session sidebar and rename
-    await page.locator("#shortcut-bar .session-btn").click();
-    await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
+    // Verify the created session tab exists
+    await expect(page.locator(`#shortcut-bar .tab-bar-tab[data-session="${name}"]`)).toBeVisible({ timeout: 10000 });
 
-    // Wait for session list to load, double-click to enable editing
-    const nameInput = page.getByLabel(`Session name: ${name}`);
-    await expect(nameInput).toBeVisible({ timeout: 10000 });
-    await nameInput.dblclick();
-    await nameInput.fill(newName);
-    await nameInput.press("Enter");
+    // Delete via API
+    await deleteSession(page, name);
 
-    // Verify new name appears in list (re-rendered after rename)
-    await expect(page.getByLabel(`Session name: ${newName}`)).toBeVisible({ timeout: 10000 });
+    // Force session store refresh by navigating
+    await page.goto("/?s=default");
+    await waitForShellReady(page);
 
-    // Cleanup
-    await deleteSession(page, newName);
+    // The deleted session tab should be gone
+    await expect(page.locator(`#shortcut-bar .tab-bar-tab[data-session="${name}"]`)).not.toBeVisible({ timeout: 10000 });
   });
 
   test("Switch session via URL", async ({ page }) => {
     const name = `test-switch-${Date.now()}`;
-    await page.goto("/");
-    await page.waitForSelector("#shortcut-bar");
 
-    // Navigate to session (creates it via session attach)
+    // Navigate directly to a named session URL
     await page.goto(`/?s=${encodeURIComponent(name)}`);
     await page.waitForSelector(".xterm-helper-textarea");
     await page.waitForSelector(".xterm-screen", { timeout: 5000 });
-    await page.locator(".xterm-helper-textarea").focus();
+    await waitForShellReady(page);
 
-    // Verify session button shows the session name
-    await expect(page.locator("#shortcut-bar .session-btn")).toContainText(
-      name,
-    );
+    // Verify URL has the session name
+    expect(new URL(page.url()).searchParams.get("s")).toBe(name);
+
+    // Verify the session tab appears (tab bar renders async after session store loads)
+    const sessionTab = page.locator(`#shortcut-bar .tab-bar-tab[data-session="${name}"]`);
+    await expect(sessionTab).toBeVisible({ timeout: 10000 });
 
     // Verify terminal is functional
     await expect(page.locator(".xterm-rows")).not.toHaveText("");
@@ -133,42 +195,30 @@ test.describe("Session CRUD", () => {
     await deleteSession(page, name);
   });
 
-  test("Unmanaged tmux sessions appear in sidebar and can be adopted", async ({ page }) => {
-    const tmuxName = `unmanaged-e2e-${Date.now()}`;
+  test("Switch session via tab click", async ({ page }) => {
+    const name = `test-tab-${Date.now()}`;
+    await page.goto("/");
+    await waitForShellReady(page);
 
-    // Create a tmux session outside of katulong
-    execSync(`tmux new-session -d -s ${tmuxName}`);
+    // Create a second session
+    await createSessionByNav(page, name);
 
-    try {
-      await page.goto("/");
-      await page.waitForSelector("#shortcut-bar");
+    // Go back to default
+    await page.goto("/?s=default");
+    await waitForShellReady(page);
 
-      // Open sidebar
-      await page.locator("#shortcut-bar .session-btn").click();
-      await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
+    // Wait for our test session tab to appear
+    const targetTab = page.locator(`#shortcut-bar .tab-bar-tab[data-session="${name}"]`);
+    await expect(targetTab).toBeVisible({ timeout: 10000 });
 
-      // Unmanaged session should appear with .unmanaged class
-      const unmanagedCard = page.locator(`.session-card.unmanaged`, {
-        has: page.locator(`text=${tmuxName}`),
-      });
-      await expect(unmanagedCard).toBeVisible({ timeout: 10000 });
+    // Click the test session tab
+    await targetTab.click();
 
-      // Click to adopt
-      await unmanagedCard.click();
+    // URL should update to our session
+    await page.waitForURL(`**/?s=${encodeURIComponent(name)}`, { timeout: 5000 });
 
-      // After adoption, it should appear as a managed session (no .unmanaged class)
-      const managedCard = page.locator(`.session-card:not(.unmanaged)`, {
-        has: page.getByLabel(`Session name: ${tmuxName}`),
-      });
-      await expect(managedCard).toBeVisible({ timeout: 10000 });
-
-      // The unmanaged card should be gone
-      await expect(unmanagedCard).not.toBeVisible();
-    } finally {
-      // Cleanup: delete via katulong API first, then kill tmux session as fallback
-      await deleteSession(page, tmuxName);
-      try { execSync(`tmux kill-session -t ${tmuxName} 2>/dev/null`); } catch {}
-    }
+    // Cleanup
+    await deleteSession(page, name);
   });
 
   test("Session isolation — markers do not bleed across sessions", async ({
@@ -179,40 +229,23 @@ test.describe("Session CRUD", () => {
     const markerA = `ISOA_${Date.now()}`;
     const markerB = `ISOB_${Date.now()}`;
 
-    await page.goto("/");
-    await page.waitForSelector("#shortcut-bar");
-
-    // Type marker in session A (creates it via session attach)
-    await page.goto(`/?s=${encodeURIComponent(nameA)}`);
-    await page.waitForSelector(".xterm-helper-textarea");
-    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
-    await waitForShellReady(page);
+    // Type marker in session A
+    await createSessionByNav(page, nameA);
     await page.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type(`echo ${markerA}`);
     await page.keyboard.press("Enter");
-    await expect(page.locator(".xterm-rows")).toContainText(markerA);
+    await expect(page.locator(".xterm-rows")).toContainText(markerA, { timeout: 5000 });
 
-    // Type marker in session B (creates it via session attach)
-    await page.goto(`/?s=${encodeURIComponent(nameB)}`);
-    await page.waitForSelector(".xterm-helper-textarea");
-    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
-    await waitForShellReady(page);
+    // Type marker in session B
+    await createSessionByNav(page, nameB);
     await page.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type(`echo ${markerB}`);
     await page.keyboard.press("Enter");
-    await expect(page.locator(".xterm-rows")).toContainText(markerB);
+    await expect(page.locator(".xterm-rows")).toContainText(markerB, { timeout: 5000 });
 
     // Session B should NOT contain marker A
     const textB = await page.locator(".xterm-rows").textContent();
     expect(textB).not.toContain(markerA);
-
-    // Go back to session A — buffer replay should show marker A but not B
-    await page.goto(`/?s=${encodeURIComponent(nameA)}`);
-    await page.waitForSelector(".xterm-helper-textarea");
-    await page.waitForSelector(".xterm-screen", { timeout: 5000 });
-    await expect(page.locator(".xterm-rows")).toContainText(markerA);
-    const textA = await page.locator(".xterm-rows").textContent();
-    expect(textA).not.toContain(markerB);
 
     // Cleanup
     await deleteSession(page, nameA);

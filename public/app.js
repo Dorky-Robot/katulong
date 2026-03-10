@@ -20,6 +20,7 @@
     import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll } from "/lib/scroll-utils.js";
     import { keysToSequence, sendSequence, displayKey, keysLabel, keysString, VALID_KEYS, normalizeKey } from "/lib/key-mapping.js";
     import { createShortcutBar } from "/lib/shortcut-bar.js";
+    import { createWindowTabSet } from "/lib/window-tab-set.js";
     import { createPasteHandler } from "/lib/paste-handler.js";
     import { createNetworkMonitor } from "/lib/network-monitor.js";
     import { createP2PManager, createP2PIndicator } from "/lib/p2p-manager.js";
@@ -145,14 +146,17 @@
     });
     const updateP2PIndicator = () => {
       p2pIndicator.update();
-      // Sync sidebar connection dot
-      const sidebarDot = document.getElementById("sidebar-p2p-dot");
-      if (sidebarDot) {
-        const attached = state.connection.attached;
-        const p2pConnected = state.p2p.connected;
-        sidebarDot.classList.toggle("connected", attached || p2pConnected);
-        sidebarDot.classList.toggle("disconnected", !attached && !p2pConnected);
-        sidebarDot.title = p2pConnected ? "Connected (direct)" : attached ? "Connected (relay)" : "Disconnected";
+      const attached = state.connection.attached;
+      const p2pConnected = state.p2p.connected;
+      const title = p2pConnected ? "Connected (direct)" : attached ? "Connected (relay)" : "Disconnected";
+      // Sync all connection dots (sidebar + tab bar)
+      for (const id of ["sidebar-p2p-dot", "bar-p2p-dot"]) {
+        const dot = document.getElementById(id);
+        if (!dot) continue;
+        dot.classList.toggle("connected", p2pConnected);
+        dot.classList.toggle("relay", attached && !p2pConnected);
+        dot.classList.toggle("disconnected", !attached && !p2pConnected);
+        dot.title = title;
       }
     };
 
@@ -421,11 +425,18 @@
     // --- Session manager (render takes data) ---
 
     const sessionStore = createSessionStore(state.session.name);
+    const windowTabSet = createWindowTabSet({
+      sessionStore,
+      getCurrentSession: () => state.session.name
+    });
+    // Ensure the initial session from the URL is in this window's tab set
+    windowTabSet.addTab(state.session.name);
 
     // Create session list component
     // switchSession is defined below but the callback is only invoked on click, not during init
     const sessionListComponent = createSessionListComponent(sessionStore, {
-      onSessionSwitch: (name) => switchSession(name)
+      onSessionSwitch: (name) => switchSession(name),
+      windowTabSet
     });
     const sessionListEl = document.getElementById("session-list");
     if (sessionListEl) {
@@ -438,8 +449,10 @@
     const sidebarAddBtn = document.getElementById("sidebar-add-btn");
     const sidebarBackdrop = document.getElementById("sidebar-backdrop");
 
-    // Overlay breakpoint: 1024px — must match @media queries in index.html
-    const isOverlayViewport = () => window.matchMedia("(max-width: 1023px)").matches;
+    // Device-based layout: phones get sidebar overlay, tablets/desktop get tab bar
+    const isOverlayViewport = () =>
+      !window.matchMedia("(pointer: fine)").matches &&
+      !window.matchMedia("(pointer: coarse) and (min-width: 768px)").matches;
 
     function loadSidebarData() {
       invalidateSessions(sessionStore, state.session.name);
@@ -500,9 +513,11 @@
         if (sidebar?.classList.contains("collapsed")) {
           setSidebarCollapsed(false);
         }
+        windowTabSet.addTab(data.name);
         switchSession(data.name);
       } catch (err) {
         console.error("Failed to create session:", err);
+        showToast(`Failed to create session: ${err.message}`);
       }
     }
 
@@ -510,7 +525,8 @@
       sidebarAddBtn.addEventListener("click", createNewSession);
     }
 
-    if (!isInitiallyCollapsed) loadSidebarData();
+    // Load session data: always on desktop (for tab bar), or when sidebar is expanded
+    if (!isOverlayViewport() || !isInitiallyCollapsed) loadSidebarData();
 
     // --- Session switching (no page reload) ---
     function activateSession(name) {
@@ -518,12 +534,17 @@
       if (portForwardEl?.classList.contains("active")) closePortForward();
       if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
 
+      // Ensure session is in this window's tab set
+      if (!windowTabSet.hasTab(name)) {
+        windowTabSet.addTab(name);
+      }
+
       // Capture the current terminal before switching so output that arrives
       // during the switch window (before the server confirms) goes to the old terminal.
       const oldTerm = getTerm();
       const ws = state.connection.ws;
       const wsOpen = ws && ws.readyState === WebSocket.OPEN;
-      if (wsOpen && oldTerm) {
+      if (wsOpen && oldTerm && wsConnection?.setSwitchPendingTerm) {
         wsConnection.setSwitchPendingTerm(oldTerm);
       }
 
@@ -580,10 +601,22 @@
             bar.removeAttribute("data-toolbar-color");
           }
         }
+        // Sync native title bar color (PWA Window Controls Overlay)
+        const metaTheme = document.querySelector('meta[name="theme-color"]');
+        if (metaTheme) {
+          const colorMap = {
+            blue: "#89b4fa", purple: "#cba6f7", green: "#a6e3a1", red: "#f38ba8",
+            orange: "#fab387", pink: "#f5c2e7", teal: "#94e2d5", yellow: "#f9e2af"
+          };
+          const effective = document.documentElement.getAttribute("data-theme");
+          const surfaceColor = effective === "light" ? "#ffffff" : "#313244";
+          metaTheme.content = (color && color !== "default") ? colorMap[color] || surfaceColor : surfaceColor;
+        }
       },
       onPortProxyChange: (enabled) => {
         const btn = document.getElementById("sidebar-portfwd-btn");
         if (btn) btn.style.display = enabled ? "" : "none";
+        if (shortcutBarInstance) shortcutBarInstance.setPortProxyEnabled(enabled);
         if (!enabled && portForwardEl.classList.contains("active")) {
           closePortForward();
           getTerm()?.focus();
@@ -681,11 +714,33 @@
       ],
       onSessionClick: openSessionManager,
       onNewSessionClick: createNewSession,
+      onTabClick: (name) => switchSession(name),
+      onAdoptSession: async (name) => {
+        windowTabSet.addTab(name);
+        try {
+          const result = await api.post("/tmux-sessions/adopt", { name });
+          if (result.name) switchSession(result.name);
+        } catch (err) {
+          // Fallback: switch directly (spawnSession auto-adopts existing tmux sessions)
+          console.warn("Adopt API failed, switching directly:", err.message);
+          switchSession(name);
+        }
+      },
+      onFilesClick: () => toggleFileBrowser(),
+      onPortForwardClick: () => togglePortForward(),
+      onSettingsClick: () => modals.open('settings'),
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
       sendFn: rawSend,
       get term() { return getTerm(); },
       updateP2PIndicator,
-      getInstanceIcon
+      getInstanceIcon,
+      sessionStore,
+      windowTabSet
+    });
+
+    // Re-render bar if pointer capability changes (e.g., external mouse connected)
+    window.matchMedia("(pointer: fine)").addEventListener("change", () => {
+      shortcutBarInstance.render(state.session.name);
     });
 
     const renderBar = (name) => shortcutBarInstance.render(name);
@@ -847,6 +902,7 @@
       renderBar,
       invalidateSessions: (name) => invalidateSessions(sessionStore, name),
       poolRename: (oldName, newName) => terminalPool.rename(oldName, newName),
+      onSessionKilled: (name) => windowTabSet.onSessionKilled(name),
       fit: fitActiveTerminal
     });
     wsConnection.initVisibilityReconnect();

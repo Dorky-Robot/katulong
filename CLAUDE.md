@@ -69,7 +69,8 @@ This ensures:
 
 **This application provides direct terminal access to the host.** Every code change must be reviewed with this in mind.
 
-### Authentication
+### Authentication is MANDATORY — never add a way to disable it
+- **NEVER add env vars, flags, config options, or any mechanism to disable or bypass authentication.** This app gives direct shell access to the host — disabling auth is equivalent to giving root access to anyone on the internet. This includes but is not limited to: `NO_AUTH`, `SKIP_AUTH`, `DISABLE_AUTH`, `AUTH_BYPASS`, or any similar pattern. The pre-commit hook will block any such attempt.
 - First device registers via WebAuthn (passkey). Subsequent devices register via setup token + WebAuthn.
 - Localhost requests (`127.0.0.1`, `::1`) bypass auth (auto-authenticated).
 - Remote requests via tunnel require a valid `katulong_session` cookie.
@@ -109,7 +110,7 @@ When reviewing PRs, pay close attention to:
 9. **WebAuthn flow**: Registration challenges must remain time-limited, single-use, and format-validated.
 10. **Error handling**: Error responses must not leak internal paths, stack traces, or secrets.
 11. **File I/O**: Auth state writes must be atomic (temp + rename). Add error handling for corrupt JSON.
-12. **Environment variables**: Never expose sensitive env vars (SETUP_TOKEN, KATULONG_NO_AUTH) to PTY processes.
+12. **Environment variables**: Never expose sensitive env vars (SETUP_TOKEN) to PTY processes.
 13. **Header trust**: Never trust request headers (`X-Forwarded-*`, `X-Forwarded-Proto`, etc.) for security decisions. Only trust actual socket state. This is especially important for tunnel-based access (ngrok, Cloudflare Tunnel) where reverse-proxy headers are trivially forgeable.
 14. **Localhost detection**: `isLocalRequest()` in `lib/access-method.js` is security-critical — it gates auth bypass. It must check Host and Origin headers in addition to socket address to prevent tunnel traffic from being classified as local.
 15. **State mutations**: All auth state mutations must use `withStateLock()` from `lib/auth.js` to prevent race conditions.

@@ -47,6 +47,7 @@ export function createWebSocketConnection(deps = {}) {
         { type: 'updateP2PIndicator' },
         { type: 'initP2P' },
         { type: 'fit' },
+        { type: 'invalidateSessions', name: currentState.session.name },
         { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect }
       ]
     }),
@@ -222,6 +223,8 @@ export function createWebSocketConnection(deps = {}) {
         if (createTokenBtn) createTokenBtn.style.display = "block";
         break;
       case 'sessionRemoved':
+        // Broadcast to other windows before navigating away
+        if (deps.onSessionKilled) deps.onSessionKilled(state.session.name);
         // Current session was removed — navigate to closest remaining session
         fetch("/sessions").then(r => r.json()).then(sessions => {
           if (sessions.length > 0) {

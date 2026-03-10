@@ -4,7 +4,7 @@ test.describe("Settings modal", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
-    await page.locator("#sidebar-settings-btn").click();
+    await page.locator('#shortcut-bar .bar-utility-btn[aria-label="Settings"]').click();
     await expect(page.locator("#settings-overlay")).toHaveClass(/visible/);
   });
 
@@ -63,7 +63,7 @@ test.describe("Settings modal", () => {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
     // Re-open settings and verify active button state
-    await page.locator("#sidebar-settings-btn").click();
+    await page.locator('#shortcut-bar .bar-utility-btn[aria-label="Settings"]').click();
     await expect(page.locator("#settings-overlay")).toHaveClass(/visible/);
     await expect(page.locator("button[data-theme-val='light']")).toHaveClass(/active/);
 

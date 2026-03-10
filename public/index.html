@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="theme-color" content="#1e1e2e">
+  <meta name="theme-color" content="#1e1e2e" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#eff1f5" media="(prefers-color-scheme: light)">
   <title>Katulong</title>
   <link rel="icon" href="/favicon.ico" sizes="32x32">
   <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
@@ -258,12 +259,43 @@
     /* --- Shortcut bar --- */
     #shortcut-bar {
       flex-shrink: 0; z-index: var(--z-bar);
-      height: var(--height-btn-md); background: var(--bg-surface); border-bottom: 1px solid var(--border);
+      height: var(--height-btn-md); background: var(--bg); border-bottom: 1px solid var(--border);
       display: flex; align-items: center; padding: 0 var(--space-1_5); gap: var(--space-xs);
       overflow-x: auto; overflow-y: hidden;
       -webkit-overflow-scrolling: touch;
     }
     #shortcut-bar::-webkit-scrollbar { display: none; }
+
+    /* --- Window Controls Overlay (PWA title bar integration) --- */
+    @media (display-mode: window-controls-overlay) {
+      #shortcut-bar {
+        position: fixed; top: 0; left: env(titlebar-area-x, 0);
+        width: env(titlebar-area-width, 100%);
+        height: env(titlebar-area-height, var(--height-btn-md));
+        -webkit-app-region: drag;
+        border-bottom: none;
+        padding-left: var(--space-sm);
+        padding-right: var(--space-sm);
+      }
+      /* All interactive children must be no-drag */
+      #shortcut-bar button,
+      #shortcut-bar input,
+      #shortcut-bar a,
+      #shortcut-bar .tab-bar-tab,
+      #shortcut-bar .tab-bar-add,
+      #shortcut-bar .bar-utility-btn,
+      #shortcut-bar .bar-icon-btn,
+      #shortcut-bar .shortcut-btn,
+      #shortcut-bar .session-btn,
+      #shortcut-bar .bar-new-session-btn,
+      #shortcut-bar .tab-close {
+        -webkit-app-region: no-drag;
+      }
+      /* Push main content below the fixed title bar */
+      #main-stage {
+        padding-top: env(titlebar-area-height, var(--height-btn-md));
+      }
+    }
 
     /* Toolbar color variants — custom properties */
     [data-toolbar-color="blue"]   { --tb-bg: #89b4fa; --tb-accent: #7aa2f7; --tb-btn-border: #6690e0; --tb-text: #1e1e2e; --tb-btn-bg: rgba(255,255,255,0.3); }
@@ -283,6 +315,13 @@
     #shortcut-bar[data-toolbar-color] #p2p-indicator { background: var(--tb-text, var(--text-dim)); }
     #shortcut-bar[data-toolbar-color] #p2p-indicator.p2p-active { background: #40a02b; }
     #shortcut-bar[data-toolbar-color] #p2p-indicator.p2p-relay { background: #df8e1d; }
+    #shortcut-bar[data-toolbar-color] .tab-bar-tab { background: var(--tb-btn-bg, var(--bg-input)); color: var(--tb-text, var(--text-muted)); border-color: var(--tb-btn-border, var(--border)); }
+    #shortcut-bar[data-toolbar-color] .tab-bar-tab.active { background: var(--tb-accent, var(--accent)); color: var(--tb-text, var(--text)); }
+    #shortcut-bar[data-toolbar-color] .tab-bar-add,
+    #shortcut-bar[data-toolbar-color] .bar-utility-btn { color: var(--tb-text, var(--text-muted)); }
+    #shortcut-bar[data-toolbar-color] .bar-p2p-dot { background: var(--tb-text, var(--text-dim)); }
+    #shortcut-bar[data-toolbar-color] .bar-p2p-dot.relay { background: #df8e1d; }
+    #shortcut-bar[data-toolbar-color] .bar-p2p-dot.connected { background: #40a02b; }
 
     .shortcut-btn {
       flex-shrink: 0; height: var(--height-btn-sm); padding: 0 var(--space-md);
@@ -310,7 +349,7 @@
     }
     .bar-new-session-btn:hover { color: var(--text); }
     .bar-new-session-btn:active { background: rgba(255,255,255,0.08); }
-    @media (max-width: 1023px) {
+    @media (pointer: coarse), (pointer: none) {
       .bar-new-session-btn { display: flex; }
     }
 
@@ -332,12 +371,163 @@
     .bar-icon-btn:active { background: var(--accent); }
     .bar-spacer { margin-left: auto; }
 
+    /* --- Desktop tab bar (session tabs in shortcut bar) --- */
+    .tab-bar-tab {
+      flex-shrink: 0; height: var(--height-btn-sm); padding: 0 var(--space-2_5);
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg-input); color: var(--text-muted);
+      font-size: 0.8125rem; font-family: var(--font-mono);
+      cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 0.375rem;
+    }
+    .tab-bar-tab i.ph { font-size: 1rem; }
+    .tab-bar-tab .tab-label { pointer-events: none; }
+    .tab-bar-tab.active {
+      background: var(--accent); color: var(--text);
+      border-color: var(--accent-active);
+    }
+    .tab-bar-tab:hover:not(.active) { background: var(--accent); color: var(--text); }
+    .tab-bar-tab:active { background: var(--accent-active); }
+
+    /* Tab close button (×) */
+    .tab-close {
+      display: flex; align-items: center; justify-content: center;
+      width: 1.125rem; height: 1.125rem; border-radius: var(--radius-sm);
+      font-size: 0.75rem; color: var(--text-dim);
+      opacity: 0; transition: opacity 0.1s;
+      margin-left: 0.25rem; flex-shrink: 0;
+    }
+    .tab-bar-tab:hover .tab-close { opacity: 1; }
+    .tab-close:hover { color: var(--text); background: rgba(255,255,255,0.1); }
+    .tab-bar-tab.active .tab-close:hover { color: var(--danger); }
+
+    /* Drag ghost (follows cursor while dragging) */
+    .tab-drag-ghost {
+      position: fixed; z-index: 10000; pointer-events: none;
+      opacity: 0.9; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      border-radius: var(--radius-sm);
+      display: flex; align-items: center; gap: 0.375rem;
+      padding: 0 var(--space-2_5);
+      background: var(--accent); color: var(--text);
+      border: 1px solid var(--accent-active);
+      font-size: 0.8125rem; font-family: var(--font-mono);
+    }
+    .tab-drag-ghost.tab-tear-off {
+      transform: scale(1.08);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      opacity: 0.7;
+    }
+
+    /* Tab being dragged — invisible but keeps its space in layout */
+    .tab-dragging { opacity: 0 !important; }
+
+    /* Tab bar utility buttons (files, port-forward, settings) */
+    .bar-utility-btn {
+      flex-shrink: 0; height: var(--height-btn-sm); width: 2rem;
+      border: none; border-radius: var(--radius-sm); background: transparent;
+      color: var(--text-muted); font-size: 1.125rem; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .bar-utility-btn:hover { color: var(--text); }
+    .bar-utility-btn:active { background: rgba(255,255,255,0.08); }
+
+    /* Tab bar new session (+ button) */
+    .tab-bar-add {
+      flex-shrink: 0; height: var(--height-btn-sm); width: var(--height-btn-sm);
+      border: none; border-radius: 50%; background: transparent;
+      color: var(--text-muted); font-size: 1.25rem; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: color 0.15s, background 0.15s;
+    }
+    .tab-bar-add:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+    .tab-bar-add:active { color: var(--accent); background: rgba(255,255,255,0.1); }
+
+    /* Tab context menu / dropdown */
+    .tab-context-menu {
+      position: fixed; z-index: 10001;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: var(--radius-md); padding: 0.25rem 0;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      min-width: 10rem; font-family: var(--font-mono); font-size: 0.8125rem;
+      max-height: min(60vh, 24rem); overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .tab-menu-item {
+      display: flex; align-items: center; gap: 0.5rem;
+      width: 100%; padding: 0.375rem 0.75rem;
+      border: none; background: none; color: var(--text);
+      cursor: pointer; font-family: inherit; font-size: inherit;
+      text-align: left; white-space: nowrap;
+    }
+    .tab-menu-item:hover { background: var(--accent); }
+    .tab-menu-item.danger { color: var(--danger); }
+    .tab-menu-item.danger:hover { background: rgba(243,139,168,0.15); }
+    .tab-menu-item i.ph { font-size: 1rem; width: 1rem; text-align: center; }
+    .tab-menu-delete {
+      margin-left: auto; padding: 0.25rem 0.375rem; border: none; background: none;
+      color: var(--text-muted); cursor: pointer; font-size: 0.875rem;
+      border-radius: var(--radius-sm); transition: opacity 0.15s, color 0.15s;
+    }
+    @media (pointer: fine) { .tab-menu-delete { opacity: 0; } .tab-menu-item:hover .tab-menu-delete { opacity: 1; } }
+    .tab-menu-delete:hover { color: var(--danger); }
+    .tab-menu-divider {
+      height: 1px; background: var(--border); margin: 0.25rem 0;
+    }
+    .tab-menu-divider-label {
+      height: auto; background: none;
+      padding: 0.375rem 0.75rem 0.125rem;
+      font-size: 0.6875rem; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.05em;
+      border-top: 1px solid var(--border);
+    }
+
+    /* Tab bar P2P dot — grey (disconnected) → yellow (relay/WS) → green (direct/WebRTC) */
+    .bar-p2p-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--text-dim); flex-shrink: 0;
+      transition: background 0.2s;
+    }
+    .bar-p2p-dot.relay { background: var(--warning); }
+    .bar-p2p-dot.connected { background: var(--success); }
+
     /* Tablet / wider viewports — larger touch targets */
     @media (min-width: 768px) {
       #shortcut-bar { padding: 0 var(--space-lg); gap: var(--space-sm); }
       .session-btn { font-size: var(--text-sm); padding: 0 var(--space-md); }
       .shortcut-btn { font-size: var(--text-sm); padding: 0 var(--space-lg); }
       .bar-icon-btn { width: 2.5rem; font-size: 1.25rem; }
+    }
+
+    /* --- Floating key island (touch devices with desktop tab bar, e.g. iPad) --- */
+    #key-island {
+      position: fixed; bottom: 1.5rem; left: 1.5rem; z-index: var(--z-bar);
+      display: flex; gap: 0.375rem; padding: 0.375rem;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+      touch-action: none; /* allow JS to handle touch drag */
+      user-select: none; -webkit-user-select: none;
+    }
+    .key-island-btn {
+      height: 2.25rem; padding: 0 0.875rem;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg-input); color: var(--text-muted);
+      font-size: 0.8125rem; font-family: var(--font-mono);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    .key-island-btn:active { background: var(--accent); color: var(--text); }
+    .key-island-icon { width: 2.25rem; padding: 0; font-size: 1.125rem; }
+
+    /* iPad/tablet with desktop tabs */
+    @media (pointer: coarse) and (min-width: 768px) {
+      /* Hide sidebar on tablet when showing desktop tabs */
+      #sidebar { display: none !important; }
+      #sidebar-backdrop { display: none !important; }
+      /* Close button always visible on touch (no hover) */
+      .tab-close { opacity: 0.6; }
+    }
+    /* Traffic light gap only in PWA/standalone mode */
+    @media (display-mode: standalone) and (pointer: coarse) and (min-width: 768px) {
+      #shortcut-bar { padding-left: 5rem; }
     }
 
     /* --- Shared modal --- */
@@ -592,7 +782,7 @@
     /* iPadOS Stage Manager: window controls overlay top-left corner */
     @supports (-webkit-touch-callout: none) {
       @media (pointer: coarse) {
-        :root { --bar-top-pad: 1rem; }
+        :root { --bar-top-pad: 1.5rem; }
         #sidebar-toolbar { height: calc(var(--height-btn-md) + var(--bar-top-pad)); padding-top: var(--bar-top-pad); }
         #sidebar.collapsed #sidebar-toolbar { padding-top: calc(var(--bar-top-pad) + 0.5rem); }
         #shortcut-bar { height: calc(var(--height-btn-md) + var(--bar-top-pad)); padding-top: var(--bar-top-pad); }
@@ -619,11 +809,11 @@
     .sidebar-p2p-dot {
       width: 8px; height: 8px; border-radius: 50%;
       background: var(--text-dim); flex-shrink: 0;
-      margin-left: auto;
+      margin-left: auto; transition: background 0.2s;
     }
     #sidebar.collapsed .sidebar-p2p-dot { margin-left: 0; }
+    .sidebar-p2p-dot.relay { background: var(--warning); }
     .sidebar-p2p-dot.connected { background: var(--success); }
-    .sidebar-p2p-dot.disconnected { background: var(--warning); }
     #sidebar-content {
       flex: 1; min-height: 0; overflow-y: auto; padding: 0.5rem 0.5rem 0.5rem;
     }
@@ -653,8 +843,8 @@
       pointer-events: none;
     }
     #sidebar.collapsed .session-card.active::after { color: var(--accent-active); }
-    /* --- Mobile/Tablet: sidebar as floating overlay (overlay breakpoint: 1024px) --- */
-    @media (max-width: 1023px) {
+    /* --- Mobile/Tablet: sidebar as floating overlay (device-based: coarse pointer) --- */
+    @media (pointer: coarse), (pointer: none) {
       #sidebar {
         position: fixed; top: calc(var(--height-btn-md) + var(--bar-top-pad, 0px)); left: 0; bottom: 0; z-index: 100;
         width: 280px; min-width: 280px;
@@ -695,7 +885,8 @@
       }
       #sidebar-backdrop.visible { display: block; }
     }
-    @media (min-width: 1024px) {
+    @media (pointer: fine) {
+      #sidebar { display: none !important; }
       #sidebar-backdrop { display: none !important; }
     }
 
@@ -1231,7 +1422,6 @@
     }
     .toast.visible { opacity: 1; }
     .toast.toast-error { border-color: var(--danger); color: var(--danger); }
-
     /* --- File Browser --- */
     #file-browser { display: none; flex: 1; min-height: 0; overflow: hidden; }
     #file-browser.active { display: flex; }
@@ -1559,6 +1749,6 @@
     </div>
   </div>
 
-  <script type="module" src="/app.js?v=37"></script>
+  <script type="module" src="/app.js?v=63"></script>
 </body>
 </html>

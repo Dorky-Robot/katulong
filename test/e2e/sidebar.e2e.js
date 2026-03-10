@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { waitForShellReady, waitForAppReady } from "./helpers.js";
 
-test.describe("Sidebar", () => {
+test.describe("Sidebar & Tab Bar", () => {
   // Helper: delete a session via API (best-effort cleanup)
   async function deleteSession(page, name) {
     await page.evaluate(
@@ -10,37 +10,15 @@ test.describe("Sidebar", () => {
     );
   }
 
-  // Helper: check if current viewport uses overlay sidebar (mobile/tablet)
+  // Helper: check if current viewport uses overlay sidebar (mobile only — tablet gets desktop tabs)
   function isOverlayViewport(testInfo) {
-    return testInfo.project.name === "mobile" || testInfo.project.name === "tablet";
+    return testInfo.project.name === "mobile";
   }
 
-  // Helper: open sidebar in a viewport-appropriate way
-  async function openSidebar(page, testInfo) {
-    if (isOverlayViewport(testInfo)) {
-      await page.locator("#shortcut-bar .session-btn").click();
-      await expect(page.locator("#sidebar")).toHaveClass(/mobile-open/);
-    } else {
-      const sidebar = page.locator("#sidebar");
-      if (await sidebar.evaluate((el) => el.classList.contains("collapsed"))) {
-        await page.locator("#sidebar-toggle").click();
-        await expect(sidebar).not.toHaveClass(/collapsed/);
-      }
-    }
-  }
-
-  // Helper: close sidebar in a viewport-appropriate way
-  async function closeSidebar(page, testInfo) {
-    if (isOverlayViewport(testInfo)) {
-      await page.locator("#sidebar-backdrop").click();
-      await expect(page.locator("#sidebar")).not.toHaveClass(/mobile-open/);
-    } else {
-      const sidebar = page.locator("#sidebar");
-      if (!await sidebar.evaluate((el) => el.classList.contains("collapsed"))) {
-        await page.locator("#sidebar-toggle").click();
-        await expect(sidebar).toHaveClass(/collapsed/);
-      }
-    }
+  // Helper: open sidebar on mobile/tablet
+  async function openSidebar(page) {
+    await page.locator("#shortcut-bar .session-btn").click();
+    await expect(page.locator("#sidebar")).toHaveClass(/mobile-open/);
   }
 
   test.describe("Layout", () => {
@@ -80,102 +58,232 @@ test.describe("Sidebar", () => {
       );
       expect(termRect.top).toBeGreaterThanOrEqual(barBottom - 1);
     });
-
-    test("on desktop, sidebar toolbar and shortcut bar are at the same vertical level", async ({ page }, testInfo) => {
-      if (isOverlayViewport(testInfo)) { test.skip(); return; }
-
-      await page.goto("/");
-      await waitForAppReady(page);
-
-      const sidebarToolbarTop = await page.locator("#sidebar-toolbar").evaluate(
-        (el) => el.getBoundingClientRect().top
-      );
-      const shortcutBarTop = await page.locator("#shortcut-bar").evaluate(
-        (el) => el.getBoundingClientRect().top
-      );
-      expect(Math.abs(sidebarToolbarTop - shortcutBarTop)).toBeLessThan(2);
-    });
   });
 
-  test.describe("Toggle (desktop)", () => {
+  test.describe("Desktop tab bar", () => {
     test.beforeEach(async ({}, testInfo) => {
       if (isOverlayViewport(testInfo)) test.skip();
     });
 
-    test("starts collapsed by default", async ({ page }) => {
+    test("sidebar is hidden on desktop", async ({ page }) => {
       await page.goto("/");
-      await page.evaluate(() => localStorage.removeItem("sidebar-collapsed"));
-      await page.reload();
       await waitForAppReady(page);
 
-      await expect(page.locator("#sidebar")).toHaveClass(/collapsed/);
+      const display = await page.locator("#sidebar").evaluate(
+        (el) => getComputedStyle(el).display
+      );
+      expect(display).toBe("none");
     });
 
-    test("chevron toggle expands and collapses", async ({ page }) => {
+    test("tab bar shows session tabs on desktop", async ({ page }) => {
       await page.goto("/");
       await waitForAppReady(page);
 
-      const sidebar = page.locator("#sidebar");
-      const toggle = page.locator("#sidebar-toggle");
+      const tabs = page.locator("#shortcut-bar .tab-bar-tab");
+      await expect(tabs.first()).toBeVisible({ timeout: 10000 });
 
-      await page.evaluate(() => localStorage.setItem("sidebar-collapsed", "1"));
-      await page.reload();
-      await waitForAppReady(page);
-      await expect(sidebar).toHaveClass(/collapsed/);
-
-      await toggle.click();
-      await expect(sidebar).not.toHaveClass(/collapsed/);
-      await expect(toggle.locator("i")).toHaveClass(/ph-caret-left/);
-
-      await toggle.click();
-      await expect(sidebar).toHaveClass(/collapsed/);
-      await expect(toggle.locator("i")).toHaveClass(/ph-caret-right/);
+      // Active tab should exist for current session
+      const activeTab = page.locator("#shortcut-bar .tab-bar-tab.active");
+      await expect(activeTab).toHaveCount(1);
     });
 
-    test("session button in shortcut bar toggles sidebar", async ({ page }) => {
+    test("tab bar shows new session + button", async ({ page }) => {
       await page.goto("/");
       await waitForAppReady(page);
 
-      const sidebar = page.locator("#sidebar");
-
-      await page.evaluate(() => localStorage.setItem("sidebar-collapsed", "1"));
-      await page.reload();
-      await waitForAppReady(page);
-      await expect(sidebar).toHaveClass(/collapsed/);
-
-      await page.locator("#shortcut-bar .session-btn").click();
-      await expect(sidebar).not.toHaveClass(/collapsed/);
-
-      await page.locator("#shortcut-bar .session-btn").click();
-      await expect(sidebar).toHaveClass(/collapsed/);
+      const addBtn = page.locator("#shortcut-bar .tab-bar-add");
+      await expect(addBtn).toBeVisible();
     });
 
-    test("collapsed state persists across reloads", async ({ page }) => {
+    test("tab bar shows utility buttons (files, settings)", async ({ page }) => {
       await page.goto("/");
       await waitForAppReady(page);
 
-      await page.locator("#sidebar-toggle").click();
-      await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
+      await expect(page.locator("#shortcut-bar .bar-utility-btn")).toHaveCount(3);
+    });
 
-      await page.reload();
+    test("clicking + button opens dropdown with New session", async ({ page }) => {
+      await page.goto("/");
       await waitForAppReady(page);
-      await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
 
-      await page.locator("#sidebar-toggle").click();
-      await expect(page.locator("#sidebar")).toHaveClass(/collapsed/);
+      await page.locator("#shortcut-bar .tab-bar-add").click();
 
-      await page.reload();
+      // Dropdown menu should appear with "New session" option
+      const menu = page.locator(".tab-context-menu");
+      await expect(menu).toBeVisible();
+      const newItem = menu.locator(".tab-menu-item", { hasText: "New session" });
+      await expect(newItem).toBeVisible();
+      await newItem.click();
+
+      await page.waitForFunction(
+        () => window.location.search.includes("s=session-"),
+        { timeout: 5000 }
+      );
+
+      const newName = new URL(page.url()).searchParams.get("s");
+      if (newName) await deleteSession(page, newName);
+    });
+
+    test("clicking a tab switches session", async ({ page }) => {
+      const sessionName = `tab-switch-${Date.now()}`;
+
+      // Create a second session
+      await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
       await waitForAppReady(page);
-      await expect(page.locator("#sidebar")).toHaveClass(/collapsed/);
+
+      // Go to default session
+      await page.goto("/?s=default");
+      await waitForAppReady(page);
+
+      // Wait for our test session tab to appear
+      const targetTab = page.locator(`#shortcut-bar .tab-bar-tab[data-session="${sessionName}"]`);
+      await expect(targetTab).toBeVisible({ timeout: 10000 });
+
+      // Click the test session tab
+      await targetTab.click();
+
+      await page.waitForURL(`**/?s=${encodeURIComponent(sessionName)}`, { timeout: 5000 });
+
+      await deleteSession(page, sessionName);
+    });
+
+    test("no Esc/Tab/keyboard buttons on desktop (touch-only)", async ({ page }) => {
+      await page.goto("/");
+      await waitForAppReady(page);
+
+      await expect(page.locator("#shortcut-bar .shortcut-btn")).toHaveCount(0);
+      await expect(page.locator("#shortcut-bar .bar-icon-btn")).toHaveCount(0);
+    });
+
+    test("tab close button visible on hover", async ({ page }) => {
+      await page.goto("/");
+      await waitForAppReady(page);
+
+      const tab = page.locator("#shortcut-bar .tab-bar-tab").first();
+      await expect(tab).toBeVisible({ timeout: 10000 });
+      await tab.hover();
+
+      const closeBtn = tab.locator(".tab-close");
+      await expect(closeBtn).toBeVisible();
+    });
+
+    test("terminal gets full width on desktop (no sidebar)", async ({ page }) => {
+      await page.goto("/");
+      await waitForAppReady(page);
+
+      const viewportWidth = page.viewportSize().width;
+      const mainStageWidth = await page.locator("#main-stage").evaluate(
+        (el) => el.getBoundingClientRect().width
+      );
+
+      expect(mainStageWidth).toBeGreaterThan(viewportWidth - 10);
     });
   });
 
-  test.describe("Session cards", () => {
-    test("shows current session card when sidebar is expanded", async ({ page }, testInfo) => {
+  test.describe("Mobile sidebar", () => {
+    test.beforeEach(async ({}, testInfo) => {
+      if (!isOverlayViewport(testInfo)) test.skip();
+    });
+
+    test("sidebar opens as overlay without pushing content", async ({ page }) => {
       await page.goto("/");
       await waitForAppReady(page);
 
-      await openSidebar(page, testInfo);
+      const widthBefore = await page.locator("#terminal-container").evaluate(
+        (el) => el.getBoundingClientRect().width
+      );
+
+      await openSidebar(page);
+
+      const sidebar = page.locator("#sidebar");
+      await expect(sidebar).toBeVisible();
+
+      const position = await sidebar.evaluate((el) => getComputedStyle(el).position);
+      expect(position).toBe("fixed");
+
+      const widthAfter = await page.locator("#terminal-container").evaluate(
+        (el) => el.getBoundingClientRect().width
+      );
+      expect(Math.abs(widthAfter - widthBefore)).toBeLessThan(5);
+    });
+
+    test("backdrop tap closes sidebar", async ({ page }) => {
+      await page.goto("/");
+      await waitForAppReady(page);
+
+      await openSidebar(page);
+
+      const backdrop = page.locator("#sidebar-backdrop");
+      await expect(backdrop).toHaveClass(/visible/);
+
+      await backdrop.click();
+      await expect(page.locator("#sidebar")).not.toHaveClass(/mobile-open/);
+    });
+
+    test("switching sessions closes sidebar", async ({ page }) => {
+      const sessionName = `responsive-switch-${Date.now()}`;
+
+      await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
+      await waitForAppReady(page);
+
+      await page.goto("/");
+      await waitForAppReady(page);
+
+      await openSidebar(page);
+
+      const card = page.locator(".session-card", {
+        has: page.getByLabel(`Session name: ${sessionName}`),
+      });
+      await expect(card).toBeVisible({ timeout: 10000 });
+      await card.click();
+
+      await expect(page.locator("#sidebar")).not.toHaveClass(/mobile-open/);
+      await page.waitForURL(`**/?s=${encodeURIComponent(sessionName)}`);
+
+      await deleteSession(page, sessionName);
+    });
+
+    test("sidebar does not consume space when closed", async ({ page }, testInfo) => {
+      if (testInfo.project.name !== "tablet") { test.skip(); return; }
+
+      await page.goto("/");
+      await waitForAppReady(page);
+
+      const viewportWidth = page.viewportSize().width;
+      const mainStageWidth = await page.locator("#main-stage").evaluate(
+        (el) => el.getBoundingClientRect().width
+      );
+
+      expect(mainStageWidth).toBeGreaterThan(viewportWidth - 10);
+    });
+
+    test("shortcut bar shows Esc/Tab buttons on mobile", async ({ page }) => {
+      await page.goto("/");
+      await waitForAppReady(page);
+
+      const shortcutBtns = page.locator("#shortcut-bar .shortcut-btn");
+      await expect(shortcutBtns).toHaveCount(2);
+    });
+
+    test("new session button visible in shortcut bar on mobile", async ({ page }) => {
+      await page.goto("/");
+      await waitForAppReady(page);
+
+      const btn = page.locator("#shortcut-bar .bar-new-session-btn");
+      await expect(btn).toBeVisible();
+    });
+  });
+
+  test.describe("Session cards (mobile)", () => {
+    test.beforeEach(async ({}, testInfo) => {
+      if (!isOverlayViewport(testInfo)) test.skip();
+    });
+
+    test("shows current session card when sidebar is open", async ({ page }) => {
+      await page.goto("/");
+      await waitForAppReady(page);
+
+      await openSidebar(page);
 
       const cards = page.locator(".session-card");
       await expect(cards.first()).toBeVisible({ timeout: 10000 });
@@ -183,13 +291,13 @@ test.describe("Sidebar", () => {
       await expect(activeCard).toBeVisible();
     });
 
-    test("session cards show terminal preview text", async ({ page }, testInfo) => {
+    test("session cards show terminal preview text", async ({ page }) => {
       const marker = `PREVIEW_MARKER_${Date.now()}`;
 
       await page.goto("/");
       await waitForAppReady(page);
 
-      await openSidebar(page, testInfo);
+      await openSidebar(page);
 
       await page.locator(".xterm-helper-textarea").focus();
       await page.keyboard.type(`echo ${marker}`);
@@ -205,265 +313,24 @@ test.describe("Sidebar", () => {
       await expect(preview).toContainText(marker, { timeout: 10000 });
     });
 
-    test("session card shows session name", async ({ page }, testInfo) => {
+    test("session card shows session name", async ({ page }) => {
       await page.goto("/");
       await waitForAppReady(page);
 
-      await openSidebar(page, testInfo);
+      await openSidebar(page);
 
       const name = page.locator(".session-card.active .session-card-name");
       await expect(name).toBeVisible({ timeout: 10000 });
       await expect(name).toHaveValue("default");
     });
-
-    test("multiple session cards appear for multiple sessions", async ({ page }, testInfo) => {
-      const sessionName = `sidebar-multi-${Date.now()}`;
-
-      await page.goto("/");
-      await waitForAppReady(page);
-      const existingCount = await page.evaluate(() =>
-        fetch("/sessions").then(r => r.json()).then(s => s.length)
-      );
-
-      await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
-      await waitForAppReady(page);
-
-      await page.goto("/");
-      await waitForAppReady(page);
-
-      await openSidebar(page, testInfo);
-
-      const cards = page.locator(".session-card");
-      const newCount = await cards.count();
-      expect(newCount).toBeGreaterThan(existingCount);
-
-      const activeCards = page.locator(".session-card.active");
-      await expect(activeCards).toHaveCount(1);
-
-      const newCard = page.locator(".session-card", {
-        has: page.getByLabel(`Session name: ${sessionName}`),
-      });
-      await expect(newCard).toBeVisible();
-
-      await deleteSession(page, sessionName);
-    });
-  });
-
-  test.describe("New session", () => {
-    test("+ button creates new session and switches to it", async ({ page }, testInfo) => {
-      await page.goto("/");
-      await waitForAppReady(page);
-
-      // On mobile/tablet, use the shortcut bar + button; on desktop, use sidebar +
-      if (isOverlayViewport(testInfo)) {
-        await page.locator("#shortcut-bar .bar-new-session-btn").click();
-      } else {
-        await openSidebar(page, testInfo);
-        await page.locator("#sidebar-add-btn").click();
-      }
-
-      await page.waitForFunction(
-        () => window.location.search.includes("s=session-"),
-        { timeout: 5000 }
-      );
-
-      const activeCard = page.locator(".session-card.active");
-      await expect(activeCard).toBeVisible();
-
-      const newName = new URL(page.url()).searchParams.get("s");
-      if (newName) await deleteSession(page, newName);
-    });
-
-    test("on desktop, + button expands sidebar if it was collapsed", async ({ page }, testInfo) => {
-      if (isOverlayViewport(testInfo)) { test.skip(); return; }
-
-      await page.goto("/");
-      await waitForAppReady(page);
-
-      await page.evaluate(() => localStorage.setItem("sidebar-collapsed", "1"));
-      await page.reload();
-      await waitForAppReady(page);
-      await expect(page.locator("#sidebar")).toHaveClass(/collapsed/);
-
-      await page.locator("#sidebar-add-btn").click();
-      await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/, { timeout: 5000 });
-
-      const newName = new URL(page.url()).searchParams.get("s");
-      if (newName && newName !== "default") await deleteSession(page, newName);
-    });
-  });
-
-  test.describe("Session switching", () => {
-    test("sidebar stays open when switching sessions via card click (desktop)", async ({ page }, testInfo) => {
-      if (isOverlayViewport(testInfo)) { test.skip(); return; }
-
-      const sessionName = `sidebar-switch-${Date.now()}`;
-
-      await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
-      await waitForAppReady(page);
-
-      await page.goto("/");
-      await waitForAppReady(page);
-
-      await openSidebar(page, testInfo);
-
-      const card = page.locator(".session-card", {
-        has: page.getByLabel(`Session name: ${sessionName}`),
-      });
-      await expect(card).toBeVisible({ timeout: 10000 });
-      await card.click();
-
-      await page.waitForURL(`**/?s=${encodeURIComponent(sessionName)}`);
-      await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
-      await expect(page.locator("#shortcut-bar .session-btn")).toContainText(sessionName);
-
-      await page.waitForSelector(".xterm-screen", { timeout: 5000 });
-
-      const activeCard = page.locator(".session-card.active");
-      await expect(activeCard).toBeVisible({ timeout: 10000 });
-      await expect(activeCard.locator(".session-card-name")).toHaveValue(sessionName);
-
-      await deleteSession(page, sessionName);
-    });
-
-    test("sidebar stays closed when it was closed before switching sessions", async ({ page }, testInfo) => {
-      if (isOverlayViewport(testInfo)) { test.skip(); return; }
-      const sessionName = `sidebar-closed-switch-${Date.now()}`;
-
-      await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
-      await waitForAppReady(page);
-
-      await page.goto("/");
-      await waitForAppReady(page);
-      await page.evaluate(() => localStorage.setItem("sidebar-collapsed", "1"));
-      await page.reload();
-      await waitForAppReady(page);
-      await expect(page.locator("#sidebar")).toHaveClass(/collapsed/);
-
-      await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
-      await waitForAppReady(page);
-
-      await expect(page.locator("#sidebar")).toHaveClass(/collapsed/);
-
-      await deleteSession(page, sessionName);
-    });
-  });
-
-  test.describe("Responsive", () => {
-    test("on mobile/tablet, sidebar opens as overlay without pushing content", async ({ page }, testInfo) => {
-      if (!isOverlayViewport(testInfo)) { test.skip(); return; }
-
-      await page.goto("/");
-      await waitForAppReady(page);
-
-      const widthBefore = await page.locator("#terminal-container").evaluate(
-        (el) => el.getBoundingClientRect().width
-      );
-
-      await page.locator("#shortcut-bar .session-btn").click();
-
-      const sidebar = page.locator("#sidebar");
-      await expect(sidebar).toBeVisible();
-
-      const position = await sidebar.evaluate((el) => getComputedStyle(el).position);
-      expect(position).toBe("fixed");
-
-      const widthAfter = await page.locator("#terminal-container").evaluate(
-        (el) => el.getBoundingClientRect().width
-      );
-      expect(Math.abs(widthAfter - widthBefore)).toBeLessThan(5);
-    });
-
-    test("on mobile/tablet, backdrop tap closes sidebar", async ({ page }, testInfo) => {
-      if (!isOverlayViewport(testInfo)) { test.skip(); return; }
-
-      await page.goto("/");
-      await waitForAppReady(page);
-
-      await page.locator("#shortcut-bar .session-btn").click();
-      await expect(page.locator("#sidebar")).toHaveClass(/mobile-open/);
-
-      const backdrop = page.locator("#sidebar-backdrop");
-      await expect(backdrop).toHaveClass(/visible/);
-
-      await backdrop.click();
-      await expect(page.locator("#sidebar")).not.toHaveClass(/mobile-open/);
-    });
-
-    test("on mobile/tablet, switching sessions closes sidebar", async ({ page }, testInfo) => {
-      if (!isOverlayViewport(testInfo)) { test.skip(); return; }
-
-      const sessionName = `responsive-switch-${Date.now()}`;
-
-      await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
-      await waitForAppReady(page);
-
-      await page.goto("/");
-      await waitForAppReady(page);
-
-      await page.locator("#shortcut-bar .session-btn").click();
-      await expect(page.locator("#sidebar")).toHaveClass(/mobile-open/);
-
-      const card = page.locator(".session-card", {
-        has: page.getByLabel(`Session name: ${sessionName}`),
-      });
-      await expect(card).toBeVisible({ timeout: 10000 });
-      await card.click();
-
-      await expect(page.locator("#sidebar")).not.toHaveClass(/mobile-open/);
-      await page.waitForURL(`**/?s=${encodeURIComponent(sessionName)}`);
-
-      await deleteSession(page, sessionName);
-    });
-
-    test("on tablet, sidebar does not consume space when closed", async ({ page }, testInfo) => {
-      if (testInfo.project.name !== "tablet") { test.skip(); return; }
-
-      await page.goto("/");
-      await waitForAppReady(page);
-
-      const viewportWidth = page.viewportSize().width;
-      const mainStageWidth = await page.locator("#main-stage").evaluate(
-        (el) => el.getBoundingClientRect().width
-      );
-
-      expect(mainStageWidth).toBeGreaterThan(viewportWidth - 10);
-    });
-
-    test("on desktop, sidebar is inline and takes space", async ({ page }, testInfo) => {
-      if (isOverlayViewport(testInfo)) { test.skip(); return; }
-
-      await page.goto("/");
-      await waitForAppReady(page);
-
-      const position = await page.locator("#sidebar").evaluate(
-        (el) => getComputedStyle(el).position
-      );
-      expect(position).not.toBe("fixed");
-
-      const sidebarWidth = await page.locator("#sidebar").evaluate(
-        (el) => el.getBoundingClientRect().width
-      );
-      expect(sidebarWidth).toBeCloseTo(56, -1);
-    });
-
-    test("on mobile/tablet, new session button visible in shortcut bar", async ({ page }, testInfo) => {
-      if (!isOverlayViewport(testInfo)) { test.skip(); return; }
-
-      await page.goto("/");
-      await waitForAppReady(page);
-
-      const btn = page.locator("#shortcut-bar .bar-new-session-btn");
-      await expect(btn).toBeVisible();
-    });
   });
 
   test.describe("Terminal interaction", () => {
-    test("terminal remains functional when sidebar is toggled", async ({ page }, testInfo) => {
+    test("terminal remains functional after interacting with bar", async ({ page }, testInfo) => {
       await page.goto("/");
       await waitForAppReady(page);
 
-      const marker = `TERM_SIDEBAR_${Date.now()}`;
+      const marker = `TERM_BAR_${Date.now()}`;
 
       await page.locator(".xterm-helper-textarea").focus();
       await page.keyboard.type(`echo ${marker}`);
@@ -475,11 +342,16 @@ test.describe("Sidebar", () => {
         { timeout: 5000 }
       );
 
-      await openSidebar(page, testInfo);
+      // On mobile, open/close sidebar; on desktop, just verify terminal still works
+      if (isOverlayViewport(testInfo)) {
+        await openSidebar(page);
+        await page.locator("#sidebar-backdrop").click();
+        await expect(page.locator("#sidebar")).not.toHaveClass(/mobile-open/);
+      }
 
       await expect(page.locator(".xterm-rows")).toContainText(marker);
 
-      const marker2 = `OPEN_${Date.now()}`;
+      const marker2 = `AFTER_${Date.now()}`;
       await page.locator(".xterm-helper-textarea").focus();
       await page.keyboard.type(`echo ${marker2}`);
       await page.keyboard.press("Enter");
@@ -489,33 +361,6 @@ test.describe("Sidebar", () => {
         marker2,
         { timeout: 5000 }
       );
-
-      await closeSidebar(page, testInfo);
-
-      await expect(page.locator(".xterm-rows")).toContainText(marker);
-      await expect(page.locator(".xterm-rows")).toContainText(marker2);
-    });
-
-    test("on desktop, terminal resizes when sidebar toggles", async ({ page }, testInfo) => {
-      if (isOverlayViewport(testInfo)) { test.skip(); return; }
-
-      await page.goto("/");
-      await waitForAppReady(page);
-
-      const collapsedWidth = await page.locator("#terminal-container").evaluate(
-        (el) => el.getBoundingClientRect().width
-      );
-
-      await page.locator("#sidebar-toggle").click();
-      await expect(page.locator("#sidebar")).not.toHaveClass(/collapsed/);
-
-      await page.waitForTimeout(300);
-
-      const expandedWidth = await page.locator("#terminal-container").evaluate(
-        (el) => el.getBoundingClientRect().width
-      );
-
-      expect(expandedWidth).toBeLessThan(collapsedWidth);
     });
   });
 });

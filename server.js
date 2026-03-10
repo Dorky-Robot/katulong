@@ -54,10 +54,6 @@ const authRateLimit = rateLimit(10, 60000, (req) => {
   return `${addr}:${ua}:${origin}`;
 });
 
-if (envConfig.noAuth) {
-  log.warn("WARNING: KATULONG_NO_AUTH=1 — authentication is DISABLED. All requests are treated as authenticated. Do NOT use this in production or on untrusted networks.");
-}
-
 // --- Constants ---
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -82,10 +78,6 @@ const credentialLockout = new CredentialLockout({
 });
 
 function isAuthenticated(req) {
-  if (envConfig.noAuth) {
-    log.debug("Auth bypassed: KATULONG_NO_AUTH=1");
-    return true;
-  }
   if (isLocalRequest(req)) {
     log.debug("Auth bypassed: localhost", { ip: req.socket.remoteAddress });
     return true;
@@ -208,7 +200,7 @@ async function handleRequest(req, res) {
 
   // Refresh session activity for authenticated requests (sliding expiry)
   // Skip for localhost (auto-authenticated) and public paths
-  if (!isPublicPath(pathname) && !isLocalRequest(req) && !envConfig.noAuth) {
+  if (!isPublicPath(pathname) && !isLocalRequest(req)) {
     const cookies = parseCookies(req.headers.cookie);
     const token = cookies.get("katulong_session");
     if (token) {
