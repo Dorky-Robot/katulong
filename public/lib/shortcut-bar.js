@@ -18,6 +18,9 @@ const DESKTOP_MQ = "(pointer: fine)";
 const TABLET_MQ = "(pointer: coarse) and (min-width: 768px)";
 const DRAG_OUT_THRESHOLD = 60; // px below bar to trigger tear-off
 const DRAG_DEAD_ZONE = 5; // px before drag starts
+const LONG_PRESS_MS = 300; // ms before touch becomes drag
+const SCROLL_EDGE_PX = 40; // px from edge to trigger auto-scroll
+const SCROLL_SPEED = 8; // px per frame during auto-scroll
 
 /**
  * Create shortcut bar renderer
@@ -169,9 +172,13 @@ export function createShortcutBar(options = {}) {
     const savedWindowId = sessionStorage.getItem("katulong-window-id");
     sessionStorage.setItem("katulong-window-tabs", JSON.stringify([name]));
     sessionStorage.removeItem("katulong-window-id");
-    window.open(url, "_blank", "width=900,height=600");
-    if (savedTabs) sessionStorage.setItem("katulong-window-tabs", savedTabs);
-    if (savedWindowId) sessionStorage.setItem("katulong-window-id", savedWindowId);
+    try {
+      window.open(url, "_blank", "width=900,height=600");
+    } finally {
+      if (savedTabs) sessionStorage.setItem("katulong-window-tabs", savedTabs);
+      else sessionStorage.removeItem("katulong-window-tabs");
+      if (savedWindowId) sessionStorage.setItem("katulong-window-id", savedWindowId);
+    }
   }
 
   // ── Tab actions ────────────────────────────────────────────────────
@@ -364,20 +371,36 @@ export function createShortcutBar(options = {}) {
   function onTabTouchStart(e, tab, name) {
     if (e.target.closest(".tab-close")) return;
 
-    // Claim the touch immediately so Safari doesn't start page scrolling.
-    // Taps still work — we fire onTabClick in onEnd if there was no movement.
-    e.preventDefault();
-
-    const touch = e.touches[0];
-    const startX = touch.clientX;
-    const startY = touch.clientY;
+    // Long-press to drag: short touches allow native horizontal scroll of the tab area.
+    // After LONG_PRESS_MS without significant movement, we enter drag mode.
+    const initialTouch = e.touches[0];
+    const startX = initialTouch.clientX;
+    const startY = initialTouch.clientY;
+    let longPressed = false;
     let started = false;
+    let cancelled = false;
+
+    const longPressTimer = setTimeout(() => {
+      longPressed = true;
+      tab.classList.add("tab-long-press");
+    }, LONG_PRESS_MS);
 
     const onMove = (te) => {
-      const t = te.touches[0];
-      const dx = t.clientX - startX;
-      const dy = t.clientY - startY;
+      const touch = te.touches[0];
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
 
+      if (!longPressed) {
+        // Movement before long press — cancel drag, allow native scroll
+        if (Math.abs(dx) > DRAG_DEAD_ZONE || Math.abs(dy) > DRAG_DEAD_ZONE) {
+          clearTimeout(longPressTimer);
+          cancelled = true;
+          cleanup();
+        }
+        return;
+      }
+
+      // Long press active — enter drag mode
       if (!started) {
         if (Math.abs(dx) < DRAG_DEAD_ZONE && Math.abs(dy) < DRAG_DEAD_ZONE) return;
         started = true;
@@ -385,11 +408,15 @@ export function createShortcutBar(options = {}) {
       }
 
       te.preventDefault();
-      updateDrag(t.clientX, t.clientY);
+      updateDrag(touch.clientX, touch.clientY);
     };
 
     const onEnd = () => {
+      clearTimeout(longPressTimer);
+      tab.classList.remove("tab-long-press");
       cleanup();
+
+      if (cancelled) return;
 
       if (!started) {
         if (name !== currentSessionName && onTabClick) onTabClick(name);
@@ -413,6 +440,8 @@ export function createShortcutBar(options = {}) {
   function beginDrag(tab, name, startX, fromTouch) {
     const tabs = [...container.querySelectorAll(".tab-bar-tab")];
     const dragIndex = tabs.indexOf(tab);
+    if (dragIndex === -1) return; // tab removed from DOM between touchstart and drag
+    const scrollArea = container.querySelector(".tab-scroll-area");
 
     const rects = tabs.map(t => {
       const r = t.getBoundingClientRect();
@@ -439,15 +468,37 @@ export function createShortcutBar(options = {}) {
       grabOffset,
       tornOff: false,
       isTouch: !!fromTouch,
+      scrollArea,
     };
   }
 
   function updateDrag(cx, cy) {
     if (!drag) return;
-    const { ghost, tabs, rects, dragIndex, grabOffset } = drag;
+    const { ghost, tabs, dragIndex, grabOffset, scrollArea } = drag;
 
     ghost.style.left = (cx - grabOffset) + "px";
     ghost.style.top = (cy - ghost.offsetHeight / 2) + "px";
+
+    // Auto-scroll the tab area when dragging near edges (throttled to ~60fps)
+    if (scrollArea) {
+      const now = performance.now();
+      const scrollRect = scrollArea.getBoundingClientRect();
+      if (now - (drag.lastScrollTime || 0) > 16) {
+        if (cx < scrollRect.left + SCROLL_EDGE_PX) {
+          scrollArea.scrollLeft -= SCROLL_SPEED;
+          drag.lastScrollTime = now;
+        } else if (cx > scrollRect.right - SCROLL_EDGE_PX) {
+          scrollArea.scrollLeft += SCROLL_SPEED;
+          drag.lastScrollTime = now;
+        }
+      }
+    }
+
+    // Refresh rects — auto-scroll shifts tab positions
+    const rects = tabs.map(t => {
+      const r = t.getBoundingClientRect();
+      return { left: r.left, width: r.width, center: r.left + r.width / 2 };
+    });
 
     const barRect = container.getBoundingClientRect();
     // Tear-off only for mouse — touch can't open new windows (Safari blocks popups)
@@ -496,7 +547,8 @@ export function createShortcutBar(options = {}) {
   }
 
   function getGap() {
-    return parseFloat(getComputedStyle(container).gap) || 0;
+    const area = drag?.scrollArea || container;
+    return parseFloat(getComputedStyle(area).gap) || 0;
   }
 
   function endDrag() {
@@ -532,6 +584,10 @@ export function createShortcutBar(options = {}) {
   // ── Render ─────────────────────────────────────────────────────────
 
   function renderDesktopTabs(sessionName, sessions) {
+
+    // Scrollable tab area
+    const tabScroll = document.createElement("div");
+    tabScroll.className = "tab-scroll-area";
 
     // Session tabs
     for (const s of sessions) {
@@ -570,8 +626,16 @@ export function createShortcutBar(options = {}) {
       tab.addEventListener("mousedown", (e) => onTabMouseDown(e, tab, s.name));
       tab.addEventListener("touchstart", (e) => onTabTouchStart(e, tab, s.name), { passive: false });
 
-      container.appendChild(tab);
+      tabScroll.appendChild(tab);
     }
+
+    container.appendChild(tabScroll);
+
+    // Scroll active tab into view
+    requestAnimationFrame(() => {
+      const activeTab = tabScroll.querySelector(".tab-bar-tab.active");
+      if (activeTab) activeTab.scrollIntoView({ inline: "nearest", block: "nearest" });
+    });
 
     // New session + button (dropdown if unmanaged sessions exist)
     const addBtn = document.createElement("button");
@@ -581,11 +645,6 @@ export function createShortcutBar(options = {}) {
     addBtn.innerHTML = '<i class="ph ph-plus-circle"></i>';
     addBtn.addEventListener("click", () => showAddMenu(addBtn));
     container.appendChild(addBtn);
-
-    // Spacer
-    const spacer = document.createElement("span");
-    spacer.className = "bar-spacer";
-    container.appendChild(spacer);
 
     // Utility buttons: Files
     if (onFilesClick) {
@@ -693,6 +752,14 @@ export function createShortcutBar(options = {}) {
   function render(sessionName) {
     if (!container) return;
     currentSessionName = sessionName;
+
+    // Abort any in-flight drag before wiping the DOM
+    if (drag) {
+      drag.ghost.remove();
+      drag.tab.classList.remove("tab-dragging");
+      drag.tabs.forEach(t => { t.style.transition = ""; t.style.transform = ""; });
+      drag = null;
+    }
 
     container.innerHTML = "";
     document.getElementById("key-island")?.remove();
