@@ -32,7 +32,15 @@ export function createViewportManager(options = {}) {
       // In Chromium mobile emulation (isMobile: true), vv.height can be 0 during
       // initial JS module execution before the visual viewport is fully initialised.
       // Fall back to window.innerHeight so the terminal container gets a valid height.
-      const h = (vv && vv.height > 0) ? vv.height : window.innerHeight;
+      const vvH = (vv && vv.height > 0) ? vv.height : window.innerHeight;
+      const innerH = window.innerHeight;
+      // Only override layout height when a keyboard or similar input is shrinking
+      // the visual viewport (vv.height significantly less than innerHeight).
+      // Otherwise let CSS 100dvh handle layout — this avoids a gap on iPad
+      // where the floating toolbar reduces visualViewport.height but the app
+      // should still fill the full screen.
+      const keyboardOpen = innerH - vvH > 100;
+      const h = keyboardOpen ? vvH : innerH;
       const layoutHeight = h + "px";
       if (appLayout) {
         appLayout.style.height = layoutHeight;

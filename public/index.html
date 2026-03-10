@@ -2,7 +2,7 @@
 <html lang="en" data-theme="auto">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1e1e2e">
@@ -82,7 +82,7 @@
     /* --- Reset & base --- */
     * { margin: 0; padding: 0; box-sizing: border-box; }
     button, input { font-family: inherit; }
-    html, body { height: 100%; background: var(--bg); overflow: hidden; color: var(--text); font-family: var(--font-mono); }
+    html, body { height: 100dvh; background: var(--bg); overflow: hidden; color: var(--text); font-family: var(--font-mono); }
 
     /* --- Focus & motion --- */
     :focus-visible {
@@ -233,7 +233,7 @@
 
     /* --- Scroll to bottom --- */
     #scroll-bottom {
-      position: fixed; bottom: 1rem; left: 1rem; z-index: 10;
+      position: fixed; bottom: calc(1rem + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); z-index: 10;
       width: 2.5rem; height: 2.5rem; border-radius: 50%; border: none;
       background: var(--overlay-bg); color: var(--text); font-size: 1.25rem;
       cursor: pointer; display: none; align-items: center; justify-content: center;
