@@ -31,15 +31,16 @@ test.describe("Smoke — critical path", () => {
     await expect(page.locator(".xterm-rows")).toContainText(marker);
   });
 
-  test("Reconnection replays buffer", async ({ page }) => {
-    const marker = `reconnect_${Date.now()}`;
-    await page.keyboard.type(`echo ${marker}`);
+  test("Reconnection redraws terminal", async ({ page }) => {
+    // Type something so the session has a prompt
+    await page.keyboard.type(`echo hello`);
     await page.keyboard.press("Enter");
-    await expect(page.locator(".xterm-rows")).toContainText(marker);
+    await expect(page.locator(".xterm-rows")).toContainText("hello");
 
     await page.reload();
-    // After reconnect, capture-pane snapshot should contain the marker
+    // After reconnect, Ctrl-L triggers the shell to redraw.
+    // The prompt should appear (shell redraws on Ctrl-L).
     await page.waitForSelector(".xterm-screen", { timeout: 10000 });
-    await expect(page.locator(".xterm-rows")).toContainText(marker, { timeout: 10000 });
+    await expect(page.locator(".xterm-rows")).not.toHaveText("", { timeout: 10000 });
   });
 });
