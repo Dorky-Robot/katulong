@@ -3,8 +3,9 @@
 #
 # Hook chain:
 #   1. Secrets scan   (gitleaks — BLOCKING)
-#   2. Spell check    (typos — BLOCKING)
-#   3. Targeted tests (mapped from staged files — BLOCKING)
+#   2. Auth bypass scan (grep — BLOCKING)
+#   3. Spell check    (typos — BLOCKING)
+#   4. Targeted tests (mapped from staged files — BLOCKING)
 #
 # Activate once per clone:
 #   git config core.hooksPath .husky
@@ -29,7 +30,7 @@ echo "  pre-commit checks"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # ── 1. Secrets scan (BLOCKING) ────────────────────────────────────────────────
-step "[1/3] Secrets scan"
+step "[1/4] Secrets scan"
 SCRIPT_DIR="$(cd "$(dirname "$0")/../scripts" && pwd)"
 . "$SCRIPT_DIR/secrets-scan.sh"
 if ! scan_secrets "pre-commit"; then
@@ -37,8 +38,31 @@ if ! scan_secrets "pre-commit"; then
 fi
 echo "      OK  No secrets detected"
 
-# ── 2. Spell check (BLOCKING) ────────────────────────────────────────────────
-step "[2/3] Spell check (typos)"
+# ── 2. Auth bypass scan (BLOCKING) ────────────────────────────────────────────
+# Katulong provides direct terminal access to the host. Any mechanism to disable
+# auth is equivalent to giving root shell access to anyone on the internet.
+# This check blocks any attempt to reintroduce auth bypass patterns.
+step "[2/4] Auth bypass scan"
+AUTH_BYPASS_PATTERNS='NO_AUTH|SKIP_AUTH|DISABLE_AUTH|AUTH_DISABLED|BYPASS_AUTH|AUTH_BYPASS'
+# Only scan source files, not test files or docs (tests may reference removed patterns)
+AUTH_BYPASS_HITS=$(git diff --cached -U0 --diff-filter=ACMR -- 'lib/*.js' 'server.js' 'public/*.js' 'public/lib/*.js' \
+  | grep -E '^\+' | grep -v '^\+\+\+' \
+  | grep -iE "$AUTH_BYPASS_PATTERNS" || true)
+if [ -n "$AUTH_BYPASS_HITS" ]; then
+  echo ""
+  echo "  BLOCKED: Auth bypass pattern detected in staged changes:"
+  echo "$AUTH_BYPASS_HITS"
+  echo ""
+  echo "  Katulong MUST always require authentication. There is no valid"
+  echo "  reason to add a way to disable auth — this app provides direct"
+  echo "  terminal access to the host machine."
+  echo ""
+  fail "Auth bypass pattern detected — commit blocked."
+fi
+echo "      OK  No auth bypass patterns"
+
+# ── 3. Spell check (BLOCKING) ────────────────────────────────────────────────
+step "[3/4] Spell check (typos)"
 if command -v typos >/dev/null 2>&1; then
   if ! typos --format brief; then
     fail "Spelling errors found — commit blocked. Fix typos or add to _typos.toml to ignore."
@@ -49,8 +73,8 @@ else
   warn "Install: cargo install typos-cli  OR  brew install typos-cli"
 fi
 
-# ── 3. Targeted tests (BLOCKING) ─────────────────────────────────────────────
-step "[3/3] Targeted tests (mapped from staged files)"
+# ── 4. Targeted tests (BLOCKING) ─────────────────────────────────────────────
+step "[4/4] Targeted tests (mapped from staged files)"
 
 map_to_test() {
   case "$1" in

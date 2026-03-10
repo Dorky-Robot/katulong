@@ -69,7 +69,8 @@ This ensures:
 
 **This application provides direct terminal access to the host.** Every code change must be reviewed with this in mind.
 
-### Authentication
+### Authentication is MANDATORY — never add a way to disable it
+- **NEVER add env vars, flags, config options, or any mechanism to disable or bypass authentication.** This app gives direct shell access to the host — disabling auth is equivalent to giving root access to anyone on the internet. This includes but is not limited to: `NO_AUTH`, `SKIP_AUTH`, `DISABLE_AUTH`, `AUTH_BYPASS`, or any similar pattern. The pre-commit hook will block any such attempt.
 - First device registers via WebAuthn (passkey). Subsequent devices register via setup token + WebAuthn.
 - Localhost requests (`127.0.0.1`, `::1`) bypass auth (auto-authenticated).
 - Remote requests via tunnel require a valid `katulong_session` cookie.
