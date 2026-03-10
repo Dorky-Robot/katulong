@@ -436,6 +436,7 @@ export function createShortcutBar(options = {}) {
   function beginDrag(tab, name, startX, fromTouch) {
     const tabs = [...container.querySelectorAll(".tab-bar-tab")];
     const dragIndex = tabs.indexOf(tab);
+    if (dragIndex === -1) return; // tab removed from DOM between touchstart and drag
     const scrollArea = container.querySelector(".tab-scroll-area");
 
     const rects = tabs.map(t => {
@@ -474,13 +475,18 @@ export function createShortcutBar(options = {}) {
     ghost.style.left = (cx - grabOffset) + "px";
     ghost.style.top = (cy - ghost.offsetHeight / 2) + "px";
 
-    // Auto-scroll the tab area when dragging near edges
+    // Auto-scroll the tab area when dragging near edges (throttled to ~60fps)
     if (scrollArea) {
+      const now = performance.now();
       const scrollRect = scrollArea.getBoundingClientRect();
-      if (cx < scrollRect.left + SCROLL_EDGE_PX) {
-        scrollArea.scrollLeft -= SCROLL_SPEED;
-      } else if (cx > scrollRect.right - SCROLL_EDGE_PX) {
-        scrollArea.scrollLeft += SCROLL_SPEED;
+      if (now - (drag.lastScrollTime || 0) > 16) {
+        if (cx < scrollRect.left + SCROLL_EDGE_PX) {
+          scrollArea.scrollLeft -= SCROLL_SPEED;
+          drag.lastScrollTime = now;
+        } else if (cx > scrollRect.right - SCROLL_EDGE_PX) {
+          scrollArea.scrollLeft += SCROLL_SPEED;
+          drag.lastScrollTime = now;
+        }
       }
     }
 
@@ -743,6 +749,14 @@ export function createShortcutBar(options = {}) {
   function render(sessionName) {
     if (!container) return;
     currentSessionName = sessionName;
+
+    // Abort any in-flight drag before wiping the DOM
+    if (drag) {
+      drag.ghost.remove();
+      drag.tab.classList.remove("tab-dragging");
+      drag.tabs.forEach(t => { t.style.transition = ""; t.style.transform = ""; });
+      drag = null;
+    }
 
     container.innerHTML = "";
     document.getElementById("key-island")?.remove();
