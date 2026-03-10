@@ -294,6 +294,7 @@ export function createShortcutBar(options = {}) {
             api.delete(`/sessions/${encodeURIComponent(s.name)}`).then(() => {
               if (windowTabSet) windowTabSet.onSessionKilled(s.name);
               if (sessionStore) invalidateSessions(sessionStore, currentSessionName);
+              if (s.name === currentSessionName) navigateAfterRemoval(s.name, 0);
             }).catch(err => console.error("[Session] Kill failed:", err));
           },
         });
