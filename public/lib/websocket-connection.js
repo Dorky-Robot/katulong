@@ -158,8 +158,11 @@ export function createWebSocketConnection(deps = {}) {
       case 'terminalReset':
         term.clear();
         term.reset();
-        // Scroll to bottom after the deferred resize-triggered redraw arrives
-        setTimeout(() => scrollToBottom(term), 200);
+        // Scroll to bottom after the deferred resize-triggered redraw arrives.
+        // TUI apps like Claude Code take variable time to redraw, so we
+        // schedule multiple scroll attempts to catch the content.
+        setTimeout(() => scrollToBottom(term), 300);
+        setTimeout(() => scrollToBottom(term), 800);
         break;
       case 'terminalWrite':
         if (effect.preserveScroll) {
