@@ -1,17 +1,11 @@
-    import { Terminal } from "/vendor/xterm/xterm.esm.js";
-    import { FitAddon } from "/vendor/xterm/addon-fit.esm.js";
-    import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
-    import { WebglAddon } from "/vendor/xterm/addon-webgl.esm.js";
-    import { SearchAddon } from "/vendor/xterm/addon-search.esm.js";
-    import { ClipboardAddon } from "/vendor/xterm/addon-clipboard.esm.js";
     import { ModalRegistry } from "/lib/modal.js";
+    import { createTerminalPool } from "/lib/terminal-pool.js";
     import {
       createSessionStore, invalidateSessions,
       createTokenStore, setNewToken, invalidateTokens, removeToken, loadTokens as reloadTokens,
       createShortcutsStore, loadShortcuts as reloadShortcuts,
     } from "/lib/stores.js";
     import { createSessionListComponent, updateSnapshot } from "/lib/session-list-component.js";
-    import { createTmuxBrowserComponent } from "/lib/tmux-browser-component.js";
     import { api } from "/lib/api-client.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
     import { createTokenFormManager } from "/lib/token-form.js";
@@ -46,8 +40,10 @@
     // --- Theme (using composable theme manager) ---
     const themeManager = createThemeManager({
       onThemeChange: (themeData) => {
-        withPreservedScroll(term, () => {
-          term.options.theme = themeData;
+        terminalPool.forEach((name, entry) => {
+          withPreservedScroll(entry.term, () => {
+            entry.term.options.theme = themeData;
+          });
         });
       }
     });
@@ -132,7 +128,8 @@
         try {
           const msg = JSON.parse(str);
           if (msg.type === "output") {
-            term.write(msg.data);
+            const active = terminalPool.getActive();
+            if (active) active.term.write(msg.data);
           }
         } catch {
           // ignore malformed P2P data
@@ -161,42 +158,70 @@
 
     document.title = state.session.name;
 
-    // --- Terminal setup ---
+    // --- Terminal pool ---
+    // One xterm.js Terminal per managed session, visibility-toggled on switch.
 
-    const term = new Terminal({
-      fontSize: 14,
-      fontFamily: "'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace",
-      theme: themeManager.getEffective() === "light" ? LIGHT_THEME : DARK_THEME,
-      cursorBlink: true,
-      scrollback: 10000,
-      convertEol: true,
-      macOptionIsMeta: true,
-      minimumContrastRatio: 4.5,
-      cursorInactiveStyle: 'outline',
-      rightClickSelectsWord: true,
-      rescaleOverlappingGlyphs: true,
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.loadAddon(new WebLinksAddon());
-    const searchAddon = new SearchAddon();
-    term.loadAddon(searchAddon);
-    term.loadAddon(new ClipboardAddon());
-    term.open(document.getElementById("terminal-container"));
+    const terminalPool = createTerminalPool({
+      parentEl: document.getElementById("terminal-container"),
+      terminalOptions: {
+        fontSize: 14,
+        fontFamily: "'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace",
+        theme: themeManager.getEffective() === "light" ? LIGHT_THEME : DARK_THEME,
+        cursorBlink: true,
+        scrollback: 10000,
+        convertEol: true,
+        macOptionIsMeta: true,
+        minimumContrastRatio: 4.5,
+        cursorInactiveStyle: 'outline',
+        rightClickSelectsWord: true,
+        rescaleOverlappingGlyphs: true,
+      },
+      onTerminalCreated: (sessionName, entry) => {
+        // Wire up keyboard handler for each new terminal
+        // Uses late-bound rawSend — safe because onTerminalCreated is only
+        // called from activate() which first runs after rawSend is defined.
+        const kb = createTerminalKeyboard({
+          term: entry.term,
+          onSend: (data) => rawSend(data),
+          onToggleSearch: toggleSearchBar
+        });
+        kb.init();
 
-    // WebGL renderer (GPU-accelerated) with graceful fallback.
-    // Only loads when a real GPU is available — skips software renderers
-    // (SwiftShader in headless browsers) that break xterm's DOM rendering.
-    try {
-      const testCanvas = document.createElement("canvas");
-      const gl = testCanvas.getContext("webgl2", { failIfMajorPerformanceCaveat: true });
-      if (gl) {
-        const webgl = new WebglAddon();
-        webgl.onContextLoss(() => webgl.dispose());
-        term.loadAddon(webgl);
+        // Terminal preview snapshots (throttled per-terminal)
+        // Read entry.sessionName dynamically so renames are reflected
+        let lastSnapshotTime = 0;
+        let timer = null;
+        entry.term.onRender(() => {
+          const now = Date.now();
+          const elapsed = now - lastSnapshotTime;
+          if (elapsed < 3000) {
+            if (!timer) {
+              timer = setTimeout(() => {
+                timer = null;
+                lastSnapshotTime = Date.now();
+                updateSnapshot(entry.sessionName, entry.term);
+              }, 3000 - elapsed);
+            }
+            return;
+          }
+          if (timer) { clearTimeout(timer); timer = null; }
+          lastSnapshotTime = now;
+          updateSnapshot(entry.sessionName, entry.term);
+        });
       }
-    } catch {
-      console.warn("WebGL renderer unavailable, using default canvas renderer");
+    });
+
+    // Convenience accessors — always reference the active terminal
+    const getTerm = () => terminalPool.getActive()?.term;
+    const getFit = () => terminalPool.getActive()?.fit;
+    const getSearchAddon = () => terminalPool.getActive()?.searchAddon;
+
+    /** Fit the active terminal after a visibility change (e.g. closing file browser/port forward) */
+    function fitActiveTerminal() {
+      requestAnimationFrame(() => {
+        const active = terminalPool.getActive();
+        if (active) withPreservedScroll(active.term, () => active.fit.fit());
+      });
     }
 
     // --- Search bar ---
@@ -211,16 +236,16 @@
         searchInput.select();
       } else {
         searchInput.value = "";
-        searchAddon.clearDecorations();
-        term.focus();
+        getSearchAddon()?.clearDecorations();
+        getTerm()?.focus();
       }
     }
 
     searchInput.addEventListener("input", () => {
       if (searchInput.value) {
-        searchAddon.findNext(searchInput.value);
+        getSearchAddon()?.findNext(searchInput.value);
       } else {
-        searchAddon.clearDecorations();
+        getSearchAddon()?.clearDecorations();
       }
     });
     searchInput.addEventListener("keydown", (ev) => {
@@ -229,55 +254,55 @@
         ev.preventDefault();
       } else if (ev.key === "Enter") {
         if (ev.shiftKey) {
-          searchAddon.findPrevious(searchInput.value);
+          getSearchAddon()?.findPrevious(searchInput.value);
         } else {
-          searchAddon.findNext(searchInput.value);
+          getSearchAddon()?.findNext(searchInput.value);
         }
         ev.preventDefault();
       }
     });
     searchClose.addEventListener("click", toggleSearchBar);
 
-    // Initialize modals with terminal reference
+    // Initialize modals — use getters so focus goes to whichever terminal is active
     modals.register('shortcuts', 'shortcuts-overlay', {
-      returnFocus: term,
-      onClose: () => term.focus()
+      get returnFocus() { return getTerm(); },
+      onClose: () => getTerm()?.focus()
     });
     modals.register('edit', 'edit-overlay', {
-      returnFocus: term,
-      onClose: () => term.focus()
+      get returnFocus() { return getTerm(); },
+      onClose: () => getTerm()?.focus()
     });
     modals.register('add', 'add-modal', {
-      returnFocus: term,
+      get returnFocus() { return getTerm(); },
       onOpen: () => {
         const keyInput = document.getElementById("key-composer-input");
         if (keyInput) keyInput.focus();
       },
-      onClose: () => term.focus()
+      onClose: () => getTerm()?.focus()
     });
-    // Session sidebar (no longer a modal)
     modals.register('dictation', 'dictation-overlay', {
-      returnFocus: term,
-      onClose: () => term.focus()
+      get returnFocus() { return getTerm(); },
+      onClose: () => getTerm()?.focus()
     });
     modals.register('settings', 'settings-overlay', {
-      returnFocus: term,
-      onClose: () => term.focus()
+      get returnFocus() { return getTerm(); },
+      onClose: () => getTerm()?.focus()
     });
 
-    // Disable mobile autocorrect/suggestions on xterm's hidden textarea
+    // Patch mobile autocorrect on all terminal textareas (pool creates them dynamically)
     function patchTextarea() {
-      const ta = document.querySelector(".xterm-helper-textarea");
-      if (!ta || ta._patched) return;
-      ta._patched = true;
-      ta.setAttribute("autocorrect", "off");
-      ta.setAttribute("autocapitalize", "none");
-      ta.setAttribute("autocomplete", "new-password");
-      ta.setAttribute("spellcheck", "false");
-      ta.autocomplete = "new-password";
-      ta.autocapitalize = "none";
-      ta.spellcheck = false;
-      ta.addEventListener("compositionstart", (e) => e.preventDefault());
+      document.querySelectorAll(".xterm-helper-textarea").forEach(ta => {
+        if (ta._patched) return;
+        ta._patched = true;
+        ta.setAttribute("autocorrect", "off");
+        ta.setAttribute("autocapitalize", "none");
+        ta.setAttribute("autocomplete", "new-password");
+        ta.setAttribute("spellcheck", "false");
+        ta.autocomplete = "new-password";
+        ta.autocapitalize = "none";
+        ta.spellcheck = false;
+        ta.addEventListener("compositionstart", (e) => e.preventDefault());
+      });
     }
     patchTextarea();
     new MutationObserver(patchTextarea).observe(
@@ -285,9 +310,11 @@
       { childList: true, subtree: true }
     );
     document.fonts.ready.then(() => {
-      withPreservedScroll(term, () => fit.fit());
-      // Ensure we start at bottom on initial page load
-      scrollToBottom(term);
+      const active = terminalPool.getActive();
+      if (active) {
+        withPreservedScroll(active.term, () => active.fit.fit());
+        scrollToBottom(active.term);
+      }
     });
 
     applyTheme(localStorage.getItem("theme") || "auto");
@@ -305,15 +332,8 @@
 
     const rawSend = (data) => inputSender.send(data);
 
-    // Initialize terminal keyboard handlers
-    const terminalKeyboard = createTerminalKeyboard({
-      term,
-      onSend: rawSend,
-      onToggleSearch: toggleSearchBar
-    });
-    terminalKeyboard.init();
-
-    // WebSocket connection setup moved to after all dependencies are initialized (see before Boot section)
+    // Create the initial terminal now that rawSend is available
+    terminalPool.activate(state.session.name);
 
     // --- Layout ---
 
@@ -412,15 +432,6 @@
       sessionListComponent.mount(sessionListEl);
     }
 
-    // tmux session browser
-    const tmuxBrowserEl = document.getElementById("tmux-browser");
-    if (tmuxBrowserEl) {
-      const tmuxBrowser = createTmuxBrowserComponent(sessionStore, {
-        onSessionSwitch: (name) => switchSession(name)
-      });
-      tmuxBrowser.mount(tmuxBrowserEl);
-    }
-
     // --- Sidebar toggle ---
     const sidebar = document.getElementById("sidebar");
     const sidebarToggleBtn = document.getElementById("sidebar-toggle");
@@ -503,23 +514,36 @@
 
     // --- Session switching (no page reload) ---
     function activateSession(name) {
-      // Clear any pending snapshot timer to avoid writing stale content
-      // under the new session name (snapshotTimer is declared later but
-      // initialized before this function is ever called).
-      if (snapshotTimer) { clearTimeout(snapshotTimer); snapshotTimer = null; }
       // Close port forward / file browser — switching sessions returns to terminal
       if (portForwardEl?.classList.contains("active")) closePortForward();
       if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
-      term.clear();
-      term.reset();
+
+      // Capture the current terminal before switching so output that arrives
+      // during the switch window (before the server confirms) goes to the old terminal.
+      const oldTerm = getTerm();
       const ws = state.connection.ws;
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      const wsOpen = ws && ws.readyState === WebSocket.OPEN;
+      if (wsOpen && oldTerm) {
+        wsConnection.setSwitchPendingTerm(oldTerm);
+      }
+
+      const wasCached = terminalPool.has(name);
+      const entry = terminalPool.activate(name);
+
+      // If this is a fresh terminal (not cached), clear it so we start clean
+      if (!wasCached) {
+        entry.term.clear();
+        entry.term.reset();
+      }
+
+      // Update state optimistically so state.session.name and pool.getActiveName()
+      // stay in sync (the server's "switched" confirmation will set it again, harmlessly).
+      state.update('session.name', name);
+      document.title = name;
+
+      if (wsOpen) {
         // Switch session over the existing WebSocket — no disconnect/reconnect needed
-        ws.send(JSON.stringify({ type: "switch", session: name, cols: term.cols, rows: term.rows }));
-      } else {
-        // No open connection — update state and let reconnect handle it
-        state.update('session.name', name);
-        document.title = name;
+        ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows }));
       }
       if (shortcutBarInstance) shortcutBarInstance.render(name);
       invalidateSessions(sessionStore, name);
@@ -562,8 +586,8 @@
         if (btn) btn.style.display = enabled ? "" : "none";
         if (!enabled && portForwardEl.classList.contains("active")) {
           closePortForward();
-          term.focus();
-          requestAnimationFrame(() => withPreservedScroll(term, () => fit.fit()));
+          getTerm()?.focus();
+          fitActiveTerminal();
         }
       }
     });
@@ -636,8 +660,8 @@
     // (Moved here after openSessionManager and openDictationModal are defined)
 
     const viewportManager = createViewportManager({
-      term,
-      fit,
+      term: getTerm,
+      fit: getFit,
       termContainer,
       bar,
       onWebSocketResize: (cols, rows) => {
@@ -659,7 +683,7 @@
       onNewSessionClick: createNewSession,
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
       sendFn: rawSend,
-      term,
+      get term() { return getTerm(); },
       updateP2PIndicator,
       getInstanceIcon
     });
@@ -735,8 +759,8 @@
       const isActive = fileBrowserEl.classList.contains("active");
       if (isActive) {
         closeFileBrowser();
-        term.focus();
-        requestAnimationFrame(() => withPreservedScroll(term, () => fit.fit()));
+        getTerm()?.focus();
+        fitActiveTerminal();
       } else {
         // Close port forward if open (mutual exclusion)
         if (portForwardEl.classList.contains("active")) closePortForward();
@@ -765,8 +789,8 @@
       const isActive = portForwardEl.classList.contains("active");
       if (isActive) {
         closePortForward();
-        term.focus();
-        requestAnimationFrame(() => withPreservedScroll(term, () => fit.fit()));
+        getTerm()?.focus();
+        fitActiveTerminal();
       } else {
         // Close file browser if open (mutual exclusion)
         if (fileBrowserEl.classList.contains("active")) closeFileBrowser();
@@ -814,7 +838,7 @@
     // --- WebSocket Connection ---
 
     const wsConnection = createWebSocketConnection({
-      term,
+      term: getTerm,
       state,
       p2pManager,
       updateP2PIndicator,
@@ -822,40 +846,17 @@
       isAtBottom,
       renderBar,
       invalidateSessions: (name) => invalidateSessions(sessionStore, name),
-      fit: () => withPreservedScroll(term, () => fit.fit())
+      poolRename: (oldName, newName) => terminalPool.rename(oldName, newName),
+      fit: fitActiveTerminal
     });
     wsConnection.initVisibilityReconnect();
-
-    // --- Terminal preview for session cards ---
-    // Read xterm's text buffer after renders (throttled) for sidebar previews.
-    // Uses a trailing-edge timer so the last render in a burst is always captured,
-    // even if the terminal goes idle before the throttle window expires.
-    let lastSnapshotTime = 0;
-    let snapshotTimer = null;
-    term.onRender(() => {
-      const now = Date.now();
-      const elapsed = now - lastSnapshotTime;
-      if (elapsed < 3000) {
-        if (!snapshotTimer) {
-          snapshotTimer = setTimeout(() => {
-            snapshotTimer = null;
-            lastSnapshotTime = Date.now();
-            updateSnapshot(state.session.name, term);
-          }, 3000 - elapsed);
-        }
-        return;
-      }
-      if (snapshotTimer) { clearTimeout(snapshotTimer); snapshotTimer = null; }
-      lastSnapshotTime = now;
-      updateSnapshot(state.session.name, term);
-    });
 
     // --- Boot ---
 
     renderBar(state.session.name);  // Initial render
     wsConnection.connect();
     loadShortcuts();
-    term.focus();
+    getTerm()?.focus();
 
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});

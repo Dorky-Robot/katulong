@@ -4,6 +4,8 @@
  * Handles pull-up gesture to refresh terminal or reconnect.
  */
 
+import { activeViewport } from "/lib/scroll-utils.js";
+
 export function createPullToRefreshManager(options = {}) {
   const { container, isAtBottom, onRefresh } = options;
   const indicator = document.getElementById("pull-refresh-indicator");
@@ -17,7 +19,7 @@ export function createPullToRefreshManager(options = {}) {
       if (!container || !indicator) return;
 
       container.addEventListener("touchstart", (e) => {
-        const viewport = document.querySelector(".xterm-viewport");
+        const viewport = activeViewport();
         // Only allow pull-up if at bottom of scrollback
         if (isAtBottom && isAtBottom(viewport)) {
           pullStartY = e.touches[0].clientY;

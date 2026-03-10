@@ -9,6 +9,8 @@ import { createComponent } from '/lib/component.js';
 import { invalidateSessions } from '/lib/stores.js';
 import { api } from '/lib/api-client.js';
 
+const DIVIDER_CLASS = "session-list-divider";
+
 /**
  * Create session list component
  */
@@ -37,7 +39,8 @@ export function updateSnapshot(sessionName, term) {
     if (text.trim()) {
       snapshotCache.set(sessionName, text);
       // Push directly into any visible preview div for this session
-      document.querySelectorAll(`.session-card[title="${sessionName}"] .session-card-preview`)
+      const escaped = CSS.escape(sessionName);
+      document.querySelectorAll(`.session-card[title="${escaped}"] .session-card-preview`)
         .forEach(el => { el.textContent = text; });
     }
   } catch { /* buffer not ready */ }
@@ -202,6 +205,61 @@ export function createSessionListComponent(store, options = {}) {
 
       footer.appendChild(actions);
       container.appendChild(card);
+    }
+
+    // Unmanaged tmux sessions — shown below a divider
+    if (state.unmanagedSessions?.length > 0) {
+      const divider = document.createElement("div");
+      divider.className = DIVIDER_CLASS;
+      container.appendChild(divider);
+
+      for (const s of state.unmanagedSessions) {
+        const card = document.createElement("div");
+        card.className = "session-card unmanaged";
+        card.setAttribute("role", "listitem");
+        card.setAttribute("aria-label", `Unmanaged tmux session: ${s.name}`);
+        card.setAttribute("data-initial", s.name.charAt(0));
+        card.title = s.name;
+
+        async function adoptSession() {
+          card.style.opacity = "0.5";
+          card.style.pointerEvents = "none";
+          try {
+            const result = await api.post("/tmux-sessions/adopt", { name: s.name });
+            if (result.name) {
+              if (onSessionSwitch) onSessionSwitch(result.name);
+              invalidateSessions(store, result.name);
+            }
+          } catch (err) {
+            console.error("[Session] Adopt failed:", err);
+            card.style.opacity = "";
+            card.style.pointerEvents = "";
+          }
+        }
+
+        card.addEventListener("click", adoptSession);
+
+        const row = document.createElement("div");
+        row.className = "session-card-row";
+
+        const nameSpan = document.createElement("span");
+        nameSpan.className = "session-card-name";
+        nameSpan.textContent = s.name;
+        row.appendChild(nameSpan);
+
+        const attachBtn = document.createElement("button");
+        attachBtn.className = "session-card-action";
+        attachBtn.setAttribute("aria-label", `Attach session ${s.name}`);
+        attachBtn.innerHTML = '<i class="ph ph-plug"></i>';
+        attachBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          adoptSession();
+        });
+        row.appendChild(attachBtn);
+
+        card.appendChild(row);
+        container.appendChild(card);
+      }
     }
   };
 

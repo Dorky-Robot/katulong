@@ -5,7 +5,7 @@
  * Uses functional core / imperative shell pattern with dependency injection.
  */
 
-import { scrollToBottom, terminalWriteWithScroll } from "/lib/scroll-utils.js";
+import { scrollToBottom, terminalWriteWithScroll, activeViewport } from "/lib/scroll-utils.js";
 
 /**
  * Create WebSocket connection manager with injected dependencies
@@ -14,13 +14,23 @@ const REDRAW_SCROLL_DELAYS_MS = [300, 800];
 
 export function createWebSocketConnection(deps = {}) {
   const {
-    term,
     state,
     p2pManager,
     updateP2PIndicator,
     loadTokens,
     isAtBottom
   } = deps;
+
+  // Support both direct terminal reference and getter function for pooled terminals
+  const getTerm = typeof deps.term === "function" ? deps.term : () => deps.term;
+  // During a session switch, output may still arrive for the previous session
+  // before the server confirms the switch. getOutputTerm() resolves to the
+  // correct terminal by checking the switchPending flag.
+  const getOutputTerm = () => {
+    if (switchPendingTerm) return switchPendingTerm;
+    return getTerm();
+  };
+  let switchPendingTerm = null;
 
   let isConnecting = false;
   let reconnectTimeout = null;
@@ -41,24 +51,27 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
-    switched: (msg) => ({
-      stateUpdates: {
-        'connection.attached': true,
-        'session.name': msg.session,
-      },
-      effects: [
-        { type: 'terminalReset' },
-        { type: 'updateSessionUI', name: msg.session },
-        { type: 'invalidateSessions', name: msg.session },
-        { type: 'fit' },
-        { type: 'scrollToBottomIfNeeded', condition: true }
-      ]
-    }),
+    switched: (msg) => {
+      // Server confirmed the switch — output now flows for the new session
+      switchPendingTerm = null;
+      return {
+        stateUpdates: {
+          'connection.attached': true,
+          'session.name': msg.session,
+        },
+        effects: [
+          { type: 'updateSessionUI', name: msg.session },
+          { type: 'invalidateSessions', name: msg.session },
+          { type: 'fit' },
+          { type: 'scrollToBottomIfNeeded', condition: true }
+        ]
+      };
+    },
 
     output: (msg) => ({
       stateUpdates: {},
       effects: [
-        { type: 'terminalWrite', data: msg.data, preserveScroll: true }
+        { type: 'terminalWrite', data: msg.data, preserveScroll: true, useOutputTerm: true }
       ]
     }),
 
@@ -69,7 +82,7 @@ export function createWebSocketConnection(deps = {}) {
 
     exit: () => ({
       stateUpdates: {},
-      effects: [{ type: 'terminalWrite', data: '\r\n[shell exited]\r\n' }]
+      effects: [{ type: 'terminalWrite', data: '\r\n[shell exited]\r\n', useOutputTerm: true }]
     }),
 
     'session-removed': () => ({
@@ -77,9 +90,12 @@ export function createWebSocketConnection(deps = {}) {
       effects: [{ type: 'sessionRemoved' }]
     }),
 
-    'session-renamed': (msg) => ({
+    'session-renamed': (msg, currentState) => ({
       stateUpdates: { 'session.name': msg.name },
-      effects: [{ type: 'updateSessionUI', name: msg.name }]
+      effects: [
+        { type: 'poolRename', oldName: currentState.session.name, newName: msg.name },
+        { type: 'updateSessionUI', name: msg.name }
+      ]
     }),
 
     'credential-registered': () => ({
@@ -152,28 +168,36 @@ export function createWebSocketConnection(deps = {}) {
       case 'logServerLanIPs':
         console.log('[P2P] Server LAN addresses:', effect.addresses);
         break;
-      case 'scrollToBottomIfNeeded':
-        if (effect.condition) {
+      case 'scrollToBottomIfNeeded': {
+        const term = getTerm();
+        if (effect.condition && term) {
           scrollToBottom(term);
         }
         break;
-      case 'terminalReset':
+      }
+      case 'terminalReset': {
+        const term = getTerm();
+        if (!term) break;
         term.clear();
         term.reset();
         // Scroll to bottom after the server-side SIGWINCH-triggered redraw
         // arrives. Two attempts at staggered delays to handle variable
         // TUI redraw times (Claude Code, vim) and network latency.
         for (const ms of REDRAW_SCROLL_DELAYS_MS) {
-          setTimeout(() => scrollToBottom(term), ms);
+          setTimeout(() => { const t = getTerm(); if (t) scrollToBottom(t); }, ms);
         }
         break;
-      case 'terminalWrite':
+      }
+      case 'terminalWrite': {
+        const term = effect.useOutputTerm ? getOutputTerm() : getTerm();
+        if (!term) break;
         if (effect.preserveScroll) {
           terminalWriteWithScroll(term, effect.data);
         } else {
           term.write(effect.data);
         }
         break;
+      }
       case 'reload':
         location.reload();
         break;
@@ -207,6 +231,9 @@ export function createWebSocketConnection(deps = {}) {
           }
         }).catch(() => { location.href = "/"; });
         break;
+      case 'poolRename':
+        if (deps.poolRename) deps.poolRename(effect.oldName, effect.newName);
+        break;
       case 'fastReconnect':
         // Reset reconnect delay for fast reconnection to new server
         state.connection.reconnectDelay = 500;
@@ -237,8 +264,11 @@ export function createWebSocketConnection(deps = {}) {
     state.connection.ws.onopen = () => {
       isConnecting = false;
       state.connection.reconnectDelay = 1000;
-      state.connection.ws.send(JSON.stringify({ type: "attach", session: state.session.name, cols: term.cols, rows: term.rows }));
-      state.connection.ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+      const term = getTerm();
+      const cols = term?.cols || 80;
+      const rows = term?.rows || 24;
+      state.connection.ws.send(JSON.stringify({ type: "attach", session: state.session.name, cols, rows }));
+      state.connection.ws.send(JSON.stringify({ type: "resize", cols, rows }));
     };
 
     state.connection.ws.onmessage = (e) => {
@@ -268,7 +298,8 @@ export function createWebSocketConnection(deps = {}) {
       }
 
       // Normal disconnect - attempt reconnection with exponential backoff
-      const viewport = document.querySelector(".xterm-viewport");
+      switchPendingTerm = null; // Clear stale switch state on disconnect
+      const viewport = activeViewport();
       state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
       state.connection.attached = false;
       if (p2pManager) p2pManager.destroy();
@@ -305,7 +336,10 @@ export function createWebSocketConnection(deps = {}) {
         } else if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
           // Quick test - send resize to verify connection is alive
           try {
-            state.connection.ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+            const term = getTerm();
+            const cols = term?.cols || 80;
+            const rows = term?.rows || 24;
+            state.connection.ws.send(JSON.stringify({ type: "resize", cols, rows }));
           } catch {
             state.connection.ws.close();
           }
@@ -318,6 +352,8 @@ export function createWebSocketConnection(deps = {}) {
     connect,
     initVisibilityReconnect,
     wsMessageHandlers,
-    executeEffect
+    executeEffect,
+    /** Set the terminal that should receive output during a session switch window */
+    setSwitchPendingTerm(term) { switchPendingTerm = term; },
   };
 }
