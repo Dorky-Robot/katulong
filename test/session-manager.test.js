@@ -12,7 +12,6 @@ import assert from "node:assert";
 
 // Mock tmux operations before importing session-manager
 const tmuxSessions = new Map(); // tmuxName -> true
-let sessionIdCounter = 0;
 
 const sessionModuleUrl = new URL("../lib/session.js", import.meta.url).href;
 const envFilterUrl = new URL("../lib/env-filter.js", import.meta.url).href;
