@@ -11,13 +11,18 @@ set -eu
 # Options (env vars):
 #   KATULONG_VERSION  — version to install (default: latest)
 #   KATULONG_DIR      — install directory (default: /opt/katulong)
-#   KATULONG_DATA_DIR — data directory (default: ~/.katulong)
+#   KATULONG_DATA_DIR — data directory (default: $HOME/.katulong)
 
 REPO="dorky-robot/katulong"
 VERSION="${KATULONG_VERSION:-latest}"
 INSTALL_DIR="${KATULONG_DIR:-/opt/katulong}"
-DATA_DIR="${KATULONG_DATA_DIR:-\$HOME/.katulong}"
+DATA_DIR="${KATULONG_DATA_DIR:-$HOME/.katulong}"
 BIN_LINK="/usr/local/bin/katulong"
+
+# Temp directory for downloads — cleaned up on exit
+TMP_DIR=""
+cleanup() { [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"; }
+trap cleanup EXIT
 
 log()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*"; }
@@ -91,7 +96,8 @@ resolve_version() {
   if [ "$VERSION" = "latest" ]; then
     # Use tags API (not releases) — katulong tags every version but may not
     # create GitHub releases for each one.
-    VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/tags?per_page=1" \
+    VERSION=$(curl -fsSL --max-filesize 65536 \
+      "https://api.github.com/repos/${REPO}/tags?per_page=1" \
       | grep '"name"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/')
     if [ -z "$VERSION" ]; then
       die "Could not determine latest version from GitHub"
@@ -99,6 +105,9 @@ resolve_version() {
   fi
   # Strip leading v if present
   VERSION=$(echo "$VERSION" | sed 's/^v//')
+  # Validate semver format to prevent injection via crafted version strings
+  echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
+    || die "Invalid version format: $VERSION (expected X.Y.Z)"
 }
 
 # --- Download and install ---
@@ -106,8 +115,9 @@ resolve_version() {
 install_katulong() {
   log "Installing katulong v${VERSION} to ${INSTALL_DIR}"
 
+  TMP_DIR="$(mktemp -d /tmp/katulong-install-XXXXXX)"
+  tmp_tar="$TMP_DIR/katulong.tar.gz"
   tarball_url="https://github.com/${REPO}/archive/refs/tags/v${VERSION}.tar.gz"
-  tmp_tar="$(mktemp /tmp/katulong-XXXXXX).tar.gz"
 
   curl -fsSL --retry 3 --retry-delay 3 "$tarball_url" -o "$tmp_tar" \
     || die "Failed to download v${VERSION} from GitHub"
@@ -120,23 +130,22 @@ install_katulong() {
 
   mkdir -p "$INSTALL_DIR"
   tar xzf "$tmp_tar" -C "$INSTALL_DIR" --strip-components=1
-  rm -f "$tmp_tar"
 
   # Install production dependencies
   cd "$INSTALL_DIR"
   npm install --production --omit=dev 2>&1 | tail -1
   cd - >/dev/null
 
-  # Create wrapper script
+  # Create wrapper script — DATA_DIR is resolved at runtime via env var
   cat > "$BIN_LINK" <<WRAPPER
 #!/bin/sh
-export KATULONG_DATA_DIR="${DATA_DIR}"
+export KATULONG_DATA_DIR="\${KATULONG_DATA_DIR:-${DATA_DIR}}"
 exec node "${INSTALL_DIR}/bin/katulong" "\$@"
 WRAPPER
   chmod +x "$BIN_LINK"
 
   # Create data directory
-  mkdir -p "$(eval echo "$DATA_DIR")" 2>/dev/null || true
+  mkdir -p "$DATA_DIR" 2>/dev/null || true
 }
 
 # --- Verify ---
