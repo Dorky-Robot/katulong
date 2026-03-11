@@ -38,6 +38,7 @@ export function createShortcutBar(options = {}) {
     onPortForwardClick,
     onSettingsClick,
     onShortcutsClick,
+    onDictationClick,
     sendFn,
     updateP2PIndicator,
     getInstanceIcon,
@@ -757,6 +758,15 @@ export function createShortcutBar(options = {}) {
         kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
         kbBtn.addEventListener("click", onShortcutsClick);
         island.appendChild(kbBtn);
+      }
+
+      if (onDictationClick) {
+        const btn = document.createElement("button");
+        btn.className = "key-island-btn key-island-icon";
+        btn.setAttribute("aria-label", "Text input");
+        btn.innerHTML = '<i class="ph ph-chat-text"></i>';
+        btn.addEventListener("click", onDictationClick);
+        island.appendChild(btn);
       }
     }
 

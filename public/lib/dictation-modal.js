@@ -74,6 +74,18 @@ export function createDictationModal(options = {}) {
         });
       }
 
+      // Handle image paste into the textarea
+      const textInput = document.getElementById("dictation-input");
+      if (textInput) {
+        textInput.addEventListener("paste", (e) => {
+          const imageFiles = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
+          if (imageFiles.length > 0) {
+            e.preventDefault();
+            store.dispatch({ type: DICTATION_ACTIONS.ADD_IMAGES, files: imageFiles });
+          }
+        });
+      }
+
       if (sendBtn) {
         sendBtn.addEventListener("click", async () => {
           const textInput = document.getElementById("dictation-input");

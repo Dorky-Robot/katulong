@@ -227,11 +227,9 @@ test.describe("Dictation modal", () => {
     await page.waitForSelector("#shortcut-bar");
   });
 
-  test("Long-pressing the terminal opens the dictation panel", async ({ page }) => {
-    const terminal = page.locator("#terminal-container");
-
-    // Native long-press fires contextmenu
-    await terminal.dispatchEvent("contextmenu");
+  test("Text input button on island opens the dictation panel", async ({ page }) => {
+    const btn = page.locator('#key-island button[aria-label="Text input"]');
+    await btn.click();
 
     const overlay = page.locator("#dictation-overlay");
     await expect(overlay).toHaveClass(/visible/);

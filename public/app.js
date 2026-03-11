@@ -701,8 +701,7 @@
         if (state.connection.ws?.readyState === 1) {
           state.connection.ws.send(JSON.stringify({ type: "resize", cols, rows }));
         }
-      },
-      onDictationOpen: () => openDictationModal()
+      }
     });
     viewportManager.init();
 
@@ -730,6 +729,7 @@
       onPortForwardClick: () => togglePortForward(),
       onSettingsClick: () => modals.open('settings'),
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
+      onDictationClick: () => openDictationModal(),
       sendFn: rawSend,
       get term() { return getTerm(); },
       updateP2PIndicator,
