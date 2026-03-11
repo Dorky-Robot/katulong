@@ -152,21 +152,6 @@ One server. Multiple windows. Your work follows you.
 - **Cmd/Option key support** — Cmd+Backspace (kill line), Option+Backspace (delete word)
 - **Touch-optimized toolbar** — Essential keys always accessible
 
-### Screenshots
-
-<div align="center">
-
-<img src="docs/assets/images/terminal-main.png" alt="Main terminal interface" width="45%">
-<img src="docs/assets/images/terminal-mobile.png" alt="Mobile terminal with touch controls" width="45%">
-
-<img src="docs/assets/images/settings.png" alt="Settings panel" width="30%">
-<img src="docs/assets/images/devices.png" alt="Device management" width="30%">
-<img src="docs/assets/images/pairing-flow.png" alt="Secure device pairing" width="30%">
-
-<img src="docs/assets/images/shortcuts-editor.png" alt="Shortcuts editor" width="60%">
-
-</div>
-
 ## Architecture
 
 ```
