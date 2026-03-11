@@ -64,6 +64,11 @@ export function createShortcutBar(options = {}) {
     return isTouch() && !window.matchMedia(TABLET_MQ).matches;
   }
 
+  function safeInstanceIcon() {
+    const raw = getInstanceIcon ? getInstanceIcon() : "terminal-window";
+    return raw.replace(/[^a-z0-9-]/g, "");
+  }
+
   // ── Context menu / dropdown ────────────────────────────────────────
 
   function closeMenu() {
@@ -656,10 +661,8 @@ export function createShortcutBar(options = {}) {
       tab.dataset.session = s.name;
       tab.setAttribute("aria-label", `Session: ${s.name}`);
 
-      const rawIcon = getInstanceIcon ? getInstanceIcon() : "terminal-window";
-      const instanceIcon = rawIcon.replace(/[^a-z0-9-]/g, "");
       const iconEl = document.createElement("i");
-      iconEl.className = `ph ph-${instanceIcon}`;
+      iconEl.className = `ph ph-${safeInstanceIcon()}`;
       tab.appendChild(iconEl);
 
       const nameSpan = document.createElement("span");
@@ -712,10 +715,8 @@ export function createShortcutBar(options = {}) {
     sessBtn.className = "session-btn";
     sessBtn.tabIndex = -1;
     sessBtn.setAttribute("aria-label", `Session: ${sessionName}`);
-    const rawIcon = getInstanceIcon ? getInstanceIcon() : "terminal-window";
-    const instanceIcon = rawIcon.replace(/[^a-z0-9-]/g, "");
     const iconEl = document.createElement("i");
-    iconEl.className = `ph ph-${instanceIcon}`;
+    iconEl.className = `ph ph-${safeInstanceIcon()}`;
     sessBtn.appendChild(iconEl);
     sessBtn.appendChild(document.createTextNode(" "));
     sessBtn.appendChild(document.createTextNode(sessionName));
@@ -807,8 +808,6 @@ export function createShortcutBar(options = {}) {
     p2pDot.style.display = "none";
     container.appendChild(p2pDot);
 
-    if (updateP2PIndicator) updateP2PIndicator();
-
     if (isDesktop() && sessionStore) {
       const storeState = sessionStore.getState();
       const allSessions = storeState.sessions || [];
@@ -829,8 +828,10 @@ export function createShortcutBar(options = {}) {
       renderMobile(sessionName);
     }
 
-    // Floating island with utility buttons (files, port forward, settings)
+    // Floating island (Esc/Tab/keyboard on touch, plus utility buttons on tablet/desktop)
     renderKeyIsland();
+
+    if (updateP2PIndicator) updateP2PIndicator();
   }
 
   let _islandResizeHandler = null;
@@ -930,7 +931,6 @@ export function createShortcutBar(options = {}) {
       dot.id = "island-p2p-dot";
       dot.className = "island-p2p-dot";
       island.appendChild(dot);
-      if (updateP2PIndicator) updateP2PIndicator();
     }
 
     // Clamp island position to stay within viewport (with 8px margin)
