@@ -9,14 +9,14 @@ test.describe("Shortcuts popup", () => {
   });
 
   test("Clicking keyboard icon opens the shortcuts popup", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
+    const kbBtn = page.locator("button[aria-label='Open shortcuts']");
     await kbBtn.click();
     const overlay = page.locator("#shortcuts-overlay");
     await expect(overlay).toHaveClass(/visible/);
   });
 
   test("Shortcut buttons have visible text (no blank labels)", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
+    const kbBtn = page.locator("button[aria-label='Open shortcuts']");
     await kbBtn.click();
     await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
 
@@ -29,7 +29,7 @@ test.describe("Shortcuts popup", () => {
   });
 
   test("Edit button is present in the footer", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
+    const kbBtn = page.locator("button[aria-label='Open shortcuts']");
     await kbBtn.click();
     const editBtn = page.locator("#shortcuts-edit-btn");
     await expect(editBtn).toBeVisible();
@@ -37,7 +37,7 @@ test.describe("Shortcuts popup", () => {
   });
 
   test("Closing the modal returns focus to terminal", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
+    const kbBtn = page.locator("button[aria-label='Open shortcuts']");
     await kbBtn.click();
     await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
 
@@ -51,7 +51,7 @@ test.describe("Shortcuts popup", () => {
   });
 
   test("Added shortcut appears in edit list immediately", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
+    const kbBtn = page.locator("button[aria-label='Open shortcuts']");
     await kbBtn.click();
     await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
 
@@ -80,7 +80,7 @@ test.describe("Shortcuts popup", () => {
   });
 
   test("Added shortcut appears in shortcuts popup after closing edit", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
+    const kbBtn = page.locator("button[aria-label='Open shortcuts']");
     await kbBtn.click();
     await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
 
@@ -118,7 +118,7 @@ test.describe("Shortcuts popup", () => {
 
   test("Comma-separated sequence shortcut shows correct label", async ({ page }) => {
     // Open shortcuts popup → Edit → Add
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
+    const kbBtn = page.locator("button[aria-label='Open shortcuts']");
     await kbBtn.click();
     await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
 
@@ -167,7 +167,7 @@ test.describe("Shortcuts popup", () => {
   });
 
   test("Chord shortcut sends correct sequence when clicked", async ({ page }) => {
-    const kbBtn = page.locator("#shortcut-bar .bar-icon-btn[aria-label='Open shortcuts']");
+    const kbBtn = page.locator("button[aria-label='Open shortcuts']");
     await kbBtn.click();
     await expect(page.locator("#shortcuts-overlay")).toHaveClass(/visible/);
 
@@ -229,7 +229,7 @@ test.describe("Dictation modal", () => {
   });
 
   test("Text input button on island opens the dictation panel", async ({ page }) => {
-    const btn = page.locator('#key-island button[aria-label="Text input"]');
+    const btn = page.locator('button[aria-label="Text input"]');
     await btn.click();
 
     const overlay = page.locator("#dictation-overlay");

@@ -506,6 +506,13 @@
     .key-island-btn:hover { background: rgba(255,255,255,0.08); color: var(--text); }
     .key-island-btn:active { background: var(--accent); color: var(--text); }
     .key-island-icon { width: 2.25rem; padding: 0; font-size: 1.125rem; }
+    .island-p2p-dot {
+      width: 0.5rem; height: 0.5rem; border-radius: 50%;
+      background: var(--text-dim); align-self: center; margin-left: 0.125rem;
+      flex-shrink: 0;
+    }
+    .island-p2p-dot.connected { background: var(--success); }
+    .island-p2p-dot.relay { background: var(--warning); }
 
     /* iPad/tablet with desktop tabs */
     @media (pointer: coarse) and (min-width: 768px) {

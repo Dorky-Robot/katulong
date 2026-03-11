@@ -60,6 +60,10 @@ export function createShortcutBar(options = {}) {
     return window.matchMedia("(pointer: coarse)").matches;
   }
 
+  function isPhone() {
+    return isTouch() && !window.matchMedia(TABLET_MQ).matches;
+  }
+
   // ── Context menu / dropdown ────────────────────────────────────────
 
   function closeMenu() {
@@ -733,30 +737,54 @@ export function createShortcutBar(options = {}) {
     spacer.className = "bar-spacer";
     container.appendChild(spacer);
 
-    for (const s of pinnedKeys) {
-      const btn = document.createElement("button");
-      btn.className = "shortcut-btn";
-      btn.tabIndex = -1;
-      btn.textContent = s.label;
-      btn.setAttribute("aria-label", `Send ${s.label}`);
-      btn.addEventListener("click", () => {
-        if (sendFn) {
-          sendSequence(keysToSequence(s.keys), sendFn);
-        }
-        if (options.term) options.term.focus();
-      });
-      container.appendChild(btn);
-    }
+    if (isPhone()) {
+      // Phone: utility buttons in toolbar (island has Esc/Tab/keyboard)
+      const utils = [
+        { icon: "chat-text", label: "Text input", click: onDictationClick },
+        { icon: "terminal-window", label: "Terminal", click: onTerminalClick },
+        { icon: "folder-open", label: "Files", click: onFilesClick },
+        { icon: "plug", label: "Port Forward", click: onPortForwardClick, id: "bar-portfwd-btn", hidden: !portProxyEnabled },
+        { icon: "gear", label: "Settings", click: onSettingsClick },
+      ];
+      for (const u of utils) {
+        if (!u.click) continue;
+        const btn = document.createElement("button");
+        btn.className = "bar-icon-btn";
+        btn.tabIndex = -1;
+        btn.setAttribute("aria-label", u.label);
+        btn.innerHTML = `<i class="ph ph-${u.icon}"></i>`;
+        if (u.id) btn.id = u.id;
+        if (u.hidden) btn.style.display = "none";
+        btn.addEventListener("click", u.click);
+        container.appendChild(btn);
+      }
+    } else {
+      // Tablet: keep Esc/Tab/Keyboard in toolbar
+      for (const s of pinnedKeys) {
+        const btn = document.createElement("button");
+        btn.className = "shortcut-btn";
+        btn.tabIndex = -1;
+        btn.textContent = s.label;
+        btn.setAttribute("aria-label", `Send ${s.label}`);
+        btn.addEventListener("click", () => {
+          if (sendFn) {
+            sendSequence(keysToSequence(s.keys), sendFn);
+          }
+          if (options.term) options.term.focus();
+        });
+        container.appendChild(btn);
+      }
 
-    const kbBtn = document.createElement("button");
-    kbBtn.className = "bar-icon-btn";
-    kbBtn.tabIndex = -1;
-    kbBtn.setAttribute("aria-label", "Open shortcuts");
-    kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
-    if (onShortcutsClick) {
-      kbBtn.addEventListener("click", onShortcutsClick);
+      const kbBtn = document.createElement("button");
+      kbBtn.className = "bar-icon-btn";
+      kbBtn.tabIndex = -1;
+      kbBtn.setAttribute("aria-label", "Open shortcuts");
+      kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
+      if (onShortcutsClick) {
+        kbBtn.addEventListener("click", onShortcutsClick);
+      }
+      container.appendChild(kbBtn);
     }
-    container.appendChild(kbBtn);
   }
 
   function render(sessionName) {
@@ -845,7 +873,7 @@ export function createShortcutBar(options = {}) {
         island.appendChild(kbBtn);
       }
 
-      if (onDictationClick) {
+      if (!isPhone() && onDictationClick) {
         const btn = document.createElement("button");
         btn.className = "key-island-btn key-island-icon";
         btn.setAttribute("aria-label", "Text input");
@@ -855,44 +883,54 @@ export function createShortcutBar(options = {}) {
       }
     }
 
-    // Terminal button — always present so user can get back from file browser / port forward
-    if (onTerminalClick) {
-      const btn = document.createElement("button");
-      btn.className = "key-island-btn key-island-icon";
-      btn.setAttribute("aria-label", "Terminal");
-      btn.innerHTML = '<i class="ph ph-terminal-window"></i>';
-      btn.addEventListener("click", onTerminalClick);
-      island.appendChild(btn);
+    // Utility buttons — skip on phone (they're in the toolbar)
+    if (!isPhone()) {
+      if (onTerminalClick) {
+        const btn = document.createElement("button");
+        btn.className = "key-island-btn key-island-icon";
+        btn.setAttribute("aria-label", "Terminal");
+        btn.innerHTML = '<i class="ph ph-terminal-window"></i>';
+        btn.addEventListener("click", onTerminalClick);
+        island.appendChild(btn);
+      }
+
+      if (onFilesClick) {
+        const btn = document.createElement("button");
+        btn.className = "key-island-btn key-island-icon";
+        btn.setAttribute("aria-label", "Files");
+        btn.innerHTML = '<i class="ph ph-folder-open"></i>';
+        btn.addEventListener("click", onFilesClick);
+        island.appendChild(btn);
+      }
+
+      if (onPortForwardClick) {
+        const btn = document.createElement("button");
+        btn.className = "key-island-btn key-island-icon";
+        btn.id = "bar-portfwd-btn";
+        btn.setAttribute("aria-label", "Port Forward");
+        btn.innerHTML = '<i class="ph ph-plug"></i>';
+        btn.addEventListener("click", onPortForwardClick);
+        if (!portProxyEnabled) btn.style.display = "none";
+        island.appendChild(btn);
+      }
+
+      if (onSettingsClick) {
+        const btn = document.createElement("button");
+        btn.className = "key-island-btn key-island-icon";
+        btn.setAttribute("aria-label", "Settings");
+        btn.innerHTML = '<i class="ph ph-gear"></i>';
+        btn.addEventListener("click", onSettingsClick);
+        island.appendChild(btn);
+      }
     }
 
-    // Utility buttons
-    if (onFilesClick) {
-      const btn = document.createElement("button");
-      btn.className = "key-island-btn key-island-icon";
-      btn.setAttribute("aria-label", "Files");
-      btn.innerHTML = '<i class="ph ph-folder-open"></i>';
-      btn.addEventListener("click", onFilesClick);
-      island.appendChild(btn);
-    }
-
-    if (onPortForwardClick) {
-      const btn = document.createElement("button");
-      btn.className = "key-island-btn key-island-icon";
-      btn.id = "bar-portfwd-btn";
-      btn.setAttribute("aria-label", "Port Forward");
-      btn.innerHTML = '<i class="ph ph-plug"></i>';
-      btn.addEventListener("click", onPortForwardClick);
-      if (!portProxyEnabled) btn.style.display = "none";
-      island.appendChild(btn);
-    }
-
-    if (onSettingsClick) {
-      const btn = document.createElement("button");
-      btn.className = "key-island-btn key-island-icon";
-      btn.setAttribute("aria-label", "Settings");
-      btn.innerHTML = '<i class="ph ph-gear"></i>';
-      btn.addEventListener("click", onSettingsClick);
-      island.appendChild(btn);
+    // P2P connection dot — iPad/desktop only (phone has it in sidebar)
+    if (!isPhone()) {
+      const dot = document.createElement("span");
+      dot.id = "island-p2p-dot";
+      dot.className = "island-p2p-dot";
+      island.appendChild(dot);
+      if (updateP2PIndicator) updateP2PIndicator();
     }
 
     // Clamp island position to stay within viewport (with 8px margin)

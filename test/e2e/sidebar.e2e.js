@@ -95,11 +95,14 @@ test.describe("Sidebar & Tab Bar", () => {
       await expect(addBtn).toBeVisible();
     });
 
-    test("floating island shows utility buttons (terminal, files, port-forward, settings)", async ({ page }) => {
+    test("floating island shows utility buttons (terminal, files, port-forward, settings)", async ({ page }, testInfo) => {
       await page.goto("/");
       await waitForAppReady(page);
 
-      await expect(page.locator("#key-island .key-island-btn")).toHaveCount(4);
+      // Desktop: 4 utility buttons (terminal, files, port-forward, settings)
+      // Tablet: adds Esc, Tab, keyboard, dictation = 8 total
+      const expected = testInfo.project.name === "tablet" ? 8 : 4;
+      await expect(page.locator("#key-island .key-island-btn")).toHaveCount(expected);
     });
 
     test("clicking + button opens dropdown with New session", async ({ page }) => {
@@ -257,12 +260,19 @@ test.describe("Sidebar & Tab Bar", () => {
       expect(mainStageWidth).toBeGreaterThan(viewportWidth - 10);
     });
 
-    test("shortcut bar shows Esc/Tab buttons on mobile", async ({ page }) => {
+    test("shortcut bar shows Esc/Tab on tablet, utility buttons on phone", async ({ page }, testInfo) => {
       await page.goto("/");
       await waitForAppReady(page);
 
-      const shortcutBtns = page.locator("#shortcut-bar .shortcut-btn");
-      await expect(shortcutBtns).toHaveCount(2);
+      if (isOverlayViewport(testInfo)) {
+        // Phone: utility icons in toolbar, no Esc/Tab (those are in the key island)
+        const iconBtns = page.locator("#shortcut-bar .bar-icon-btn");
+        await expect(iconBtns).not.toHaveCount(0);
+      } else {
+        // Tablet: Esc/Tab in toolbar
+        const shortcutBtns = page.locator("#shortcut-bar .shortcut-btn");
+        await expect(shortcutBtns).toHaveCount(2);
+      }
     });
 
     test("new session button visible in shortcut bar on mobile", async ({ page }) => {
