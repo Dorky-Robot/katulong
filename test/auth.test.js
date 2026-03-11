@@ -700,7 +700,7 @@ describe("refreshSessionActivity", () => {
           expiry: now + SESSION_TTL_MS,
           credentialId: credential.id,
           csrfToken: "csrf1",
-          lastActivityAt: now - 2 * 60 * 60 * 1000, // 2 hours ago
+          lastActivityAt: now - 25 * 60 * 60 * 1000, // 25 hours ago (beyond 24h threshold)
           ...sessionOverrides,
         },
       },

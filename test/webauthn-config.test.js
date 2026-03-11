@@ -6,10 +6,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import {
-  generateRegistrationOpts,
-  generateRegistrationOptsForUser
-} from '../lib/auth.js';
+import { generateRegistrationOpts } from '../lib/auth.js';
 
 describe('WebAuthn configuration', () => {
   describe('generateRegistrationOpts', () => {
@@ -68,15 +65,12 @@ describe('WebAuthn configuration', () => {
     });
   });
 
-  describe('generateRegistrationOptsForUser', () => {
+  describe('generateRegistrationOpts with existingUserID', () => {
     const existingUserID = 'test-user-id';
 
     it('generates options with platform authenticator attachment', async () => {
-      const { opts } = await generateRegistrationOptsForUser(
-        existingUserID,
-        'Katulong',
-        'localhost',
-        'http://localhost:3001'
+      const { opts } = await generateRegistrationOpts(
+        'Katulong', 'localhost', 'http://localhost:3001', existingUserID
       );
 
       assert.strictEqual(
@@ -87,11 +81,8 @@ describe('WebAuthn configuration', () => {
     });
 
     it('uses the provided user ID', async () => {
-      const { userID } = await generateRegistrationOptsForUser(
-        existingUserID,
-        'Katulong',
-        'localhost',
-        'http://localhost:3001'
+      const { userID } = await generateRegistrationOpts(
+        'Katulong', 'localhost', 'http://localhost:3001', existingUserID
       );
 
       assert.strictEqual(userID, existingUserID);
@@ -99,11 +90,8 @@ describe('WebAuthn configuration', () => {
 
     it('sets same authenticator preferences as initial registration', async () => {
       const { opts: initialOpts } = await generateRegistrationOpts('Katulong', 'localhost', 'http://localhost:3001');
-      const { opts: additionalOpts } = await generateRegistrationOptsForUser(
-        existingUserID,
-        'Katulong',
-        'localhost',
-        'http://localhost:3001'
+      const { opts: additionalOpts } = await generateRegistrationOpts(
+        'Katulong', 'localhost', 'http://localhost:3001', existingUserID
       );
 
       assert.deepStrictEqual(
