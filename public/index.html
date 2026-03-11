@@ -321,9 +321,6 @@
     #shortcut-bar[data-toolbar-color] .tab-bar-tab { background: var(--tb-btn-bg, var(--bg-input)); color: var(--tb-text, var(--text-muted)); border-color: var(--tb-btn-border, var(--border)); }
     #shortcut-bar[data-toolbar-color] .tab-bar-tab.active { background: var(--tb-accent, var(--accent)); color: var(--tb-text, var(--text)); }
     #shortcut-bar[data-toolbar-color] .tab-bar-add { color: var(--tb-text, var(--text-muted)); }
-    #shortcut-bar[data-toolbar-color] .bar-p2p-dot { background: var(--tb-text, var(--text-dim)); }
-    #shortcut-bar[data-toolbar-color] .bar-p2p-dot.relay { background: #df8e1d; }
-    #shortcut-bar[data-toolbar-color] .bar-p2p-dot.connected { background: #40a02b; }
 
     .shortcut-btn {
       flex-shrink: 0; height: var(--height-btn-sm); padding: 0 var(--space-md);
@@ -477,15 +474,6 @@
       border-top: 1px solid var(--border);
     }
 
-    /* Tab bar P2P dot — grey (disconnected) → yellow (relay/WS) → green (direct/WebRTC) */
-    .bar-p2p-dot {
-      width: 8px; height: 8px; border-radius: 50%;
-      background: var(--text-dim); flex-shrink: 0;
-      transition: background 0.2s;
-    }
-    .bar-p2p-dot.relay { background: var(--warning); }
-    .bar-p2p-dot.connected { background: var(--success); }
-
     /* Tablet / wider viewports — larger touch targets */
     @media (min-width: 768px) {
       #shortcut-bar { padding: 0 var(--space-lg); gap: var(--space-sm); }
@@ -513,7 +501,7 @@
       font-size: 0.8125rem; font-family: var(--font-mono);
       cursor: pointer; display: flex; align-items: center; justify-content: center;
     }
-    .key-island-btn:hover { background: var(--bg-hover); color: var(--text); }
+    .key-island-btn:hover { background: rgba(255,255,255,0.08); color: var(--text); }
     .key-island-btn:active { background: var(--accent); color: var(--text); }
     .key-island-icon { width: 2.25rem; padding: 0; font-size: 1.125rem; }
 

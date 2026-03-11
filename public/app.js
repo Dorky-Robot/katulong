@@ -150,7 +150,7 @@
       const p2pConnected = state.p2p.connected;
       const title = p2pConnected ? "Connected (direct)" : attached ? "Connected (relay)" : "Disconnected";
       // Sync all connection dots (sidebar + tab bar)
-      for (const id of ["sidebar-p2p-dot", "bar-p2p-dot"]) {
+      for (const id of ["sidebar-p2p-dot", "p2p-indicator"]) {
         const dot = document.getElementById(id);
         if (!dot) continue;
         dot.classList.toggle("connected", p2pConnected);
