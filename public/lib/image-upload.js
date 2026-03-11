@@ -57,11 +57,14 @@ export async function uploadImageToTerminal(file, options = {}) {
     }
 
     const data = await res.json();
-    if (onSend && data.fsPath) {
-      // Always send the filesystem path — more reliable than clipboard,
-      // especially on headless/remote machines where the pasteboard can be stale.
-      // CLI tools like Claude Code can read images directly by path.
-      onSend(data.fsPath + " ");
+    if (onSend) {
+      if (data.clipboard === true) {
+        // Image was copied to host clipboard — send Ctrl+V so CLI tools read it
+        onSend("\x16");
+      } else if (data.fsPath) {
+        // Clipboard not available — send the filesystem path as fallback
+        onSend(data.fsPath + " ");
+      }
     }
   } catch (err) {
     if (toast) toast("Upload failed", true);

@@ -84,7 +84,16 @@ export function createDictationModal(options = {}) {
       const textInput = document.getElementById("dictation-input");
       if (textInput) {
         textInput.addEventListener("paste", (e) => {
-          const imageFiles = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
+          // Check both files and items — Safari may only expose images via items
+          let imageFiles = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
+          if (imageFiles.length === 0 && e.clipboardData?.items) {
+            for (const item of e.clipboardData.items) {
+              if (item.type.startsWith("image/")) {
+                const file = item.getAsFile();
+                if (file) imageFiles.push(file);
+              }
+            }
+          }
           if (imageFiles.length > 0) {
             e.preventDefault();
             store.dispatch({ type: DICTATION_ACTIONS.ADD_IMAGES, files: imageFiles });

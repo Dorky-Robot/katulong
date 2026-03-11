@@ -353,6 +353,67 @@ describe("uploadImageToTerminal", () => {
     assert.equal(toasts[0].isError, true);
   });
 
+  it("sends Ctrl+V when server confirms clipboard was set", async () => {
+    globalThis.fetch = mock.fn(async () => ({
+      ok: true,
+      json: async () => ({ clipboard: true, fsPath: "/uploads/photo.png" }),
+    }));
+
+    const { uploadImageToTerminal } = await import("../public/lib/image-upload.js");
+
+    const sent = [];
+    const file = fakeFile("photo.png", "image/png");
+
+    await uploadImageToTerminal(file, {
+      onSend: (val) => sent.push(val),
+      toast: () => {},
+    });
+
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0], "\x16");
+  });
+
+  it("falls back to fsPath when clipboard is false", async () => {
+    globalThis.fetch = mock.fn(async () => ({
+      ok: true,
+      json: async () => ({ clipboard: false, fsPath: "/uploads/photo.png" }),
+    }));
+
+    const { uploadImageToTerminal } = await import("../public/lib/image-upload.js");
+
+    const sent = [];
+    const file = fakeFile("photo.png", "image/png");
+
+    await uploadImageToTerminal(file, {
+      onSend: (val) => sent.push(val),
+      toast: () => {},
+    });
+
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0], "/uploads/photo.png ");
+  });
+
+  it("does not send Ctrl+V for non-boolean truthy clipboard value", async () => {
+    globalThis.fetch = mock.fn(async () => ({
+      ok: true,
+      json: async () => ({ clipboard: "error", fsPath: "/uploads/photo.png" }),
+    }));
+
+    const { uploadImageToTerminal } = await import("../public/lib/image-upload.js");
+
+    const sent = [];
+    const file = fakeFile("photo.png", "image/png");
+
+    await uploadImageToTerminal(file, {
+      onSend: (val) => sent.push(val),
+      toast: () => {},
+    });
+
+    // Should fall through to fsPath, not treat "error" as clipboard success
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0], "/uploads/photo.png ");
+  });
+
   it("sends correct headers and body in the upload request", async () => {
     globalThis.fetch = mock.fn(async () => ({
       ok: true,
@@ -375,5 +436,78 @@ describe("uploadImageToTerminal", () => {
     assert.equal(opts.headers["Content-Type"], "application/octet-stream");
     assert.equal(opts.headers["X-Filename"], "test.png");
     assert.equal(opts.body, file);
+  });
+});
+
+// ===================================================================
+// 3. Paste handler — clipboardData.items fallback (Safari)
+// ===================================================================
+
+// paste-handler.js uses a browser absolute import ("/lib/image-upload.js") that
+// Node can't resolve. The items-fallback and isImageFileFn filter are covered
+// by E2E tests (Safari paste). The handlePaste logic is exercised here via a
+// minimal inline reproduction to verify the items-fallback algorithm.
+
+describe("paste handler — Safari items fallback (algorithm)", () => {
+  // Reproduce the core image-detection algorithm from paste-handler.js handlePaste
+  // to verify the items-fallback logic without needing to import the browser module.
+  function detectImages(clipboardData, isImageFileFn = (f) => f.type.startsWith("image/")) {
+    let imageFiles = [...(clipboardData?.files || [])].filter(isImageFileFn);
+    if (imageFiles.length === 0 && clipboardData?.items) {
+      for (const item of clipboardData.items) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file && isImageFileFn(file)) imageFiles.push(file);
+        }
+      }
+    }
+    return imageFiles;
+  }
+
+  it("detects images via items when files is empty (Safari)", () => {
+    const file = fakeFile("screenshot.png", "image/png");
+    const result = detectImages({
+      files: [],
+      items: [{ type: "image/png", getAsFile: () => file }],
+    });
+    assert.equal(result.length, 1);
+    assert.equal(result[0].name, "screenshot.png");
+  });
+
+  it("prefers files over items when files has images", () => {
+    const fileFromFiles = fakeFile("from-files.png", "image/png");
+    const fileFromItems = fakeFile("from-items.png", "image/png");
+    const result = detectImages({
+      files: [fileFromFiles],
+      items: [{ type: "image/png", getAsFile: () => fileFromItems }],
+    });
+    assert.equal(result.length, 1);
+    assert.equal(result[0].name, "from-files.png");
+  });
+
+  it("applies custom isImageFileFn to items fallback", () => {
+    const svgFile = fakeFile("icon.svg", "image/svg+xml");
+    const pngOnly = (f) => f.type === "image/png";
+    const result = detectImages({
+      files: [],
+      items: [{ type: "image/svg+xml", getAsFile: () => svgFile }],
+    }, pngOnly);
+    assert.equal(result.length, 0);
+  });
+
+  it("handles null getAsFile gracefully", () => {
+    const result = detectImages({
+      files: [],
+      items: [{ type: "image/png", getAsFile: () => null }],
+    });
+    assert.equal(result.length, 0);
+  });
+
+  it("returns empty when no images in files or items", () => {
+    const result = detectImages({
+      files: [],
+      items: [{ type: "text/plain", getAsFile: () => fakeFile("t.txt", "text/plain") }],
+    });
+    assert.equal(result.length, 0);
   });
 });
