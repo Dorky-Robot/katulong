@@ -81,7 +81,16 @@ export function createPasteHandler(options = {}) {
       return;
     }
 
-    const imageFiles = [...(e.clipboardData?.files || [])].filter(isImageFileFn);
+    // Check both files and items — Safari may only expose images via items
+    let imageFiles = [...(e.clipboardData?.files || [])].filter(isImageFileFn);
+    if (imageFiles.length === 0 && e.clipboardData?.items) {
+      for (const item of e.clipboardData.items) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) imageFiles.push(file);
+        }
+      }
+    }
     if (imageFiles.length > 0) {
       // Image paste — upload to host, which sends the file path to terminal
       e.stopImmediatePropagation();
