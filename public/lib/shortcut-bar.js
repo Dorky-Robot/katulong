@@ -485,7 +485,12 @@ export function createShortcutBar(options = {}) {
       if (cancelled) return;
 
       if (!started) {
-        if (name !== currentSessionName && onTabClick) onTabClick(name);
+        if (longPressed) {
+          // Long press without drag — show context menu
+          showTabContextMenu({ preventDefault() {}, currentTarget: tab }, name);
+        } else if (name !== currentSessionName && onTabClick) {
+          onTabClick(name);
+        }
         return;
       }
 
