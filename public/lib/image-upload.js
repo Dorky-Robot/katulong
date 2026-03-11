@@ -58,7 +58,7 @@ export async function uploadImageToTerminal(file, options = {}) {
 
     const data = await res.json();
     if (onSend) {
-      if (data.clipboard) {
+      if (data.clipboard === true) {
         // Image was copied to host clipboard — send Ctrl+V so CLI tools read it
         onSend("\x16");
       } else if (data.fsPath) {

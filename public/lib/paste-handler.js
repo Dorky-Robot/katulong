@@ -87,7 +87,7 @@ export function createPasteHandler(options = {}) {
       for (const item of e.clipboardData.items) {
         if (item.type.startsWith("image/")) {
           const file = item.getAsFile();
-          if (file) imageFiles.push(file);
+          if (file && isImageFileFn(file)) imageFiles.push(file);
         }
       }
     }
