@@ -71,7 +71,7 @@ export async function loadSessions(store, currentSession = null) {
   store.dispatch({ type: SESSION_ACTIONS.LOAD_START });
 
   try {
-    const [sessions, unmanagedNames] = await Promise.all([
+    const [sessions, unmanagedSessions] = await Promise.all([
       api.get("/sessions"),
       api.get("/tmux-sessions").catch(() => [])
     ]);
@@ -79,7 +79,7 @@ export async function loadSessions(store, currentSession = null) {
     store.dispatch({
       type: SESSION_ACTIONS.LOAD_SUCCESS,
       sessions,
-      unmanagedSessions: unmanagedNames,
+      unmanagedSessions,
       currentSession: currentSession || store.getState().currentSession
     });
   } catch (err) {
