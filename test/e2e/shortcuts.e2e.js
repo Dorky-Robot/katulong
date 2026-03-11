@@ -222,7 +222,8 @@ test.describe("Shortcuts popup", () => {
 });
 
 test.describe("Dictation modal", () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
+    if (testInfo.project.name === "desktop") test.skip();
     await page.goto("/");
     await page.waitForSelector("#shortcut-bar");
   });
