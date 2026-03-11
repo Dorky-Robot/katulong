@@ -38,6 +38,14 @@ export function createWindowTabSet({ sessionStore, getCurrentSession }) {
         saveTabs();
         notify();
       }
+      if (msg.type === "session-renamed") {
+        const idx = tabs.indexOf(msg.oldName);
+        if (idx !== -1) {
+          tabs[idx] = msg.newName;
+          saveTabs();
+          notify();
+        }
+      }
     };
   } catch { /* BroadcastChannel not available — degrade gracefully */ }
 
@@ -117,6 +125,19 @@ export function createWindowTabSet({ sessionStore, getCurrentSession }) {
       tabs = orderedNames.filter(n => tabs.includes(n));
       saveTabs();
       notify();
+    },
+
+    renameTab(oldName, newName) {
+      const idx = tabs.indexOf(oldName);
+      if (idx === -1) return;
+      tabs[idx] = newName;
+      recentlyAdded.add(newName);
+      recentlyAdded.delete(oldName);
+      saveTabs();
+      notify();
+      if (channel) {
+        channel.postMessage({ type: "session-renamed", oldName, newName });
+      }
     },
 
     /** Kill: remove from all windows via broadcast */

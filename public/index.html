@@ -381,6 +381,7 @@
     }
     .tab-bar-tab i.ph { font-size: 1rem; flex-shrink: 0; }
     .tab-bar-tab .tab-label { pointer-events: none; overflow: hidden; text-overflow: ellipsis; }
+    .tab-rename-input { all: unset; font: inherit; color: inherit; width: 100%; min-width: 3rem; background: transparent; border-bottom: 1px solid currentColor; cursor: text; }
     .tab-bar-tab.active {
       background: var(--accent); color: var(--text);
       border-color: var(--accent-active);
@@ -1432,6 +1433,7 @@
     .fb-btn { width: var(--height-btn-sm); height: var(--height-btn-sm); border: none; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: color var(--transition-fast) ease, background var(--transition-fast) ease; }
     .fb-btn:hover:not(:disabled) { color: var(--text); background: var(--accent); }
     .fb-btn:disabled { opacity: var(--opacity-disabled); cursor: default; }
+    .fb-btn.fb-active { color: var(--accent); }
     .fb-breadcrumb { display: flex; align-items: center; gap: 0; overflow-x: auto; flex: 1; min-width: 0; white-space: nowrap; padding: 0 var(--space-xs); }
     .fb-crumb { cursor: pointer; padding: 2px 4px; border-radius: var(--radius-sm); color: var(--text-muted); }
     .fb-crumb:hover { color: var(--text); background: var(--accent); }

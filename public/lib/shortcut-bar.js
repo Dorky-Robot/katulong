@@ -33,6 +33,7 @@ export function createShortcutBar(options = {}) {
     onSessionClick,
     onNewSessionClick,
     onTabClick,
+    onTabRenamed,
     onAdoptSession,
     onTerminalClick,
     onFilesClick,
@@ -233,6 +234,11 @@ export function createShortcutBar(options = {}) {
     const tab = e.currentTarget;
     const items = [
       {
+        icon: "pencil-simple",
+        label: "Rename",
+        action: () => startTabRename(tab, sessionName)
+      },
+      {
         icon: "eject",
         label: "Detach from server",
         action: () => detachTab(sessionName)
@@ -326,6 +332,66 @@ export function createShortcutBar(options = {}) {
     }
 
     showMenu(items, addBtn);
+  }
+
+  // ── Inline tab rename ─────────────────────────────────────────────
+
+  function startTabRename(tab, sessionName) {
+    const label = tab.querySelector(".tab-label");
+    if (!label || tab.querySelector(".tab-rename-input")) return;
+
+    const input = document.createElement("input");
+    input.className = "tab-rename-input";
+    input.value = sessionName;
+    input.setAttribute("aria-label", "Rename session");
+
+    // Select all text for easy replacement
+    label.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let committed = false;
+
+    function commit() {
+      if (committed) return;
+      committed = true;
+
+      const newName = input.value.trim();
+      if (!newName || newName === sessionName) {
+        revert();
+        return;
+      }
+
+      // Call rename API
+      api.put(`/sessions/${encodeURIComponent(sessionName)}`, { name: newName })
+        .then((result) => {
+          const canonicalName = result?.name || newName;
+          if (onTabRenamed) onTabRenamed(sessionName, canonicalName);
+        })
+        .catch((err) => {
+          console.error("[Tab] Rename failed:", err);
+          // Input may be detached if render() fired during the API call
+          render(currentSessionName);
+        });
+    }
+
+    function revert() {
+      committed = true;
+      const span = document.createElement("span");
+      span.className = "tab-label";
+      span.textContent = sessionName;
+      if (input.parentNode) input.replaceWith(span);
+    }
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(); }
+      if (e.key === "Escape") { e.preventDefault(); if (!committed) revert(); }
+      e.stopPropagation(); // Don't let keyboard events reach the terminal
+    });
+    // Only commit on blur if input is still connected (not detached by render())
+    input.addEventListener("blur", () => { if (input.isConnected) commit(); });
+    // Prevent mousedown from starting a tab drag
+    input.addEventListener("mousedown", (e) => e.stopPropagation());
   }
 
   // ── Chrome-style drag reorder ──────────────────────────────────────
@@ -602,6 +668,12 @@ export function createShortcutBar(options = {}) {
         closeTab(s.name);
       });
       tab.appendChild(closeBtn);
+
+      // Double-click to rename
+      tab.addEventListener("dblclick", (e) => {
+        e.preventDefault();
+        startTabRename(tab, s.name);
+      });
 
       // Right-click context menu
       tab.addEventListener("contextmenu", (e) => showTabContextMenu(e, s.name));

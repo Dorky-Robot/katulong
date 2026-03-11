@@ -714,6 +714,18 @@
       onSessionClick: openSessionManager,
       onNewSessionClick: createNewSession,
       onTabClick: (name) => switchSession(name),
+      onTabRenamed: (oldName, newName) => {
+        windowTabSet.renameTab(oldName, newName);
+        terminalPool.rename(oldName, newName);
+        invalidateSessions(sessionStore, newName);
+        if (state.session.name === oldName) {
+          state.update('session.name', newName);
+          document.title = newName;
+          const url = new URL(window.location);
+          url.searchParams.set("s", newName);
+          history.replaceState(null, "", url);
+        }
+      },
       onAdoptSession: async (name) => {
         windowTabSet.addTab(name);
         try {
@@ -910,6 +922,7 @@
       renderBar,
       invalidateSessions: (name) => invalidateSessions(sessionStore, name),
       poolRename: (oldName, newName) => terminalPool.rename(oldName, newName),
+      tabRename: (oldName, newName) => windowTabSet.renameTab(oldName, newName),
       onSessionKilled: (name) => windowTabSet.onSessionKilled(name),
       fit: fitActiveTerminal
     });

@@ -6,7 +6,7 @@
  * Double-click on a file downloads it.
  */
 
-import { selectItem, goBack, refreshAll, getDeepestPath, loadRoot } from "/lib/file-browser/file-browser-store.js";
+import { selectItem, goBack, refreshAll, getDeepestPath, loadRoot, filterHidden } from "/lib/file-browser/file-browser-store.js";
 import { getFileIcon } from "/lib/file-browser/file-browser-types.js";
 import { createContextMenu } from "/lib/file-browser/file-browser-context-menu.js";
 import { createFileBrowserActions } from "/lib/file-browser/file-browser-actions.js";
@@ -84,6 +84,9 @@ export function createFileBrowserComponent(store, options = {}) {
         </div>
         <div class="fb-breadcrumb" aria-label="Path breadcrumb"></div>
         <div class="fb-toolbar-actions">
+          <button class="fb-btn fb-hidden-btn${store.getState().showHidden ? " fb-active" : ""}" aria-label="Toggle hidden files">
+            <i class="ph ph-eye${store.getState().showHidden ? "" : "-slash"}"></i>
+          </button>
           <button class="fb-btn fb-refresh-btn" aria-label="Refresh">
             <i class="ph ph-arrow-clockwise"></i>
           </button>
@@ -101,6 +104,9 @@ export function createFileBrowserComponent(store, options = {}) {
     const closeBtn = container.querySelector(".fb-close-btn");
     const refreshBtn = container.querySelector(".fb-refresh-btn");
     columnsEl = container.querySelector(".fb-columns");
+
+    const hiddenBtn = container.querySelector(".fb-hidden-btn");
+    hiddenBtn.addEventListener("click", () => store.dispatch({ type: "TOGGLE_HIDDEN" }));
 
     backBtn.addEventListener("click", () => goBack(store));
     fwdBtn.addEventListener("click", () => {
@@ -168,7 +174,7 @@ export function createFileBrowserComponent(store, options = {}) {
     const col = state.columns[activeColIdx];
     if (!col) return;
 
-    const entries = col.entries;
+    const entries = filterHidden(col.entries, state.showHidden);
     const selectedName = col.selected;
     const names = entries.map(en => en.name);
     const currentIdx = selectedName ? names.indexOf(selectedName) : -1;
@@ -187,10 +193,11 @@ export function createFileBrowserComponent(store, options = {}) {
       if (selectedName) {
         const entry = entries.find(en => en.name === selectedName);
         if (entry?.type === "directory" && state.columns[activeColIdx + 1]) {
-          // Focus the next column — select its first item
+          // Focus the next column — select its first visible item
           const nextCol = state.columns[activeColIdx + 1];
-          if (nextCol.entries.length > 0) {
-            selectItem(store, activeColIdx + 1, nextCol.entries[0].name);
+          const nextVisible = filterHidden(nextCol.entries, state.showHidden);
+          if (nextVisible.length > 0) {
+            selectItem(store, activeColIdx + 1, nextVisible[0].name);
           }
         }
       }
@@ -225,6 +232,14 @@ export function createFileBrowserComponent(store, options = {}) {
     if (!container || !columnsEl) return;
     const state = store.getState();
 
+    // Update hidden toggle button
+    const hiddenBtn = container.querySelector(".fb-hidden-btn");
+    if (hiddenBtn) {
+      hiddenBtn.classList.toggle("fb-active", state.showHidden);
+      const icon = hiddenBtn.querySelector("i");
+      icon.className = state.showHidden ? "ph ph-eye" : "ph ph-eye-slash";
+    }
+
     // Back/forward button states
     const backBtn = container.querySelector(".fb-back-btn");
     const fwdBtn = container.querySelector(".fb-forward-btn");
@@ -245,8 +260,8 @@ export function createFileBrowserComponent(store, options = {}) {
     const status = container.querySelector(".fb-status");
     const deepest = getDeepestPath(state);
     const lastColData = state.columns[state.columns.length - 1];
-    const count = lastColData ? lastColData.entries.length : 0;
-    status.textContent = `${deepest}  —  ${count} item${count !== 1 ? "s" : ""}`;
+    const visibleCount = lastColData ? filterHidden(lastColData.entries, state.showHidden).length : 0;
+    status.textContent = `${deepest}  —  ${visibleCount} item${visibleCount !== 1 ? "s" : ""}`;
   }
 
   let prevColumnCount = 0;
@@ -291,12 +306,16 @@ export function createFileBrowserComponent(store, options = {}) {
       colEl.innerHTML = `<div class="fb-miller-empty fb-error">${escapeHtml(col.error)}</div>`;
       return;
     }
-    if (col.entries.length === 0) {
+
+    const { showHidden } = store.getState();
+    const visibleEntries = filterHidden(col.entries, showHidden);
+
+    if (visibleEntries.length === 0) {
       colEl.innerHTML = '<div class="fb-miller-empty">Empty</div>';
       return;
     }
 
-    const html = col.entries.map(entry => {
+    const html = visibleEntries.map(entry => {
       const selected = col.selected === entry.name;
       const isDir = entry.type === "directory";
       return `<div class="fb-miller-row${selected ? " fb-miller-selected" : ""}" data-name="${escapeAttr(entry.name)}" data-type="${entry.type}" data-col="${colIndex}" draggable="true">
