@@ -239,20 +239,6 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // Service worker — inject version so PWA cache updates on each release
-  if (req.method === "GET" && pathname === "/sw.js") {
-    const swPath = join(__dirname, "public", "sw.js");
-    try {
-      const sw = readFileSync(swPath, "utf-8").replace("__APP_VERSION__", APP_VERSION);
-      res.writeHead(200, { "Content-Type": "application/javascript", "Cache-Control": "no-cache" });
-      res.end(sw);
-    } catch {
-      res.writeHead(404);
-      res.end();
-    }
-    return;
-  }
-
   // Static files
   if (req.method === "GET") {
     const publicDir = join(__dirname, "public");
