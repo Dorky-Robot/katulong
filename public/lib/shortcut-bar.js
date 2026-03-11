@@ -726,9 +726,7 @@ export function createShortcutBar(options = {}) {
     newSessBtn.tabIndex = -1;
     newSessBtn.setAttribute("aria-label", "New session");
     newSessBtn.innerHTML = '<i class="ph ph-plus"></i>';
-    if (onNewSessionClick) {
-      newSessBtn.addEventListener("click", onNewSessionClick);
-    }
+    newSessBtn.addEventListener("click", () => showAddMenu(newSessBtn));
     container.appendChild(newSessBtn);
 
     const spacer = document.createElement("span");
