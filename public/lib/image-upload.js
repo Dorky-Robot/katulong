@@ -57,16 +57,11 @@ export async function uploadImageToTerminal(file, options = {}) {
     }
 
     const data = await res.json();
-    if (onSend) {
-      if (data.clipboard) {
-        // Image is on host clipboard — wait for macOS pasteboard to propagate,
-        // then send Ctrl+V so CLI tools detect the new clipboard contents.
-        await new Promise((r) => setTimeout(r, 300));
-        onSend("\x16");
-      } else {
-        // Fallback: type the filesystem path
-        onSend(data.fsPath + " ");
-      }
+    if (onSend && data.fsPath) {
+      // Always send the filesystem path — more reliable than clipboard,
+      // especially on headless/remote machines where the pasteboard can be stale.
+      // CLI tools like Claude Code can read images directly by path.
+      onSend(data.fsPath + " ");
     }
   } catch (err) {
     if (toast) toast("Upload failed", true);
