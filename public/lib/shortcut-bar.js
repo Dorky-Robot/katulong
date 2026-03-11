@@ -925,13 +925,11 @@ export function createShortcutBar(options = {}) {
       }
     }
 
-    // P2P connection dot — iPad/desktop only (phone has it in sidebar)
-    if (!isPhone()) {
-      const dot = document.createElement("span");
-      dot.id = "island-p2p-dot";
-      dot.className = "island-p2p-dot";
-      island.appendChild(dot);
-    }
+    // P2P connection dot
+    const dot = document.createElement("span");
+    dot.id = "island-p2p-dot";
+    dot.className = "island-p2p-dot";
+    island.appendChild(dot);
 
     // Clamp island position to stay within viewport (with 8px margin)
     function clampIsland() {
