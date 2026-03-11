@@ -825,8 +825,8 @@ export function createShortcutBar(options = {}) {
       const rect = island.getBoundingClientRect();
       if (rect.width === 0) return; // not visible yet
       const margin = 8;
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
+      const vw = window.visualViewport?.width ?? window.innerWidth;
+      const vh = window.visualViewport?.height ?? window.innerHeight;
       // If fully visible with margin, nothing to do
       if (rect.left >= margin && rect.top >= margin &&
           rect.right <= vw - margin && rect.bottom <= vh - margin) return;
@@ -876,8 +876,8 @@ export function createShortcutBar(options = {}) {
       const x = cx - dragState.offsetX;
       const y = cy - dragState.offsetY;
       const margin = 8;
-      const maxX = window.innerWidth - island.offsetWidth - margin;
-      const maxY = window.innerHeight - island.offsetHeight - margin;
+      const maxX = (window.visualViewport?.width ?? window.innerWidth) - island.offsetWidth - margin;
+      const maxY = (window.visualViewport?.height ?? window.innerHeight) - island.offsetHeight - margin;
       island.style.left = Math.max(margin, Math.min(x, maxX)) + "px";
       island.style.top = Math.max(margin, Math.min(y, maxY)) + "px";
       island.style.bottom = "auto";
