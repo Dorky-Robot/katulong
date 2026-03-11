@@ -31,7 +31,14 @@ export function createDictationModal(options = {}) {
   const { modals, onSend } = options;
   const store = createStore([], dictationReducer, { debug: false });
 
+  function revokeAllThumbs(container) {
+    for (const img of container.querySelectorAll("img")) {
+      URL.revokeObjectURL(img.src);
+    }
+  }
+
   const renderThumbs = (container, images) => {
+    revokeAllThumbs(container);
     container.innerHTML = "";
     images.forEach((file, i) => {
       const wrap = document.createElement("div");
@@ -45,7 +52,6 @@ export function createDictationModal(options = {}) {
       rm.setAttribute("aria-label", `Remove ${file.name}`);
       rm.innerHTML = '<i class="ph ph-x"></i>';
       rm.addEventListener("click", () => {
-        URL.revokeObjectURL(img.src);
         store.dispatch({ type: DICTATION_ACTIONS.REMOVE_IMAGE, index: i });
       });
       wrap.appendChild(rm);
