@@ -24,14 +24,10 @@ export function createPasteHandler(options = {}) {
     isImageFileFn = isImageFile
   } = options;
 
-  // Flag: when true, we blocked a Ctrl+V keydown and are waiting
-  // for the paste event to decide what to do.
-  let _blocked = false;
-  let _fallbackTimer = null;
-
   /**
    * Handle keydown — block Ctrl+V / Cmd+V so xterm doesn't send \x16
-   * before the paste event fires. We'll handle it in handlePaste instead.
+   * before the paste event fires. We only use stopImmediatePropagation
+   * (not preventDefault) so the browser still fires the paste event.
    */
   function handleKeydown(e) {
     if ((e.key === "v" || e.key === "V") && (e.ctrlKey || e.metaKey) && !e.altKey) {
@@ -41,24 +37,9 @@ export function createPasteHandler(options = {}) {
           !target.classList.contains("xterm-helper-textarea")) {
         return;
       }
-      _blocked = true;
+      // Stop xterm's keydown handler from sending \x16, but do NOT
+      // call preventDefault — that would suppress the paste event on WebKit.
       e.stopImmediatePropagation();
-      e.preventDefault();
-      // If no paste event fires within 200ms (e.g. empty clipboard),
-      // send the original Ctrl+V through.
-      _fallbackTimer = setTimeout(async () => {
-        if (_blocked) {
-          _blocked = false;
-          _fallbackTimer = null;
-          // Try reading clipboard text directly (paste event may not fire on some browsers)
-          try {
-            const text = await navigator.clipboard.readText();
-            if (text && onTextPaste) { onTextPaste(text); return; }
-          } catch { /* clipboard API not available */ }
-          // Don't send raw \x16 — it makes CLI tools read the host clipboard,
-          // which may contain stale image data from a previous paste.
-        }
-      }, 200);
     }
   }
 
@@ -66,13 +47,6 @@ export function createPasteHandler(options = {}) {
    * Handle paste event
    */
   function handlePaste(e) {
-    // Clear the fallback timer to prevent double-send
-    if (_fallbackTimer) {
-      clearTimeout(_fallbackTimer);
-      _fallbackTimer = null;
-    }
-    _blocked = false;
-
     // Let native paste work in input/textarea elements (e.g., dictation modal)
     // except for xterm's hidden textarea which we always intercept
     const target = e.target;
@@ -128,10 +102,6 @@ export function createPasteHandler(options = {}) {
   function unmount() {
     document.removeEventListener("keydown", handleKeydown, true);
     document.removeEventListener("paste", handlePaste, true);
-    if (_fallbackTimer) {
-      clearTimeout(_fallbackTimer);
-      _fallbackTimer = null;
-    }
   }
 
   return {
