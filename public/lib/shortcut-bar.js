@@ -375,6 +375,7 @@ export function createShortcutBar(options = {}) {
     }
 
     function revert() {
+      committed = true;
       const span = document.createElement("span");
       span.className = "tab-label";
       span.textContent = sessionName;
@@ -383,7 +384,7 @@ export function createShortcutBar(options = {}) {
 
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); commit(); }
-      if (e.key === "Escape") { e.preventDefault(); revert(); }
+      if (e.key === "Escape") { e.preventDefault(); if (!committed) revert(); }
       e.stopPropagation(); // Don't let keyboard events reach the terminal
     });
     input.addEventListener("blur", () => commit());

@@ -84,7 +84,7 @@ export function createFileBrowserComponent(store, options = {}) {
         </div>
         <div class="fb-breadcrumb" aria-label="Path breadcrumb"></div>
         <div class="fb-toolbar-actions">
-          <button class="fb-btn fb-hidden-btn${store.getState().showHidden ? " fb-active" : ""}" aria-label="Toggle hidden files" title="Toggle hidden files">
+          <button class="fb-btn fb-hidden-btn${store.getState().showHidden ? " fb-active" : ""}" aria-label="Toggle hidden files">
             <i class="ph ph-eye${store.getState().showHidden ? "" : "-slash"}"></i>
           </button>
           <button class="fb-btn fb-refresh-btn" aria-label="Refresh">

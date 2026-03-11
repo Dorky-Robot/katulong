@@ -11,7 +11,7 @@ import { api } from "/lib/api-client.js";
 const initialState = {
   columns: [],         // [{ path, entries, selected, loading, error }]
   clipboard: null,     // { action: "copy"|"cut", items: [...paths] }
-  showHidden: localStorage.getItem("katulong-fb-show-hidden") !== "false",
+  showHidden: localStorage.getItem("katulong-fb-show-hidden") !== "0",
 };
 
 const handlers = {
@@ -59,7 +59,7 @@ const handlers = {
 
   TOGGLE_HIDDEN: (state) => {
     const showHidden = !state.showHidden;
-    localStorage.setItem("katulong-fb-show-hidden", showHidden);
+    localStorage.setItem("katulong-fb-show-hidden", showHidden ? "1" : "0");
     return { ...state, showHidden };
   },
 };
