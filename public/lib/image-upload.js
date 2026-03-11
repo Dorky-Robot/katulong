@@ -59,7 +59,9 @@ export async function uploadImageToTerminal(file, options = {}) {
     const data = await res.json();
     if (onSend) {
       if (data.clipboard) {
-        // Image is on host clipboard — send Ctrl+V so CLI tools detect it
+        // Image is on host clipboard — wait for macOS pasteboard to propagate,
+        // then send Ctrl+V so CLI tools detect the new clipboard contents.
+        await new Promise((r) => setTimeout(r, 300));
         onSend("\x16");
       } else {
         // Fallback: type the filesystem path
