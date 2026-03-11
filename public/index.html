@@ -60,7 +60,7 @@
     @media (prefers-color-scheme: light) {
       [data-theme="auto"] {
         --bg: #eff1f5;
-          --bg-surface: #ffffff;
+        --bg-surface: #ffffff;
         --bg-input: #e6e9ef;
         --border: #ccd0da;
         --text: #4c4f69;
@@ -287,7 +287,6 @@
       #shortcut-bar a,
       #shortcut-bar .tab-bar-tab,
       #shortcut-bar .tab-bar-add,
-      #shortcut-bar .bar-utility-btn,
       #shortcut-bar .bar-icon-btn,
       #shortcut-bar .shortcut-btn,
       #shortcut-bar .session-btn,
@@ -321,8 +320,7 @@
     #shortcut-bar[data-toolbar-color] #p2p-indicator.p2p-relay { background: #df8e1d; }
     #shortcut-bar[data-toolbar-color] .tab-bar-tab { background: var(--tb-btn-bg, var(--bg-input)); color: var(--tb-text, var(--text-muted)); border-color: var(--tb-btn-border, var(--border)); }
     #shortcut-bar[data-toolbar-color] .tab-bar-tab.active { background: var(--tb-accent, var(--accent)); color: var(--tb-text, var(--text)); }
-    #shortcut-bar[data-toolbar-color] .tab-bar-add,
-    #shortcut-bar[data-toolbar-color] .bar-utility-btn { color: var(--tb-text, var(--text-muted)); }
+    #shortcut-bar[data-toolbar-color] .tab-bar-add { color: var(--tb-text, var(--text-muted)); }
     #shortcut-bar[data-toolbar-color] .bar-p2p-dot { background: var(--tb-text, var(--text-dim)); }
     #shortcut-bar[data-toolbar-color] .bar-p2p-dot.relay { background: #df8e1d; }
     #shortcut-bar[data-toolbar-color] .bar-p2p-dot.connected { background: #40a02b; }
@@ -428,16 +426,6 @@
 
     /* Tab being dragged — invisible but keeps its space in layout */
     .tab-dragging { opacity: 0 !important; }
-
-    /* Tab bar utility buttons (files, port-forward, settings) */
-    .bar-utility-btn {
-      flex-shrink: 0; height: var(--height-btn-sm); width: 2rem;
-      border: none; border-radius: var(--radius-sm); background: transparent;
-      color: var(--text-muted); font-size: 1.125rem; cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-    }
-    .bar-utility-btn:hover { color: var(--text); }
-    .bar-utility-btn:active { background: rgba(255,255,255,0.08); }
 
     /* Tab bar new session (+ button) */
     .tab-bar-add {

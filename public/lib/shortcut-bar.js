@@ -795,9 +795,11 @@ export function createShortcutBar(options = {}) {
     if (saved) {
       try {
         const { x, y } = JSON.parse(saved);
-        island.style.left = x + "px";
-        island.style.top = y + "px";
-        island.style.bottom = "auto";
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          island.style.left = x + "px";
+          island.style.top = y + "px";
+          island.style.bottom = "auto";
+        }
       } catch {}
     }
 
