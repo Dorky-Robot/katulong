@@ -95,11 +95,11 @@ test.describe("Sidebar & Tab Bar", () => {
       await expect(addBtn).toBeVisible();
     });
 
-    test("floating island shows utility buttons (files, port-forward, settings)", async ({ page }) => {
+    test("floating island shows utility buttons (terminal, files, port-forward, settings)", async ({ page }) => {
       await page.goto("/");
       await waitForAppReady(page);
 
-      await expect(page.locator("#key-island .key-island-btn")).toHaveCount(3);
+      await expect(page.locator("#key-island .key-island-btn")).toHaveCount(4);
     });
 
     test("clicking + button opens dropdown with New session", async ({ page }) => {

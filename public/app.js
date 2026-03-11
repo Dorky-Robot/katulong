@@ -725,6 +725,7 @@
           switchSession(name);
         }
       },
+      onTerminalClick: () => returnToTerminal(),
       onFilesClick: () => toggleFileBrowser(),
       onPortForwardClick: () => togglePortForward(),
       onSettingsClick: () => modals.open('settings'),
@@ -797,6 +798,13 @@
     let fileBrowserComponent = null;
 
     const joystickEl = document.getElementById("joystick");
+
+    function returnToTerminal() {
+      if (portForwardEl?.classList.contains("active")) closePortForward();
+      if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
+      getTerm()?.focus();
+      fitActiveTerminal();
+    }
 
     function closePortForward() {
       portForwardEl.classList.remove("active");
