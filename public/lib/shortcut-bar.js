@@ -34,6 +34,7 @@ export function createShortcutBar(options = {}) {
     onNewSessionClick,
     onTabClick,
     onAdoptSession,
+    onTerminalClick,
     onFilesClick,
     onPortForwardClick,
     onSettingsClick,
@@ -729,10 +730,19 @@ export function createShortcutBar(options = {}) {
     renderKeyIsland();
   }
 
+  let _islandResizeHandler = null;
+
   /** Floating pill with Esc/Tab/keyboard for touch devices in desktop tab mode */
   function renderKeyIsland() {
-    // Remove previous island if any
+    // Remove previous island and its resize listeners
     document.getElementById("key-island")?.remove();
+    if (_islandResizeHandler) {
+      window.removeEventListener("resize", _islandResizeHandler);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener("resize", _islandResizeHandler);
+      }
+      _islandResizeHandler = null;
+    }
 
     const island = document.createElement("div");
     island.id = "key-island";
@@ -770,6 +780,16 @@ export function createShortcutBar(options = {}) {
       }
     }
 
+    // Terminal button — always present so user can get back from file browser / port forward
+    if (onTerminalClick) {
+      const btn = document.createElement("button");
+      btn.className = "key-island-btn key-island-icon";
+      btn.setAttribute("aria-label", "Terminal");
+      btn.innerHTML = '<i class="ph ph-terminal-window"></i>';
+      btn.addEventListener("click", onTerminalClick);
+      island.appendChild(btn);
+    }
+
     // Utility buttons
     if (onFilesClick) {
       const btn = document.createElement("button");
@@ -800,7 +820,27 @@ export function createShortcutBar(options = {}) {
       island.appendChild(btn);
     }
 
-    // Restore saved position
+    // Clamp island position to stay within viewport (with 8px margin)
+    function clampIsland() {
+      const rect = island.getBoundingClientRect();
+      if (rect.width === 0) return; // not visible yet
+      const margin = 8;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      // If fully visible with margin, nothing to do
+      if (rect.left >= margin && rect.top >= margin &&
+          rect.right <= vw - margin && rect.bottom <= vh - margin) return;
+      // Nudge into view
+      const nx = Math.max(margin, Math.min(rect.left, vw - rect.width - margin));
+      const ny = Math.max(margin, Math.min(rect.top, vh - rect.height - margin));
+      island.style.left = nx + "px";
+      island.style.top = ny + "px";
+      island.style.bottom = "auto";
+      island.style.right = "auto";
+      localStorage.setItem("katulong-key-island-pos", JSON.stringify({ x: nx, y: ny }));
+    }
+
+    // Restore saved position (clamped to current viewport)
     const saved = localStorage.getItem("katulong-key-island-pos");
     if (saved) {
       try {
@@ -811,6 +851,15 @@ export function createShortcutBar(options = {}) {
           island.style.bottom = "auto";
         }
       } catch {}
+    }
+
+    // Clamp after layout (when dimensions are known) and on every resize
+    _islandResizeHandler = clampIsland;
+    requestAnimationFrame(() => clampIsland());
+    window.addEventListener("resize", clampIsland);
+    // Also observe the visual viewport (fires more reliably on iOS/iPad)
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", clampIsland);
     }
 
     // Drag to reposition (touch + mouse, with dead zone so clicks/taps still work)
@@ -826,10 +875,11 @@ export function createShortcutBar(options = {}) {
       }
       const x = cx - dragState.offsetX;
       const y = cy - dragState.offsetY;
-      const maxX = window.innerWidth - island.offsetWidth;
-      const maxY = window.innerHeight - island.offsetHeight;
-      island.style.left = Math.max(0, Math.min(x, maxX)) + "px";
-      island.style.top = Math.max(0, Math.min(y, maxY)) + "px";
+      const margin = 8;
+      const maxX = window.innerWidth - island.offsetWidth - margin;
+      const maxY = window.innerHeight - island.offsetHeight - margin;
+      island.style.left = Math.max(margin, Math.min(x, maxX)) + "px";
+      island.style.top = Math.max(margin, Math.min(y, maxY)) + "px";
       island.style.bottom = "auto";
       island.style.right = "auto";
     }
