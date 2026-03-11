@@ -50,12 +50,13 @@ export function createPasteHandler(options = {}) {
         if (_blocked) {
           _blocked = false;
           _fallbackTimer = null;
-          // Try reading clipboard directly (paste event may not fire on some browsers)
+          // Try reading clipboard text directly (paste event may not fire on some browsers)
           try {
             const text = await navigator.clipboard.readText();
             if (text && onTextPaste) { onTextPaste(text); return; }
           } catch { /* clipboard API not available */ }
-          if (onTextPaste) onTextPaste("\x16");
+          // Don't send raw \x16 — it makes CLI tools read the host clipboard,
+          // which may contain stale image data from a previous paste.
         }
       }, 200);
     }
@@ -82,7 +83,7 @@ export function createPasteHandler(options = {}) {
 
     const imageFiles = [...(e.clipboardData?.files || [])].filter(isImageFileFn);
     if (imageFiles.length > 0) {
-      // Image paste — upload to host and send Ctrl+V after clipboard is set
+      // Image paste — upload to host, which sends the file path to terminal
       e.stopImmediatePropagation();
       e.preventDefault();
       if (onImage) {
@@ -91,16 +92,16 @@ export function createPasteHandler(options = {}) {
         }
       }
     } else {
-      // Text paste — we blocked the keydown, so forward text to terminal.
-      // Send raw text without bracket paste wrapping — xterm.js's onData
-      // handler will pick it up and the terminal application negotiates
-      // bracket paste mode on its own via DEC private mode 2004.
       const text = e.clipboardData?.getData("text/plain");
       e.stopImmediatePropagation();
       e.preventDefault();
       if (text && onTextPaste) {
+        // Text paste — forward to terminal
         onTextPaste(text);
       }
+      // If no text and no images, do nothing — the clipboard likely contains
+      // an image that the browser can't access (e.g. iPad cross-app paste).
+      // Sending \x16 would make CLI tools read a stale host clipboard.
     }
   }
 
