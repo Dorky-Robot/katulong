@@ -24,10 +24,14 @@ export function createPasteHandler(options = {}) {
     isImageFileFn = isImageFile
   } = options;
 
+  // When true, we blocked a Ctrl+V keydown and are waiting for the
+  // paste event (or fallback timer) to handle it.
+  let _blocked = false;
+  let _fallbackTimer = null;
+
   /**
    * Handle keydown — block Ctrl+V / Cmd+V so xterm doesn't send \x16
-   * before the paste event fires. We only use stopImmediatePropagation
-   * (not preventDefault) so the browser still fires the paste event.
+   * before the paste event fires.
    */
   function handleKeydown(e) {
     if ((e.key === "v" || e.key === "V") && (e.ctrlKey || e.metaKey) && !e.altKey) {
@@ -37,16 +41,59 @@ export function createPasteHandler(options = {}) {
           !target.classList.contains("xterm-helper-textarea")) {
         return;
       }
-      // Stop xterm's keydown handler from sending \x16, but do NOT
-      // call preventDefault — that would suppress the paste event on WebKit.
+      _blocked = true;
       e.stopImmediatePropagation();
+      e.preventDefault();
+      // If no paste event fires within 200ms (WebKit suppresses it after
+      // preventDefault on keydown), read the clipboard directly.
+      _fallbackTimer = setTimeout(() => handleClipboardFallback(), 200);
     }
   }
 
   /**
-   * Handle paste event
+   * Fallback: read clipboard via async Clipboard API when the paste event
+   * doesn't fire (WebKit behavior after preventDefault on keydown).
+   */
+  async function handleClipboardFallback() {
+    if (!_blocked) return;
+    _blocked = false;
+    _fallbackTimer = null;
+
+    // Try navigator.clipboard.read() for images first
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        for (const type of item.types) {
+          if (type.startsWith("image/")) {
+            const blob = await item.getType(type);
+            const file = new File([blob], "clipboard-image." + type.split("/")[1], { type });
+            if (isImageFileFn(file) && onImage) {
+              onImage(file);
+              return;
+            }
+          }
+        }
+      }
+    } catch { /* Clipboard API read() not available or denied */ }
+
+    // Fall back to reading text
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && onTextPaste) { onTextPaste(text); return; }
+    } catch { /* clipboard API not available */ }
+  }
+
+  /**
+   * Handle paste event (fires on browsers that don't suppress it)
    */
   function handlePaste(e) {
+    // Clear the fallback timer — paste event fired, so we handle it here
+    if (_fallbackTimer) {
+      clearTimeout(_fallbackTimer);
+      _fallbackTimer = null;
+    }
+    _blocked = false;
+
     // Let native paste work in input/textarea elements (e.g., dictation modal)
     // except for xterm's hidden textarea which we always intercept
     const target = e.target;
@@ -66,7 +113,7 @@ export function createPasteHandler(options = {}) {
       }
     }
     if (imageFiles.length > 0) {
-      // Image paste — upload to host, which sends the file path to terminal
+      // Image paste — upload to host, which copies to host clipboard
       e.stopImmediatePropagation();
       e.preventDefault();
       if (onImage) {
@@ -82,9 +129,6 @@ export function createPasteHandler(options = {}) {
         // Text paste — forward to terminal
         onTextPaste(text);
       }
-      // If no text and no images, do nothing — the clipboard likely contains
-      // an image that the browser can't access (e.g. iPad cross-app paste).
-      // Sending \x16 would make CLI tools read a stale host clipboard.
     }
   }
 
@@ -102,6 +146,10 @@ export function createPasteHandler(options = {}) {
   function unmount() {
     document.removeEventListener("keydown", handleKeydown, true);
     document.removeEventListener("paste", handlePaste, true);
+    if (_fallbackTimer) {
+      clearTimeout(_fallbackTimer);
+      _fallbackTimer = null;
+    }
   }
 
   return {
