@@ -6,19 +6,12 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import {
-  generateRegistrationOpts,
-  generateRegistrationOptsForUser
-} from '../lib/auth.js';
+import { generateRegistrationOpts } from '../lib/auth.js';
 
 describe('WebAuthn configuration', () => {
   describe('generateRegistrationOpts', () => {
     it('generates options with platform authenticator attachment', async () => {
-      const { opts } = await generateRegistrationOpts(
-        'Katulong',
-        'localhost',
-        'http://localhost:3001'
-      );
+      const { opts } = await generateRegistrationOpts('Katulong', 'localhost');
 
       assert.ok(opts.authenticatorSelection);
       assert.strictEqual(
@@ -29,55 +22,44 @@ describe('WebAuthn configuration', () => {
     });
 
     it('sets residentKey to preferred', async () => {
-      const { opts } = await generateRegistrationOpts('Katulong', 'localhost', 'http://localhost:3001');
-
+      const { opts } = await generateRegistrationOpts('Katulong', 'localhost');
       assert.strictEqual(opts.authenticatorSelection.residentKey, 'preferred');
     });
 
     it('sets userVerification to preferred', async () => {
-      const { opts } = await generateRegistrationOpts('Katulong', 'localhost', 'http://localhost:3001');
-
+      const { opts } = await generateRegistrationOpts('Katulong', 'localhost');
       assert.strictEqual(opts.authenticatorSelection.userVerification, 'preferred');
     });
 
     it('sets attestation to none (privacy)', async () => {
-      const { opts } = await generateRegistrationOpts('Katulong', 'localhost', 'http://localhost:3001');
-
+      const { opts } = await generateRegistrationOpts('Katulong', 'localhost');
       assert.strictEqual(opts.attestation, 'none');
     });
 
     it('generates a unique user ID', async () => {
-      const { userID: id1 } = await generateRegistrationOpts('Katulong', 'localhost', 'http://localhost:3001');
-      const { userID: id2 } = await generateRegistrationOpts('Katulong', 'localhost', 'http://localhost:3001');
-
+      const { userID: id1 } = await generateRegistrationOpts('Katulong', 'localhost');
+      const { userID: id2 } = await generateRegistrationOpts('Katulong', 'localhost');
       assert.notStrictEqual(id1, id2, 'User IDs should be unique');
     });
 
     it('includes RP name and ID', async () => {
-      const { opts } = await generateRegistrationOpts('Katulong', 'katulong.local', 'https://katulong.local:3002');
-
+      const { opts } = await generateRegistrationOpts('Katulong', 'katulong.local');
       assert.strictEqual(opts.rp.name, 'Katulong');
       assert.strictEqual(opts.rp.id, 'katulong.local');
     });
 
     it('sets user as "owner"', async () => {
-      const { opts } = await generateRegistrationOpts('Katulong', 'localhost', 'http://localhost:3001');
-
+      const { opts } = await generateRegistrationOpts('Katulong', 'localhost');
       assert.strictEqual(opts.user.name, 'owner');
       assert.strictEqual(opts.user.displayName, 'Owner');
     });
   });
 
-  describe('generateRegistrationOptsForUser', () => {
+  describe('generateRegistrationOpts with existingUserID', () => {
     const existingUserID = 'test-user-id';
 
     it('generates options with platform authenticator attachment', async () => {
-      const { opts } = await generateRegistrationOptsForUser(
-        existingUserID,
-        'Katulong',
-        'localhost',
-        'http://localhost:3001'
-      );
+      const { opts } = await generateRegistrationOpts('Katulong', 'localhost', existingUserID);
 
       assert.strictEqual(
         opts.authenticatorSelection.authenticatorAttachment,
@@ -87,24 +69,13 @@ describe('WebAuthn configuration', () => {
     });
 
     it('uses the provided user ID', async () => {
-      const { userID } = await generateRegistrationOptsForUser(
-        existingUserID,
-        'Katulong',
-        'localhost',
-        'http://localhost:3001'
-      );
-
+      const { userID } = await generateRegistrationOpts('Katulong', 'localhost', existingUserID);
       assert.strictEqual(userID, existingUserID);
     });
 
     it('sets same authenticator preferences as initial registration', async () => {
-      const { opts: initialOpts } = await generateRegistrationOpts('Katulong', 'localhost', 'http://localhost:3001');
-      const { opts: additionalOpts } = await generateRegistrationOptsForUser(
-        existingUserID,
-        'Katulong',
-        'localhost',
-        'http://localhost:3001'
-      );
+      const { opts: initialOpts } = await generateRegistrationOpts('Katulong', 'localhost');
+      const { opts: additionalOpts } = await generateRegistrationOpts('Katulong', 'localhost', existingUserID);
 
       assert.deepStrictEqual(
         initialOpts.authenticatorSelection,

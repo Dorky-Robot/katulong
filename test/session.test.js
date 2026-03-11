@@ -246,12 +246,12 @@ function createSimpleTestSession(name, options = {}) {
   const session = new Session(name, tmuxName, options);
   const mockProc = new MockControlProc();
   session.controlProc = mockProc;
-  session.alive = true;
+  session.state = Session.STATE_ATTACHED;
 
   mockProc.on("close", (code) => {
     session._flushCoalesced();
-    if (session.alive) {
-      session.alive = false;
+    if (session.state === Session.STATE_ATTACHED) {
+      session.state = Session.STATE_DETACHED;
       if (session._onExit) session._onExit(session.name, code ?? 0);
     }
   });
@@ -315,7 +315,7 @@ describe("Session", () => {
 
     it("throws SessionNotAliveError when session is dead", () => {
       const { session } = createSimpleTestSession("test");
-      session.alive = false;
+      session.state = Session.STATE_DETACHED;
 
       assert.throws(
         () => session.write("test"),
@@ -360,7 +360,7 @@ describe("Session", () => {
 
     it("does not resize when session is dead", () => {
       const { session, mockProc } = createSimpleTestSession("test");
-      session.alive = false;
+      session.state = Session.STATE_DETACHED;
 
       session.resize(80, 24);
 
@@ -528,7 +528,7 @@ describe("Session", () => {
   describe("hasChildProcesses", () => {
     it("returns false for dead session", () => {
       const { session } = createSimpleTestSession("test");
-      session.alive = false;
+      session.state = Session.STATE_DETACHED;
       assert.strictEqual(session.hasChildProcesses(), false);
     });
 
