@@ -61,6 +61,37 @@ No passwords to manage. No tokens in URLs. No `X-Forwarded-*` header trust. The 
 
 ## Install
 
+### One-line install (Linux, macOS, Docker)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dorky-robot/katulong/main/install.sh | sh
+```
+
+Works on Alpine, Debian/Ubuntu, RHEL/Fedora, and macOS. Installs Node, tmux, and katulong. On macOS it detects Homebrew and uses the tap instead.
+
+**Options** (env vars):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KATULONG_VERSION` | latest | Version to install (e.g. `0.14.13`) |
+| `KATULONG_DIR` | `/opt/katulong` | Install directory |
+| `KATULONG_DATA_DIR` | `~/.katulong` | Data directory |
+
+### Docker
+
+Add to your Dockerfile:
+
+```dockerfile
+RUN curl -fsSL https://raw.githubusercontent.com/dorky-robot/katulong/main/install.sh | sh
+```
+
+Or with a specific version:
+
+```dockerfile
+RUN KATULONG_VERSION=0.14.13 \
+    curl -fsSL https://raw.githubusercontent.com/dorky-robot/katulong/main/install.sh | sh
+```
+
 ### Homebrew (macOS)
 
 ```bash
