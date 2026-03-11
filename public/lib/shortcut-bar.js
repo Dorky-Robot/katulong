@@ -19,8 +19,6 @@ const TABLET_MQ = "(pointer: coarse) and (min-width: 768px)";
 const DRAG_OUT_THRESHOLD = 60; // px below bar to trigger tear-off
 const DRAG_DEAD_ZONE = 5; // px before drag starts
 const LONG_PRESS_MS = 300; // ms before touch becomes drag
-const SCROLL_EDGE_PX = 40; // px from edge to trigger auto-scroll
-const SCROLL_SPEED = 8; // px per frame during auto-scroll
 
 /**
  * Create shortcut bar renderer
@@ -441,7 +439,6 @@ export function createShortcutBar(options = {}) {
     const tabs = [...container.querySelectorAll(".tab-bar-tab")];
     const dragIndex = tabs.indexOf(tab);
     if (dragIndex === -1) return; // tab removed from DOM between touchstart and drag
-    const scrollArea = container.querySelector(".tab-scroll-area");
 
     const rects = tabs.map(t => {
       const r = t.getBoundingClientRect();
@@ -452,6 +449,9 @@ export function createShortcutBar(options = {}) {
     ghost.classList.add("tab-drag-ghost");
     ghost.style.width = rects[dragIndex].width + "px";
     ghost.style.height = tab.offsetHeight + "px";
+    // Safari clips cloned nodes that inherit overflow:hidden from the source tab,
+    // even after appending to document.body with position:fixed. Force visible.
+    ghost.style.overflow = "visible";
     document.body.appendChild(ghost);
 
     tab.classList.add("tab-dragging");
@@ -468,37 +468,19 @@ export function createShortcutBar(options = {}) {
       grabOffset,
       tornOff: false,
       isTouch: !!fromTouch,
-      scrollArea,
     };
   }
 
   function updateDrag(cx, cy) {
     if (!drag) return;
-    const { ghost, tabs, dragIndex, grabOffset, scrollArea } = drag;
+    const { ghost, tabs, rects, dragIndex, grabOffset } = drag;
 
-    ghost.style.left = (cx - grabOffset) + "px";
-    ghost.style.top = (cy - ghost.offsetHeight / 2) + "px";
-
-    // Auto-scroll the tab area when dragging near edges (throttled to ~60fps)
-    if (scrollArea) {
-      const now = performance.now();
-      const scrollRect = scrollArea.getBoundingClientRect();
-      if (now - (drag.lastScrollTime || 0) > 16) {
-        if (cx < scrollRect.left + SCROLL_EDGE_PX) {
-          scrollArea.scrollLeft -= SCROLL_SPEED;
-          drag.lastScrollTime = now;
-        } else if (cx > scrollRect.right - SCROLL_EDGE_PX) {
-          scrollArea.scrollLeft += SCROLL_SPEED;
-          drag.lastScrollTime = now;
-        }
-      }
-    }
-
-    // Refresh rects — auto-scroll shifts tab positions
-    const rects = tabs.map(t => {
-      const r = t.getBoundingClientRect();
-      return { left: r.left, width: r.width, center: r.left + r.width / 2 };
-    });
+    // Use translate3d for GPU-accelerated positioning (fixes Safari ghost disappearing)
+    const gx = cx - grabOffset;
+    const gy = cy - ghost.offsetHeight / 2;
+    ghost.style.transform = drag.tornOff
+      ? `translate3d(${gx}px, ${gy}px, 0) scale(1.08)`
+      : `translate3d(${gx}px, ${gy}px, 0)`;
 
     const barRect = container.getBoundingClientRect();
     // Tear-off only for mouse — touch can't open new windows (Safari blocks popups)
@@ -547,7 +529,7 @@ export function createShortcutBar(options = {}) {
   }
 
   function getGap() {
-    const area = drag?.scrollArea || container;
+    const area = container.querySelector(".tab-scroll-area") || container;
     return parseFloat(getComputedStyle(area).gap) || 0;
   }
 
@@ -629,66 +611,17 @@ export function createShortcutBar(options = {}) {
       tabScroll.appendChild(tab);
     }
 
-    container.appendChild(tabScroll);
-
-    // Scroll active tab into view
-    requestAnimationFrame(() => {
-      const activeTab = tabScroll.querySelector(".tab-bar-tab.active");
-      if (activeTab) activeTab.scrollIntoView({ inline: "nearest", block: "nearest" });
-    });
-
-    // New session + button (dropdown if unmanaged sessions exist)
+    // + button inside scroll area, next to last tab
     const addBtn = document.createElement("button");
     addBtn.className = "tab-bar-add";
     addBtn.tabIndex = -1;
     addBtn.setAttribute("aria-label", "New session");
     addBtn.innerHTML = '<i class="ph ph-plus-circle"></i>';
     addBtn.addEventListener("click", () => showAddMenu(addBtn));
-    container.appendChild(addBtn);
+    tabScroll.appendChild(addBtn);
 
-    // Utility buttons: Files
-    if (onFilesClick) {
-      const filesBtn = document.createElement("button");
-      filesBtn.className = "bar-utility-btn";
-      filesBtn.tabIndex = -1;
-      filesBtn.setAttribute("aria-label", "Files");
-      filesBtn.title = "Files";
-      filesBtn.innerHTML = '<i class="ph ph-folder-open"></i>';
-      filesBtn.addEventListener("click", onFilesClick);
-      container.appendChild(filesBtn);
-    }
+    container.appendChild(tabScroll);
 
-    // Utility buttons: Port Forward
-    if (onPortForwardClick) {
-      const pfBtn = document.createElement("button");
-      pfBtn.className = "bar-utility-btn";
-      pfBtn.id = "bar-portfwd-btn";
-      pfBtn.tabIndex = -1;
-      pfBtn.setAttribute("aria-label", "Port Forward");
-      pfBtn.title = "Port Forward";
-      pfBtn.innerHTML = '<i class="ph ph-plug"></i>';
-      pfBtn.addEventListener("click", onPortForwardClick);
-      if (!portProxyEnabled) pfBtn.style.display = "none";
-      container.appendChild(pfBtn);
-    }
-
-    // Utility buttons: Settings
-    if (onSettingsClick) {
-      const settingsBtn = document.createElement("button");
-      settingsBtn.className = "bar-utility-btn";
-      settingsBtn.tabIndex = -1;
-      settingsBtn.setAttribute("aria-label", "Settings");
-      settingsBtn.title = "Settings";
-      settingsBtn.innerHTML = '<i class="ph ph-gear"></i>';
-      settingsBtn.addEventListener("click", onSettingsClick);
-      container.appendChild(settingsBtn);
-    }
-
-    // P2P dot
-    const p2pDot = document.createElement("span");
-    p2pDot.className = "bar-p2p-dot";
-    p2pDot.id = "bar-p2p-dot";
-    container.appendChild(p2pDot);
   }
 
   function renderMobile(sessionName) {
@@ -787,12 +720,12 @@ export function createShortcutBar(options = {}) {
       }
 
       renderDesktopTabs(sessionName, sessions);
-
-      // Floating key island for touch devices showing desktop tabs (iPad)
-      if (isTouch()) renderKeyIsland();
     } else {
       renderMobile(sessionName);
     }
+
+    // Floating island with utility buttons (files, port forward, settings)
+    renderKeyIsland();
   }
 
   /** Floating pill with Esc/Tab/keyboard for touch devices in desktop tab mode */
@@ -803,25 +736,58 @@ export function createShortcutBar(options = {}) {
     const island = document.createElement("div");
     island.id = "key-island";
 
-    for (const s of pinnedKeys) {
+    // Pinned keys and keyboard shortcut button — touch only (desktop has real keyboard)
+    if (isTouch()) {
+      for (const s of pinnedKeys) {
+        const btn = document.createElement("button");
+        btn.className = "key-island-btn";
+        btn.textContent = s.label;
+        btn.setAttribute("aria-label", `Send ${s.label}`);
+        btn.addEventListener("click", () => {
+          if (sendFn) sendSequence(keysToSequence(s.keys), sendFn);
+          if (options.term) options.term.focus();
+        });
+        island.appendChild(btn);
+      }
+
+      if (onShortcutsClick) {
+        const kbBtn = document.createElement("button");
+        kbBtn.className = "key-island-btn key-island-icon";
+        kbBtn.setAttribute("aria-label", "Open shortcuts");
+        kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
+        kbBtn.addEventListener("click", onShortcutsClick);
+        island.appendChild(kbBtn);
+      }
+    }
+
+    // Utility buttons
+    if (onFilesClick) {
       const btn = document.createElement("button");
-      btn.className = "key-island-btn";
-      btn.textContent = s.label;
-      btn.setAttribute("aria-label", `Send ${s.label}`);
-      btn.addEventListener("click", () => {
-        if (sendFn) sendSequence(keysToSequence(s.keys), sendFn);
-        if (options.term) options.term.focus();
-      });
+      btn.className = "key-island-btn key-island-icon";
+      btn.setAttribute("aria-label", "Files");
+      btn.innerHTML = '<i class="ph ph-folder-open"></i>';
+      btn.addEventListener("click", onFilesClick);
       island.appendChild(btn);
     }
 
-    if (onShortcutsClick) {
-      const kbBtn = document.createElement("button");
-      kbBtn.className = "key-island-btn key-island-icon";
-      kbBtn.setAttribute("aria-label", "Open shortcuts");
-      kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
-      kbBtn.addEventListener("click", onShortcutsClick);
-      island.appendChild(kbBtn);
+    if (onPortForwardClick) {
+      const btn = document.createElement("button");
+      btn.className = "key-island-btn key-island-icon";
+      btn.id = "bar-portfwd-btn";
+      btn.setAttribute("aria-label", "Port Forward");
+      btn.innerHTML = '<i class="ph ph-plug"></i>';
+      btn.addEventListener("click", onPortForwardClick);
+      if (!portProxyEnabled) btn.style.display = "none";
+      island.appendChild(btn);
+    }
+
+    if (onSettingsClick) {
+      const btn = document.createElement("button");
+      btn.className = "key-island-btn key-island-icon";
+      btn.setAttribute("aria-label", "Settings");
+      btn.innerHTML = '<i class="ph ph-gear"></i>';
+      btn.addEventListener("click", onSettingsClick);
+      island.appendChild(btn);
     }
 
     // Restore saved position
@@ -835,54 +801,71 @@ export function createShortcutBar(options = {}) {
       } catch {}
     }
 
-    // Touch drag to reposition (with dead zone so taps still work)
+    // Drag to reposition (touch + mouse, with dead zone so clicks/taps still work)
     let dragState = null;
-    island.addEventListener("touchstart", (e) => {
-      if (e.touches.length !== 1) return;
-      const t = e.touches[0];
-      const rect = island.getBoundingClientRect();
-      dragState = {
-        startX: t.clientX,
-        startY: t.clientY,
-        offsetX: t.clientX - rect.left,
-        offsetY: t.clientY - rect.top,
-        dragging: false,
-      };
-    }, { passive: false });
 
-    island.addEventListener("touchmove", (e) => {
+    function islandDragMove(cx, cy) {
       if (!dragState) return;
-      const t = e.touches[0];
-
       if (!dragState.dragging) {
-        const dx = t.clientX - dragState.startX;
-        const dy = t.clientY - dragState.startY;
+        const dx = cx - dragState.startX;
+        const dy = cy - dragState.startY;
         if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
         dragState.dragging = true;
       }
-
-      e.preventDefault();
-      e.stopPropagation();
-      const x = t.clientX - dragState.offsetX;
-      const y = t.clientY - dragState.offsetY;
+      const x = cx - dragState.offsetX;
+      const y = cy - dragState.offsetY;
       const maxX = window.innerWidth - island.offsetWidth;
       const maxY = window.innerHeight - island.offsetHeight;
       island.style.left = Math.max(0, Math.min(x, maxX)) + "px";
       island.style.top = Math.max(0, Math.min(y, maxY)) + "px";
       island.style.bottom = "auto";
       island.style.right = "auto";
-    }, { passive: false });
+    }
 
-    island.addEventListener("touchend", (e) => {
+    function islandDragEnd() {
       if (dragState?.dragging) {
-        // Suppress the click that would follow
-        e.preventDefault();
         localStorage.setItem("katulong-key-island-pos", JSON.stringify({
           x: parseInt(island.style.left),
           y: parseInt(island.style.top),
         }));
       }
       dragState = null;
+    }
+
+    // Touch drag
+    island.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const rect = island.getBoundingClientRect();
+      dragState = { startX: t.clientX, startY: t.clientY, offsetX: t.clientX - rect.left, offsetY: t.clientY - rect.top, dragging: false };
+    }, { passive: false });
+    island.addEventListener("touchmove", (e) => {
+      if (!dragState) return;
+      const t = e.touches[0];
+      islandDragMove(t.clientX, t.clientY);
+      if (dragState?.dragging) { e.preventDefault(); e.stopPropagation(); }
+    }, { passive: false });
+    island.addEventListener("touchend", (e) => {
+      if (dragState?.dragging) e.preventDefault();
+      islandDragEnd();
+    });
+
+    // Mouse drag
+    island.addEventListener("mousedown", (e) => {
+      if (e.target.closest("button")) return; // let button clicks through
+      const rect = island.getBoundingClientRect();
+      dragState = { startX: e.clientX, startY: e.clientY, offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top, dragging: false };
+      const onMouseMove = (me) => {
+        islandDragMove(me.clientX, me.clientY);
+        if (dragState?.dragging) { me.preventDefault(); }
+      };
+      const onMouseUp = () => {
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        islandDragEnd();
+      };
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
     });
 
     document.body.appendChild(island);

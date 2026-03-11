@@ -53,7 +53,7 @@ export function createThemeManager(options = {}) {
     const effective = getEffectiveTheme();
 
     // Update theme color meta tags to match the shortcut bar / PWA title bar
-    const color = effective === "light" ? "#eff1f5" : "#1e1e2e";
+    const color = effective === "light" ? "#ffffff" : "#313244";
     document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
       m.content = color;
     });

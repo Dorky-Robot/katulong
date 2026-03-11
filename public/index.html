@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="theme-color" content="#1e1e2e" media="(prefers-color-scheme: dark)">
-  <meta name="theme-color" content="#eff1f5" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#313244" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <title>Katulong</title>
   <link rel="icon" href="/favicon.ico" sizes="32x32">
   <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">
@@ -60,7 +60,7 @@
     @media (prefers-color-scheme: light) {
       [data-theme="auto"] {
         --bg: #eff1f5;
-        --bg-surface: #ffffff;
+          --bg-surface: #ffffff;
         --bg-input: #e6e9ef;
         --border: #ccd0da;
         --text: #4c4f69;
@@ -265,12 +265,9 @@
     }
     .tab-scroll-area {
       display: flex; align-items: center; gap: var(--space-xs);
-      overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
       flex: 1 1 0; min-width: 0;
-      padding-left: var(--space-xs);
-      scrollbar-width: none;
+      overflow: hidden;
     }
-    .tab-scroll-area::-webkit-scrollbar { display: none; }
 
     /* --- Window Controls Overlay (PWA title bar integration) --- */
     @media (display-mode: window-controls-overlay) {
@@ -279,6 +276,7 @@
         width: env(titlebar-area-width, 100%);
         height: env(titlebar-area-height, var(--height-btn-md));
         -webkit-app-region: drag;
+        background: var(--bg-surface);
         border-bottom: none;
         padding-left: var(--space-sm);
         padding-right: var(--space-sm);
@@ -379,14 +377,15 @@
 
     /* --- Desktop tab bar (session tabs in shortcut bar) --- */
     .tab-bar-tab {
-      flex-shrink: 0; height: var(--height-btn-sm); padding: 0 var(--space-2_5);
+      flex: 0 1 auto; min-width: 2rem; height: var(--height-btn-sm); padding: 0 var(--space-2_5);
       border: 1px solid var(--border); border-radius: var(--radius-sm);
       background: var(--bg-input); color: var(--text-muted);
       font-size: 0.8125rem; font-family: var(--font-mono);
       cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 0.375rem;
+      overflow: hidden;
     }
-    .tab-bar-tab i.ph { font-size: 1rem; }
-    .tab-bar-tab .tab-label { pointer-events: none; }
+    .tab-bar-tab i.ph { font-size: 1rem; flex-shrink: 0; }
+    .tab-bar-tab .tab-label { pointer-events: none; overflow: hidden; text-overflow: ellipsis; }
     .tab-bar-tab.active {
       background: var(--accent); color: var(--text);
       border-color: var(--accent-active);
@@ -410,7 +409,8 @@
 
     /* Drag ghost (follows cursor while dragging) */
     .tab-drag-ghost {
-      position: fixed; z-index: 10000; pointer-events: none;
+      position: fixed; left: 0; top: 0;
+      z-index: 10000; pointer-events: none;
       opacity: 0.9; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
       border-radius: var(--radius-sm);
       display: flex; align-items: center; gap: 0.375rem;
@@ -418,11 +418,12 @@
       background: var(--accent); color: var(--text);
       border: 1px solid var(--accent-active);
       font-size: 0.8125rem; font-family: var(--font-mono);
+      overflow: visible;
+      will-change: transform;
     }
     .tab-drag-ghost.tab-tear-off {
-      transform: scale(1.08);
-      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
       opacity: 0.7;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
     }
 
     /* Tab being dragged — invisible but keeps its space in layout */
@@ -505,16 +506,18 @@
       .bar-icon-btn { width: 2.5rem; font-size: 1.25rem; }
     }
 
-    /* --- Floating key island (touch devices with desktop tab bar, e.g. iPad) --- */
+    /* --- Floating utility island (all devices) --- */
     #key-island {
       position: fixed; bottom: 1.5rem; left: 1.5rem; z-index: var(--z-bar);
       display: flex; gap: 0.375rem; padding: 0.375rem;
-      background: var(--bg-surface); border: 1px solid var(--border);
+      background: var(--bg); border: 1px solid var(--border);
       border-radius: var(--radius-lg);
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-      touch-action: none; /* allow JS to handle touch drag */
+      touch-action: none;
       user-select: none; -webkit-user-select: none;
+      cursor: grab;
     }
+    #key-island:active { cursor: grabbing; }
     .key-island-btn {
       height: 2.25rem; padding: 0 0.875rem;
       border: 1px solid var(--border); border-radius: var(--radius-sm);
@@ -522,6 +525,7 @@
       font-size: 0.8125rem; font-family: var(--font-mono);
       cursor: pointer; display: flex; align-items: center; justify-content: center;
     }
+    .key-island-btn:hover { background: var(--bg-hover); color: var(--text); }
     .key-island-btn:active { background: var(--accent); color: var(--text); }
     .key-island-icon { width: 2.25rem; padding: 0; font-size: 1.125rem; }
 
@@ -1757,6 +1761,6 @@
     </div>
   </div>
 
-  <script type="module" src="/app.js?v=70"></script>
+  <script type="module" src="/app.js?v=73"></script>
 </body>
 </html>
