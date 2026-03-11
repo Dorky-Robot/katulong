@@ -82,15 +82,16 @@ Works on Alpine, Debian/Ubuntu, RHEL/Fedora, and macOS. Installs Node, tmux, and
 Add to your Dockerfile (pin to a version tag for reproducible builds):
 
 ```dockerfile
-RUN KATULONG_VERSION=0.14.13 KATULONG_DATA_DIR=/data \
+RUN KATULONG_VERSION=0.14.13 \
     curl -fsSL https://raw.githubusercontent.com/dorky-robot/katulong/v0.14.13/install.sh | sh
 ```
 
-Then expose the port and mount the data volume:
+Katulong gives you shell access to the container — it has full access to the container's filesystem. Auth state lives in `~/.katulong` inside the container by default.
+
+Set the port with the `PORT` env var (default: 3001):
 
 ```dockerfile
-EXPOSE 3001
-VOLUME /data
+ENV PORT=3001
 CMD ["katulong", "start", "--foreground"]
 ```
 
