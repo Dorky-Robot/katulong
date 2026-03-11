@@ -14,6 +14,10 @@ Katulong is a self-hosted web terminal that gives remote shell access to the hos
 
 Remote access model: the server binds to localhost and an external tunnel tool (ngrok, Cloudflare Tunnel, etc.) forwards HTTPS traffic to it. TLS termination and external certificate management are handled by the tunnel, not by Katulong itself.
 
+### Remote clipboard bridge
+
+Image paste across machines (e.g., iPad → tunnel → Mac mini) requires a three-layer interception in `public/lib/paste-handler.js`: (1) block xterm's keydown `\x16`, (2) handle the paste event, (3) Clipboard API fallback for WebKit which suppresses paste after `preventDefault` on keydown. See `docs/clipboard-bridge.md` for the full architecture — **read it before modifying paste-handler.js, image-upload.js, or the upload route in routes.js**.
+
 ## Development principles
 
 ### Boy Scout Rule
