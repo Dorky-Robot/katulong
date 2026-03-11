@@ -76,12 +76,10 @@ export async function loadSessions(store, currentSession = null) {
       api.get("/tmux-sessions").catch(() => [])
     ]);
 
-    const unmanagedSessions = unmanagedNames.map(name => ({ name }));
-
     store.dispatch({
       type: SESSION_ACTIONS.LOAD_SUCCESS,
       sessions,
-      unmanagedSessions,
+      unmanagedSessions: unmanagedNames,
       currentSession: currentSession || store.getState().currentSession
     });
   } catch (err) {
