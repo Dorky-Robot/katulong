@@ -1,4 +1,4 @@
-const CACHE_NAME = "katulong-v9";
+const CACHE_NAME = "katulong-__APP_VERSION__";
 const PRECACHE = [
   "/",
   "/icon-192.png",
