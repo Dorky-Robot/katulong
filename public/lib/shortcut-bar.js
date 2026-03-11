@@ -364,8 +364,9 @@ export function createShortcutBar(options = {}) {
 
       // Call rename API
       api.put(`/sessions/${encodeURIComponent(sessionName)}`, { name: newName })
-        .then(() => {
-          if (onTabRenamed) onTabRenamed(sessionName, newName);
+        .then((result) => {
+          const canonicalName = result?.name || newName;
+          if (onTabRenamed) onTabRenamed(sessionName, canonicalName);
         })
         .catch((err) => {
           console.error("[Tab] Rename failed:", err);
