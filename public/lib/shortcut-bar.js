@@ -925,7 +925,7 @@ export function createShortcutBar(options = {}) {
       }
     }
 
-    // P2P connection dot
+    // P2P connection dot — shown on all devices
     const dot = document.createElement("span");
     dot.id = "island-p2p-dot";
     dot.className = "island-p2p-dot";
