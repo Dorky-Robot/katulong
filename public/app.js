@@ -725,7 +725,6 @@
           url.searchParams.set("s", newName);
           history.replaceState(null, "", url);
         }
-        shortcutBarInstance.render(state.session.name === oldName ? newName : state.session.name);
       },
       onAdoptSession: async (name) => {
         windowTabSet.addTab(name);
@@ -923,6 +922,7 @@
       renderBar,
       invalidateSessions: (name) => invalidateSessions(sessionStore, name),
       poolRename: (oldName, newName) => terminalPool.rename(oldName, newName),
+      tabRename: (oldName, newName) => windowTabSet.renameTab(oldName, newName),
       onSessionKilled: (name) => windowTabSet.onSessionKilled(name),
       fit: fitActiveTerminal
     });

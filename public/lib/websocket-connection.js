@@ -95,6 +95,7 @@ export function createWebSocketConnection(deps = {}) {
       stateUpdates: { 'session.name': msg.name },
       effects: [
         { type: 'poolRename', oldName: currentState.session.name, newName: msg.name },
+        { type: 'tabRename', oldName: currentState.session.name, newName: msg.name },
         { type: 'updateSessionUI', name: msg.name }
       ]
     }),
@@ -236,6 +237,9 @@ export function createWebSocketConnection(deps = {}) {
         break;
       case 'poolRename':
         if (deps.poolRename) deps.poolRename(effect.oldName, effect.newName);
+        break;
+      case 'tabRename':
+        if (deps.tabRename) deps.tabRename(effect.oldName, effect.newName);
         break;
       case 'fastReconnect':
         // Reset reconnect delay for fast reconnection to new server
