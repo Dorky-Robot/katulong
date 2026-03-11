@@ -79,17 +79,19 @@ Works on Alpine, Debian/Ubuntu, RHEL/Fedora, and macOS. Installs Node, tmux, and
 
 ### Docker
 
-Add to your Dockerfile:
+Add to your Dockerfile (pin to a version tag for reproducible builds):
 
 ```dockerfile
-RUN curl -fsSL https://raw.githubusercontent.com/dorky-robot/katulong/main/install.sh | sh
+RUN KATULONG_VERSION=0.14.13 KATULONG_DATA_DIR=/data \
+    curl -fsSL https://raw.githubusercontent.com/dorky-robot/katulong/v0.14.13/install.sh | sh
 ```
 
-Or with a specific version:
+Then expose the port and mount the data volume:
 
 ```dockerfile
-RUN KATULONG_VERSION=0.14.13 \
-    curl -fsSL https://raw.githubusercontent.com/dorky-robot/katulong/main/install.sh | sh
+EXPOSE 3001
+VOLUME /data
+CMD ["katulong", "start", "--foreground"]
 ```
 
 ### Homebrew (macOS)

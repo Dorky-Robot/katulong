@@ -1,4 +1,5 @@
 #!/bin/sh
+# POSIX sh for maximum portability — Alpine ships without bash by default
 set -eu
 
 # Katulong installer
@@ -12,17 +13,21 @@ set -eu
 #   KATULONG_VERSION  — version to install (default: latest)
 #   KATULONG_DIR      — install directory (default: /opt/katulong)
 #   KATULONG_DATA_DIR — data directory (default: $HOME/.katulong)
+#
+# Requires root for the default paths. Set KATULONG_DIR and BIN_DIR to
+# user-writable paths to install without root.
 
 REPO="dorky-robot/katulong"
 VERSION="${KATULONG_VERSION:-latest}"
 INSTALL_DIR="${KATULONG_DIR:-/opt/katulong}"
 DATA_DIR="${KATULONG_DATA_DIR:-$HOME/.katulong}"
 BIN_LINK="/usr/local/bin/katulong"
+MIN_NODE_MAJOR=18
 
 # Temp directory for downloads — cleaned up on exit
 TMP_DIR=""
 cleanup() { [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"; }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 log()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*"; }
@@ -43,10 +48,9 @@ detect_pm() {
 # --- Install system dependencies ---
 
 install_deps() {
-  pm="$1"
-  log "Installing dependencies via $pm"
+  log "Installing dependencies via $1"
 
-  case "$pm" in
+  case "$1" in
     apk)
       apk add --no-cache nodejs npm tmux bash curl
       ;;
@@ -67,6 +71,7 @@ install_deps() {
       # macOS — prefer the tap for a managed install
       log "Homebrew detected — installing via tap instead"
       brew install dorky-robot/katulong/katulong
+      katulong --version || die "Homebrew install succeeded but katulong is not in PATH"
       log "Installed! Run: katulong start"
       exit 0
       ;;
@@ -79,15 +84,17 @@ install_deps() {
 # --- Check prerequisites ---
 
 check_prereqs() {
-  missing=""
-  command -v node >/dev/null 2>&1 || missing="$missing node"
-  command -v npm >/dev/null 2>&1  || missing="$missing npm"
-  command -v tmux >/dev/null 2>&1 || missing="$missing tmux"
+  command -v node >/dev/null 2>&1 &&
+  command -v npm  >/dev/null 2>&1 &&
+  command -v tmux >/dev/null 2>&1
+}
 
-  if [ -n "$missing" ]; then
-    return 1
+check_node_version() {
+  node_ver=$(node --version 2>/dev/null | sed 's/^v//')
+  node_major=$(echo "$node_ver" | cut -d. -f1)
+  if [ -z "$node_major" ] || [ "$node_major" -lt "$MIN_NODE_MAJOR" ] 2>/dev/null; then
+    die "Node.js >= ${MIN_NODE_MAJOR} required (found: ${node_ver:-none})"
   fi
-  return 0
 }
 
 # --- Resolve version ---
@@ -96,11 +103,11 @@ resolve_version() {
   if [ "$VERSION" = "latest" ]; then
     # Use tags API (not releases) — katulong tags every version but may not
     # create GitHub releases for each one.
-    VERSION=$(curl -fsSL --max-filesize 65536 \
-      "https://api.github.com/repos/${REPO}/tags?per_page=1" \
+    api_url="https://api.github.com/repos/${REPO}/tags?per_page=1"
+    VERSION=$(curl -fsSL --max-filesize 65536 "$api_url" \
       | grep '"name"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/')
     if [ -z "$VERSION" ]; then
-      die "Could not determine latest version from GitHub"
+      die "Could not determine latest version (URL: $api_url)"
     fi
   fi
   # Strip leading v if present
@@ -117,26 +124,33 @@ install_katulong() {
 
   TMP_DIR="$(mktemp -d /tmp/katulong-install-XXXXXX)"
   tmp_tar="$TMP_DIR/katulong.tar.gz"
+  tmp_extract="$TMP_DIR/extract"
   tarball_url="https://github.com/${REPO}/archive/refs/tags/v${VERSION}.tar.gz"
 
   curl -fsSL --retry 3 --retry-delay 3 "$tarball_url" -o "$tmp_tar" \
     || die "Failed to download v${VERSION} from GitHub"
 
-  # Clean previous install
-  if [ -d "$INSTALL_DIR" ]; then
-    log "Removing previous install at ${INSTALL_DIR}"
-    rm -rf "$INSTALL_DIR"
-  fi
+  # Extract to temp dir first, then move atomically
+  mkdir -p "$tmp_extract"
+  tar xzf "$tmp_tar" -C "$tmp_extract" --strip-components=1
 
-  mkdir -p "$INSTALL_DIR"
-  tar xzf "$tmp_tar" -C "$INSTALL_DIR" --strip-components=1
-
-  # Install production dependencies
-  cd "$INSTALL_DIR"
-  npm install --production --omit=dev 2>&1 | tail -1
+  # Install production dependencies in the temp dir
+  cd "$tmp_extract"
+  npm install --production --omit=dev --silent \
+    || die "npm install failed — check network and Node.js version"
   cd - >/dev/null
 
-  # Create wrapper script — DATA_DIR is resolved at runtime via env var
+  # Atomic swap: remove old install, move new one into place
+  if [ -d "$INSTALL_DIR" ]; then
+    log "Replacing previous install at ${INSTALL_DIR}"
+    rm -rf "$INSTALL_DIR"
+  fi
+  mv "$tmp_extract" "$INSTALL_DIR"
+
+  # Ensure bin directory exists
+  mkdir -p "$(dirname "$BIN_LINK")"
+
+  # Create wrapper script — KATULONG_DATA_DIR resolves at runtime
   cat > "$BIN_LINK" <<WRAPPER
 #!/bin/sh
 export KATULONG_DATA_DIR="\${KATULONG_DATA_DIR:-${DATA_DIR}}"
@@ -151,9 +165,9 @@ WRAPPER
 # --- Verify ---
 
 verify() {
-  if ! command -v katulong >/dev/null 2>&1; then
-    die "Installation failed — katulong not found in PATH"
-  fi
+  # Test the binary directly rather than relying on PATH
+  node "${INSTALL_DIR}/bin/katulong" --version >/dev/null 2>&1 \
+    || die "Installation failed — katulong binary does not run"
   installed_version=$(katulong --version 2>/dev/null || echo "unknown")
   log "Installed ${installed_version}"
 }
@@ -175,6 +189,7 @@ main() {
     log "Dependencies satisfied (node, npm, tmux)"
   fi
 
+  check_node_version
   resolve_version
   install_katulong
   verify
