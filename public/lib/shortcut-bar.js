@@ -358,7 +358,6 @@ export function createShortcutBar(options = {}) {
 
       const newName = input.value.trim();
       if (!newName || newName === sessionName) {
-        // Revert — restore the label span
         revert();
         return;
       }
@@ -370,7 +369,8 @@ export function createShortcutBar(options = {}) {
         })
         .catch((err) => {
           console.error("[Tab] Rename failed:", err);
-          revert();
+          // Input may be detached if render() fired during the API call
+          render(currentSessionName);
         });
     }
 
@@ -387,7 +387,8 @@ export function createShortcutBar(options = {}) {
       if (e.key === "Escape") { e.preventDefault(); if (!committed) revert(); }
       e.stopPropagation(); // Don't let keyboard events reach the terminal
     });
-    input.addEventListener("blur", () => commit());
+    // Only commit on blur if input is still connected (not detached by render())
+    input.addEventListener("blur", () => { if (input.isConnected) commit(); });
     // Prevent mousedown from starting a tab drag
     input.addEventListener("mousedown", (e) => e.stopPropagation());
   }

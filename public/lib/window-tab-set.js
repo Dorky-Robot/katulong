@@ -131,6 +131,8 @@ export function createWindowTabSet({ sessionStore, getCurrentSession }) {
       const idx = tabs.indexOf(oldName);
       if (idx === -1) return;
       tabs[idx] = newName;
+      recentlyAdded.add(newName);
+      recentlyAdded.delete(oldName);
       saveTabs();
       notify();
       if (channel) {

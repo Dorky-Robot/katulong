@@ -193,10 +193,11 @@ export function createFileBrowserComponent(store, options = {}) {
       if (selectedName) {
         const entry = entries.find(en => en.name === selectedName);
         if (entry?.type === "directory" && state.columns[activeColIdx + 1]) {
-          // Focus the next column — select its first item
+          // Focus the next column — select its first visible item
           const nextCol = state.columns[activeColIdx + 1];
-          if (nextCol.entries.length > 0) {
-            selectItem(store, activeColIdx + 1, nextCol.entries[0].name);
+          const nextVisible = filterHidden(nextCol.entries, state.showHidden);
+          if (nextVisible.length > 0) {
+            selectItem(store, activeColIdx + 1, nextVisible[0].name);
           }
         }
       }
