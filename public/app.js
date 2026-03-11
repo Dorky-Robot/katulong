@@ -714,6 +714,19 @@
       onSessionClick: openSessionManager,
       onNewSessionClick: createNewSession,
       onTabClick: (name) => switchSession(name),
+      onTabRenamed: (oldName, newName) => {
+        windowTabSet.renameTab(oldName, newName);
+        terminalPool.rename(oldName, newName);
+        invalidateSessions(sessionStore, newName);
+        if (state.session.name === oldName) {
+          state.update('session.name', newName);
+          document.title = newName;
+          const url = new URL(window.location);
+          url.searchParams.set("s", newName);
+          history.replaceState(null, "", url);
+        }
+        shortcutBarInstance.render(state.session.name === oldName ? newName : state.session.name);
+      },
       onAdoptSession: async (name) => {
         windowTabSet.addTab(name);
         try {
