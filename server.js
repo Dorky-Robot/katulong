@@ -77,7 +77,17 @@ const credentialLockout = new CredentialLockout({
   lockoutMs: 15 * 60 * 1000, // locks for 15 minutes
 });
 
+function isTrustedProxy(req) {
+  const secret = envConfig.trustProxySecret;
+  if (!secret) return false;
+  return req.headers["x-katulong-auth"] === secret;
+}
+
 function isAuthenticated(req) {
+  if (isTrustedProxy(req)) {
+    log.debug("Auth bypassed: trusted proxy", { ip: req.socket.remoteAddress });
+    return true;
+  }
   if (isLocalRequest(req)) {
     log.debug("Auth bypassed: localhost", { ip: req.socket.remoteAddress });
     return true;
@@ -267,11 +277,16 @@ function rejectUpgrade(socket, status) {
 function authenticateUpgrade(req) {
   if (!isAuthenticated(req)) return null;
 
+  // Trusted proxy and localhost don't need session tokens
+  if (isTrustedProxy(req) || isLocalRequest(req)) {
+    return { sessionToken: null, credentialId: null };
+  }
+
   const cookies = parseCookies(req.headers.cookie);
   const sessionToken = cookies.get("katulong_session");
   let credentialId = null;
 
-  if (sessionToken && !isLocalRequest(req)) {
+  if (sessionToken) {
     const state = loadState();
     const session = state?.getSession(sessionToken);
     if (!state || !session || !state.isValidSession(sessionToken)) return null;
@@ -282,6 +297,7 @@ function authenticateUpgrade(req) {
 }
 
 function validateUpgradeOrigin(req) {
+  if (isTrustedProxy(req)) return true;
   if (isLocalRequest(req)) return true;
   const origin = req.headers.origin;
   const host = req.headers.host;
