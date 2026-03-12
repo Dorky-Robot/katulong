@@ -886,15 +886,6 @@ export function createShortcutBar(options = {}) {
 
     // Utility buttons — skip on phone (they're in the toolbar)
     if (!isPhone()) {
-      if (onTerminalClick) {
-        const btn = document.createElement("button");
-        btn.className = "key-island-btn key-island-icon";
-        btn.setAttribute("aria-label", "Terminal");
-        btn.innerHTML = '<i class="ph ph-terminal-window"></i>';
-        btn.addEventListener("click", onTerminalClick);
-        island.appendChild(btn);
-      }
-
       if (onFilesClick) {
         const btn = document.createElement("button");
         btn.className = "key-island-btn key-island-icon";
