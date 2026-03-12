@@ -2,6 +2,9 @@ import { test, expect } from "@playwright/test";
 import { waitForAppReady } from './helpers.js';
 
 test.describe("Smoke — critical path", () => {
+  // Shell init (zsh/bash profile) can be slow under load — give enough headroom
+  test.setTimeout(30_000);
+
   let sessionName;
 
   test.beforeEach(async ({ page }, testInfo) => {
