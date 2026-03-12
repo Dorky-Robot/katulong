@@ -8,10 +8,12 @@ import {
 // --- tmux control mode helper tests ---
 
 describe("tmuxSessionName", () => {
-  it("replaces dots and colons with underscores", () => {
+  it("replaces dots, colons, and spaces with underscores", () => {
     assert.strictEqual(tmuxSessionName("my.session"), "my_session");
     assert.strictEqual(tmuxSessionName("host:port"), "host_port");
     assert.strictEqual(tmuxSessionName("a.b:c"), "a_b_c");
+    assert.strictEqual(tmuxSessionName("my session"), "my_session");
+    assert.strictEqual(tmuxSessionName("a.b c:d"), "a_b_c_d");
   });
 
   it("preserves valid names", () => {
