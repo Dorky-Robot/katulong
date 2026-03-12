@@ -22,7 +22,7 @@ export async function setupTest({ page, context }) {
  */
 export async function waitForShellReady(page) {
   await page.waitForFunction(
-    () => /[$➜%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
+    () => /[$➜❯%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
     { timeout: 20000 },
   );
 }
