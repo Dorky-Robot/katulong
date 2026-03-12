@@ -106,11 +106,6 @@ export function createWebSocketConnection(deps = {}) {
       effects: [{ type: 'refreshTokensAfterRegistration' }]
     }),
 
-    'credential-removed': () => ({
-      stateUpdates: {},
-      effects: []
-    }),
-
     'p2p-signal': (msg) => ({
       stateUpdates: {},
       effects: [{ type: 'p2pSignal', data: msg.data }]
