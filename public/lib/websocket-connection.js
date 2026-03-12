@@ -6,6 +6,7 @@
  */
 
 import { scrollToBottom, terminalWriteWithScroll, activeViewport } from "/lib/scroll-utils.js";
+import { basePath } from "/lib/base-path.js";
 
 /**
  * Create WebSocket connection manager with injected dependencies
@@ -266,7 +267,8 @@ export function createWebSocketConnection(deps = {}) {
 
     isConnecting = true;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    state.connection.ws = new WebSocket(`${proto}//${location.host}`);
+    const wsPath = basePath ? `${basePath}/stream` : "";
+    state.connection.ws = new WebSocket(`${proto}//${location.host}${wsPath}`);
 
     state.connection.ws.onopen = () => {
       isConnecting = false;
