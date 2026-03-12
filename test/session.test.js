@@ -59,6 +59,32 @@ describe("unescapeTmuxOutput", () => {
   it("rejects non-octal digits", () => {
     assert.strictEqual(unescapeTmuxOutput("a\\189"), "a\\189");
   });
+
+  it("decodes octal-escaped emoji (👋) as UTF-8 bytes", () => {
+    // 👋 = U+1F44B = UTF-8 bytes F0 9F 91 8B = octal \360\237\221\213
+    assert.strictEqual(unescapeTmuxOutput("\\360\\237\\221\\213"), "👋");
+  });
+
+  it("decodes octal-escaped CJK (你好) as UTF-8 bytes", () => {
+    // 你 = E4 BD A0, 好 = E5 A5 BD
+    assert.strictEqual(unescapeTmuxOutput("\\344\\275\\240\\345\\245\\275"), "你好");
+  });
+
+  it("decodes mixed ASCII and octal-escaped emoji", () => {
+    assert.strictEqual(
+      unescapeTmuxOutput("hello \\360\\237\\221\\213 world"),
+      "hello 👋 world"
+    );
+  });
+
+  it("handles passthrough UTF-8 (tmux -u mode) without escaping", () => {
+    // When tmux passes high bytes through directly (not octal-escaped)
+    assert.strictEqual(unescapeTmuxOutput("hello 👋 world"), "hello 👋 world");
+  });
+
+  it("handles passthrough emoji above BMP via surrogate pairs", () => {
+    assert.strictEqual(unescapeTmuxOutput("hi \uD83D\uDC4B bye"), "hi 👋 bye");
+  });
 });
 
 describe("stripDaResponses", () => {

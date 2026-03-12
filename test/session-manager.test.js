@@ -75,6 +75,7 @@ mock.module(sessionModuleUrl, {
     tmuxHasSession: async (tmuxName) => tmuxSessions.has(tmuxName),
     applyTmuxSessionOptions: async () => {},
     captureScrollback: async () => "",
+    captureVisiblePane: async () => "$ prompt\n",
     checkTmux: async () => {},
     cleanTmuxServerEnv: async () => {},
     tmuxListSessions: async () => [...tmuxSessions.keys()],
@@ -224,11 +225,12 @@ describe("session manager", () => {
   });
 
   describe("client attach/detach", () => {
-    it("attaches a client to a session", async () => {
+    it("attaches a client to a session and returns visible pane snapshot", async () => {
       const { mgr } = makeManager();
       await mgr.createSession("sess");
       const result = await mgr.attachClient("client1", "sess", 80, 24);
       assert.strictEqual(result.alive, true);
+      assert.strictEqual(result.buffer, "$ prompt\n");
     });
 
     it("creates session on attach if missing", async () => {
