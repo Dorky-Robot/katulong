@@ -130,6 +130,15 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
+    'p2p-unavailable': () => ({
+      stateUpdates: {},
+      effects: [
+        { type: 'log', message: '[P2P] Server reports P2P unavailable' },
+        { type: 'p2pDestroy' },
+        { type: 'updateP2PIndicator' }
+      ]
+    }),
+
     'p2p-closed': () => ({
       stateUpdates: { 'p2p.connected': false },
       effects: [
@@ -161,6 +170,9 @@ export function createWebSocketConnection(deps = {}) {
         break;
       case 'p2pSignal':
         if (p2pManager) p2pManager.signal(effect.data);
+        break;
+      case 'p2pDestroy':
+        if (p2pManager) p2pManager.destroy();
         break;
       case 'log':
         console.log(effect.message);

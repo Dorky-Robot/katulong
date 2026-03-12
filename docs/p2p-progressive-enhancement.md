@@ -55,5 +55,5 @@ The UI shows a connection status dot:
 
 ## Dependencies
 
-- **Client**: SimplePeer (bundled in `public/vendor/`)
-- **Server**: `node-datachannel` (optional — P2P is disabled if not installed)
+- **Client**: Browser `RTCPeerConnection` API (no library needed)
+- **Server**: `node-datachannel` polyfill (optional — P2P is disabled if not installed)

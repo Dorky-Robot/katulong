@@ -101,12 +101,7 @@ export function createP2PManager(config = {}) {
       if (newPC.iceConnectionState === "failed" || newPC.iceConnectionState === "disconnected") {
         if (pc !== newPC) return; // stale
         console.log("[P2P] ICE failed/disconnected, cleaning up");
-        connected = false;
-        dc = null;
-        pc = null;
-        if (onStateChange) {
-          onStateChange({ connected: false, peer: null });
-        }
+        destroy();
         scheduleRetry();
       }
     };
@@ -171,6 +166,11 @@ export function createP2PManager(config = {}) {
           type: "p2p-signal",
           data: { type: offer.type, sdp: offer.sdp }
         }));
+      } else {
+        // WS closed between createOffer and send — clean up
+        destroy();
+        scheduleRetry();
+        return;
       }
     } catch (err) {
       console.warn("[P2P] Failed to create offer:", err.message);
