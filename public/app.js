@@ -572,8 +572,9 @@
       if (wsOpen) {
         // Switch session over the existing WebSocket — no disconnect/reconnect needed
         ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows }));
-      } else if (!ws) {
+      } else if (!ws || ws.readyState === WebSocket.CLOSED) {
         // No WebSocket yet (e.g., first load with no sessions, user picked one from sidebar)
+        // or WebSocket was closed and hasn't reconnected yet
         wsConnection.connect();
       }
       if (shortcutBarInstance) shortcutBarInstance.render(name);
@@ -590,7 +591,8 @@
     }
 
     window.addEventListener("popstate", () => {
-      const name = new URLSearchParams(location.search).get("s") || "default";
+      const name = new URLSearchParams(location.search).get("s");
+      if (!name) return; // bare URL without ?s= — stay on current session
       if (name !== state.session.name) activateSession(name);
     });
 
@@ -940,15 +942,18 @@
 
     // --- Boot ---
 
-    renderBar(state.session.name);  // Initial render
-
     // If no explicit ?s= param, resolve an existing session before connecting
     // to avoid creating a throwaway "default" tmux session.
     if (!explicitSession) {
-      fetch("/sessions").then(r => r.json()).then(sessions => {
-        if (sessions.length > 0) {
+      fetch("/sessions").then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      }).then(sessions => {
+        // Guard: if the user already picked a session while the fetch was in-flight, skip
+        if (state.connection.ws || state.session.name !== "default") return;
+        if (sessions.length > 0 && sessions[0].name) {
           const name = sessions[0].name;
-          state.session.name = name;
+          state.update('session.name', name);
           document.title = name;
           const url = new URL(window.location);
           url.searchParams.set("s", name);
@@ -959,10 +964,13 @@
           wsConnection.connect();
         }
         // If no sessions exist, stay empty — user can create one via session list
-      }).catch(() => {
-        wsConnection.connect(); // fallback: connect with default
+      }).catch((err) => {
+        console.warn("Failed to fetch sessions on load:", err);
+        // Stay empty rather than creating a throwaway "default" session.
+        // User can create or pick a session via the sidebar.
       });
     } else {
+      renderBar(state.session.name);
       wsConnection.connect();
     }
     loadShortcuts();
