@@ -54,7 +54,7 @@ class MockSession {
 mock.module(sessionModuleUrl, {
   namedExports: {
     Session: MockSession,
-    tmuxSessionName: (name) => name.replace(/[.:]/g, "_"),
+    tmuxSessionName: (name) => name.replace(/[.: ]/g, "_"),
     tmuxExec: async (args) => {
       // Rename support
       if (args[0] === "rename-session") {
