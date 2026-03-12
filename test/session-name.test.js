@@ -11,7 +11,7 @@ describe("SessionName", () => {
 
     it("sanitizes invalid characters", () => {
       const name = new SessionName("hello world!@#$");
-      assert.strictEqual(name.value, "helloworld");
+      assert.strictEqual(name.value, "hello world");
     });
 
     it("truncates to 64 characters", () => {
@@ -60,9 +60,9 @@ describe("SessionName", () => {
       );
     });
 
-    it("preserves alphanumeric, hyphens, and underscores", () => {
-      const name = new SessionName("abc123-DEF_456");
-      assert.strictEqual(name.value, "abc123-DEF_456");
+    it("preserves alphanumeric, spaces, hyphens, and underscores", () => {
+      const name = new SessionName("abc 123-DEF_456");
+      assert.strictEqual(name.value, "abc 123-DEF_456");
     });
   });
 
@@ -95,7 +95,7 @@ describe("SessionName", () => {
 
     it("returns sanitized value with special characters removed", () => {
       const name = new SessionName("hello world!");
-      assert.strictEqual(name.toString(), "helloworld");
+      assert.strictEqual(name.toString(), "hello world");
     });
   });
 
@@ -169,9 +169,9 @@ describe("SessionName", () => {
       assert.strictEqual(name.value, "test--session"); // Hyphens remain, emoji removed
     });
 
-    it("handles whitespace by removing it", () => {
+    it("preserves internal spaces and trims leading/trailing whitespace", () => {
       const name = new SessionName("  test  session  ");
-      assert.strictEqual(name.value, "testsession");
+      assert.strictEqual(name.value, "test  session");
     });
   });
 
@@ -200,9 +200,9 @@ describe("SessionName", () => {
 
     it("sanitizes user input from UI", () => {
       const examples = [
-        ["My Project (prod)", "MyProjectprod"],
-        ["test #1", "test1"],
-        ["server @ port 3000", "serverport3000"],
+        ["My Project (prod)", "My Project prod"],
+        ["test #1", "test 1"],
+        ["server @ port 3000", "server  port 3000"],
         ["logs/debug", "logsdebug"],
       ];
 
