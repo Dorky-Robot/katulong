@@ -262,12 +262,16 @@ export function createWebSocketConnection(deps = {}) {
       case 'resizeSync': {
         const term = getTerm();
         if (!term) break;
+        // Bounds check — reject invalid dimensions that could crash xterm.js
+        if (effect.cols <= 0 || effect.rows <= 0 || effect.cols > 1000 || effect.rows > 1000) break;
         // Resize the local terminal to match the active client's dimensions.
         // Set a flag so the ResizeObserver doesn't echo this back to the server.
         if (deps.setSyncResize) deps.setSyncResize(true);
         term.resize(effect.cols, effect.rows);
-        // Clear the flag after a microtask so the ResizeObserver callback sees it
-        Promise.resolve().then(() => { if (deps.setSyncResize) deps.setSyncResize(false); });
+        // Clear the flag after rAF — ResizeObserver fires during the
+        // "update the rendering" step which follows rAF callbacks,
+        // so the flag is guaranteed to still be true when the observer runs.
+        requestAnimationFrame(() => { if (deps.setSyncResize) deps.setSyncResize(false); });
         break;
       }
       case 'fastReconnect':
