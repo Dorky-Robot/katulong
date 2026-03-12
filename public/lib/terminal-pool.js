@@ -122,6 +122,10 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
       if (!pool.has(sessionName)) return;
       entry.fit.fit();
       entry.term.focus();
+      // Prevent the browser from scrolling the outer page when focus()
+      // triggers scrollIntoView on the textarea helper.
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
     });
 
     return entry;

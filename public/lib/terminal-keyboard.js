@@ -61,10 +61,14 @@ export function createTerminalKeyboard(options = {}) {
       // Tab handled by capture-phase listener
       if (ev.key === "Tab") return false;
 
-      // Shift+Enter: quoted-insert (\x16) + newline (\x0a)
-      // Inserts a literal newline without executing (works in zsh/bash)
+      // Shift+Enter: insert a literal newline via bracketed paste.
+      // xterm.js can't send Shift+Enter distinctly (no kitty keyboard
+      // protocol), so we wrap \r (CR, matching Enter's raw byte) in paste
+      // brackets — apps that enable bracketed paste (Claude Code, vim,
+      // etc.) treat bracketed content as literal text rather than a
+      // submit/execute action.
       if (ev.shiftKey && ev.key === "Enter" && ev.type === "keydown") {
-        if (onSend) onSend("\x16\x0a");
+        if (onSend) onSend("\x1b[200~\r\x1b[201~");
         return false;
       }
 

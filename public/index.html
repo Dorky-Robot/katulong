@@ -242,6 +242,9 @@
       backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
     }
     #scroll-bottom:active { opacity: 0.7; }
+    @media (pointer: coarse) {
+      #scroll-bottom { right: calc(1.5rem + 5.5rem + env(safe-area-inset-right, 0px)); bottom: 2.75rem; }
+    }
 
     /* --- Swipe feedback --- */
     .swipe-feedback {

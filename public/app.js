@@ -579,6 +579,16 @@
       }
       if (shortcutBarInstance) shortcutBarInstance.render(name);
       invalidateSessions(sessionStore, name);
+      // Reflow terminal to current window size after activation
+      fitActiveTerminal();
+      // Scroll the xterm viewport to bottom after the fit reflow settles,
+      // then reset outer page scroll in case the browser shifted it.
+      setTimeout(() => {
+        const vp = termContainer.querySelector(".terminal-pane.active .xterm-viewport")
+          || termContainer.querySelector(".xterm-viewport");
+        if (vp) vp.scrollTop = vp.scrollHeight;
+        window.scrollTo(0, 0);
+      }, 100);
     }
 
     function switchSession(name) {
@@ -936,7 +946,8 @@
       poolRename: (oldName, newName) => terminalPool.rename(oldName, newName),
       tabRename: (oldName, newName) => windowTabSet.renameTab(oldName, newName),
       onSessionKilled: (name) => windowTabSet.onSessionKilled(name),
-      fit: fitActiveTerminal
+      fit: fitActiveTerminal,
+      setSyncResize: (v) => viewportManager.setSyncResize(v),
     });
     wsConnection.initVisibilityReconnect();
 
