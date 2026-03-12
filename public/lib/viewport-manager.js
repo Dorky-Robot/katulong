@@ -69,6 +69,9 @@ export function createViewportManager(options = {}) {
     window.addEventListener("load", resizeToViewport);
   }
 
+  // Flag to suppress resize echo when applying server-dictated dimensions
+  let isSyncResize = false;
+
   // Initialize terminal ResizeObserver for WebSocket resize events
   function initTerminalResizeObserver() {
     const ro = new ResizeObserver(() => {
@@ -76,6 +79,8 @@ export function createViewportManager(options = {}) {
       // fit.fit() on a display:none element produces 0 dimensions which
       // corrupts the PTY session via an invalid resize message.
       if (termContainer.offsetParent === null) return;
+      // Skip if this resize was triggered by a server resize-sync message
+      if (isSyncResize) return;
       const term = getTerm();
       const fit = getFit();
       if (!term || !fit) return;
@@ -138,6 +143,7 @@ export function createViewportManager(options = {}) {
     initViewportResize,
     initTerminalResizeObserver,
     initScrollButton,
-    initTerminalGestures
+    initTerminalGestures,
+    setSyncResize(v) { isSyncResize = v; },
   };
 }

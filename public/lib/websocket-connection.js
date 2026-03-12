@@ -148,6 +148,13 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
+    'resize-sync': (msg) => ({
+      stateUpdates: {},
+      effects: [
+        { type: 'resizeSync', cols: msg.cols, rows: msg.rows }
+      ]
+    }),
+
     'server-draining': () => ({
       stateUpdates: {},
       effects: [
@@ -252,6 +259,17 @@ export function createWebSocketConnection(deps = {}) {
       case 'tabRename':
         if (deps.tabRename) deps.tabRename(effect.oldName, effect.newName);
         break;
+      case 'resizeSync': {
+        const term = getTerm();
+        if (!term) break;
+        // Resize the local terminal to match the active client's dimensions.
+        // Set a flag so the ResizeObserver doesn't echo this back to the server.
+        if (deps.setSyncResize) deps.setSyncResize(true);
+        term.resize(effect.cols, effect.rows);
+        // Clear the flag after a microtask so the ResizeObserver callback sees it
+        Promise.resolve().then(() => { if (deps.setSyncResize) deps.setSyncResize(false); });
+        break;
+      }
       case 'fastReconnect':
         // Reset reconnect delay for fast reconnection to new server
         state.connection.reconnectDelay = 500;
