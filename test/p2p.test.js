@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { destroyPeer, createServerPeer, p2pAvailable, initP2P } from "../lib/p2p.js";
+import { destroyPeer, createServerPeer, p2pAvailable, initP2P, stripCandidatePrefix } from "../lib/p2p.js";
 
 describe("destroyPeer", () => {
   it("calls destroy() on the peer", () => {
@@ -51,5 +51,33 @@ describe("createServerPeer", () => {
         try { result.destroy(); } catch {}
       }
     });
+  });
+});
+
+describe("stripCandidatePrefix", () => {
+  it("strips a= prefix from SDP attribute format candidates", () => {
+    const input = "a=candidate:1 1 UDP 2114977791 192.168.1.138 64862 typ host";
+    const expected = "candidate:1 1 UDP 2114977791 192.168.1.138 64862 typ host";
+    assert.strictEqual(stripCandidatePrefix(input), expected);
+  });
+
+  it("leaves bare candidate strings unchanged", () => {
+    const input = "candidate:1 1 UDP 2114977791 192.168.1.138 64862 typ host";
+    assert.strictEqual(stripCandidatePrefix(input), input);
+  });
+
+  it("strips a= prefix from IPv6 candidates", () => {
+    const input = "a=candidate:2 1 UDP 2116026111 fd32:bdc4:6078:2303::1 64862 typ host";
+    const expected = "candidate:2 1 UDP 2116026111 fd32:bdc4:6078:2303::1 64862 typ host";
+    assert.strictEqual(stripCandidatePrefix(input), expected);
+  });
+
+  it("handles empty string", () => {
+    assert.strictEqual(stripCandidatePrefix(""), "");
+  });
+
+  it("does not strip a= from middle of string", () => {
+    const input = "candidate:1 a=something";
+    assert.strictEqual(stripCandidatePrefix(input), input);
   });
 });

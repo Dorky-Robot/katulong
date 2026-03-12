@@ -110,11 +110,9 @@ export function createWebSocketConnection(deps = {}) {
       effects: []
     }),
 
-    'p2p-signal': (msg, currentState) => ({
+    'p2p-signal': (msg) => ({
       stateUpdates: {},
-      effects: currentState.p2p?.peer
-        ? [{ type: 'p2pSignal', data: msg.data }]
-        : []
+      effects: [{ type: 'p2pSignal', data: msg.data }]
     }),
 
     'p2p-ready': () => ({

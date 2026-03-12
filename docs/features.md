@@ -1,55 +1,117 @@
 # Features
 
-Built for developers who need secure, anywhere access to their terminal.
+Complete inventory of everything katulong can do.
 
-## Passwordless Authentication
+## Web Terminal
 
-WebAuthn (passkeys) for secure, phishing-resistant authentication. Use your fingerprint, Face ID, or security key.
+Full terminal emulator in the browser powered by xterm.js with WebGL rendering. Connects to tmux sessions via WebSocket for real-time I/O.
+
+- GPU-accelerated rendering via WebGL addon
+- Terminal pool pre-allocates xterm instances for instant session switching
+- Output buffer replay on reconnect — pick up exactly where you left off
+- Coalesced output dispatch reduces partial-frame rendering in TUI apps
+
+## Multi-Session Management
+
+Create, rename, switch, and destroy terminal sessions. Each session is a tmux session that persists across server restarts and reconnections.
+
+- Named sessions via URL — `/?s=myproject` connects to a session called "myproject"
+- Create sessions with `POST /sessions` or from the UI
+- Rename sessions without losing state
+- Sessions survive server restarts — tmux owns the PTY
+
+## Tab Management
+
+Multi-window support with tear-off tabs. Each tab connects to a different session.
+
+- Open multiple sessions as tabs in a single browser window
+- Tear off a tab into its own window
+- Tab bar shows all active sessions with quick switching
+- URL reflects current session for bookmarking
+
+## Tmux Session Browser
+
+Discover and adopt existing tmux sessions not created by katulong.
+
+- `GET /tmux-sessions` lists unmanaged tmux sessions
+- `POST /tmux-sessions/adopt` brings an external session under katulong management
+- Useful for attaching to sessions started via SSH or local terminal
 
 ## Mobile-First Design
 
-Beautiful, responsive interface optimized for mobile devices. Full terminal access from your phone or tablet.
+Responsive interface optimized for phones and tablets.
 
-- **Full-screen text input** — Dedicated textarea for commit messages, docs, or long-form text. Works with your phone's speech-to-text.
-- **Swipe navigation** — Touch zone for arrow keys. Swipe to navigate without obscuring the terminal.
-- **Smart keyboard handling** — Autocorrect and autocapitalize disabled. Virtual keyboard detection keeps the terminal in view.
-- **PWA-ready** — Install as a full-screen app. No app store needed.
+- **Virtual keyboard handling** — autocorrect and autocapitalize disabled, keyboard detection keeps terminal in view
+- **Shortcut bar** — touch-optimized toolbar with essential keys (Tab, Ctrl, Esc, arrows) always accessible
+- **Full-screen text input** — dedicated textarea for commit messages, docs, or long-form text
+- **Dictation mode** — works with your phone's speech-to-text
+- **Swipe navigation** — joystick touch zone for arrow keys without obscuring the terminal
+- **PWA support** — install as a full-screen app, no app store needed
+- **Split phone/tablet layout** — different toolbar layouts for different device sizes
 
-## Zero-Configuration P2P
+## File Browser
 
-Automatic WebRTC DataChannel for ultra-low latency. Falls back to WebSocket seamlessly.
+Navigate, upload, download, and manage files on the host.
 
-## LAN Pairing
+- Browse directories with a visual file listing
+- Upload files via the file browser or drag-and-drop
+- Download files from the host to your device
+- Create directories, rename files, delete files
 
-Scan a QR code + PIN to pair devices on your local network. No cloud services required.
+## Remote Clipboard Bridge
 
-## Customizable Shortcuts
+Paste text and images across machines (e.g., iPad to Mac mini via tunnel).
 
-Visual shortcut bar with custom commands. Keyboard shortcuts and dictation mode for faster workflows.
+Three-layer interception handles browser clipboard restrictions:
 
-- Pinned keys in the toolbar, full list in a popup
-- Cmd+Backspace (kill line), Option+Backspace (delete word)
-- Touch-optimized toolbar with essential keys always accessible
+1. Block xterm's keydown handler for Ctrl+V/Cmd+V
+2. Handle the paste event with Clipboard API
+3. WebKit fallback for browsers that suppress paste after preventDefault
 
-## Security-First
+Image paste uploads the image to the host and copies it to the macOS clipboard. See [Clipboard Bridge](clipboard-bridge.md) for the full architecture.
 
-Built with security at every layer: CSP headers, CSRF protection, atomic file operations, and comprehensive input validation.
+## Drag-and-Drop Upload
 
-## Multiple Access Methods
+Drop files or images directly onto the terminal to upload them to the host. Images are copied to the macOS clipboard for pasting into other apps.
 
-Web (HTTP/HTTPS) or remote tunneling (ngrok/Cloudflare). Choose what works for you.
+## Port Proxy
 
-## Multi-Session Support
+Access localhost services running on the host from your browser, even when connecting via tunnel.
 
-Create, rename, and switch between multiple terminal sessions. Each session persists across reconnections.
+- Enable via `PUT /api/config/port-proxy-enabled`
+- Proxies WebSocket upgrade requests to local ports
+- Useful for accessing dev servers, databases, or dashboards running on the host
 
-- Named sessions via URL — `/?s=myproject` connects to a session called "myproject"
-- Sessions survive restarts — Daemon owns PTYs. Restart the server, your sessions are still there.
-- Shared sessions — Same URL in multiple windows = shared terminal
+## P2P Progressive Enhancement
 
-## Credential Management
+Automatic WebRTC DataChannel upgrade for low-latency terminal I/O when the client is on the same LAN as the host.
 
-Manage multiple devices with individual credentials. Revoke access instantly from any device.
+- Baseline: connect via tunnel (WebSocket over HTTPS)
+- Enhancement: when on the same LAN, upgrade to WebRTC DataChannel
+- Near-zero latency even though you connected via internet
+- Falls back to WebSocket seamlessly on failure
+- No STUN/TURN servers needed (LAN-only)
+- Connection indicator shows direct (green) vs relay (orange) status
+
+See [P2P Progressive Enhancement](p2p-progressive-enhancement.md) for technical details.
+
+## Passwordless Authentication
+
+WebAuthn (passkeys) for secure, phishing-resistant authentication.
+
+- First device registers via passkey (fingerprint, Face ID, security key)
+- Additional devices register via setup token + passkey
+- Localhost requests bypass auth automatically
+- 30-day session tokens with automatic pruning
+
+## Credential and Device Management
+
+Manage registered devices and access tokens.
+
+- `GET /api/credentials` lists all registered passkeys with metadata
+- Revoke individual credentials from any device
+- Setup tokens for pairing new devices (7-day TTL)
+- Token management via CLI or API
 
 ## Self-Updating
 
@@ -61,4 +123,35 @@ katulong update --check     # Check without applying
 katulong update --no-restart  # Update code, skip restart
 ```
 
-Sessions survive updates with ~2-5 second reconnect.
+Sessions survive updates with ~2-5 second reconnect. The server drains gracefully — clients receive a `server-draining` message and fast-reconnect to the new instance.
+
+## Customizable Shortcuts
+
+Visual shortcut bar with custom commands.
+
+- Pinned keys in the toolbar, full list in a popup
+- Cmd+Backspace (kill line), Option+Backspace (delete word)
+- Edit shortcuts via `GET /shortcuts` and `PUT /shortcuts`
+
+## Instance Customization
+
+Personalize your katulong instance.
+
+- Custom instance name (shown in title bar and tabs)
+- Custom instance icon
+- Custom toolbar color
+- All settings persisted via `PUT /api/config/*`
+
+## Service Worker Caching
+
+Offline-capable with service worker caching of static assets. Cache-busted on server updates.
+
+## Three-Access-Method Detection
+
+Katulong automatically detects how you're connecting:
+
+- **Localhost** — direct access on the host machine, auth bypassed
+- **LAN** — access from another device on the local network
+- **Internet** — access via tunnel (ngrok, Cloudflare Tunnel, etc.)
+
+The access method determines auth requirements and available features (e.g., P2P is only available on LAN).
