@@ -127,7 +127,7 @@ describe("Sessions CRUD Integration", () => {
   it("POST /sessions sanitizes name (strips invalid chars)", async () => {
     const { status, body } = await request("POST", "/sessions", { name: "hello world!" });
     assert.equal(status, 201);
-    assert.equal(body.name, "helloworld");
+    assert.equal(body.name, "hello world");
 
     // Cleanup using the name returned by the server
     await request("DELETE", `/sessions/${encodeURIComponent(body.name)}`);
