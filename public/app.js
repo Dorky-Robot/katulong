@@ -941,11 +941,36 @@
       updateP2PIndicator,
       loadTokens,
       isAtBottom,
-      renderBar,
       invalidateSessions: (name) => invalidateSessions(sessionStore, name),
+      updateSessionUI: (name) => {
+        document.title = name;
+        const url = new URL(window.location);
+        url.searchParams.set("s", name);
+        history.replaceState(null, "", url);
+        renderBar(name);
+      },
+      refreshTokensAfterRegistration: () => {
+        loadTokens();
+        const form = document.getElementById("token-create-form");
+        const btn = document.getElementById("settings-create-token");
+        if (form) form.style.display = "none";
+        if (btn) btn.style.display = "";
+      },
+      onSessionRemoved: (name) => {
+        windowTabSet.onSessionKilled(name);
+        fetch("/sessions").then(r => r.json()).then(sessions => {
+          if (sessions.length > 0) {
+            const next = sessions[0].name;
+            switchSession(next);
+          } else {
+            window.location.href = "/";
+          }
+        }).catch(() => {
+          window.location.href = "/";
+        });
+      },
       poolRename: (oldName, newName) => terminalPool.rename(oldName, newName),
       tabRename: (oldName, newName) => windowTabSet.renameTab(oldName, newName),
-      onSessionKilled: (name) => windowTabSet.onSessionKilled(name),
       fit: fitActiveTerminal,
       setSyncResize: (v) => viewportManager.setSyncResize(v),
     });

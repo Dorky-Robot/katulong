@@ -225,33 +225,13 @@ export function createWebSocketConnection(deps = {}) {
         if (deps.invalidateSessions) deps.invalidateSessions(effect.name);
         break;
       case 'updateSessionUI':
-        document.title = effect.name;
-        const url = new URL(window.location);
-        url.searchParams.set("s", effect.name);
-        history.replaceState(null, "", url);
-        // Call render bar via callback if provided
-        if (deps.renderBar) deps.renderBar(effect.name);
+        if (deps.updateSessionUI) deps.updateSessionUI(effect.name);
         break;
       case 'refreshTokensAfterRegistration':
-        // Refresh token list to show newly used token
-        loadTokens();
-        // Hide token creation form and show "Generate New Token" button
-        const tokenCreateForm = document.getElementById("token-create-form");
-        const createTokenBtn = document.getElementById("settings-create-token");
-        if (tokenCreateForm) tokenCreateForm.style.display = "none";
-        if (createTokenBtn) createTokenBtn.style.display = "block";
+        if (deps.refreshTokensAfterRegistration) deps.refreshTokensAfterRegistration();
         break;
       case 'sessionRemoved':
-        // Broadcast to other windows before navigating away
-        if (deps.onSessionKilled) deps.onSessionKilled(state.session.name);
-        // Current session was removed — navigate to closest remaining session
-        fetch("/sessions").then(r => r.json()).then(sessions => {
-          if (sessions.length > 0) {
-            location.href = `/?s=${encodeURIComponent(sessions[0].name)}`;
-          } else {
-            location.href = "/";
-          }
-        }).catch(() => { location.href = "/"; });
+        if (deps.onSessionRemoved) deps.onSessionRemoved(state.session.name);
         break;
       case 'poolRename':
         if (deps.poolRename) deps.poolRename(effect.oldName, effect.newName);

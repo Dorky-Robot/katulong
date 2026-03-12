@@ -5,7 +5,7 @@ import { SESSION_TTL_MS } from "../lib/env-config.js";
 
 describe("AuthState", () => {
   describe("constructor", () => {
-    it("creates state with user, credentials, and sessions", () => {
+    it("creates state with user, credentials, and loginTokens", () => {
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [{ id: "cred1" }],
@@ -14,7 +14,7 @@ describe("AuthState", () => {
 
       assert.deepStrictEqual(state.user, { id: "user123", name: "owner" });
       assert.deepStrictEqual(state.credentials, [{ id: "cred1" }]);
-      assert.deepStrictEqual(state.sessions, { token1: 999999 });
+      assert.deepStrictEqual(state.loginTokens, { token1: 999999 });
     });
 
     it("defaults credentials to empty array", () => {
@@ -26,13 +26,23 @@ describe("AuthState", () => {
       assert.deepStrictEqual(state.credentials, []);
     });
 
-    it("defaults sessions to empty object", () => {
+    it("defaults loginTokens to empty object", () => {
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [],
       });
 
-      assert.deepStrictEqual(state.sessions, {});
+      assert.deepStrictEqual(state.loginTokens, {});
+    });
+
+    it("accepts loginTokens key directly", () => {
+      const state = new AuthState({
+        user: { id: "user123", name: "owner" },
+        credentials: [],
+        loginTokens: { token1: 999999 },
+      });
+
+      assert.deepStrictEqual(state.loginTokens, { token1: 999999 });
     });
   });
 
@@ -62,7 +72,7 @@ describe("AuthState", () => {
       assert.strictEqual(original.credentials.length, 1);
     });
 
-    it("preserves user and sessions", () => {
+    it("preserves user and loginTokens", () => {
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [],
@@ -72,19 +82,19 @@ describe("AuthState", () => {
       const newState = original.addCredential({ id: "cred1" });
 
       assert.deepStrictEqual(newState.user, original.user);
-      assert.deepStrictEqual(newState.sessions, original.sessions);
+      assert.deepStrictEqual(newState.loginTokens, original.loginTokens);
     });
   });
 
-  describe("addSession", () => {
-    it("returns new state with session added", () => {
+  describe("addLoginToken", () => {
+    it("returns new state with login token added", () => {
       const original = AuthState.empty("user123");
       const now = Date.now();
       const expiry = now + 10000;
 
-      const newState = original.addSession("token1", expiry, "cred123", "csrf123", now);
+      const newState = original.addLoginToken("token1", expiry, "cred123", "csrf123", now);
 
-      assert.deepStrictEqual(newState.sessions.token1, {
+      assert.deepStrictEqual(newState.loginTokens.token1, {
         expiry,
         credentialId: "cred123",
         csrfToken: "csrf123",
@@ -96,9 +106,9 @@ describe("AuthState", () => {
       const original = AuthState.empty("user123");
       const expiry = Date.now() + 10000;
 
-      original.addSession("token1", expiry);
+      original.addLoginToken("token1", expiry);
 
-      assert.deepStrictEqual(original.sessions, {});
+      assert.deepStrictEqual(original.loginTokens, {});
     });
 
     it("preserves user and credentials", () => {
@@ -108,34 +118,34 @@ describe("AuthState", () => {
         sessions: {},
       });
 
-      const newState = original.addSession("token1", 999999);
+      const newState = original.addLoginToken("token1", 999999);
 
       assert.deepStrictEqual(newState.user, original.user);
       assert.deepStrictEqual(newState.credentials, original.credentials);
     });
 
-    it("allows multiple sessions", () => {
+    it("allows multiple login tokens", () => {
       const state = AuthState.empty("user123")
-        .addSession("token1", 1000)
-        .addSession("token2", 2000)
-        .addSession("token3", 3000);
+        .addLoginToken("token1", 1000)
+        .addLoginToken("token2", 2000)
+        .addLoginToken("token3", 3000);
 
-      assert.strictEqual(Object.keys(state.sessions).length, 3);
+      assert.strictEqual(Object.keys(state.loginTokens).length, 3);
     });
   });
 
-  describe("removeSession", () => {
-    it("returns new state with session removed", () => {
+  describe("removeLoginToken", () => {
+    it("returns new state with login token removed", () => {
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [],
         sessions: { token1: 1000, token2: 2000 },
       });
 
-      const newState = original.removeSession("token1");
+      const newState = original.removeLoginToken("token1");
 
-      assert.strictEqual(newState.sessions.token1, undefined);
-      assert.strictEqual(newState.sessions.token2, 2000);
+      assert.strictEqual(newState.loginTokens.token1, undefined);
+      assert.strictEqual(newState.loginTokens.token2, 2000);
     });
 
     it("does not mutate original state", () => {
@@ -145,25 +155,25 @@ describe("AuthState", () => {
         sessions: { token1: 1000 },
       });
 
-      original.removeSession("token1");
+      original.removeLoginToken("token1");
 
-      assert.strictEqual(original.sessions.token1, 1000);
+      assert.strictEqual(original.loginTokens.token1, 1000);
     });
 
-    it("handles removing non-existent session", () => {
+    it("handles removing non-existent login token", () => {
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [],
         sessions: { token1: 1000 },
       });
 
-      const newState = original.removeSession("nonexistent");
+      const newState = original.removeLoginToken("nonexistent");
 
-      assert.deepStrictEqual(newState.sessions, { token1: 1000 });
+      assert.deepStrictEqual(newState.loginTokens, { token1: 1000 });
     });
   });
 
-  describe("updateSessionActivity", () => {
+  describe("updateLoginTokenActivity", () => {
     it("updates lastActivityAt timestamp", () => {
       const now = 1000000;
       const original = new AuthState({
@@ -174,10 +184,10 @@ describe("AuthState", () => {
         },
       });
 
-      const newState = original.updateSessionActivity("token1", now);
+      const newState = original.updateLoginTokenActivity("token1", now);
 
-      assert.strictEqual(newState.sessions.token1.lastActivityAt, now);
-      assert.strictEqual(newState.sessions.token1.expiry, now + 100000); // Expiry unchanged (within 24h)
+      assert.strictEqual(newState.loginTokens.token1.lastActivityAt, now);
+      assert.strictEqual(newState.loginTokens.token1.expiry, now + 100000); // Expiry unchanged (within 24h)
     });
 
     it("extends expiry if activity was more than 24h ago", () => {
@@ -190,13 +200,13 @@ describe("AuthState", () => {
         },
       });
 
-      const newState = original.updateSessionActivity("token1", now);
+      const newState = original.updateLoginTokenActivity("token1", now);
 
-      assert.strictEqual(newState.sessions.token1.lastActivityAt, now);
-      assert.strictEqual(newState.sessions.token1.expiry, now + SESSION_TTL_MS); // Expiry extended
+      assert.strictEqual(newState.loginTokens.token1.lastActivityAt, now);
+      assert.strictEqual(newState.loginTokens.token1.expiry, now + SESSION_TTL_MS); // Expiry extended
     });
 
-    it("returns unchanged state for non-existent session", () => {
+    it("returns unchanged state for non-existent login token", () => {
       const now = 1000000;
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -204,7 +214,7 @@ describe("AuthState", () => {
         sessions: {},
       });
 
-      const newState = original.updateSessionActivity("nonexistent", now);
+      const newState = original.updateLoginTokenActivity("nonexistent", now);
 
       assert.strictEqual(newState, original); // Same instance
     });
@@ -219,10 +229,10 @@ describe("AuthState", () => {
         },
       });
 
-      const originalLastActivity = original.sessions.token1.lastActivityAt;
-      original.updateSessionActivity("token1", now);
+      const originalLastActivity = original.loginTokens.token1.lastActivityAt;
+      original.updateLoginTokenActivity("token1", now);
 
-      assert.strictEqual(original.sessions.token1.lastActivityAt, originalLastActivity);
+      assert.strictEqual(original.loginTokens.token1.lastActivityAt, originalLastActivity);
     });
 
     it("does not extend expiry when activity is exactly at the 24h threshold", () => {
@@ -237,10 +247,10 @@ describe("AuthState", () => {
         },
       });
 
-      const newState = original.updateSessionActivity("token1", now);
+      const newState = original.updateLoginTokenActivity("token1", now);
 
-      assert.strictEqual(newState.sessions.token1.lastActivityAt, now);
-      assert.strictEqual(newState.sessions.token1.expiry, now + 100000, "expiry must not be extended when activity is exactly at the threshold");
+      assert.strictEqual(newState.loginTokens.token1.lastActivityAt, now);
+      assert.strictEqual(newState.loginTokens.token1.expiry, now + 100000, "expiry must not be extended when activity is exactly at the threshold");
     });
 
     it("extends expiry when activity is 1ms beyond the 24h threshold", () => {
@@ -255,10 +265,10 @@ describe("AuthState", () => {
         },
       });
 
-      const newState = original.updateSessionActivity("token1", now);
+      const newState = original.updateLoginTokenActivity("token1", now);
 
-      assert.strictEqual(newState.sessions.token1.lastActivityAt, now);
-      assert.strictEqual(newState.sessions.token1.expiry, now + SESSION_TTL_MS, "expiry must be extended when activity exceeds the threshold by 1ms");
+      assert.strictEqual(newState.loginTokens.token1.lastActivityAt, now);
+      assert.strictEqual(newState.loginTokens.token1.expiry, now + SESSION_TTL_MS, "expiry must be extended when activity exceeds the threshold by 1ms");
     });
 
     it("updates correctly across consecutive calls (chaining)", () => {
@@ -274,20 +284,20 @@ describe("AuthState", () => {
         },
       });
 
-      const state1 = original.updateSessionActivity("token1", t1);
-      assert.strictEqual(state1.sessions.token1.lastActivityAt, t1, "first call should set lastActivityAt to t1");
-      assert.strictEqual(state1.sessions.token1.expiry, originalExpiry, "first call should not extend expiry (activity under 24h)");
+      const state1 = original.updateLoginTokenActivity("token1", t1);
+      assert.strictEqual(state1.loginTokens.token1.lastActivityAt, t1, "first call should set lastActivityAt to t1");
+      assert.strictEqual(state1.loginTokens.token1.expiry, originalExpiry, "first call should not extend expiry (activity under 24h)");
 
-      const state2 = state1.updateSessionActivity("token1", t2);
-      assert.strictEqual(state2.sessions.token1.lastActivityAt, t2, "second call should update lastActivityAt to t2");
-      assert.strictEqual(state2.sessions.token1.expiry, originalExpiry, "second call should not extend expiry (activity 1s ago)");
+      const state2 = state1.updateLoginTokenActivity("token1", t2);
+      assert.strictEqual(state2.loginTokens.token1.lastActivityAt, t2, "second call should update lastActivityAt to t2");
+      assert.strictEqual(state2.loginTokens.token1.expiry, originalExpiry, "second call should not extend expiry (activity 1s ago)");
 
       // Prior states should be unaffected
-      assert.strictEqual(original.sessions.token1.lastActivityAt, t1 - 50000, "original should be unchanged");
-      assert.strictEqual(state1.sessions.token1.lastActivityAt, t1, "state1 should be unchanged after second call");
+      assert.strictEqual(original.loginTokens.token1.lastActivityAt, t1 - 50000, "original should be unchanged");
+      assert.strictEqual(state1.loginTokens.token1.lastActivityAt, t1, "state1 should be unchanged after second call");
     });
 
-    it("extends expiry for a session with lastActivityAt: 0 (pre-migration default)", () => {
+    it("extends expiry for a login token with lastActivityAt: 0 (pre-migration default)", () => {
       const now = Date.now();
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -298,14 +308,14 @@ describe("AuthState", () => {
         },
       });
 
-      const newState = original.updateSessionActivity("token1", now);
+      const newState = original.updateLoginTokenActivity("token1", now);
 
-      assert.strictEqual(newState.sessions.token1.lastActivityAt, now);
-      assert.strictEqual(newState.sessions.token1.expiry, now + SESSION_TTL_MS, "expiry should be extended for session with lastActivityAt: 0");
+      assert.strictEqual(newState.loginTokens.token1.lastActivityAt, now);
+      assert.strictEqual(newState.loginTokens.token1.expiry, now + SESSION_TTL_MS, "expiry should be extended for login token with lastActivityAt: 0");
     });
 
-    it("updates lastActivityAt even on an already-expired session", () => {
-      // updateSessionActivity is a pure value transform — it does not check session expiry
+    it("updates lastActivityAt even on an already-expired login token", () => {
+      // updateLoginTokenActivity is a pure value transform — it does not check expiry
       const now = 1000000000;
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -315,25 +325,25 @@ describe("AuthState", () => {
         },
       });
 
-      const newState = original.updateSessionActivity("token1", now);
+      const newState = original.updateLoginTokenActivity("token1", now);
 
-      assert.strictEqual(newState.sessions.token1.lastActivityAt, now, "lastActivityAt should be updated regardless of expiry");
+      assert.strictEqual(newState.loginTokens.token1.lastActivityAt, now, "lastActivityAt should be updated regardless of expiry");
       // timeSinceActivity = 500ms < 24h, so expiry is NOT extended (remains expired)
-      assert.strictEqual(newState.sessions.token1.expiry, now - 1000, "expiry should not be extended when activity is recent");
+      assert.strictEqual(newState.loginTokens.token1.expiry, now - 1000, "expiry should not be extended when activity is recent");
     });
   });
 
-  describe("revokeAllSessions", () => {
-    it("returns new state with all sessions removed", () => {
+  describe("revokeAllLoginTokens", () => {
+    it("returns new state with all login tokens removed", () => {
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [],
         sessions: { token1: 1000, token2: 2000, token3: 3000 },
       });
 
-      const newState = original.revokeAllSessions();
+      const newState = original.revokeAllLoginTokens();
 
-      assert.deepStrictEqual(newState.sessions, {});
+      assert.deepStrictEqual(newState.loginTokens, {});
     });
 
     it("does not mutate original state", () => {
@@ -343,9 +353,9 @@ describe("AuthState", () => {
         sessions: { token1: 1000 },
       });
 
-      original.revokeAllSessions();
+      original.revokeAllLoginTokens();
 
-      assert.strictEqual(original.sessions.token1, 1000);
+      assert.strictEqual(original.loginTokens.token1, 1000);
     });
 
     it("preserves user and credentials", () => {
@@ -355,7 +365,7 @@ describe("AuthState", () => {
         sessions: { token1: 1000 },
       });
 
-      const newState = original.revokeAllSessions();
+      const newState = original.revokeAllLoginTokens();
 
       assert.deepStrictEqual(newState.user, original.user);
       assert.deepStrictEqual(newState.credentials, original.credentials);
@@ -363,7 +373,7 @@ describe("AuthState", () => {
   });
 
   describe("pruneExpired", () => {
-    it("removes expired sessions", () => {
+    it("removes expired login tokens", () => {
       const now = Date.now();
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -378,13 +388,13 @@ describe("AuthState", () => {
 
       const newState = original.pruneExpired(now);
 
-      assert.strictEqual(newState.sessions.expired1, undefined);
-      assert.strictEqual(newState.sessions.expired2, undefined);
-      assert.strictEqual(newState.sessions.valid1, now + 1000);
-      assert.strictEqual(newState.sessions.valid2, now + 2000);
+      assert.strictEqual(newState.loginTokens.expired1, undefined);
+      assert.strictEqual(newState.loginTokens.expired2, undefined);
+      assert.strictEqual(newState.loginTokens.valid1, now + 1000);
+      assert.strictEqual(newState.loginTokens.valid2, now + 2000);
     });
 
-    it("keeps sessions that expire exactly at 'now'", () => {
+    it("removes login tokens that expire exactly at 'now'", () => {
       const now = Date.now();
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -394,7 +404,7 @@ describe("AuthState", () => {
 
       const newState = original.pruneExpired(now);
 
-      assert.strictEqual(newState.sessions.token, undefined);
+      assert.strictEqual(newState.loginTokens.token, undefined);
     });
 
     it("uses Date.now() if time not provided", () => {
@@ -408,11 +418,11 @@ describe("AuthState", () => {
 
       const newState = original.pruneExpired();
 
-      assert.ok(newState.sessions.futureToken);
-      assert.strictEqual(newState.sessions.pastToken, undefined);
+      assert.ok(newState.loginTokens.futureToken);
+      assert.strictEqual(newState.loginTokens.pastToken, undefined);
     });
 
-    it("returns empty sessions when all expired", () => {
+    it("returns empty loginTokens when all expired", () => {
       const now = Date.now();
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -422,12 +432,12 @@ describe("AuthState", () => {
 
       const newState = original.pruneExpired(now);
 
-      assert.deepStrictEqual(newState.sessions, {});
+      assert.deepStrictEqual(newState.loginTokens, {});
     });
   });
 
-  describe("isValidSession", () => {
-    it("returns true for valid session", () => {
+  describe("isValidLoginToken", () => {
+    it("returns true for valid login token", () => {
       const now = Date.now();
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -435,10 +445,10 @@ describe("AuthState", () => {
         sessions: { token1: { expiry: now + 10000, credentialId: "cred1" } },
       });
 
-      assert.strictEqual(state.isValidSession("token1", now), true);
+      assert.strictEqual(state.isValidLoginToken("token1", now), true);
     });
 
-    it("returns false for expired session", () => {
+    it("returns false for expired login token", () => {
       const now = Date.now();
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -446,22 +456,22 @@ describe("AuthState", () => {
         sessions: { token1: now - 1000 },
       });
 
-      assert.strictEqual(state.isValidSession("token1", now), false);
+      assert.strictEqual(state.isValidLoginToken("token1", now), false);
     });
 
-    it("returns false for non-existent session", () => {
+    it("returns false for non-existent login token", () => {
       const state = AuthState.empty("user123");
-      assert.strictEqual(state.isValidSession("nonexistent"), false);
+      assert.strictEqual(state.isValidLoginToken("nonexistent"), false);
     });
 
     it("returns false for null token", () => {
       const state = AuthState.empty("user123");
-      assert.strictEqual(state.isValidSession(null), false);
+      assert.strictEqual(state.isValidLoginToken(null), false);
     });
 
     it("returns false for undefined token", () => {
       const state = AuthState.empty("user123");
-      assert.strictEqual(state.isValidSession(undefined), false);
+      assert.strictEqual(state.isValidLoginToken(undefined), false);
     });
 
     it("uses Date.now() if time not provided", () => {
@@ -472,10 +482,10 @@ describe("AuthState", () => {
         sessions: { token1: { expiry: future, credentialId: "cred1" } },
       });
 
-      assert.strictEqual(state.isValidSession("token1"), true);
+      assert.strictEqual(state.isValidLoginToken("token1"), true);
     });
 
-    it("returns false for session with non-existent credentialId (whitelist validation)", () => {
+    it("returns false for login token with non-existent credentialId (whitelist validation)", () => {
       const now = Date.now();
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -485,10 +495,10 @@ describe("AuthState", () => {
         },
       });
 
-      assert.strictEqual(state.isValidSession("token1", now), false);
+      assert.strictEqual(state.isValidLoginToken("token1", now), false);
     });
 
-    it("returns true for session with valid credentialId", () => {
+    it("returns true for login token with valid credentialId", () => {
       const now = Date.now();
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -498,25 +508,25 @@ describe("AuthState", () => {
         },
       });
 
-      assert.strictEqual(state.isValidSession("token1", now), true);
+      assert.strictEqual(state.isValidLoginToken("token1", now), true);
     });
 
-    it("returns false for pairing session without credentialId", () => {
+    it("returns false for pairing login token without credentialId", () => {
       const now = Date.now();
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [{ id: "cred1", publicKey: "key1", counter: 1 }],
         sessions: {
-          token1: { expiry: now + 10000, credentialId: null }, // Old pairing session
+          token1: { expiry: now + 10000, credentialId: null }, // Old pairing login token
         },
       });
 
-      assert.strictEqual(state.isValidSession("token1", now), false);
+      assert.strictEqual(state.isValidLoginToken("token1", now), false);
     });
   });
 
-  describe("getValidSessions", () => {
-    it("returns only valid session tokens", () => {
+  describe("getValidLoginTokens", () => {
+    it("returns only valid login tokens", () => {
       const now = Date.now();
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -528,15 +538,15 @@ describe("AuthState", () => {
         },
       });
 
-      const validSessions = state.getValidSessions(now);
+      const validTokens = state.getValidLoginTokens(now);
 
-      assert.strictEqual(validSessions.length, 2);
-      assert.ok(validSessions.includes("valid1"));
-      assert.ok(validSessions.includes("valid2"));
-      assert.ok(!validSessions.includes("expired"));
+      assert.strictEqual(validTokens.length, 2);
+      assert.ok(validTokens.includes("valid1"));
+      assert.ok(validTokens.includes("valid2"));
+      assert.ok(!validTokens.includes("expired"));
     });
 
-    it("returns empty array when no valid sessions", () => {
+    it("returns empty array when no valid login tokens", () => {
       const now = Date.now();
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
@@ -544,26 +554,26 @@ describe("AuthState", () => {
         sessions: { expired: now - 1000 },
       });
 
-      const validSessions = state.getValidSessions(now);
+      const validTokens = state.getValidLoginTokens(now);
 
-      assert.deepStrictEqual(validSessions, []);
+      assert.deepStrictEqual(validTokens, []);
     });
   });
 
-  describe("sessionCount", () => {
-    it("returns number of sessions", () => {
+  describe("loginTokenCount", () => {
+    it("returns number of login tokens", () => {
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [],
         sessions: { token1: 1000, token2: 2000, token3: 3000 },
       });
 
-      assert.strictEqual(state.sessionCount(), 3);
+      assert.strictEqual(state.loginTokenCount(), 3);
     });
 
-    it("returns 0 for empty sessions", () => {
+    it("returns 0 for empty login tokens", () => {
       const state = AuthState.empty("user123");
-      assert.strictEqual(state.sessionCount(), 0);
+      assert.strictEqual(state.loginTokenCount(), 0);
     });
   });
 
@@ -666,7 +676,7 @@ describe("AuthState", () => {
       assert.strictEqual(updated.credentials[1].counter, 0);
     });
 
-    it("preserves sessions and user", () => {
+    it("preserves loginTokens and user", () => {
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [{ id: "cred1", counter: 0 }],
@@ -676,12 +686,12 @@ describe("AuthState", () => {
       const updated = original.updateCredential("cred1", { counter: 3 });
 
       assert.deepStrictEqual(updated.user, original.user);
-      assert.deepStrictEqual(updated.sessions, original.sessions);
+      assert.deepStrictEqual(updated.loginTokens, original.loginTokens);
     });
   });
 
   describe("toJSON", () => {
-    it("serializes to plain object", () => {
+    it("serializes to plain object with sessions key for backward compat", () => {
       const state = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [{ id: "cred1" }],
@@ -717,7 +727,7 @@ describe("AuthState", () => {
 
       assert.deepStrictEqual(state.user, { id: "user123", name: "owner" });
       assert.deepStrictEqual(state.credentials, []);
-      assert.deepStrictEqual(state.sessions, {});
+      assert.deepStrictEqual(state.loginTokens, {});
     });
 
     it("creates empty state with custom user name", () => {
@@ -731,7 +741,7 @@ describe("AuthState", () => {
 
       assert.strictEqual(state.user, null);
       assert.deepStrictEqual(state.credentials, []);
-      assert.deepStrictEqual(state.sessions, {});
+      assert.deepStrictEqual(state.loginTokens, {});
     });
   });
 
@@ -748,7 +758,7 @@ describe("AuthState", () => {
       assert.ok(state instanceof AuthState);
       assert.deepStrictEqual(state.user, data.user);
       assert.deepStrictEqual(state.credentials, data.credentials);
-      assert.deepStrictEqual(state.sessions, data.sessions);
+      assert.deepStrictEqual(state.loginTokens, data.sessions);
     });
 
     it("returns null state for null input", () => {
@@ -762,15 +772,15 @@ describe("AuthState", () => {
 
       assert.strictEqual(state.user, null);
       assert.deepStrictEqual(state.credentials, []);
-      assert.deepStrictEqual(state.sessions, {});
+      assert.deepStrictEqual(state.loginTokens, {});
     });
   });
 
   describe("immutability", () => {
     it("all operations return new instances", () => {
       const original = AuthState.empty("user123");
-      const state1 = original.addSession("token1", 1000);
-      const state2 = state1.addSession("token2", 2000);
+      const state1 = original.addLoginToken("token1", 1000);
+      const state2 = state1.addLoginToken("token2", 2000);
       const state3 = state2.pruneExpired(3000);
 
       // All should be different instances
@@ -779,21 +789,21 @@ describe("AuthState", () => {
       assert.notStrictEqual(state2, state3);
 
       // Original should be unchanged
-      assert.strictEqual(original.sessionCount(), 0);
+      assert.strictEqual(original.loginTokenCount(), 0);
     });
 
-    it("does not share session references", () => {
+    it("does not share login token references", () => {
       const original = new AuthState({
         user: { id: "user123", name: "owner" },
         credentials: [],
         sessions: { token1: 1000 },
       });
 
-      const newState = original.addSession("token2", 2000);
+      const newState = original.addLoginToken("token2", 2000);
 
       // Adding to new state doesn't affect original
-      assert.strictEqual(Object.keys(original.sessions).length, 1);
-      assert.strictEqual(Object.keys(newState.sessions).length, 2);
+      assert.strictEqual(Object.keys(original.loginTokens).length, 1);
+      assert.strictEqual(Object.keys(newState.loginTokens).length, 2);
     });
   });
 
@@ -801,13 +811,13 @@ describe("AuthState", () => {
     it("allows method chaining", () => {
       const state = AuthState.empty("user123")
         .addCredential({ id: "cred1" })
-        .addSession("token1", Date.now() + 10000)
-        .addSession("token2", Date.now() + 20000)
+        .addLoginToken("token1", Date.now() + 10000)
+        .addLoginToken("token2", Date.now() + 20000)
         .pruneExpired();
 
       assert.strictEqual(state.hasUser(), true);
       assert.strictEqual(state.hasCredentials(), true);
-      assert.strictEqual(state.sessionCount(), 2);
+      assert.strictEqual(state.loginTokenCount(), 2);
     });
   });
 });

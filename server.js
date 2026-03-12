@@ -137,23 +137,23 @@ const pruneTimer = setInterval(async () => {
     await withStateLock((state) => {
       if (!state) return {};
       const pruned = state.pruneExpired();
-      if (pruned.sessionCount() < state.sessionCount()) {
-        log.info("Pruned expired auth sessions", {
-          removed: state.sessionCount() - pruned.sessionCount(),
+      if (pruned.loginTokenCount() < state.loginTokenCount()) {
+        log.info("Pruned expired login tokens", {
+          removed: state.loginTokenCount() - pruned.loginTokenCount(),
         });
         return { state: pruned };
       }
       return {};
     });
   } catch (err) {
-    log.warn("Session pruning failed", { error: err.message });
+    log.warn("Login token pruning failed", { error: err.message });
   }
 }, PRUNE_INTERVAL_MS);
 pruneTimer.unref();
 
 // --- WebSocket manager ---
 const wsManager = createWebSocketManager({ bridge, sessionManager });
-const { wsClients, broadcastToAll, closeAllWebSockets, closeWebSocketsForCredential } = wsManager;
+const { wsClients, broadcastToAll, closeAllWebSockets } = wsManager;
 
 // --- HTTP routes (assembled from lib/routes/) ---
 
@@ -163,7 +163,7 @@ const routes = [
   ...createAuthRoutes({
     json, parseJSON, isAuthenticated,
     storeChallenge, consumeChallenge, challengeStore,
-    broadcastToAll, closeWebSocketsForCredential, closeAllWebSockets,
+    bridge,
     credentialLockout,
     RP_NAME, PORT,
     auth, csrf,
@@ -288,8 +288,8 @@ function authenticateUpgrade(req) {
 
   if (sessionToken) {
     const state = loadState();
-    const session = state?.getSession(sessionToken);
-    if (!state || !session || !state.isValidSession(sessionToken)) return null;
+    const session = state?.getLoginToken(sessionToken);
+    if (!state || !session || !state.isValidLoginToken(sessionToken)) return null;
     credentialId = session.credentialId;
   }
 
@@ -341,7 +341,7 @@ function handleUpgrade(req, socket, head) {
   wss.handleUpgrade(req, socket, head, (ws) => {
     if (sessionToken && !isLocalRequest(req)) {
       const freshState = loadState();
-      if (!freshState || !freshState.isValidSession(sessionToken)) {
+      if (!freshState || !freshState.isValidLoginToken(sessionToken)) {
         log.warn("WebSocket rejected during upgrade: session invalidated", { ip: req.socket.remoteAddress });
         ws.close(1008, "Session invalidated");
         return;
