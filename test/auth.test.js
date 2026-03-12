@@ -102,7 +102,7 @@ describe("validateSession", () => {
 
   it("returns false for old-format session (plain number expiry in AuthState)", () => {
     // AuthState can hold a number-format session if constructed directly;
-    // isValidSession must reject it regardless
+    // isValidLoginToken must reject it regardless
     const state = new AuthState({
       user: { id: "user1", name: "owner" },
       credentials: [credential],
@@ -267,17 +267,17 @@ describe("loadState caching", () => {
     _invalidateCache();
 
     const loaded = loadState();
-    const sessions = loaded.sessions;
+    const loginTokens = loaded.loginTokens;
 
     // Should keep token1 (valid credential)
-    assert.ok(sessions.token1, "should keep session for existing credential");
-    assert.equal(sessions.token1.credentialId, "cred1");
+    assert.ok(loginTokens.token1, "should keep login token for existing credential");
+    assert.equal(loginTokens.token1.credentialId, "cred1");
 
     // Should remove token2 (orphaned - credential doesn't exist)
-    assert.equal(sessions.token2, undefined, "should remove session for non-existent credential");
+    assert.equal(loginTokens.token2, undefined, "should remove login token for non-existent credential");
 
-    // Should remove token5 (old pairing session - pairing now creates credentials)
-    assert.equal(sessions.token5, undefined, "should remove old pairing sessions");
+    // Should remove token5 (old pairing login token - pairing now creates credentials)
+    assert.equal(loginTokens.token5, undefined, "should remove old pairing login tokens");
   });
 
   it("loadState prunes expired setup tokens and persists the change", () => {
@@ -448,15 +448,15 @@ describe("loadState - session lastActivityAt migration", () => {
     _invalidateCache();
 
     const loaded = loadState();
-    const session = loaded.sessions["tok1"];
+    const loginToken = loaded.loginTokens["tok1"];
 
-    assert.ok(session, "session should still exist");
-    assert.ok(session.lastActivityAt >= now, "lastActivityAt should be set to current time");
-    assert.equal(session.credentialId, "cred1", "credentialId must be preserved");
-    assert.equal(session.expiry, now + 10000, "expiry must be preserved");
+    assert.ok(loginToken, "login token should still exist");
+    assert.ok(loginToken.lastActivityAt >= now, "lastActivityAt should be set to current time");
+    assert.equal(loginToken.credentialId, "cred1", "credentialId must be preserved");
+    assert.equal(loginToken.expiry, now + 10000, "expiry must be preserved");
   });
 
-  it("does not modify sessions that already have lastActivityAt", () => {
+  it("does not modify login tokens that already have lastActivityAt", () => {
     const past = Date.now() - 10000;
     const now = Date.now();
     const state = {
@@ -472,9 +472,9 @@ describe("loadState - session lastActivityAt migration", () => {
     _invalidateCache();
 
     const loaded = loadState();
-    const session = loaded.sessions["tok1"];
+    const loginToken = loaded.loginTokens["tok1"];
 
-    assert.equal(session.lastActivityAt, past, "existing lastActivityAt must not be changed");
+    assert.equal(loginToken.lastActivityAt, past, "existing lastActivityAt must not be changed");
   });
 
   it("saves migrated lastActivityAt to disk", () => {
@@ -495,7 +495,7 @@ describe("loadState - session lastActivityAt migration", () => {
     // Re-read from disk
     _invalidateCache();
     const reloaded = loadState();
-    assert.ok(reloaded.sessions["tok1"].lastActivityAt >= now, "lastActivityAt should be persisted to disk");
+    assert.ok(reloaded.loginTokens["tok1"].lastActivityAt >= now, "lastActivityAt should be persisted to disk");
   });
 
   it("applies credential and session migrations together on a very old state file", () => {
@@ -521,8 +521,8 @@ describe("loadState - session lastActivityAt migration", () => {
     assert.equal(loaded.credentials[0].deviceId, null, "deviceId set to null for old credential");
 
     // Session activity migration applied
-    assert.ok(loaded.sessions["tok1"], "valid session preserved");
-    assert.ok(loaded.sessions["tok1"].lastActivityAt >= now, "lastActivityAt added to valid session");
+    assert.ok(loaded.loginTokens["tok1"], "valid login token preserved");
+    assert.ok(loaded.loginTokens["tok1"].lastActivityAt >= now, "lastActivityAt added to valid login token");
   });
 });
 
@@ -720,7 +720,7 @@ describe("refreshSessionActivity", () => {
     await refreshSessionActivity(null);
 
     const loaded = loadState();
-    assert.deepEqual(Object.keys(loaded.sessions), [], "no sessions should be added for null token");
+    assert.deepEqual(Object.keys(loaded.loginTokens), [], "no login tokens should be added for null token");
   });
 
   it("returns early for undefined token without throwing", async () => {
@@ -733,20 +733,20 @@ describe("refreshSessionActivity", () => {
   it("updates lastActivityAt for a valid session", async () => {
     const token = "validtoken123";
     const initial = makeValidState(token);
-    const originalLastActivity = initial.sessions[token].lastActivityAt;
+    const originalLastActivity = initial.loginTokens[token].lastActivityAt;
     const beforeCall = Date.now() - 1;
     saveState(initial);
 
     await refreshSessionActivity(token);
 
     const updated = loadState();
-    assert.ok(updated.sessions[token], "session should still exist after refresh");
+    assert.ok(updated.loginTokens[token], "login token should still exist after refresh");
     assert.ok(
-      updated.sessions[token].lastActivityAt > originalLastActivity,
+      updated.loginTokens[token].lastActivityAt > originalLastActivity,
       "lastActivityAt should be updated to a more recent time"
     );
     assert.ok(
-      updated.sessions[token].lastActivityAt >= beforeCall,
+      updated.loginTokens[token].lastActivityAt >= beforeCall,
       "lastActivityAt should be at or after the time of the call"
     );
   });
@@ -758,16 +758,16 @@ describe("refreshSessionActivity", () => {
       expiry: now - 1000, // expired 1 second ago
       lastActivityAt: now - 2000,
     });
-    const originalLastActivity = initial.sessions[token].lastActivityAt;
+    const originalLastActivity = initial.loginTokens[token].lastActivityAt;
     saveState(initial);
 
     await refreshSessionActivity(token);
 
     const loaded = loadState();
     assert.equal(
-      loaded.sessions[token].lastActivityAt,
+      loaded.loginTokens[token].lastActivityAt,
       originalLastActivity,
-      "expired session lastActivityAt should not be updated"
+      "expired login token lastActivityAt should not be updated"
     );
   });
 
@@ -783,7 +783,7 @@ describe("refreshSessionActivity", () => {
     await refreshSessionActivity("doesnotexist");
 
     const loaded = loadState();
-    assert.deepEqual(Object.keys(loaded.sessions), [], "no sessions should be created for unknown token");
+    assert.deepEqual(Object.keys(loaded.loginTokens), [], "no login tokens should be created for unknown token");
   });
 
   it("is a no-op when there is no auth state (null state)", async () => {
@@ -804,18 +804,18 @@ describe("refreshSessionActivity", () => {
       expiry: now + 10 * 60 * 1000, // 10 minutes from now
       lastActivityAt: now - 25 * 60 * 60 * 1000, // 25 hours ago, beyond the 24h threshold
     });
-    const originalExpiry = initial.sessions[token].expiry;
+    const originalExpiry = initial.loginTokens[token].expiry;
     saveState(initial);
 
     await refreshSessionActivity(token);
 
     const updated = loadState();
     assert.ok(
-      updated.sessions[token].expiry > originalExpiry,
+      updated.loginTokens[token].expiry > originalExpiry,
       "expiry should be extended when lastActivityAt was more than 24h ago"
     );
     assert.ok(
-      updated.sessions[token].expiry >= now + SESSION_TTL_MS - 1000,
+      updated.loginTokens[token].expiry >= now + SESSION_TTL_MS - 1000,
       "expiry should be approximately 30 days from now"
     );
   });
@@ -854,7 +854,7 @@ describe("withStateLock", () => {
       const newState = new AuthState({
         user: state.user,
         credentials: state.credentials,
-        sessions: { ...state.sessions, [token]: { expiry, credentialId: "cred1", csrfToken, lastActivityAt } },
+        loginTokens: { ...state.loginTokens, [token]: { expiry, credentialId: "cred1", csrfToken, lastActivityAt } },
         setupTokens: state.setupTokens,
       });
       return { state: newState };
@@ -862,7 +862,7 @@ describe("withStateLock", () => {
 
     _invalidateCache();
     const loaded = loadState();
-    assert.ok(Object.keys(loaded.sessions).length > 0, "session should be persisted");
+    assert.ok(Object.keys(loaded.loginTokens).length > 0, "login token should be persisted");
   });
 
   it("does not save when modifier returns without a state key (read-only)", async () => {
@@ -882,7 +882,7 @@ describe("withStateLock", () => {
 
     _invalidateCache();
     const loaded = loadState();
-    assert.deepEqual(Object.keys(loaded.sessions), [], "no sessions should be created for read-only operation");
+    assert.deepEqual(Object.keys(loaded.loginTokens), [], "no login tokens should be created for read-only operation");
   });
 
   it("serializes concurrent operations (mutex behavior)", async () => {

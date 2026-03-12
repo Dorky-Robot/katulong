@@ -1,9 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
+import { Session, SessionNotAliveError } from "../lib/session.js";
+import { RingBuffer } from "../lib/ring-buffer.js";
 import {
-  Session, SessionNotAliveError, RingBuffer,
   tmuxSessionName, encodeHexKeys, unescapeTmuxOutput, stripDaResponses,
-} from "../lib/session.js";
+} from "../lib/tmux.js";
 
 // --- tmux control mode helper tests ---
 

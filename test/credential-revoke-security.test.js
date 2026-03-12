@@ -81,9 +81,9 @@ describe('Credential Revocation Security', () => {
 
   describe('Session Validation', () => {
     it('should validate sessions for existing credentials', () => {
-      assert.strictEqual(testState.isValidSession('token-1'), true);
-      assert.strictEqual(testState.isValidSession('token-2'), true);
-      assert.strictEqual(testState.isValidSession('token-3'), true);
+      assert.strictEqual(testState.isValidLoginToken('token-1'), true);
+      assert.strictEqual(testState.isValidLoginToken('token-2'), true);
+      assert.strictEqual(testState.isValidLoginToken('token-3'), true);
     });
 
     it('should IMMEDIATELY invalidate sessions when credential is removed', () => {
@@ -91,13 +91,13 @@ describe('Credential Revocation Security', () => {
       const newState = testState.removeCredential('cred-1');
 
       // Sessions linked to removed credential MUST be invalid
-      assert.strictEqual(newState.isValidSession('token-1'), false,
+      assert.strictEqual(newState.isValidLoginToken('token-1'), false,
         'Session token-1 should be invalid after credential revoked');
-      assert.strictEqual(newState.isValidSession('token-2'), false,
+      assert.strictEqual(newState.isValidLoginToken('token-2'), false,
         'Session token-2 should be invalid after credential revoked');
 
       // Sessions linked to other credentials should still be valid
-      assert.strictEqual(newState.isValidSession('token-3'), true,
+      assert.strictEqual(newState.isValidLoginToken('token-3'), true,
         'Session token-3 should remain valid (different credential)');
     });
 
@@ -111,7 +111,7 @@ describe('Credential Revocation Security', () => {
         setupTokens: []
       });
 
-      assert.strictEqual(stateWithOldSession.isValidSession('old-token'), false,
+      assert.strictEqual(stateWithOldSession.isValidLoginToken('old-token'), false,
         'Old format sessions without credentialId must be rejected');
     });
 
@@ -125,7 +125,7 @@ describe('Credential Revocation Security', () => {
         setupTokens: []
       });
 
-      assert.strictEqual(stateWithNullCred.isValidSession('pairing-token'), false,
+      assert.strictEqual(stateWithNullCred.isValidLoginToken('pairing-token'), false,
         'Pairing sessions with null credentialId must be rejected');
     });
 
@@ -144,7 +144,7 @@ describe('Credential Revocation Security', () => {
         setupTokens: []
       });
 
-      assert.strictEqual(stateWithExpired.isValidSession('expired-token'), false,
+      assert.strictEqual(stateWithExpired.isValidLoginToken('expired-token'), false,
         'Expired sessions must be rejected');
     });
   });
@@ -158,13 +158,13 @@ describe('Credential Revocation Security', () => {
       assert.strictEqual(newState.credentials[0].id, 'cred-2');
 
       // Sessions for removed credential should be gone
-      assert.strictEqual(newState.sessions['token-1'], undefined,
+      assert.strictEqual(newState.loginTokens['token-1'], undefined,
         'Session token-1 should be removed');
-      assert.strictEqual(newState.sessions['token-2'], undefined,
+      assert.strictEqual(newState.loginTokens['token-2'], undefined,
         'Session token-2 should be removed');
 
       // Session for other credential should remain
-      assert.ok(newState.sessions['token-3'],
+      assert.ok(newState.loginTokens['token-3'],
         'Session token-3 should still exist');
     });
 
@@ -189,7 +189,7 @@ describe('Credential Revocation Security', () => {
 
       assert.strictEqual(newState.credentials.length, 0,
         'All credentials should be removed');
-      assert.strictEqual(Object.keys(newState.sessions).length, 0,
+      assert.strictEqual(Object.keys(newState.loginTokens).length, 0,
         'All sessions should be removed');
     });
 
@@ -208,7 +208,7 @@ describe('Credential Revocation Security', () => {
 
       // State should be unchanged
       assert.strictEqual(newState.credentials.length, 2);
-      assert.strictEqual(Object.keys(newState.sessions).length, 3);
+      assert.strictEqual(Object.keys(newState.loginTokens).length, 3);
     });
   });
 
@@ -242,8 +242,8 @@ describe('Credential Revocation Security', () => {
       assert.strictEqual(newState.credentials.some(c => c.id === 'cred-1'), false);
 
       // All sessions for that credential should be invalid
-      assert.strictEqual(newState.isValidSession('token-1'), false);
-      assert.strictEqual(newState.isValidSession('token-2'), false);
+      assert.strictEqual(newState.isValidLoginToken('token-1'), false);
+      assert.strictEqual(newState.isValidLoginToken('token-2'), false);
     });
   });
 
@@ -264,18 +264,18 @@ describe('Credential Revocation Security', () => {
       });
 
       // Session should be invalid because credential doesn't exist
-      assert.strictEqual(attemptedState.isValidSession('token-1'), false,
+      assert.strictEqual(attemptedState.isValidLoginToken('token-1'), false,
         'Session for non-existent credential must be invalid (prevents resurrection attack)');
     });
 
     it('should validate sessions against current credentials, not session data', () => {
-      // This ensures isValidSession() does a LIVE check of credentials,
+      // This ensures isValidLoginToken() does a LIVE check of credentials,
       // not just checking if session.credentialId field exists
       const newState = testState.removeCredential('cred-1');
 
       // Even though session1 has credentialId: 'cred-1' in its data,
       // it should be invalid because credential1 no longer exists in state
-      assert.strictEqual(newState.isValidSession('token-1'), false);
+      assert.strictEqual(newState.isValidLoginToken('token-1'), false);
     });
   });
 });

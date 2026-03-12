@@ -81,7 +81,7 @@ describe('End Session Behavior', () => {
   describe('endSession()', () => {
     it('should remove credential and all its sessions', () => {
       const sessionToken = 'session-token-1';
-      const session = testState.sessions[sessionToken];
+      const session = testState.loginTokens[sessionToken];
 
       // End session should remove credential and all sessions for that credential
       const { state: newState } = testState.endSession(sessionToken);
@@ -94,11 +94,11 @@ describe('End Session Behavior', () => {
       );
 
       // All sessions for that credential should be removed
-      assert.strictEqual(newState.sessions['session-token-1'], undefined);
-      assert.strictEqual(newState.sessions['session-token-2'], undefined);
+      assert.strictEqual(newState.loginTokens['session-token-1'], undefined);
+      assert.strictEqual(newState.loginTokens['session-token-2'], undefined);
 
       // Sessions for other credentials should remain
-      assert.ok(newState.sessions['session-token-3']);
+      assert.ok(newState.loginTokens['session-token-3']);
     });
 
     it('should handle session without credential gracefully', () => {
@@ -114,7 +114,7 @@ describe('End Session Behavior', () => {
         user: testState.user,
         credentials: testState.credentials,
         sessions: {
-          ...testState.sessions,
+          ...testState.loginTokens,
           'orphan-token': orphanSession
         },
         setupTokens: []
@@ -123,9 +123,9 @@ describe('End Session Behavior', () => {
       // Should remove session but not crash
       const { state: newState, removedCredentialId } = stateWithOrphan.endSession('orphan-token');
 
-      assert.strictEqual(newState.sessions['orphan-token'], undefined);
+      assert.strictEqual(newState.loginTokens['orphan-token'], undefined);
       // Other sessions should remain
-      assert.ok(newState.sessions['session-token-1']);
+      assert.ok(newState.loginTokens['session-token-1']);
       // No credential was removed (orphan session had a non-existent credentialId reference)
       assert.strictEqual(removedCredentialId, 'non-existent-cred');
     });
@@ -151,7 +151,7 @@ describe('End Session Behavior', () => {
 
       assert.strictEqual(newState.credentials.length, 0,
         'All credentials should be removed');
-      assert.strictEqual(Object.keys(newState.sessions).length, 0,
+      assert.strictEqual(Object.keys(newState.loginTokens).length, 0,
         'All sessions should be removed');
       assert.strictEqual(removedCredentialId, 'cred-1',
         'Should report which credential was removed');
@@ -172,7 +172,7 @@ describe('End Session Behavior', () => {
 
       // State should be unchanged
       assert.strictEqual(newState.credentials.length, 2);
-      assert.strictEqual(Object.keys(newState.sessions).length, 3);
+      assert.strictEqual(Object.keys(newState.loginTokens).length, 3);
     });
 
     it('should also remove linked setup tokens', () => {
@@ -189,7 +189,7 @@ describe('End Session Behavior', () => {
       const stateWithToken = new AuthState({
         user: testState.user,
         credentials: testState.credentials,
-        sessions: testState.sessions,
+        sessions: testState.loginTokens,
         setupTokens: [setupToken]
       });
 
@@ -222,11 +222,11 @@ describe('End Session Behavior', () => {
       const { state: newState } = testState.endSession('session-token-1');
 
       // Sessions should be invalid
-      assert.strictEqual(newState.isValidSession('session-token-1'), false);
-      assert.strictEqual(newState.isValidSession('session-token-2'), false);
+      assert.strictEqual(newState.isValidLoginToken('session-token-1'), false);
+      assert.strictEqual(newState.isValidLoginToken('session-token-2'), false);
 
       // Other credential's session should still be valid
-      assert.strictEqual(newState.isValidSession('session-token-3'), true);
+      assert.strictEqual(newState.isValidLoginToken('session-token-3'), true);
     });
 
     it('should remove credential from getCredentialsWithMetadata', () => {

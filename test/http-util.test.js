@@ -578,7 +578,7 @@ describe("getCsrfToken", () => {
   function makeState(sessionToken, csrfToken) {
     return AuthState.empty("user1")
       .addCredential({ id: "cred1", publicKey: "key", counter: 0 })
-      .addSession(sessionToken, Date.now() + 86400000, "cred1", csrfToken);
+      .addLoginToken(sessionToken, Date.now() + 86400000, "cred1", csrfToken);
   }
 
   it("returns CSRF token for valid session", () => {
@@ -601,10 +601,10 @@ describe("getCsrfToken", () => {
   });
 
   it("returns null when session has no csrfToken (backward compat)", () => {
-    // addSession with null csrfToken
+    // addLoginToken with null csrfToken
     const state = AuthState.empty("user1")
       .addCredential({ id: "cred1", publicKey: "key", counter: 0 })
-      .addSession("sess-abc", Date.now() + 86400000, "cred1", null);
+      .addLoginToken("sess-abc", Date.now() + 86400000, "cred1", null);
     assert.equal(getCsrfToken(state, "sess-abc"), null);
   });
 });
@@ -616,7 +616,7 @@ describe("validateCsrfToken", () => {
   function makeState(csrfToken = CSRF_TOKEN) {
     return AuthState.empty("user1")
       .addCredential({ id: "cred1", publicKey: "key", counter: 0 })
-      .addSession(SESSION_TOKEN, Date.now() + 86400000, "cred1", csrfToken);
+      .addLoginToken(SESSION_TOKEN, Date.now() + 86400000, "cred1", csrfToken);
   }
 
   function makeReq({ cookie, csrfHeader } = {}) {
