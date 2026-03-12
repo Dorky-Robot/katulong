@@ -91,7 +91,25 @@ Access your terminal from anywhere using ngrok or Cloudflare Tunnel.
 ### LAN Access
 
 ```
-http://katulong.local:3001
+https://katulong.local:3001
 ```
 
 Auto-advertised via mDNS on local network.
+
+**HTTPS is required for LAN access.** WebAuthn passkeys only work over secure contexts (HTTPS or localhost). When accessing from another device on your LAN:
+
+1. Use HTTPS (katulong serves a self-signed certificate)
+2. Accept the self-signed certificate in your browser
+3. Register a passkey on the new device
+
+For internet access via tunnel, HTTPS is handled by the tunnel provider (ngrok, Cloudflare Tunnel).
+
+### Setup Token for Remote Devices
+
+When pairing a new device over the internet (via tunnel), you need a setup token:
+
+```bash
+katulong token create "My Phone"  # Creates a token
+```
+
+The token is used during WebAuthn registration to authorize the new device. Tokens expire after 7 days.

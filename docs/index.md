@@ -28,6 +28,8 @@ katulong start
 3. **Register a passkey** — first visit registers your device with WebAuthn
 4. **Access from anywhere** — use a tunnel (ngrok, Cloudflare) for remote access
 
+Katulong automatically detects how you're connecting — localhost, LAN, or internet — and adjusts auth requirements accordingly.
+
 ## Why Katulong
 
 Traditional remote access tools force you to choose between convenience and security. Web terminals are convenient but usually cloud-hosted. Katulong gives you both:
@@ -37,6 +39,9 @@ Traditional remote access tools force you to choose between convenience and secu
 - **Multi-access** — browser, phone, tablet — whatever's handy
 - **Session persistence** — backed by tmux; sessions survive server restarts
 - **Tunnel-friendly** — designed for ngrok, Cloudflare Tunnel, or any reverse proxy
+- **File browser** — navigate, upload, download, and manage files on the host
+- **Remote clipboard** — paste text and images across machines via tunnel
+- **P2P enhancement** — automatic WebRTC upgrade on LAN for near-zero latency
 
 ## Architecture at a Glance
 
@@ -58,5 +63,7 @@ The session manager runs in-process. Sessions are backed by tmux — restart the
 | [CLI Reference](cli-reference.md) | All commands and flags |
 | [Security](security/index.md) | Auth model, hardening, threat surface |
 | [Access Guide](access-guide/index.md) | Localhost, LAN, internet access setup |
-| [Architecture](architecture.md) | Server architecture, WebSocket protocol |
+| [Architecture](architecture.md) | Server architecture, API, WebSocket protocol |
+| [P2P Enhancement](p2p-progressive-enhancement.md) | WebRTC progressive enhancement on LAN |
+| [Clipboard Bridge](clipboard-bridge.md) | Remote clipboard architecture |
 | [Use Cases](use-cases.md) | Real-world scenarios |

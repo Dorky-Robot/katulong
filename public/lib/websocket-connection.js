@@ -110,11 +110,9 @@ export function createWebSocketConnection(deps = {}) {
       effects: []
     }),
 
-    'p2p-signal': (msg, currentState) => ({
+    'p2p-signal': (msg) => ({
       stateUpdates: {},
-      effects: currentState.p2p?.peer
-        ? [{ type: 'p2pSignal', data: msg.data }]
-        : []
+      effects: [{ type: 'p2pSignal', data: msg.data }]
     }),
 
     'p2p-ready': () => ({
@@ -129,6 +127,15 @@ export function createWebSocketConnection(deps = {}) {
       stateUpdates: {},
       effects: [
         { type: 'logServerLanIPs', addresses: msg.addresses }
+      ]
+    }),
+
+    'p2p-unavailable': () => ({
+      stateUpdates: {},
+      effects: [
+        { type: 'log', message: '[P2P] Server reports P2P unavailable' },
+        { type: 'p2pDestroy' },
+        { type: 'updateP2PIndicator' }
       ]
     }),
 
@@ -163,6 +170,9 @@ export function createWebSocketConnection(deps = {}) {
         break;
       case 'p2pSignal':
         if (p2pManager) p2pManager.signal(effect.data);
+        break;
+      case 'p2pDestroy':
+        if (p2pManager) p2pManager.destroy();
         break;
       case 'log':
         console.log(effect.message);

@@ -2,7 +2,8 @@
  * P2P Manager
  *
  * WebRTC DataChannel manager for low-latency terminal I/O.
- * Uses SimplePeer for peer connection management.
+ * Uses raw RTCPeerConnection (no SimplePeer) for compatibility with
+ * node-datachannel polyfill on the server side.
  */
 
 /**
@@ -16,7 +17,8 @@ export function createP2PManager(config = {}) {
     retryDelay = 3000
   } = config;
 
-  let peer = null;
+  let pc = null;
+  let dc = null;
   let connected = false;
   let retryTimer = 0;
 
@@ -27,13 +29,13 @@ export function createP2PManager(config = {}) {
     clearTimeout(retryTimer);
     retryTimer = 0;
 
-    if (peer) {
-      try {
-        peer.destroy();
-      } catch (err) {
-        // Ignore errors during cleanup
-      }
-      peer = null;
+    if (dc) {
+      try { dc.close(); } catch { /* ignore */ }
+      dc = null;
+    }
+    if (pc) {
+      try { pc.close(); } catch { /* ignore */ }
+      pc = null;
     }
 
     if (connected) {
@@ -58,15 +60,9 @@ export function createP2PManager(config = {}) {
   }
 
   /**
-   * Create new peer connection
+   * Create new peer connection (initiator side)
    */
-  function create() {
-    // Check if SimplePeer is loaded
-    if (typeof SimplePeer === "undefined") {
-      console.warn("[P2P] SimplePeer not loaded");
-      return;
-    }
-
+  async function create() {
     // Destroy existing connection
     destroy();
 
@@ -76,92 +72,128 @@ export function createP2PManager(config = {}) {
       return;
     }
 
-    // Create new peer (initiator)
-    const newPeer = new SimplePeer({
-      initiator: true,
-      trickle: true,
-      config: { iceServers: [] } // Local network only
-    });
+    const newPC = new RTCPeerConnection({ iceServers: [] });
+    pc = newPC;
 
-    // Handle signaling
-    newPeer.on("signal", (data) => {
-      if (data.candidate) {
-        console.log("[P2P] Local candidate:", data.candidate.candidate);
-      } else if (data.type) {
-        console.log("[P2P] Signal:", data.type);
-      }
+    if (onStateChange) {
+      onStateChange({ connected: false, peer: null });
+    }
+
+    // Create DataChannel (we are the initiator)
+    const newDC = newPC.createDataChannel("katulong", { ordered: true });
+    dc = newDC;
+
+    // ICE candidate trickle
+    newPC.onicecandidate = (event) => {
+      if (!event.candidate) return;
+      console.log("[P2P] Local candidate:", event.candidate.candidate);
       const currentWS = getWS ? getWS() : null;
       if (currentWS?.readyState === 1) {
-        currentWS.send(JSON.stringify({ type: "p2p-signal", data }));
+        currentWS.send(JSON.stringify({
+          type: "p2p-signal",
+          data: { candidate: event.candidate.toJSON() }
+        }));
       }
-    });
+    };
 
-    // Handle connection
-    newPeer.on("connect", () => {
+    newPC.oniceconnectionstatechange = () => {
+      console.log("[P2P] ICE connection state:", newPC.iceConnectionState);
+      if (newPC.iceConnectionState === "failed" || newPC.iceConnectionState === "disconnected") {
+        if (pc !== newPC) return; // stale
+        console.log("[P2P] ICE failed/disconnected, cleaning up");
+        destroy();
+        scheduleRetry();
+      }
+    };
+
+    newPC.onicegatheringstatechange = () => {
+      console.log("[P2P] ICE gathering state:", newPC.iceGatheringState);
+    };
+
+    // DataChannel events
+    newDC.onopen = () => {
+      if (pc !== newPC) return; // stale
+      clearTimeout(retryTimer);
+      retryTimer = 0;
       connected = true;
       console.log("[P2P] DataChannel connected");
       if (onStateChange) {
-        onStateChange({ connected: true, peer: newPeer });
+        onStateChange({ connected: true, peer: newDC });
       }
-    });
+    };
 
-    // Handle incoming data
-    newPeer.on("data", (chunk) => {
-      const str = typeof chunk === "string"
-        ? chunk
-        : new TextDecoder().decode(chunk);
-      if (onData) onData(str);
-    });
+    newDC.onmessage = (event) => {
+      if (onData) {
+        const str = typeof event.data === "string"
+          ? event.data
+          : new TextDecoder().decode(event.data);
+        onData(str);
+      }
+    };
 
-    // Handle close
-    newPeer.on("close", () => {
+    newDC.onclose = () => {
+      if (pc !== newPC) return; // stale
       console.log("[P2P] DataChannel closed, using WS");
       connected = false;
-      peer = null;
+      dc = null;
+      pc = null;
       if (onStateChange) {
         onStateChange({ connected: false, peer: null });
       }
       scheduleRetry();
-    });
+    };
 
-    // Handle errors
-    newPeer.on("error", (err) => {
-      console.warn("[P2P] error:", err.message);
+    newDC.onerror = (err) => {
+      if (pc !== newPC) return; // stale
+      console.warn("[P2P] DataChannel error:", err?.message || err);
       connected = false;
-      peer = null;
+      dc = null;
+      pc = null;
       if (onStateChange) {
         onStateChange({ connected: false, peer: null });
       }
       scheduleRetry();
-    });
+    };
 
-    // Log ICE connection state changes for diagnostics
+    // Create and send the offer
     try {
-      const pc = newPeer._pc;
-      if (pc) {
-        pc.oniceconnectionstatechange = () => {
-          console.log("[P2P] ICE connection state:", pc.iceConnectionState);
-        };
-        pc.onicegatheringstatechange = () => {
-          console.log("[P2P] ICE gathering state:", pc.iceGatheringState);
-        };
+      const offer = await newPC.createOffer();
+      await newPC.setLocalDescription(offer);
+      console.log("[P2P] Signal: offer");
+      const currentWS = getWS ? getWS() : null;
+      if (currentWS?.readyState === 1) {
+        currentWS.send(JSON.stringify({
+          type: "p2p-signal",
+          data: { type: offer.type, sdp: offer.sdp }
+        }));
+      } else {
+        // WS closed between createOffer and send — clean up
+        destroy();
+        scheduleRetry();
+        return;
       }
-    } catch {
-      // SimplePeer internals not accessible — skip
-    }
-
-    peer = newPeer;
-    if (onStateChange) {
-      onStateChange({ connected: false, peer: newPeer });
+    } catch (err) {
+      console.warn("[P2P] Failed to create offer:", err.message);
+      destroy();
+      scheduleRetry();
     }
   }
 
   /**
-   * Send signal data to peer
+   * Handle signal data from server (answers and ICE candidates)
    */
-  function signal(data) {
-    if (peer) {
-      peer.signal(data);
+  async function signal(data) {
+    if (!pc) return;
+    try {
+      if (data.type === "answer") {
+        console.log("[P2P] Signal: answer received");
+        await pc.setRemoteDescription(new RTCSessionDescription(data));
+      } else if (data.candidate) {
+        console.log("[P2P] Remote candidate:", data.candidate.candidate);
+        await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+      }
+    } catch (err) {
+      console.warn("[P2P] Signal error:", err.message);
     }
   }
 
@@ -170,10 +202,10 @@ export function createP2PManager(config = {}) {
    * Returns true if sent successfully
    */
   function send(data) {
-    if (!connected || !peer) return false;
+    if (!connected || !dc || dc.readyState !== "open") return false;
 
     try {
-      peer.send(data);
+      dc.send(data);
       return true;
     } catch (err) {
       console.warn("[P2P] Send failed:", err.message);
@@ -185,7 +217,7 @@ export function createP2PManager(config = {}) {
    * Get current P2P state
    */
   function getState() {
-    return { connected, peer };
+    return { connected, peer: dc };
   }
 
   return {
