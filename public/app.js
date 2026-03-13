@@ -130,8 +130,9 @@
         try {
           const msg = JSON.parse(str);
           if (msg.type === "output") {
-            const active = terminalPool.getActive();
-            if (active) active.term.write(msg.data);
+            const term = (msg.session && terminalPool.get(msg.session)?.term)
+              || terminalPool.getActive()?.term;
+            if (term) terminalWriteWithScroll(term, msg.data);
           }
         } catch {
           // ignore malformed P2P data
@@ -361,6 +362,7 @@
     const pullToRefresh = createPullToRefreshManager({
       container: termContainer,
       isAtBottom,
+      getTerm,
       onRefresh: () => {
         if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN && state.connection.attached) {
           rawSend("\x0C"); // Ctrl-L: refresh screen
@@ -578,14 +580,8 @@
       invalidateSessions(sessionStore, name);
       // Reflow terminal to current window size after activation
       fitActiveTerminal();
-      // Scroll the xterm viewport to bottom after the fit reflow settles,
-      // then reset outer page scroll in case the browser shifted it.
-      setTimeout(() => {
-        const vp = termContainer.querySelector(".terminal-pane.active .xterm-viewport")
-          || termContainer.querySelector(".xterm-viewport");
-        if (vp) vp.scrollTop = vp.scrollHeight;
-        window.scrollTo(0, 0);
-      }, 100);
+      // Reset outer page scroll in case the browser shifted it
+      requestAnimationFrame(() => window.scrollTo(0, 0));
     }
 
     function switchSession(name) {

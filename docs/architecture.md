@@ -186,7 +186,7 @@ Katulong uses tmux control mode (`tmux -u -C attach-session -d -t <name>`) for s
 - **Input**: sent via `send-keys -H` (hex-encoded) to avoid keybinding conflicts
 - **Resize**: `refresh-client -C WxH` + `resize-window` for control and regular clients
 - **DA stripping**: xterm.js query responses (DA1, DA2, CPR) are filtered from input to prevent tmux keybinding triggers
-- **Output coalescing**: rapid `%output` chunks are buffered and flushed as a single write to reduce partial-frame rendering
+- **Output dispatch**: each `%output` line is dispatched immediately to connected clients — xterm.js handles its own internal write buffering
 
 ## Security Architecture
 

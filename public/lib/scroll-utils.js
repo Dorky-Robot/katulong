@@ -4,16 +4,15 @@
  * Composable scroll management helpers for terminal.
  */
 
-/** Find the viewport element for the active terminal pane */
-export function activeViewport() {
-  return document.querySelector(".terminal-pane.active .xterm-viewport")
-    || document.querySelector(".xterm-viewport");
+/** Derive the viewport element from a terminal instance's own DOM */
+export function viewportOf(term) {
+  return term?.element?.closest(".terminal-pane")?.querySelector(".xterm-viewport") || null;
 }
 
 /**
  * Check if viewport is at bottom
  */
-export function isAtBottom(viewport = activeViewport()) {
+export function isAtBottom(viewport) {
   if (!viewport) return true;
   // Dynamic threshold: 10px minimum or 2% of viewport height (better for high-DPI)
   const threshold = Math.max(10, viewport.clientHeight * 0.02);
@@ -21,19 +20,18 @@ export function isAtBottom(viewport = activeViewport()) {
 }
 
 /**
- * Scroll to bottom with double RAF for layout settling
+ * Scroll to bottom
  */
 export const scrollToBottom = (term) => {
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => term.scrollToBottom());
-  });
+  requestAnimationFrame(() => term.scrollToBottom());
 };
 
 /**
- * Preserve scroll position during operation (composable)
+ * Preserve scroll position during operation (composable).
+ * Derives viewport from the terminal instance, not from the active pane.
  */
 export const withPreservedScroll = (term, operation) => {
-  const viewport = activeViewport();
+  const viewport = viewportOf(term);
   const wasAtBottom = isAtBottom(viewport);
   const scrollTop = viewport?.scrollTop ?? 0;
   operation();
@@ -47,10 +45,11 @@ export const withPreservedScroll = (term, operation) => {
 };
 
 /**
- * Terminal write with preserved scroll (composable)
+ * Terminal write with preserved scroll (composable).
+ * Derives viewport from the terminal instance, not from the active pane.
  */
 export const terminalWriteWithScroll = (term, data, onComplete) => {
-  const viewport = activeViewport();
+  const viewport = viewportOf(term);
   const wasAtBottom = isAtBottom(viewport);
   term.write(data, () => {
     if (wasAtBottom) scrollToBottom(term);

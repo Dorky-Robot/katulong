@@ -39,6 +39,7 @@ class MockSession {
   updateChildCount(count) { this._childCount = count; }
   write(data) { this._written.push(data); }
   resize(cols, rows) { this._resizes.push({ cols, rows }); }
+  forceRefresh() {}
   detach() {
     if (this.state !== MockSession.STATE_ATTACHED) return;
     this.state = MockSession.STATE_DETACHED;
