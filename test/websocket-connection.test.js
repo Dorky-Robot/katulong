@@ -74,26 +74,28 @@ describe("wsMessageHandlers", () => {
   });
 
   describe("attached", () => {
-    it("sets connection.attached and clears scroll flag", () => {
+    it("sets connection.attached, session.name, and clears scroll flag", () => {
       const state = makeState({ scroll: { userScrolledUpBeforeDisconnect: true } });
-      const result = handlers.attached({}, state);
+      const result = handlers.attached({ session: "alpha" }, state);
       assert.strictEqual(result.stateUpdates["connection.attached"], true);
+      assert.strictEqual(result.stateUpdates["session.name"], "alpha");
       assert.strictEqual(result.stateUpdates["scroll.userScrolledUpBeforeDisconnect"], false);
     });
 
-    it("emits terminalReset, updateP2PIndicator, initP2P, fit effects", () => {
+    it("emits terminalReset, updateSessionUI, updateP2PIndicator, initP2P, fit effects", () => {
       const state = makeState();
-      const result = handlers.attached({}, state);
+      const result = handlers.attached({ session: "alpha" }, state);
       const effectTypes = result.effects.map(e => e.type);
       assert.ok(effectTypes.includes("terminalReset"));
+      assert.ok(effectTypes.includes("updateSessionUI"));
       assert.ok(effectTypes.includes("updateP2PIndicator"));
       assert.ok(effectTypes.includes("initP2P"));
       assert.ok(effectTypes.includes("fit"));
     });
 
-    it("includes invalidateSessions with current session name", () => {
-      const state = makeState({ session: { name: "my-session" } });
-      const result = handlers.attached({}, state);
+    it("includes invalidateSessions with server-confirmed session name", () => {
+      const state = makeState({ session: { name: "old-session" } });
+      const result = handlers.attached({ session: "my-session" }, state);
       const inv = result.effects.find(e => e.type === "invalidateSessions");
       assert.strictEqual(inv.name, "my-session");
     });
@@ -154,9 +156,8 @@ describe("wsMessageHandlers", () => {
   });
 
   describe("session-removed", () => {
-    it("emits sessionRemoved effect with session name", () => {
-      const state = makeState({ session: { name: "my-session" } });
-      const result = handlers["session-removed"]({}, state);
+    it("emits sessionRemoved effect with server-provided session name", () => {
+      const result = handlers["session-removed"]({ session: "my-session" });
       assert.strictEqual(result.effects[0].type, "sessionRemoved");
       assert.strictEqual(result.effects[0].name, "my-session");
     });

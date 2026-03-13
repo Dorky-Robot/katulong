@@ -600,7 +600,7 @@
     window.addEventListener("popstate", () => {
       const name = new URLSearchParams(location.search).get("s");
       if (!name) return; // bare URL without ?s= — stay on current session
-      if (name !== state.session.name) activateSession(name);
+      if (name !== state.session.name && name !== pendingSwitch) activateSession(name);
     });
 
     const openSessionManager = () => toggleSidebar();
@@ -999,7 +999,6 @@
       state,
       p2pManager,
       updateP2PIndicator,
-      loadTokens,
       isAtBottom,
       invalidateSessions: (name) => invalidateSessions(sessionStore, name),
       updateSessionUI: (name) => {
@@ -1030,6 +1029,7 @@
           window.location.href = "/";
         });
       },
+      onDisconnect: () => { pendingSwitch = null; },
       poolRename: (oldName, newName) => terminalPool.rename(oldName, newName),
       tabRename: (oldName, newName) => windowTabSet.renameTab(oldName, newName),
       fit: fitActiveTerminal,

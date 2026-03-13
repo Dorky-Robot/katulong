@@ -29,7 +29,6 @@ export function createWebSocketConnection(deps = {}) {
     state,
     p2pManager,
     updateP2PIndicator,
-    loadTokens,
     isAtBottom
   } = deps;
 
@@ -55,32 +54,32 @@ export function createWebSocketConnection(deps = {}) {
     attached: (msg, currentState) => ({
       stateUpdates: {
         'connection.attached': true,
+        'session.name': msg.session,
         'scroll.userScrolledUpBeforeDisconnect': false
       },
       effects: [
         { type: 'terminalReset' },
+        { type: 'updateSessionUI', name: msg.session },
         { type: 'updateP2PIndicator' },
         { type: 'initP2P' },
         { type: 'fit' },
-        { type: 'invalidateSessions', name: currentState.session.name },
+        { type: 'invalidateSessions', name: msg.session },
         { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect }
       ]
     }),
 
-    switched: (msg) => {
-      return {
-        stateUpdates: {
-          'connection.attached': true,
-          'session.name': msg.session,
-        },
-        effects: [
-          { type: 'updateSessionUI', name: msg.session },
-          { type: 'invalidateSessions', name: msg.session },
-          { type: 'fit' },
-          { type: 'scrollToBottomIfNeeded', condition: true }
-        ]
-      };
-    },
+    switched: (msg) => ({
+      stateUpdates: {
+        'connection.attached': true,
+        'session.name': msg.session,
+      },
+      effects: [
+        { type: 'updateSessionUI', name: msg.session },
+        { type: 'invalidateSessions', name: msg.session },
+        { type: 'fit' },
+        { type: 'scrollToBottomIfNeeded', condition: true }
+      ]
+    }),
 
     output: (msg) => ({
       stateUpdates: {},
@@ -99,9 +98,9 @@ export function createWebSocketConnection(deps = {}) {
       effects: [{ type: 'terminalWrite', data: '\r\n[shell exited]\r\n', session: msg.session, useOutputTerm: true }]
     }),
 
-    'session-removed': (msg, currentState) => ({
+    'session-removed': (msg) => ({
       stateUpdates: {},
-      effects: [{ type: 'sessionRemoved', name: currentState.session.name }]
+      effects: [{ type: 'sessionRemoved', name: msg.session }]
     }),
 
     'session-renamed': (msg, currentState) => ({
@@ -336,6 +335,7 @@ export function createWebSocketConnection(deps = {}) {
       state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
       state.connection.attached = false;
       if (p2pManager) p2pManager.destroy();
+      if (deps.onDisconnect) deps.onDisconnect();
 
       console.log(`[WS] Reconnecting in ${state.connection.reconnectDelay}ms`);
       reconnectTimeout = setTimeout(connect, state.connection.reconnectDelay);
@@ -343,7 +343,9 @@ export function createWebSocketConnection(deps = {}) {
     };
 
     state.connection.ws.onerror = () => {
-      // Let onclose handle the state transition to DISCONNECTED
+      // Set DISCONNECTED unconditionally — if the socket is already CLOSED,
+      // calling close() is a no-op and onclose won't fire again.
+      connectionState = CONNECTION_STATES.DISCONNECTED;
       state.connection.ws.close();
     };
   }
