@@ -154,9 +154,11 @@ describe("wsMessageHandlers", () => {
   });
 
   describe("session-removed", () => {
-    it("emits sessionRemoved effect", () => {
-      const result = handlers["session-removed"]();
+    it("emits sessionRemoved effect with session name", () => {
+      const state = makeState({ session: { name: "my-session" } });
+      const result = handlers["session-removed"]({}, state);
       assert.strictEqual(result.effects[0].type, "sessionRemoved");
+      assert.strictEqual(result.effects[0].name, "my-session");
     });
   });
 

@@ -25,12 +25,13 @@ export function createWebSocketConnection(deps = {}) {
   // Support both direct terminal reference and getter function for pooled terminals
   const getTerm = typeof deps.term === "function" ? deps.term : () => deps.term;
   // Route output to the correct terminal by session name (from the pool).
-  // Falls back to the active terminal if no session-specific lookup is available.
+  // Returns null if the session has no terminal (e.g., evicted from pool).
+  // Callers must handle null — dropping output is correct because background
+  // sessions get a full buffer replay when switched to.
   const getTermForSession = deps.getTermForSession || null;
   const getOutputTerm = (session) => {
     if (session && getTermForSession) {
-      const t = getTermForSession(session);
-      if (t) return t;
+      return getTermForSession(session) || null;
     }
     return getTerm();
   };
@@ -87,9 +88,9 @@ export function createWebSocketConnection(deps = {}) {
       effects: [{ type: 'terminalWrite', data: '\r\n[shell exited]\r\n', session: msg.session, useOutputTerm: true }]
     }),
 
-    'session-removed': () => ({
+    'session-removed': (msg, currentState) => ({
       stateUpdates: {},
-      effects: [{ type: 'sessionRemoved' }]
+      effects: [{ type: 'sessionRemoved', name: currentState.session.name }]
     }),
 
     'session-renamed': (msg, currentState) => ({
@@ -204,16 +205,8 @@ export function createWebSocketConnection(deps = {}) {
         break;
       }
       case 'terminalWrite': {
-        const sessionTerm = effect.useOutputTerm && effect.session && getTermForSession
-          ? getTermForSession(effect.session) : null;
-        const term = sessionTerm || getTerm();
+        const term = effect.useOutputTerm ? getOutputTerm(effect.session) : getTerm();
         if (!term) break;
-        // When we resolved a session-specific terminal, write to it even if
-        // it's not active (e.g. "[shell exited]" for a background tab).
-        // When we fell back to the active terminal, skip if the message was
-        // intended for a different session — background terminals get a full
-        // buffer replay on switch, so writing here would be redundant.
-        if (!sessionTerm && term !== getTerm()) break;
         if (effect.preserveScroll) {
           terminalWriteWithScroll(term, effect.data);
         } else {
@@ -234,7 +227,7 @@ export function createWebSocketConnection(deps = {}) {
         if (deps.refreshTokensAfterRegistration) deps.refreshTokensAfterRegistration();
         break;
       case 'sessionRemoved':
-        if (deps.onSessionRemoved) deps.onSessionRemoved(state.session.name);
+        if (deps.onSessionRemoved) deps.onSessionRemoved(effect.name);
         break;
       case 'poolRename':
         if (deps.poolRename) deps.poolRename(effect.oldName, effect.newName);
