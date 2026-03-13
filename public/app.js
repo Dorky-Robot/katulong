@@ -618,17 +618,14 @@
       switchSession(tabs[(idx + direction + tabs.length) % tabs.length]);
     }
 
-    // Close tab view only — tmux session stays alive on the server
+    // Close tab view only — tmux session stays alive on the server.
+    // Delegates to shortcut bar's closeTab which handles post-removal navigation.
     function closeCurrentTab() {
+      if (!shortcutBarInstance) return false;
       const tabs = windowTabSet.getTabs();
-      if (tabs.length <= 1) return false; // Can't close the last tab
-      const current = state.session.name;
-      const idx = tabs.indexOf(current);
-      if (idx === -1) return false;
-      windowTabSet.removeTab(current);
-      const remaining = windowTabSet.getTabs();
-      const nextIdx = Math.min(idx, remaining.length - 1);
-      switchSession(remaining[nextIdx]);
+      if (tabs.length <= 1) return false;
+      if (!tabs.includes(state.session.name)) return false;
+      shortcutBarInstance.closeTab(state.session.name);
       return true;
     }
 
