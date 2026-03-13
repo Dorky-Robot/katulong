@@ -9,6 +9,17 @@ import { scrollToBottom, terminalWriteWithScroll, activeViewport } from "/lib/sc
 import { basePath } from "/lib/base-path.js";
 
 /**
+ * Connection state machine: DISCONNECTED → CONNECTING → CONNECTED → ATTACHED
+ * Only valid transitions are forward through this sequence, or back to DISCONNECTED.
+ */
+export const CONNECTION_STATES = {
+  DISCONNECTED: 'disconnected',
+  CONNECTING: 'connecting',
+  CONNECTED: 'connected',
+  ATTACHED: 'attached'
+};
+
+/**
  * Create WebSocket connection manager with injected dependencies
  */
 const REDRAW_SCROLL_DELAYS_MS = [300, 800];
@@ -18,24 +29,24 @@ export function createWebSocketConnection(deps = {}) {
     state,
     p2pManager,
     updateP2PIndicator,
-    loadTokens,
     isAtBottom
   } = deps;
 
   // Support both direct terminal reference and getter function for pooled terminals
   const getTerm = typeof deps.term === "function" ? deps.term : () => deps.term;
   // Route output to the correct terminal by session name (from the pool).
-  // Falls back to the active terminal if no session-specific lookup is available.
+  // Returns null if the session has no terminal (e.g., evicted from pool).
+  // Callers must handle null — dropping output is correct because background
+  // sessions get a full buffer replay when switched to.
   const getTermForSession = deps.getTermForSession || null;
   const getOutputTerm = (session) => {
     if (session && getTermForSession) {
-      const t = getTermForSession(session);
-      if (t) return t;
+      return getTermForSession(session) || null;
     }
     return getTerm();
   };
 
-  let isConnecting = false;
+  let connectionState = CONNECTION_STATES.DISCONNECTED;
   let reconnectTimeout = null;
 
   // --- Pure WebSocket message handlers (functional core) ---
@@ -43,32 +54,32 @@ export function createWebSocketConnection(deps = {}) {
     attached: (msg, currentState) => ({
       stateUpdates: {
         'connection.attached': true,
+        'session.name': msg.session,
         'scroll.userScrolledUpBeforeDisconnect': false
       },
       effects: [
         { type: 'terminalReset' },
+        { type: 'updateSessionUI', name: msg.session },
         { type: 'updateP2PIndicator' },
         { type: 'initP2P' },
         { type: 'fit' },
-        { type: 'invalidateSessions', name: currentState.session.name },
+        { type: 'invalidateSessions', name: msg.session },
         { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect }
       ]
     }),
 
-    switched: (msg) => {
-      return {
-        stateUpdates: {
-          'connection.attached': true,
-          'session.name': msg.session,
-        },
-        effects: [
-          { type: 'updateSessionUI', name: msg.session },
-          { type: 'invalidateSessions', name: msg.session },
-          { type: 'fit' },
-          { type: 'scrollToBottomIfNeeded', condition: true }
-        ]
-      };
-    },
+    switched: (msg) => ({
+      stateUpdates: {
+        'connection.attached': true,
+        'session.name': msg.session,
+      },
+      effects: [
+        { type: 'updateSessionUI', name: msg.session },
+        { type: 'invalidateSessions', name: msg.session },
+        { type: 'fit' },
+        { type: 'scrollToBottomIfNeeded', condition: true }
+      ]
+    }),
 
     output: (msg) => ({
       stateUpdates: {},
@@ -87,9 +98,9 @@ export function createWebSocketConnection(deps = {}) {
       effects: [{ type: 'terminalWrite', data: '\r\n[shell exited]\r\n', session: msg.session, useOutputTerm: true }]
     }),
 
-    'session-removed': () => ({
+    'session-removed': (msg) => ({
       stateUpdates: {},
-      effects: [{ type: 'sessionRemoved' }]
+      effects: [{ type: 'sessionRemoved', name: msg.session }]
     }),
 
     'session-renamed': (msg, currentState) => ({
@@ -204,16 +215,8 @@ export function createWebSocketConnection(deps = {}) {
         break;
       }
       case 'terminalWrite': {
-        const sessionTerm = effect.useOutputTerm && effect.session && getTermForSession
-          ? getTermForSession(effect.session) : null;
-        const term = sessionTerm || getTerm();
+        const term = effect.useOutputTerm ? getOutputTerm(effect.session) : getTerm();
         if (!term) break;
-        // When we resolved a session-specific terminal, write to it even if
-        // it's not active (e.g. "[shell exited]" for a background tab).
-        // When we fell back to the active terminal, skip if the message was
-        // intended for a different session — background terminals get a full
-        // buffer replay on switch, so writing here would be redundant.
-        if (!sessionTerm && term !== getTerm()) break;
         if (effect.preserveScroll) {
           terminalWriteWithScroll(term, effect.data);
         } else {
@@ -234,7 +237,7 @@ export function createWebSocketConnection(deps = {}) {
         if (deps.refreshTokensAfterRegistration) deps.refreshTokensAfterRegistration();
         break;
       case 'sessionRemoved':
-        if (deps.onSessionRemoved) deps.onSessionRemoved(state.session.name);
+        if (deps.onSessionRemoved) deps.onSessionRemoved(effect.name);
         break;
       case 'poolRename':
         if (deps.poolRename) deps.poolRename(effect.oldName, effect.newName);
@@ -269,8 +272,8 @@ export function createWebSocketConnection(deps = {}) {
 
   // WebSocket connection function
   function connect() {
-    // Prevent multiple simultaneous connection attempts
-    if (isConnecting) {
+    // Only connect from DISCONNECTED state
+    if (connectionState !== CONNECTION_STATES.DISCONNECTED) {
       return;
     }
 
@@ -280,13 +283,13 @@ export function createWebSocketConnection(deps = {}) {
       reconnectTimeout = null;
     }
 
-    isConnecting = true;
+    connectionState = CONNECTION_STATES.CONNECTING;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const wsPath = basePath ? `${basePath}/stream` : "";
     state.connection.ws = new WebSocket(`${proto}//${location.host}${wsPath}`);
 
     state.connection.ws.onopen = () => {
-      isConnecting = false;
+      connectionState = CONNECTION_STATES.CONNECTED;
       state.connection.reconnectDelay = 1000;
       const term = getTerm();
       const cols = term?.cols || 80;
@@ -302,6 +305,11 @@ export function createWebSocketConnection(deps = {}) {
       if (handler) {
         const { stateUpdates, effects } = handler(msg, state);
 
+        // Transition to ATTACHED when server confirms attachment
+        if (msg.type === 'attached' || msg.type === 'switched') {
+          connectionState = CONNECTION_STATES.ATTACHED;
+        }
+
         // Apply state updates
         if (Object.keys(stateUpdates).length > 0) {
           state.updateMany(stateUpdates);
@@ -313,7 +321,7 @@ export function createWebSocketConnection(deps = {}) {
     };
 
     state.connection.ws.onclose = (event) => {
-      isConnecting = false;
+      connectionState = CONNECTION_STATES.DISCONNECTED;
 
       // Check if connection was closed due to revoked credentials
       if (event.code === 1008) { // 1008 = Policy Violation
@@ -327,6 +335,7 @@ export function createWebSocketConnection(deps = {}) {
       state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
       state.connection.attached = false;
       if (p2pManager) p2pManager.destroy();
+      if (deps.onDisconnect) deps.onDisconnect();
 
       console.log(`[WS] Reconnecting in ${state.connection.reconnectDelay}ms`);
       reconnectTimeout = setTimeout(connect, state.connection.reconnectDelay);
@@ -334,7 +343,9 @@ export function createWebSocketConnection(deps = {}) {
     };
 
     state.connection.ws.onerror = () => {
-      isConnecting = false;
+      // Set DISCONNECTED unconditionally — if the socket is already CLOSED,
+      // calling close() is a no-op and onclose won't fire again.
+      connectionState = CONNECTION_STATES.DISCONNECTED;
       state.connection.ws.close();
     };
   }
@@ -350,7 +361,7 @@ export function createWebSocketConnection(deps = {}) {
         const hiddenDuration = Date.now() - hiddenAt;
 
         // Skip if already connecting
-        if (isConnecting) {
+        if (connectionState === CONNECTION_STATES.CONNECTING) {
           return;
         }
 
@@ -377,5 +388,6 @@ export function createWebSocketConnection(deps = {}) {
     initVisibilityReconnect,
     wsMessageHandlers,
     executeEffect,
+    getConnectionState: () => connectionState,
   };
 }

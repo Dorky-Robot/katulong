@@ -536,6 +536,8 @@
     if (!isOverlayViewport() || !isInitiallyCollapsed) loadSidebarData();
 
     // --- Session switching (no page reload) ---
+    let pendingSwitch = null;
+
     function activateSession(name) {
       // Close port forward / file browser — switching sessions returns to terminal
       if (portForwardEl?.classList.contains("active")) closePortForward();
@@ -558,17 +560,18 @@
         entry.term.reset();
       }
 
-      // Update state optimistically so state.session.name and pool.getActiveName()
-      // stay in sync (the server's "switched" confirmation will set it again, harmlessly).
-      state.update('session.name', name);
+      // Visual updates only — state.session.name is set by the server's
+      // "switched" or "attached" confirmation to avoid stale routing during
+      // the switch window.
       document.title = name;
 
       if (wsOpen) {
         // Switch session over the existing WebSocket — no disconnect/reconnect needed
+        pendingSwitch = name;
         ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows }));
       } else if (!ws || ws.readyState === WebSocket.CLOSED) {
-        // No WebSocket yet (e.g., first load with no sessions, user picked one from sidebar)
-        // or WebSocket was closed and hasn't reconnected yet
+        // No WebSocket yet — set session name for the attach message, then connect
+        state.update('session.name', name);
         wsConnection.connect();
       }
       if (shortcutBarInstance) shortcutBarInstance.render(name);
@@ -586,7 +589,7 @@
     }
 
     function switchSession(name) {
-      if (name === state.session.name) return;
+      if (name === state.session.name || name === pendingSwitch) return;
       const url = new URL(window.location);
       url.searchParams.set("s", name);
       history.pushState(null, "", url);
@@ -597,7 +600,7 @@
     window.addEventListener("popstate", () => {
       const name = new URLSearchParams(location.search).get("s");
       if (!name) return; // bare URL without ?s= — stay on current session
-      if (name !== state.session.name) activateSession(name);
+      if (name !== state.session.name && name !== pendingSwitch) activateSession(name);
     });
 
     const openSessionManager = () => toggleSidebar();
@@ -996,10 +999,10 @@
       state,
       p2pManager,
       updateP2PIndicator,
-      loadTokens,
       isAtBottom,
       invalidateSessions: (name) => invalidateSessions(sessionStore, name),
       updateSessionUI: (name) => {
+        pendingSwitch = null;
         document.title = name;
         const url = new URL(window.location);
         url.searchParams.set("s", name);
@@ -1026,6 +1029,7 @@
           window.location.href = "/";
         });
       },
+      onDisconnect: () => { pendingSwitch = null; },
       poolRename: (oldName, newName) => terminalPool.rename(oldName, newName),
       tabRename: (oldName, newName) => windowTabSet.renameTab(oldName, newName),
       fit: fitActiveTerminal,
