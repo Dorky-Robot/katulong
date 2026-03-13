@@ -607,7 +607,59 @@
     });
 
     const openSessionManager = () => toggleSidebar();
-    
+
+    // --- Tab keyboard shortcuts (Cmd+Shift+[/], Cmd+T, Cmd+W) ---
+    function closeCurrentTab() {
+      const tabs = windowTabSet.getTabs();
+      if (tabs.length <= 1) return; // Don't close the last tab
+      const current = state.session.name;
+      const idx = tabs.indexOf(current);
+      windowTabSet.removeTab(current);
+      terminalPool.dispose(current);
+      const remaining = windowTabSet.getTabs();
+      const nextIdx = Math.min(idx, remaining.length - 1);
+      switchSession(remaining[nextIdx]);
+    }
+
+    document.addEventListener("keydown", (ev) => {
+      if (!ev.metaKey) return;
+
+      // Cmd+Shift+[ — previous tab
+      if (ev.shiftKey && ev.key === "[") {
+        ev.preventDefault();
+        const tabs = windowTabSet.getTabs();
+        if (tabs.length <= 1) return;
+        const idx = tabs.indexOf(state.session.name);
+        const prev = (idx - 1 + tabs.length) % tabs.length;
+        switchSession(tabs[prev]);
+        return;
+      }
+
+      // Cmd+Shift+] — next tab
+      if (ev.shiftKey && ev.key === "]") {
+        ev.preventDefault();
+        const tabs = windowTabSet.getTabs();
+        if (tabs.length <= 1) return;
+        const idx = tabs.indexOf(state.session.name);
+        const next = (idx + 1) % tabs.length;
+        switchSession(tabs[next]);
+        return;
+      }
+
+      // Cmd+T — new tab
+      if (ev.key === "t" && !ev.shiftKey) {
+        ev.preventDefault();
+        createNewSession();
+        return;
+      }
+
+      // Cmd+W — close tab
+      if (ev.key === "w" && !ev.shiftKey) {
+        ev.preventDefault();
+        closeCurrentTab();
+        return;
+      }
+    }, true); // Capture phase to intercept before browser defaults
 
     // --- Settings ---
 
