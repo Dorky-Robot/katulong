@@ -9,9 +9,26 @@
 import { describe, it, before } from "node:test";
 import { mock } from "node:test";
 import assert from "node:assert/strict";
+import { register } from "node:module";
+import { pathToFileURL } from "node:url";
 
-// Mock browser-only modules before importing the module under test
-await mock.module("../public/lib/scroll-utils.js", {
+// The source uses absolute browser paths ("/lib/...") which Node can't resolve.
+// Register a custom resolver that redirects /lib/ and /vendor/ to public/.
+const projectRoot = new URL("..", import.meta.url).href;
+const resolverCode = `
+export function resolve(specifier, context, nextResolve) {
+  if (specifier.startsWith("/lib/") || specifier.startsWith("/vendor/")) {
+    return nextResolve("${projectRoot}public" + specifier, context);
+  }
+  return nextResolve(specifier, context);
+}`;
+register("data:text/javascript," + encodeURIComponent(resolverCode));
+
+// Now mock the browser-only modules (using resolved paths)
+const scrollUtilsUrl = new URL("../public/lib/scroll-utils.js", import.meta.url).href;
+const basePathUrl = new URL("../public/lib/base-path.js", import.meta.url).href;
+
+await mock.module(scrollUtilsUrl, {
   namedExports: {
     scrollToBottom: () => {},
     terminalWriteWithScroll: () => {},
@@ -19,7 +36,7 @@ await mock.module("../public/lib/scroll-utils.js", {
   },
 });
 
-await mock.module("../public/lib/base-path.js", {
+await mock.module(basePathUrl, {
   namedExports: {
     basePath: "",
   },
@@ -105,12 +122,13 @@ describe("wsMessageHandlers", () => {
 
   describe("output", () => {
     it("emits terminalWrite with preserveScroll and useOutputTerm", () => {
-      const result = handlers.output({ data: "hello" });
+      const result = handlers.output({ data: "hello", session: "alpha" });
       assert.deepStrictEqual(result.stateUpdates, {});
       assert.strictEqual(result.effects.length, 1);
       const eff = result.effects[0];
       assert.strictEqual(eff.type, "terminalWrite");
       assert.strictEqual(eff.data, "hello");
+      assert.strictEqual(eff.session, "alpha");
       assert.strictEqual(eff.preserveScroll, true);
       assert.strictEqual(eff.useOutputTerm, true);
     });
@@ -126,11 +144,12 @@ describe("wsMessageHandlers", () => {
 
   describe("exit", () => {
     it("writes shell exited message", () => {
-      const result = handlers.exit();
+      const result = handlers.exit({ session: "my-session" });
       assert.deepStrictEqual(result.stateUpdates, {});
       const eff = result.effects[0];
       assert.strictEqual(eff.type, "terminalWrite");
       assert.ok(eff.data.includes("[shell exited]"));
+      assert.strictEqual(eff.session, "my-session");
     });
   });
 

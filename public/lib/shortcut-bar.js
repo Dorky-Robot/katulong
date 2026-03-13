@@ -914,6 +914,7 @@ export function createShortcutBar(options = {}) {
         btn.addEventListener("click", onSettingsClick);
         island.appendChild(btn);
       }
+
     }
 
     // P2P connection dot — shown on all devices
@@ -1053,7 +1054,6 @@ export function createShortcutBar(options = {}) {
 
   return {
     render,
-    closeTab,
     setPortProxyEnabled(enabled) {
       portProxyEnabled = enabled;
       const btn = document.getElementById("bar-portfwd-btn");

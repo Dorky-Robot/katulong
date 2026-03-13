@@ -546,14 +546,8 @@
         windowTabSet.addTab(name);
       }
 
-      // Capture the current terminal before switching so output that arrives
-      // during the switch window (before the server confirms) goes to the old terminal.
-      const oldTerm = getTerm();
       const ws = state.connection.ws;
       const wsOpen = ws && ws.readyState === WebSocket.OPEN;
-      if (wsOpen && oldTerm && wsConnection?.setSwitchPendingTerm) {
-        wsConnection.setSwitchPendingTerm(oldTerm);
-      }
 
       const wasCached = terminalPool.has(name);
       const entry = terminalPool.activate(name);
@@ -608,7 +602,7 @@
 
     const openSessionManager = () => toggleSidebar();
 
-    // --- Tab keyboard shortcuts (Cmd+Shift+[/], Cmd+T, Cmd+W) ---
+    // --- Keyboard shortcuts (Cmd+Shift+[/], Cmd+?) ---
 
     function navigateTab(direction) {
       const tabs = windowTabSet.getTabs();
@@ -618,41 +612,55 @@
       switchSession(tabs[(idx + direction + tabs.length) % tabs.length]);
     }
 
-    // Close tab view only — tmux session stays alive on the server.
-    // Delegates to shortcut bar's closeTab which handles post-removal navigation.
-    function closeCurrentTab() {
-      if (!shortcutBarInstance) return false;
-      const tabs = windowTabSet.getTabs();
-      if (tabs.length <= 1) return false;
-      if (!tabs.includes(state.session.name)) return false;
-      shortcutBarInstance.closeTab(state.session.name);
-      return true;
+    function toggleKeyboardHelp() {
+      const overlay = document.getElementById("kb-help-overlay");
+      if (!overlay) return;
+      const isVisible = overlay.classList.contains("visible");
+      overlay.classList.toggle("visible", !isVisible);
+      if (!isVisible) {
+        const closeBtn = document.getElementById("kb-help-close");
+        if (closeBtn) closeBtn.focus();
+      }
+    }
+
+    // Close overlay on backdrop click or close button
+    const kbHelpOverlay = document.getElementById("kb-help-overlay");
+    if (kbHelpOverlay) {
+      kbHelpOverlay.addEventListener("click", (ev) => {
+        if (ev.target === kbHelpOverlay) toggleKeyboardHelp();
+      });
+      const closeBtn = document.getElementById("kb-help-close");
+      if (closeBtn) closeBtn.addEventListener("click", toggleKeyboardHelp);
     }
 
     document.addEventListener("keydown", (ev) => {
-      if (!ev.metaKey) return;
-
-      if (ev.shiftKey && ev.key === "[") {
+      // Escape closes keyboard help
+      if (ev.key === "Escape" && kbHelpOverlay?.classList.contains("visible")) {
         ev.preventDefault();
-        navigateTab(-1);
+        toggleKeyboardHelp();
         return;
       }
 
-      if (ev.shiftKey && ev.key === "]") {
+      if (!ev.metaKey) return;
+
+      // Cmd+/ — keyboard shortcuts help
+      if (ev.key === "/" && !ev.shiftKey) {
+        ev.preventDefault();
+        toggleKeyboardHelp();
+        return;
+      }
+
+      // Cmd+[ — next tab
+      if (ev.key === "[" && !ev.shiftKey) {
         ev.preventDefault();
         navigateTab(+1);
         return;
       }
 
-      if (ev.key === "t" && !ev.shiftKey) {
+      // Cmd+] — previous tab
+      if (ev.key === "]" && !ev.shiftKey) {
         ev.preventDefault();
-        createNewSession();
-        return;
-      }
-
-      if (ev.key === "w" && !ev.shiftKey) {
-        if (!closeCurrentTab()) return; // Let browser handle Cmd+W on last tab
-        ev.preventDefault();
+        navigateTab(-1);
         return;
       }
     }, true); // Capture phase to intercept before browser defaults
@@ -984,6 +992,7 @@
 
     const wsConnection = createWebSocketConnection({
       term: getTerm,
+      getTermForSession: (session) => terminalPool.get(session)?.term || null,
       state,
       p2pManager,
       updateP2PIndicator,

@@ -35,8 +35,15 @@ export const scrollToBottom = (term) => {
 export const withPreservedScroll = (term, operation) => {
   const viewport = activeViewport();
   const wasAtBottom = isAtBottom(viewport);
+  const scrollTop = viewport?.scrollTop ?? 0;
   operation();
-  if (wasAtBottom) scrollToBottom(term);
+  if (wasAtBottom) {
+    scrollToBottom(term);
+  } else if (viewport) {
+    // Restore scroll position after reflow (e.g. fit/resize) to prevent
+    // the viewport from jumping when the user has scrolled up.
+    viewport.scrollTop = scrollTop;
+  }
 };
 
 /**

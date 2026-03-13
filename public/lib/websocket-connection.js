@@ -24,14 +24,16 @@ export function createWebSocketConnection(deps = {}) {
 
   // Support both direct terminal reference and getter function for pooled terminals
   const getTerm = typeof deps.term === "function" ? deps.term : () => deps.term;
-  // During a session switch, output may still arrive for the previous session
-  // before the server confirms the switch. getOutputTerm() resolves to the
-  // correct terminal by checking the switchPending flag.
-  const getOutputTerm = () => {
-    if (switchPendingTerm) return switchPendingTerm;
+  // Route output to the correct terminal by session name (from the pool).
+  // Falls back to the active terminal if no session-specific lookup is available.
+  const getTermForSession = deps.getTermForSession || null;
+  const getOutputTerm = (session) => {
+    if (session && getTermForSession) {
+      const t = getTermForSession(session);
+      if (t) return t;
+    }
     return getTerm();
   };
-  let switchPendingTerm = null;
 
   let isConnecting = false;
   let reconnectTimeout = null;
@@ -54,8 +56,6 @@ export function createWebSocketConnection(deps = {}) {
     }),
 
     switched: (msg) => {
-      // Server confirmed the switch — output now flows for the new session
-      switchPendingTerm = null;
       return {
         stateUpdates: {
           'connection.attached': true,
@@ -73,7 +73,7 @@ export function createWebSocketConnection(deps = {}) {
     output: (msg) => ({
       stateUpdates: {},
       effects: [
-        { type: 'terminalWrite', data: msg.data, preserveScroll: true, useOutputTerm: true }
+        { type: 'terminalWrite', data: msg.data, session: msg.session, preserveScroll: true, useOutputTerm: true }
       ]
     }),
 
@@ -82,9 +82,9 @@ export function createWebSocketConnection(deps = {}) {
       effects: [{ type: 'reload' }]
     }),
 
-    exit: () => ({
+    exit: (msg) => ({
       stateUpdates: {},
-      effects: [{ type: 'terminalWrite', data: '\r\n[shell exited]\r\n', useOutputTerm: true }]
+      effects: [{ type: 'terminalWrite', data: '\r\n[shell exited]\r\n', session: msg.session, useOutputTerm: true }]
     }),
 
     'session-removed': () => ({
@@ -204,8 +204,12 @@ export function createWebSocketConnection(deps = {}) {
         break;
       }
       case 'terminalWrite': {
-        const term = effect.useOutputTerm ? getOutputTerm() : getTerm();
+        const term = effect.useOutputTerm ? getOutputTerm(effect.session) : getTerm();
         if (!term) break;
+        // Only write to the active terminal — background terminals get a
+        // full buffer replay + resize redraw when switched to, so writing
+        // to them now would just waste work and can disrupt xterm layout.
+        if (term !== getTerm()) break;
         if (effect.preserveScroll) {
           terminalWriteWithScroll(term, effect.data);
         } else {
@@ -314,7 +318,7 @@ export function createWebSocketConnection(deps = {}) {
       }
 
       // Normal disconnect - attempt reconnection with exponential backoff
-      switchPendingTerm = null; // Clear stale switch state on disconnect
+      // (no stale state to clear — output routes by session name)
       const viewport = activeViewport();
       state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
       state.connection.attached = false;
@@ -369,7 +373,5 @@ export function createWebSocketConnection(deps = {}) {
     initVisibilityReconnect,
     wsMessageHandlers,
     executeEffect,
-    /** Set the terminal that should receive output during a session switch window */
-    setSwitchPendingTerm(term) { switchPendingTerm = term; },
   };
 }
