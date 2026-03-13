@@ -151,7 +151,7 @@ describe("createWebSocketManager", () => {
       bridge.relay({ type: "output", session: "alpha", data: "test output" });
 
       assert.equal(ws.sent.length, 1);
-      assert.deepEqual(JSON.parse(ws.sent[0]), { type: "output", data: "test output" });
+      assert.deepEqual(JSON.parse(ws.sent[0]), { type: "output", session: "alpha", data: "test output" });
     });
 
     it("routes exit events to correct session", () => {
@@ -161,7 +161,7 @@ describe("createWebSocketManager", () => {
       bridge.relay({ type: "exit", session: "alpha", code: 0 });
 
       assert.equal(ws.sent.length, 1);
-      assert.deepEqual(JSON.parse(ws.sent[0]), { type: "exit", code: 0 });
+      assert.deepEqual(JSON.parse(ws.sent[0]), { type: "exit", session: "alpha", code: 0 });
     });
 
     it("updates client session name on session-renamed", () => {

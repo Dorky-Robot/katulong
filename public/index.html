@@ -216,7 +216,7 @@
     /* --- Search bar --- */
     #search-bar {
       display: none;
-      position: fixed; top: 0; right: 0; z-index: 20;
+      position: fixed; top: env(titlebar-area-height, 0px); right: 0; z-index: 20;
       padding: 0.4rem 0.5rem;
       background: var(--bg-surface); border-bottom: 1px solid var(--border);
       border-left: 1px solid var(--border);
@@ -557,6 +557,21 @@
     .modal-overlay.visible .modal-panel { transform: translateY(0); }
     .modal-panel h3 {
       color: var(--text); font-size: 1rem; margin-bottom: 0.875rem; padding-top: 1rem;
+    }
+
+    /* --- Keyboard shortcuts help --- */
+    .kb-help-list { padding: 0; margin: 0; list-style: none; }
+    .kb-help-list li {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0.5rem 0; border-bottom: 1px solid var(--border);
+    }
+    .kb-help-list li:last-child { border-bottom: none; }
+    .kb-help-list .kb-label { color: var(--text); font-size: var(--text-sm); }
+    .kb-help-list kbd {
+      font-family: var(--font-mono); font-size: var(--text-xs);
+      background: var(--bg-muted); color: var(--text-secondary);
+      padding: 0.125rem 0.375rem; border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
     }
 
     /* --- Shortcuts popup --- */
@@ -1595,6 +1610,28 @@
         <button class="btn btn--secondary" id="shortcuts-edit-btn">
           <i class="ph ph-pencil-simple"></i> Edit
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keyboard shortcuts help (Cmd+?) -->
+  <div id="kb-help-overlay" class="modal-overlay" role="dialog" aria-label="Keyboard shortcuts">
+    <div class="modal-panel" style="max-width: var(--modal-width-sm);">
+      <h3>Keyboard Shortcuts</h3>
+      <ul class="kb-help-list">
+        <li><span class="kb-label">Previous tab</span><span><kbd>&#8984;</kbd> <kbd>[</kbd></span></li>
+        <li><span class="kb-label">Next tab</span><span><kbd>&#8984;</kbd> <kbd>]</kbd></span></li>
+        <li><span class="kb-label">Clear terminal</span><span><kbd>&#8984;</kbd> <kbd>K</kbd></span></li>
+        <li><span class="kb-label">Search</span><span><kbd>&#8984;</kbd> <kbd>F</kbd></span></li>
+        <li><span class="kb-label">Start of line</span><span><kbd>&#8984;</kbd> <kbd>←</kbd></span></li>
+        <li><span class="kb-label">End of line</span><span><kbd>&#8984;</kbd> <kbd>→</kbd></span></li>
+        <li><span class="kb-label">Word back</span><span><kbd>&#x2325;</kbd> <kbd>←</kbd></span></li>
+        <li><span class="kb-label">Word forward</span><span><kbd>&#x2325;</kbd> <kbd>→</kbd></span></li>
+        <li><span class="kb-label">Literal newline</span><span><kbd>Shift</kbd> <kbd>Enter</kbd></span></li>
+        <li><span class="kb-label">This help</span><span><kbd>&#8984;</kbd> <kbd>/</kbd></span></li>
+      </ul>
+      <div class="modal-footer" style="padding-top: 0.75rem;">
+        <button class="btn btn--secondary" id="kb-help-close">Close</button>
       </div>
     </div>
   </div>

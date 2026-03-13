@@ -149,6 +149,10 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     return activeSession;
   }
 
+  function get(sessionName) {
+    return pool.get(sessionName) || null;
+  }
+
   function has(sessionName) {
     return pool.has(sessionName);
   }
@@ -171,6 +175,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
   }
 
   return {
+    get,
     getOrCreate,
     activate,
     dispose,
