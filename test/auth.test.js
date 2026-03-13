@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync, unlinkSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { createSession, validateSession, pruneExpiredSessions, loadState, saveState, _invalidateCache, refreshSessionActivity, withStateLock } from "../lib/auth.js";
+import { createLoginToken, validateSession, pruneExpiredSessions, loadState, saveState, _invalidateCache, refreshSessionActivity, withStateLock } from "../lib/auth.js";
 import { AuthState } from "../lib/auth-state.js";
 import { SESSION_TTL_MS } from "../lib/env-config.js";
 import envConfig from "../lib/env-config.js";
@@ -19,15 +19,15 @@ function clearAuthFiles() {
   }
 }
 
-describe("createSession", () => {
+describe("createLoginToken", () => {
   it("returns a token that is 64 hex characters", () => {
-    const { token } = createSession();
+    const { token } = createLoginToken();
     assert.equal(token.length, 64);
     assert.match(token, /^[0-9a-f]{64}$/);
   });
 
   it("returns an expiry roughly 30 days in the future", () => {
-    const { expiry } = createSession();
+    const { expiry } = createLoginToken();
     const diff = expiry - Date.now();
     // Allow 5 second tolerance
     assert.ok(diff > SESSION_TTL_MS - 5000, `expiry too early: ${diff}ms`);
@@ -35,8 +35,8 @@ describe("createSession", () => {
   });
 
   it("generates unique tokens", () => {
-    const a = createSession();
-    const b = createSession();
+    const a = createLoginToken();
+    const b = createLoginToken();
     assert.notEqual(a.token, b.token);
   });
 });
@@ -54,7 +54,7 @@ describe("validateSession", () => {
   }
 
   it("returns true for a valid session", () => {
-    const { token, expiry, csrfToken, lastActivityAt } = createSession();
+    const { token, expiry, csrfToken, lastActivityAt } = createLoginToken();
     const state = makeState({
       [token]: { expiry, credentialId: credential.id, csrfToken, lastActivityAt },
     });
@@ -126,40 +126,40 @@ describe("validateSession", () => {
 });
 
 describe("pruneExpiredSessions", () => {
+  const credential = { id: "cred1", publicKey: "key1", counter: 0 };
+
+  function makeState(sessions = {}) {
+    return new AuthState({
+      user: { id: "user1", name: "owner" },
+      credentials: [credential],
+      sessions,
+      setupTokens: [],
+    });
+  }
+
   it("removes expired sessions", () => {
-    const state = {
-      sessions: {
-        expired1: Date.now() - 10000,
-        expired2: Date.now() - 1,
-      },
-    };
+    const state = makeState({
+      expired1: { expiry: Date.now() - 10000, credentialId: credential.id, csrfToken: "csrf1", lastActivityAt: Date.now() },
+      expired2: { expiry: Date.now() - 1, credentialId: credential.id, csrfToken: "csrf2", lastActivityAt: Date.now() },
+    });
     const result = pruneExpiredSessions(state);
-    assert.deepEqual(result.sessions, {});
+    assert.deepEqual(Object.keys(result.loginTokens), []);
   });
 
   it("keeps valid sessions", () => {
     const future = Date.now() + 60000;
-    const state = {
-      sessions: {
-        valid: future,
-        expired: Date.now() - 1,
-      },
-    };
+    const state = makeState({
+      valid: { expiry: future, credentialId: credential.id, csrfToken: "csrf1", lastActivityAt: Date.now() },
+      expired: { expiry: Date.now() - 1, credentialId: credential.id, csrfToken: "csrf2", lastActivityAt: Date.now() },
+    });
     const result = pruneExpiredSessions(state);
-    assert.deepEqual(Object.keys(result.sessions), ["valid"]);
-    assert.equal(result.sessions.valid, future);
+    assert.deepEqual(Object.keys(result.loginTokens), ["valid"]);
   });
 
-  it("handles empty sessions object", () => {
-    const state = { sessions: {} };
+  it("handles empty sessions", () => {
+    const state = makeState({});
     const result = pruneExpiredSessions(state);
-    assert.deepEqual(result.sessions, {});
-  });
-
-  it("handles state without sessions key", () => {
-    const state = { user: "test" };
-    const result = pruneExpiredSessions(state);
-    assert.deepEqual(result, { user: "test" });
+    assert.deepEqual(Object.keys(result.loginTokens), []);
   });
 
   it("handles null state", () => {
@@ -636,36 +636,48 @@ describe("validateSession - boundary and edge cases", () => {
 });
 
 describe("pruneExpiredSessions - boundary conditions", () => {
+  const credential = { id: "cred1", publicKey: "key1", counter: 0 };
+
+  function makeState(sessions = {}) {
+    return new AuthState({
+      user: { id: "user1", name: "owner" },
+      credentials: [credential],
+      sessions,
+      setupTokens: [],
+    });
+  }
+
   it("removes sessions with expiry exactly equal to Date.now() - 1", () => {
-    const expiry = Date.now() - 1;
-    const state = { sessions: { boundaryToken: expiry } };
+    const state = makeState({
+      boundaryToken: { expiry: Date.now() - 1, credentialId: credential.id, csrfToken: "csrf", lastActivityAt: Date.now() },
+    });
     const result = pruneExpiredSessions(state);
-    assert.equal(result.sessions.boundaryToken, undefined, "just-expired session should be pruned");
+    assert.equal(result.loginTokens.boundaryToken, undefined, "just-expired session should be pruned");
   });
 
   it("keeps sessions with expiry well in the future", () => {
-    const expiry = Date.now() + 1000 * 60 * 60; // 1 hour from now
-    const state = { sessions: { futureToken: expiry } };
+    const expiry = Date.now() + 1000 * 60 * 60;
+    const state = makeState({
+      futureToken: { expiry, credentialId: credential.id, csrfToken: "csrf", lastActivityAt: Date.now() },
+    });
     const result = pruneExpiredSessions(state);
-    assert.ok(result.sessions.futureToken, "future session should be kept");
+    assert.ok(result.loginTokens.futureToken, "future session should be kept");
   });
 
   it("handles mixed valid and expired sessions in one pass", () => {
     const now = Date.now();
-    const state = {
-      sessions: {
-        valid1: now + 10000,
-        expired1: now - 10000,
-        valid2: now + 20000,
-        expired2: now - 1,
-      },
-    };
+    const state = makeState({
+      valid1: { expiry: now + 10000, credentialId: credential.id, csrfToken: "csrf1", lastActivityAt: now },
+      expired1: { expiry: now - 10000, credentialId: credential.id, csrfToken: "csrf2", lastActivityAt: now },
+      valid2: { expiry: now + 20000, credentialId: credential.id, csrfToken: "csrf3", lastActivityAt: now },
+      expired2: { expiry: now - 1, credentialId: credential.id, csrfToken: "csrf4", lastActivityAt: now },
+    });
     const result = pruneExpiredSessions(state);
-    assert.ok(result.sessions.valid1, "valid1 should survive");
-    assert.ok(result.sessions.valid2, "valid2 should survive");
-    assert.equal(result.sessions.expired1, undefined, "expired1 should be pruned");
-    assert.equal(result.sessions.expired2, undefined, "expired2 should be pruned");
-    assert.equal(Object.keys(result.sessions).length, 2);
+    assert.ok(result.loginTokens.valid1, "valid1 should survive");
+    assert.ok(result.loginTokens.valid2, "valid2 should survive");
+    assert.equal(result.loginTokens.expired1, undefined, "expired1 should be pruned");
+    assert.equal(result.loginTokens.expired2, undefined, "expired2 should be pruned");
+    assert.equal(Object.keys(result.loginTokens).length, 2);
   });
 });
 
@@ -850,7 +862,7 @@ describe("withStateLock", () => {
     saveState(initial);
 
     await withStateLock(async (state) => {
-      const { token, expiry, csrfToken, lastActivityAt } = createSession();
+      const { token, expiry, csrfToken, lastActivityAt } = createLoginToken();
       const newState = new AuthState({
         user: state.user,
         credentials: state.credentials,

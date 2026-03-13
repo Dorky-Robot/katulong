@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { readFileSync, existsSync, watch, writeFileSync, unlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -17,7 +18,7 @@ import { rateLimit, getClientIp } from "./lib/rate-limit.js";
 import { ConfigManager } from "./lib/config.js";
 
 import { CredentialLockout } from "./lib/credential-lockout.js";
-import { isLocalRequest } from "./lib/access-method.js";
+import { isLocalRequest, isLoopbackAddress } from "./lib/access-method.js";
 import { serveStaticFile, clearFileCache } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createSessionManager, checkTmux, cleanTmuxServerEnv } from "./lib/session-manager.js";
@@ -80,23 +81,37 @@ const credentialLockout = new CredentialLockout({
 function isTrustedProxy(req) {
   const secret = envConfig.trustProxySecret;
   if (!secret) return false;
-  return req.headers["x-katulong-auth"] === secret;
+  // Only trust the header from loopback (proxy must run on the same machine)
+  const addr = req.socket?.remoteAddress || "";
+  if (!isLoopbackAddress(addr)) return false;
+  const provided = req.headers["x-katulong-auth"];
+  if (!provided || provided.length !== secret.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(provided), Buffer.from(secret));
+  } catch {
+    return false;
+  }
 }
 
+/**
+ * Check if a request is authenticated.
+ * @returns {{ authenticated: boolean, sessionToken: string|null, credentialId: string|null } | null}
+ *   Rich result object when authenticated, null when not.
+ */
 function isAuthenticated(req) {
   if (isTrustedProxy(req)) {
     log.debug("Auth bypassed: trusted proxy", { ip: req.socket.remoteAddress });
-    return true;
+    return { authenticated: true, sessionToken: null, credentialId: null };
   }
   if (isLocalRequest(req)) {
     log.debug("Auth bypassed: localhost", { ip: req.socket.remoteAddress });
-    return true;
+    return { authenticated: true, sessionToken: null, credentialId: null };
   }
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies.get("katulong_session");
   if (!token) {
     log.debug("Auth rejected: no token", { ip: req.socket.remoteAddress });
-    return false;
+    return null;
   }
   const state = loadState();
   const valid = validateSession(state, token);
@@ -106,7 +121,10 @@ function isAuthenticated(req) {
     tokenPrefix: token.substring(0, 8) + "...",
     valid
   });
-  return valid;
+  if (!valid) return null;
+
+  const session = state?.getLoginToken(token);
+  return { authenticated: true, sessionToken: token, credentialId: session?.credentialId || null };
 }
 
 // --- Verify tmux is available ---
@@ -275,25 +293,9 @@ function rejectUpgrade(socket, status) {
 }
 
 function authenticateUpgrade(req) {
-  if (!isAuthenticated(req)) return null;
-
-  // Trusted proxy and localhost don't need session tokens
-  if (isTrustedProxy(req) || isLocalRequest(req)) {
-    return { sessionToken: null, credentialId: null };
-  }
-
-  const cookies = parseCookies(req.headers.cookie);
-  const sessionToken = cookies.get("katulong_session");
-  let credentialId = null;
-
-  if (sessionToken) {
-    const state = loadState();
-    const session = state?.getLoginToken(sessionToken);
-    if (!state || !session || !state.isValidLoginToken(sessionToken)) return null;
-    credentialId = session.credentialId;
-  }
-
-  return { sessionToken, credentialId };
+  const auth = isAuthenticated(req);
+  if (!auth) return null;
+  return { sessionToken: auth.sessionToken, credentialId: auth.credentialId };
 }
 
 function validateUpgradeOrigin(req) {

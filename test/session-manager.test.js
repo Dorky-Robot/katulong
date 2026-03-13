@@ -14,6 +14,7 @@ import assert from "node:assert";
 const tmuxSessions = new Map(); // tmuxName -> true
 
 const sessionModuleUrl = new URL("../lib/session.js", import.meta.url).href;
+const tmuxModuleUrl = new URL("../lib/tmux.js", import.meta.url).href;
 const envFilterUrl = new URL("../lib/env-filter.js", import.meta.url).href;
 
 // Minimal Session mock that tracks state
@@ -22,19 +23,20 @@ class MockSession {
   static STATE_DETACHED = "detached";
   static STATE_KILLED = "killed";
 
-  constructor(name, tmuxName) {
+  constructor(name, tmuxName, options = {}) {
     this.name = name;
     this.tmuxName = tmuxName;
     this.state = MockSession.STATE_ATTACHED;
     this.outputBuffer = [];
-    this.lastKnownChildCount = 0;
-    this.external = false;
+    this._childCount = 0;
+    this.external = options.external || false;
     this._written = [];
     this._resizes = [];
   }
 
   get alive() { return this.state === MockSession.STATE_ATTACHED; }
   attachControlMode() {}
+  updateChildCount(count) { this._childCount = count; }
   write(data) { this._written.push(data); }
   resize(cols, rows) { this._resizes.push({ cols, rows }); }
   detach() {
@@ -51,9 +53,16 @@ class MockSession {
   }
 }
 
+// Mock session.js — only exports Session
 mock.module(sessionModuleUrl, {
   namedExports: {
     Session: MockSession,
+  },
+});
+
+// Mock tmux.js — all tmux operations as in-memory stubs
+mock.module(tmuxModuleUrl, {
+  namedExports: {
     tmuxSessionName: (name) => name.replace(/[.: ]/g, "_"),
     tmuxExec: async (args) => {
       // Rename support

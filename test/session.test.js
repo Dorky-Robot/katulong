@@ -307,7 +307,7 @@ describe("Session", () => {
       const session = new Session("test", "test");
       assert.strictEqual(session.name, "test");
       assert.strictEqual(session.tmuxName, "test");
-      assert.strictEqual(session.alive, true);
+      assert.strictEqual(session.alive, false, "starts detached until attachControlMode is called");
     });
 
     it("initializes output buffer with default limits", () => {
@@ -561,21 +561,21 @@ describe("Session", () => {
       assert.strictEqual(session.hasChildProcesses(), false);
     });
 
-    it("returns false when lastKnownChildCount is 0", () => {
+    it("returns false when child count is 0", () => {
       const { session } = createSimpleTestSession("test");
-      session.lastKnownChildCount = 0;
+      session.updateChildCount(0);
       assert.strictEqual(session.hasChildProcesses(), false);
     });
 
-    it("returns false when lastKnownChildCount is 1", () => {
+    it("returns false when child count is 1", () => {
       const { session } = createSimpleTestSession("test");
-      session.lastKnownChildCount = 1;
+      session.updateChildCount(1);
       assert.strictEqual(session.hasChildProcesses(), false);
     });
 
-    it("returns true when lastKnownChildCount > 1", () => {
+    it("returns true when child count > 1", () => {
       const { session } = createSimpleTestSession("test");
-      session.lastKnownChildCount = 2;
+      session.updateChildCount(2);
       assert.strictEqual(session.hasChildProcesses(), true);
     });
   });

@@ -264,7 +264,7 @@ describe("processRegistration — success path", () => {
         // Unused in registration path, provided to satisfy the import
         verifyAuth: async () => 0,
         // Return a deterministic session so we can look it up in the state
-        createSession: () => ({
+        createLoginToken: () => ({
           token: "mock-session-token",
           csrfToken: "mock-csrf-token",
           expiry: Date.now() + 30 * 24 * 60 * 60 * 1000,
@@ -301,7 +301,7 @@ describe("processRegistration — success path", () => {
 
     // Session is stored in state and linked to the new credential
     assert.ok(session.token, "result should include a session with a token");
-    const storedSession = updatedState.sessions[session.token];
+    const storedSession = updatedState.loginTokens[session.token];
     assert.ok(storedSession, "session should be persisted inside updatedState");
     assert.equal(storedSession.credentialId, MOCK_CRED.id, "session must be linked to the registered credential");
     assert.ok(storedSession.csrfToken, "session should carry a CSRF token");
@@ -445,7 +445,7 @@ describe("processRegistration — success path", () => {
     assert.ok(result instanceof Success);
     const { updatedState } = result.data;
     assert.equal(
-      updatedState.sessions[expiredToken],
+      updatedState.loginTokens[expiredToken],
       undefined,
       "expired session should be pruned from updatedState"
     );
@@ -469,7 +469,7 @@ describe("processAuthentication — success path", () => {
         // Return a fixed counter increment
         verifyAuth: async () => NEW_COUNTER,
         // Return a deterministic session so we can look it up in state
-        createSession: () => ({
+        createLoginToken: () => ({
           token: "auth-session-token",
           csrfToken: "auth-csrf-token",
           expiry: Date.now() + 30 * 24 * 60 * 60 * 1000,
@@ -507,7 +507,7 @@ describe("processAuthentication — success path", () => {
 
     // Session is stored and linked to the credential that was authenticated
     assert.ok(session.token, "result should contain a session with a token");
-    const storedSession = updatedState.sessions[session.token];
+    const storedSession = updatedState.loginTokens[session.token];
     assert.ok(storedSession, "session should be stored in the updated state");
     assert.equal(
       storedSession.credentialId,
@@ -587,7 +587,7 @@ describe("processAuthentication — success path", () => {
     assert.ok(result instanceof Success);
     const { updatedState } = result.data;
     assert.equal(
-      updatedState.sessions[expiredToken],
+      updatedState.loginTokens[expiredToken],
       undefined,
       "expired session should be pruned from updatedState"
     );

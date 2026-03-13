@@ -17,7 +17,7 @@ const dictationReducer = createReducer([], {
     return [...images, ...action.files];
   },
   [DICTATION_ACTIONS.REMOVE_IMAGE]: (images, action) => {
-    return images.filter((_, idx) => idx !== action.index);
+    return images.filter(f => f !== action.file);
   },
   [DICTATION_ACTIONS.CLEAR]: () => {
     return [];
@@ -31,16 +31,14 @@ export function createDictationModal(options = {}) {
   const { modals, onSend } = options;
   const store = createStore([], dictationReducer, { debug: false });
 
-  function revokeAllThumbs(container) {
+  const renderThumbs = (container, images) => {
+    // Revoke existing blob URLs before clearing to prevent memory leaks
     for (const img of container.querySelectorAll("img")) {
       URL.revokeObjectURL(img.src);
     }
-  }
-
-  const renderThumbs = (container, images) => {
-    revokeAllThumbs(container);
     container.innerHTML = "";
-    images.forEach((file, i) => {
+    for (let i = 0; i < images.length; i++) {
+      const file = images[i];
       const wrap = document.createElement("div");
       wrap.className = "dictation-thumb";
       const img = document.createElement("img");
@@ -52,11 +50,11 @@ export function createDictationModal(options = {}) {
       rm.setAttribute("aria-label", `Remove ${file.name}`);
       rm.innerHTML = '<i class="ph ph-x"></i>';
       rm.addEventListener("click", () => {
-        store.dispatch({ type: DICTATION_ACTIONS.REMOVE_IMAGE, index: i });
+        store.dispatch({ type: DICTATION_ACTIONS.REMOVE_IMAGE, file });
       });
       wrap.appendChild(rm);
       container.appendChild(wrap);
-    });
+    }
   };
 
   // Subscribe to image changes
@@ -77,6 +75,15 @@ export function createDictationModal(options = {}) {
           const files = [...fileInput.files].filter(f => f.type.startsWith("image/"));
           store.dispatch({ type: DICTATION_ACTIONS.ADD_IMAGES, files });
           fileInput.value = "";
+        });
+      }
+
+      // Programmatic click fallback for mobile (label-for can fail on WebKit)
+      const imagesBtn = document.querySelector(".dictation-images-btn");
+      if (imagesBtn && fileInput) {
+        imagesBtn.addEventListener("click", (e) => {
+          e.preventDefault();
+          fileInput.click();
         });
       }
 
