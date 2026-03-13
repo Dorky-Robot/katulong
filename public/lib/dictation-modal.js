@@ -32,6 +32,10 @@ export function createDictationModal(options = {}) {
   const store = createStore([], dictationReducer, { debug: false });
 
   const renderThumbs = (container, images) => {
+    // Revoke existing blob URLs before clearing to prevent memory leaks
+    for (const img of container.querySelectorAll("img")) {
+      URL.revokeObjectURL(img.src);
+    }
     container.innerHTML = "";
     for (let i = 0; i < images.length; i++) {
       const file = images[i];
