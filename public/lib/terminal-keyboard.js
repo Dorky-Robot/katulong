@@ -74,6 +74,10 @@ export function createTerminalKeyboard(options = {}) {
 
       // Cmd/Meta key shortcuts
       if (ev.metaKey && ev.type === "keydown") {
+        // Tab management shortcuts — handled by app-level listener, don't send to PTY
+        if ((ev.key === "t" || ev.key === "w") && !ev.shiftKey) return false;
+        if (ev.shiftKey && (ev.key === "[" || ev.key === "]")) return false;
+
         if (ev.key === "f" && onToggleSearch) {
           ev.preventDefault();
           onToggleSearch();

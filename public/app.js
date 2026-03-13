@@ -607,7 +607,55 @@
     });
 
     const openSessionManager = () => toggleSidebar();
-    
+
+    // --- Tab keyboard shortcuts (Cmd+Shift+[/], Cmd+T, Cmd+W) ---
+
+    function navigateTab(direction) {
+      const tabs = windowTabSet.getTabs();
+      if (tabs.length <= 1) return;
+      const idx = tabs.indexOf(state.session.name);
+      if (idx === -1) return;
+      switchSession(tabs[(idx + direction + tabs.length) % tabs.length]);
+    }
+
+    // Close tab view only — tmux session stays alive on the server.
+    // Delegates to shortcut bar's closeTab which handles post-removal navigation.
+    function closeCurrentTab() {
+      if (!shortcutBarInstance) return false;
+      const tabs = windowTabSet.getTabs();
+      if (tabs.length <= 1) return false;
+      if (!tabs.includes(state.session.name)) return false;
+      shortcutBarInstance.closeTab(state.session.name);
+      return true;
+    }
+
+    document.addEventListener("keydown", (ev) => {
+      if (!ev.metaKey) return;
+
+      if (ev.shiftKey && ev.key === "[") {
+        ev.preventDefault();
+        navigateTab(-1);
+        return;
+      }
+
+      if (ev.shiftKey && ev.key === "]") {
+        ev.preventDefault();
+        navigateTab(+1);
+        return;
+      }
+
+      if (ev.key === "t" && !ev.shiftKey) {
+        ev.preventDefault();
+        createNewSession();
+        return;
+      }
+
+      if (ev.key === "w" && !ev.shiftKey) {
+        if (!closeCurrentTab()) return; // Let browser handle Cmd+W on last tab
+        ev.preventDefault();
+        return;
+      }
+    }, true); // Capture phase to intercept before browser defaults
 
     // --- Settings ---
 
