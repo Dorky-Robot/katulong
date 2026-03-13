@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { readFileSync, existsSync, watch, writeFileSync, unlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -17,7 +18,7 @@ import { rateLimit, getClientIp } from "./lib/rate-limit.js";
 import { ConfigManager } from "./lib/config.js";
 
 import { CredentialLockout } from "./lib/credential-lockout.js";
-import { isLocalRequest } from "./lib/access-method.js";
+import { isLocalRequest, isLoopbackAddress } from "./lib/access-method.js";
 import { serveStaticFile, clearFileCache } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createSessionManager, checkTmux, cleanTmuxServerEnv } from "./lib/session-manager.js";
@@ -80,13 +81,22 @@ const credentialLockout = new CredentialLockout({
 function isTrustedProxy(req) {
   const secret = envConfig.trustProxySecret;
   if (!secret) return false;
-  return req.headers["x-katulong-auth"] === secret;
+  // Only trust the header from loopback (proxy must run on the same machine)
+  const addr = req.socket?.remoteAddress || "";
+  if (!isLoopbackAddress(addr)) return false;
+  const provided = req.headers["x-katulong-auth"];
+  if (!provided || provided.length !== secret.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(provided), Buffer.from(secret));
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Check if a request is authenticated.
- * Returns { authenticated, sessionToken, credentialId } for rich callers,
- * and is truthy/falsy for simple boolean checks.
+ * @returns {{ authenticated: boolean, sessionToken: string|null, credentialId: string|null } | null}
+ *   Rich result object when authenticated, null when not.
  */
 function isAuthenticated(req) {
   if (isTrustedProxy(req)) {

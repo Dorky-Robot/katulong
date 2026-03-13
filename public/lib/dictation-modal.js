@@ -17,7 +17,7 @@ const dictationReducer = createReducer([], {
     return [...images, ...action.files];
   },
   [DICTATION_ACTIONS.REMOVE_IMAGE]: (images, action) => {
-    return images.filter((_, idx) => idx !== action.index);
+    return images.filter(f => f !== action.file);
   },
   [DICTATION_ACTIONS.CLEAR]: () => {
     return [];
@@ -50,7 +50,7 @@ export function createDictationModal(options = {}) {
       rm.setAttribute("aria-label", `Remove ${file.name}`);
       rm.innerHTML = '<i class="ph ph-x"></i>';
       rm.addEventListener("click", () => {
-        store.dispatch({ type: DICTATION_ACTIONS.REMOVE_IMAGE, index: i });
+        store.dispatch({ type: DICTATION_ACTIONS.REMOVE_IMAGE, file });
       });
       wrap.appendChild(rm);
       container.appendChild(wrap);
