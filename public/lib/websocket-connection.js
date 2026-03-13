@@ -204,12 +204,16 @@ export function createWebSocketConnection(deps = {}) {
         break;
       }
       case 'terminalWrite': {
-        const term = effect.useOutputTerm ? getOutputTerm(effect.session) : getTerm();
+        const sessionTerm = effect.useOutputTerm && effect.session && getTermForSession
+          ? getTermForSession(effect.session) : null;
+        const term = sessionTerm || getTerm();
         if (!term) break;
-        // Only write to the active terminal — background terminals get a
-        // full buffer replay + resize redraw when switched to, so writing
-        // to them now would just waste work and can disrupt xterm layout.
-        if (term !== getTerm()) break;
+        // When we resolved a session-specific terminal, write to it even if
+        // it's not active (e.g. "[shell exited]" for a background tab).
+        // When we fell back to the active terminal, skip if the message was
+        // intended for a different session — background terminals get a full
+        // buffer replay on switch, so writing here would be redundant.
+        if (!sessionTerm && term !== getTerm()) break;
         if (effect.preserveScroll) {
           terminalWriteWithScroll(term, effect.data);
         } else {
