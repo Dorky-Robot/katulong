@@ -5,7 +5,7 @@
  * Uses functional core / imperative shell pattern with dependency injection.
  */
 
-import { scrollToBottom, terminalWriteWithScroll, activeViewport } from "/lib/scroll-utils.js";
+import { scrollToBottom, terminalWriteWithScroll, viewportOf } from "/lib/scroll-utils.js";
 import { basePath } from "/lib/base-path.js";
 
 /**
@@ -22,8 +22,6 @@ export const CONNECTION_STATES = {
 /**
  * Create WebSocket connection manager with injected dependencies
  */
-const REDRAW_SCROLL_DELAYS_MS = [300, 800];
-
 export function createWebSocketConnection(deps = {}) {
   const {
     state,
@@ -206,12 +204,6 @@ export function createWebSocketConnection(deps = {}) {
         if (!term) break;
         term.clear();
         term.reset();
-        // Scroll to bottom after the server-side SIGWINCH-triggered redraw
-        // arrives. Two attempts at staggered delays to handle variable
-        // TUI redraw times (Claude Code, vim) and network latency.
-        for (const ms of REDRAW_SCROLL_DELAYS_MS) {
-          setTimeout(() => { const t = getTerm(); if (t) scrollToBottom(t); }, ms);
-        }
         break;
       }
       case 'terminalWrite': {
@@ -331,8 +323,8 @@ export function createWebSocketConnection(deps = {}) {
 
       // Normal disconnect - attempt reconnection with exponential backoff
       // (no stale state to clear — output routes by session name)
-      const viewport = activeViewport();
-      state.scroll.userScrolledUpBeforeDisconnect = !isAtBottom(viewport);
+      const term = getTerm();
+      state.scroll.userScrolledUpBeforeDisconnect = term ? !isAtBottom(viewportOf(term)) : false;
       state.connection.attached = false;
       if (p2pManager) p2pManager.destroy();
       if (deps.onDisconnect) deps.onDisconnect();
