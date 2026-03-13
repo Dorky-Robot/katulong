@@ -264,7 +264,7 @@ describe("processRegistration — success path", () => {
         // Unused in registration path, provided to satisfy the import
         verifyAuth: async () => 0,
         // Return a deterministic session so we can look it up in the state
-        createSession: () => ({
+        createLoginToken: () => ({
           token: "mock-session-token",
           csrfToken: "mock-csrf-token",
           expiry: Date.now() + 30 * 24 * 60 * 60 * 1000,
@@ -469,7 +469,7 @@ describe("processAuthentication — success path", () => {
         // Return a fixed counter increment
         verifyAuth: async () => NEW_COUNTER,
         // Return a deterministic session so we can look it up in state
-        createSession: () => ({
+        createLoginToken: () => ({
           token: "auth-session-token",
           csrfToken: "auth-csrf-token",
           expiry: Date.now() + 30 * 24 * 60 * 60 * 1000,

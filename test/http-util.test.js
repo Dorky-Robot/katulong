@@ -474,6 +474,18 @@ describe("challengeStore metadata", () => {
     assert.equal(cs.getMeta("challenge-1", "userID"), undefined);
     cs.destroy();
   });
+
+  it("consume cleans up associated metadata", () => {
+    const cs = createChallengeStore(60000);
+    cs.store("challenge-1");
+    cs.setMeta("challenge-1", "userID", "user-abc");
+    cs.setMeta("challenge-1", "rpID", "localhost");
+    assert.ok(cs.consume("challenge-1"));
+    // Metadata should be cleaned up after consume
+    assert.equal(cs.getMeta("challenge-1", "userID"), undefined);
+    assert.equal(cs.getMeta("challenge-1", "rpID"), undefined);
+    cs.destroy();
+  });
 });
 
 describe("getCspHeaders", () => {
@@ -498,7 +510,7 @@ describe("getCspHeaders", () => {
     assert.match(policy, /script-src 'self'/);
     assert.match(policy, /style-src 'self' 'unsafe-inline'/);
     assert.match(policy, /connect-src 'self' ws: wss:/);
-    assert.match(policy, /img-src 'self' data:/);
+    assert.match(policy, /img-src 'self' data: blob:/);
     assert.match(policy, /font-src 'self'/);
     assert.match(policy, /object-src 'none'/);
     assert.match(policy, /base-uri 'self'/);

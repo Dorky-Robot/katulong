@@ -22,19 +22,20 @@ class MockSession {
   static STATE_DETACHED = "detached";
   static STATE_KILLED = "killed";
 
-  constructor(name, tmuxName) {
+  constructor(name, tmuxName, options = {}) {
     this.name = name;
     this.tmuxName = tmuxName;
     this.state = MockSession.STATE_ATTACHED;
     this.outputBuffer = [];
-    this.lastKnownChildCount = 0;
-    this.external = false;
+    this._childCount = 0;
+    this.external = options.external || false;
     this._written = [];
     this._resizes = [];
   }
 
   get alive() { return this.state === MockSession.STATE_ATTACHED; }
   attachControlMode() {}
+  updateChildCount(count) { this._childCount = count; }
   write(data) { this._written.push(data); }
   resize(cols, rows) { this._resizes.push({ cols, rows }); }
   detach() {

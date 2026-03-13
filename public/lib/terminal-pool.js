@@ -12,6 +12,7 @@ import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
 import { WebglAddon } from "/vendor/xterm/addon-webgl.esm.js";
 import { SearchAddon } from "/vendor/xterm/addon-search.esm.js";
 import { ClipboardAddon } from "/vendor/xterm/addon-clipboard.esm.js";
+import { ImageAddon } from "/vendor/xterm/addon-image.esm.js";
 
 const MAX_POOL_SIZE = 5;
 
@@ -86,6 +87,24 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
       } catch {
         // fallback to canvas
       }
+    }
+
+    // Image addon — Sixel and iTerm2 inline image protocol support
+    try {
+      const imageAddon = new ImageAddon({
+        enableSizeReports: true,
+        sixelSupport: true,
+        sixelScrolling: true,
+        sixelPaletteLimit: 4096,
+        sixelSizeLimit: 25000000,
+        storageLimit: 128,
+        showPlaceholder: true,
+        iipSupport: true,
+        iipSizeLimit: 20000000,
+      });
+      term.loadAddon(imageAddon);
+    } catch {
+      // image support unavailable — non-critical
     }
 
     const entry = { term, fit, searchAddon, container, sessionName, lastUsed: Date.now() };

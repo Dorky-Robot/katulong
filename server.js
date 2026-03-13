@@ -83,20 +83,25 @@ function isTrustedProxy(req) {
   return req.headers["x-katulong-auth"] === secret;
 }
 
+/**
+ * Check if a request is authenticated.
+ * Returns { authenticated, sessionToken, credentialId } for rich callers,
+ * and is truthy/falsy for simple boolean checks.
+ */
 function isAuthenticated(req) {
   if (isTrustedProxy(req)) {
     log.debug("Auth bypassed: trusted proxy", { ip: req.socket.remoteAddress });
-    return true;
+    return { authenticated: true, sessionToken: null, credentialId: null };
   }
   if (isLocalRequest(req)) {
     log.debug("Auth bypassed: localhost", { ip: req.socket.remoteAddress });
-    return true;
+    return { authenticated: true, sessionToken: null, credentialId: null };
   }
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies.get("katulong_session");
   if (!token) {
     log.debug("Auth rejected: no token", { ip: req.socket.remoteAddress });
-    return false;
+    return null;
   }
   const state = loadState();
   const valid = validateSession(state, token);
@@ -106,7 +111,10 @@ function isAuthenticated(req) {
     tokenPrefix: token.substring(0, 8) + "...",
     valid
   });
-  return valid;
+  if (!valid) return null;
+
+  const session = state?.getLoginToken(token);
+  return { authenticated: true, sessionToken: token, credentialId: session?.credentialId || null };
 }
 
 // --- Verify tmux is available ---
@@ -275,25 +283,9 @@ function rejectUpgrade(socket, status) {
 }
 
 function authenticateUpgrade(req) {
-  if (!isAuthenticated(req)) return null;
-
-  // Trusted proxy and localhost don't need session tokens
-  if (isTrustedProxy(req) || isLocalRequest(req)) {
-    return { sessionToken: null, credentialId: null };
-  }
-
-  const cookies = parseCookies(req.headers.cookie);
-  const sessionToken = cookies.get("katulong_session");
-  let credentialId = null;
-
-  if (sessionToken) {
-    const state = loadState();
-    const session = state?.getLoginToken(sessionToken);
-    if (!state || !session || !state.isValidLoginToken(sessionToken)) return null;
-    credentialId = session.credentialId;
-  }
-
-  return { sessionToken, credentialId };
+  const auth = isAuthenticated(req);
+  if (!auth) return null;
+  return { sessionToken: auth.sessionToken, credentialId: auth.credentialId };
 }
 
 function validateUpgradeOrigin(req) {
