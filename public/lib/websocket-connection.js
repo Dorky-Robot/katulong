@@ -357,11 +357,12 @@ export function createWebSocketConnection(deps = {}) {
           return;
         }
 
-        // If was hidden for more than 5 seconds, force reconnect
-        if (hiddenDuration > 5000 && state.connection.ws) {
+        // Force reconnect after backgrounding — goes through the full
+        // attach path which sends SIGWINCH so TUI apps redraw cleanly.
+        if (hiddenDuration > 2000 && state.connection.ws) {
           state.connection.ws.close();
         } else if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
-          // Quick test - send resize to verify connection is alive
+          // Brief background — ping with resize to verify connection
           try {
             const term = getTerm();
             const cols = term?.cols || 80;

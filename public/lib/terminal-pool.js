@@ -22,6 +22,13 @@ const MAX_POOL_SIZE = 5;
 let _hasGPU = null;
 function hasGPU() {
   if (_hasGPU !== null) return _hasGPU;
+  // Safari/WebKit has known WebGL rendering bugs with xterm.js that cause
+  // garbled text. Disable WebGL on WebKit-based browsers (Safari, iOS).
+  const isWebKit = /AppleWebKit/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
+  if (isWebKit) {
+    _hasGPU = false;
+    return false;
+  }
   try {
     const canvas = document.createElement("canvas");
     const gl = canvas.getContext("webgl2", { failIfMajorPerformanceCaveat: true });
