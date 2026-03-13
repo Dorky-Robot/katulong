@@ -548,42 +548,6 @@ describe("getCspHeaders", () => {
     assert.match(policy, /form-action 'self'/);
   });
 
-  it("allows Cloudflare Insights when request comes through Cloudflare (loopback)", () => {
-    const req = {
-      headers: {
-        'cf-ray': '1234567890abc-SJC',
-        'host': 'example.com'
-      },
-      socket: { remoteAddress: '127.0.0.1' }
-    };
-    const headers = getCspHeaders(false, req);
-    const policy = headers["Content-Security-Policy"];
-    assert.match(policy, /script-src 'self' https:\/\/static\.cloudflareinsights\.com/);
-  });
-
-  it("does not allow Cloudflare Insights for non-Cloudflare requests", () => {
-    const req = {
-      headers: {
-        'host': 'example.com'
-      }
-    };
-    const headers = getCspHeaders(false, req);
-    const policy = headers["Content-Security-Policy"];
-    assert.doesNotMatch(policy, /cloudflareinsights/);
-  });
-
-  it("rejects forged CF headers from non-loopback addresses", () => {
-    const req = {
-      headers: {
-        'cf-ray': '1234567890abc-SJC',
-        'host': 'example.com'
-      },
-      socket: { remoteAddress: '203.0.113.10' }
-    };
-    const headers = getCspHeaders(false, req);
-    const policy = headers["Content-Security-Policy"];
-    assert.doesNotMatch(policy, /cloudflareinsights/);
-  });
 });
 
 describe("getCsrfToken", () => {

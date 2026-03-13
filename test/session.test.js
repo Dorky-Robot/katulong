@@ -307,7 +307,7 @@ describe("Session", () => {
       const session = new Session("test", "test");
       assert.strictEqual(session.name, "test");
       assert.strictEqual(session.tmuxName, "test");
-      assert.strictEqual(session.alive, true);
+      assert.strictEqual(session.alive, false, "starts detached until attachControlMode is called");
     });
 
     it("initializes output buffer with default limits", () => {
