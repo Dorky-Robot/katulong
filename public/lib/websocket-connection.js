@@ -93,7 +93,7 @@ export function createWebSocketConnection(deps = {}) {
 
     exit: (msg) => ({
       stateUpdates: {},
-      effects: [{ type: 'terminalWrite', data: '\r\n[shell exited]\r\n', session: msg.session, useOutputTerm: true }]
+      effects: [{ type: 'terminalWrite', data: '\r\n[shell exited]\r\n', session: msg.session, preserveScroll: true, useOutputTerm: true }]
     }),
 
     'session-removed': (msg) => ({

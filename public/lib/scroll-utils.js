@@ -9,12 +9,6 @@ export function viewportOf(term) {
   return term?.element?.closest(".terminal-pane")?.querySelector(".xterm-viewport") || null;
 }
 
-/** Find the viewport element for the active terminal pane (UI-only uses) */
-export function activeViewport() {
-  return document.querySelector(".terminal-pane.active .xterm-viewport")
-    || document.querySelector(".xterm-viewport");
-}
-
 /**
  * Check if viewport is at bottom
  */
