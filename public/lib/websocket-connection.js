@@ -9,6 +9,17 @@ import { scrollToBottom, terminalWriteWithScroll, activeViewport } from "/lib/sc
 import { basePath } from "/lib/base-path.js";
 
 /**
+ * Connection state machine: DISCONNECTED → CONNECTING → CONNECTED → ATTACHED
+ * Only valid transitions are forward through this sequence, or back to DISCONNECTED.
+ */
+export const CONNECTION_STATES = {
+  DISCONNECTED: 'disconnected',
+  CONNECTING: 'connecting',
+  CONNECTED: 'connected',
+  ATTACHED: 'attached'
+};
+
+/**
  * Create WebSocket connection manager with injected dependencies
  */
 const REDRAW_SCROLL_DELAYS_MS = [300, 800];
@@ -36,7 +47,7 @@ export function createWebSocketConnection(deps = {}) {
     return getTerm();
   };
 
-  let isConnecting = false;
+  let connectionState = CONNECTION_STATES.DISCONNECTED;
   let reconnectTimeout = null;
 
   // --- Pure WebSocket message handlers (functional core) ---
@@ -262,8 +273,8 @@ export function createWebSocketConnection(deps = {}) {
 
   // WebSocket connection function
   function connect() {
-    // Prevent multiple simultaneous connection attempts
-    if (isConnecting) {
+    // Only connect from DISCONNECTED state
+    if (connectionState !== CONNECTION_STATES.DISCONNECTED) {
       return;
     }
 
@@ -273,13 +284,13 @@ export function createWebSocketConnection(deps = {}) {
       reconnectTimeout = null;
     }
 
-    isConnecting = true;
+    connectionState = CONNECTION_STATES.CONNECTING;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const wsPath = basePath ? `${basePath}/stream` : "";
     state.connection.ws = new WebSocket(`${proto}//${location.host}${wsPath}`);
 
     state.connection.ws.onopen = () => {
-      isConnecting = false;
+      connectionState = CONNECTION_STATES.CONNECTED;
       state.connection.reconnectDelay = 1000;
       const term = getTerm();
       const cols = term?.cols || 80;
@@ -295,6 +306,11 @@ export function createWebSocketConnection(deps = {}) {
       if (handler) {
         const { stateUpdates, effects } = handler(msg, state);
 
+        // Transition to ATTACHED when server confirms attachment
+        if (msg.type === 'attached' || msg.type === 'switched') {
+          connectionState = CONNECTION_STATES.ATTACHED;
+        }
+
         // Apply state updates
         if (Object.keys(stateUpdates).length > 0) {
           state.updateMany(stateUpdates);
@@ -306,7 +322,7 @@ export function createWebSocketConnection(deps = {}) {
     };
 
     state.connection.ws.onclose = (event) => {
-      isConnecting = false;
+      connectionState = CONNECTION_STATES.DISCONNECTED;
 
       // Check if connection was closed due to revoked credentials
       if (event.code === 1008) { // 1008 = Policy Violation
@@ -327,7 +343,7 @@ export function createWebSocketConnection(deps = {}) {
     };
 
     state.connection.ws.onerror = () => {
-      isConnecting = false;
+      // Let onclose handle the state transition to DISCONNECTED
       state.connection.ws.close();
     };
   }
@@ -343,7 +359,7 @@ export function createWebSocketConnection(deps = {}) {
         const hiddenDuration = Date.now() - hiddenAt;
 
         // Skip if already connecting
-        if (isConnecting) {
+        if (connectionState === CONNECTION_STATES.CONNECTING) {
           return;
         }
 
@@ -370,5 +386,6 @@ export function createWebSocketConnection(deps = {}) {
     initVisibilityReconnect,
     wsMessageHandlers,
     executeEffect,
+    getConnectionState: () => connectionState,
   };
 }
