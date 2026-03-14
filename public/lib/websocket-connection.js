@@ -357,9 +357,8 @@ export function createWebSocketConnection(deps = {}) {
           return;
         }
 
-        // Force reconnect after backgrounding — goes through the full
-        // attach path which sends SIGWINCH so TUI apps redraw cleanly.
-        if (hiddenDuration > 2000 && state.connection.ws) {
+        // Force reconnect after extended backgrounding to get fresh state
+        if (hiddenDuration > 5000 && state.connection.ws) {
           state.connection.ws.close();
         } else if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
           // Brief background — ping with resize to verify connection

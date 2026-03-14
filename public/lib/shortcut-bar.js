@@ -917,6 +917,16 @@ export function createShortcutBar(options = {}) {
 
     }
 
+    // Dictation/text input — on phone, add to island (tablet/desktop has it above)
+    if (isPhone() && onDictationClick) {
+      const btn = document.createElement("button");
+      btn.className = "key-island-btn key-island-icon";
+      btn.setAttribute("aria-label", "Text input");
+      btn.innerHTML = '<i class="ph ph-chat-text"></i>';
+      btn.addEventListener("click", onDictationClick);
+      island.appendChild(btn);
+    }
+
     // P2P connection dot — shown on all devices
     const dot = document.createElement("span");
     dot.id = "island-p2p-dot";
@@ -997,9 +1007,10 @@ export function createShortcutBar(options = {}) {
       dragState = null;
     }
 
-    // Touch drag
+    // Touch drag (skip if tapping the connection dot or a button)
     island.addEventListener("touchstart", (e) => {
       if (e.touches.length !== 1) return;
+      if (e.target.closest("button")) return;
       const t = e.touches[0];
       const rect = island.getBoundingClientRect();
       dragState = { startX: t.clientX, startY: t.clientY, offsetX: t.clientX - rect.left, offsetY: t.clientY - rect.top, dragging: false };
