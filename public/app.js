@@ -56,7 +56,7 @@
     // --- Centralized application state (at edge) ---
     const explicitSession = new URLSearchParams(location.search).get("s");
     const createAppState = () => {
-      const initialSessionName = explicitSession || "default";
+      const initialSessionName = explicitSession || null;
 
       return {
         session: {
@@ -162,7 +162,7 @@
       }
     };
 
-    document.title = state.session.name;
+    if (state.session.name) document.title = state.session.name;
 
     // --- Terminal pool ---
     // One xterm.js Terminal per managed session, visibility-toggled on switch.
@@ -502,6 +502,8 @@
         if (sidebar?.classList.contains("collapsed")) {
           setSidebarCollapsed(false);
         }
+        // Re-enable reconnect if we were in empty state
+        wsConnection.enableReconnect();
         windowTabSet.addTab(data.name);
         switchSession(data.name);
       } catch (err) {
@@ -550,7 +552,7 @@
       if (wsOpen) {
         // Switch session over the existing WebSocket — no disconnect/reconnect needed
         pendingSwitch = name;
-        ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows }));
+        ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows, cached: wasCached }));
       } else if (!ws || ws.readyState === WebSocket.CLOSED) {
         // No WebSocket yet — set session name for the attach message, then connect
         state.update('session.name', name);
@@ -800,6 +802,16 @@
       onSettingsClick: () => modals.open('settings'),
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
       onDictationClick: () => openDictationModal(),
+      onAllTabsClosed: () => {
+        // Hide all terminal panes, disconnect WS, clear state
+        terminalPool.forEach((name) => terminalPool.dispose(name));
+        wsConnection.disconnect();
+        state.update('session.name', null);
+        document.title = "katulong";
+        const url = new URL(window.location);
+        url.searchParams.delete("s");
+        history.replaceState(null, "", url);
+      },
       sendFn: rawSend,
       get term() { return getTerm(); },
       updateP2PIndicator,
@@ -994,15 +1006,27 @@
       },
       onSessionRemoved: (name) => {
         windowTabSet.onSessionKilled(name);
-        fetch("/sessions").then(r => r.json()).then(sessions => {
+        terminalPool.dispose(name);
+        fetch("/sessions").then(r => r.json()).then(allSessions => {
+          // Filter out the session that was just removed (may still be in the response)
+          const sessions = allSessions.filter(s => s.name !== name);
           if (sessions.length > 0) {
             const next = sessions[0].name;
             switchSession(next);
           } else {
-            window.location.href = "/";
+            // No sessions left — disconnect WS, clear UI, stay on page
+            wsConnection.disconnect();
+            state.update('session.name', null);
+            document.title = "katulong";
+            const url = new URL(window.location);
+            url.searchParams.delete("s");
+            history.replaceState(null, "", url);
+            renderBar(null);
           }
         }).catch(() => {
-          window.location.href = "/";
+          wsConnection.disconnect();
+          state.update('session.name', null);
+          document.title = "katulong";
         });
       },
       onDisconnect: () => { pendingSwitch = null; },
@@ -1017,13 +1041,19 @@
 
     // If no explicit ?s= param, resolve an existing session before connecting
     // to avoid creating a throwaway "default" tmux session.
+    // If user explicitly closed all tabs, stay in empty state.
+    const wasEmptyState = sessionStorage.getItem("katulong-empty-state");
+    if (wasEmptyState) sessionStorage.removeItem("katulong-empty-state");
+
     if (!explicitSession) {
       fetch("/sessions").then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       }).then(sessions => {
         // Guard: if the user already picked a session while the fetch was in-flight, skip
-        if (state.connection.ws || state.session.name !== "default") return;
+        if (state.connection.ws || state.session.name !== null) return;
+        // If user explicitly closed all tabs, don't auto-attach
+        if (wasEmptyState) return;
         if (sessions.length > 0 && sessions[0].name) {
           const name = sessions[0].name;
           state.update('session.name', name);

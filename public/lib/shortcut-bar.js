@@ -41,6 +41,7 @@ export function createShortcutBar(options = {}) {
     onSettingsClick,
     onShortcutsClick,
     onDictationClick,
+    onAllTabsClosed,
     sendFn,
     updateP2PIndicator,
     getInstanceIcon,
@@ -197,9 +198,14 @@ export function createShortcutBar(options = {}) {
   function navigateAfterRemoval(removedName, priorIndex) {
     const remaining = windowTabSet ? windowTabSet.getTabs() : [];
     if (removedName !== currentSessionName) { render(currentSessionName); return; }
-    if (remaining.length === 0) { location.href = "/"; return; }
-    const idx = typeof priorIndex === "number" ? priorIndex : 0;
-    if (onTabClick) onTabClick(remaining[Math.min(idx, remaining.length - 1)]);
+    if (remaining.length > 0) {
+      const idx = typeof priorIndex === "number" ? priorIndex : 0;
+      if (onTabClick) onTabClick(remaining[Math.min(idx, remaining.length - 1)]);
+      return;
+    }
+    // No tabs left in this window — mark empty state and reload
+    sessionStorage.setItem("katulong-empty-state", "1");
+    window.location.href = "/";
   }
 
   /** Close tab: remove from this window's tab set only (session stays managed on server) */

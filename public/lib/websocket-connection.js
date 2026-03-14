@@ -46,6 +46,7 @@ export function createWebSocketConnection(deps = {}) {
 
   let connectionState = CONNECTION_STATES.DISCONNECTED;
   let reconnectTimeout = null;
+  let suppressReconnect = false;
 
   // --- Pure WebSocket message handlers (functional core) ---
   const wsMessageHandlers = {
@@ -264,8 +265,11 @@ export function createWebSocketConnection(deps = {}) {
 
   // WebSocket connection function
   function connect() {
-    // Only connect from DISCONNECTED state
+    // Only connect from DISCONNECTED state, and only if we have a session
     if (connectionState !== CONNECTION_STATES.DISCONNECTED) {
+      return;
+    }
+    if (!state.session.name) {
       return;
     }
 
@@ -329,6 +333,10 @@ export function createWebSocketConnection(deps = {}) {
       if (p2pManager) p2pManager.destroy();
       if (deps.onDisconnect) deps.onDisconnect();
 
+      if (suppressReconnect || !state.session.name) {
+        console.log("[WS] No session — skipping reconnect");
+        return;
+      }
       console.log(`[WS] Reconnecting in ${state.connection.reconnectDelay}ms`);
       reconnectTimeout = setTimeout(connect, state.connection.reconnectDelay);
       state.connection.reconnectDelay = Math.min(state.connection.reconnectDelay * 2, 10000);
@@ -375,8 +383,30 @@ export function createWebSocketConnection(deps = {}) {
     });
   }
 
+  /** Disconnect and stop reconnecting (e.g., when all sessions are closed) */
+  function disconnect() {
+    suppressReconnect = true;
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
+    }
+    if (state.connection.ws && state.connection.ws.readyState <= 1) {
+      state.connection.ws.close();
+    }
+    connectionState = CONNECTION_STATES.DISCONNECTED;
+    state.connection.attached = false;
+  }
+
+  /** Re-enable reconnection (e.g., when a new session is created) */
+  function enableReconnect() {
+    suppressReconnect = false;
+    state.connection.reconnectDelay = 1000;
+  }
+
   return {
     connect,
+    disconnect,
+    enableReconnect,
     initVisibilityReconnect,
     wsMessageHandlers,
     executeEffect,

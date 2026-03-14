@@ -81,10 +81,13 @@ export function createWindowTabSet({ sessionStore, getCurrentSession }) {
       const last = JSON.parse(localStorage.getItem(LAST_TABS_KEY));
       if (Array.isArray(last) && last.length > 0) return last;
     } catch { /* ignore */ }
-    // 3. Seed with the current session from URL
-    const session = getCurrentSession ? getCurrentSession() : "default";
-    return [session];
+    // 3. Seed with the current session from URL (empty if none)
+    const session = getCurrentSession ? getCurrentSession() : null;
+    return session ? [session] : [];
   }
+
+  // Filter out null/undefined that may have been saved by a previous version
+  tabs = tabs.filter(Boolean);
 
   function saveTabs() {
     sessionStorage.setItem(WINDOW_TABS_KEY, JSON.stringify(tabs));
