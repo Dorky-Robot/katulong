@@ -26,6 +26,7 @@ import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/route
 import { createFileBrowserRoutes } from "./lib/file-browser.js";
 import { createPortProxyRoutes, proxyWebSocket } from "./lib/port-proxy.js";
 import { createWebSocketManager } from "./lib/ws-manager.js";
+import { createClaudeSessionManager } from "./lib/claude-session-manager.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -169,8 +170,11 @@ const pruneTimer = setInterval(async () => {
 }, PRUNE_INTERVAL_MS);
 pruneTimer.unref();
 
+// --- Claude session manager (yolo browser mode) ---
+const claudeSessionManager = createClaudeSessionManager({ bridge });
+
 // --- WebSocket manager ---
-const wsManager = createWebSocketManager({ bridge, sessionManager });
+const wsManager = createWebSocketManager({ bridge, sessionManager, claudeSessionManager });
 const { wsClients, broadcastToAll, closeAllWebSockets } = wsManager;
 
 // --- HTTP routes (assembled from lib/routes/) ---
@@ -188,6 +192,7 @@ const routes = [
   }),
   ...createAppRoutes({
     json, parseJSON, isAuthenticated, sessionManager,
+    claudeSessionManager,
     configManager,
     __dirname, DATA_DIR, APP_VERSION,
     getDraining: () => draining,
@@ -329,8 +334,17 @@ function handleUpgrade(req, socket, head) {
     return rejectUpgrade(socket, "403 Forbidden");
   }
 
-  // Port proxy WebSocket — intercept before terminal WS handling
   const { pathname: wsPathname } = new URL(req.url, `http://${req.headers.host}`);
+
+  // Claude session WebSocket — yolo processes connect here
+  if (wsPathname === "/ws/claude") {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      claudeSessionManager.handleConnection(ws);
+    });
+    return;
+  }
+
+  // Port proxy WebSocket — intercept before terminal WS handling
   if (wsPathname.startsWith("/_proxy/")) {
     if (configManager.getPortProxyEnabled() === false) {
       return rejectUpgrade(socket, "403 Forbidden");
@@ -377,6 +391,8 @@ process.on("unhandledRejection", (err) => {
   process.exit(1);
 });
 
+const SERVER_INFO_PATH = join(DATA_DIR, "server.json");
+
 server.listen(PORT, envConfig.bindHost, () => {
   log.info("Katulong HTTP started", { port: PORT, host: envConfig.bindHost });
   // Write PID file so CLI commands can find us
@@ -384,6 +400,16 @@ server.listen(PORT, envConfig.bindHost, () => {
     writeFileSync(SERVER_PID_PATH, String(process.pid), { encoding: "utf-8" });
   } catch (err) {
     log.warn("Failed to write server PID file", { error: err.message });
+  }
+  // Write server info so tools (yolo) can discover us without env vars
+  try {
+    writeFileSync(SERVER_INFO_PATH, JSON.stringify({
+      pid: process.pid,
+      port: PORT,
+      host: envConfig.bindHost,
+    }), { encoding: "utf-8" });
+  } catch (err) {
+    log.warn("Failed to write server info file", { error: err.message });
   }
 });
 
@@ -396,6 +422,16 @@ function cleanupPidFile() {
       const content = readFileSync(SERVER_PID_PATH, "utf-8").trim();
       if (content === String(process.pid)) {
         unlinkSync(SERVER_PID_PATH);
+      }
+    }
+  } catch {
+    // Best-effort cleanup
+  }
+  try {
+    if (existsSync(SERVER_INFO_PATH)) {
+      const info = JSON.parse(readFileSync(SERVER_INFO_PATH, "utf-8"));
+      if (info.pid === process.pid) {
+        unlinkSync(SERVER_INFO_PATH);
       }
     }
   } catch {
@@ -439,6 +475,7 @@ async function gracefulShutdown(signal) {
 
   // 6. Shutdown session manager (close control mode procs, leave tmux sessions alive)
   sessionManager.shutdown();
+  claudeSessionManager.shutdown();
 
   // 7. Clean up PID file
   cleanupPidFile();
