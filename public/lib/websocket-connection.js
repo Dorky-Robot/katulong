@@ -186,7 +186,33 @@ export function createWebSocketConnection(deps = {}) {
         { type: 'log', message: '[WS] Server is draining, reconnecting immediately' },
         { type: 'fastReconnect' }
       ]
-    })
+    }),
+
+    // --- Helm mode events ---
+
+    'helm-mode-changed': (msg) => ({
+      stateUpdates: {},
+      effects: [{
+        type: 'helmModeChanged', session: msg.session, active: msg.active,
+        agent: msg.agent, prompt: msg.prompt, cwd: msg.cwd,
+        result: msg.result, error: msg.error,
+      }]
+    }),
+
+    'helm-event': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'helmEvent', session: msg.session, event: msg.event }]
+    }),
+
+    'helm-turn-complete': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'helmTurnComplete', session: msg.session }]
+    }),
+
+    'helm-waiting-for-input': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'helmWaitingForInput', session: msg.session }]
+    }),
   };
 
   // Effect executor (side effects at edges)
@@ -279,6 +305,19 @@ export function createWebSocketConnection(deps = {}) {
         if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
           state.connection.ws.close();
         }
+        break;
+      // Helm mode effects — delegated to app.js via deps
+      case 'helmModeChanged':
+        if (deps.onHelmModeChanged) deps.onHelmModeChanged(effect);
+        break;
+      case 'helmEvent':
+        if (deps.onHelmEvent) deps.onHelmEvent(effect.session, effect.event);
+        break;
+      case 'helmTurnComplete':
+        if (deps.onHelmTurnComplete) deps.onHelmTurnComplete(effect.session);
+        break;
+      case 'helmWaitingForInput':
+        if (deps.onHelmWaitingForInput) deps.onHelmWaitingForInput(effect.session);
         break;
     }
   }
