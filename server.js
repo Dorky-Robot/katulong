@@ -26,7 +26,7 @@ import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/route
 import { createFileBrowserRoutes } from "./lib/file-browser.js";
 import { createPortProxyRoutes, proxyWebSocket } from "./lib/port-proxy.js";
 import { createWebSocketManager } from "./lib/ws-manager.js";
-import { createClaudeSessionManager } from "./lib/claude-session-manager.js";
+import { createHelmSessionManager } from "./lib/helm-session-manager.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -170,11 +170,11 @@ const pruneTimer = setInterval(async () => {
 }, PRUNE_INTERVAL_MS);
 pruneTimer.unref();
 
-// --- Claude session manager (yolo browser mode) ---
-const claudeSessionManager = createClaudeSessionManager({ bridge });
+// --- Helm session manager (agentic browser mode) ---
+const helmSessionManager = createHelmSessionManager({ bridge });
 
 // --- WebSocket manager ---
-const wsManager = createWebSocketManager({ bridge, sessionManager, claudeSessionManager });
+const wsManager = createWebSocketManager({ bridge, sessionManager, helmSessionManager });
 const { wsClients, broadcastToAll, closeAllWebSockets } = wsManager;
 
 // --- HTTP routes (assembled from lib/routes/) ---
@@ -192,7 +192,7 @@ const routes = [
   }),
   ...createAppRoutes({
     json, parseJSON, isAuthenticated, sessionManager,
-    claudeSessionManager,
+    helmSessionManager,
     configManager,
     __dirname, DATA_DIR, APP_VERSION,
     getDraining: () => draining,
@@ -337,9 +337,9 @@ function handleUpgrade(req, socket, head) {
   const { pathname: wsPathname } = new URL(req.url, `http://${req.headers.host}`);
 
   // Claude session WebSocket — yolo processes connect here
-  if (wsPathname === "/ws/claude") {
+  if (wsPathname === "/ws/helm") {
     wss.handleUpgrade(req, socket, head, (ws) => {
-      claudeSessionManager.handleConnection(ws);
+      helmSessionManager.handleConnection(ws);
     });
     return;
   }
@@ -475,7 +475,7 @@ async function gracefulShutdown(signal) {
 
   // 6. Shutdown session manager (close control mode procs, leave tmux sessions alive)
   sessionManager.shutdown();
-  claudeSessionManager.shutdown();
+  helmSessionManager.shutdown();
 
   // 7. Clean up PID file
   cleanupPidFile();
