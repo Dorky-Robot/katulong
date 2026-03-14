@@ -295,26 +295,6 @@
       onClose: () => getTerm()?.focus()
     });
 
-    // Patch mobile autocorrect on all terminal textareas (pool creates them dynamically)
-    function patchTextarea() {
-      document.querySelectorAll(".xterm-helper-textarea").forEach(ta => {
-        if (ta._patched) return;
-        ta._patched = true;
-        ta.setAttribute("autocorrect", "off");
-        ta.setAttribute("autocapitalize", "none");
-        ta.setAttribute("autocomplete", "new-password");
-        ta.setAttribute("spellcheck", "false");
-        ta.autocomplete = "new-password";
-        ta.autocapitalize = "none";
-        ta.spellcheck = false;
-        ta.addEventListener("compositionstart", (e) => e.preventDefault());
-      });
-    }
-    patchTextarea();
-    new MutationObserver(patchTextarea).observe(
-      document.getElementById("terminal-container"),
-      { childList: true, subtree: true }
-    );
     document.fonts.ready.then(() => {
       const active = terminalPool.getActive();
       if (active) {

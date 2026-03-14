@@ -196,7 +196,8 @@
     .terminal-pane { position: absolute; inset: 0 0 0 4px; display: none; }
     .terminal-pane.active { display: block; }
     .terminal-pane .xterm, #terminal-container .xterm { height: 100%; overflow: hidden; }
-    #terminal-container .xterm-viewport {
+    #terminal-container .xterm-viewport,
+    #terminal-container .xterm-scrollable-element {
       -webkit-overflow-scrolling: touch;
       overscroll-behavior: contain;
     }

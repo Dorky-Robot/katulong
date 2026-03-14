@@ -9,35 +9,10 @@
 import { Terminal } from "/vendor/xterm/xterm.esm.js";
 import { FitAddon } from "/vendor/xterm/addon-fit.esm.js";
 import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
-import { WebglAddon } from "/vendor/xterm/addon-webgl.esm.js";
 import { SearchAddon } from "/vendor/xterm/addon-search.esm.js";
 import { ClipboardAddon } from "/vendor/xterm/addon-clipboard.esm.js";
 
 const MAX_POOL_SIZE = 5;
-
-/**
- * Detect if a real GPU is available for WebGL rendering.
- * Cached on first call since GPU availability doesn't change at runtime.
- */
-let _hasGPU = null;
-function hasGPU() {
-  if (_hasGPU !== null) return _hasGPU;
-  // Safari/WebKit has known WebGL rendering bugs with xterm.js that cause
-  // garbled text. Disable WebGL on WebKit-based browsers (Safari, iOS).
-  const isWebKit = /AppleWebKit/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
-  if (isWebKit) {
-    _hasGPU = false;
-    return false;
-  }
-  try {
-    const canvas = document.createElement("canvas");
-    const gl = canvas.getContext("webgl2", { failIfMajorPerformanceCaveat: true });
-    _hasGPU = !!gl;
-  } catch {
-    _hasGPU = false;
-  }
-  return _hasGPU;
-}
 
 /**
  * Create a terminal pool.
@@ -83,17 +58,6 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     parentEl.appendChild(container);
 
     term.open(container);
-
-    // WebGL addon — GPU-accelerated rendering with graceful fallback
-    if (hasGPU()) {
-      try {
-        const webgl = new WebglAddon();
-        webgl.onContextLoss(() => webgl.dispose());
-        term.loadAddon(webgl);
-      } catch {
-        // fallback to canvas
-      }
-    }
 
     const entry = { term, fit, searchAddon, container, sessionName, lastUsed: Date.now() };
     pool.set(sessionName, entry);

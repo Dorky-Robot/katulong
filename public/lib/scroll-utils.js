@@ -4,9 +4,12 @@
  * Composable scroll management helpers for terminal.
  */
 
-/** Derive the viewport element from a terminal instance's own DOM */
+/** Derive the scrollable viewport element from a terminal instance's own DOM */
 export function viewportOf(term) {
-  return term?.element?.closest(".terminal-pane")?.querySelector(".xterm-viewport") || null;
+  const pane = term?.element?.closest(".terminal-pane");
+  if (!pane) return null;
+  // xterm 6 uses .xterm-scrollable-element; fall back to .xterm-viewport for older versions
+  return pane.querySelector(".xterm-scrollable-element") || pane.querySelector(".xterm-viewport") || null;
 }
 
 /**
