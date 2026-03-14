@@ -48,6 +48,26 @@ export function createWebSocketConnection(deps = {}) {
   let reconnectTimeout = null;
   let suppressReconnect = false;
 
+  // Output write batching: accumulate incoming data per terminal and flush
+  // once per animation frame to reduce xterm.js write/render passes.
+  const pendingWrites = new Map(); // term -> string
+  let rafScheduled = false;
+
+  function scheduleWrite(term, data) {
+    const pending = pendingWrites.get(term);
+    pendingWrites.set(term, pending !== undefined ? pending + data : data);
+    if (!rafScheduled) {
+      rafScheduled = true;
+      requestAnimationFrame(() => {
+        rafScheduled = false;
+        for (const [t, buf] of pendingWrites) {
+          terminalWriteWithScroll(t, buf);
+        }
+        pendingWrites.clear();
+      });
+    }
+  }
+
   // --- Pure WebSocket message handlers (functional core) ---
   const wsMessageHandlers = {
     attached: (msg, currentState) => ({
@@ -211,7 +231,7 @@ export function createWebSocketConnection(deps = {}) {
         const term = effect.useOutputTerm ? getOutputTerm(effect.session) : getTerm();
         if (!term) break;
         if (effect.preserveScroll) {
-          terminalWriteWithScroll(term, effect.data);
+          scheduleWrite(term, effect.data);
         } else {
           term.write(effect.data);
         }

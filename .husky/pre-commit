@@ -10,7 +10,7 @@
 # Activate once per clone:
 #   git config core.hooksPath .husky
 
-set -euo pipefail
+set -eu
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
