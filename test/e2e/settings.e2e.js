@@ -36,7 +36,8 @@ test.describe("Settings modal", () => {
     // (localhost bypasses auth - it's root/admin access)
     const logout = page.locator("#settings-logout");
     await expect(logout).toBeHidden();
-    await expect(logout).toHaveText("End Session");
+    const text = await logout.textContent();
+    expect(text).toBe("End Session");
   });
 
   test("No Done button exists", async ({ page }) => {
