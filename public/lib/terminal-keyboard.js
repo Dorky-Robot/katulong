@@ -61,14 +61,14 @@ export function createTerminalKeyboard(options = {}) {
       // Tab handled by capture-phase listener
       if (ev.key === "Tab") return false;
 
-      // Shift+Enter: insert a literal newline via bracketed paste.
-      // xterm.js can't send Shift+Enter distinctly (no kitty keyboard
-      // protocol), so we wrap \r (CR, matching Enter's raw byte) in paste
-      // brackets — apps that enable bracketed paste (Claude Code, vim,
-      // etc.) treat bracketed content as literal text rather than a
-      // submit/execute action.
+      // Shift+Enter: send kitty keyboard protocol CSI u sequence.
+      // Encodes key=13 (Enter) with modifier=2 (Shift) → \x1b[13;2u.
+      // Claude Code (and other modern TUI apps) recognise this as
+      // Shift+Enter and insert a literal newline instead of submitting.
+      // xterm.js doesn't natively support kitty keyboard, so we send
+      // the sequence manually via the PTY.
       if (ev.shiftKey && ev.key === "Enter" && ev.type === "keydown") {
-        if (onSend) onSend("\x1b[200~\r\x1b[201~");
+        if (onSend) onSend("\x1b[13;2u");
         return false;
       }
 
