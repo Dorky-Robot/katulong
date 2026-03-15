@@ -879,7 +879,7 @@ export function createShortcutBar(options = {}) {
         island.appendChild(kbBtn);
       }
 
-      if (!isPhone() && onDictationClick) {
+      if (onDictationClick) {
         const btn = document.createElement("button");
         btn.className = "key-island-btn key-island-icon";
         btn.setAttribute("aria-label", "Text input");
