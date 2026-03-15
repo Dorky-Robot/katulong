@@ -36,7 +36,7 @@ test.describe("Keyboard handling", () => {
     );
   });
 
-  test("Shift+Enter sends bracketed paste with carriage return", async ({ page }) => {
+  test("Shift+Enter sends kitty keyboard CSI u sequence", async ({ page }) => {
     await page.keyboard.press("Shift+Enter");
 
     await page.waitForFunction(
@@ -47,9 +47,10 @@ test.describe("Keyboard handling", () => {
     const inputs = await page.evaluate(() => window.__inputsSent);
     expect(inputs.length).toBeGreaterThan(0);
     const combined = inputs.join("");
-    // Shift+Enter must send \r wrapped in bracketed paste markers so apps
-    // like Claude Code treat it as a literal newline, not a submit action.
-    expect(combined).toContain("\x1b[200~\r\x1b[201~");
+    // Shift+Enter must send kitty keyboard CSI u: key=13 (Enter),
+    // modifier=2 (Shift) → \x1b[13;2u. Claude Code recognises this
+    // as Shift+Enter and inserts a literal newline.
+    expect(combined).toContain("\x1b[13;2u");
   });
 
   test("Plain Enter sends carriage return (\\r) without bracketed paste", async ({ page }) => {

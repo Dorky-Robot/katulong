@@ -922,7 +922,14 @@
 
     const pasteHandler = createPasteHandler({
       onImage: (file) => uploadImageToTerminal(file),
-      onTextPaste: (text) => rawSend(text),
+      // Use xterm.js paste() so text is wrapped in bracketed paste
+      // markers (\x1b[200~…\x1b[201~) when the app has enabled it.
+      // Without this, multiline pastes arrive without brackets and
+      // each newline is treated as Enter/submit by TUI apps.
+      onTextPaste: (text) => {
+        const term = getTerm();
+        if (term) { term.paste(text); } else { rawSend(text); }
+      },
     });
     pasteHandler.init();
 
