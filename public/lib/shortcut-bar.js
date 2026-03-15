@@ -45,6 +45,7 @@ export function createShortcutBar(options = {}) {
     sendFn,
     updateP2PIndicator,
     getInstanceIcon,
+    getSessionIcon,
     sessionStore,
     windowTabSet
   } = options;
@@ -68,6 +69,15 @@ export function createShortcutBar(options = {}) {
   function safeInstanceIcon() {
     const raw = getInstanceIcon ? getInstanceIcon() : "terminal-window";
     return raw.replace(/[^a-z0-9-]/g, "");
+  }
+
+  /** Get the icon for a specific session (per-session override or instance default) */
+  function iconForSession(sessionName) {
+    if (getSessionIcon) {
+      const override = getSessionIcon(sessionName);
+      if (override) return override.replace(/[^a-z0-9-]/g, "");
+    }
+    return safeInstanceIcon();
   }
 
   // ── Context menu / dropdown ────────────────────────────────────────
@@ -668,7 +678,7 @@ export function createShortcutBar(options = {}) {
       tab.setAttribute("aria-label", `Session: ${s.name}`);
 
       const iconEl = document.createElement("i");
-      iconEl.className = `ph ph-${safeInstanceIcon()}`;
+      iconEl.className = `ph ph-${iconForSession(s.name)}`;
       tab.appendChild(iconEl);
 
       const nameSpan = document.createElement("span");
@@ -722,7 +732,7 @@ export function createShortcutBar(options = {}) {
     sessBtn.tabIndex = -1;
     sessBtn.setAttribute("aria-label", `Session: ${sessionName}`);
     const iconEl = document.createElement("i");
-    iconEl.className = `ph ph-${safeInstanceIcon()}`;
+    iconEl.className = `ph ph-${iconForSession(sessionName)}`;
     sessBtn.appendChild(iconEl);
     sessBtn.appendChild(document.createTextNode(" "));
     sessBtn.appendChild(document.createTextNode(sessionName));

@@ -192,7 +192,7 @@
       flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
     }
     /* --- Terminal --- */
-    #terminal-container { flex: 1; min-width: 0; position: relative; z-index: 1; overflow: hidden; }
+    #terminal-container { flex: 1; min-width: 0; position: relative; z-index: 1; overflow: hidden; background: var(--bg); }
     .terminal-pane { position: absolute; inset: 0 0 0 4px; display: none; }
     .terminal-pane.active { display: block; }
     .terminal-pane .xterm, #terminal-container .xterm { height: 100%; overflow: hidden; }
@@ -201,6 +201,9 @@
       -webkit-overflow-scrolling: touch;
       overscroll-behavior: contain;
     }
+    /* Override xterm.css default #000 background so the gap below terminal rows
+       matches the theme instead of showing a black strip. */
+    #terminal-container .xterm-viewport { background-color: var(--bg) !important; }
     /* Hide xterm's helper textarea caret so it never renders outside the terminal box.
        xterm.js repositions this textarea via inline styles for IME — clip it to the
        terminal bounds and force the caret invisible regardless. */

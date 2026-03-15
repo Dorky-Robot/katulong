@@ -1,45 +1,55 @@
 class Katulong < Formula
-  desc "Self-hosted web terminal with remote shell access"
-  homepage "https://github.com/dorky-robot/katulong"
-  url "https://github.com/dorky-robot/katulong/archive/refs/tags/v0.25.0.tar.gz"
-  sha256 "f83024dba6c4562a7460c759e7359d67b9f24cbdaa1f3ccf5a97c951d9736feb"
+  desc "Self-hosted web terminal with tmux sessions and WebAuthn security"
+  homepage "https://github.com/Dorky-Robot/katulong"
+  url "https://github.com/Dorky-Robot/katulong/archive/refs/tags/v0.25.2.tar.gz"
+  sha256 "4b1977f76e6042fde58ab196d5e498f0a36a090b9b4fb843e1b7f77524f6efb0"
   license "MIT"
 
   depends_on "node"
+
   depends_on "tmux"
 
   def install
-    # Install npm dependencies (prepare script now handles missing husky gracefully)
-    system "npm", "install", "--production", "--omit=dev"
-
-    # Install everything to libexec
+    system "npm", "install", "--omit=dev"
     libexec.install Dir["*"]
-
-    # Create wrapper script that sets DATA_DIR and ensures Homebrew bin is in PATH
-    (bin/"katulong").write <<~EOS
-      #!/bin/bash
-      export KATULONG_DATA_DIR="${HOME}/.katulong"
-      export PATH="#{HOMEBREW_PREFIX}/bin:#{HOMEBREW_PREFIX}/sbin:$PATH"
-      exec "#{Formula["node"].opt_bin}/node" "#{libexec}/bin/katulong" "$@"
-    EOS
+    bin.install_symlink libexec/"bin/katulong"
   end
 
   def post_install
-    # Create data directory (matches wrapper's KATULONG_DATA_DIR)
+    # Create data directory
     data_dir = Pathname.new(Dir.home) / ".katulong"
     data_dir.mkpath
+
+    # Stop the old server so it doesn't serve 500s from deleted Cellar files.
+    # During `brew upgrade`, the old process still references the old Cellar path.
+    # Cleanup deletes those files, causing readFileSync failures → 500 errors.
+    # This runs in post_install (not install) because Homebrew's sandbox blocks
+    # process signals during install on macOS.
+    pid_file = data_dir / "server.pid"
+    if pid_file.exist?
+      old_pid = pid_file.read.strip.to_i
+      if old_pid > 0
+        begin
+          Process.kill("TERM", old_pid)
+          sleep 3
+        rescue Errno::ESRCH
+          # Process already exited
+        end
+      end
+    end
   end
 
-  service do
-    run [opt_bin/"katulong", "start", "--foreground"]
-    keep_alive true
-    working_dir var
-    log_path var/"log/katulong.log"
-    error_log_path var/"log/katulong.log"
-    environment_variables KATULONG_DATA_DIR: "#{Dir.home}/.katulong"
+  def caveats
+    <<~EOS
+      To restart katulong after upgrading:
+        katulong start
+
+      Or use brew services for automatic lifecycle management:
+        brew services start katulong
+    EOS
   end
 
   test do
-    system "#{bin}/katulong", "--version"
+    assert_match "katulong", shell_output("#{bin}/katulong --help")
   end
 end

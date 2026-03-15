@@ -103,6 +103,11 @@
     let instanceIcon = "terminal-window";
     let shortcutBarInstance = null;
     const getInstanceIcon = () => instanceIcon;
+
+    // --- Per-session tab icon overrides ---
+    // sessionName -> Phosphor icon name (set via OSC 7337 from terminal processes)
+    const sessionIcons = new Map();
+    const getSessionIcon = (name) => sessionIcons.get(name) || null;
     const setInstanceIcon = (icon) => {
       instanceIcon = icon.replace(/[^a-z0-9-]/g, "");
       // Re-render shortcut bar to show new icon
@@ -194,6 +199,29 @@
         });
         kb.init();
 
+        // OSC 7337 handler: per-session tab icon override
+        // Terminal processes can emit: \033]7337;icon=cube\007
+        // to change their tab's icon. Empty value resets to instance default.
+        entry.term.parser.registerOscHandler(7337, (data) => {
+          const match = data.match(/^icon=([a-z0-9-]*)$/);
+          if (!match) return false; // not our OSC, let xterm handle it
+          const iconName = match[1];
+          const currentName = entry.sessionName;
+          if (iconName) {
+            sessionIcons.set(currentName, iconName);
+          } else {
+            sessionIcons.delete(currentName);
+          }
+          // Re-render tabs to show the new icon
+          if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
+          // Notify server so other clients see the change
+          const ws = state.connection.ws;
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "set-tab-icon", session: currentName, icon: iconName || null }));
+          }
+          return true; // handled
+        });
+
         // Terminal preview snapshots (throttled per-terminal)
         // Read entry.sessionName dynamically so renames are reflected
         let lastSnapshotTime = 0;
@@ -227,7 +255,15 @@
     function fitActiveTerminal() {
       requestAnimationFrame(() => {
         const active = terminalPool.getActive();
-        if (active) withPreservedScroll(active.term, () => active.fit.fit());
+        if (!active) return;
+        withPreservedScroll(active.term, () => active.fit.fit());
+        // After fit, send updated dimensions to the server.
+        // The ResizeObserver only fires when the container element changes size,
+        // but fit() can change the terminal rows/cols without the container
+        // changing (e.g. on initial attach when the container was already laid out).
+        if (state.connection.ws?.readyState === 1) {
+          state.connection.ws.send(JSON.stringify({ type: "resize", cols: active.term.cols, rows: active.term.rows }));
+        }
       });
     }
 
@@ -297,11 +333,8 @@
     });
 
     document.fonts.ready.then(() => {
-      const active = terminalPool.getActive();
-      if (active) {
-        withPreservedScroll(active.term, () => active.fit.fit());
-        scrollToBottom(active.term);
-      }
+      // Fonts loaded — refit terminal since glyph metrics may have changed
+      fitActiveTerminal();
     });
 
     applyTheme(localStorage.getItem("theme") || "auto");
@@ -824,6 +857,7 @@
       get term() { return getTerm(); },
       updateP2PIndicator,
       getInstanceIcon,
+      getSessionIcon,
       sessionStore,
       windowTabSet
     });
@@ -834,6 +868,17 @@
     });
 
     const renderBar = (name) => shortcutBarInstance.render(name);
+
+    // Sync per-session icons from server session data
+    sessionStore.subscribe(() => {
+      const { sessions } = sessionStore.getState();
+      if (!sessions) return;
+      for (const s of sessions) {
+        if (s.icon) {
+          sessionIcons.set(s.name, s.icon);
+        }
+      }
+    });
 
     // Subscribe to shortcuts changes to re-render bar
     shortcutsStore.subscribe((shortcuts) => {
@@ -1130,6 +1175,14 @@
       onHelmEvent: (session, event) => helmComponent?.helmEvent(session, event),
       onHelmTurnComplete: (session) => helmComponent?.helmTurnComplete(session),
       onHelmWaitingForInput: (session) => helmComponent?.helmWaitingForInput(session),
+      onTabIconChanged: (session, icon) => {
+        if (icon) {
+          sessionIcons.set(session, icon);
+        } else {
+          sessionIcons.delete(session);
+        }
+        if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
+      },
     });
     wsConnection.initVisibilityReconnect();
 

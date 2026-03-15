@@ -19,7 +19,7 @@ import { ConfigManager } from "./lib/config.js";
 
 import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest, isLoopbackAddress } from "./lib/access-method.js";
-import { serveStaticFile, clearFileCache } from "./lib/static-files.js";
+import { serveStaticFile, clearFileCache, buildVendorHashes, rewriteVendorUrls } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createSessionManager, checkTmux, cleanTmuxServerEnv } from "./lib/session-manager.js";
 import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/routes.js";
@@ -42,6 +42,9 @@ const instanceName = configManager.getInstanceName();
 const instanceId = configManager.getInstanceId();
 const APP_VERSION = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf-8")).version;
 log.info("Configuration loaded", { instanceName, instanceId, version: APP_VERSION });
+
+// Build vendor content hashes for automatic cache busting
+buildVendorHashes(join(__dirname, "public"));
 
 await initP2P();
 
@@ -194,7 +197,7 @@ const routes = [
     json, parseJSON, isAuthenticated, sessionManager,
     helmSessionManager,
     configManager,
-    __dirname, DATA_DIR, APP_VERSION,
+    __dirname, DATA_DIR, APP_VERSION, rewriteVendorUrls,
     getDraining: () => draining,
     shortcutsPath: join(DATA_DIR, "shortcuts.json"),
     auth, csrf,
