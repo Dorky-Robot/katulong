@@ -1516,7 +1516,10 @@
     .helm-msg.user { background: color-mix(in srgb, var(--accent-active) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent-active) 25%, transparent); align-self: flex-end; }
     .helm-msg.system { color: var(--text-muted); font-size: var(--text-xs); align-self: center; font-style: italic; }
     .helm-msg.tool { background: var(--bg-surface); border: 1px solid var(--border); align-self: flex-start; font-size: var(--text-xs); }
+    .helm-tool-header { display: flex; align-items: center; gap: var(--space-xs); }
     .helm-msg .helm-tool-name { color: var(--accent-active); font-weight: var(--font-medium); }
+    .helm-tool-input { margin: 4px 0 0; opacity: 0.8; font-size: 0.85em; overflow-x: auto; white-space: pre-wrap; max-height: 8rem; overflow-y: auto; }
+    .helm-tool-result { margin: 4px 0 0; opacity: 0.6; font-size: 0.8em; overflow-x: auto; white-space: pre-wrap; max-height: 12rem; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 4px; }
     .helm-input-area { display: flex; gap: var(--space-xs); padding: var(--space-sm); border-top: 1px solid var(--border); background: var(--bg-surface); flex-shrink: 0; }
     .helm-input { flex: 1; padding: var(--space-xs) var(--space-sm); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text); font-size: var(--text-sm); font-family: var(--font-mono); outline: none; resize: none; min-height: 2.5rem; max-height: 8rem; }
     .helm-input:focus { border-color: var(--accent-active); }
