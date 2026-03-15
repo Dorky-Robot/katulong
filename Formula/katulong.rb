@@ -32,8 +32,8 @@ class Katulong < Formula
         begin
           Process.kill("TERM", old_pid)
           sleep 3
-        rescue Errno::ESRCH
-          # Process already exited
+        rescue Errno::ESRCH, Errno::EPERM
+          # Process already exited or PID reused by another user's process
         end
       end
     end

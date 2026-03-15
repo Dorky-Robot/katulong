@@ -876,6 +876,8 @@
       for (const s of sessions) {
         if (s.icon) {
           sessionIcons.set(s.name, s.icon);
+        } else {
+          sessionIcons.delete(s.name);
         }
       }
     });
