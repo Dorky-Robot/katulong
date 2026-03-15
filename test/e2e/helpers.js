@@ -7,13 +7,33 @@
 import { expect } from '@playwright/test';
 
 /**
- * Setup test environment - grants permissions and navigates to app
+ * Setup test environment - grants permissions, navigates to app with a unique session name.
+ * Returns the session name for cleanup.
  */
-export async function setupTest({ page, context }) {
+export async function setupTest({ page, context, testInfo }) {
+  const sessionName = testInfo
+    ? `e2e-${testInfo.testId}-${Date.now()}`
+    : `e2e-fallback-${Date.now()}`;
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.goto("/");
+  await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
   await waitForAppReady(page);
   await page.locator(".xterm-helper-textarea").focus();
+  return sessionName;
+}
+
+/**
+ * Clean up a named session via the DELETE API
+ */
+export async function cleanupSession(page, sessionName) {
+  if (!sessionName) return;
+  try {
+    await page.evaluate(
+      (name) => fetch(`/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+      sessionName,
+    );
+  } catch {
+    // page may already be closed
+  }
 }
 
 /**
@@ -40,7 +60,7 @@ export async function waitForAppReady(page) {
  * Open settings modal and wait for it to be ready
  */
 export async function openSettings(page) {
-  await page.click('#sidebar-settings-btn');
+  await page.click('#key-island .key-island-btn[aria-label="Settings"]');
   const modal = page.locator('#settings-overlay');
   await expect(modal).toBeVisible();
   return modal;
