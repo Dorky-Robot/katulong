@@ -213,6 +213,11 @@ export function createWebSocketConnection(deps = {}) {
       stateUpdates: {},
       effects: [{ type: 'helmWaitingForInput', session: msg.session }]
     }),
+
+    'tab-icon-changed': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'tabIconChanged', session: msg.session, icon: msg.icon }]
+    }),
   };
 
   // Effect executor (side effects at edges)
@@ -318,6 +323,9 @@ export function createWebSocketConnection(deps = {}) {
         break;
       case 'helmWaitingForInput':
         if (deps.onHelmWaitingForInput) deps.onHelmWaitingForInput(effect.session);
+        break;
+      case 'tabIconChanged':
+        if (deps.onTabIconChanged) deps.onTabIconChanged(effect.session, effect.icon);
         break;
     }
   }

@@ -1,0 +1,47 @@
+#!/bin/sh
+# katulong-tab-icon — Set the tab icon for the current katulong session.
+#
+# Usage:
+#   katulong-tab-icon cube         # Set icon to "cube" (any Phosphor icon name)
+#   katulong-tab-icon --reset      # Reset to instance default
+#
+# Works by emitting an OSC 7337 escape sequence that katulong's terminal
+# intercepts. No API calls or authentication needed — the terminal process
+# itself is the credential.
+#
+# Common icons for container/environment detection:
+#   cube          — container/Docker
+#   package       — package environment
+#   cloud         — cloud/remote
+#   desktop-tower — bare metal
+#   git-branch    — development
+#   database      — database server
+#   terminal      — generic terminal
+#   rocket        — deployment
+#   shield        — security context
+#   lock          — restricted environment
+#
+# Example: auto-detect kubo container in .bashrc/.zshrc:
+#   if [ -f /.kubo-container ]; then
+#     katulong-tab-icon cube
+#   fi
+
+set -e
+
+if [ $# -eq 0 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+  echo "Usage: katulong-tab-icon <icon-name>    Set tab icon"
+  echo "       katulong-tab-icon --reset        Reset to default"
+  echo ""
+  echo "Icon names: any Phosphor icon (lowercase with hyphens)"
+  echo "Examples: cube, package, cloud, rocket, database, terminal"
+  exit 0
+fi
+
+icon="$1"
+if [ "$icon" = "--reset" ] || [ "$icon" = "-r" ]; then
+  icon=""
+fi
+
+# Emit OSC 7337 escape sequence
+# \033] = OSC start, \007 = ST (String Terminator)
+printf '\033]7337;icon=%s\007' "$icon"

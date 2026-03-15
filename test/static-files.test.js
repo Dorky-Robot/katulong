@@ -8,7 +8,9 @@ import {
   isStaticFileRequest,
   getMimeType,
   isSafePathname,
-  clearFileCache
+  clearFileCache,
+  buildVendorHashes,
+  rewriteVendorUrls
 } from '../lib/static-files.js';
 
 function mockResponse() {
@@ -185,13 +187,23 @@ describe('static-files', () => {
     });
 
     describe('caching', () => {
-      it('sets immutable cache for vendor files', () => {
+      it('sets must-revalidate cache for vendor files', () => {
         const res = mockResponse();
         serveStaticFile(res, publicDir, '/vendor/lib.js');
 
         const cacheControl = res.getHeader('Cache-Control');
-        assert.ok(cacheControl.includes('immutable'));
-        assert.ok(cacheControl.includes('max-age=31536000'));
+        assert.ok(cacheControl.includes('must-revalidate'));
+        assert.ok(cacheControl.includes('max-age=0'));
+      });
+
+      it('uses content-hash ETag', () => {
+        const res = mockResponse();
+        serveStaticFile(res, publicDir, '/vendor/lib.js');
+
+        const etag = res.getHeader('ETag');
+        assert.ok(etag, 'ETag should be set');
+        // ETag should be a quoted 8-char hex hash, not a timestamp
+        assert.match(etag, /^"[a-f0-9]{8}"$/);
       });
 
       it('sets must-revalidate cache for app files', () => {
@@ -210,12 +222,13 @@ describe('static-files', () => {
         assert.strictEqual(res.getHeader('Cache-Control'), undefined);
       });
 
-      it('allows custom max-age', () => {
+      it('all files use must-revalidate (no immutable)', () => {
         const res = mockResponse();
-        serveStaticFile(res, publicDir, '/vendor/lib.js', { maxAge: 3600 });
+        serveStaticFile(res, publicDir, '/vendor/lib.js');
 
         const cacheControl = res.getHeader('Cache-Control');
-        assert.ok(cacheControl.includes('max-age=3600'));
+        assert.ok(!cacheControl.includes('immutable'), 'Vendor files must not be immutable');
+        assert.ok(cacheControl.includes('must-revalidate'));
       });
     });
 
@@ -398,6 +411,82 @@ describe('static-files', () => {
       const served = serveStaticFile(res, publicDir, '/.hidden/secret.txt');
 
       assert.strictEqual(served, false);
+    });
+  });
+
+  describe('vendor cache busting', () => {
+    afterEach(() => {
+      clearFileCache();
+    });
+
+    it('buildVendorHashes creates hashes for vendor JS and CSS files', () => {
+      // vendor/lib.js already created in beforeEach
+      const cssDir = join(publicDir, 'vendor', 'xterm');
+      mkdirSync(cssDir, { recursive: true });
+      writeFileSync(join(cssDir, 'xterm.min.css'), 'body {}');
+
+      buildVendorHashes(publicDir);
+
+      // After building, rewriteVendorUrls should replace paths
+      const input = 'import { Foo } from "/vendor/lib.js";';
+      const output = rewriteVendorUrls(input);
+      assert.ok(output.includes('?h='), 'Vendor import should get a hash query param');
+      assert.ok(!output.includes('/vendor/lib.js"'), 'Original bare path should be replaced');
+    });
+
+    it('rewriteVendorUrls rewrites both JS imports and HTML hrefs', () => {
+      buildVendorHashes(publicDir);
+
+      const html = `<link rel="stylesheet" href="/vendor/lib.js">`;
+      const rewritten = rewriteVendorUrls(html);
+      assert.ok(rewritten.includes('?h='), 'HTML href should get hash');
+
+      const js = `import { X } from "/vendor/lib.js";`;
+      const rewrittenJs = rewriteVendorUrls(js);
+      assert.ok(rewrittenJs.includes('?h='), 'JS import should get hash');
+    });
+
+    it('rewriteVendorUrls replaces existing ?v= params', () => {
+      buildVendorHashes(publicDir);
+
+      const input = `import { X } from "/vendor/lib.js?v=2";`;
+      const output = rewriteVendorUrls(input);
+      assert.ok(output.includes('?h='), 'Should have hash param');
+      assert.ok(!output.includes('?v=2'), 'Old ?v=2 should be removed');
+    });
+
+    it('hash changes when vendor file content changes', async () => {
+      buildVendorHashes(publicDir);
+      const before = rewriteVendorUrls(`"/vendor/lib.js"`);
+
+      // Update the vendor file
+      await new Promise(resolve => setTimeout(resolve, 50));
+      writeFileSync(join(publicDir, 'vendor', 'lib.js'), 'export const version = "2.0.0";');
+      clearFileCache();
+      buildVendorHashes(publicDir);
+
+      const after = rewriteVendorUrls(`"/vendor/lib.js"`);
+      assert.notStrictEqual(before, after, 'Hash should change when file content changes');
+    });
+
+    it('JS files with vendor imports get rewritten when served', () => {
+      // Create a JS file that imports from vendor
+      writeFileSync(join(publicDir, 'app-test.js'), 'import { X } from "/vendor/lib.js";\nconsole.log(X);');
+      buildVendorHashes(publicDir);
+
+      const res = mockResponse();
+      serveStaticFile(res, publicDir, '/app-test.js');
+      const body = res.getBody().toString();
+      assert.ok(body.includes('?h='), 'Served JS should have vendor imports rewritten with hash');
+    });
+
+    it('vendor files themselves are NOT rewritten', () => {
+      buildVendorHashes(publicDir);
+
+      const res = mockResponse();
+      serveStaticFile(res, publicDir, '/vendor/lib.js');
+      const body = res.getBody().toString();
+      assert.ok(!body.includes('?h='), 'Vendor files should not be rewritten');
     });
   });
 });
