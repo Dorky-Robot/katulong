@@ -3,6 +3,7 @@
  *
  * Renders session preview cards with terminal buffer snapshots.
  * Auto-updates when session store changes.
+ * Supports touch drag-and-drop reordering on mobile.
  */
 
 import { createComponent } from '/lib/component.js';
@@ -10,6 +11,8 @@ import { invalidateSessions } from '/lib/stores.js';
 import { api } from '/lib/api-client.js';
 
 const DIVIDER_CLASS = "session-list-divider";
+const LONG_PRESS_MS = 300;
+const DRAG_DEAD_ZONE = 5;
 
 /**
  * Create session list component
@@ -48,6 +51,190 @@ export function updateSnapshot(sessionName, term) {
 
 export function createSessionListComponent(store, options = {}) {
   const { onSessionSwitch, windowTabSet } = options;
+
+  // ── Drag state ──────────────────────────────────────────────────────
+  let drag = null;
+
+  function orderByTabs(sessions) {
+    if (!windowTabSet) return sessions;
+    const tabOrder = windowTabSet.getTabs();
+    const orderMap = new Map(tabOrder.map((name, i) => [name, i]));
+    return [...sessions].sort((a, b) => {
+      const ai = orderMap.has(a.name) ? orderMap.get(a.name) : Infinity;
+      const bi = orderMap.has(b.name) ? orderMap.get(b.name) : Infinity;
+      return ai - bi;
+    });
+  }
+
+  function onCardTouchStart(e, card, name, container) {
+    if (e.target.closest(".session-card-action") || e.target.closest(".session-card-name:not([readonly])")) return;
+
+    const initialTouch = e.touches[0];
+    const startX = initialTouch.clientX;
+    const startY = initialTouch.clientY;
+    let longPressed = false;
+    let started = false;
+    let cancelled = false;
+
+    const longPressTimer = setTimeout(() => {
+      longPressed = true;
+      card.classList.add("session-card-long-press");
+    }, LONG_PRESS_MS);
+
+    const onMove = (te) => {
+      const touch = te.touches[0];
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+
+      if (!longPressed) {
+        // Movement before long press — cancel drag, allow native scroll
+        if (Math.abs(dx) > DRAG_DEAD_ZONE || Math.abs(dy) > DRAG_DEAD_ZONE) {
+          clearTimeout(longPressTimer);
+          cancelled = true;
+          cleanup();
+        }
+        return;
+      }
+
+      // Long press active — enter drag mode
+      if (!started) {
+        if (Math.abs(dx) < DRAG_DEAD_ZONE && Math.abs(dy) < DRAG_DEAD_ZONE) return;
+        started = true;
+        beginDrag(card, name, startY, container);
+      }
+
+      te.preventDefault();
+      updateDrag(touch.clientY);
+    };
+
+    const onEnd = () => {
+      clearTimeout(longPressTimer);
+      card.classList.remove("session-card-long-press");
+      cleanup();
+
+      if (cancelled) return;
+
+      if (!started) {
+        // Long press without drag — no special action, just cancel
+        if (longPressed) return;
+        // Short tap — handled by click handler
+        return;
+      }
+
+      endDrag(container);
+    };
+
+    function cleanup() {
+      document.removeEventListener("touchmove", onMove);
+      document.removeEventListener("touchend", onEnd);
+      document.removeEventListener("touchcancel", onEnd);
+    }
+
+    document.addEventListener("touchmove", onMove, { passive: false });
+    document.addEventListener("touchend", onEnd);
+    document.addEventListener("touchcancel", onEnd);
+  }
+
+  function beginDrag(card, name, startY, container) {
+    const cards = [...container.querySelectorAll(".session-card:not(.unmanaged)")];
+    const dragIndex = cards.indexOf(card);
+    if (dragIndex === -1) return;
+
+    const rects = cards.map(c => {
+      const r = c.getBoundingClientRect();
+      return { top: r.top, height: r.height, center: r.top + r.height / 2 };
+    });
+
+    const cardRect = card.getBoundingClientRect();
+
+    const ghost = card.cloneNode(true);
+    ghost.classList.add("session-card-drag-ghost");
+    ghost.style.width = cardRect.width + "px";
+    ghost.style.height = rects[dragIndex].height + "px";
+    ghost.style.left = cardRect.left + "px";
+    ghost.style.overflow = "visible";
+    document.body.appendChild(ghost);
+
+    card.classList.add("session-card-dragging");
+
+    cards.forEach((c, i) => {
+      if (i !== dragIndex) c.style.transition = "transform 0.2s ease";
+    });
+
+    const grabOffset = startY - rects[dragIndex].top;
+
+    drag = {
+      card, name, ghost, cards, rects, dragIndex,
+      currentIndex: dragIndex,
+      grabOffset,
+    };
+  }
+
+  function updateDrag(cy) {
+    if (!drag) return;
+    const { ghost, cards, rects, dragIndex, grabOffset } = drag;
+
+    const gy = cy - grabOffset;
+    ghost.style.transform = `translate3d(0, ${gy}px, 0)`;
+
+    const dragHeight = rects[dragIndex].height;
+
+    let newIndex = rects.length - 1;
+    for (let i = 0; i < rects.length; i++) {
+      if (cy < rects[i].center) {
+        newIndex = i;
+        break;
+      }
+    }
+    if (newIndex > rects.length - 1) newIndex = rects.length - 1;
+
+    drag.currentIndex = newIndex;
+
+    const gap = parseFloat(getComputedStyle(cards[0].parentElement).gap) || 8;
+
+    for (let i = 0; i < cards.length; i++) {
+      if (i === dragIndex) continue;
+
+      let shift = 0;
+      if (dragIndex < newIndex) {
+        if (i > dragIndex && i <= newIndex) {
+          shift = -(dragHeight + gap);
+        }
+      } else if (dragIndex > newIndex) {
+        if (i >= newIndex && i < dragIndex) {
+          shift = dragHeight + gap;
+        }
+      }
+
+      cards[i].style.transform = shift ? `translateY(${shift}px)` : "";
+    }
+  }
+
+  function endDrag(container) {
+    if (!drag) return;
+    const { card, ghost, cards, dragIndex, currentIndex } = drag;
+
+    ghost.remove();
+
+    cards.forEach(c => {
+      c.style.transition = "";
+      c.style.transform = "";
+    });
+
+    card.classList.remove("session-card-dragging");
+
+    if (currentIndex !== dragIndex && windowTabSet) {
+      const names = cards.map(c => c.title);
+      const [moved] = names.splice(dragIndex, 1);
+      names.splice(currentIndex, 0, moved);
+      windowTabSet.reorderTabs(names);
+    }
+
+    drag = null;
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────
+
   const render = (state) => {
     if (state.loading && state.sessions.length === 0) {
       return '<div class="session-list-status">Loading...</div>';
@@ -62,7 +249,9 @@ export function createSessionListComponent(store, options = {}) {
   };
 
   const afterRender = (container, state) => {
-    for (const s of state.sessions) {
+    const orderedSessions = orderByTabs(state.sessions);
+
+    for (const s of orderedSessions) {
       const isCurrent = s.name === state.currentSession;
 
       const card = document.createElement("div");
@@ -71,6 +260,11 @@ export function createSessionListComponent(store, options = {}) {
       card.setAttribute("aria-label", `Session: ${s.name}${s.external ? " (external tmux session)" : ""}`);
       card.setAttribute("data-initial", s.name.charAt(0));
       card.title = s.name;
+
+      // Touch drag-and-drop for reordering (mobile sidebar)
+      card.addEventListener("touchstart", (e) => {
+        onCardTouchStart(e, card, s.name, container);
+      }, { passive: true });
 
       // Click to switch session
       if (!isCurrent) {
@@ -84,6 +278,12 @@ export function createSessionListComponent(store, options = {}) {
           }
         });
       }
+
+      // Drag handle indicator
+      const handle = document.createElement("div");
+      handle.className = "session-card-drag-handle";
+      handle.innerHTML = '<i class="ph ph-dots-six"></i>';
+      card.appendChild(handle);
 
       // Terminal preview — cached text from xterm buffer
       const preview = document.createElement("div");
@@ -154,8 +354,8 @@ export function createSessionListComponent(store, options = {}) {
           return;
         }
         // Find the closest session to switch to
-        const idx = state.sessions.findIndex(x => x.name === removedName);
-        const remaining = state.sessions.filter(x => x.name !== removedName);
+        const idx = orderedSessions.findIndex(x => x.name === removedName);
+        const remaining = orderedSessions.filter(x => x.name !== removedName);
         if (remaining.length === 0) {
           // No sessions left — navigate to home to create a new one
           location.href = "/";
