@@ -28,6 +28,7 @@
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
+    import { createHelmComponent } from "/lib/helm/helm-component.js";
     import { createWebSocketConnection } from "/lib/websocket-connection.js";
     import { createFileBrowserStore, loadRoot } from "/lib/file-browser/file-browser-store.js";
     import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
@@ -523,9 +524,16 @@
     let pendingSwitch = null;
 
     function activateSession(name) {
-      // Close port forward / file browser — switching sessions returns to terminal
+      // Close alternative views — switching sessions returns to terminal
       if (portForwardEl?.classList.contains("active")) closePortForward();
       if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
+      // If the target session has an active helm session, show helm view; otherwise terminal
+      if (helmActiveSessions.has(name)) {
+        showHelmView();
+        helmComponent?.showSession(name);
+      } else if (helmViewEl?.classList.contains("active")) {
+        hideHelmView();
+      }
 
       // Ensure session is in this window's tab set
       if (!windowTabSet.hasTab(name)) {
@@ -883,6 +891,7 @@
     function returnToTerminal() {
       if (portForwardEl?.classList.contains("active")) closePortForward();
       if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
+      if (helmViewEl?.classList.contains("active")) hideHelmView();
       getTerm()?.focus();
       fitActiveTerminal();
     }
@@ -969,6 +978,88 @@
       sidebarSettingsBtn.addEventListener("click", () => modals.open('settings'));
     }
 
+    // --- Helm Mode ---
+
+    const helmViewEl = document.getElementById("helm-view");
+    let helmMounted = false;
+    let helmComponent = null;
+    // Track which sessions are in helm mode (per-session, not global)
+    const helmActiveSessions = new Set();
+
+    function ensureHelmMounted() {
+      if (helmMounted) return;
+      helmComponent = createHelmComponent({
+        onSendMessage: (session, content) => {
+          const ws = state.connection.ws;
+          if (ws?.readyState === 1) {
+            ws.send(JSON.stringify({ type: "helm-input", session, content }));
+          }
+        },
+        onAbort: (session) => {
+          const ws = state.connection.ws;
+          if (ws?.readyState === 1) {
+            ws.send(JSON.stringify({ type: "helm-abort", session }));
+          }
+        },
+        onToggleTerminal: () => toggleHelmView(),
+      });
+      helmComponent.mount(helmViewEl);
+      helmMounted = true;
+    }
+
+    function showHelmView() {
+      ensureHelmMounted();
+      if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
+      if (portForwardEl?.classList.contains("active")) closePortForward();
+      termContainer.classList.add("helm-hidden");
+      helmViewEl.classList.add("active");
+      helmComponent.showSession(state.session.name);
+      helmComponent.focus();
+    }
+
+    function hideHelmView() {
+      helmViewEl.classList.remove("active");
+      termContainer.classList.remove("helm-hidden");
+      getTerm()?.focus();
+      fitActiveTerminal();
+    }
+
+    function toggleHelmView() {
+      if (helmViewEl.classList.contains("active")) {
+        hideHelmView();
+      } else if (helmActiveSessions.has(state.session.name)) {
+        showHelmView();
+      }
+    }
+
+    function onHelmModeChanged(effect) {
+      if (effect.active) {
+        helmActiveSessions.add(effect.session);
+        ensureHelmMounted();
+        helmComponent.helmStarted(effect.session, {
+          agent: effect.agent,
+          prompt: effect.prompt,
+          cwd: effect.cwd,
+        });
+        // Auto-switch to helm view if this is the active session
+        if (effect.session === state.session.name) {
+          showHelmView();
+        }
+      } else {
+        helmActiveSessions.delete(effect.session);
+        helmComponent?.helmEnded(effect.session, {
+          result: effect.result,
+          error: effect.error,
+        });
+        // If viewing helm for this session and it ended, switch back to terminal
+        if (effect.session === state.session.name && helmViewEl.classList.contains("active")) {
+          hideHelmView();
+        }
+      }
+      // Re-render the tab bar to show/hide helm indicator
+      renderBar(state.session.name);
+    }
+
     // --- Network change monitoring ---
 
     const networkMonitor = createNetworkMonitor({
@@ -1034,6 +1125,11 @@
       tabRename: (oldName, newName) => windowTabSet.renameTab(oldName, newName),
       fit: fitActiveTerminal,
       setSyncResize: (v) => viewportManager.setSyncResize(v),
+      // Helm mode
+      onHelmModeChanged,
+      onHelmEvent: (session, event) => helmComponent?.helmEvent(session, event),
+      onHelmTurnComplete: (session) => helmComponent?.helmTurnComplete(session),
+      onHelmWaitingForInput: (session) => helmComponent?.helmWaitingForInput(session),
     });
     wsConnection.initVisibilityReconnect();
 
