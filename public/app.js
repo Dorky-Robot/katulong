@@ -17,7 +17,7 @@
     import { createPullToRefreshManager } from "/lib/pull-to-refresh.js";
     import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
     import { createTabManager } from "/lib/tab-manager.js";
-    import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll } from "/lib/scroll-utils.js";
+    import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll, initScrollTracking } from "/lib/scroll-utils.js";
     import { keysToSequence, sendSequence, displayKey, keysLabel, keysString, VALID_KEYS, normalizeKey } from "/lib/key-mapping.js";
     import { createShortcutBar } from "/lib/shortcut-bar.js";
     import { createWindowTabSet } from "/lib/window-tab-set.js";
@@ -198,6 +198,10 @@
           onToggleSearch: toggleSearchBar
         });
         kb.init();
+
+        // Track user-initiated scrolling so rapid output doesn't
+        // fight the user's scroll position.
+        initScrollTracking(entry.term);
 
         // OSC 7337 handler: per-session tab icon override
         // Terminal processes can emit: \033]7337;icon=cube\007
