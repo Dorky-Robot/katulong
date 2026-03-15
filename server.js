@@ -19,7 +19,7 @@ import { ConfigManager } from "./lib/config.js";
 
 import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest, isLoopbackAddress } from "./lib/access-method.js";
-import { serveStaticFile, clearFileCache, buildVendorHashes, rewriteVendorUrls } from "./lib/static-files.js";
+import { serveStaticFile, clearFileCache, buildVendorHashes } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createSessionManager, checkTmux, cleanTmuxServerEnv } from "./lib/session-manager.js";
 import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/routes.js";
@@ -197,7 +197,7 @@ const routes = [
     json, parseJSON, isAuthenticated, sessionManager,
     helmSessionManager,
     configManager,
-    __dirname, DATA_DIR, APP_VERSION, rewriteVendorUrls,
+    __dirname, DATA_DIR, APP_VERSION,
     getDraining: () => draining,
     shortcutsPath: join(DATA_DIR, "shortcuts.json"),
     auth, csrf,
