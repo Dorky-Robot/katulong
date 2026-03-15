@@ -992,6 +992,43 @@
       display: flex; align-items: center; justify-content: center; color: var(--text-muted);
     }
     .session-icon-btn:active { background: rgba(255,255,255,0.1); }
+
+    /* --- Session card drag-and-drop (mobile sidebar) --- */
+    .session-card-drag-handle {
+      display: none; /* hidden on desktop */
+    }
+    @media (pointer: coarse), (pointer: none) {
+      .session-card-drag-handle {
+        display: flex; align-items: center; justify-content: center;
+        position: absolute; top: 0.25rem; left: 50%; transform: translateX(-50%);
+        color: var(--text-dim); font-size: 0.75rem; opacity: 0.4;
+        pointer-events: none; z-index: 1;
+      }
+    }
+    .session-card-long-press {
+      transform: scale(1.03);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+      z-index: 10;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .session-card-dragging {
+      opacity: 0.15;
+      pointer-events: none;
+    }
+    .session-card-drag-ghost {
+      position: fixed;
+      left: 0;
+      top: 0;
+      z-index: 10000;
+      pointer-events: none;
+      opacity: 0.9;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      border-radius: var(--radius-lg);
+      background: var(--bg);
+      border: 2px solid var(--accent-active);
+      will-change: transform;
+    }
+
     /* --- Settings modal --- */
     #settings-overlay { z-index: var(--z-modal-bg); }
     .settings-row {
@@ -1516,7 +1553,10 @@
     .helm-msg.user { background: color-mix(in srgb, var(--accent-active) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent-active) 25%, transparent); align-self: flex-end; }
     .helm-msg.system { color: var(--text-muted); font-size: var(--text-xs); align-self: center; font-style: italic; }
     .helm-msg.tool { background: var(--bg-surface); border: 1px solid var(--border); align-self: flex-start; font-size: var(--text-xs); }
+    .helm-tool-header { display: flex; align-items: center; gap: var(--space-xs); }
     .helm-msg .helm-tool-name { color: var(--accent-active); font-weight: var(--font-medium); }
+    .helm-tool-input { margin: 4px 0 0; opacity: 0.8; font-size: 0.85em; overflow-x: auto; white-space: pre-wrap; max-height: 8rem; overflow-y: auto; }
+    .helm-tool-result { margin: 4px 0 0; opacity: 0.6; font-size: 0.8em; overflow-x: auto; white-space: pre-wrap; max-height: 12rem; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 4px; }
     .helm-input-area { display: flex; gap: var(--space-xs); padding: var(--space-sm); border-top: 1px solid var(--border); background: var(--bg-surface); flex-shrink: 0; }
     .helm-input { flex: 1; padding: var(--space-xs) var(--space-sm); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text); font-size: var(--text-sm); font-family: var(--font-mono); outline: none; resize: none; min-height: 2.5rem; max-height: 8rem; }
     .helm-input:focus { border-color: var(--accent-active); }
