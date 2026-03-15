@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { readFileSync, existsSync, watch, writeFileSync, unlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
 import envConfig, { ensureDataDir } from "./lib/env-config.js";
 import { log } from "./lib/log.js";
@@ -45,6 +46,24 @@ log.info("Configuration loaded", { instanceName, instanceId, version: APP_VERSIO
 
 // Build vendor content hashes for automatic cache busting
 buildVendorHashes(join(__dirname, "public"));
+
+// Auto-detect Xvfb display on Linux (headless containers like kubo).
+// Sets DISPLAY for this process and propagates it into tmux's global env
+// so clipboard operations (xclip) work for both katulong and child processes.
+if (process.platform === "linux" && !process.env.DISPLAY) {
+  try {
+    execFile("pgrep", ["-a", "Xvfb"], { timeout: 2000 }, (err, stdout) => {
+      if (err || !stdout) return;
+      const match = stdout.match(/:(\d+)/);
+      if (match) {
+        const display = `:${match[1]}`;
+        process.env.DISPLAY = display;
+        log.info("Auto-detected Xvfb display", { display });
+        execFile("tmux", ["setenv", "-g", "DISPLAY", display], { timeout: 2000 }, () => {});
+      }
+    });
+  } catch { /* no Xvfb — clipboard will use file-based fallback */ }
+}
 
 await initP2P();
 
