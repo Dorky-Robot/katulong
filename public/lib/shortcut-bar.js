@@ -747,7 +747,6 @@ export function createShortcutBar(options = {}) {
     if (isPhone()) {
       // Phone: utility buttons in toolbar (island has Esc/Tab/keyboard)
       const utils = [
-        { icon: "chat-text", label: "Text input", click: onDictationClick },
         { icon: "terminal-window", label: "Terminal", click: onTerminalClick },
         { icon: "folder-open", label: "Files", click: onFilesClick },
         { icon: "plug", label: "Port Forward", click: onPortForwardClick, id: "bar-portfwd-btn", hidden: !portProxyEnabled },
@@ -880,7 +879,7 @@ export function createShortcutBar(options = {}) {
         island.appendChild(kbBtn);
       }
 
-      if (!isPhone() && onDictationClick) {
+      if (onDictationClick) {
         const btn = document.createElement("button");
         btn.className = "key-island-btn key-island-icon";
         btn.setAttribute("aria-label", "Text input");
@@ -921,16 +920,6 @@ export function createShortcutBar(options = {}) {
         island.appendChild(btn);
       }
 
-    }
-
-    // Dictation/text input — on phone, add to island (tablet/desktop has it above)
-    if (isPhone() && onDictationClick) {
-      const btn = document.createElement("button");
-      btn.className = "key-island-btn key-island-icon";
-      btn.setAttribute("aria-label", "Text input");
-      btn.innerHTML = '<i class="ph ph-chat-text"></i>';
-      btn.addEventListener("click", onDictationClick);
-      island.appendChild(btn);
     }
 
     // P2P connection dot — shown on all devices
