@@ -98,6 +98,68 @@ Both paths must be checked, and the `items` path must also apply the `isImageFil
 
 `navigator.clipboard.readText()` has a lower permission bar and may work without a prompt.
 
+## Container use case: katulong inside kubo (Docker)
+
+When katulong runs inside a kubo Docker container, the clipboard bridge uses **xclip + Xvfb** instead of `osascript`. This is the most fragile deployment and has regressed multiple times.
+
+### Architecture
+
+```
+iPad (Machine A)                    kubo container (Machine B)
+================                    ==========================
+
+1. User presses Cmd+V
+        |
+2. Browser reads clipboard -----> 3. POST /upload (image bytes)
+   via Clipboard API                      |
+                                   4. Server saves to
+                                      ~/.katulong/uploads/<uuid>.png
+                                          |
+                                   5. xclip sets X clipboard
+                                      (requires DISPLAY=:99 + Xvfb)
+                                          |
+6. Browser sends \x16 ----------> 7. tmux session receives Ctrl+V
+   (after upload completes)               |
+                                   8. Claude Code reads X clipboard
+                                      via xclip (needs DISPLAY=:99)
+                                      -> gets the NEW image
+```
+
+### Why it's fragile (failure modes)
+
+1. **DISPLAY not set**: Xvfb runs on `:99` (started by entrypoint.sh) but `DISPLAY` may not propagate to katulong or tmux child processes. Without DISPLAY, xclip silently fails on both write (upload route) and read (Claude Code).
+
+2. **DISPLAY not in tmux**: Even if katulong has DISPLAY, tmux sessions may not. The fix uses `tmux setenv -g DISPLAY :99` to propagate, but this only affects new shell commands in existing sessions — processes already running won't pick it up.
+
+3. **Xvfb not running**: If the container wasn't started via entrypoint.sh (e.g., manual `docker exec`), Xvfb won't be running. xclip needs a valid X display.
+
+4. **P2P silently dropping data**: The WebSocket manager prefers P2P (WebRTC) for output delivery. If P2P `send()` succeeds but the DataChannel isn't actually open, data is silently lost and the WebSocket fallback is skipped. This can cause the final Ctrl+V or the last bits of Claude Code output to never reach the browser.
+
+### Auto-detection (how we prevent regressions)
+
+katulong auto-detects Xvfb at two points:
+
+1. **Server startup** (`server.js`): Scans `pgrep -a Xvfb` for display number, sets `process.env.DISPLAY`, and runs `tmux setenv -g DISPLAY` to propagate to all tmux sessions.
+
+2. **Upload route** (`lib/routes.js`): Same detection as fallback, in case startup missed it (e.g., Xvfb started after katulong).
+
+### Container mount
+
+kubo mounts `~/.katulong/uploads/` from the host into the container at `/home/dev/.katulong/uploads/` (read-write). This allows:
+- Host-side katulong to save uploads that container-side Claude Code can read
+- Container-side katulong to save uploads locally
+
+The custom `pbpaste` script in kubo checks both locations.
+
+### Key files (container-specific)
+
+| File | Location | Role |
+|------|----------|------|
+| `pbpaste` | kubo: `/usr/local/bin/pbpaste` | File-based clipboard bridge (finds latest image in uploads dir) |
+| `pbcopy` | kubo: `/usr/local/bin/pbcopy` | Text clipboard storage |
+| `entrypoint.sh` | kubo: container entrypoint | Starts Xvfb, sets DISPLAY=:99 |
+| `container.rs` | kubo: `crates/kubo-core/src/` | Mounts ~/.katulong/uploads/ into container |
+
 ## Files involved
 
 | File | Role |
@@ -105,7 +167,10 @@ Both paths must be checked, and the `items` path must also apply the `isImageFil
 | `public/lib/paste-handler.js` | Three-layer Cmd+V interception |
 | `public/lib/image-upload.js` | Upload + clipboard/path response handling |
 | `public/lib/dictation-modal.js` | Paste handler for the dictation textarea (same items fix) |
-| `lib/routes.js` (upload handler) | Saves image, sets Machine B's clipboard via osascript |
+| `lib/routes.js` (upload handler) | Saves image, sets clipboard via osascript (macOS) or xclip (Linux) |
+| `server.js` | Auto-detects Xvfb display at startup, propagates to tmux |
+| `lib/ws-manager.js` | Routes output via P2P or WebSocket (P2P fallback is critical) |
+| `lib/p2p.js` | P2P DataChannel send — must return success/failure for fallback |
 
 ## What NOT to change
 
@@ -114,12 +179,25 @@ Both paths must be checked, and the `items` path must also apply the `isImageFil
 3. **Do not remove the `clipboardData.items` check** — Safari only exposes pasted images via items, not files
 4. **Do not change `clipboard === true` to truthy check** — server may return non-boolean values on error
 5. **Do not send `\x16` as a fallback for "no content detected"** — it reads the stale Machine B clipboard
-6. **Do not remove the osascript clipboard write** — this is the bridge that makes the whole flow work
+6. **Do not remove the osascript/xclip clipboard write** — this is the bridge that makes the whole flow work
+7. **Do not make P2P send() swallow errors** — the caller must know if data was actually delivered so it can fall back to WebSocket
+8. **Do not remove the Xvfb auto-detection** — DISPLAY propagation is the #1 cause of clipboard regressions in containers
 
 ## Testing
 
 The paste handler can't be fully imported in Node.js (browser-only imports), so tests are split:
 
 - `test/image-drop.test.js` — tests `uploadImageToTerminal` clipboard/path branching, and the items-fallback detection algorithm extracted as a standalone function
+- `test/clipboard-bridge.test.js` — tests Xvfb display auto-detection, xclip clipboard set/read, and P2P send fallback
 - E2E tests — full browser-level paste behavior (Playwright)
-- Manual testing — required for cross-machine clipboard verification (iPad -> tunnel -> mini)
+- Manual testing — required for cross-machine clipboard verification (iPad -> tunnel -> container)
+
+### Manual test checklist (container use case)
+
+1. Start katulong inside a kubo container
+2. Verify `v<version>` shows in settings
+3. Open Claude Code in a tmux session
+4. Paste an image from iPad clipboard
+5. Verify Claude Code receives and displays the image
+6. Check katulong server logs for "Auto-detected Xvfb display" message
+7. Verify `tmux showenv -g DISPLAY` returns `:99`
