@@ -747,7 +747,6 @@ export function createShortcutBar(options = {}) {
     if (isPhone()) {
       // Phone: utility buttons in toolbar (island has Esc/Tab/keyboard)
       const utils = [
-        { icon: "chat-text", label: "Text input", click: onDictationClick },
         { icon: "terminal-window", label: "Terminal", click: onTerminalClick },
         { icon: "folder-open", label: "Files", click: onFilesClick },
         { icon: "plug", label: "Port Forward", click: onPortForwardClick, id: "bar-portfwd-btn", hidden: !portProxyEnabled },
