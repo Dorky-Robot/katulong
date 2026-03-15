@@ -41,6 +41,8 @@ export function createShortcutBar(options = {}) {
     onSettingsClick,
     onShortcutsClick,
     onDictationClick,
+    onHelmToggleClick,
+    getHelmAvailable,
     onAllTabsClosed,
     sendFn,
     updateP2PIndicator,
@@ -746,9 +748,11 @@ export function createShortcutBar(options = {}) {
 
     if (isPhone()) {
       // Phone: utility buttons in toolbar (island has Esc/Tab/keyboard)
+      const helmAvail = getHelmAvailable ? getHelmAvailable() : false;
       const utils = [
         { icon: "chat-text", label: "Text input", click: onDictationClick },
         { icon: "terminal-window", label: "Terminal", click: onTerminalClick },
+        { icon: "robot", label: "Helm", click: onHelmToggleClick, id: "bar-helm-btn", hidden: !helmAvail },
         { icon: "folder-open", label: "Files", click: onFilesClick },
         { icon: "plug", label: "Port Forward", click: onPortForwardClick, id: "bar-portfwd-btn", hidden: !portProxyEnabled },
         { icon: "gear", label: "Settings", click: onSettingsClick },
@@ -909,6 +913,18 @@ export function createShortcutBar(options = {}) {
         btn.innerHTML = '<i class="ph ph-plug"></i>';
         btn.addEventListener("click", onPortForwardClick);
         if (!portProxyEnabled) btn.style.display = "none";
+        island.appendChild(btn);
+      }
+
+      if (onHelmToggleClick) {
+        const helmAvail = getHelmAvailable ? getHelmAvailable() : false;
+        const btn = document.createElement("button");
+        btn.className = "key-island-btn key-island-icon";
+        btn.id = "bar-helm-btn";
+        btn.setAttribute("aria-label", "Helm");
+        btn.innerHTML = '<i class="ph ph-robot"></i>';
+        btn.addEventListener("click", onHelmToggleClick);
+        if (!helmAvail) btn.style.display = "none";
         island.appendChild(btn);
       }
 

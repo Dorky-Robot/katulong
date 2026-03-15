@@ -192,7 +192,7 @@ const routes = [
   }),
   ...createAppRoutes({
     json, parseJSON, isAuthenticated, sessionManager,
-    helmSessionManager,
+    helmSessionManager, bridge,
     configManager,
     __dirname, DATA_DIR, APP_VERSION,
     getDraining: () => draining,

@@ -213,6 +213,12 @@ export function createWebSocketConnection(deps = {}) {
       stateUpdates: {},
       effects: [{ type: 'helmWaitingForInput', session: msg.session }]
     }),
+
+    // Claude Code hook events (from /api/helm/hook)
+    'helm-hook-event': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'helmHookEvent', event: msg.event }]
+    }),
   };
 
   // Effect executor (side effects at edges)
@@ -318,6 +324,9 @@ export function createWebSocketConnection(deps = {}) {
         break;
       case 'helmWaitingForInput':
         if (deps.onHelmWaitingForInput) deps.onHelmWaitingForInput(effect.session);
+        break;
+      case 'helmHookEvent':
+        if (deps.onHelmHookEvent) deps.onHelmHookEvent(effect.event);
         break;
     }
   }

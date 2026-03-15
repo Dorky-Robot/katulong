@@ -810,6 +810,8 @@
       onSettingsClick: () => modals.open('settings'),
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
       onDictationClick: () => openDictationModal(),
+      onHelmToggleClick: () => toggleHelmView(),
+      getHelmAvailable: () => getHelmToggleState(),
       onAllTabsClosed: () => {
         // Hide all terminal panes, disconnect WS, clear state
         terminalPool.forEach((name) => terminalPool.dispose(name));
@@ -1032,32 +1034,120 @@
       }
     }
 
+    // Maps helm session names (from yolo) to browser session names
+    const helmSessionMap = new Map();
+
     function onHelmModeChanged(effect) {
       if (effect.active) {
-        helmActiveSessions.add(effect.session);
+        // Map the helm session to the current browser session so events
+        // route correctly even when yolo can't know the tmux session name.
+        helmSessionMap.set(effect.session, state.session.name);
+        const browserSession = state.session.name;
+        helmActiveSessions.add(browserSession);
         ensureHelmMounted();
-        helmComponent.helmStarted(effect.session, {
+        helmComponent.helmStarted(browserSession, {
           agent: effect.agent,
           prompt: effect.prompt,
           cwd: effect.cwd,
         });
-        // Auto-switch to helm view if this is the active session
-        if (effect.session === state.session.name) {
-          showHelmView();
-        }
+        showHelmView();
       } else {
-        helmActiveSessions.delete(effect.session);
-        helmComponent?.helmEnded(effect.session, {
+        const browserSession = helmSessionMap.get(effect.session) || effect.session;
+        helmSessionMap.delete(effect.session);
+        helmActiveSessions.delete(browserSession);
+        helmComponent?.helmEnded(browserSession, {
           result: effect.result,
           error: effect.error,
         });
-        // If viewing helm for this session and it ended, switch back to terminal
-        if (effect.session === state.session.name && helmViewEl.classList.contains("active")) {
+        if (helmViewEl.classList.contains("active")) {
           hideHelmView();
         }
       }
       // Re-render the tab bar to show/hide helm indicator
       renderBar(state.session.name);
+    }
+
+    // --- Claude Code Hook Events ---
+    // These come from Claude Code's hook system (PreToolUse, PostToolUse,
+    // UserPromptSubmit, Stop, Notification) via /api/helm/hook endpoint.
+
+    let helmHookSessionActive = false;
+
+    function onHelmHookEvent(event) {
+      const hookName = event.hook_event_name;
+      const browserSession = state.session.name;
+
+      // Auto-activate helm on first hook event
+      if (!helmHookSessionActive) {
+        helmHookSessionActive = true;
+        helmActiveSessions.add(browserSession);
+        ensureHelmMounted();
+        helmComponent.helmStarted(browserSession, {
+          agent: "claude-code",
+          prompt: null,
+          cwd: event.cwd || null,
+        });
+        renderBar(browserSession);
+      }
+
+      // Map hook events to helm component events
+      switch (hookName) {
+        case "UserPromptSubmit":
+          helmComponent?.helmEvent(browserSession, {
+            type: "user",
+            message: { content: [{ type: "text", text: event.prompt }] },
+          });
+          break;
+
+        case "PreToolUse":
+          helmComponent?.helmEvent(browserSession, {
+            type: "assistant",
+            message: { content: [{
+              type: "tool_use",
+              id: event.tool_use_id,
+              name: event.tool_name,
+              input: event.tool_input || {},
+            }] },
+          });
+          break;
+
+        case "PostToolUse":
+          helmComponent?.helmEvent(browserSession, {
+            type: "user",
+            message: { content: [{
+              type: "tool_result",
+              tool_use_id: event.tool_use_id,
+              content: typeof event.tool_response === "string"
+                ? event.tool_response
+                : JSON.stringify(event.tool_response),
+            }] },
+          });
+          break;
+
+        case "Stop":
+          if (event.last_assistant_message) {
+            helmComponent?.helmEvent(browserSession, {
+              type: "assistant",
+              message: { content: [{ type: "text", text: event.last_assistant_message }] },
+            });
+          }
+          helmComponent?.helmTurnComplete(browserSession);
+          break;
+
+        case "Notification":
+          helmComponent?.helmEvent(browserSession, {
+            type: "system",
+            subtype: "notification",
+            message: event.message,
+          });
+          break;
+      }
+    }
+
+    // --- Helm toggle button in tab bar ---
+    // Shows when helm has hook data available, lets user toggle views.
+    function getHelmToggleState() {
+      return helmHookSessionActive || helmActiveSessions.has(state.session?.name);
     }
 
     // --- Network change monitoring ---
@@ -1125,11 +1215,13 @@
       tabRename: (oldName, newName) => windowTabSet.renameTab(oldName, newName),
       fit: fitActiveTerminal,
       setSyncResize: (v) => viewportManager.setSyncResize(v),
-      // Helm mode
+      // Helm mode (yolo WebSocket events)
       onHelmModeChanged,
-      onHelmEvent: (session, event) => helmComponent?.helmEvent(session, event),
-      onHelmTurnComplete: (session) => helmComponent?.helmTurnComplete(session),
-      onHelmWaitingForInput: (session) => helmComponent?.helmWaitingForInput(session),
+      onHelmEvent: (session, event) => helmComponent?.helmEvent(helmSessionMap.get(session) || session, event),
+      onHelmTurnComplete: (session) => helmComponent?.helmTurnComplete(helmSessionMap.get(session) || session),
+      onHelmWaitingForInput: (session) => helmComponent?.helmWaitingForInput(helmSessionMap.get(session) || session),
+      // Claude Code hook events (from /api/helm/hook)
+      onHelmHookEvent: (event) => onHelmHookEvent(event),
     });
     wsConnection.initVisibilityReconnect();
 
