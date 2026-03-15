@@ -922,16 +922,6 @@ export function createShortcutBar(options = {}) {
 
     }
 
-    // Dictation/text input — on phone, add to island (tablet/desktop has it above)
-    if (isPhone() && onDictationClick) {
-      const btn = document.createElement("button");
-      btn.className = "key-island-btn key-island-icon";
-      btn.setAttribute("aria-label", "Text input");
-      btn.innerHTML = '<i class="ph ph-chat-text"></i>';
-      btn.addEventListener("click", onDictationClick);
-      island.appendChild(btn);
-    }
-
     // P2P connection dot — shown on all devices
     const dot = document.createElement("span");
     dot.id = "island-p2p-dot";
