@@ -22,6 +22,7 @@ const COMMANDS = {
   token: "Manage setup tokens (create, list, revoke)",
   credential: "Manage passkey credentials (list, revoke)",
   session: "Manage terminal sessions (list, create, kill, rename)",
+  service: "Manage macOS LaunchAgent (install, uninstall, restart, status)",
 };
 
 function showHelp() {
@@ -55,6 +56,8 @@ EXAMPLES:
   katulong credential list    List registered passkeys
   katulong session list       List active PTY sessions
   katulong session kill dev   Kill a PTY session
+  katulong service install    Auto-start on login (macOS)
+  katulong service restart    Restart after brew upgrade
 
 For more information, visit: https://github.com/dorky-robot/katulong
 `);

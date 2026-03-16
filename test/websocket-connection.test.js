@@ -43,6 +43,7 @@ await mock.module(scrollUtilsUrl, {
     scrollToBottom: () => {},
     terminalWriteWithScroll: () => {},
     viewportOf: () => null,
+    isAtBottom: () => true,
   },
 });
 
