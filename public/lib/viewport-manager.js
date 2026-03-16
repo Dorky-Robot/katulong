@@ -94,19 +94,17 @@ export function createViewportManager(options = {}) {
   }
 
   // --- Scroll-to-bottom button ---
+  //
+  // xterm.js 6 uses a custom scrollable element with its own scroll
+  // management — native DOM scroll events do NOT fire on it. We must
+  // use term.onScroll (fires when the viewport scroll offset changes)
+  // and check the buffer's baseY vs viewportY to determine position.
 
-  let _scrollViewport = null; // currently attached viewport
-  let scrollRaf = 0;
+  let _scrollDisposable = null; // xterm onScroll disposable
 
-  function onScrollUpdate() {
-    if (!scrollRaf) {
-      scrollRaf = requestAnimationFrame(() => {
-        scrollRaf = 0;
-        const vp = getViewport();
-        if (!vp) return;
-        scrollBtn.style.display = isAtBottom(vp) ? "none" : "flex";
-      });
-    }
+  function isTermAtBottom(term) {
+    const buf = term.buffer.active;
+    return buf.viewportY >= buf.baseY;
   }
 
   function initScrollButton() {
@@ -120,31 +118,32 @@ export function createViewportManager(options = {}) {
   }
 
   /**
-   * Attach scroll-button listener to the current terminal's viewport.
+   * Attach scroll-button tracking to the current terminal.
    *
-   * The scroll event does NOT bubble — listening on an ancestor element
-   * (like termContainer) never fires when the xterm viewport scrolls.
-   * We must listen directly on the viewport element itself.
+   * Uses term.onScroll instead of DOM scroll events because xterm.js 6
+   * uses a custom scrollable element that doesn't fire native scroll.
    *
-   * Call this whenever the active terminal changes (creation, session
-   * switch). Safe to call repeatedly — skips if already attached to
-   * the same viewport.
+   * Call whenever the active terminal changes. Safe to call repeatedly.
    */
   function attachScrollButton() {
     if (!scrollBtn) return;
-    const vp = getViewport();
-    if (!vp || vp === _scrollViewport) return;
+    const term = getTerm();
+    if (!term) return;
 
-    // Detach from previous viewport
-    if (_scrollViewport) {
-      _scrollViewport.removeEventListener("scroll", onScrollUpdate);
+    // Dispose previous listener
+    if (_scrollDisposable) {
+      _scrollDisposable.dispose();
+      _scrollDisposable = null;
     }
 
-    _scrollViewport = vp;
-    vp.addEventListener("scroll", onScrollUpdate, { passive: true });
+    _scrollDisposable = term.onScroll(() => {
+      scrollBtn.style.display = isTermAtBottom(term) ? "none" : "flex";
+    });
 
-    // Check initial state
-    scrollBtn.style.display = isAtBottom(vp) ? "none" : "flex";
+    // Also check on write completion — output may push baseY without
+    // triggering onScroll if viewport was already following.
+    // Initial state check:
+    scrollBtn.style.display = isTermAtBottom(term) ? "none" : "flex";
   }
 
   // Initialize terminal gesture handlers
