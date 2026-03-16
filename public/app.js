@@ -12,7 +12,7 @@
     import { createShortcutsPopup, createShortcutsEditPanel, createAddShortcutModal } from "/lib/shortcuts-components.js";
     import { createDictationModal } from "/lib/dictation-modal.js";
     import { createDragDropManager } from "/lib/drag-drop.js";
-    import { showToast, isImageFile, uploadImageToTerminal as uploadImageToTerminalFn } from "/lib/image-upload.js";
+    import { showToast, isImageFile, uploadImageToTerminal as uploadImageToTerminalFn, uploadImagesToTerminal as uploadImagesToTerminalFn, onPasteComplete } from "/lib/image-upload.js";
     import { createJoystickManager } from "/lib/joystick.js";
     import { createPullToRefreshManager } from "/lib/pull-to-refresh.js";
     import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
@@ -923,10 +923,8 @@
           if (totalFiles > 0) showToast("Not an image file", true);
           return;
         }
-        for (const file of imageFiles) {
-          // Upload and send absolute filesystem path to terminal
-          uploadImageToTerminal(file);
-        }
+        // Upload in parallel, paste via single server request
+        uploadImagesToTerminalFn(imageFiles, { onSend: rawSend, toast: showToast, sessionName: state.session.name });
       }
     });
 
@@ -1198,6 +1196,7 @@
       onHelmEvent: (session, event) => helmComponent?.helmEvent(session, event),
       onHelmTurnComplete: (session) => helmComponent?.helmTurnComplete(session),
       onHelmWaitingForInput: (session) => helmComponent?.helmWaitingForInput(session),
+      onPasteComplete: (path) => onPasteComplete(path),
       onTabIconChanged: (session, icon) => {
         if (icon) {
           sessionIcons.set(session, icon);

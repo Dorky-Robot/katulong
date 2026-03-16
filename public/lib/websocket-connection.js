@@ -173,6 +173,13 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
+    'paste-complete': (msg) => ({
+      stateUpdates: {},
+      effects: [
+        { type: 'pasteComplete', path: msg.path }
+      ]
+    }),
+
     'resize-sync': (msg) => ({
       stateUpdates: {},
       effects: [
@@ -243,6 +250,9 @@ export function createWebSocketConnection(deps = {}) {
         break;
       case 'logServerLanIPs':
         console.log('[P2P] Server LAN addresses:', effect.addresses);
+        break;
+      case 'pasteComplete':
+        if (deps.onPasteComplete) deps.onPasteComplete(effect.path);
         break;
       case 'scrollToBottomIfNeeded': {
         const term = getTerm();
