@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+#
+# katulong-stage — spin up a staging instance with a Cloudflare tunnel
+#
+# Usage:
+#   katulong-stage [source-dir]    Start staging from source-dir (default: repo root)
+#   katulong-stage --stop [port]   Tear down staging on port (default: all)
+#   katulong-stage --status        Show running staging instances
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+STAGE_BASE="/tmp/katulong-staging"
+
+# Check if a PID is alive
+is_alive() { kill -0 "$1" 2>/dev/null; }
+
+# Stop a single staging instance by port
+stop_port() {
+  local port="$1"
+  local pidfile="${STAGE_BASE}-${port}/server.pid"
+  local tpidfile="${STAGE_BASE}-${port}/tunnel.pid"
+  if [[ -f "$pidfile" ]]; then
+    local pid; pid=$(cat "$pidfile")
+    is_alive "$pid" && kill "$pid" 2>/dev/null
+    rm -f "$pidfile"
+  fi
+  if [[ -f "$tpidfile" ]]; then
+    local tpid; tpid=$(cat "$tpidfile")
+    is_alive "$tpid" && kill "$tpid" 2>/dev/null
+    rm -f "$tpidfile"
+  fi
+  echo "Stopped staging on port $port."
+}
+
+# --- Stop mode ---
+if [[ "${1:-}" == "--stop" ]]; then
+  PORT="${2:-}"
+  if [[ -n "$PORT" ]]; then
+    stop_port "$PORT"
+  else
+    found=0
+    for dir in ${STAGE_BASE}-*/; do
+      [[ -d "$dir" ]] || continue
+      port=$(basename "$dir" | grep -oP '\d+$' || true)
+      [[ -n "$port" ]] && stop_port "$port" && found=1
+    done
+    [[ "$found" -eq 0 ]] && echo "No staging instances found."
+  fi
+  exit 0
+fi
+
+# --- Status mode ---
+if [[ "${1:-}" == "--status" ]]; then
+  echo "Staging instances:"
+  found=0
+  for dir in ${STAGE_BASE}-*/; do
+    [[ -d "$dir" ]] || continue
+    port=$(basename "$dir" | grep -oP '\d+$' || true)
+    [[ -z "$port" ]] && continue
+    pidfile="${dir}server.pid"
+    [[ -f "$pidfile" ]] || continue
+    pid=$(cat "$pidfile")
+    if is_alive "$pid"; then
+      tunnel_url=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' "${dir}tunnel.log" 2>/dev/null | head -1 || echo "no tunnel")
+      echo "  port=$port  pid=$pid  url=$tunnel_url"
+      found=1
+    fi
+  done
+  if [[ "$found" -eq 0 ]]; then
+    echo "  (none running)"
+  fi
+  exit 0
+fi
+
+# --- Start mode ---
+SOURCE_DIR="${1:-$REPO_ROOT}"
+SOURCE_DIR="$(cd "$SOURCE_DIR" && pwd)"
+
+if [[ ! -f "$SOURCE_DIR/server.js" ]]; then
+  echo "Error: server.js not found in $SOURCE_DIR" >&2
+  exit 1
+fi
+
+# Find a free port starting from 3003
+find_free_port() {
+  node -e "
+    const net = require('net');
+    function tryPort(p) {
+      return new Promise(resolve => {
+        const s = net.createServer();
+        s.listen(p, '127.0.0.1', () => { s.close(() => resolve(p)); });
+        s.on('error', () => resolve(tryPort(p + 1)));
+      });
+    }
+    tryPort(3003).then(p => console.log(p));
+  "
+}
+
+PORT=$(find_free_port)
+
+# Install deps if needed
+if [[ ! -d "$SOURCE_DIR/node_modules" ]]; then
+  echo "Installing dependencies..."
+  (cd "$SOURCE_DIR" && npm install --silent)
+fi
+
+# Generate setup token
+SETUP_TOKEN=$(node -e "console.log(require('crypto').randomBytes(16).toString('hex'))")
+
+# Data dir (also holds PID files and logs)
+DATA_DIR="${STAGE_BASE}-${PORT}"
+mkdir -p "$DATA_DIR"
+
+# Start server
+PORT="$PORT" DATA_DIR="$DATA_DIR" SETUP_TOKEN="$SETUP_TOKEN" \
+  nohup node "$SOURCE_DIR/server.js" > "${DATA_DIR}/server.log" 2>&1 &
+SERVER_PID=$!
+echo "$SERVER_PID" > "${DATA_DIR}/server.pid"
+
+# Wait for server to be ready
+echo "Starting server on port $PORT (pid $SERVER_PID)..."
+for i in $(seq 1 10); do
+  if curl -s -o /dev/null -w "" "http://127.0.0.1:${PORT}/" 2>/dev/null; then
+    break
+  fi
+  if ! is_alive "$SERVER_PID"; then
+    echo "Error: server failed to start. Log:" >&2
+    tail -20 "${DATA_DIR}/server.log" >&2
+    exit 1
+  fi
+  sleep 1
+done
+
+# Verify server is actually responding
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}/" 2>/dev/null || echo "000")
+if [[ "$HTTP_CODE" != "200" ]]; then
+  echo "Error: server not responding (HTTP $HTTP_CODE). Log:" >&2
+  tail -20 "${DATA_DIR}/server.log" >&2
+  kill "$SERVER_PID" 2>/dev/null || true
+  exit 1
+fi
+
+# Find or download cloudflared
+CLOUDFLARED=""
+if command -v cloudflared &>/dev/null; then
+  CLOUDFLARED="cloudflared"
+elif [[ -x /tmp/cloudflared-bin ]]; then
+  CLOUDFLARED="/tmp/cloudflared-bin"
+else
+  echo "Downloading cloudflared..."
+  ARCH=$(uname -m)
+  case "$ARCH" in
+    aarch64|arm64) SUFFIX="arm64" ;;
+    *)             SUFFIX="amd64" ;;
+  esac
+  curl -sL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${SUFFIX}" \
+    -o /tmp/cloudflared-bin && chmod +x /tmp/cloudflared-bin
+  CLOUDFLARED="/tmp/cloudflared-bin"
+fi
+
+# Start tunnel
+nohup "$CLOUDFLARED" tunnel --url "http://127.0.0.1:${PORT}" \
+  > "${DATA_DIR}/tunnel.log" 2>&1 &
+TUNNEL_PID=$!
+echo "$TUNNEL_PID" > "${DATA_DIR}/tunnel.pid"
+
+# Wait for tunnel URL
+echo "Starting Cloudflare tunnel (pid $TUNNEL_PID)..."
+TUNNEL_URL=""
+for i in $(seq 1 20); do
+  TUNNEL_URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' "${DATA_DIR}/tunnel.log" 2>/dev/null | head -1 || true)
+  if [[ -n "$TUNNEL_URL" ]]; then
+    break
+  fi
+  if ! is_alive "$TUNNEL_PID"; then
+    echo "Error: tunnel failed to start. Log:" >&2
+    tail -20 "${DATA_DIR}/tunnel.log" >&2
+    kill "$SERVER_PID" 2>/dev/null || true
+    exit 1
+  fi
+  sleep 1
+done
+
+if [[ -z "$TUNNEL_URL" ]]; then
+  echo "Error: tunnel URL not found after 20s. Log:" >&2
+  tail -20 "${DATA_DIR}/tunnel.log" >&2
+  kill "$SERVER_PID" 2>/dev/null || true
+  kill "$TUNNEL_PID" 2>/dev/null || true
+  exit 1
+fi
+
+# Report
+cat <<EOF
+
+Staging is live:
+
+  URL:         $TUNNEL_URL
+  Setup Token: $SETUP_TOKEN
+  Port:        $PORT
+  Source:      $SOURCE_DIR
+  Server PID:  $SERVER_PID
+  Tunnel PID:  $TUNNEL_PID
+
+Tear down:
+  $(basename "$0") --stop $PORT
+
+EOF

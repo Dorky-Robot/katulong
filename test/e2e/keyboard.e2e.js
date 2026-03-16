@@ -51,6 +51,10 @@ test.describe("Keyboard handling", () => {
     // modifier=2 (Shift) → \x1b[13;2u. Claude Code recognises this
     // as Shift+Enter and inserts a literal newline.
     expect(combined).toContain("\x1b[13;2u");
+    // Must NOT also send a raw \r — the keypress event must be blocked
+    // by the custom key handler returning false for all event types.
+    // A leaked \r would cause Claude Code to submit instead of newline.
+    expect(combined).not.toContain("\r");
   });
 
   test("Plain Enter sends carriage return (\\r) without bracketed paste", async ({ page }) => {

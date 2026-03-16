@@ -67,8 +67,15 @@ export function createTerminalKeyboard(options = {}) {
       // Shift+Enter and insert a literal newline instead of submitting.
       // xterm.js doesn't natively support kitty keyboard, so we send
       // the sequence manually via the PTY.
-      if (ev.shiftKey && ev.key === "Enter" && ev.type === "keydown") {
-        if (onSend) onSend("\x1b[13;2u");
+      //
+      // Must block ALL event types (keydown, keypress, keyup) — not just
+      // keydown. xterm.js calls this handler for each event type. When
+      // _keyDown returns early (custom handler → false), _keyDownHandled
+      // stays false. _keyPress then checks _keyDownHandled, finds it
+      // false, and processes the keypress — sending a raw \r that causes
+      // Claude Code to submit instead of inserting a newline.
+      if (ev.shiftKey && ev.key === "Enter") {
+        if (ev.type === "keydown" && onSend) onSend("\x1b[13;2u");
         return false;
       }
 
