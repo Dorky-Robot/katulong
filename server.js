@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
-import { readFileSync, existsSync, watch, writeFileSync, unlinkSync } from "node:fs";
+import { readFileSync, existsSync, watch, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { execFile } from "node:child_process";
@@ -34,6 +34,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = envConfig.port;
 const DATA_DIR = envConfig.dataDir;
 ensureDataDir();
+
+// Ensure uploads directory exists early so kubo containers can mount it.
+// kubo only mounts ~/.katulong/uploads if the directory exists at container
+// creation time — creating it on first upload is too late.
+try { mkdirSync(join(DATA_DIR, "uploads"), { recursive: true }); } catch { /* ok */ }
 
 // --- Configuration (load instance name first) ---
 
