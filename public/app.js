@@ -203,6 +203,10 @@
         // fight the user's scroll position.
         initScrollTracking(entry.term);
 
+        // Attach scroll-to-bottom button to this terminal's viewport.
+        // Deferred one frame so xterm.js has rendered the viewport element.
+        requestAnimationFrame(() => _attachScrollButton());
+
         // OSC 7337 handler: per-session tab icon override
         // Terminal processes can emit: \033]7337;icon=cube\007
         // to change their tab's icon. Empty value resets to instance default.
