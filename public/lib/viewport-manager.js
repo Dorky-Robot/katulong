@@ -4,7 +4,7 @@
  * Handles viewport resizing, scroll button UI, and terminal gesture handlers.
  */
 
-import { withPreservedScroll, viewportOf, isAtBottom } from "/lib/scroll-utils.js";
+import { withPreservedScroll, viewportOf, isAtBottom, scrollToBottom } from "/lib/scroll-utils.js";
 
 /**
  * Create viewport manager for responsive terminal layout
@@ -93,30 +93,58 @@ export function createViewportManager(options = {}) {
     return ro;
   }
 
-  // Initialize scroll-to-bottom button
+  // --- Scroll-to-bottom button ---
+
+  let _scrollViewport = null; // currently attached viewport
+  let scrollRaf = 0;
+
+  function onScrollUpdate() {
+    if (!scrollRaf) {
+      scrollRaf = requestAnimationFrame(() => {
+        scrollRaf = 0;
+        const vp = getViewport();
+        if (!vp) return;
+        scrollBtn.style.display = isAtBottom(vp) ? "none" : "flex";
+      });
+    }
+  }
+
   function initScrollButton() {
     if (!scrollBtn) return;
 
-    let scrollRaf = 0;
-    function onScroll() {
-      if (!scrollRaf) {
-        scrollRaf = requestAnimationFrame(() => {
-          scrollRaf = 0;
-          const vp = getViewport();
-          if (!vp) return;
-          scrollBtn.style.display = isAtBottom(vp) ? "none" : "flex";
-        });
-      }
-    }
-
-    // Use event delegation on termContainer for scroll events
-    termContainer.addEventListener("scroll", onScroll, { passive: true, capture: true });
-
     scrollBtn.addEventListener("click", () => {
       const term = getTerm();
-      if (term) term.scrollToBottom();
+      if (term) scrollToBottom(term);
       scrollBtn.style.display = "none";
     });
+  }
+
+  /**
+   * Attach scroll-button listener to the current terminal's viewport.
+   *
+   * The scroll event does NOT bubble — listening on an ancestor element
+   * (like termContainer) never fires when the xterm viewport scrolls.
+   * We must listen directly on the viewport element itself.
+   *
+   * Call this whenever the active terminal changes (creation, session
+   * switch). Safe to call repeatedly — skips if already attached to
+   * the same viewport.
+   */
+  function attachScrollButton() {
+    if (!scrollBtn) return;
+    const vp = getViewport();
+    if (!vp || vp === _scrollViewport) return;
+
+    // Detach from previous viewport
+    if (_scrollViewport) {
+      _scrollViewport.removeEventListener("scroll", onScrollUpdate);
+    }
+
+    _scrollViewport = vp;
+    vp.addEventListener("scroll", onScrollUpdate, { passive: true });
+
+    // Check initial state
+    scrollBtn.style.display = isAtBottom(vp) ? "none" : "flex";
   }
 
   // Initialize terminal gesture handlers
@@ -139,6 +167,7 @@ export function createViewportManager(options = {}) {
 
   return {
     init,
+    attachScrollButton,
     resizeToViewport,
     initViewportResize,
     initTerminalResizeObserver,
