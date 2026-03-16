@@ -102,7 +102,13 @@ Both paths must be checked, and the `items` path must also apply the `isImageFil
 
 When katulong runs inside a kubo Docker container, the clipboard bridge uses **xclip + Xvfb** instead of `osascript`. This is the most fragile deployment and has regressed multiple times.
 
-### Architecture
+### Two scenarios
+
+**Scenario 1: katulong runs in-container** — katulong and Claude Code share the same Xvfb. The xclip write in the upload handler directly sets the clipboard that Claude Code reads.
+
+**Scenario 2: katulong on host, Claude Code in kubo container** — katulong runs on the host machine and the user enters a kubo container via a tmux tab. The host clipboard (osascript/xclip) is **isolated from the container's Xvfb clipboard**. The upload handler must bridge across the container boundary using `docker exec`.
+
+### Architecture (Scenario 1: in-container)
 
 ```
 iPad (Machine A)                    kubo container (Machine B)
@@ -124,6 +130,34 @@ iPad (Machine A)                    kubo container (Machine B)
                                       via xclip (needs DISPLAY=:99)
                                       -> gets the NEW image
 ```
+
+### Architecture (Scenario 2: host → container bridge)
+
+```
+iPad (Machine A)           Host (Machine B)              kubo container (Machine C)
+================           ================              ==========================
+
+1. User presses Cmd+V
+        |
+2. Browser reads       --> 3. POST /upload
+   clipboard                      |
+                            4. Save to ~/.katulong/uploads/<uuid>.png
+                                  |                              |
+                            5a. Set host clipboard         5b. docker exec xclip
+                                (osascript/xclip)               in each kubo container
+                                                                (DISPLAY=:99)
+                                  |                              |
+6. Browser sends \x16 --> 7. tmux → docker → Claude Code reads
+   (after BOTH 5a+5b           container clipboard → gets image
+    complete)
+```
+
+Key points for Scenario 2:
+- `bridgeClipboardToContainers()` in `routes.js` finds running kubo containers via `docker ps --filter label=managed-by=kubo`
+- Uses `docker exec -e DISPLAY=:99 <container> xclip -i` to set each container's clipboard
+- The image file is accessible inside the container because `~/.katulong/uploads` is volume-mounted
+- **Must be awaited** before returning the upload response — the client sends Ctrl+V immediately on response, so the clipboard must be ready
+- The uploads directory is created at katulong startup (not on first upload) so kubo always has a directory to mount
 
 ### Why it's fragile (failure modes)
 
@@ -182,14 +216,17 @@ The custom `pbpaste` script in kubo checks both locations.
 6. **Do not remove the osascript/xclip clipboard write** — this is the bridge that makes the whole flow work
 7. **Do not make P2P send() swallow errors** — the caller must know if data was actually delivered so it can fall back to WebSocket
 8. **Do not remove the Xvfb auto-detection** — DISPLAY propagation is the #1 cause of clipboard regressions in containers
+9. **Do not make `bridgeClipboardToContainers` fire-and-forget** — the upload response must wait for the bridge to complete, otherwise the client sends Ctrl+V before the container clipboard is ready
+10. **Do not remove the uploads directory creation at startup** — kubo only mounts `~/.katulong/uploads` if it exists at container creation time
 
 ## Testing
 
 The paste handler can't be fully imported in Node.js (browser-only imports), so tests are split:
 
 - `test/image-drop.test.js` — tests `uploadImageToTerminal` clipboard/path branching, and the items-fallback detection algorithm extracted as a standalone function
-- `test/clipboard-bridge.test.js` — tests Xvfb display auto-detection, xclip clipboard set/read, and P2P send fallback
-- E2E tests — full browser-level paste behavior (Playwright)
+- `test/clipboard-bridge.test.js` — tests Xvfb display auto-detection, xclip clipboard set/read, P2P send fallback, imageMimeType mapping, and container bridge resolution
+- `test/terminal-keyboard.test.js` — tests Shift+Enter keypress blocking across all event types (keydown/keypress/keyup), meta/alt shortcuts
+- E2E tests (`test/e2e/keyboard.e2e.js`) — full browser-level Shift+Enter, plain Enter, Tab
 - Manual testing — required for cross-machine clipboard verification (iPad -> tunnel -> container)
 
 ### Manual test checklist (container use case)
