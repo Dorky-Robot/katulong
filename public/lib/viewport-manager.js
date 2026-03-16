@@ -102,11 +102,6 @@ export function createViewportManager(options = {}) {
 
   let _scrollDisposable = null; // xterm onScroll disposable
 
-  function isTermAtBottom(term) {
-    const buf = term.buffer.active;
-    return buf.viewportY >= buf.baseY;
-  }
-
   function initScrollButton() {
     if (!scrollBtn) return;
 
@@ -137,13 +132,13 @@ export function createViewportManager(options = {}) {
     }
 
     _scrollDisposable = term.onScroll(() => {
-      scrollBtn.style.display = isTermAtBottom(term) ? "none" : "flex";
+      scrollBtn.style.display = isAtBottom(term) ? "none" : "flex";
     });
 
     // Also check on write completion — output may push baseY without
     // triggering onScroll if viewport was already following.
     // Initial state check:
-    scrollBtn.style.display = isTermAtBottom(term) ? "none" : "flex";
+    scrollBtn.style.display = isAtBottom(term) ? "none" : "flex";
   }
 
   // Initialize terminal gesture handlers
