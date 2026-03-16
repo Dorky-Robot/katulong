@@ -559,6 +559,8 @@
 
     // --- Session switching (no page reload) ---
     let pendingSwitch = null;
+    // Late-bound: viewportManager is created after activateSession but called lazily
+    let _attachScrollButton = () => {};
 
     function activateSession(name) {
       // Close alternative views — switching sessions returns to terminal
@@ -607,6 +609,9 @@
       invalidateSessions(sessionStore, name);
       // Reflow terminal to current window size after activation
       fitActiveTerminal();
+      // Attach scroll-to-bottom button listener to the new viewport.
+      // scroll events don't bubble, so we must listen on the viewport directly.
+      _attachScrollButton();
       // Reset outer page scroll in case the browser shifted it
       requestAnimationFrame(() => window.scrollTo(0, 0));
     }
@@ -808,6 +813,7 @@
       }
     });
     viewportManager.init();
+    _attachScrollButton = () => viewportManager.attachScrollButton();
 
     shortcutBarInstance = createShortcutBar({
       container: bar,
