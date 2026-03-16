@@ -24,6 +24,7 @@ export function createP2PManager(config = {}) {
   let retryTimer = 0;
   let retryCount = 0;
   let _gaveUp = false; // true after maxRetries exhausted
+  let _attempting = false; // true while a connection attempt is in progress
 
   /**
    * Destroy current peer connection
@@ -31,6 +32,7 @@ export function createP2PManager(config = {}) {
   function destroy() {
     clearTimeout(retryTimer);
     retryTimer = 0;
+    _attempting = false;
 
     if (dc) {
       try { dc.close(); } catch { /* ignore */ }
@@ -79,9 +81,17 @@ export function createP2PManager(config = {}) {
   async function create() {
     // Destroy existing connection
     destroy();
-    // Reset retry state on explicit create (e.g., new WS connection)
-    retryCount = 0;
-    _gaveUp = false;
+    // Don't reset retry count here — only reset on successful connection.
+    // Resetting on every create() defeats the backoff when the attach
+    // message triggers initP2P on each reconnect.
+    if (_gaveUp) {
+      console.log("[P2P] Previously gave up — skipping (use WebSocket)");
+      return;
+    }
+    if (_attempting) {
+      console.log("[P2P] Connection attempt already in progress — skipping");
+      return;
+    }
 
     const ws = getWS ? getWS() : null;
     if (!ws || ws.readyState !== 1) {
@@ -89,6 +99,7 @@ export function createP2PManager(config = {}) {
       return;
     }
 
+    _attempting = true;
     const newPC = new RTCPeerConnection({ iceServers: [] });
     pc = newPC;
 
@@ -134,6 +145,7 @@ export function createP2PManager(config = {}) {
       retryTimer = 0;
       retryCount = 0; // reset on success
       _gaveUp = false;
+      _attempting = false;
       connected = true;
       console.log("[P2P] DataChannel connected");
       if (onStateChange) {
@@ -152,6 +164,7 @@ export function createP2PManager(config = {}) {
 
     newDC.onclose = () => {
       if (pc !== newPC) return; // stale
+      const wasConnected = connected;
       console.log("[P2P] DataChannel closed, using WS");
       connected = false;
       dc = null;
@@ -159,7 +172,9 @@ export function createP2PManager(config = {}) {
       if (onStateChange) {
         onStateChange({ connected: false, peer: null });
       }
-      scheduleRetry();
+      // Only retry if the channel was previously open (actual disconnect).
+      // If it never opened (ICE failed), the ICE handler already scheduled retry.
+      if (wasConnected) scheduleRetry();
     };
 
     newDC.onerror = (err) => {
