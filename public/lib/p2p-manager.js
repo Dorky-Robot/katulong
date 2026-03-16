@@ -14,13 +14,16 @@ export function createP2PManager(config = {}) {
     onStateChange,
     onData,
     getWS,
-    retryDelay = 3000
+    retryDelay = 3000,
+    maxRetries = 3
   } = config;
 
   let pc = null;
   let dc = null;
   let connected = false;
   let retryTimer = 0;
+  let retryCount = 0;
+  let _gaveUp = false; // true after maxRetries exhausted
 
   /**
    * Destroy current peer connection
@@ -47,16 +50,27 @@ export function createP2PManager(config = {}) {
   }
 
   /**
-   * Schedule retry attempt
+   * Schedule retry attempt with exponential backoff.
+   * Gives up after maxRetries consecutive failures.
    */
   function scheduleRetry() {
     clearTimeout(retryTimer);
+    retryCount++;
+    if (retryCount > maxRetries) {
+      if (!_gaveUp) {
+        _gaveUp = true;
+        console.log(`[P2P] Gave up after ${maxRetries} attempts — using WebSocket`);
+      }
+      return;
+    }
+    const delay = retryDelay * Math.pow(2, retryCount - 1); // 3s, 6s, 12s
+    console.log(`[P2P] Retry ${retryCount}/${maxRetries} in ${delay}ms`);
     retryTimer = setTimeout(() => {
       const ws = getWS ? getWS() : null;
       if (!connected && ws?.readyState === 1) {
         create();
       }
-    }, retryDelay);
+    }, delay);
   }
 
   /**
@@ -65,6 +79,9 @@ export function createP2PManager(config = {}) {
   async function create() {
     // Destroy existing connection
     destroy();
+    // Reset retry state on explicit create (e.g., new WS connection)
+    retryCount = 0;
+    _gaveUp = false;
 
     const ws = getWS ? getWS() : null;
     if (!ws || ws.readyState !== 1) {
@@ -115,6 +132,8 @@ export function createP2PManager(config = {}) {
       if (pc !== newPC) return; // stale
       clearTimeout(retryTimer);
       retryTimer = 0;
+      retryCount = 0; // reset on success
+      _gaveUp = false;
       connected = true;
       console.log("[P2P] DataChannel connected");
       if (onStateChange) {
