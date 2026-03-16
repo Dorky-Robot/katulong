@@ -106,15 +106,44 @@ if [[ ! -d "$SOURCE_DIR/node_modules" ]]; then
   (cd "$SOURCE_DIR" && npm install --silent)
 fi
 
-# Generate setup token
-SETUP_TOKEN=$(node -e "console.log(require('crypto').randomBytes(16).toString('hex'))")
-
 # Data dir (also holds PID files and logs)
 DATA_DIR="${STAGE_BASE}-${PORT}"
 mkdir -p "$DATA_DIR"
 
+# Generate setup token and pre-seed it into the auth state.
+# Remote access (via tunnel) requires a setup token even for the first
+# passkey registration. Katulong uses per-entity file layout:
+#   user.json + setup-tokens/<id>.json
+SETUP_TOKEN=$(node -e "
+  const { randomBytes, scryptSync, randomUUID } = require('crypto');
+  const { writeFileSync, mkdirSync } = require('fs');
+  const { join } = require('path');
+  const dataDir = '${DATA_DIR}';
+  const token = randomBytes(16).toString('hex');
+  const salt = randomBytes(16);
+  const hash = scryptSync(token, salt, 64, { N: 16384, r: 8, p: 1 });
+  const id = randomUUID();
+  // user.json — minimal user for loadState to find
+  writeFileSync(join(dataDir, 'user.json'), JSON.stringify({
+    id: Buffer.from(randomBytes(16)).toString('base64url'),
+    name: 'owner'
+  }));
+  // setup-tokens/<id>.json
+  const tokDir = join(dataDir, 'setup-tokens');
+  mkdirSync(tokDir, { recursive: true });
+  writeFileSync(join(tokDir, id + '.json'), JSON.stringify({
+    id,
+    hash: hash.toString('hex'),
+    salt: salt.toString('hex'),
+    name: 'staging',
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000
+  }));
+  console.log(token);
+")
+
 # Start server
-PORT="$PORT" DATA_DIR="$DATA_DIR" SETUP_TOKEN="$SETUP_TOKEN" \
+PORT="$PORT" KATULONG_DATA_DIR="$DATA_DIR" \
   nohup node "$SOURCE_DIR/server.js" > "${DATA_DIR}/server.log" 2>&1 &
 SERVER_PID=$!
 echo "$SERVER_PID" > "${DATA_DIR}/server.pid"
