@@ -33,7 +33,7 @@ export function createHelmComponent({ onSendMessage, onAbort, onToggleTerminal }
   function mount(el) {
     container = el;
     container.innerHTML = `
-      <div class="helm-toolbar">
+      <div class="helm-toolbar" data-helm-toolbar>
         <div class="helm-toolbar-info">
           <span class="helm-agent-badge"></span>
           <span class="helm-status"></span>

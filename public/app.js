@@ -28,7 +28,8 @@
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
-    import { createHelmComponent } from "/lib/helm/helm-component.js";
+    import { registerClaudeCompanionWidget } from "/lib/helm/claude-companion-widget.js";
+    import { createDashboard, listWidgetTypes } from "/lib/helm/dashboard.js";
     import { createWebSocketConnection } from "/lib/websocket-connection.js";
     import { createFileBrowserStore, loadRoot } from "/lib/file-browser/file-browser-store.js";
     import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
@@ -527,13 +528,8 @@
       // Close alternative views — switching sessions returns to terminal
       if (portForwardEl?.classList.contains("active")) closePortForward();
       if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
-      // If the target session has an active helm session, show helm view; otherwise terminal
-      if (helmActiveSessions.has(name)) {
-        showHelmView();
-        helmComponent?.showSession(name);
-      } else if (helmViewEl?.classList.contains("active")) {
-        hideHelmView();
-      }
+      // If switching sessions while in helm mode, stay in helm
+      // (dashboard is independent of terminal sessions)
 
       // Ensure session is in this window's tab set
       if (!windowTabSet.hasTab(name)) {
@@ -980,43 +976,100 @@
       sidebarSettingsBtn.addEventListener("click", () => modals.open('settings'));
     }
 
-    // --- Helm Mode ---
+    // --- Helm Mode (Dashboard) ---
 
     const helmViewEl = document.getElementById("helm-view");
-    let helmMounted = false;
-    let helmComponent = null;
-    // Track which sessions are in helm mode (per-session, not global)
+    let dashboard = null;
     const helmActiveSessions = new Set();
+    // Maps helm session name → dashboard cellId for event routing
+    const helmWidgetMap = new Map();
+    // Maps yolo session names to browser session names
+    const helmSessionMap = new Map();
 
-    function ensureHelmMounted() {
-      if (helmMounted) return;
-      helmComponent = createHelmComponent({
-        onSendMessage: (session, content) => {
-          const ws = state.connection.ws;
-          if (ws?.readyState === 1) {
-            ws.send(JSON.stringify({ type: "helm-input", session, content }));
-          }
+    // Register widget types
+    registerClaudeCompanionWidget({
+      onSendMessage: (session, content) => {
+        const ws = state.connection.ws;
+        if (ws?.readyState === 1) {
+          ws.send(JSON.stringify({ type: "helm-input", session, content }));
+        }
+      },
+      onAbort: (session) => {
+        const ws = state.connection.ws;
+        if (ws?.readyState === 1) {
+          ws.send(JSON.stringify({ type: "helm-abort", session }));
+        }
+      },
+    });
+
+    function ensureDashboardMounted() {
+      if (dashboard) return;
+      dashboard = createDashboard(helmViewEl, {
+        onLayoutChange: (layout) => {
+          // TODO: persist layout
         },
-        onAbort: (session) => {
-          const ws = state.connection.ws;
-          if (ws?.readyState === 1) {
-            ws.send(JSON.stringify({ type: "helm-abort", session }));
+        onAddWidget: (cellId, resolve) => {
+          // Simple widget picker — for now just claude-companion
+          const types = listWidgetTypes();
+          if (types.length === 1) {
+            resolve(types[0], { sessionName: state.session.name });
+            return;
           }
+          // Show picker for multiple types
+          const menu = document.createElement("div");
+          menu.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px;z-index:1000;min-width:200px;";
+          for (const t of types) {
+            const btn = document.createElement("button");
+            btn.style.cssText = "display:block;width:100%;padding:8px 12px;border:none;background:transparent;color:var(--text);cursor:pointer;text-align:left;border-radius:var(--radius-sm);font-size:var(--text-sm);";
+            btn.textContent = t;
+            btn.addEventListener("mouseenter", () => btn.style.background = "var(--accent)");
+            btn.addEventListener("mouseleave", () => btn.style.background = "transparent");
+            btn.addEventListener("click", () => {
+              menu.remove();
+              resolve(t, { sessionName: state.session.name });
+            });
+            menu.appendChild(btn);
+          }
+          document.body.appendChild(menu);
+          const dismiss = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("click", dismiss); } };
+          setTimeout(() => document.addEventListener("click", dismiss), 0);
         },
-        onToggleTerminal: () => toggleHelmView(),
       });
-      helmComponent.mount(helmViewEl);
-      helmMounted = true;
+    }
+
+    /**
+     * Add a claude-companion widget to the dashboard for a session.
+     * Returns the cellId so events can be routed to it.
+     */
+    function addCompanionWidget(sessionName, context = {}) {
+      ensureDashboardMounted();
+      const row = dashboard.addRow([{
+        id: genCellId(),
+        width: null,
+        widgetType: "claude-companion",
+        context: { sessionName, ...context },
+      }]);
+      const cellId = row.cells[0].id;
+      helmWidgetMap.set(sessionName, cellId);
+      helmActiveSessions.add(sessionName);
+      return cellId;
+    }
+
+    function genCellId() { return "c-" + Math.random().toString(36).slice(2, 10); }
+
+    /** Get the helm component for a session (inside a dashboard widget). */
+    function getHelmForSession(sessionName) {
+      const cellId = helmWidgetMap.get(sessionName);
+      if (!cellId || !dashboard) return null;
+      return dashboard.getWidget(cellId)?.helm || null;
     }
 
     function showHelmView() {
-      ensureHelmMounted();
+      ensureDashboardMounted();
       if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
       if (portForwardEl?.classList.contains("active")) closePortForward();
       termContainer.classList.add("helm-hidden");
       helmViewEl.classList.add("active");
-      helmComponent.showSession(state.session.name);
-      helmComponent.focus();
     }
 
     function hideHelmView() {
@@ -1029,47 +1082,33 @@
     function toggleHelmView() {
       if (helmViewEl.classList.contains("active")) {
         hideHelmView();
-      } else if (helmActiveSessions.has(state.session.name)) {
+      } else {
         showHelmView();
       }
     }
 
-    // Maps helm session names (from yolo) to browser session names
-    const helmSessionMap = new Map();
-
     function onHelmModeChanged(effect) {
       if (effect.active) {
-        // Map the helm session to the current browser session so events
-        // route correctly even when yolo can't know the tmux session name.
         helmSessionMap.set(effect.session, state.session.name);
         const browserSession = state.session.name;
-        helmActiveSessions.add(browserSession);
-        ensureHelmMounted();
-        helmComponent.helmStarted(browserSession, {
-          agent: effect.agent,
-          prompt: effect.prompt,
-          cwd: effect.cwd,
-        });
+        if (!helmWidgetMap.has(browserSession)) {
+          addCompanionWidget(browserSession, {
+            agent: effect.agent,
+            prompt: effect.prompt,
+            cwd: effect.cwd,
+          });
+        }
         showHelmView();
       } else {
         const browserSession = helmSessionMap.get(effect.session) || effect.session;
         helmSessionMap.delete(effect.session);
-        helmActiveSessions.delete(browserSession);
-        helmComponent?.helmEnded(browserSession, {
-          result: effect.result,
-          error: effect.error,
-        });
-        if (helmViewEl.classList.contains("active")) {
-          hideHelmView();
-        }
+        const helm = getHelmForSession(browserSession);
+        helm?.helmEnded(browserSession, { result: effect.result, error: effect.error });
       }
-      // Re-render the tab bar to show/hide helm indicator
       renderBar(state.session.name);
     }
 
     // --- Claude Code Hook Events ---
-    // These come from Claude Code's hook system (PreToolUse, PostToolUse,
-    // UserPromptSubmit, Stop, Notification) via /api/helm/hook endpoint.
 
     let helmHookSessionActive = false;
 
@@ -1077,30 +1116,28 @@
       const hookName = event.hook_event_name;
       const browserSession = state.session.name;
 
-      // Auto-activate helm on first hook event
-      if (!helmHookSessionActive) {
+      // Auto-add a companion widget on first hook event
+      if (!helmWidgetMap.has(browserSession)) {
         helmHookSessionActive = true;
-        helmActiveSessions.add(browserSession);
-        ensureHelmMounted();
-        helmComponent.helmStarted(browserSession, {
-          agent: "claude-code",
-          prompt: null,
-          cwd: event.cwd || null,
-        });
+        addCompanionWidget(browserSession, { cwd: event.cwd || null });
         renderBar(browserSession);
       }
 
-      // Map hook events to helm component events
+      const helm = getHelmForSession(browserSession);
+      if (!helm) return;
+
       switch (hookName) {
+        case "SessionStart":
+          // Widget already added above
+          break;
         case "UserPromptSubmit":
-          helmComponent?.helmEvent(browserSession, {
+          helm.helmEvent(browserSession, {
             type: "user",
             message: { content: [{ type: "text", text: event.prompt }] },
           });
           break;
-
         case "PreToolUse":
-          helmComponent?.helmEvent(browserSession, {
+          helm.helmEvent(browserSession, {
             type: "assistant",
             message: { content: [{
               type: "tool_use",
@@ -1110,9 +1147,8 @@
             }] },
           });
           break;
-
         case "PostToolUse":
-          helmComponent?.helmEvent(browserSession, {
+          helm.helmEvent(browserSession, {
             type: "user",
             message: { content: [{
               type: "tool_result",
@@ -1123,19 +1159,17 @@
             }] },
           });
           break;
-
         case "Stop":
           if (event.last_assistant_message) {
-            helmComponent?.helmEvent(browserSession, {
+            helm.helmEvent(browserSession, {
               type: "assistant",
               message: { content: [{ type: "text", text: event.last_assistant_message }] },
             });
           }
-          helmComponent?.helmTurnComplete(browserSession);
+          helm.helmTurnComplete(browserSession);
           break;
-
         case "Notification":
-          helmComponent?.helmEvent(browserSession, {
+          helm.helmEvent(browserSession, {
             type: "system",
             subtype: "notification",
             message: event.message,
@@ -1144,10 +1178,8 @@
       }
     }
 
-    // --- Helm toggle button in tab bar ---
-    // Shows when helm has hook data available, lets user toggle views.
     function getHelmToggleState() {
-      return helmHookSessionActive || helmActiveSessions.has(state.session?.name);
+      return helmHookSessionActive || helmActiveSessions.size > 0 || (dashboard !== null);
     }
 
     // --- Network change monitoring ---
@@ -1217,10 +1249,18 @@
       setSyncResize: (v) => viewportManager.setSyncResize(v),
       // Helm mode (yolo WebSocket events)
       onHelmModeChanged,
-      onHelmEvent: (session, event) => helmComponent?.helmEvent(helmSessionMap.get(session) || session, event),
-      onHelmTurnComplete: (session) => helmComponent?.helmTurnComplete(helmSessionMap.get(session) || session),
-      onHelmWaitingForInput: (session) => helmComponent?.helmWaitingForInput(helmSessionMap.get(session) || session),
-      // Claude Code hook events (from /api/helm/hook)
+      onHelmEvent: (session, event) => {
+        const s = helmSessionMap.get(session) || session;
+        getHelmForSession(s)?.helmEvent(s, event);
+      },
+      onHelmTurnComplete: (session) => {
+        const s = helmSessionMap.get(session) || session;
+        getHelmForSession(s)?.helmTurnComplete(s);
+      },
+      onHelmWaitingForInput: (session) => {
+        const s = helmSessionMap.get(session) || session;
+        getHelmForSession(s)?.helmWaitingForInput(s);
+      },
       onHelmHookEvent: (event) => onHelmHookEvent(event),
     });
     wsConnection.initVisibilityReconnect();
