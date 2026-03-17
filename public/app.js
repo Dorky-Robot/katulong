@@ -917,7 +917,8 @@
     const uploadImageToTerminal = (file, sessionName) => uploadImageToTerminalFn(file, {
       onSend: rawSend,
       toast: showToast,
-      sessionName: sessionName || state.session.name
+      sessionName: sessionName || state.session.name,
+      getWebSocket: () => state.connection.ws
     });
 
     // --- Drag-and-drop (reactive manager) ---
@@ -931,7 +932,7 @@
           return;
         }
         // Upload in parallel, paste via single server request
-        uploadImagesToTerminalFn(imageFiles, { onSend: rawSend, toast: showToast, sessionName: state.session.name });
+        uploadImagesToTerminalFn(imageFiles, { onSend: rawSend, toast: showToast, sessionName: state.session.name, getWebSocket: () => state.connection.ws });
       }
     });
 
