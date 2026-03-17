@@ -160,6 +160,8 @@ export function createPasteHandler(options = {}) {
       clearTimeout(_fallbackTimer);
       _fallbackTimer = null;
     }
+    _capturedSession = null;
+    _blocked = false;
   }
 
   return {

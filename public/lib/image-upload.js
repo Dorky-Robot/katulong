@@ -219,7 +219,6 @@ export async function uploadImagesToTerminal(files, options = {}) {
         const csrf = getCsrfToken();
         if (csrf) headers["x-csrf-token"] = csrf;
         const pastePromise = waitForPaste(data.path);
-        tracker.uploaded(id);
         await fetch("/paste", {
           method: "POST",
           headers,

@@ -31,10 +31,7 @@ export function createInputSender(options = {}) {
 
         if (!sendBuf) return;
 
-        const session = getSession ? getSession() : undefined;
-        const payload = JSON.stringify(
-          session ? { type: "input", data: sendBuf, session } : { type: "input", data: sendBuf }
-        );
+        const payload = JSON.stringify({ type: "input", data: sendBuf, session: getSession ? getSession() : undefined });
 
         // Try P2P first, fall back to WebSocket
         if (p2pManager && p2pManager.send(payload)) {
