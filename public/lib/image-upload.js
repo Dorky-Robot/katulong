@@ -176,13 +176,30 @@ function getCsrfToken() {
 }
 
 /**
+ * Send data to a specific session via WebSocket input message.
+ * Uses explicit session field so the server routes to the correct
+ * session even if the user switched tabs since the paste started.
+ * Falls back to onSend (which uses the input sender's current session).
+ */
+function _sendToSession(data, sessionName, getWebSocket, onSend) {
+  if (sessionName && getWebSocket) {
+    const ws = getWebSocket();
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: "input", data, session: sessionName }));
+      return;
+    }
+  }
+  if (onSend) onSend(data);
+}
+
+/**
  * Upload images to terminal.
  * All files upload in parallel for speed. Once all complete, a single
  * POST /paste request tells the server to set clipboard + write Ctrl+V
  * to the PTY for each image sequentially — no per-file round-trips.
  */
 export async function uploadImagesToTerminal(files, options = {}) {
-  const { onSend, toast = showToast, sessionName } = options;
+  const { onSend, toast = showToast, sessionName, getWebSocket } = options;
   const tracker = getTracker();
   const entries = [];
 
@@ -209,37 +226,13 @@ export async function uploadImagesToTerminal(files, options = {}) {
   if (successEntries.length === 0) return;
 
   if (successEntries.length === 1) {
+    // Single file: clipboard already set during upload (including container
+    // bridge). Send Ctrl+V with explicit session to avoid tab-switch race.
     const { id, data } = successEntries[0];
-    // When sessionName is provided, use the /paste server route so the
-    // Ctrl+V keystroke targets the correct session even if the user
-    // switches tabs during upload.
-    if (sessionName && data.path && data.clipboard === true) {
-      try {
-        const headers = { "Content-Type": "application/json" };
-        const csrf = getCsrfToken();
-        if (csrf) headers["x-csrf-token"] = csrf;
-        const pastePromise = waitForPaste(data.path);
-        await fetch("/paste", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ paths: [data.path], session: sessionName }),
-        });
-        await pastePromise;
-        tracker.complete(id, true);
-      } catch {
-        // Fallback: send via local onSend (may target wrong session if switched)
-        if (onSend) onSend("\x16");
-        tracker.complete(id, true);
-      }
-      return;
-    }
-    // No sessionName — legacy path: clipboard set during upload, just send Ctrl+V
-    if (onSend) {
-      if (data.clipboard === true) {
-        onSend("\x16");
-      } else if (data.fsPath) {
-        onSend(data.fsPath + " ");
-      }
+    if (data.clipboard === true) {
+      _sendToSession("\x16", sessionName, getWebSocket, onSend);
+    } else if (data.fsPath) {
+      _sendToSession(data.fsPath + " ", sessionName, getWebSocket, onSend);
     }
     tracker.complete(id, true);
     return;
