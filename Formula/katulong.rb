@@ -18,13 +18,14 @@ class Katulong < Formula
   def post_install
     # Use the katulong CLI itself to handle the upgrade lifecycle.
     # `katulong service restart` does launchctl unload/load if the
-    # LaunchAgent is installed; `katulong stop` sends SIGTERM otherwise.
-    # This avoids duplicating process/launchd management in Ruby.
+    # LaunchAgent is installed; `katulong restart` does stop+start
+    # otherwise. This avoids duplicating process/launchd management
+    # in Ruby.
     katulong = bin/"katulong"
     if (Pathname.new(Dir.home) / "Library/LaunchAgents/com.dorkyrobot.katulong.plist").exist?
       system katulong, "service", "restart"
     else
-      system katulong, "stop"
+      system katulong, "restart"
     end
   end
 
