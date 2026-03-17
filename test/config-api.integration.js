@@ -18,7 +18,7 @@ import { tmpdir, hostname } from "node:os";
 const TEST_PORT = 3003;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 
-describe("Config API Integration", () => {
+describe("Config API Integration", { concurrency: 1 }, () => {
   let serverProcess;
   let testDataDir;
 

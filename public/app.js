@@ -270,7 +270,7 @@
         // but fit() can change the terminal rows/cols without the container
         // changing (e.g. on initial attach when the container was already laid out).
         if (state.connection.ws?.readyState === 1) {
-          state.connection.ws.send(JSON.stringify({ type: "resize", cols: active.term.cols, rows: active.term.rows }));
+          state.connection.ws.send(JSON.stringify({ type: "resize", session: state.session.name, cols: active.term.cols, rows: active.term.rows }));
         }
       });
     }
@@ -355,7 +355,8 @@
     // Create buffered input sender
     const inputSender = createInputSender({
       p2pManager,
-      getWebSocket: () => state.connection.ws
+      getWebSocket: () => state.connection.ws,
+      getSession: () => state.session.name
     });
 
     const rawSend = (data) => inputSender.send(data);
@@ -812,7 +813,7 @@
       bar,
       onWebSocketResize: (cols, rows) => {
         if (state.connection.ws?.readyState === 1) {
-          state.connection.ws.send(JSON.stringify({ type: "resize", cols, rows }));
+          state.connection.ws.send(JSON.stringify({ type: "resize", session: state.session.name, cols, rows }));
         }
       }
     });
@@ -908,9 +909,10 @@
 
 
     // --- Image upload (using imported helpers) ---
-    const uploadImageToTerminal = (file) => uploadImageToTerminalFn(file, {
+    const uploadImageToTerminal = (file, sessionName) => uploadImageToTerminalFn(file, {
       onSend: rawSend,
-      toast: showToast
+      toast: showToast,
+      sessionName: sessionName || state.session.name
     });
 
     // --- Drag-and-drop (reactive manager) ---
@@ -933,7 +935,8 @@
     // --- Global paste ---
 
     const pasteHandler = createPasteHandler({
-      onImage: (file) => uploadImageToTerminal(file),
+      getSession: () => state.session.name,
+      onImage: (file, sessionName) => uploadImageToTerminal(file, sessionName),
       // Use xterm.js paste() so text is wrapped in bracketed paste
       // markers (\x1b[200~…\x1b[201~) when the app has enabled it.
       // Without this, multiline pastes arrive without brackets and

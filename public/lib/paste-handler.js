@@ -21,13 +21,17 @@ export function createPasteHandler(options = {}) {
   const {
     onImage,
     onTextPaste,
-    isImageFileFn = isImageFile
+    isImageFileFn = isImageFile,
+    getSession
   } = options;
 
   // When true, we blocked a Ctrl+V keydown and are waiting for the
   // paste event (or fallback timer) to handle it.
   let _blocked = false;
   let _fallbackTimer = null;
+  // Session name captured at paste-initiation time, so the image upload
+  // targets the correct session even if the user switches tabs during upload.
+  let _capturedSession = null;
 
   /**
    * Handle keydown — block Ctrl+V / Cmd+V so xterm doesn't send \x16
@@ -42,6 +46,7 @@ export function createPasteHandler(options = {}) {
         return;
       }
       _blocked = true;
+      _capturedSession = getSession ? getSession() : null;
       e.stopImmediatePropagation();
       e.preventDefault();
       // If no paste event fires within 200ms (WebKit suppresses it after
@@ -58,6 +63,8 @@ export function createPasteHandler(options = {}) {
     if (!_blocked) return;
     _blocked = false;
     _fallbackTimer = null;
+    const sessionName = _capturedSession;
+    _capturedSession = null;
 
     // Try navigator.clipboard.read() for images first
     try {
@@ -68,7 +75,7 @@ export function createPasteHandler(options = {}) {
             const blob = await item.getType(type);
             const file = new File([blob], "clipboard-image." + type.split("/")[1], { type });
             if (isImageFileFn(file) && onImage) {
-              onImage(file);
+              onImage(file, sessionName);
               return;
             }
           }
@@ -92,6 +99,9 @@ export function createPasteHandler(options = {}) {
       clearTimeout(_fallbackTimer);
       _fallbackTimer = null;
     }
+    // Use session captured at keydown time, or capture now for direct paste events
+    const sessionName = _capturedSession || (getSession ? getSession() : null);
+    _capturedSession = null;
     _blocked = false;
 
     // Let native paste work in input/textarea elements (e.g., dictation modal)
@@ -118,7 +128,7 @@ export function createPasteHandler(options = {}) {
       e.preventDefault();
       if (onImage) {
         for (const file of imageFiles) {
-          onImage(file);
+          onImage(file, sessionName);
         }
       }
     } else {
