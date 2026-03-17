@@ -45,32 +45,16 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           TAG="${GITHUB_REF_NAME}"
 
-          mkdir -p homebrew-tap/Formula
-          cat > homebrew-tap/Formula/katulong.rb << FORMULA
-          class Katulong < Formula
-            desc "Self-hosted web terminal with tmux sessions and WebAuthn security"
-            homepage "https://github.com/Dorky-Robot/katulong"
-            url "https://github.com/Dorky-Robot/katulong/archive/refs/tags/${TAG}.tar.gz"
-            sha256 "${SOURCE_SHA}"
-            license "MIT"
-
-            depends_on "node"
-
-            def install
-              system "npm", "install", "--omit=dev"
-              libexec.install Dir["*"]
-              bin.install_symlink libexec/"bin/katulong"
-            end
-
-            test do
-              assert_match "katulong", shell_output("#{bin}/katulong --help")
-            end
-          end
-          FORMULA
+          # Copy the formula from the repo (source of truth) and patch
+          # in the correct version URL and SHA for this release.
+          cp Formula/katulong.rb homebrew-tap/Formula/katulong.rb
+          sed -i "s|url \".*\"|url \"https://github.com/Dorky-Robot/katulong/archive/refs/tags/${TAG}.tar.gz\"|" homebrew-tap/Formula/katulong.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${SOURCE_SHA}\"|" homebrew-tap/Formula/katulong.rb
 
           cd homebrew-tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/katulong.rb
+          git diff --cached --quiet && echo "No changes" && exit 0
           git commit -m "katulong ${VERSION}"
           git push
