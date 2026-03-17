@@ -168,6 +168,19 @@ describe("validateInput", () => {
     assert.match(result.error, /data/i);
   });
 
+  it("accepts input message with optional session field", () => {
+    const msg = { type: "input", data: "hello", session: "my-session" };
+    const result = validateInput(msg);
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("rejects when session is not a string in input", () => {
+    const msg = { type: "input", data: "hello", session: 123 };
+    const result = validateInput(msg);
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /session/i);
+  });
+
   it("rejects when message is not an object", () => {
     const result = validateInput("not an object");
     assert.strictEqual(result.valid, false);
@@ -208,6 +221,19 @@ describe("validateResize", () => {
     const result = validateResize(msg);
     assert.strictEqual(result.valid, false);
     assert.match(result.error, /1000/);
+  });
+
+  it("accepts resize message with optional session field", () => {
+    const msg = { type: "resize", cols: 100, rows: 30, session: "my-session" };
+    const result = validateResize(msg);
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("rejects when session is not a string in resize", () => {
+    const msg = { type: "resize", cols: 100, rows: 30, session: 42 };
+    const result = validateResize(msg);
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /session/i);
   });
 
   it("rejects when message is not an object", () => {

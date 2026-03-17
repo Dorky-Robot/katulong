@@ -368,7 +368,7 @@ export function createWebSocketConnection(deps = {}) {
       const cols = term?.cols || 80;
       const rows = term?.rows || 24;
       state.connection.ws.send(JSON.stringify({ type: "attach", session: state.session.name, cols, rows }));
-      state.connection.ws.send(JSON.stringify({ type: "resize", cols, rows }));
+      state.connection.ws.send(JSON.stringify({ type: "resize", session: state.session.name, cols, rows }));
     };
 
     state.connection.ws.onmessage = (e) => {
@@ -451,7 +451,7 @@ export function createWebSocketConnection(deps = {}) {
             const term = getTerm();
             const cols = term?.cols || 80;
             const rows = term?.rows || 24;
-            state.connection.ws.send(JSON.stringify({ type: "resize", cols, rows }));
+            state.connection.ws.send(JSON.stringify({ type: "resize", session: state.session.name, cols, rows }));
           } catch {
             state.connection.ws.close();
           }

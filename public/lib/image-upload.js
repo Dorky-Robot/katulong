@@ -209,8 +209,32 @@ export async function uploadImagesToTerminal(files, options = {}) {
   if (successEntries.length === 0) return;
 
   if (successEntries.length === 1) {
-    // Single file: clipboard set during upload, just send Ctrl+V
     const { id, data } = successEntries[0];
+    // When sessionName is provided, use the /paste server route so the
+    // Ctrl+V keystroke targets the correct session even if the user
+    // switches tabs during upload.
+    if (sessionName && data.path && data.clipboard === true) {
+      try {
+        const headers = { "Content-Type": "application/json" };
+        const csrf = getCsrfToken();
+        if (csrf) headers["x-csrf-token"] = csrf;
+        const pastePromise = waitForPaste(data.path);
+        tracker.uploaded(id);
+        await fetch("/paste", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ paths: [data.path], session: sessionName }),
+        });
+        await pastePromise;
+        tracker.complete(id, true);
+      } catch {
+        // Fallback: send via local onSend (may target wrong session if switched)
+        if (onSend) onSend("\x16");
+        tracker.complete(id, true);
+      }
+      return;
+    }
+    // No sessionName — legacy path: clipboard set during upload, just send Ctrl+V
     if (onSend) {
       if (data.clipboard === true) {
         onSend("\x16");

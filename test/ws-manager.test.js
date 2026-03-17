@@ -220,6 +220,61 @@ describe("createWebSocketManager", () => {
       assert.equal(ws2._closed, null);
     });
 
+    it("input message with session field passes session to writeInput", async () => {
+      const ws = createMockWs();
+      wsMgr.handleConnection(ws);
+
+      // Find the clientId that was assigned
+      const clientId = [...wsMgr.wsClients.keys()][0];
+
+      // Track writeInput calls
+      const writeInputCalls = [];
+      sessionManager.writeInput = (cid, data, session) => {
+        writeInputCalls.push({ clientId: cid, data, session });
+      };
+
+      // Simulate attach first (required for auth check to pass with null state)
+      await ws._handlers.message(Buffer.from(JSON.stringify({
+        type: "attach", session: "test-session", cols: 80, rows: 24
+      })));
+
+      // Send input with explicit session
+      await ws._handlers.message(Buffer.from(JSON.stringify({
+        type: "input", data: "hello", session: "explicit-session"
+      })));
+
+      // Allow message queue to process
+      await new Promise(r => setTimeout(r, 10));
+
+      assert.equal(writeInputCalls.length, 1);
+      assert.equal(writeInputCalls[0].data, "hello");
+      assert.equal(writeInputCalls[0].session, "explicit-session");
+    });
+
+    it("input message without session field passes undefined to writeInput", async () => {
+      const ws = createMockWs();
+      wsMgr.handleConnection(ws);
+
+      const writeInputCalls = [];
+      sessionManager.writeInput = (cid, data, session) => {
+        writeInputCalls.push({ clientId: cid, data, session });
+      };
+
+      await ws._handlers.message(Buffer.from(JSON.stringify({
+        type: "attach", session: "test-session", cols: 80, rows: 24
+      })));
+
+      await ws._handlers.message(Buffer.from(JSON.stringify({
+        type: "input", data: "hello"
+      })));
+
+      await new Promise(r => setTimeout(r, 10));
+
+      assert.equal(writeInputCalls.length, 1);
+      assert.equal(writeInputCalls[0].data, "hello");
+      assert.equal(writeInputCalls[0].session, undefined);
+    });
+
     it("resize-sync excludes the active client", () => {
       const ws1 = createMockWs();
       const ws2 = createMockWs();
