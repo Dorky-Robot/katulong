@@ -16,36 +16,15 @@ class Katulong < Formula
   end
 
   def post_install
-    # Create data directory
-    data_dir = Pathname.new(Dir.home) / ".katulong"
-    data_dir.mkpath
-
-    plist_path = Pathname.new(Dir.home) / "Library/LaunchAgents/com.dorkyrobot.katulong.plist"
-
-    if plist_path.exist?
-      # LaunchAgent is installed — let launchctl handle the lifecycle.
-      # Unload (kills old process) then reload (starts new version).
-      system "launchctl", "unload", plist_path.to_s
-      system "launchctl", "load", "-w", plist_path.to_s
+    # Use the katulong CLI itself to handle the upgrade lifecycle.
+    # `katulong service restart` does launchctl unload/load if the
+    # LaunchAgent is installed; `katulong stop` sends SIGTERM otherwise.
+    # This avoids duplicating process/launchd management in Ruby.
+    katulong = bin/"katulong"
+    if (Pathname.new(Dir.home) / "Library/LaunchAgents/com.dorkyrobot.katulong.plist").exist?
+      system katulong, "service", "restart"
     else
-      # No LaunchAgent — stop the old server manually so it doesn't serve
-      # 500s from deleted Cellar files. During `brew upgrade`, the old
-      # process still references the old Cellar path. Cleanup deletes those
-      # files, causing readFileSync failures → 500 errors.
-      # This runs in post_install (not install) because Homebrew's sandbox
-      # blocks process signals during install on macOS.
-      pid_file = data_dir / "server.pid"
-      if pid_file.exist?
-        old_pid = pid_file.read.strip.to_i
-        if old_pid > 0
-          begin
-            Process.kill("TERM", old_pid)
-            sleep 3
-          rescue Errno::ESRCH, Errno::EPERM
-            # Process already exited or PID reused by another user's process
-          end
-        end
-      end
+      system katulong, "stop"
     end
   end
 
