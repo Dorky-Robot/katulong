@@ -28,8 +28,13 @@ function setupBrowserGlobals() {
       return {
         className: "",
         textContent: "",
+        innerHTML: "",
+        dataset: {},
+        style: {},
         classList: { add() {}, remove() {} },
         remove() {},
+        appendChild() {},
+        querySelector() { return { style: {}, dataset: {}, innerHTML: "" }; },
       };
     },
     body: { appendChild() {} },
@@ -68,8 +73,44 @@ function setupBrowserGlobals() {
   // requestAnimationFrame / setTimeout needed by showToast but not relevant.
   globalThis.requestAnimationFrame = (fn) => fn();
 
+  // performance.now — used by upload tracker
+  globalThis.performance = globalThis.performance || { now: () => Date.now() };
+
   // fetch — overridden per-test.
   globalThis.fetch = mock.fn();
+
+  // XMLHttpRequest mock — the upload code uses XHR for progress tracking.
+  // Delegates to globalThis.fetch so per-test fetch mocks control responses.
+  globalThis.XMLHttpRequest = class {
+    constructor() {
+      this.upload = {};
+      this._headers = {};
+    }
+    open(method, url) {
+      this._method = method;
+      this._url = url;
+    }
+    setRequestHeader(k, v) {
+      this._headers[k] = v;
+    }
+    send(body) {
+      // Delegate to the per-test fetch mock
+      const fetchFn = globalThis.fetch;
+      fetchFn(this._url, {
+        method: this._method,
+        headers: { ...this._headers },
+        body,
+      }).then(async (res) => {
+        this.status = res.ok !== false ? 200 : 500;
+        const data = await (res.json ? res.json() : {});
+        this.responseText = JSON.stringify(data);
+        if (this.upload.onload) this.upload.onload();
+        if (this.onload) this.onload();
+      }).catch((err) => {
+        if (this.onerror) this.onerror(err);
+      });
+    }
+  };
 }
 
 function teardownBrowserGlobals() {
@@ -80,6 +121,7 @@ function teardownBrowserGlobals() {
   delete globalThis.navigator;
   delete globalThis.requestAnimationFrame;
   delete globalThis.fetch;
+  delete globalThis.XMLHttpRequest;
 }
 
 // ---------------------------------------------------------------------------
@@ -301,10 +343,11 @@ describe("uploadImageToTerminal", () => {
     const sent = [];
     const file = fakeFile("photo.png", "image/png");
 
-    await uploadImageToTerminal(file, {
+    uploadImageToTerminal(file, {
       onSend: (val) => sent.push(val),
       toast: () => {},
     });
+    await new Promise(r => setTimeout(r, 50));
 
     assert.equal(sent.length, 1);
     assert.equal(sent[0], "/uploads/photo.png ");
@@ -322,10 +365,11 @@ describe("uploadImageToTerminal", () => {
     const toasts = [];
     const file = fakeFile("photo.png", "image/png");
 
-    await uploadImageToTerminal(file, {
+    uploadImageToTerminal(file, {
       onSend: (val) => sent.push(val),
       toast: (msg, isError) => toasts.push({ msg, isError }),
     });
+    await new Promise(r => setTimeout(r, 50));
 
     assert.equal(sent.length, 0);
     assert.equal(toasts.length, 1);
@@ -343,10 +387,11 @@ describe("uploadImageToTerminal", () => {
     const toasts = [];
     const file = fakeFile("photo.png", "image/png");
 
-    await uploadImageToTerminal(file, {
+    uploadImageToTerminal(file, {
       onSend: (val) => sent.push(val),
       toast: (msg, isError) => toasts.push({ msg, isError }),
     });
+    await new Promise(r => setTimeout(r, 50));
 
     assert.equal(sent.length, 0);
     assert.equal(toasts.length, 1);
@@ -364,10 +409,11 @@ describe("uploadImageToTerminal", () => {
     const sent = [];
     const file = fakeFile("photo.png", "image/png");
 
-    await uploadImageToTerminal(file, {
+    uploadImageToTerminal(file, {
       onSend: (val) => sent.push(val),
       toast: () => {},
     });
+    await new Promise(r => setTimeout(r, 50));
 
     assert.equal(sent.length, 1);
     assert.equal(sent[0], "\x16");
@@ -384,10 +430,11 @@ describe("uploadImageToTerminal", () => {
     const sent = [];
     const file = fakeFile("photo.png", "image/png");
 
-    await uploadImageToTerminal(file, {
+    uploadImageToTerminal(file, {
       onSend: (val) => sent.push(val),
       toast: () => {},
     });
+    await new Promise(r => setTimeout(r, 50));
 
     assert.equal(sent.length, 1);
     assert.equal(sent[0], "/uploads/photo.png ");
@@ -404,10 +451,11 @@ describe("uploadImageToTerminal", () => {
     const sent = [];
     const file = fakeFile("photo.png", "image/png");
 
-    await uploadImageToTerminal(file, {
+    uploadImageToTerminal(file, {
       onSend: (val) => sent.push(val),
       toast: () => {},
     });
+    await new Promise(r => setTimeout(r, 50));
 
     // Should fall through to fsPath, not treat "error" as clipboard success
     assert.equal(sent.length, 1);
@@ -424,10 +472,13 @@ describe("uploadImageToTerminal", () => {
 
     const file = fakeFile("test.png", "image/png");
 
-    await uploadImageToTerminal(file, {
+    uploadImageToTerminal(file, {
       onSend: () => {},
       toast: () => {},
     });
+
+    // XHR mock delegates to fetch, so fetch.mock tracks the call
+    await new Promise(r => setTimeout(r, 50));
 
     assert.equal(globalThis.fetch.mock.callCount(), 1);
     const [url, opts] = globalThis.fetch.mock.calls[0].arguments;
