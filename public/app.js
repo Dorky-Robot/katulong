@@ -33,6 +33,7 @@
     import { createFileBrowserStore, loadRoot } from "/lib/file-browser/file-browser-store.js";
     import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
+    import { createNotepad } from "/lib/notepad.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -571,6 +572,7 @@
       // Close alternative views — switching sessions returns to terminal
       if (portForwardEl?.classList.contains("active")) closePortForward();
       if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
+      if (notepad.isActive()) notepad.hide();
       // If the target session has an active helm session, show helm view; otherwise terminal
       if (helmActiveSessions.has(name)) {
         showHelmView();
@@ -829,9 +831,12 @@
       onSessionClick: openSessionManager,
       onNewSessionClick: createNewSession,
       onTabClick: (name) => switchSession(name),
+      onNotepadClick: () => toggleNotepad(),
+      get notepad() { return notepad; },
       onTabRenamed: (oldName, newName) => {
         windowTabSet.renameTab(oldName, newName);
         terminalPool.rename(oldName, newName);
+        notepad.rename(oldName, newName);
         invalidateSessions(sessionStore, newName);
         if (state.session.name === oldName) {
           state.update('session.name', newName);
@@ -960,6 +965,7 @@
     function returnToTerminal() {
       if (portForwardEl?.classList.contains("active")) closePortForward();
       if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
+      if (notepad.isActive()) notepad.hide();
       if (helmViewEl?.classList.contains("active")) hideHelmView();
       getTerm()?.focus();
       fitActiveTerminal();
@@ -984,7 +990,7 @@
         getTerm()?.focus();
         fitActiveTerminal();
       } else {
-        // Close port forward if open (mutual exclusion)
+        // Close other panels if open (mutual exclusion)
         if (portForwardEl.classList.contains("active")) closePortForward();
         if (!fileBrowserMounted) {
           fileBrowserComponent = createFileBrowserComponent(fileBrowserStore, {
@@ -1014,7 +1020,7 @@
         getTerm()?.focus();
         fitActiveTerminal();
       } else {
-        // Close file browser if open (mutual exclusion)
+        // Close other panels if open (mutual exclusion)
         if (fileBrowserEl.classList.contains("active")) closeFileBrowser();
         if (!portForwardMounted) {
           portForwardComponent = createPortForwardComponent({
@@ -1045,6 +1051,20 @@
     const sidebarSettingsBtn = document.getElementById("sidebar-settings-btn");
     if (sidebarSettingsBtn) {
       sidebarSettingsBtn.addEventListener("click", () => modals.open('settings'));
+    }
+
+    // --- Notepad ---
+
+    const notepad = createNotepad({
+      onClose: () => getTerm()?.focus(),
+    });
+
+    function toggleNotepad() {
+      if (notepad.isActive()) {
+        notepad.hide();
+      } else {
+        notepad.show(state.session.name);
+      }
     }
 
     // --- Helm Mode ---

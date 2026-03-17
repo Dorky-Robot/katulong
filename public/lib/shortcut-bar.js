@@ -41,6 +41,7 @@ export function createShortcutBar(options = {}) {
     onSettingsClick,
     onShortcutsClick,
     onDictationClick,
+    onNotepadClick,
     onAllTabsClosed,
     sendFn,
     updateP2PIndicator,
@@ -258,6 +259,11 @@ export function createShortcutBar(options = {}) {
     e.preventDefault();
     const tab = e.currentTarget;
     const items = [
+      {
+        icon: "note-pencil",
+        label: "Notes",
+        action: () => { if (onNotepadClick) onNotepadClick(); }
+      },
       {
         icon: "pencil-simple",
         label: "Rename",
@@ -686,6 +692,14 @@ export function createShortcutBar(options = {}) {
       nameSpan.textContent = s.name;
       tab.appendChild(nameSpan);
 
+      // Notes indicator dot — show when session has notes
+      if (options.notepad && options.notepad.hasNotes(s.name)) {
+        const dot = document.createElement("span");
+        dot.className = "tab-notes-dot";
+        dot.title = "Has notes";
+        tab.appendChild(dot);
+      }
+
       // Close button (×) — click to detach (like closing a Chrome tab)
       const closeBtn = document.createElement("span");
       closeBtn.className = "tab-close";
@@ -758,6 +772,7 @@ export function createShortcutBar(options = {}) {
       // Phone: utility buttons in toolbar (island has Esc/Tab/keyboard)
       const utils = [
         { icon: "terminal-window", label: "Terminal", click: onTerminalClick },
+        { icon: "note-pencil", label: "Notes", click: onNotepadClick },
         { icon: "folder-open", label: "Files", click: onFilesClick },
         { icon: "plug", label: "Port Forward", click: onPortForwardClick, id: "bar-portfwd-btn", hidden: !portProxyEnabled },
         { icon: "gear", label: "Settings", click: onSettingsClick },
@@ -901,6 +916,15 @@ export function createShortcutBar(options = {}) {
 
     // Utility buttons — skip on phone (they're in the toolbar)
     if (!isPhone()) {
+      if (onNotepadClick) {
+        const btn = document.createElement("button");
+        btn.className = "key-island-btn key-island-icon";
+        btn.setAttribute("aria-label", "Notes");
+        btn.innerHTML = '<i class="ph ph-note-pencil"></i>';
+        btn.addEventListener("click", onNotepadClick);
+        island.appendChild(btn);
+      }
+
       if (onFilesClick) {
         const btn = document.createElement("button");
         btn.className = "key-island-btn key-island-icon";

@@ -93,6 +93,13 @@ describe("Config API Integration", { concurrency: 1 }, () => {
 
   describe("GET /api/config", () => {
     it("should return current configuration", async () => {
+      // Reset instance name to hostname in case a prior test changed it
+      await fetch(`${BASE_URL}/api/config/instance-name`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instanceName: hostname() }),
+      });
+
       const response = await fetch(`${BASE_URL}/api/config`);
       assert.strictEqual(response.status, 200, "Should return 200 OK");
 
