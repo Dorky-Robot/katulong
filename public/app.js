@@ -137,9 +137,10 @@
         try {
           const msg = JSON.parse(str);
           if (msg.type === "output") {
-            // Route through seq-buffer if sequenced, otherwise write directly (backward compat)
-            if (msg.seq !== undefined && wsConnection && wsConnection.seqBuffer?.isInitialized()) {
-              wsConnection.seqBuffer.push(msg.seq, msg.data);
+            // Route through the WS connection's sequencing layer (handles both
+            // sequenced and unsequenced output, nudge timer reset, etc.)
+            if (wsConnection) {
+              wsConnection.pushP2POutput(msg.seq, msg.data, msg.session);
             } else {
               const term = (msg.session && terminalPool.get(msg.session)?.term)
                 || terminalPool.getActive()?.term;

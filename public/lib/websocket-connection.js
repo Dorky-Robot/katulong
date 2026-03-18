@@ -50,6 +50,15 @@ export function createWebSocketConnection(deps = {}) {
   let reconnectTimeout = null;
   let suppressReconnect = false;
 
+  // Helper: send a catchup request to the server
+  // (Catchup trigger 1/2: gap timeout in seq-buffer; 2/2: nudge poll in seqStatus effect)
+  function sendCatchup(session, fromSeq) {
+    const ws = state.connection.ws;
+    if (ws && ws.readyState === 1 && session) {
+      ws.send(JSON.stringify({ type: "catchup", session, fromSeq }));
+    }
+  }
+
   // Sequence tracking for ordered output delivery
   const seqBuffer = createSeqBuffer({
     onFlush: (data) => {
@@ -58,11 +67,8 @@ export function createWebSocketConnection(deps = {}) {
       if (term) scheduleWrite(term, data);
     },
     onGapTimeout: (expectedSeq) => {
-      // Request catchup from server
-      const ws = state.connection.ws;
-      if (ws && ws.readyState === 1 && state.session.name) {
-        ws.send(JSON.stringify({ type: "catchup", session: state.session.name, fromSeq: expectedSeq }));
-      }
+      // Catchup trigger 1/2: gap in seq-ordered stream (see also seqStatus effect)
+      sendCatchup(state.session.name, expectedSeq);
     },
   });
 
@@ -319,13 +325,10 @@ export function createWebSocketConnection(deps = {}) {
         nudgeTimer.start();
         break;
       case 'seqStatus': {
-        // Compare server seq with our expected — request catchup if behind
+        // Catchup trigger 2/2: nudge poll revealed lag (see also onGapTimeout)
         const expected = seqBuffer.getExpectedSeq();
         if (seqBuffer.isInitialized() && effect.seq > expected) {
-          const ws = state.connection.ws;
-          if (ws && ws.readyState === 1) {
-            ws.send(JSON.stringify({ type: "catchup", session: effect.session, fromSeq: expected }));
-          }
+          sendCatchup(effect.session, expected);
         }
         break;
       }
@@ -563,7 +566,9 @@ export function createWebSocketConnection(deps = {}) {
     wsMessageHandlers,
     executeEffect,
     getConnectionState: () => connectionState,
-    seqBuffer,
-    nudgeTimer,
+    /** Route P2P output through the sequencing layer. */
+    pushP2POutput(seq, data, session) {
+      executeEffect({ type: 'seqOutput', seq, data, session });
+    },
   };
 }

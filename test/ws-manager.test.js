@@ -64,7 +64,8 @@ function createMockSessionManager() {
   return {
     attachClient: async (clientId, session) => {
       clientSessions.set(clientId, session);
-      return { buffer: "", alive: true };
+      const s = mockSessions.get(session);
+      return { buffer: "", alive: true, seq: s?.outputBuffer?.totalBytes };
     },
     detachClient: (clientId) => { clientSessions.delete(clientId); },
     getSessionForClient: (clientId) => clientSessions.get(clientId) || null,

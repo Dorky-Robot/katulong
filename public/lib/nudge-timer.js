@@ -14,6 +14,7 @@ export function createNudgeTimer({ getWS }) {
   let running = false;
 
   function tick() {
+    if (!running) return; // guard against stale timer after stop()
     const ws = getWS();
     if (ws && ws.readyState === 1) {
       ws.send(JSON.stringify({ type: "seq-query" }));
