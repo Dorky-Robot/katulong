@@ -87,6 +87,7 @@ mock.module(tmuxModuleUrl, {
     captureVisiblePane: async () => "$ prompt\n",
     checkTmux: async () => {},
     cleanTmuxServerEnv: async () => {},
+    setTmuxKatulongEnv: async () => {},
     tmuxListSessions: async () => [...tmuxSessions.keys()],
     tmuxKillSession: async (tmuxName) => { tmuxSessions.delete(tmuxName); },
     tmuxListSessionsDetailed: async () => new Map(),

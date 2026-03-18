@@ -22,6 +22,7 @@ const COMMANDS = {
   token: "Manage setup tokens (create, list, revoke)",
   credential: "Manage passkey credentials (list, revoke)",
   session: "Manage terminal sessions (list, create, kill, rename)",
+  notes: "Read per-session notepad content (read, list)",
   service: "Manage macOS LaunchAgent (install, uninstall, restart, status)",
 };
 
@@ -56,6 +57,9 @@ EXAMPLES:
   katulong credential list    List registered passkeys
   katulong session list       List active PTY sessions
   katulong session kill dev   Kill a PTY session
+  katulong notes read         Read notes for current session
+  katulong notes todos        List unchecked todos
+  katulong notes check "fix"  Check off a matching todo
   katulong service install    Auto-start on login (macOS)
   katulong service restart    Restart after brew upgrade
 
