@@ -137,9 +137,15 @@
         try {
           const msg = JSON.parse(str);
           if (msg.type === "output") {
-            const term = (msg.session && terminalPool.get(msg.session)?.term)
-              || terminalPool.getActive()?.term;
-            if (term) terminalWriteWithScroll(term, msg.data);
+            // Route through the WS connection's sequencing layer (handles both
+            // sequenced and unsequenced output, nudge timer reset, etc.)
+            if (wsConnection) {
+              wsConnection.pushP2POutput(msg.seq, msg.data, msg.session);
+            } else {
+              const term = (msg.session && terminalPool.get(msg.session)?.term)
+                || terminalPool.getActive()?.term;
+              if (term) terminalWriteWithScroll(term, msg.data);
+            }
           }
         } catch {
           // ignore malformed P2P data
