@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import http from "node:http";
 import { writeAuthFixture } from "./helpers/auth-fixture.js";
 
-const TEST_PORT = 3007;
+const TEST_PORT = 3011;
 
 // A pre-seeded session token and matching CSRF token used in tests.
 const SESSION_TOKEN = "test-session-token-abcdef1234567890abcdef1234567890";
