@@ -22,7 +22,7 @@ import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest, isLoopbackAddress } from "./lib/access-method.js";
 import { serveStaticFile, clearFileCache, buildVendorHashes } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
-import { createSessionManager, checkTmux, cleanTmuxServerEnv } from "./lib/session-manager.js";
+import { createSessionManager, checkTmux, cleanTmuxServerEnv, setTmuxKatulongEnv } from "./lib/session-manager.js";
 import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/routes.js";
 import { createFileBrowserRoutes } from "./lib/file-browser.js";
 import { createPortProxyRoutes, proxyWebSocket } from "./lib/port-proxy.js";
@@ -166,6 +166,7 @@ if (!hasTmux) {
 // Strip SENSITIVE_ENV_VARS from the tmux server's global environment
 // so they don't leak into terminal sessions (defense-in-depth).
 await cleanTmuxServerEnv();
+await setTmuxKatulongEnv(join(__dirname, "bin"), PORT);
 
 // --- Session manager (replaces daemon IPC) ---
 

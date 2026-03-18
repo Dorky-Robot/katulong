@@ -729,6 +729,19 @@ export function createNotepad({ onClose }) {
     positionElement();
 
     // Async load from server (updates if different)
+    _syncFromServer(sessionName);
+    // Poll for external changes (e.g. CLI edits) while visible
+    if (_syncTimer) clearInterval(_syncTimer);
+    _syncTimer = setInterval(() => {
+      if (currentSession && isActive() && editingIdx === -1) {
+        _syncFromServer(currentSession);
+      }
+    }, 3000);
+  }
+
+  let _syncTimer = null;
+
+  function _syncFromServer(sessionName) {
     loadNoteFromServer(sessionName).then(content => {
       if (currentSession === sessionName && content !== serialize()) {
         blocks = parse(content);
@@ -739,6 +752,7 @@ export function createNotepad({ onClose }) {
   }
 
   function hide() {
+    if (_syncTimer) { clearInterval(_syncTimer); _syncTimer = null; }
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
     if (currentSession) saveNoteToServer(currentSession, serialize());
 
