@@ -33,28 +33,37 @@ jobs:
           SHA=$(curl -fsSL "$URL" | sha256sum | cut -d' ' -f1)
           echo "SOURCE_SHA=${SHA}" >> "$GITHUB_ENV"
 
-      - name: Checkout tap repo
-        uses: actions/checkout@v4
-        with:
-          repository: dorky-robot/homebrew-tap
-          token: ${{ secrets.TAP_GITHUB_TOKEN }}
-          path: homebrew-tap
-
-      - name: Update formula
+      - name: Update tap repos
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           TAG="${GITHUB_REF_NAME}"
 
-          # Copy the formula from the repo (source of truth) and patch
-          # in the correct version URL and SHA for this release.
-          cp Formula/katulong.rb homebrew-tap/Formula/katulong.rb
-          sed -i "s|url \".*\"|url \"https://github.com/Dorky-Robot/katulong/archive/refs/tags/${TAG}.tar.gz\"|" homebrew-tap/Formula/katulong.rb
-          sed -i "s|sha256 \".*\"|sha256 \"${SOURCE_SHA}\"|" homebrew-tap/Formula/katulong.rb
+          # Build the patched formula
+          cp Formula/katulong.rb /tmp/katulong.rb
+          sed -i "s|url \".*\"|url \"https://github.com/Dorky-Robot/katulong/archive/refs/tags/${TAG}.tar.gz\"|" /tmp/katulong.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${SOURCE_SHA}\"|" /tmp/katulong.rb
 
-          cd homebrew-tap
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/katulong.rb
-          git diff --cached --quiet && echo "No changes" && exit 0
-          git commit -m "katulong ${VERSION}"
-          git push
+          # Update both tap repos (homebrew-tap and homebrew-katulong)
+          for REPO in homebrew-tap homebrew-katulong; do
+            BRANCH="main"
+            if [ "$REPO" = "homebrew-katulong" ]; then BRANCH="master"; fi
+
+            echo "Updating dorky-robot/${REPO} (${BRANCH})..."
+            git clone --depth 1 -b "$BRANCH" \
+              "https://x-access-token:${TAP_TOKEN}@github.com/Dorky-Robot/${REPO}.git" \
+              "/tmp/${REPO}" 2>/dev/null || continue
+
+            mkdir -p "/tmp/${REPO}/Formula"
+            cp /tmp/katulong.rb "/tmp/${REPO}/Formula/katulong.rb"
+            cd "/tmp/${REPO}"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add Formula/katulong.rb
+            git diff --cached --quiet && echo "  No changes" && cd - && continue
+            git commit -m "katulong ${VERSION}"
+            git push
+            echo "  Updated to ${VERSION}"
+            cd -
+          done
