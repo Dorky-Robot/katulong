@@ -137,9 +137,14 @@
         try {
           const msg = JSON.parse(str);
           if (msg.type === "output") {
-            const term = (msg.session && terminalPool.get(msg.session)?.term)
-              || terminalPool.getActive()?.term;
-            if (term) terminalWriteWithScroll(term, msg.data);
+            // Route through seq-buffer if sequenced, otherwise write directly (backward compat)
+            if (msg.seq !== undefined && wsConnection && wsConnection.seqBuffer?.isInitialized()) {
+              wsConnection.seqBuffer.push(msg.seq, msg.data);
+            } else {
+              const term = (msg.session && terminalPool.get(msg.session)?.term)
+                || terminalPool.getActive()?.term;
+              if (term) terminalWriteWithScroll(term, msg.data);
+            }
           }
         } catch {
           // ignore malformed P2P data

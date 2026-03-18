@@ -134,16 +134,22 @@ describe("wsMessageHandlers", () => {
   });
 
   describe("output", () => {
-    it("emits terminalWrite with preserveScroll and useOutputTerm", () => {
-      const result = handlers.output({ data: "hello", session: "alpha" });
+    it("emits seqOutput with data, session, and seq", () => {
+      const result = handlers.output({ data: "hello", session: "alpha", seq: 42 });
       assert.deepStrictEqual(result.stateUpdates, {});
       assert.strictEqual(result.effects.length, 1);
       const eff = result.effects[0];
-      assert.strictEqual(eff.type, "terminalWrite");
+      assert.strictEqual(eff.type, "seqOutput");
       assert.strictEqual(eff.data, "hello");
       assert.strictEqual(eff.session, "alpha");
-      assert.strictEqual(eff.preserveScroll, true);
-      assert.strictEqual(eff.useOutputTerm, true);
+      assert.strictEqual(eff.seq, 42);
+    });
+
+    it("passes undefined seq for unsequenced output (backward compat)", () => {
+      const result = handlers.output({ data: "hello", session: "alpha" });
+      const eff = result.effects[0];
+      assert.strictEqual(eff.type, "seqOutput");
+      assert.strictEqual(eff.seq, undefined);
     });
   });
 

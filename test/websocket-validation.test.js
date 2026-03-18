@@ -360,4 +360,43 @@ describe("validateMessage", () => {
     assert.strictEqual(result.valid, false);
     assert.match(result.error, /object/i);
   });
+
+  it("validates seq-query messages (no fields required)", () => {
+    const result = validateMessage({ type: "seq-query" });
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("validates catchup messages with required fromSeq", () => {
+    const result = validateMessage({ type: "catchup", fromSeq: 0 });
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("validates catchup with session field", () => {
+    const result = validateMessage({ type: "catchup", session: "alpha", fromSeq: 100 });
+    assert.strictEqual(result.valid, true);
+  });
+
+  it("rejects catchup with missing fromSeq", () => {
+    const result = validateMessage({ type: "catchup" });
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /fromSeq/i);
+  });
+
+  it("rejects catchup with negative fromSeq", () => {
+    const result = validateMessage({ type: "catchup", fromSeq: -1 });
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /fromSeq/i);
+  });
+
+  it("rejects catchup with non-integer fromSeq", () => {
+    const result = validateMessage({ type: "catchup", fromSeq: 1.5 });
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /fromSeq/i);
+  });
+
+  it("rejects catchup with string fromSeq", () => {
+    const result = validateMessage({ type: "catchup", fromSeq: "100" });
+    assert.strictEqual(result.valid, false);
+    assert.match(result.error, /fromSeq/i);
+  });
 });

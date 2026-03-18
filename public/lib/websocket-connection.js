@@ -7,6 +7,8 @@
 
 import { scrollToBottom, terminalWriteWithScroll, isAtBottom } from "/lib/scroll-utils.js";
 import { basePath } from "/lib/base-path.js";
+import { createSeqBuffer } from "/lib/seq-buffer.js";
+import { createNudgeTimer } from "/lib/nudge-timer.js";
 
 /**
  * Connection state machine: DISCONNECTED → CONNECTING → CONNECTED → ATTACHED
@@ -47,6 +49,26 @@ export function createWebSocketConnection(deps = {}) {
   let connectionState = CONNECTION_STATES.DISCONNECTED;
   let reconnectTimeout = null;
   let suppressReconnect = false;
+
+  // Sequence tracking for ordered output delivery
+  const seqBuffer = createSeqBuffer({
+    onFlush: (data) => {
+      // Route through the same RAF batching path used by direct writes
+      const term = getOutputTerm(state.session.name);
+      if (term) scheduleWrite(term, data);
+    },
+    onGapTimeout: (expectedSeq) => {
+      // Request catchup from server
+      const ws = state.connection.ws;
+      if (ws && ws.readyState === 1 && state.session.name) {
+        ws.send(JSON.stringify({ type: "catchup", session: state.session.name, fromSeq: expectedSeq }));
+      }
+    },
+  });
+
+  const nudgeTimer = createNudgeTimer({
+    getWS: () => state.connection.ws,
+  });
 
   // Output write batching: accumulate incoming data per terminal and flush
   // once per animation frame to reduce xterm.js write/render passes.
@@ -103,7 +125,7 @@ export function createWebSocketConnection(deps = {}) {
     output: (msg) => ({
       stateUpdates: {},
       effects: [
-        { type: 'terminalWrite', data: msg.data, session: msg.session, preserveScroll: true, useOutputTerm: true }
+        { type: 'seqOutput', data: msg.data, session: msg.session, seq: msg.seq }
       ]
     }),
 
@@ -187,6 +209,26 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
+    'seq-init': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'seqInit', session: msg.session, seq: msg.seq }]
+    }),
+
+    'seq-status': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'seqStatus', session: msg.session, seq: msg.seq }]
+    }),
+
+    'catchup-data': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'seqOutput', data: msg.data, session: msg.session, seq: msg.seq }]
+    }),
+
+    'seq-reset': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'seqReset', session: msg.session }]
+    }),
+
     'server-draining': () => ({
       stateUpdates: {},
       effects: [
@@ -261,6 +303,37 @@ export function createWebSocketConnection(deps = {}) {
         }
         break;
       }
+      case 'seqOutput': {
+        nudgeTimer.reset();
+        if (effect.seq !== undefined && seqBuffer.isInitialized()) {
+          seqBuffer.push(effect.seq, effect.data);
+        } else {
+          // No seq (backward compat) or seq-init not yet received — write directly
+          const term = effect.useOutputTerm !== false ? getOutputTerm(effect.session) : getTerm();
+          if (term) scheduleWrite(term, effect.data);
+        }
+        break;
+      }
+      case 'seqInit':
+        seqBuffer.init(effect.seq);
+        nudgeTimer.start();
+        break;
+      case 'seqStatus': {
+        // Compare server seq with our expected — request catchup if behind
+        const expected = seqBuffer.getExpectedSeq();
+        if (seqBuffer.isInitialized() && effect.seq > expected) {
+          const ws = state.connection.ws;
+          if (ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: "catchup", session: effect.session, fromSeq: expected }));
+          }
+        }
+        break;
+      }
+      case 'seqReset':
+        // Data evicted — force reconnect to get fresh buffer replay
+        seqBuffer.clear();
+        if (state.connection.ws) state.connection.ws.close();
+        break;
       case 'terminalReset': {
         const term = getTerm();
         if (!term) break;
@@ -407,6 +480,8 @@ export function createWebSocketConnection(deps = {}) {
       const term = getTerm();
       state.scroll.userScrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
       state.connection.attached = false;
+      nudgeTimer.stop();
+      seqBuffer.clear();
       if (p2pManager) p2pManager.destroy();
       if (deps.onDisconnect) deps.onDisconnect();
 
@@ -488,5 +563,7 @@ export function createWebSocketConnection(deps = {}) {
     wsMessageHandlers,
     executeEffect,
     getConnectionState: () => connectionState,
+    seqBuffer,
+    nudgeTimer,
   };
 }
