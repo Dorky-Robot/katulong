@@ -101,7 +101,7 @@ $RELATED_FILES"
 
 # --- Timeout configuration ---
 
-AGENT_TIMEOUT=180  # 3 minutes per agent (typically finish in 1-2 min)
+AGENT_TIMEOUT=300  # 5 minutes per agent
 
 # Portable timeout using background process + sleep + kill.
 # Works on macOS without coreutils (no timeout/gtimeout needed).
