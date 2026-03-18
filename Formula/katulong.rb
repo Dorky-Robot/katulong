@@ -7,8 +7,6 @@ class Katulong < Formula
 
   depends_on "node"
 
-  depends_on "tmux"
-
   def install
     system "npm", "install", "--omit=dev"
     libexec.install Dir["*"]

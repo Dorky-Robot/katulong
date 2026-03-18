@@ -155,18 +155,17 @@ function isAuthenticated(req) {
   return { authenticated: true, sessionToken: token, credentialId: session?.credentialId || null };
 }
 
-// --- Verify tmux is available ---
+// --- tmux setup (optional at startup — sessions fail gracefully if missing) ---
 
 const hasTmux = await checkTmux();
 if (!hasTmux) {
-  log.error("tmux is required but not found. Install with: brew install tmux");
-  process.exit(1);
+  log.warn("tmux not found — terminal sessions will be unavailable until tmux is installed");
+} else {
+  // Strip SENSITIVE_ENV_VARS from the tmux server's global environment
+  // so they don't leak into terminal sessions (defense-in-depth).
+  await cleanTmuxServerEnv();
+  await setTmuxKatulongEnv(join(__dirname, "bin"), PORT);
 }
-
-// Strip SENSITIVE_ENV_VARS from the tmux server's global environment
-// so they don't leak into terminal sessions (defense-in-depth).
-await cleanTmuxServerEnv();
-await setTmuxKatulongEnv(join(__dirname, "bin"), PORT);
 
 // --- Session manager (replaces daemon IPC) ---
 
