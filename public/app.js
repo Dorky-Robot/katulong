@@ -363,7 +363,8 @@
     const inputSender = createInputSender({
       p2pManager,
       getWebSocket: () => state.connection.ws,
-      getSession: () => state.session.name
+      getSession: () => state.session.name,
+      onInput: () => wsConnection?.nudgeOnInput(),
     });
 
     const rawSend = (data) => inputSender.send(data);

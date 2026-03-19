@@ -12,7 +12,8 @@ export function createInputSender(options = {}) {
   const {
     p2pManager,
     getWebSocket,
-    getSession
+    getSession,
+    onInput
   } = options;
 
   let sendBuf = "";
@@ -45,6 +46,7 @@ export function createInputSender(options = {}) {
         }
 
         sendBuf = "";
+        if (onInput) onInput();
       });
     }
   }

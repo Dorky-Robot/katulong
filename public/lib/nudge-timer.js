@@ -6,7 +6,7 @@
  */
 
 const INITIAL_INTERVAL_MS = 2000;
-const MAX_INTERVAL_MS = 60000;
+const MAX_INTERVAL_MS = 10000;
 
 export function createNudgeTimer({ getWS }) {
   let timer = null;
@@ -40,6 +40,18 @@ export function createNudgeTimer({ getWS }) {
       }
       interval = INITIAL_INTERVAL_MS;
       timer = setTimeout(tick, interval);
+    },
+
+    /** Nudge on user activity (input). Resets backoff so gap detection
+     *  stays responsive while the user is actively interacting. */
+    nudge() {
+      if (!running) return;
+      // Only reset if interval has backed off — avoid churning at 2s
+      if (interval > INITIAL_INTERVAL_MS) {
+        if (timer !== null) clearTimeout(timer);
+        interval = INITIAL_INTERVAL_MS;
+        timer = setTimeout(tick, interval);
+      }
     },
 
     /** Stop polling. */
