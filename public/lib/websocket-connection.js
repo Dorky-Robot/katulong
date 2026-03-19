@@ -105,6 +105,7 @@ export function createWebSocketConnection(deps = {}) {
         'scroll.userScrolledUpBeforeDisconnect': false
       },
       effects: [
+        { type: 'seqClear' },
         { type: 'terminalReset' },
         { type: 'updateSessionUI', name: msg.session },
         { type: 'updateP2PIndicator' },
