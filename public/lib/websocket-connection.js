@@ -576,5 +576,9 @@ export function createWebSocketConnection(deps = {}) {
     pushP2POutput(seq, data, session) {
       executeEffect({ type: 'seqOutput', seq, data, session });
     },
+    /** Reset nudge backoff on user input so gap detection stays responsive. */
+    nudgeOnInput() {
+      nudgeTimer.nudge();
+    },
   };
 }
