@@ -9,9 +9,9 @@ describe("SessionName", () => {
       assert.strictEqual(name.value, "my-session_1");
     });
 
-    it("sanitizes invalid characters", () => {
+    it("preserves all printable ASCII", () => {
       const name = new SessionName("hello world!@#$");
-      assert.strictEqual(name.value, "hello world");
+      assert.strictEqual(name.value, "hello world!@#$");
     });
 
     it("truncates to 64 characters", () => {
@@ -53,16 +53,16 @@ describe("SessionName", () => {
       );
     });
 
-    it("throws InvalidSessionNameError when all characters are invalid", () => {
+    it("throws InvalidSessionNameError when all characters are non-printable", () => {
       assert.throws(
-        () => new SessionName("!@#$%^&*()"),
+        () => new SessionName("\x01\x02\x03"),
         InvalidSessionNameError
       );
     });
 
-    it("preserves alphanumeric, spaces, hyphens, and underscores", () => {
-      const name = new SessionName("abc 123-DEF_456");
-      assert.strictEqual(name.value, "abc 123-DEF_456");
+    it("preserves all printable ASCII including special characters", () => {
+      const name = new SessionName("abc 123-DEF_456!@#$%^&*()");
+      assert.strictEqual(name.value, "abc 123-DEF_456!@#$%^&*()");
     });
   });
 
@@ -77,7 +77,7 @@ describe("SessionName", () => {
       assert.strictEqual(SessionName.tryCreate(null), null);
       assert.strictEqual(SessionName.tryCreate(undefined), null);
       assert.strictEqual(SessionName.tryCreate(""), null);
-      assert.strictEqual(SessionName.tryCreate("!@#$"), null);
+      assert.strictEqual(SessionName.tryCreate("\x01\x02"), null);
     });
 
     it("returns null for non-string types", () => {
@@ -93,9 +93,9 @@ describe("SessionName", () => {
       assert.strictEqual(name.toString(), "test");
     });
 
-    it("returns sanitized value with special characters removed", () => {
+    it("returns sanitized value preserving printable ASCII", () => {
       const name = new SessionName("hello world!");
-      assert.strictEqual(name.toString(), "hello world");
+      assert.strictEqual(name.toString(), "hello world!");
     });
   });
 
@@ -159,9 +159,9 @@ describe("SessionName", () => {
       assert.strictEqual(name.value, "MySession123");
     });
 
-    it("strips leading and trailing invalid characters", () => {
+    it("preserves special characters at edges after trim", () => {
       const name = new SessionName("!!!test!!!");
-      assert.strictEqual(name.value, "test");
+      assert.strictEqual(name.value, "!!!test!!!");
     });
 
     it("handles Unicode characters by removing them", () => {
@@ -198,12 +198,12 @@ describe("SessionName", () => {
       }
     });
 
-    it("sanitizes user input from UI", () => {
+    it("preserves special characters in user input from UI", () => {
       const examples = [
-        ["My Project (prod)", "My Project prod"],
-        ["test #1", "test 1"],
-        ["server @ port 3000", "server  port 3000"],
-        ["logs/debug", "logsdebug"],
+        ["My Project (prod)", "My Project (prod)"],
+        ["test #1", "test #1"],
+        ["server @ port 3000", "server @ port 3000"],
+        ["logs/debug", "logs/debug"],
       ];
 
       for (const [input, expected] of examples) {
