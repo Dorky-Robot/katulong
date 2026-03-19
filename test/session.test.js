@@ -9,17 +9,21 @@ import {
 // --- tmux control mode helper tests ---
 
 describe("tmuxSessionName", () => {
-  it("replaces dots, colons, and spaces with underscores", () => {
+  it("replaces tmux-incompatible characters with underscores", () => {
     assert.strictEqual(tmuxSessionName("my.session"), "my_session");
     assert.strictEqual(tmuxSessionName("host:port"), "host_port");
     assert.strictEqual(tmuxSessionName("a.b:c"), "a_b_c");
     assert.strictEqual(tmuxSessionName("my session"), "my_session");
     assert.strictEqual(tmuxSessionName("a.b c:d"), "a_b_c_d");
+    assert.strictEqual(tmuxSessionName("test #1"), "test__1");
+    assert.strictEqual(tmuxSessionName("50%"), "50_");
   });
 
-  it("preserves valid names", () => {
+  it("preserves other printable ASCII", () => {
     assert.strictEqual(tmuxSessionName("default"), "default");
     assert.strictEqual(tmuxSessionName("my-session"), "my-session");
+    assert.strictEqual(tmuxSessionName("test!@$&"), "test!@$&");
+    assert.strictEqual(tmuxSessionName("(prod)"), "(prod)");
   });
 });
 
