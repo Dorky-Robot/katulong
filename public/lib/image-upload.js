@@ -206,7 +206,7 @@ export async function uploadImagesToTerminal(files, options = {}) {
   for (const file of files) {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     tracker.add(id, file.name);
-    entries.push({ file, id, promise: _doUpload(file, id, tracker, toast) });
+    entries.push({ file, id, promise: _doUpload(file, id, tracker, toast, sessionName) });
   }
 
   // Wait for all uploads to complete
@@ -288,11 +288,12 @@ export function uploadImageToTerminal(file, options = {}) {
   uploadImagesToTerminal([file], options);
 }
 
-async function _doUpload(file, id, tracker, toast) {
+async function _doUpload(file, id, tracker, toast, sessionName) {
   const headers = {
     "Content-Type": "application/octet-stream",
     "X-Filename": file.name,
   };
+  if (sessionName) headers["X-Session"] = sessionName;
   const csrf = getCsrfToken();
   if (csrf) headers["x-csrf-token"] = csrf;
 
