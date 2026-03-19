@@ -33,6 +33,8 @@ export function createP2PManager(config = {}) {
     clearTimeout(retryTimer);
     retryTimer = 0;
     _attempting = false;
+    _gaveUp = false;
+    retryCount = 0;
 
     if (dc) {
       try { dc.close(); } catch { /* ignore */ }
