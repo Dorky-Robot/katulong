@@ -1,0 +1,8 @@
+{
+  "name": "katulong-tala",
+  "version": "0.2.0",
+  "description": "Tala notes connector for Katulong",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT"
+}

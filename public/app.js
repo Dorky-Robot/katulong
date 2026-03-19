@@ -34,6 +34,7 @@
     import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
+    import { initPlugins } from "/lib/plugin-client.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -750,10 +751,16 @@
     settingsHandlers.init();
 
     // --- Settings tabs (using generic tab manager) ---
+    let connectorsLoaded = false;
     const settingsTabManager = createTabManager({
       tabSelector: '.settings-tab',
       contentSelector: '.settings-tab-content',
-      onTabChange: (targetTab) => {
+      onTabChange: async (targetTab) => {
+        if (targetTab === "connectors" && !connectorsLoaded) {
+          const { initPluginConfig } = await import("/lib/plugin-config-ui.js");
+          await initPluginConfig(document.getElementById("plugin-config-list"));
+          connectorsLoaded = true;
+        }
         if (targetTab === "remote") {
           // Clear any lingering new token display before loading tokens
           const tokensList = document.getElementById("tokens-list");
@@ -867,6 +874,7 @@
       onTerminalClick: () => returnToTerminal(),
       onFilesClick: () => toggleFileBrowser(),
       onPortForwardClick: () => togglePortForward(),
+      get pluginButtons() { return pluginManager ? pluginManager.getPluginButtons() : []; },
       onSettingsClick: () => modals.open('settings'),
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
       onDictationClick: () => openDictationModal(),
@@ -963,6 +971,8 @@
 
     // --- File Browser ---
 
+    let pluginManager = null; // initialized after sidebar wiring
+
     const fileBrowserStore = createFileBrowserStore();
     const fileBrowserEl = document.getElementById("file-browser");
     let fileBrowserMounted = false;
@@ -975,6 +985,7 @@
       if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
       if (notepad.isActive()) notepad.hide();
       if (helmViewEl?.classList.contains("active")) hideHelmView();
+      if (pluginManager) pluginManager.closeAll();
       getTerm()?.focus();
       fitActiveTerminal();
     }
@@ -1000,6 +1011,7 @@
       } else {
         // Close other panels if open (mutual exclusion)
         if (portForwardEl.classList.contains("active")) closePortForward();
+        pluginManager?.closeAll();
         if (!fileBrowserMounted) {
           fileBrowserComponent = createFileBrowserComponent(fileBrowserStore, {
             onClose: () => toggleFileBrowser(),
@@ -1030,6 +1042,7 @@
       } else {
         // Close other panels if open (mutual exclusion)
         if (fileBrowserEl.classList.contains("active")) closeFileBrowser();
+        pluginManager?.closeAll();
         if (!portForwardMounted) {
           portForwardComponent = createPortForwardComponent({
             onClose: () => togglePortForward(),
@@ -1060,6 +1073,25 @@
     if (sidebarSettingsBtn) {
       sidebarSettingsBtn.addEventListener("click", () => modals.open('settings'));
     }
+
+    // --- Plugins ---
+
+    pluginManager = await initPlugins({
+      showToast,
+      getWs: () => state.connection.ws,
+      getSessionName: () => state.session.name,
+      closeOtherPanels: () => {
+        if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
+        if (portForwardEl?.classList.contains("active")) closePortForward();
+        if (document.getElementById("helm-view")?.classList.contains("active")) hideHelmView();
+      },
+      returnToTerminal,
+      termContainer,
+      pluginPanelsContainer: document.getElementById("plugin-panels"),
+      sidebarFooter: document.getElementById("sidebar-footer"),
+      fitActiveTerminal,
+      closeSidebarIfOverlay: () => { if (isOverlayViewport()) setOverlaySidebar(false); },
+    });
 
     // --- Notepad ---
 
@@ -1108,6 +1140,7 @@
       ensureHelmMounted();
       if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
       if (portForwardEl?.classList.contains("active")) closePortForward();
+      pluginManager?.closeAll();
       termContainer.classList.add("helm-hidden");
       helmViewEl.classList.add("active");
       helmComponent.showSession(state.session.name);

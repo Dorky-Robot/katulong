@@ -1039,6 +1039,11 @@
       gap: var(--space-lg);
       padding: 0.75rem 0; border-bottom: 1px solid var(--border);
     }
+    .connector-card {
+      padding: 12px; margin-bottom: 12px;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg);
+    }
     .settings-label {
       color: var(--text); font-size: 0.875rem; font-family: var(--font-mono);
     }
@@ -1959,6 +1964,7 @@
           <!-- Tab navigation -->
           <div class="settings-tabs" role="tablist">
             <button class="settings-tab active" data-tab="theme" role="tab" aria-selected="true">Theme</button>
+            <button class="settings-tab" data-tab="connectors" role="tab" aria-selected="false">Connectors</button>
             <button class="settings-tab" data-tab="remote" role="tab" aria-selected="false">Remote</button>
           </div>
 
@@ -2005,6 +2011,11 @@
                 </button>
               </div>
             </div>
+          </div>
+
+          <!-- Connectors tab content -->
+          <div class="settings-tab-content" id="settings-tab-connectors">
+            <div id="plugin-config-list"></div>
           </div>
 
           <!-- Remote tab content -->
