@@ -121,6 +121,7 @@ export function createWebSocketConnection(deps = {}) {
         'session.name': msg.session,
       },
       effects: [
+        { type: 'seqClear' },
         { type: 'updateSessionUI', name: msg.session },
         { type: 'invalidateSessions', name: msg.session },
         { type: 'fit' },
@@ -320,6 +321,10 @@ export function createWebSocketConnection(deps = {}) {
         }
         break;
       }
+      case 'seqClear':
+        seqBuffer.clear();
+        nudgeTimer.stop();
+        break;
       case 'seqInit':
         seqBuffer.init(effect.seq);
         nudgeTimer.start();
