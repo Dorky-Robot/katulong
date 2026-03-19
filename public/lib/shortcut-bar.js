@@ -775,6 +775,7 @@ export function createShortcutBar(options = {}) {
         { icon: "note-pencil", label: "Notes", click: onNotepadClick },
         { icon: "folder-open", label: "Files", click: onFilesClick },
         { icon: "plug", label: "Port Forward", click: onPortForwardClick, id: "bar-portfwd-btn", hidden: !portProxyEnabled },
+        ...(options.pluginButtons || []).map(p => ({ icon: p.icon, label: p.label, click: p.click })),
         { icon: "gear", label: "Settings", click: onSettingsClick },
       ];
       for (const u of utils) {
@@ -942,6 +943,17 @@ export function createShortcutBar(options = {}) {
         btn.innerHTML = '<i class="ph ph-plug"></i>';
         btn.addEventListener("click", onPortForwardClick);
         if (!portProxyEnabled) btn.style.display = "none";
+        island.appendChild(btn);
+      }
+
+      // Plugin buttons
+      for (const p of (options.pluginButtons || [])) {
+        if (!p.click) continue;
+        const btn = document.createElement("button");
+        btn.className = "key-island-btn key-island-icon";
+        btn.setAttribute("aria-label", p.label);
+        btn.innerHTML = `<i class="ph ph-${p.icon}"></i>`;
+        btn.addEventListener("click", p.click);
         island.appendChild(btn);
       }
 

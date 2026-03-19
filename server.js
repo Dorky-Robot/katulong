@@ -29,6 +29,7 @@ import { createPortProxyRoutes, proxyWebSocket } from "./lib/port-proxy.js";
 import { createWebSocketManager } from "./lib/ws-manager.js";
 import { createHelmSessionManager } from "./lib/helm-session-manager.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
+import { loadPlugins } from "./lib/plugin-loader.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = envConfig.port;
@@ -201,13 +202,22 @@ pruneTimer.unref();
 // --- Helm session manager (agentic browser mode) ---
 const helmSessionManager = createHelmSessionManager({ bridge });
 
-// --- WebSocket manager ---
-const wsManager = createWebSocketManager({ bridge, sessionManager, helmSessionManager });
-const { wsClients, broadcastToAll, closeAllWebSockets } = wsManager;
-
 // --- HTTP routes (assembled from lib/routes/) ---
 
 const { auth, csrf } = createMiddleware({ isAuthenticated, json });
+
+// --- Plugins ---
+const { pluginRoutes, pluginWsHandlers, shutdownPlugins } = await loadPlugins({
+  dataDir: DATA_DIR,
+  rootDir: __dirname,
+  auth, csrf, json, parseJSON, bridge,
+  broadcastToAll: (payload) => wsManager.broadcastToAll(payload),
+  log,
+});
+
+// --- WebSocket manager ---
+const wsManager = createWebSocketManager({ bridge, sessionManager, helmSessionManager, pluginWsHandlers });
+const { wsClients, broadcastToAll, closeAllWebSockets } = wsManager;
 
 const routes = [
   ...createAuthRoutes({
@@ -229,6 +239,7 @@ const routes = [
   }),
   ...createFileBrowserRoutes({ json, parseJSON, auth, csrf }),
   ...createPortProxyRoutes({ auth, PORT, configManager }),
+  ...pluginRoutes,
 ];
 
 function matchRoute(method, pathname) {
@@ -505,7 +516,10 @@ async function gracefulShutdown(signal) {
   sessionManager.shutdown();
   helmSessionManager.shutdown();
 
-  // 7. Clean up PID file
+  // 7. Shutdown plugins
+  await shutdownPlugins();
+
+  // 8. Clean up PID file
   cleanupPidFile();
 
   log.info("Graceful shutdown complete", { signal });
