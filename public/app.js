@@ -561,6 +561,13 @@
         // Re-enable reconnect if we were in empty state
         wsConnection.enableReconnect();
         windowTabSet.addTab(data.name);
+        // When split, assign new session to the focused pane
+        if (splitManager.isSplit()) {
+          const focusedPane = splitManager.getPaneForSession(state.session.name);
+          if (focusedPane === 2) {
+            splitManager.addToPane2(data.name);
+          }
+        }
         switchSession(data.name);
       } catch (err) {
         console.error("Failed to create session:", err);
@@ -877,6 +884,11 @@
         windowTabSet.renameTab(oldName, newName);
         terminalPool.rename(oldName, newName);
         notepad.rename(oldName, newName);
+        // Update split pane assignment for renamed session
+        if (splitManager.isInPane2(oldName)) {
+          splitManager.removeFromPane2(oldName);
+          splitManager.addToPane2(newName);
+        }
         invalidateSessions(sessionStore, newName);
         if (state.session.name === oldName) {
           state.update('session.name', newName);
@@ -1248,6 +1260,14 @@
       },
       onSessionRemoved: (name) => {
         windowTabSet.onSessionKilled(name);
+        // Clean up split state for removed session
+        if (splitManager.isSplit()) {
+          const otherSession = splitManager.getOtherSession(name);
+          if (name === splitManager.getPane1() || name === splitManager.getPane2()) {
+            splitManager.unsplit(otherSession);
+          }
+          splitManager.removeFromPane2(name);
+        }
         terminalPool.dispose(name);
         fetch("/sessions").then(r => r.json()).then(allSessions => {
           // Filter out the session that was just removed (may still be in the response)

@@ -22,10 +22,6 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
   let _onSplitChanged = null;
   const focusCleanups = [];
 
-  function isTablet() {
-    return detectTablet();
-  }
-
   function getDirection() {
     return window.matchMedia("(orientation: landscape)").matches ? "row" : "column";
   }
@@ -33,7 +29,7 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
   // ── Split lifecycle ──────────────────────────────────────────────────
 
   function split(session1, session2) {
-    if (!isTablet()) return;
+    if (!detectTablet()) return;
     active = true;
     pane1Session = session1;
     pane2Session = session2;
@@ -133,14 +129,15 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
   // ── Divider ──────────────────────────────────────────────────────────
 
   function ensureDivider() {
+    const dir = getDirection();
     if (!dividerEl) {
       dividerEl = document.createElement("div");
-      const dir = getDirection();
-      dividerEl.style.cssText = dir === "row"
-        ? "order:2; flex-shrink:0; width:3px; background:var(--accent-active); cursor:col-resize;"
-        : "order:2; flex-shrink:0; height:3px; background:var(--accent-active); cursor:row-resize;";
       dividerEl.addEventListener("dblclick", () => unsplit());
     }
+    // Always update style based on current direction (handles orientation changes)
+    dividerEl.style.cssText = dir === "row"
+      ? "order:2; flex-shrink:0; width:3px; background:var(--accent-active); cursor:col-resize;"
+      : "order:2; flex-shrink:0; height:3px; background:var(--accent-active); cursor:row-resize;";
     if (!dividerEl.parentElement) {
       terminalContainer.appendChild(dividerEl);
     }
@@ -198,94 +195,6 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
     return null;
   }
 
-  // ── Drop preview (during tab drag) ──────────────────────────────────
-
-  let previewOverlay = null;
-
-  function showPreview() {
-    if (previewOverlay) return;
-    const dir = getDirection();
-
-    previewOverlay = document.createElement("div");
-    previewOverlay.className = `split-drop-overlay ${dir === "row" ? "drop-row" : "drop-col"}`;
-
-    const zone1 = document.createElement("div");
-    zone1.className = "split-drop-zone";
-    zone1.dataset.pane = "1";
-    const label1 = document.createElement("span");
-    label1.className = "split-drop-label";
-    label1.textContent = "Drop here";
-    zone1.appendChild(label1);
-
-    const zone2 = document.createElement("div");
-    zone2.className = "split-drop-zone";
-    zone2.dataset.pane = "2";
-    const label2 = document.createElement("span");
-    label2.className = "split-drop-label";
-    label2.textContent = "Drop here";
-    zone2.appendChild(label2);
-
-    previewOverlay.appendChild(zone1);
-    previewOverlay.appendChild(zone2);
-    terminalContainer.appendChild(previewOverlay);
-
-    terminalContainer.classList.add("split-preview");
-
-    // Force reflow then show
-    previewOverlay.offsetHeight;
-    previewOverlay.classList.add("visible");
-  }
-
-  function updatePreview(cx, cy) {
-    if (!previewOverlay) return null;
-    const rect = terminalContainer.getBoundingClientRect();
-    const dir = getDirection();
-    const zones = previewOverlay.querySelectorAll(".split-drop-zone");
-
-    let hoverPane = null;
-    if (dir === "row") {
-      const mid = rect.left + rect.width / 2;
-      hoverPane = cx < mid ? 1 : 2;
-      // Slide active terminal to the opposite side
-      terminalContainer.classList.toggle("preview-slide-right", hoverPane === 1);
-      terminalContainer.classList.toggle("preview-slide-left", hoverPane === 2);
-      terminalContainer.classList.remove("preview-slide-up", "preview-slide-down");
-    } else {
-      const mid = rect.top + rect.height / 2;
-      hoverPane = cy < mid ? 1 : 2;
-      terminalContainer.classList.toggle("preview-slide-down", hoverPane === 1);
-      terminalContainer.classList.toggle("preview-slide-up", hoverPane === 2);
-      terminalContainer.classList.remove("preview-slide-left", "preview-slide-right");
-    }
-
-    zones[0].classList.toggle("hover", hoverPane === 1);
-    zones[1].classList.toggle("hover", hoverPane === 2);
-
-    return hoverPane;
-  }
-
-  function hidePreview() {
-    if (previewOverlay) {
-      previewOverlay.remove();
-      previewOverlay = null;
-    }
-    terminalContainer.classList.remove(
-      "split-preview",
-      "preview-slide-left", "preview-slide-right",
-      "preview-slide-up", "preview-slide-down"
-    );
-  }
-
-  function getPreviewPane(cx, cy) {
-    const rect = terminalContainer.getBoundingClientRect();
-    const dir = getDirection();
-    if (dir === "row") {
-      return cx < rect.left + rect.width / 2 ? 1 : 2;
-    } else {
-      return cy < rect.top + rect.height / 2 ? 1 : 2;
-    }
-  }
-
   // ── Orientation change ───────────────────────────────────────────────
 
   window.matchMedia("(orientation: landscape)").addEventListener("change", () => {
@@ -296,7 +205,7 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
     split,
     unsplit,
     isSplit: () => active,
-    isTablet,
+    isTablet: detectTablet,
     getDirection,
     getPane1: () => pane1Session,
     getPane2: () => pane2Session,
@@ -308,11 +217,6 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
     removeFromPane2: (name) => pane2Sessions.delete(name),
     applyLayout,
     fitAll,
-    // Preview API (for tab drag)
-    showPreview,
-    updatePreview,
-    hidePreview,
-    getPreviewPane,
     // Callbacks
     set onFocusChange(fn) { _onFocusChange = fn; },
     set onSplitChanged(fn) { _onSplitChanged = fn; },

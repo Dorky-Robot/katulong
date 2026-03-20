@@ -921,7 +921,7 @@ export function createShortcutBar(options = {}) {
       group2.className = "tab-scroll-area";
       group2.style.cssText = "flex:1; min-width:0; padding-left:var(--space-xs);";
       for (const s of pane2Tabs) {
-        group2.appendChild(createTabEl(s, s.name === p2Active, "split-pane-2"));
+        group2.appendChild(createTabEl(s, s.name === p2Active));
       }
       const addBtn2 = document.createElement("button");
       addBtn2.className = "tab-bar-add";
