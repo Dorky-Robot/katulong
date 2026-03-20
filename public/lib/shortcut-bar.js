@@ -16,7 +16,9 @@ import { api } from "/lib/api-client.js";
 
 const DESKTOP_MQ = "(pointer: fine)";
 const TABLET_MQ = "(pointer: coarse) and (min-width: 768px)";
-const DRAG_OUT_THRESHOLD = 60; // px below bar to trigger tear-off
+const TABLET_ANY_MQ = "(any-pointer: coarse) and (min-width: 768px)";
+const DRAG_OUT_THRESHOLD = 60; // px below bar to trigger tear-off (desktop)
+const SPLIT_THRESHOLD = 15; // px below bar to trigger split preview (tablet)
 const DRAG_DEAD_ZONE = 5; // px before drag starts
 const LONG_PRESS_MS = 300; // ms before touch becomes drag
 
@@ -58,11 +60,16 @@ export function createShortcutBar(options = {}) {
   let activeMenu = null; // currently open context/dropdown menu
 
   function isDesktop() {
-    return window.matchMedia(DESKTOP_MQ).matches || window.matchMedia(TABLET_MQ).matches;
+    return window.matchMedia(DESKTOP_MQ).matches || window.matchMedia(TABLET_MQ).matches || window.matchMedia(TABLET_ANY_MQ).matches;
   }
 
   function isTouch() {
     return window.matchMedia("(pointer: coarse)").matches;
+  }
+
+  /** Detect tablet: touch-capable + large screen (works even with Magic Keyboard) */
+  function isTabletLocal() {
+    return navigator.maxTouchPoints > 0 && window.innerWidth >= 768;
   }
 
   function isPhone() {
@@ -596,12 +603,17 @@ export function createShortcutBar(options = {}) {
       : `translate3d(${gx}px, ${gy}px, 0)`;
 
     const barRect = container.getBoundingClientRect();
-    const isTabletDevice = splitManager?.isTablet();
+    // Detect tablet via split manager OR local check (maxTouchPoints + screen width)
+    const isTabletDevice = splitManager?.isTablet() || isTabletLocal();
+    const belowBar = cy > barRect.bottom + SPLIT_THRESHOLD;
+
+    // DEBUG: show state on ghost so we can see what's happening
+    ghost.dataset.debug = `tablet=${isTabletDevice} sm=${!!splitManager} split=${splitManager?.isSplit()} below=${belowBar} cy=${Math.round(cy)} barBot=${Math.round(barRect.bottom)}`;
 
     // iPad/tablet: drag below bar enters split preview (replaces tear-off).
     // On iPad, quick-drag goes through the synthesized mouse path (isTouch=false),
     // so check the device type rather than the event source.
-    if (isTabletDevice && !splitManager.isSplit() && cy > barRect.bottom + DRAG_OUT_THRESHOLD) {
+    if (isTabletDevice && splitManager && !splitManager.isSplit() && belowBar) {
       if (!drag.splitPreview) {
         drag.splitPreview = true;
         splitManager.showPreview();

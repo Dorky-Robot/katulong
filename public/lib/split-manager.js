@@ -6,7 +6,11 @@
  * Only two splits maximum. Drag a tab into the terminal area to split.
  */
 
-const TABLET_MQ = "(pointer: coarse) and (min-width: 768px)";
+// Detect tablet: has touch + wide screen. Media queries are unreliable on iPad
+// (Magic Keyboard changes pointer type), so use maxTouchPoints instead.
+function detectTablet() {
+  return navigator.maxTouchPoints > 0 && window.innerWidth >= 768;
+}
 
 export function createSplitManager({ terminalContainer, terminalPool, sendResize }) {
   let active = false;
@@ -19,7 +23,7 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
   const focusCleanups = [];
 
   function isTablet() {
-    return window.matchMedia(TABLET_MQ).matches;
+    return detectTablet();
   }
 
   function getDirection() {
