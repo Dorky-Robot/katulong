@@ -427,14 +427,6 @@
       opacity: 0.7;
       box-shadow: 0 8px 32px rgba(0,0,0,0.5);
     }
-    /* DEBUG: show split detection state while dragging */
-    .tab-drag-ghost::after {
-      content: attr(data-debug);
-      position: absolute; top: 100%; left: 0; margin-top: 4px;
-      font-size: 10px; white-space: nowrap; color: #f9e2af;
-      background: rgba(0,0,0,0.8); padding: 2px 6px; border-radius: 4px;
-    }
-
     /* Tab being dragged — invisible but keeps its space in layout */
     .tab-dragging { opacity: 0 !important; }
 

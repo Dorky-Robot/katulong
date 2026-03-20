@@ -57,12 +57,21 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
     pane2Session = null;
 
     cleanupFocusTracking();
-    terminalContainer.classList.remove("split-active", "split-row", "split-col");
+    // Clear inline styles from split layout
+    terminalContainer.style.display = "";
+    terminalContainer.style.flexDirection = "";
     removeDivider();
 
-    // Remove split classes from all panes
+    // Clear inline styles from all panes
     terminalPool.forEach((_name, entry) => {
-      entry.container.classList.remove("split-visible", "split-pane-1", "split-pane-2");
+      entry.container.style.display = "";
+      entry.container.style.position = "";
+      entry.container.style.inset = "";
+      entry.container.style.flex = "";
+      entry.container.style.minWidth = "";
+      entry.container.style.minHeight = "";
+      entry.container.style.overflow = "";
+      entry.container.style.order = "";
     });
 
     // Restore single-pane mode
@@ -76,17 +85,30 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
     if (!active || !pane1Session || !pane2Session) return;
 
     const dir = getDirection();
-    terminalContainer.classList.add("split-active");
-    terminalContainer.classList.toggle("split-row", dir === "row");
-    terminalContainer.classList.toggle("split-col", dir === "column");
+
+    // Apply layout with inline styles (CSS classes were unreliable on iPad Safari)
+    terminalContainer.style.display = "flex";
+    terminalContainer.style.flexDirection = dir === "row" ? "row" : "column";
 
     terminalPool.forEach((name, entry) => {
       const isP1 = name === pane1Session;
       const isP2 = name === pane2Session;
       entry.container.classList.remove("active");
-      entry.container.classList.toggle("split-pane-1", isP1);
-      entry.container.classList.toggle("split-pane-2", isP2);
-      entry.container.classList.toggle("split-visible", isP1 || isP2);
+
+      if (isP1 || isP2) {
+        // Make visible as flex child
+        entry.container.style.display = "block";
+        entry.container.style.position = "relative";
+        entry.container.style.inset = "auto";
+        entry.container.style.flex = "1";
+        entry.container.style.minWidth = "0";
+        entry.container.style.minHeight = "0";
+        entry.container.style.overflow = "hidden";
+        entry.container.style.order = isP1 ? "1" : "3";
+      } else {
+        // Hide other panes
+        entry.container.style.display = "none";
+      }
     });
 
     ensureDivider();
@@ -113,8 +135,10 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
   function ensureDivider() {
     if (!dividerEl) {
       dividerEl = document.createElement("div");
-      dividerEl.className = "split-divider";
-      // Double-tap to close split
+      const dir = getDirection();
+      dividerEl.style.cssText = dir === "row"
+        ? "order:2; flex-shrink:0; width:3px; background:var(--accent-active); cursor:col-resize;"
+        : "order:2; flex-shrink:0; height:3px; background:var(--accent-active); cursor:row-resize;";
       dividerEl.addEventListener("dblclick", () => unsplit());
     }
     if (!dividerEl.parentElement) {
