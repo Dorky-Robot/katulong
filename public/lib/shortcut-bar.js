@@ -434,11 +434,18 @@ export function createShortcutBar(options = {}) {
   function onTabMouseDown(e, tab, name) {
     if (e.button !== 0 || e.target.closest(".tab-close")) return;
 
+    // On iPad, synthesized mouse events from touch trigger native text
+    // selection / drag unless we prevent default immediately.
+    if (splitManager?.isTablet()) {
+      e.preventDefault();
+    }
+
     const startX = e.clientX;
     const startY = e.clientY;
     let started = false;
 
     const onMove = (me) => {
+      me.preventDefault(); // prevent native selection during drag
       const dx = me.clientX - startX;
       const dy = me.clientY - startY;
 
