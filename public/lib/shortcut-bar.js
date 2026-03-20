@@ -923,20 +923,29 @@ export function createShortcutBar(options = {}) {
     const isSplit = splitManager?.isSplit();
 
     if (isSplit) {
-      // Split mode: two separate tab groups, one per pane, like two browser windows
+      // Split mode: two separate tab groups, one per pane
+      // Layout matches the split orientation:
+      //   landscape (row split) → tab groups side by side
+      //   portrait (column split) → tab groups stacked vertically
+      const dir = splitManager.getDirection();
+      const isRow = dir === "row";
       const p1Active = splitManager.getPane1();
       const p2Active = splitManager.getPane2();
       const pane1Tabs = sessions.filter(s => !splitManager.isInPane2(s.name));
       const pane2Tabs = sessions.filter(s => splitManager.isInPane2(s.name));
 
-      // Wrapper that splits the bar into two halves
+      // Wrapper that splits the bar matching the pane orientation
       const splitBar = document.createElement("div");
-      splitBar.style.cssText = "display:flex; flex:1; min-width:0; gap:0;";
+      splitBar.style.cssText = isRow
+        ? "display:flex; flex:1; min-width:0; gap:0; flex-direction:row;"
+        : "display:flex; flex:1; min-width:0; gap:0; flex-direction:column;";
 
-      // Pane 1 tab group (left)
+      // Pane 1 tab group (left or top)
       const group1 = document.createElement("div");
       group1.className = "tab-scroll-area";
-      group1.style.cssText = "flex:1; min-width:0; border-right:2px solid var(--accent-active);";
+      group1.style.cssText = isRow
+        ? "flex:1; min-width:0; border-right:2px solid var(--accent-active);"
+        : "flex:0 0 auto; min-width:0; border-bottom:2px solid var(--accent-active); padding-bottom:2px;";
       for (const s of pane1Tabs) {
         group1.appendChild(createTabEl(s, s.name === p1Active));
       }
@@ -949,10 +958,12 @@ export function createShortcutBar(options = {}) {
       group1.appendChild(addBtn1);
       splitBar.appendChild(group1);
 
-      // Pane 2 tab group (right)
+      // Pane 2 tab group (right or bottom)
       const group2 = document.createElement("div");
       group2.className = "tab-scroll-area";
-      group2.style.cssText = "flex:1; min-width:0; padding-left:var(--space-xs);";
+      group2.style.cssText = isRow
+        ? "flex:1; min-width:0; padding-left:var(--space-xs);"
+        : "flex:0 0 auto; min-width:0; padding-top:2px;";
       for (const s of pane2Tabs) {
         group2.appendChild(createTabEl(s, s.name === p2Active));
       }

@@ -216,7 +216,11 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
   // ── Orientation change ───────────────────────────────────────────────
 
   window.matchMedia("(orientation: landscape)").addEventListener("change", () => {
-    if (active) applyLayout();
+    if (active) {
+      applyLayout();
+      // Re-render tab bar to match new orientation (row ↔ column tab groups)
+      if (_onSplitChanged) _onSplitChanged({ isSplit: true, pane1: pane1Session, pane2: pane2Session });
+    }
   });
 
   return {
