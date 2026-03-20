@@ -87,52 +87,14 @@ export function attachTouchSelect(term) {
   const el = term.element;
   if (!el) return () => {};
 
-  function onTouchStart(e) {
-    // Only handle single-finger touches on the terminal canvas area
+  // Non-passive touchmove handler — only attached while selecting to avoid
+  // blocking native touch scrolling on iOS Safari. iOS blocks scroll when
+  // ANY non-passive touchmove listener exists on an ancestor, even if it
+  // never calls preventDefault().
+  function onSelectingTouchMove(e) {
     if (e.touches.length !== 1) return;
-    const target = e.target;
-    // Don't interfere with joystick, key-island, or other UI
-    if (target.closest("#key-island") || target.closest("#joystick")) return;
-
-    const t = e.touches[0];
-    startX = t.clientX;
-    startY = t.clientY;
-    selecting = false;
-
-    pressTimer = setTimeout(() => {
-      pressTimer = null;
-      selecting = true;
-
-      const { col, row } = touchToCell(term, t.clientX, t.clientY);
-      const bounds = wordBoundsAt(term, col, row);
-      anchorRow = row;
-      anchorCol = bounds.start;
-
-      // Select the word under the finger
-      term.select(bounds.start, row + term.buffer.active.viewportY, bounds.end - bounds.start);
-
-      // Prevent context menu / magnifier from iOS
-      e.preventDefault();
-    }, LONG_PRESS_MS);
-  }
-
-  function onTouchMove(e) {
-    if (e.touches.length !== 1) return;
-    const t = e.touches[0];
-    const dx = t.clientX - startX;
-    const dy = t.clientY - startY;
-
-    if (!selecting) {
-      // Cancel long-press if finger moved too much
-      if (Math.sqrt(dx * dx + dy * dy) > MOVE_THRESHOLD && pressTimer) {
-        clearTimeout(pressTimer);
-        pressTimer = null;
-      }
-      return;
-    }
-
-    // Extend selection from anchor to current touch position
     e.preventDefault();
+    const t = e.touches[0];
     const { col, row } = touchToCell(term, t.clientX, t.clientY);
     const viewportY = term.buffer.active.viewportY;
 
@@ -156,6 +118,59 @@ export function attachTouchSelect(term) {
     term.select(startCol, startRow, length);
   }
 
+  function enterSelecting() {
+    selecting = true;
+    el.addEventListener("touchmove", onSelectingTouchMove, { passive: false });
+  }
+
+  function exitSelecting() {
+    selecting = false;
+    el.removeEventListener("touchmove", onSelectingTouchMove);
+  }
+
+  function onTouchStart(e) {
+    // Only handle single-finger touches on the terminal canvas area
+    if (e.touches.length !== 1) return;
+    const target = e.target;
+    // Don't interfere with joystick, key-island, or other UI
+    if (target.closest("#key-island") || target.closest("#joystick")) return;
+
+    const t = e.touches[0];
+    startX = t.clientX;
+    startY = t.clientY;
+    exitSelecting();
+
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+
+      const { col, row } = touchToCell(term, t.clientX, t.clientY);
+      const bounds = wordBoundsAt(term, col, row);
+      anchorRow = row;
+      anchorCol = bounds.start;
+
+      // Select the word under the finger
+      term.select(bounds.start, row + term.buffer.active.viewportY, bounds.end - bounds.start);
+
+      enterSelecting();
+
+      // Prevent context menu / magnifier from iOS
+      e.preventDefault();
+    }, LONG_PRESS_MS);
+  }
+
+  // Passive touchmove — only used to cancel long-press on movement.
+  // Being passive means it won't block native touch scrolling on iOS.
+  function onPassiveTouchMove(e) {
+    if (selecting || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    if (Math.sqrt(dx * dx + dy * dy) > MOVE_THRESHOLD && pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  }
+
   function onTouchEnd(e) {
     if (pressTimer) {
       clearTimeout(pressTimer);
@@ -163,7 +178,7 @@ export function attachTouchSelect(term) {
     }
     if (selecting) {
       // Keep selection visible — it will be copied by the onSelectionChange handler
-      selecting = false;
+      exitSelecting();
       e.preventDefault();
     }
   }
@@ -173,17 +188,18 @@ export function attachTouchSelect(term) {
       clearTimeout(pressTimer);
       pressTimer = null;
     }
-    selecting = false;
+    exitSelecting();
   }
 
   el.addEventListener("touchstart", onTouchStart, { passive: false });
-  el.addEventListener("touchmove", onTouchMove, { passive: false });
+  el.addEventListener("touchmove", onPassiveTouchMove, { passive: true });
   el.addEventListener("touchend", onTouchEnd, { passive: false });
   el.addEventListener("touchcancel", onTouchCancel);
 
   return () => {
     el.removeEventListener("touchstart", onTouchStart);
-    el.removeEventListener("touchmove", onTouchMove);
+    el.removeEventListener("touchmove", onPassiveTouchMove);
+    el.removeEventListener("touchmove", onSelectingTouchMove);
     el.removeEventListener("touchend", onTouchEnd);
     el.removeEventListener("touchcancel", onTouchCancel);
     if (pressTimer) clearTimeout(pressTimer);

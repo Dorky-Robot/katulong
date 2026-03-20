@@ -1,0 +1,293 @@
+/**
+ * Split Manager (iPad/tablet only)
+ *
+ * Manages two-pane split terminal layout.
+ * Landscape: side-by-side (row). Portrait: stacked (column).
+ * Only two splits maximum. Drag a tab into the terminal area to split.
+ */
+
+const TABLET_MQ = "(pointer: coarse) and (min-width: 768px)";
+
+export function createSplitManager({ terminalContainer, terminalPool, sendResize }) {
+  let active = false;
+  let pane1Session = null;
+  let pane2Session = null;
+  const pane2Sessions = new Set(); // all sessions assigned to pane 2
+  let dividerEl = null;
+  let _onFocusChange = null;
+  let _onSplitChanged = null;
+  const focusCleanups = [];
+
+  function isTablet() {
+    return window.matchMedia(TABLET_MQ).matches;
+  }
+
+  function getDirection() {
+    return window.matchMedia("(orientation: landscape)").matches ? "row" : "column";
+  }
+
+  // ── Split lifecycle ──────────────────────────────────────────────────
+
+  function split(session1, session2) {
+    if (!isTablet()) return;
+    active = true;
+    pane1Session = session1;
+    pane2Session = session2;
+    pane2Sessions.add(session2);
+
+    // Ensure both terminals exist
+    terminalPool.getOrCreate(session1);
+    terminalPool.getOrCreate(session2);
+
+    applyLayout();
+    setupFocusTracking();
+    if (_onSplitChanged) _onSplitChanged({ isSplit: true, pane1: pane1Session, pane2: pane2Session });
+  }
+
+  function unsplit(keepSession) {
+    if (!active) return;
+    active = false;
+    const keep = keepSession || pane1Session;
+    pane2Sessions.clear();
+    pane1Session = keep;
+    pane2Session = null;
+
+    cleanupFocusTracking();
+    terminalContainer.classList.remove("split-active", "split-row", "split-col");
+    removeDivider();
+
+    // Remove split classes from all panes
+    terminalPool.forEach((_name, entry) => {
+      entry.container.classList.remove("split-visible", "split-pane-1", "split-pane-2");
+    });
+
+    // Restore single-pane mode
+    if (keep) terminalPool.activate(keep);
+    if (_onSplitChanged) _onSplitChanged({ isSplit: false, pane1: keep, pane2: null });
+  }
+
+  // ── Layout ───────────────────────────────────────────────────────────
+
+  function applyLayout() {
+    if (!active || !pane1Session || !pane2Session) return;
+
+    const dir = getDirection();
+    terminalContainer.classList.add("split-active");
+    terminalContainer.classList.toggle("split-row", dir === "row");
+    terminalContainer.classList.toggle("split-col", dir === "column");
+
+    terminalPool.forEach((name, entry) => {
+      const isP1 = name === pane1Session;
+      const isP2 = name === pane2Session;
+      entry.container.classList.remove("active");
+      entry.container.classList.toggle("split-pane-1", isP1);
+      entry.container.classList.toggle("split-pane-2", isP2);
+      entry.container.classList.toggle("split-visible", isP1 || isP2);
+    });
+
+    ensureDivider();
+    fitAll();
+  }
+
+  function fitPane(session) {
+    const entry = terminalPool.get(session);
+    if (!entry) return;
+    entry.fit.fit();
+    if (sendResize) sendResize(session, entry.term.cols, entry.term.rows);
+  }
+
+  function fitAll() {
+    if (!active) return;
+    requestAnimationFrame(() => {
+      fitPane(pane1Session);
+      fitPane(pane2Session);
+    });
+  }
+
+  // ── Divider ──────────────────────────────────────────────────────────
+
+  function ensureDivider() {
+    if (!dividerEl) {
+      dividerEl = document.createElement("div");
+      dividerEl.className = "split-divider";
+      // Double-tap to close split
+      dividerEl.addEventListener("dblclick", () => unsplit());
+    }
+    if (!dividerEl.parentElement) {
+      terminalContainer.appendChild(dividerEl);
+    }
+  }
+
+  function removeDivider() {
+    if (dividerEl) {
+      dividerEl.remove();
+      dividerEl = null;
+    }
+  }
+
+  // ── Focus tracking ───────────────────────────────────────────────────
+
+  function setupFocusTracking() {
+    cleanupFocusTracking();
+    terminalPool.forEach((name, entry) => {
+      const handler = () => {
+        if (active && (name === pane1Session || name === pane2Session)) {
+          if (_onFocusChange) _onFocusChange(name);
+        }
+      };
+      entry.container.addEventListener("pointerdown", handler);
+      focusCleanups.push(() => entry.container.removeEventListener("pointerdown", handler));
+    });
+  }
+
+  function cleanupFocusTracking() {
+    for (const fn of focusCleanups) fn();
+    focusCleanups.length = 0;
+  }
+
+  // ── Pane management ──────────────────────────────────────────────────
+
+  function switchPaneSession(pane, newSession) {
+    terminalPool.getOrCreate(newSession);
+    if (pane === 1) {
+      pane2Sessions.delete(newSession);
+      pane1Session = newSession;
+    } else {
+      pane2Sessions.add(newSession);
+      pane2Session = newSession;
+    }
+    applyLayout();
+    setupFocusTracking();
+  }
+
+  function getPaneForSession(name) {
+    return pane2Sessions.has(name) ? 2 : 1;
+  }
+
+  function getOtherSession(sessionName) {
+    if (sessionName === pane1Session) return pane2Session;
+    if (sessionName === pane2Session) return pane1Session;
+    return null;
+  }
+
+  // ── Drop preview (during tab drag) ──────────────────────────────────
+
+  let previewOverlay = null;
+
+  function showPreview() {
+    if (previewOverlay) return;
+    const dir = getDirection();
+
+    previewOverlay = document.createElement("div");
+    previewOverlay.className = `split-drop-overlay ${dir === "row" ? "drop-row" : "drop-col"}`;
+
+    const zone1 = document.createElement("div");
+    zone1.className = "split-drop-zone";
+    zone1.dataset.pane = "1";
+    const label1 = document.createElement("span");
+    label1.className = "split-drop-label";
+    label1.textContent = "Drop here";
+    zone1.appendChild(label1);
+
+    const zone2 = document.createElement("div");
+    zone2.className = "split-drop-zone";
+    zone2.dataset.pane = "2";
+    const label2 = document.createElement("span");
+    label2.className = "split-drop-label";
+    label2.textContent = "Drop here";
+    zone2.appendChild(label2);
+
+    previewOverlay.appendChild(zone1);
+    previewOverlay.appendChild(zone2);
+    terminalContainer.appendChild(previewOverlay);
+
+    terminalContainer.classList.add("split-preview");
+
+    // Force reflow then show
+    previewOverlay.offsetHeight;
+    previewOverlay.classList.add("visible");
+  }
+
+  function updatePreview(cx, cy) {
+    if (!previewOverlay) return null;
+    const rect = terminalContainer.getBoundingClientRect();
+    const dir = getDirection();
+    const zones = previewOverlay.querySelectorAll(".split-drop-zone");
+
+    let hoverPane = null;
+    if (dir === "row") {
+      const mid = rect.left + rect.width / 2;
+      hoverPane = cx < mid ? 1 : 2;
+      // Slide active terminal to the opposite side
+      terminalContainer.classList.toggle("preview-slide-right", hoverPane === 1);
+      terminalContainer.classList.toggle("preview-slide-left", hoverPane === 2);
+      terminalContainer.classList.remove("preview-slide-up", "preview-slide-down");
+    } else {
+      const mid = rect.top + rect.height / 2;
+      hoverPane = cy < mid ? 1 : 2;
+      terminalContainer.classList.toggle("preview-slide-down", hoverPane === 1);
+      terminalContainer.classList.toggle("preview-slide-up", hoverPane === 2);
+      terminalContainer.classList.remove("preview-slide-left", "preview-slide-right");
+    }
+
+    zones[0].classList.toggle("hover", hoverPane === 1);
+    zones[1].classList.toggle("hover", hoverPane === 2);
+
+    return hoverPane;
+  }
+
+  function hidePreview() {
+    if (previewOverlay) {
+      previewOverlay.remove();
+      previewOverlay = null;
+    }
+    terminalContainer.classList.remove(
+      "split-preview",
+      "preview-slide-left", "preview-slide-right",
+      "preview-slide-up", "preview-slide-down"
+    );
+  }
+
+  function getPreviewPane(cx, cy) {
+    const rect = terminalContainer.getBoundingClientRect();
+    const dir = getDirection();
+    if (dir === "row") {
+      return cx < rect.left + rect.width / 2 ? 1 : 2;
+    } else {
+      return cy < rect.top + rect.height / 2 ? 1 : 2;
+    }
+  }
+
+  // ── Orientation change ───────────────────────────────────────────────
+
+  window.matchMedia("(orientation: landscape)").addEventListener("change", () => {
+    if (active) applyLayout();
+  });
+
+  return {
+    split,
+    unsplit,
+    isSplit: () => active,
+    isTablet,
+    getDirection,
+    getPane1: () => pane1Session,
+    getPane2: () => pane2Session,
+    getPaneForSession,
+    getOtherSession,
+    switchPaneSession,
+    isInPane2: (name) => pane2Sessions.has(name),
+    addToPane2: (name) => pane2Sessions.add(name),
+    removeFromPane2: (name) => pane2Sessions.delete(name),
+    applyLayout,
+    fitAll,
+    // Preview API (for tab drag)
+    showPreview,
+    updatePreview,
+    hidePreview,
+    getPreviewPane,
+    // Callbacks
+    set onFocusChange(fn) { _onFocusChange = fn; },
+    set onSplitChanged(fn) { _onSplitChanged = fn; },
+    get pane2Sessions() { return pane2Sessions; },
+  };
+}

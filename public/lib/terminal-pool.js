@@ -27,6 +27,8 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
   // sessionName -> { term, fit, searchAddon, container, lastUsed }
   const pool = new Map();
   let activeSession = null;
+  // Sessions protected from LRU eviction (e.g. split secondary pane)
+  const protectedSessions = new Set();
 
   function createEntry(sessionName) {
     // Evict LRU if at capacity
@@ -34,7 +36,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
       let oldest = null;
       let oldestTime = Infinity;
       for (const [name, entry] of pool) {
-        if (name === activeSession) continue; // never evict active
+        if (name === activeSession || protectedSessions.has(name)) continue; // never evict active/protected
         if (entry.lastUsed < oldestTime) {
           oldestTime = entry.lastUsed;
           oldest = name;
@@ -145,6 +147,10 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     }
   }
 
+  /** Mark a session as protected from LRU eviction (e.g. split secondary) */
+  function protect(sessionName) { protectedSessions.add(sessionName); }
+  function unprotect(sessionName) { protectedSessions.delete(sessionName); }
+
   return {
     get,
     getOrCreate,
@@ -155,6 +161,8 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     has,
     rename,
     forEach,
+    protect,
+    unprotect,
     get size() { return pool.size; },
   };
 }

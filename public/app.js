@@ -34,6 +34,7 @@
     import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
+    import { createSplitManager } from "/lib/split-manager.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -238,9 +239,54 @@
     const getFit = () => terminalPool.getActive()?.fit;
     const getSearchAddon = () => terminalPool.getActive()?.searchAddon;
 
+    // --- Split Manager (iPad/tablet only) ---
+    const splitManager = createSplitManager({
+      terminalContainer: document.getElementById("terminal-container"),
+      terminalPool,
+      sendResize: (session, cols, rows) => {
+        if (state.connection.ws?.readyState === 1) {
+          state.connection.ws.send(JSON.stringify({ type: "resize", session, cols, rows }));
+        }
+      }
+    });
+
+    // When the user taps a split pane, update state.session.name for input routing
+    splitManager.onFocusChange = (sessionName) => {
+      if (sessionName !== state.session.name) {
+        state.update('session.name', sessionName);
+        document.title = sessionName;
+        const url = new URL(window.location);
+        url.searchParams.set("s", sessionName);
+        history.replaceState(null, "", url);
+        if (shortcutBarInstance) shortcutBarInstance.render(sessionName);
+      }
+    };
+
+    // When split state changes, clean up protection and re-render
+    splitManager.onSplitChanged = ({ isSplit, pane1, pane2 }) => {
+      if (!isSplit) {
+        // Unsplit: unprotect all, update state
+        terminalPool.forEach((name) => terminalPool.unprotect(name));
+        if (pane1) {
+          state.update('session.name', pane1);
+          document.title = pane1;
+          const url = new URL(window.location);
+          url.searchParams.set("s", pane1);
+          history.replaceState(null, "", url);
+        }
+      }
+      if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
+      fitActiveTerminal();
+    };
+
     /** Fit the active terminal after a visibility change (e.g. closing file browser/port forward) */
     function fitActiveTerminal() {
       requestAnimationFrame(() => {
+        // In split mode, fit both panes
+        if (splitManager.isSplit()) {
+          splitManager.fitAll();
+          return;
+        }
         const active = terminalPool.getActive();
         if (!active) return;
         withPreservedScroll(active.term, () => active.fit.fit());
@@ -551,6 +597,30 @@
         windowTabSet.addTab(name);
       }
 
+      // In split mode, switch the correct pane instead of breaking the split
+      if (splitManager.isSplit()) {
+        const pane = splitManager.getPaneForSession(name);
+        splitManager.switchPaneSession(pane, name);
+        state.update('session.name', name);
+        document.title = name;
+        const url = new URL(window.location);
+        url.searchParams.set("s", name);
+        history.replaceState(null, "", url);
+        if (shortcutBarInstance) shortcutBarInstance.render(name);
+        invalidateSessions(sessionStore, name);
+
+        // Switch WS session
+        const ws = state.connection.ws;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          const entry = terminalPool.get(name);
+          if (entry) {
+            pendingSwitch = name;
+            ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows, cached: true }));
+          }
+        }
+        return;
+      }
+
       const ws = state.connection.ws;
       const wsOpen = ws && ws.readyState === WebSocket.OPEN;
 
@@ -589,7 +659,11 @@
     }
 
     function switchSession(name) {
-      if (name === state.session.name || name === pendingSwitch) return;
+      // In split mode, allow switching even if it's the "current" session
+      // (it might be active in the other pane)
+      if (!splitManager.isSplit()) {
+        if (name === state.session.name || name === pendingSwitch) return;
+      }
       const url = new URL(window.location);
       url.searchParams.set("s", name);
       history.pushState(null, "", url);
@@ -838,13 +912,36 @@
         url.searchParams.delete("s");
         history.replaceState(null, "", url);
       },
+      onSplitDrop: (sessionName, pane) => {
+        // pane 1 = left/top zone, pane 2 = right/bottom zone
+        const currentActive = state.session.name;
+        if (pane === 1) {
+          // Dragged tab goes to pane 1 (left), current stays pane 2 (right)
+          splitManager.split(sessionName, currentActive);
+        } else {
+          // Current stays pane 1 (left), dragged tab goes to pane 2 (right)
+          splitManager.split(currentActive, sessionName);
+        }
+        // Protect both sessions from pool eviction
+        terminalPool.protect(splitManager.getPane1());
+        terminalPool.protect(splitManager.getPane2());
+        // Ensure WS knows about both sessions
+        const ws = state.connection.ws;
+        if (ws?.readyState === WebSocket.OPEN) {
+          const entry = terminalPool.get(sessionName);
+          if (entry) {
+            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows, cached: terminalPool.has(sessionName) }));
+          }
+        }
+      },
       sendFn: rawSend,
       get term() { return getTerm(); },
       updateConnectionIndicator,
       getInstanceIcon,
       getSessionIcon,
       sessionStore,
-      windowTabSet
+      windowTabSet,
+      splitManager,
     });
 
     // Re-render bar if pointer capability changes (e.g., external mouse connected)

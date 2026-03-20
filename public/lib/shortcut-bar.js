@@ -43,12 +43,14 @@ export function createShortcutBar(options = {}) {
     onDictationClick,
     onNotepadClick,
     onAllTabsClosed,
+    onSplitDrop,
     sendFn,
     updateConnectionIndicator,
     getInstanceIcon,
     getSessionIcon,
     sessionStore,
-    windowTabSet
+    windowTabSet,
+    splitManager,
   } = options;
 
   let currentSessionName = "";
@@ -587,8 +589,31 @@ export function createShortcutBar(options = {}) {
       : `translate3d(${gx}px, ${gy}px, 0)`;
 
     const barRect = container.getBoundingClientRect();
-    // Tear-off only for mouse — touch can't open new windows (Safari blocks popups)
-    if (!drag.isTouch && cy > barRect.bottom + DRAG_OUT_THRESHOLD) {
+    const isTabletDevice = splitManager?.isTablet();
+
+    // iPad/tablet: drag below bar enters split preview (replaces tear-off).
+    // On iPad, quick-drag goes through the synthesized mouse path (isTouch=false),
+    // so check the device type rather than the event source.
+    if (isTabletDevice && !splitManager.isSplit() && cy > barRect.bottom + DRAG_OUT_THRESHOLD) {
+      if (!drag.splitPreview) {
+        drag.splitPreview = true;
+        splitManager.showPreview();
+        ghost.classList.add("tab-tear-off");
+        tabs.forEach((t, i) => { if (i !== dragIndex) t.style.transform = ""; });
+      }
+      drag.splitHoverPane = splitManager.updatePreview(cx, cy);
+      return;
+    }
+    // Leaving split preview zone — cancel preview
+    if (drag.splitPreview) {
+      drag.splitPreview = false;
+      drag.splitHoverPane = null;
+      splitManager.hidePreview();
+      ghost.classList.remove("tab-tear-off");
+    }
+
+    // Tear-off only for mouse on non-tablet — touch can't open new windows (Safari blocks popups)
+    if (!isTabletDevice && !drag.isTouch && cy > barRect.bottom + DRAG_OUT_THRESHOLD) {
       if (!drag.tornOff) {
         drag.tornOff = true;
         ghost.classList.add("tab-tear-off");
@@ -650,6 +675,18 @@ export function createShortcutBar(options = {}) {
 
     tab.classList.remove("tab-dragging");
 
+    // Split drop: tab was dragged to a split zone on iPad
+    if (drag.splitPreview && drag.splitHoverPane) {
+      splitManager.hidePreview();
+      if (onSplitDrop) onSplitDrop(name, drag.splitHoverPane);
+      drag = null;
+      render(currentSessionName);
+      return;
+    }
+    if (drag.splitPreview) {
+      splitManager.hidePreview();
+    }
+
     if (tornOff) {
       openInNewWindow(name);
       closeTab(name);
@@ -669,62 +706,104 @@ export function createShortcutBar(options = {}) {
 
   // ── Render ─────────────────────────────────────────────────────────
 
+  /** Create a single tab button element */
+  function createTabEl(s, isActive, paneClass) {
+    const tab = document.createElement("button");
+    tab.className = "tab-bar-tab" + (isActive ? " active" : "") + (paneClass ? ` ${paneClass}` : "");
+    tab.tabIndex = -1;
+    tab.dataset.session = s.name;
+    tab.setAttribute("aria-label", `Session: ${s.name}`);
+
+    const iconEl = document.createElement("i");
+    iconEl.className = `ph ph-${iconForSession(s.name)}`;
+    tab.appendChild(iconEl);
+
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "tab-label";
+    nameSpan.textContent = s.name;
+    tab.appendChild(nameSpan);
+
+    // Notes indicator dot
+    if (options.notepad && options.notepad.hasNotes(s.name)) {
+      const dot = document.createElement("span");
+      dot.className = "tab-notes-dot";
+      dot.title = "Has notes";
+      tab.appendChild(dot);
+    }
+
+    // Close button (×)
+    const closeBtn = document.createElement("span");
+    closeBtn.className = "tab-close";
+    closeBtn.setAttribute("aria-label", `Close ${s.name}`);
+    closeBtn.innerHTML = '<i class="ph ph-x"></i>';
+    closeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      // When split, closing the last tab in a pane unsplits
+      if (splitManager?.isSplit()) {
+        const pane = splitManager.getPaneForSession(s.name);
+        const paneActive = pane === 1 ? splitManager.getPane1() : splitManager.getPane2();
+        if (s.name === paneActive) {
+          // Closing the active session in this pane — unsplit
+          const otherSession = splitManager.getOtherSession(s.name);
+          splitManager.unsplit(otherSession);
+          if (windowTabSet) windowTabSet.removeTab(s.name);
+          render(otherSession);
+          return;
+        }
+      }
+      closeTab(s.name);
+    });
+    tab.appendChild(closeBtn);
+
+    // Double-click to rename
+    tab.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      startTabRename(tab, s.name);
+    });
+
+    // Right-click context menu
+    tab.addEventListener("contextmenu", (e) => showTabContextMenu(e, s.name));
+
+    // Drag-reorder / click-to-switch
+    tab.addEventListener("mousedown", (e) => onTabMouseDown(e, tab, s.name));
+    tab.addEventListener("touchstart", (e) => onTabTouchStart(e, tab, s.name), { passive: false });
+
+    return tab;
+  }
+
   function renderDesktopTabs(sessionName, sessions) {
 
     // Scrollable tab area
     const tabScroll = document.createElement("div");
     tabScroll.className = "tab-scroll-area";
 
-    // Session tabs
-    for (const s of sessions) {
-      const tab = document.createElement("button");
-      tab.className = "tab-bar-tab" + (s.name === sessionName ? " active" : "");
-      tab.tabIndex = -1;
-      tab.dataset.session = s.name;
-      tab.setAttribute("aria-label", `Session: ${s.name}`);
+    const isSplit = splitManager?.isSplit();
 
-      const iconEl = document.createElement("i");
-      iconEl.className = `ph ph-${iconForSession(s.name)}`;
-      tab.appendChild(iconEl);
+    if (isSplit) {
+      const p1Active = splitManager.getPane1();
+      const p2Active = splitManager.getPane2();
 
-      const nameSpan = document.createElement("span");
-      nameSpan.className = "tab-label";
-      nameSpan.textContent = s.name;
-      tab.appendChild(nameSpan);
-
-      // Notes indicator dot — show when session has notes
-      if (options.notepad && options.notepad.hasNotes(s.name)) {
-        const dot = document.createElement("span");
-        dot.className = "tab-notes-dot";
-        dot.title = "Has notes";
-        tab.appendChild(dot);
+      // Pane 1 tabs (left/top)
+      const pane1Tabs = sessions.filter(s => !splitManager.isInPane2(s.name));
+      for (const s of pane1Tabs) {
+        tabScroll.appendChild(createTabEl(s, s.name === p1Active));
       }
 
-      // Close button (×) — click to detach (like closing a Chrome tab)
-      const closeBtn = document.createElement("span");
-      closeBtn.className = "tab-close";
-      closeBtn.setAttribute("aria-label", `Close ${s.name}`);
-      closeBtn.innerHTML = '<i class="ph ph-x"></i>';
-      closeBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        closeTab(s.name);
-      });
-      tab.appendChild(closeBtn);
+      // Split divider in tab bar
+      const divider = document.createElement("div");
+      divider.className = "tab-bar-split-divider";
+      tabScroll.appendChild(divider);
 
-      // Double-click to rename
-      tab.addEventListener("dblclick", (e) => {
-        e.preventDefault();
-        startTabRename(tab, s.name);
-      });
-
-      // Right-click context menu
-      tab.addEventListener("contextmenu", (e) => showTabContextMenu(e, s.name));
-
-      // Drag-reorder / click-to-switch
-      tab.addEventListener("mousedown", (e) => onTabMouseDown(e, tab, s.name));
-      tab.addEventListener("touchstart", (e) => onTabTouchStart(e, tab, s.name), { passive: false });
-
-      tabScroll.appendChild(tab);
+      // Pane 2 tabs (right/bottom)
+      const pane2Tabs = sessions.filter(s => splitManager.isInPane2(s.name));
+      for (const s of pane2Tabs) {
+        tabScroll.appendChild(createTabEl(s, s.name === p2Active, "split-pane-2"));
+      }
+    } else {
+      // Normal mode: all tabs in single group
+      for (const s of sessions) {
+        tabScroll.appendChild(createTabEl(s, s.name === sessionName));
+      }
     }
 
     // + button inside scroll area, next to last tab
