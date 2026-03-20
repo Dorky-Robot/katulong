@@ -15,6 +15,24 @@ log() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 err() { printf '\033[1;31m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
 
+# Portable sed in-place: macOS needs -i '', GNU needs -i
+sedi() {
+  if sed --version >/dev/null 2>&1; then
+    sed -i "$@"   # GNU sed
+  else
+    sed -i '' "$@" # BSD/macOS sed
+  fi
+}
+
+# Portable SHA256: macOS has shasum, Linux has sha256sum
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
@@ -95,9 +113,9 @@ npm version "$NEW_VERSION" --no-git-tag-version
 FORMULA="$REPO_ROOT/Formula/katulong.rb"
 if [ -f "$FORMULA" ]; then
   log "Updating local Formula to v${NEW_VERSION}..."
-  sed -i '' "s|url \"https://github.com/Dorky-Robot/katulong/archive/refs/tags/v.*\.tar\.gz\"|url \"https://github.com/Dorky-Robot/katulong/archive/refs/tags/v${NEW_VERSION}.tar.gz\"|" "$FORMULA"
+  sedi "s|url \"https://github.com/Dorky-Robot/katulong/archive/refs/tags/v.*\.tar\.gz\"|url \"https://github.com/Dorky-Robot/katulong/archive/refs/tags/v${NEW_VERSION}.tar.gz\"|" "$FORMULA"
   # Mark SHA as pending — CI will compute the real one for the taps
-  sed -i '' "s|sha256 \".*\"|sha256 \"PENDING_CI_WILL_UPDATE\"|" "$FORMULA"
+  sedi "s|sha256 \".*\"|sha256 \"PENDING_CI_WILL_UPDATE\"|" "$FORMULA"
 fi
 
 # ── Commit and tag ───────────────────────────────────────────────────
@@ -123,7 +141,7 @@ URL="https://github.com/Dorky-Robot/katulong/archive/refs/tags/${TAG}.tar.gz"
 # Retry up to 30 seconds for the tarball to become available
 for i in $(seq 1 6); do
   if curl -fsSL -o /tmp/katulong-release.tar.gz "$URL" 2>/dev/null; then
-    SHA=$(shasum -a 256 /tmp/katulong-release.tar.gz | cut -d' ' -f1)
+    SHA=$(sha256 /tmp/katulong-release.tar.gz)
     rm -f /tmp/katulong-release.tar.gz
     break
   fi
@@ -132,9 +150,9 @@ done
 
 if [ -n "${SHA:-}" ] && [ -f "$FORMULA" ]; then
   log "Backfilling local Formula SHA256: ${SHA}"
-  sed -i '' "s|sha256 \"PENDING_CI_WILL_UPDATE\"|sha256 \"${SHA}\"|" "$FORMULA"
+  sedi "s|sha256 \"PENDING_CI_WILL_UPDATE\"|sha256 \"${SHA}\"|" "$FORMULA"
   git add Formula/katulong.rb
-  git commit -m "Formula: backfill SHA256 for v${NEW_VERSION}"
+  git commit -m "Formula: update to v${NEW_VERSION}"
   git push origin "$BRANCH"
 else
   warn "Could not fetch tarball SHA — update Formula/katulong.rb manually"
