@@ -782,19 +782,25 @@ export function createShortcutBar(options = {}) {
           splitManager.removeFromPane2(name);
         }
 
+        // Check if the old pane has any remaining tabs
+        const allTabs = windowTabSet ? windowTabSet.getTabs() : [];
+        const oldPaneTabs = allTabs.filter(t => t !== name &&
+          (currentPane === 1 ? !splitManager.isInPane2(t) : splitManager.isInPane2(t)));
+
+        if (oldPaneTabs.length === 0) {
+          // No tabs left in old pane — unsplit, keeping the transferred tab's pane
+          splitManager.unsplit(name);
+          render(currentSessionName);
+          return;
+        }
+
         // If this tab was the active session in its old pane, switch that pane
         const oldPaneActive = currentPane === 1 ? splitManager.getPane1() : splitManager.getPane2();
         if (oldPaneActive === name) {
-          const allTabs = windowTabSet ? windowTabSet.getTabs() : [];
-          const oldPaneTabs = allTabs.filter(t => t !== name &&
-            (currentPane === 1 ? !splitManager.isInPane2(t) : splitManager.isInPane2(t)));
-          if (oldPaneTabs.length > 0) {
-            // Update pane assignment without re-applying layout yet
-            splitManager.switchPaneSession(currentPane, oldPaneTabs[0]);
-          }
+          splitManager.switchPaneSession(currentPane, oldPaneTabs[0]);
         }
 
-        // Make the transferred tab active in the target pane (single applyLayout)
+        // Make the transferred tab active in the target pane
         splitManager.switchPaneSession(targetPane, name);
         render(currentSessionName);
         return;
