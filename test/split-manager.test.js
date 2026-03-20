@@ -85,6 +85,7 @@ function setupGlobals() {
   };
   globalThis.document = globalThis.document || {};
   globalThis.document.createElement = () => createMockElement();
+  globalThis.document.getElementById = () => null;
   globalThis.requestAnimationFrame = (fn) => fn();
 }
 

@@ -928,9 +928,6 @@ export function createShortcutBar(options = {}) {
 
     if (isSplit) {
       // Split mode: two separate tab groups, one per pane
-      // Layout matches the split orientation:
-      //   landscape (row split) → tab groups side by side
-      //   portrait (column split) → tab groups stacked vertically
       const dir = splitManager.getDirection();
       const isRow = dir === "row";
       const p1Active = splitManager.getPane1();
@@ -938,49 +935,60 @@ export function createShortcutBar(options = {}) {
       const pane1Tabs = sessions.filter(s => !splitManager.isInPane2(s.name));
       const pane2Tabs = sessions.filter(s => splitManager.isInPane2(s.name));
 
-      // Wrapper that splits the bar matching the pane orientation
-      const splitBar = document.createElement("div");
-      splitBar.style.cssText = isRow
-        ? "display:flex; flex:1; min-width:0; gap:0; flex-direction:row;"
-        : "display:flex; flex:1; min-width:0; gap:0; flex-direction:column;";
+      // Remove any previous pane 2 tab bar from the terminal container
+      document.getElementById("split-pane2-tabs")?.remove();
 
-      // Pane 1 tab group (left or top)
-      const group1 = document.createElement("div");
-      group1.className = "tab-scroll-area";
-      group1.style.cssText = isRow
-        ? "flex:1; min-width:0; border-right:2px solid var(--accent-active);"
-        : "flex:0 0 auto; min-width:0; border-bottom:2px solid var(--accent-active); padding-bottom:2px;";
-      for (const s of pane1Tabs) {
-        group1.appendChild(createTabEl(s, s.name === p1Active));
+      // Helper: build a tab group with + button
+      function buildTabGroup(tabs, activeSession) {
+        const group = document.createElement("div");
+        group.className = "tab-scroll-area";
+        for (const s of tabs) {
+          group.appendChild(createTabEl(s, s.name === activeSession));
+        }
+        const addBtn = document.createElement("button");
+        addBtn.className = "tab-bar-add";
+        addBtn.tabIndex = -1;
+        addBtn.setAttribute("aria-label", "New session");
+        addBtn.innerHTML = '<i class="ph ph-plus-circle"></i>';
+        addBtn.addEventListener("click", () => showAddMenu(addBtn));
+        group.appendChild(addBtn);
+        return group;
       }
-      const addBtn1 = document.createElement("button");
-      addBtn1.className = "tab-bar-add";
-      addBtn1.tabIndex = -1;
-      addBtn1.setAttribute("aria-label", "New session");
-      addBtn1.innerHTML = '<i class="ph ph-plus-circle"></i>';
-      addBtn1.addEventListener("click", () => showAddMenu(addBtn1));
-      group1.appendChild(addBtn1);
-      splitBar.appendChild(group1);
 
-      // Pane 2 tab group (right or bottom)
-      const group2 = document.createElement("div");
-      group2.className = "tab-scroll-area";
-      group2.style.cssText = isRow
-        ? "flex:1; min-width:0; padding-left:var(--space-xs);"
-        : "flex:0 0 auto; min-width:0; padding-top:2px;";
-      for (const s of pane2Tabs) {
-        group2.appendChild(createTabEl(s, s.name === p2Active));
+      if (isRow) {
+        // Landscape: both tab groups side by side in the shortcut bar
+        const splitBar = document.createElement("div");
+        splitBar.style.cssText = "display:flex; flex:1; min-width:0; gap:0;";
+
+        const group1 = buildTabGroup(pane1Tabs, p1Active);
+        group1.style.cssText += "flex:1; min-width:0; border-right:2px solid var(--accent-active);";
+        splitBar.appendChild(group1);
+
+        const group2 = buildTabGroup(pane2Tabs, p2Active);
+        group2.style.cssText += "flex:1; min-width:0; padding-left:var(--space-xs);";
+        splitBar.appendChild(group2);
+
+        container.appendChild(splitBar);
+      } else {
+        // Portrait: pane 1 tabs in the shortcut bar, pane 2 tabs injected
+        // directly above pane 2's terminal (between divider and bottom pane)
+        const group1 = buildTabGroup(pane1Tabs, p1Active);
+        container.appendChild(group1);
+
+        // Inject pane 2 tab bar into the terminal container
+        const tc = document.getElementById("terminal-container");
+        if (tc) {
+          const pane2Bar = buildTabGroup(pane2Tabs, p2Active);
+          pane2Bar.id = "split-pane2-tabs";
+          pane2Bar.style.cssText = `
+            order:2; flex-shrink:0; display:flex; align-items:center;
+            gap:var(--space-xs); padding:2px var(--space-xs);
+            background:var(--bg-surface); border-bottom:1px solid var(--border);
+            min-height:0;
+          `;
+          tc.appendChild(pane2Bar);
+        }
       }
-      const addBtn2 = document.createElement("button");
-      addBtn2.className = "tab-bar-add";
-      addBtn2.tabIndex = -1;
-      addBtn2.setAttribute("aria-label", "New session");
-      addBtn2.innerHTML = '<i class="ph ph-plus-circle"></i>';
-      addBtn2.addEventListener("click", () => showAddMenu(addBtn2));
-      group2.appendChild(addBtn2);
-      splitBar.appendChild(group2);
-
-      container.appendChild(splitBar);
     } else {
       // Normal mode: single tab group
       const tabScroll = document.createElement("div");

@@ -79,6 +79,8 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
     terminalContainer.style.display = "";
     terminalContainer.style.flexDirection = "";
     removeDivider();
+    // Remove pane 2 tab bar if it was injected into the terminal container (portrait mode)
+    document.getElementById("split-pane2-tabs")?.remove();
 
     // Clear inline styles from all panes
     terminalPool.forEach((_name, entry) => {
@@ -122,7 +124,9 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
         entry.container.style.minWidth = "0";
         entry.container.style.minHeight = "0";
         entry.container.style.overflow = "hidden";
-        entry.container.style.order = isP1 ? "1" : "3";
+        // In portrait (column) mode, pane 2 tabs are injected at order 2,
+        // divider at order 3, so pane 2 terminal goes to order 4.
+        entry.container.style.order = isP1 ? "1" : (dir === "column" ? "4" : "3");
       } else {
         // Hide other panes
         entry.container.style.display = "none";
@@ -157,9 +161,10 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
       dividerEl.addEventListener("dblclick", () => unsplit());
     }
     // Always update style based on current direction (handles orientation changes)
+    // In portrait mode, pane 2 tabs are at order 2, so divider goes to order 3
     dividerEl.style.cssText = dir === "row"
       ? "order:2; flex-shrink:0; width:3px; background:var(--accent-active); cursor:col-resize;"
-      : "order:2; flex-shrink:0; height:3px; background:var(--accent-active); cursor:row-resize;";
+      : "order:3; flex-shrink:0; height:3px; background:var(--accent-active); cursor:row-resize;";
     if (!dividerEl.parentElement) {
       terminalContainer.appendChild(dividerEl);
     }
