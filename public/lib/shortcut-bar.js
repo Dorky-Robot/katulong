@@ -494,6 +494,12 @@ export function createShortcutBar(options = {}) {
   function onTabTouchStart(e, tab, name) {
     if (e.target.closest(".tab-close")) return;
 
+    // On iPad, prevent default immediately to suppress native drag/selection
+    // gestures that fight with our custom drag and cause jittery movement.
+    if (splitManager?.isTablet()) {
+      e.preventDefault();
+    }
+
     // Long-press to drag: short touches allow native horizontal scroll of the tab area.
     // After LONG_PRESS_MS without significant movement, we enter drag mode.
     const initialTouch = e.touches[0];
@@ -592,10 +598,20 @@ export function createShortcutBar(options = {}) {
 
     const grabOffset = startX - rects[dragIndex].left;
 
+    // Cache ghost height and bar rect to avoid forced layout reflows every frame
+    const ghostHeight = ghost.offsetHeight;
+    const barRectCached = container.getBoundingClientRect();
+    const isTabletCached = splitManager?.isTablet() || isTabletLocal();
+
     drag = {
       tab, name, ghost, tabs, rects, dragIndex,
       currentIndex: dragIndex,
       grabOffset,
+      ghostHeight,
+      barBottom: barRectCached.bottom,
+      barLeft: barRectCached.left,
+      barWidth: barRectCached.width,
+      isTabletCached,
       tornOff: false,
       isTouch: !!fromTouch,
     };
@@ -603,11 +619,11 @@ export function createShortcutBar(options = {}) {
 
   function updateDrag(cx, cy) {
     if (!drag) return;
-    const { ghost, tabs, rects, dragIndex, grabOffset } = drag;
+    const { ghost, tabs, rects, dragIndex, grabOffset, ghostHeight } = drag;
 
-    // Use translate3d for GPU-accelerated positioning (fixes Safari ghost disappearing)
+    // Use translate3d for GPU-accelerated positioning (no layout reflows)
     const gx = cx - grabOffset;
-    const gy = cy - ghost.offsetHeight / 2;
+    const gy = cy - ghostHeight / 2;
     ghost.style.transform = drag.tornOff
       ? `translate3d(${gx}px, ${gy}px, 0) scale(1.08)`
       : `translate3d(${gx}px, ${gy}px, 0)`;
@@ -616,10 +632,9 @@ export function createShortcutBar(options = {}) {
     drag.lastCx = cx;
     drag.lastCy = cy;
 
-    const barRect = container.getBoundingClientRect();
-    // Detect tablet via split manager OR local check (maxTouchPoints + screen width)
-    const isTabletDevice = splitManager?.isTablet() || isTabletLocal();
-    const belowBar = cy > barRect.bottom + SPLIT_THRESHOLD;
+    // Use cached values — no getBoundingClientRect() in the hot path
+    const isTabletDevice = drag.isTabletCached;
+    const belowBar = cy > drag.barBottom + SPLIT_THRESHOLD;
 
     // iPad/tablet: drag below bar enters split preview (replaces tear-off).
     if (isTabletDevice && splitManager && !splitManager.isSplit() && belowBar) {
@@ -694,7 +709,7 @@ export function createShortcutBar(options = {}) {
     }
 
     // Tear-off only for mouse on non-tablet — touch can't open new windows (Safari blocks popups)
-    if (!isTabletDevice && !drag.isTouch && cy > barRect.bottom + DRAG_OUT_THRESHOLD) {
+    if (!isTabletDevice && !drag.isTouch && cy > drag.barBottom + DRAG_OUT_THRESHOLD) {
       if (!drag.tornOff) {
         drag.tornOff = true;
         ghost.classList.add("tab-tear-off");
