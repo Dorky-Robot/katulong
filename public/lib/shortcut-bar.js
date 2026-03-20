@@ -444,6 +444,10 @@ export function createShortcutBar(options = {}) {
 
   function onTabMouseDown(e, tab, name) {
     if (e.button !== 0 || e.target.closest(".tab-close")) return;
+    // If a touch drag is already in progress, don't start a mouse drag too.
+    // iPad Safari synthesizes mouse events from touch, which would create
+    // a second competing drag that makes the ghost jump around.
+    if (drag) return;
 
     // On iPad, synthesized mouse events from touch trigger native text
     // selection / drag unless we prevent default immediately.
