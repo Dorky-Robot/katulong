@@ -131,63 +131,88 @@ export const scrollToBottom = (term, { smooth = true } = {}) => {
 /**
  * Enable touch-based scrolling for a terminal.
  *
- * xterm.js 6 uses a custom scrollable element that only handles `wheel`
- * events — touch scrolling is not supported. This bridge converts
- * vertical touch-drag gestures into `term.scrollLines()` calls.
+ * xterm.js 6's scrollable element only handles wheel events — touch
+ * scrolling is not supported. This bridge converts vertical touch-drag
+ * gestures into term.scrollLines() calls.
+ *
+ * Uses a single document-level handler (installed once) that maps touch
+ * events to the terminal they started in. This avoids adding non-passive
+ * listeners to terminal elements, which would block iOS Safari's native
+ * touch gesture pipeline even if preventDefault is never called.
  *
  * Call once per terminal (idempotent via WeakSet).
  */
 const _touchScrollAttached = new WeakSet();
-export function initTouchScroll(term) {
-  if (_touchScrollAttached.has(term)) return;
-  _touchScrollAttached.add(term);
+let _documentHandlerInstalled = false;
+const _terminals = new Set(); // all registered terminals
 
-  const el = term.element;
-  if (!el) return;
+function _installDocumentTouchHandler() {
+  if (_documentHandlerInstalled) return;
+  _documentHandlerInstalled = true;
 
+  let activeTerm = null;
   let startY = 0;
   let lastY = 0;
   let scrolling = false;
   let accDelta = 0;
 
-  // Compute the height of one terminal row in CSS pixels
-  function cellHeight() {
+  function cellHeight(term) {
     try {
       return term._core._renderService.dimensions.css.cell.height;
     } catch {
-      const rect = el.getBoundingClientRect();
+      const rect = term.element.getBoundingClientRect();
       return rect.height / term.rows;
     }
   }
 
-  el.addEventListener("touchstart", (e) => {
+  function termFromTouch(target) {
+    for (const term of _terminals) {
+      if (term.element && term.element.contains(target)) return term;
+    }
+    return null;
+  }
+
+  document.addEventListener("touchstart", (e) => {
+    activeTerm = null;
     if (e.touches.length !== 1) return;
+    const term = termFromTouch(e.target);
+    if (!term) return;
+    activeTerm = term;
     startY = e.touches[0].clientY;
     lastY = startY;
     scrolling = false;
     accDelta = 0;
   }, { passive: true });
 
-  el.addEventListener("touchmove", (e) => {
-    if (e.touches.length !== 1) return;
+  document.addEventListener("touchmove", (e) => {
+    if (!activeTerm || e.touches.length !== 1) return;
     const y = e.touches[0].clientY;
-    const dy = lastY - y; // positive = finger moving up = scroll down
+    const dy = lastY - y; // positive = finger up = scroll down
     lastY = y;
 
-    // Only start scrolling after moving more than 10px from start
     if (!scrolling) {
       if (Math.abs(y - startY) < 10) return;
       scrolling = true;
     }
 
     accDelta += dy;
-    const rowH = cellHeight();
+    const rowH = cellHeight(activeTerm);
     const lines = Math.trunc(accDelta / rowH);
     if (lines !== 0) {
-      term.scrollLines(lines);
+      activeTerm.scrollLines(lines);
       accDelta -= lines * rowH;
     }
   }, { passive: true });
+
+  document.addEventListener("touchend", () => { activeTerm = null; }, { passive: true });
+  document.addEventListener("touchcancel", () => { activeTerm = null; }, { passive: true });
+}
+
+export function initTouchScroll(term) {
+  if (_touchScrollAttached.has(term)) return;
+  _touchScrollAttached.add(term);
+  _terminals.add(term);
+  _installDocumentTouchHandler();
 }
 
 /**
