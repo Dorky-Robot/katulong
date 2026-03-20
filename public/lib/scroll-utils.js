@@ -129,6 +129,68 @@ export const scrollToBottom = (term, { smooth = true } = {}) => {
 };
 
 /**
+ * Enable touch-based scrolling for a terminal.
+ *
+ * xterm.js 6 uses a custom scrollable element that only handles `wheel`
+ * events — touch scrolling is not supported. This bridge converts
+ * vertical touch-drag gestures into `term.scrollLines()` calls.
+ *
+ * Call once per terminal (idempotent via WeakSet).
+ */
+const _touchScrollAttached = new WeakSet();
+export function initTouchScroll(term) {
+  if (_touchScrollAttached.has(term)) return;
+  _touchScrollAttached.add(term);
+
+  const el = term.element;
+  if (!el) return;
+
+  let startY = 0;
+  let lastY = 0;
+  let scrolling = false;
+  let accDelta = 0;
+
+  // Compute the height of one terminal row in CSS pixels
+  function cellHeight() {
+    try {
+      return term._core._renderService.dimensions.css.cell.height;
+    } catch {
+      const rect = el.getBoundingClientRect();
+      return rect.height / term.rows;
+    }
+  }
+
+  el.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) return;
+    startY = e.touches[0].clientY;
+    lastY = startY;
+    scrolling = false;
+    accDelta = 0;
+  }, { passive: true });
+
+  el.addEventListener("touchmove", (e) => {
+    if (e.touches.length !== 1) return;
+    const y = e.touches[0].clientY;
+    const dy = lastY - y; // positive = finger moving up = scroll down
+    lastY = y;
+
+    // Only start scrolling after moving more than 10px from start
+    if (!scrolling) {
+      if (Math.abs(y - startY) < 10) return;
+      scrolling = true;
+    }
+
+    accDelta += dy;
+    const rowH = cellHeight();
+    const lines = Math.trunc(accDelta / rowH);
+    if (lines !== 0) {
+      term.scrollLines(lines);
+      accDelta -= lines * rowH;
+    }
+  }, { passive: true });
+}
+
+/**
  * Preserve scroll position during operation (composable).
  * Derives scroll state from the terminal buffer, not DOM.
  */
