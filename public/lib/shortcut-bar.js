@@ -735,39 +735,44 @@ export function createShortcutBar(options = {}) {
     return parseFloat(getComputedStyle(area).gap) || 0;
   }
 
-  function endDrag() {
+  /** Clean up all drag state: ghost, overlay, dimmed pane, stale refs */
+  function cleanupDrag() {
     if (!drag) return;
-    const { tab, name, ghost, tabs, dragIndex, currentIndex, tornOff } = drag;
-
-    ghost.remove();
-
-    tabs.forEach(t => {
-      t.style.transition = "";
-      t.style.transform = "";
-    });
-
-    tab.classList.remove("tab-dragging");
-
-    // Always clean up split overlay if it exists
+    if (drag.ghost) drag.ghost.remove();
+    if (drag.tab) drag.tab.classList.remove("tab-dragging");
+    if (drag.tabs) drag.tabs.forEach(t => { t.style.transition = ""; t.style.transform = ""; });
+    // Clean up split overlay
     if (drag.splitOverlayEl) drag.splitOverlayEl.remove();
     if (drag.splitActivePane) drag.splitActivePane.style.opacity = "";
-    // Also remove any stale overlay by ID (belt and suspenders)
+    // Remove any orphaned overlay by ID
     document.getElementById("split-overlay")?.remove();
+    drag = null;
+  }
+
+  function endDrag() {
+    if (!drag) return;
+    const { name, dragIndex, currentIndex, tornOff } = drag;
+
+    // Extract split state before cleanup
+    const wasSplitPreview = drag.splitPreview;
+    const splitHoverPane = drag.splitHoverPane;
+    const lastCx = drag.lastCx;
+
+    cleanupDrag();
 
     // Split drop: tab was dragged to a split zone on iPad (initial split creation)
-    if (drag.splitPreview && drag.splitHoverPane) {
-      if (onSplitDrop) onSplitDrop(name, drag.splitHoverPane);
-      drag = null;
+    if (wasSplitPreview && splitHoverPane) {
+      if (onSplitDrop) onSplitDrop(name, splitHoverPane);
       render(currentSessionName);
       return;
     }
 
     // Cross-pane transfer: drag a tab past the divider to move it to the other pane
-    if (splitManager?.isSplit() && drag.lastCx != null) {
-      const barMid = container.getBoundingClientRect().left + container.getBoundingClientRect().width / 2;
+    if (splitManager?.isSplit() && lastCx != null) {
+      const barRect = container.getBoundingClientRect();
+      const barMid = barRect.left + barRect.width / 2;
       const currentPane = splitManager.getPaneForSession(name);
-      const droppedOnRight = drag.lastCx > barMid;
-      const targetPane = droppedOnRight ? 2 : 1;
+      const targetPane = lastCx > barMid ? 2 : 1;
 
       if (targetPane !== currentPane) {
         // Move tab to the other pane
@@ -780,18 +785,17 @@ export function createShortcutBar(options = {}) {
         // If this tab was the active session in its old pane, switch that pane
         const oldPaneActive = currentPane === 1 ? splitManager.getPane1() : splitManager.getPane2();
         if (oldPaneActive === name) {
-          // Find another tab in the old pane to activate
           const allTabs = windowTabSet ? windowTabSet.getTabs() : [];
           const oldPaneTabs = allTabs.filter(t => t !== name &&
             (currentPane === 1 ? !splitManager.isInPane2(t) : splitManager.isInPane2(t)));
           if (oldPaneTabs.length > 0) {
+            // Update pane assignment without re-applying layout yet
             splitManager.switchPaneSession(currentPane, oldPaneTabs[0]);
           }
         }
 
-        // Make the transferred tab active in the target pane
+        // Make the transferred tab active in the target pane (single applyLayout)
         splitManager.switchPaneSession(targetPane, name);
-        drag = null;
         render(currentSessionName);
         return;
       }
@@ -1038,13 +1042,8 @@ export function createShortcutBar(options = {}) {
     if (!container) return;
     currentSessionName = sessionName;
 
-    // Abort any in-flight drag before wiping the DOM
-    if (drag) {
-      drag.ghost.remove();
-      drag.tab.classList.remove("tab-dragging");
-      drag.tabs.forEach(t => { t.style.transition = ""; t.style.transform = ""; });
-      drag = null;
-    }
+    // Abort any in-flight drag before wiping the DOM (cleans up overlay, ghost, refs)
+    cleanupDrag();
 
     container.innerHTML = "";
     document.getElementById("key-island")?.remove();

@@ -154,15 +154,17 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
 
   function setupFocusTracking() {
     cleanupFocusTracking();
-    terminalPool.forEach((name, entry) => {
+    // Only register on the two active split panes, not all pool entries
+    for (const session of [pane1Session, pane2Session]) {
+      if (!session) continue;
+      const entry = terminalPool.get(session);
+      if (!entry) continue;
       const handler = () => {
-        if (active && (name === pane1Session || name === pane2Session)) {
-          if (_onFocusChange) _onFocusChange(name);
-        }
+        if (active && _onFocusChange) _onFocusChange(session);
       };
       entry.container.addEventListener("pointerdown", handler);
       focusCleanups.push(() => entry.container.removeEventListener("pointerdown", handler));
-    });
+    }
   }
 
   function cleanupFocusTracking() {
@@ -182,6 +184,8 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
       pane2Session = newSession;
     }
     applyLayout();
+    // Re-register focus handlers only for the current active panes
+    // (cleanupFocusTracking removes all old handlers first)
     setupFocusTracking();
   }
 

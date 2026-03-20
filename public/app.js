@@ -608,7 +608,11 @@
       // In split mode, switch the correct pane instead of breaking the split
       if (splitManager.isSplit()) {
         const pane = splitManager.getPaneForSession(name);
-        splitManager.switchPaneSession(pane, name);
+        const paneActive = pane === 1 ? splitManager.getPane1() : splitManager.getPane2();
+        // Only re-apply layout if the pane's active session actually changes
+        if (paneActive !== name) {
+          splitManager.switchPaneSession(pane, name);
+        }
         state.update('session.name', name);
         document.title = name;
         const url = new URL(window.location);
