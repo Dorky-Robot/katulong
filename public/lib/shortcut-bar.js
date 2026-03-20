@@ -652,28 +652,20 @@ export function createShortcutBar(options = {}) {
         const dir = window.matchMedia("(orientation: landscape)").matches ? "row" : "column";
         const overlay = document.createElement("div");
         overlay.id = "split-overlay";
-        overlay.style.cssText = `
-          position:absolute; inset:0; z-index:9999; display:flex;
-          flex-direction:${dir}; gap:8px; padding:8px; pointer-events:all;
-        `;
+        overlay.className = "split-overlay overlay-" + dir;
         for (let i = 0; i < 2; i++) {
           const zone = document.createElement("div");
           zone.dataset.pane = String(i + 1);
-          zone.style.cssText = `
-            flex:1; border:3px dashed rgba(203,166,247,0.5); border-radius:12px;
-            display:flex; align-items:center; justify-content:center;
-            transition: border-color 0.15s, background 0.15s;
-          `;
+          zone.className = "split-zone";
           const label = document.createElement("div");
-          label.textContent = i === 0 ? "◀ Drop here" : "Drop here ▶";
-          label.style.cssText = "font-size:1rem; color:rgba(203,166,247,0.7); font-family:var(--font-mono);";
+          label.textContent = i === 0 ? "\u25C0 Drop here" : "Drop here \u25B6";
           zone.appendChild(label);
           overlay.appendChild(zone);
         }
         tc.appendChild(overlay);
         // Dim the active terminal pane
         const activePane = tc.querySelector(".terminal-pane.active");
-        if (activePane) activePane.style.opacity = "0.25";
+        if (activePane) activePane.classList.add("split-dimmed");
         drag.splitOverlayEl = overlay;
         drag.splitActivePane = activePane;
       }
@@ -692,8 +684,7 @@ export function createShortcutBar(options = {}) {
         }
         for (let i = 0; i < zones.length; i++) {
           const isHover = (i + 1) === hoverPane;
-          zones[i].style.borderColor = isHover ? "rgba(203,166,247,1)" : "rgba(203,166,247,0.3)";
-          zones[i].style.background = isHover ? "rgba(203,166,247,0.12)" : "transparent";
+          zones[i].classList.toggle("hover", isHover);
         }
         drag.splitHoverPane = hoverPane;
       }
@@ -770,7 +761,7 @@ export function createShortcutBar(options = {}) {
     if (drag.tabs) drag.tabs.forEach(t => { t.style.transition = ""; t.style.transform = ""; });
     // Clean up split overlay
     if (drag.splitOverlayEl) drag.splitOverlayEl.remove();
-    if (drag.splitActivePane) drag.splitActivePane.style.opacity = "";
+    if (drag.splitActivePane) drag.splitActivePane.classList.remove("split-dimmed");
     // Remove any orphaned overlay by ID
     document.getElementById("split-overlay")?.remove();
     drag = null;
@@ -936,7 +927,8 @@ export function createShortcutBar(options = {}) {
       const pane2Tabs = sessions.filter(s => splitManager.isInPane2(s.name));
 
       // Remove any previous pane 2 tab bar from the terminal container
-      document.getElementById("split-pane2-tabs")?.remove();
+      const existingPane2Tabs = document.querySelector(".split-pane-2 .split-pane-tabs");
+      if (existingPane2Tabs) existingPane2Tabs.innerHTML = "";
 
       // Helper: build a tab group with + button
       function buildTabGroup(tabs, activeSession) {
@@ -970,23 +962,18 @@ export function createShortcutBar(options = {}) {
 
         container.appendChild(splitBar);
       } else {
-        // Portrait: pane 1 tabs in the shortcut bar, pane 2 tabs injected
-        // directly above pane 2's terminal (between divider and bottom pane)
+        // Portrait: pane 1 tabs in the shortcut bar, pane 2 tabs populated
+        // in the .split-pane-tabs element that split-manager created inside .split-pane-2
         const group1 = buildTabGroup(pane1Tabs, p1Active);
         container.appendChild(group1);
 
-        // Inject pane 2 tab bar into the terminal container
-        const tc = document.getElementById("terminal-container");
-        if (tc) {
+        const pane2TabsEl = document.querySelector(".split-pane-2 .split-pane-tabs");
+        if (pane2TabsEl) {
           const pane2Bar = buildTabGroup(pane2Tabs, p2Active);
-          pane2Bar.id = "split-pane2-tabs";
-          pane2Bar.style.cssText = `
-            order:2; flex-shrink:0; display:flex; align-items:center;
-            gap:var(--space-xs); padding:2px var(--space-xs);
-            background:var(--bg-surface); border-bottom:1px solid var(--border);
-            min-height:0;
-          `;
-          tc.appendChild(pane2Bar);
+          // Move children from the built group into the split-pane-tabs element
+          while (pane2Bar.firstChild) {
+            pane2TabsEl.appendChild(pane2Bar.firstChild);
+          }
         }
       }
     } else {

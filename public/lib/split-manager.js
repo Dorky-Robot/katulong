@@ -75,24 +75,22 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
     pane2Session = null;
 
     cleanupFocusTracking();
-    // Clear inline styles from split layout
-    terminalContainer.style.display = "";
-    terminalContainer.style.flexDirection = "";
+    delete terminalContainer.dataset.split;
     removeDivider();
-    // Remove pane 2 tab bar if it was injected into the terminal container (portrait mode)
-    document.getElementById("split-pane2-tabs")?.remove();
 
-    // Clear inline styles from all panes
+    // Move all terminal panes back to terminalContainer (out of wrappers)
     terminalPool.forEach((_name, entry) => {
-      entry.container.style.display = "";
-      entry.container.style.position = "";
-      entry.container.style.inset = "";
-      entry.container.style.flex = "";
-      entry.container.style.minWidth = "";
-      entry.container.style.minHeight = "";
-      entry.container.style.overflow = "";
-      entry.container.style.order = "";
+      if (entry.container.parentElement !== terminalContainer) {
+        terminalContainer.appendChild(entry.container);
+      }
+      entry.container.classList.remove("split-hidden");
     });
+
+    // Remove split-pane wrappers, divider remnants, and pane-tabs elements
+    const wrappers = terminalContainer.querySelectorAll
+      ? terminalContainer.querySelectorAll(".split-pane, .split-pane-tabs")
+      : [];
+    for (const el of wrappers) el.remove();
 
     // Restore single-pane mode
     if (keep) terminalPool.activate(keep);
@@ -105,35 +103,70 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
     if (!active || !pane1Session || !pane2Session) return;
 
     const dir = getDirection();
+    terminalContainer.dataset.split = dir;
 
-    // Apply layout with inline styles (CSS classes were unreliable on iPad Safari)
-    terminalContainer.style.display = "flex";
-    terminalContainer.style.flexDirection = dir === "row" ? "row" : "column";
+    // Ensure wrapper elements exist
+    let paneWrapper1 = terminalContainer.querySelector(".split-pane-1");
+    let paneWrapper2 = terminalContainer.querySelector(".split-pane-2");
 
+    if (!paneWrapper1) {
+      paneWrapper1 = document.createElement("div");
+      paneWrapper1.className = "split-pane split-pane-1";
+    }
+    if (!paneWrapper2) {
+      paneWrapper2 = document.createElement("div");
+      paneWrapper2.className = "split-pane split-pane-2";
+    }
+
+    // Move pane 1 terminal into its wrapper
+    const entry1 = terminalPool.get(pane1Session);
+    if (entry1 && entry1.container.parentElement !== paneWrapper1) {
+      paneWrapper1.appendChild(entry1.container);
+    }
+
+    // Move pane 2 terminal into its wrapper
+    const entry2 = terminalPool.get(pane2Session);
+    if (entry2 && entry2.container.parentElement !== paneWrapper2) {
+      paneWrapper2.appendChild(entry2.container);
+    }
+
+    // Assemble DOM: pane1, divider, pane2
+    ensureDivider();
+    if (!paneWrapper1.parentElement) terminalContainer.appendChild(paneWrapper1);
+    if (!dividerEl.parentElement) terminalContainer.appendChild(dividerEl);
+    if (!paneWrapper2.parentElement) terminalContainer.appendChild(paneWrapper2);
+
+    // Ensure correct DOM order: pane1, divider, pane2
+    terminalContainer.insertBefore(paneWrapper1, terminalContainer.firstChild);
+    terminalContainer.insertBefore(dividerEl, paneWrapper1.nextSibling);
+    terminalContainer.insertBefore(paneWrapper2, dividerEl.nextSibling);
+
+    // In portrait (column) mode, create split-pane-tabs in pane2 before the terminal
+    const existingTabs = paneWrapper2.querySelector(".split-pane-tabs");
+    if (dir === "column") {
+      if (!existingTabs) {
+        const tabsEl = document.createElement("div");
+        tabsEl.className = "split-pane-tabs";
+        paneWrapper2.insertBefore(tabsEl, paneWrapper2.firstChild);
+      }
+    } else {
+      // Row mode: remove pane-tabs if present
+      if (existingTabs) existingTabs.remove();
+    }
+
+    // Hide non-active panes, show active ones
     terminalPool.forEach((name, entry) => {
       const isP1 = name === pane1Session;
       const isP2 = name === pane2Session;
       entry.container.classList.remove("active");
 
       if (isP1 || isP2) {
-        // Make visible as flex child
-        entry.container.style.display = "block";
-        entry.container.style.position = "relative";
-        entry.container.style.inset = "auto";
-        entry.container.style.flex = "1";
-        entry.container.style.minWidth = "0";
-        entry.container.style.minHeight = "0";
-        entry.container.style.overflow = "hidden";
-        // In portrait (column) mode, pane 2 tabs are injected at order 2,
-        // divider at order 3, so pane 2 terminal goes to order 4.
-        entry.container.style.order = isP1 ? "1" : (dir === "column" ? "4" : "3");
+        entry.container.classList.remove("split-hidden");
       } else {
-        // Hide other panes
-        entry.container.style.display = "none";
+        entry.container.classList.add("split-hidden");
       }
     });
 
-    ensureDivider();
     fitAll();
   }
 
@@ -155,16 +188,11 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
   // ── Divider ──────────────────────────────────────────────────────────
 
   function ensureDivider() {
-    const dir = getDirection();
     if (!dividerEl) {
       dividerEl = document.createElement("div");
+      dividerEl.className = "split-divider";
       dividerEl.addEventListener("dblclick", () => unsplit());
     }
-    // Always update style based on current direction (handles orientation changes)
-    // In portrait mode, pane 2 tabs are at order 2, so divider goes to order 3
-    dividerEl.style.cssText = dir === "row"
-      ? "order:2; flex-shrink:0; width:3px; background:var(--accent-active); cursor:col-resize;"
-      : "order:3; flex-shrink:0; height:3px; background:var(--accent-active); cursor:row-resize;";
     if (!dividerEl.parentElement) {
       terminalContainer.appendChild(dividerEl);
     }

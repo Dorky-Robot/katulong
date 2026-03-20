@@ -3,12 +3,12 @@ import assert from 'node:assert';
 
 // --- DOM/Browser mocks for split-manager (runs in Node, not a browser) ---
 
-function createMockElement() {
+function createMockElement(tag) {
   const styles = {};
   const classes = new Set();
   const children = [];
   const listeners = {};
-  return {
+  const el = {
     style: new Proxy(styles, {
       set: (t, k, v) => { t[k] = v; return true; },
       get: (t, k) => t[k] || "",
@@ -16,21 +16,60 @@ function createMockElement() {
     classList: {
       add: (...c) => c.forEach(x => classes.add(x)),
       remove: (...c) => c.forEach(x => classes.delete(x)),
-      toggle: (c, f) => f ? classes.add(c) : classes.delete(c),
+      toggle: (c, f) => f !== undefined ? (f ? classes.add(c) : classes.delete(c)) : (classes.has(c) ? classes.delete(c) : classes.add(c)),
       contains: (c) => classes.has(c),
     },
+    className: "",
     dataset: {},
-    appendChild: (el) => { children.push(el); el.parentElement = { /* truthy */ }; },
-    remove: () => {},
+    appendChild: (child) => { children.push(child); child.parentElement = el; return child; },
+    insertBefore: (child, ref) => {
+      child.parentElement = el;
+      const idx = ref ? children.indexOf(ref) : children.length;
+      if (idx === -1) children.push(child);
+      else children.splice(idx, 0, child);
+      return child;
+    },
+    remove: () => { el.parentElement = null; },
     addEventListener: (type, fn) => { listeners[type] = fn; },
     removeEventListener: (type, fn) => { if (listeners[type] === fn) delete listeners[type]; },
-    get parentElement() { return null; },
-    set parentElement(v) { /* allow set */ },
+    querySelector: (sel) => {
+      // Simple selector support for tests
+      for (const c of children) {
+        if (c._classes && sel.startsWith(".") && c._classes.has(sel.slice(1))) return c;
+        if (c.querySelector) {
+          const found = c.querySelector(sel);
+          if (found) return found;
+        }
+      }
+      return null;
+    },
+    querySelectorAll: (sel) => {
+      const results = [];
+      for (const c of children) {
+        if (c._classes && sel.includes(".")) {
+          const selectors = sel.split(",").map(s => s.trim());
+          for (const s of selectors) {
+            if (s.startsWith(".") && c._classes.has(s.slice(1))) results.push(c);
+          }
+        }
+        if (c.querySelectorAll) {
+          results.push(...c.querySelectorAll(sel));
+        }
+      }
+      return results;
+    },
+    get firstChild() { return children[0] || null; },
+    get nextSibling() { return null; },
+    get parentElement() { return el._parentElement || null; },
+    set parentElement(v) { el._parentElement = v; },
+    get innerHTML() { return ""; },
+    set innerHTML(v) { children.length = 0; },
     _classes: classes,
     _styles: styles,
     _children: children,
     _listeners: listeners,
   };
+  return el;
 }
 
 function createMockTerminalPool() {
@@ -84,8 +123,9 @@ function setupGlobals() {
     height: 768,
   };
   globalThis.document = globalThis.document || {};
-  globalThis.document.createElement = () => createMockElement();
+  globalThis.document.createElement = (tag) => createMockElement(tag);
   globalThis.document.getElementById = () => null;
+  globalThis.document.querySelector = () => null;
   globalThis.requestAnimationFrame = (fn) => fn();
 }
 
@@ -183,10 +223,9 @@ describe('split-manager', () => {
       assert.deepStrictEqual(calls[0], { isSplit: true, pane1: "a", pane2: "b" });
     });
 
-    it('applies flex layout to container', () => {
+    it('applies split layout via data attribute', () => {
       sm.split("a", "b");
-      assert.strictEqual(terminalContainer._styles.display, "flex");
-      assert.strictEqual(terminalContainer._styles.flexDirection, "row"); // landscape
+      assert.strictEqual(terminalContainer.dataset.split, "row"); // landscape
     });
 
     it('sends resize for both panes', () => {
@@ -230,19 +269,15 @@ describe('split-manager', () => {
       assert.strictEqual(terminalPool.activate.mock.callCount(), 1);
     });
 
-    it('clears inline styles on container', () => {
+    it('removes data-split attribute from container', () => {
       sm.unsplit("a");
-      assert.strictEqual(terminalContainer._styles.display, "");
-      assert.strictEqual(terminalContainer._styles.flexDirection, "");
+      assert.strictEqual(terminalContainer.dataset.split, undefined);
     });
 
-    it('clears inline styles on all pane containers', () => {
+    it('removes split-hidden class from all pane containers', () => {
       sm.unsplit("a");
       terminalPool.forEach((_name, entry) => {
-        assert.strictEqual(entry.container._styles.display, "");
-        assert.strictEqual(entry.container._styles.position, "");
-        assert.strictEqual(entry.container._styles.flex, "");
-        assert.strictEqual(entry.container._styles.order, "");
+        assert.strictEqual(entry.container.classList.contains("split-hidden"), false);
       });
     });
 
