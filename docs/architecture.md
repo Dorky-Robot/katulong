@@ -172,7 +172,7 @@ No STUN/TURN servers — LAN-only by design. See [P2P Progressive Enhancement](p
 
 **UI Components**: `shortcut-bar.js`, `shortcuts-components.js`, `tab-manager.js`, `window-tab-set.js`, `session-list-component.js`, `token-list-component.js`, `token-form.js`, `dictation-modal.js`, `modal.js`, `list-renderer.js`, `component.js`
 
-**Input Handling**: `paste-handler.js`, `drag-drop.js`, `image-upload.js`, `joystick.js`, `key-mapping.js`, `pull-to-refresh.js`
+**Input Handling**: `paste-handler.js`, `drag-drop.js`, `image-upload.js`, `joystick.js`, `key-mapping.js`
 
 **State**: `store.js`, `stores.js`
 

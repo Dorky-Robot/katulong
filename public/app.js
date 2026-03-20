@@ -14,7 +14,8 @@
     import { createDragDropManager } from "/lib/drag-drop.js";
     import { showToast, isImageFile, uploadImageToTerminal as uploadImageToTerminalFn, uploadImagesToTerminal as uploadImagesToTerminalFn, onPasteComplete } from "/lib/image-upload.js";
     import { createJoystickManager } from "/lib/joystick.js";
-    import { createPullToRefreshManager } from "/lib/pull-to-refresh.js";
+    import { attachTouchSelect } from "/lib/touch-select.js";
+
     import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
     import { createTabManager } from "/lib/tab-manager.js";
     import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll, initScrollTracking } from "/lib/scroll-utils.js";
@@ -209,6 +210,8 @@
         // On touch devices (iPad/phone), xterm.js selection is canvas-based
         // so the native iOS "Copy" menu reads an empty DOM selection.  Fix by
         // writing selected text to the system clipboard automatically.
+        // Also attach long-press-to-select so finger touch can select text
+        // (xterm.js only handles mouse/trackpad selection natively).
         if (window.matchMedia("(pointer: coarse)").matches) {
           entry.term.onSelectionChange(() => {
             const text = entry.term.getSelection();
@@ -216,6 +219,7 @@
               navigator.clipboard.writeText(text).catch(() => {});
             }
           });
+          attachTouchSelect(entry.term);
         }
 
         // Track user-initiated scrolling so rapid output doesn't
@@ -401,20 +405,7 @@
 
 
 
-    // --- Pull-to-refresh (composable gesture handler) ---
-    const pullToRefresh = createPullToRefreshManager({
-      container: termContainer,
-      isAtBottom,
-      getTerm,
-      onRefresh: () => {
-        if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN && state.connection.attached) {
-          rawSend("\x0C"); // Ctrl-L: refresh screen
-        } else {
-          if (state.connection.ws) state.connection.ws.close();
-        }
-      }
-    });
-    pullToRefresh.init();
+
 
     // --- Shortcuts popup (reactive component) ---
 

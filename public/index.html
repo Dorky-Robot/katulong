@@ -732,33 +732,7 @@
       opacity: 0.9;
     }
 
-    /* --- Pull-up refresh indicator --- */
-    #pull-refresh-indicator {
-      position: fixed;
-      bottom: 0;
-      left: 50%;
-      transform: translateX(-50%) translateY(100%);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: var(--space-xs);
-      padding: var(--space-lg);
-      background: var(--accent);
-      color: var(--bg);
-      border-radius: 0.5rem 0.5rem 0 0;
-      font-size: 0.875rem;
-      font-family: var(--font-mono);
-      pointer-events: none;
-      z-index: 100;
-      transition: transform 0.2s ease-out;
-      opacity: 0;
-    }
-    #pull-refresh-indicator.visible {
-      opacity: 1;
-    }
-    #pull-refresh-indicator i {
-      font-size: 1.5rem;
-    }
+
 
     .key-composer-input {
       flex: 1; min-width: 3.75rem; height: 1.875rem; border: none; background: transparent;
@@ -1943,11 +1917,7 @@
     <circle cx="40" cy="40" r="36" />
   </svg>
 
-  <!-- Pull-up refresh indicator -->
-  <div id="pull-refresh-indicator">
-    <i class="ph ph-arrow-up"></i>
-    <span>Release to refresh</span>
-  </div>
+
 
   <!-- Settings -->
   <div id="settings-overlay" class="modal-overlay" role="dialog" aria-label="Settings">
