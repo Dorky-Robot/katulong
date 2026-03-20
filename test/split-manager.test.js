@@ -69,6 +69,10 @@ function setupGlobals() {
   });
   globalThis.window = globalThis.window || globalThis;
   globalThis.window.innerWidth = 1024;
+  // Ensure addEventListener exists on window (Node doesn't have it by default)
+  if (!globalThis.window.addEventListener) {
+    globalThis.window.addEventListener = () => {};
+  }
   globalThis.window.matchMedia = (query) => ({
     matches: query.includes("landscape"),
     addEventListener: () => {},

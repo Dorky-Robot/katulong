@@ -60,7 +60,11 @@ export function createShortcutBar(options = {}) {
   let activeMenu = null; // currently open context/dropdown menu
 
   function isDesktop() {
-    return window.matchMedia(DESKTOP_MQ).matches || window.matchMedia(TABLET_MQ).matches || window.matchMedia(TABLET_ANY_MQ).matches;
+    if (window.matchMedia(DESKTOP_MQ).matches || window.matchMedia(TABLET_MQ).matches || window.matchMedia(TABLET_ANY_MQ).matches) return true;
+    // Always use desktop tabs on iPad, even in narrow multitasking windows
+    const ua = navigator.userAgent || "";
+    if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return true;
+    return false;
   }
 
   function isTouch() {

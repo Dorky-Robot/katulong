@@ -51,6 +51,7 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
 
   function split(session1, session2) {
     if (!detectTablet()) return;
+    if (window.innerWidth < MIN_SPLIT_WIDTH) return;
     active = true;
     pane1Session = session1;
     pane2Session = session2;
@@ -220,25 +221,29 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
     return null;
   }
 
-  // ── Orientation change ───────────────────────────────────────────────
+  // ── Orientation & resize ──────────────────────────────────────────────
+
+  const MIN_SPLIT_WIDTH = 500; // px — auto-unsplit below this width
+
+  function onOrientationOrResize() {
+    if (!active) return;
+    // Auto-unsplit if window is too narrow (e.g., iPad multitasking slim mode)
+    if (window.innerWidth < MIN_SPLIT_WIDTH) {
+      unsplit(pane1Session);
+      return;
+    }
+    applyLayout();
+    if (_onSplitChanged) _onSplitChanged({ isSplit: true, pane1: pane1Session, pane2: pane2Session });
+  }
 
   // Listen for device orientation changes
   if (screen.orientation) {
-    screen.orientation.addEventListener("change", () => {
-      if (active) {
-        applyLayout();
-        if (_onSplitChanged) _onSplitChanged({ isSplit: true, pane1: pane1Session, pane2: pane2Session });
-      }
-    });
+    screen.orientation.addEventListener("change", onOrientationOrResize);
   } else {
-    // Fallback for browsers without screen.orientation API
-    window.matchMedia("(orientation: landscape)").addEventListener("change", () => {
-      if (active) {
-        applyLayout();
-        if (_onSplitChanged) _onSplitChanged({ isSplit: true, pane1: pane1Session, pane2: pane2Session });
-      }
-    });
+    window.matchMedia("(orientation: landscape)").addEventListener("change", onOrientationOrResize);
   }
+  // Also listen for window resize (iPad multitasking slider)
+  window.addEventListener("resize", onOrientationOrResize);
 
   return {
     split,
