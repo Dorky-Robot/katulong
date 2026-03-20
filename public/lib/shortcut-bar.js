@@ -679,6 +679,12 @@ export function createShortcutBar(options = {}) {
       return;
     }
 
+    // When split is active, skip tab reorder shifts — just let the ghost follow
+    // the finger. Cross-pane transfer is handled in endDrag based on drop position.
+    if (splitManager?.isSplit()) {
+      return;
+    }
+
     // Tear-off only for mouse on non-tablet — touch can't open new windows (Safari blocks popups)
     if (!isTabletDevice && !drag.isTouch && cy > barRect.bottom + DRAG_OUT_THRESHOLD) {
       if (!drag.tornOff) {
