@@ -1359,6 +1359,14 @@
     loadShortcuts();
     getTerm()?.focus();
 
+    // Restore split layout from sessionStorage after a short delay
+    // to ensure terminals are created and the WS connection is active.
+    setTimeout(() => {
+      if (!splitManager.isSplit()) {
+        splitManager.restore();
+      }
+    }, 500);
+
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }

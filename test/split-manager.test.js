@@ -127,6 +127,13 @@ function setupGlobals() {
   globalThis.document.getElementById = () => null;
   globalThis.document.querySelector = () => null;
   globalThis.requestAnimationFrame = (fn) => fn();
+  // Mock sessionStorage
+  const storage = {};
+  globalThis.sessionStorage = {
+    getItem: (k) => storage[k] ?? null,
+    setItem: (k, v) => { storage[k] = v; },
+    removeItem: (k) => { delete storage[k]; },
+  };
 }
 
 // Dynamic import after globals are set
@@ -405,6 +412,42 @@ describe('split-manager', () => {
       globalThis.screen.height = 1024;
       const sm2 = createSplitManager({ terminalContainer, terminalPool, sendResize });
       assert.strictEqual(sm2.getDirection(), "column");
+    });
+  });
+
+  describe('persistence', () => {
+    it('saves split state to sessionStorage', () => {
+      sm.split("a", "b");
+      const saved = JSON.parse(sessionStorage.getItem("katulong-split-state"));
+      assert.strictEqual(saved.active, true);
+      assert.strictEqual(saved.pane1, "a");
+      assert.strictEqual(saved.pane2, "b");
+      assert.deepStrictEqual(saved.pane2List, ["b"]);
+    });
+
+    it('clears state on unsplit', () => {
+      sm.split("a", "b");
+      sm.unsplit("a");
+      assert.strictEqual(sessionStorage.getItem("katulong-split-state"), null);
+    });
+
+    it('restore() re-creates the split', () => {
+      sm.split("a", "b");
+      sm.addToPane2("c");
+      // Simulate a fresh manager (new instance, same sessionStorage)
+      const sm2 = createSplitManager({ terminalContainer, terminalPool, sendResize: mock.fn() });
+      const restored = sm2.restore();
+      assert.strictEqual(restored, true);
+      assert.strictEqual(sm2.isSplit(), true);
+      assert.strictEqual(sm2.getPane1(), "a");
+      assert.strictEqual(sm2.getPane2(), "b");
+      assert.strictEqual(sm2.isInPane2("c"), true);
+    });
+
+    it('restore() returns false when no saved state', () => {
+      sessionStorage.removeItem("katulong-split-state");
+      const restored = sm.restore();
+      assert.strictEqual(restored, false);
     });
   });
 

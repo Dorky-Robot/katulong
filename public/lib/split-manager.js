@@ -26,6 +26,8 @@ function detectTablet() {
   return isIPad || isAndroidTablet;
 }
 
+const SPLIT_STATE_KEY = "katulong-split-state";
+
 export function createSplitManager({ terminalContainer, terminalPool, sendResize }) {
   let active = false;
   let pane1Session = null;
@@ -35,6 +37,29 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
   let _onFocusChange = null;
   let _onSplitChanged = null;
   const focusCleanups = [];
+
+  // ── Persistence ────────────────────────────────────────────────────
+
+  function saveState() {
+    try {
+      const state = active
+        ? { active: true, pane1: pane1Session, pane2: pane2Session, pane2List: [...pane2Sessions] }
+        : null;
+      if (state) {
+        sessionStorage.setItem(SPLIT_STATE_KEY, JSON.stringify(state));
+      } else {
+        sessionStorage.removeItem(SPLIT_STATE_KEY);
+      }
+    } catch { /* sessionStorage unavailable */ }
+  }
+
+  function loadState() {
+    try {
+      const raw = sessionStorage.getItem(SPLIT_STATE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch { return null; }
+  }
 
   function getDirection() {
     // Use screen orientation API (physical device orientation) rather than
@@ -63,6 +88,7 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
 
     applyLayout();
     setupFocusTracking();
+    saveState();
     if (_onSplitChanged) _onSplitChanged({ isSplit: true, pane1: pane1Session, pane2: pane2Session });
   }
 
@@ -94,6 +120,7 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
 
     // Restore single-pane mode
     if (keep) terminalPool.activate(keep);
+    saveState();
     if (_onSplitChanged) _onSplitChanged({ isSplit: false, pane1: keep, pane2: null });
   }
 
@@ -239,6 +266,7 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
       pane2Session = newSession;
     }
     applyLayout();
+    saveState();
     // Re-register focus handlers only for the current active panes
     // (cleanupFocusTracking removes all old handlers first)
     setupFocusTracking();
@@ -278,9 +306,24 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
   // Also listen for window resize (iPad multitasking slider)
   window.addEventListener("resize", onOrientationOrResize);
 
+  /** Restore split state from sessionStorage (call after app is fully initialized) */
+  function restore() {
+    const saved = loadState();
+    if (!saved || !saved.active) return false;
+    if (!detectTablet()) return false;
+    // Restore pane2Sessions set
+    if (saved.pane2List) {
+      for (const name of saved.pane2List) pane2Sessions.add(name);
+    }
+    // Re-activate the split
+    split(saved.pane1, saved.pane2);
+    return active;
+  }
+
   return {
     split,
     unsplit,
+    restore,
     isSplit: () => active,
     isTablet: detectTablet,
     getDirection,
@@ -290,8 +333,8 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
     getOtherSession,
     switchPaneSession,
     isInPane2: (name) => pane2Sessions.has(name),
-    addToPane2: (name) => pane2Sessions.add(name),
-    removeFromPane2: (name) => pane2Sessions.delete(name),
+    addToPane2: (name) => { pane2Sessions.add(name); saveState(); },
+    removeFromPane2: (name) => { pane2Sessions.delete(name); saveState(); },
     applyLayout,
     fitAll,
     // Callbacks
