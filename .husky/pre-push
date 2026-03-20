@@ -86,6 +86,38 @@ NCPUS=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 HALF_CPUS=$(( NCPUS / 2 ))
 [ "$HALF_CPUS" -lt 1 ] && HALF_CPUS=1
 
+# Check if mock.module is available (requires Node >= 22.3 with experimental flag).
+# Exclude test files that use mock.module when it's not supported to prevent
+# false failures on systems with older Node versions.
+MOCK_MODULE_OK=0
+if node --experimental-test-module-mocks -e \
+  "const t = require('node:test'); if (typeof t.mock?.module !== 'function') process.exit(1)" \
+  >/dev/null 2>&1; then
+  MOCK_MODULE_OK=1
+fi
+
+TEST_FILES=""
+for f in test/*.test.js test/*.integration.js; do
+  if [ "$MOCK_MODULE_OK" -eq 0 ] && grep -q 'mock\.module' "$f" 2>/dev/null; then
+    continue
+  fi
+  TEST_FILES="$TEST_FILES $f"
+done
+
+if [ "$MOCK_MODULE_OK" -eq 0 ]; then
+  warn "mock.module unavailable — excluding tests that require it"
+fi
+
+# Use a temp data dir for tests if the default (~/.katulong) is not writable
+# (common in containers/CI where the dir is owned by root).
+TEST_DATA_DIR=""
+if touch "$HOME/.katulong/.pre-push-test" 2>/dev/null; then
+  rm -f "$HOME/.katulong/.pre-push-test"
+else
+  TEST_DATA_DIR=$(mktemp -d)
+  export KATULONG_DATA_DIR="$TEST_DATA_DIR"
+fi
+
 UNIT_LOG=$(mktemp)
 UNIT_RC=0; E2E_RC=0
 
@@ -93,7 +125,7 @@ if [ "$E2E_AVAILABLE" -eq 1 ]; then
   echo "      Running unit/integration + smoke E2E in parallel ($NCPUS cores)"
   E2E_LOG=$(mktemp)
 
-  node --import ./test/helpers/setup-env.js --experimental-test-module-mocks --test --test-concurrency="$HALF_CPUS" test/*.test.js test/*.integration.js > "$UNIT_LOG" 2>&1 &
+  node --import ./test/helpers/setup-env.js --experimental-test-module-mocks --test --test-concurrency="$HALF_CPUS" $TEST_FILES > "$UNIT_LOG" 2>&1 &
   UNIT_PID=$!
 
   npm run test:e2e:smoke > "$E2E_LOG" 2>&1 &
@@ -111,7 +143,7 @@ if [ "$E2E_AVAILABLE" -eq 1 ]; then
   rm -f "$E2E_LOG"
 else
   warn "Playwright browser unavailable — skipping E2E tests"
-  node --import ./test/helpers/setup-env.js --experimental-test-module-mocks --test --test-concurrency="$HALF_CPUS" test/*.test.js test/*.integration.js > "$UNIT_LOG" 2>&1 &
+  node --import ./test/helpers/setup-env.js --experimental-test-module-mocks --test --test-concurrency="$HALF_CPUS" $TEST_FILES > "$UNIT_LOG" 2>&1 &
   UNIT_PID=$!
   wait "$UNIT_PID" || UNIT_RC=$?
 fi
@@ -123,6 +155,7 @@ else
   echo "      OK  Unit/integration tests passed"
 fi
 rm -f "$UNIT_LOG"
+[ -n "$TEST_DATA_DIR" ] && rm -rf "$TEST_DATA_DIR"
 
 if [ "$UNIT_RC" -ne 0 ] || [ "$E2E_RC" -ne 0 ]; then
   [ -n "$REVIEW_PID" ] && { kill "$REVIEW_PID" 2>/dev/null; wait "$REVIEW_PID" 2>/dev/null; }
