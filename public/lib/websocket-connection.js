@@ -27,8 +27,6 @@ export const CONNECTION_STATES = {
 export function createWebSocketConnection(deps = {}) {
   const {
     state,
-    p2pManager,
-    updateP2PIndicator,
     isAtBottom
   } = deps;
 
@@ -108,8 +106,7 @@ export function createWebSocketConnection(deps = {}) {
         { type: 'seqClear' },
         { type: 'terminalReset' },
         { type: 'updateSessionUI', name: msg.session },
-        { type: 'updateP2PIndicator' },
-        { type: 'initP2P' },
+        { type: 'updateConnectionIndicator' },
         { type: 'fit' },
         { type: 'invalidateSessions', name: msg.session },
         { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect }
@@ -164,43 +161,6 @@ export function createWebSocketConnection(deps = {}) {
     'credential-registered': () => ({
       stateUpdates: {},
       effects: [{ type: 'refreshTokensAfterRegistration' }]
-    }),
-
-    'p2p-signal': (msg) => ({
-      stateUpdates: {},
-      effects: [{ type: 'p2pSignal', data: msg.data }]
-    }),
-
-    'p2p-ready': () => ({
-      stateUpdates: {},
-      effects: [
-        { type: 'log', message: '[P2P] Server confirmed DataChannel ready' },
-        { type: 'updateP2PIndicator' }
-      ]
-    }),
-
-    'p2p-lan-candidates': (msg) => ({
-      stateUpdates: {},
-      effects: [
-        { type: 'logServerLanIPs', addresses: msg.addresses }
-      ]
-    }),
-
-    'p2p-unavailable': () => ({
-      stateUpdates: {},
-      effects: [
-        { type: 'log', message: '[P2P] Server reports P2P unavailable' },
-        { type: 'p2pDestroy' },
-        { type: 'updateP2PIndicator' }
-      ]
-    }),
-
-    'p2p-closed': () => ({
-      stateUpdates: { 'p2p.connected': false },
-      effects: [
-        { type: 'log', message: '[P2P] Server reports DataChannel closed' },
-        { type: 'updateP2PIndicator' }
-      ]
     }),
 
     'paste-complete': (msg) => ({
@@ -280,26 +240,14 @@ export function createWebSocketConnection(deps = {}) {
   // Effect executor (side effects at edges)
   function executeEffect(effect) {
     switch (effect.type) {
-      case 'updateP2PIndicator':
-        if (updateP2PIndicator) updateP2PIndicator();
-        break;
-      case 'initP2P':
-        if (p2pManager) p2pManager.create();
+      case 'updateConnectionIndicator':
+        if (deps.updateConnectionIndicator) deps.updateConnectionIndicator();
         break;
       case 'fit':
         if (deps.fit) requestAnimationFrame(() => deps.fit());
         break;
-      case 'p2pSignal':
-        if (p2pManager) p2pManager.signal(effect.data);
-        break;
-      case 'p2pDestroy':
-        if (p2pManager) p2pManager.destroy();
-        break;
       case 'log':
         console.log(effect.message);
-        break;
-      case 'logServerLanIPs':
-        console.log('[P2P] Server LAN addresses:', effect.addresses);
         break;
       case 'pasteComplete':
         if (deps.onPasteComplete) deps.onPasteComplete(effect.path);
@@ -502,7 +450,7 @@ export function createWebSocketConnection(deps = {}) {
       state.connection.attached = false;
       nudgeTimer.stop();
       seqBuffer.clear();
-      if (p2pManager) p2pManager.destroy();
+      if (deps.updateConnectionIndicator) deps.updateConnectionIndicator();
       if (deps.onDisconnect) deps.onDisconnect();
 
       if (suppressReconnect || !state.session.name) {
@@ -583,10 +531,6 @@ export function createWebSocketConnection(deps = {}) {
     wsMessageHandlers,
     executeEffect,
     getConnectionState: () => connectionState,
-    /** Route P2P output through the sequencing layer. */
-    pushP2POutput(seq, data, session) {
-      executeEffect({ type: 'seqOutput', seq, data, session });
-    },
     /** Reset nudge backoff on user input so gap detection stays responsive. */
     nudgeOnInput() {
       nudgeTimer.nudge();

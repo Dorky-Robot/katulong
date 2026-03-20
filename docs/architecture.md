@@ -5,10 +5,9 @@
 ```
 Browser (xterm.js)                    Server (Node.js)
 ├─ WebSocket ──────────────────────── ws-manager.js ── session-manager.js ── tmux sessions
-├─ WebRTC DataChannel (LAN) ──────── p2p.js            │                      PTY processes
-├─ HTTP REST ──────────────────────── routes.js         │                      ring buffers
-│                                     auth middleware    transport-bridge.js
-│                                     static-files.js
+├─ HTTP REST ──────────────────────── routes.js         │                      PTY processes
+│                                     auth middleware    │                      ring buffers
+│                                     static-files.js   transport-bridge.js
 │                                     file-browser.js
 │                                     port-proxy.js
 └─ Tunnel (ngrok/CF) ─── HTTPS ───┘
@@ -24,7 +23,7 @@ Sessions are backed by tmux. Restart the server freely — your sessions survive
 | `lib/session-manager.js` | Terminal session lifecycle via tmux control mode |
 | `lib/session.js` | Session class, tmux helpers, RingBuffer, octal unescape |
 | `lib/ws-manager.js` | WebSocket connection management, ping/pong heartbeat |
-| `lib/transport-bridge.js` | Bidirectional bridge: WebSocket and DataChannel to session I/O |
+| `lib/transport-bridge.js` | Bidirectional bridge: WebSocket to session I/O |
 | `lib/routes.js` | HTTP route registration and middleware composition |
 | `lib/auth.js` | WebAuthn registration/login, session tokens, passkey storage |
 | `lib/auth-handlers.js` | Auth route handlers (register, login, logout, revoke) |
@@ -36,8 +35,6 @@ Sessions are backed by tmux. Restart the server freely — your sessions survive
 | `lib/shortcuts.js` | User shortcut config persistence |
 | `lib/file-browser.js` | File system browsing, upload, download, mkdir, rename, delete |
 | `lib/port-proxy.js` | Proxy WebSocket/HTTP to localhost ports on the host |
-| `lib/p2p.js` | WebRTC DataChannel server-side peer (node-datachannel) |
-| `lib/lan.js` | mDNS advertisement and LAN IP discovery |
 | `lib/static-files.js` | Static file serving from `public/` with path traversal protection |
 | `lib/credential-lockout.js` | Credential-level lockout after failed login attempts |
 | `lib/rate-limit.js` | Per-IP rate limiting for auth endpoints |
@@ -117,7 +114,6 @@ Sessions are backed by tmux. Restart the server freely — your sessions survive
 | `attach` | `{ session, cols, rows }` | Attach to a terminal session |
 | `resize` | `{ cols, rows }` | Resize terminal |
 | (raw text) | (terminal input) | Input sent via transport bridge |
-| `p2p-signal` | `{ data }` | WebRTC signaling |
 
 ### Server to Client
 
@@ -131,23 +127,8 @@ Sessions are backed by tmux. Restart the server freely — your sessions survive
 | `session-renamed` | `{ name }` | Current session was renamed |
 | `credential-registered` | — | New device registered |
 | `credential-removed` | — | Credential revoked |
-| `p2p-signal` | `{ data }` | WebRTC signaling |
-| `p2p-ready` | — | DataChannel ready |
-| `p2p-lan-candidates` | `{ addresses }` | Server LAN IPs |
-| `p2p-closed` | — | DataChannel closed |
 | `server-draining` | — | Server shutting down |
 | `reload` | — | Force browser reload |
-
-## P2P Progressive Enhancement
-
-WebSocket is always the baseline transport. When the client is on the same LAN:
-
-1. Client creates a WebRTC peer (initiator) after `attached` message
-2. ICE candidates exchanged as `p2p-signal` messages over WebSocket
-3. DataChannel opens — terminal I/O flows directly (lower latency)
-4. If DataChannel closes, falls back to WebSocket with no interruption
-
-No STUN/TURN servers — LAN-only by design. See [P2P Progressive Enhancement](p2p-progressive-enhancement.md).
 
 ## Environment Variables
 
@@ -168,7 +149,7 @@ No STUN/TURN servers — LAN-only by design. See [P2P Progressive Enhancement](p
 
 **Terminal**: `terminal-pool.js`, `terminal-input-filter.js`, `terminal-keyboard.js`, `input-sender.js`, `scroll-utils.js`
 
-**Networking**: `websocket-connection.js`, `p2p-manager.js`, `network-monitor.js`, `api-client.js`
+**Networking**: `websocket-connection.js`, `network-monitor.js`, `api-client.js`
 
 **UI Components**: `shortcut-bar.js`, `shortcuts-components.js`, `tab-manager.js`, `window-tab-set.js`, `session-list-component.js`, `token-list-component.js`, `token-form.js`, `dictation-modal.js`, `modal.js`, `list-renderer.js`, `component.js`
 

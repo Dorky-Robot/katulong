@@ -59,7 +59,6 @@ function makeState(overrides = {}) {
   return {
     session: { name: "default", ...overrides.session },
     connection: { ws: null, attached: false, reconnectDelay: 1000, ...overrides.connection },
-    p2p: { peer: null, connected: false, ...overrides.p2p },
     scroll: { userScrolledUpBeforeDisconnect: false, ...overrides.scroll },
     update(path, value) {
       const keys = path.split(".");
@@ -93,14 +92,13 @@ describe("wsMessageHandlers", () => {
       assert.strictEqual(result.stateUpdates["scroll.userScrolledUpBeforeDisconnect"], false);
     });
 
-    it("emits terminalReset, updateSessionUI, updateP2PIndicator, initP2P, fit effects", () => {
+    it("emits terminalReset, updateSessionUI, updateConnectionIndicator, fit effects", () => {
       const state = makeState();
       const result = handlers.attached({ session: "alpha" }, state);
       const effectTypes = result.effects.map(e => e.type);
       assert.ok(effectTypes.includes("terminalReset"));
       assert.ok(effectTypes.includes("updateSessionUI"));
-      assert.ok(effectTypes.includes("updateP2PIndicator"));
-      assert.ok(effectTypes.includes("initP2P"));
+      assert.ok(effectTypes.includes("updateConnectionIndicator"));
       assert.ok(effectTypes.includes("fit"));
     });
 
@@ -204,22 +202,6 @@ describe("wsMessageHandlers", () => {
     it("emits refreshTokensAfterRegistration", () => {
       const result = handlers["credential-registered"]();
       assert.strictEqual(result.effects[0].type, "refreshTokensAfterRegistration");
-    });
-  });
-
-  describe("p2p-signal", () => {
-    it("passes signal data through", () => {
-      const data = { type: "offer", sdp: "..." };
-      const result = handlers["p2p-signal"]({ data });
-      assert.strictEqual(result.effects[0].type, "p2pSignal");
-      assert.strictEqual(result.effects[0].data, data);
-    });
-  });
-
-  describe("p2p-closed", () => {
-    it("sets p2p.connected to false", () => {
-      const result = handlers["p2p-closed"]();
-      assert.strictEqual(result.stateUpdates["p2p.connected"], false);
     });
   });
 

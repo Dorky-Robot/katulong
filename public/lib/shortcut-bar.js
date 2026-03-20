@@ -44,7 +44,7 @@ export function createShortcutBar(options = {}) {
     onNotepadClick,
     onAllTabsClosed,
     sendFn,
-    updateP2PIndicator,
+    updateConnectionIndicator,
     getInstanceIcon,
     getSessionIcon,
     sessionStore,
@@ -834,10 +834,10 @@ export function createShortcutBar(options = {}) {
     container.innerHTML = "";
     document.getElementById("key-island")?.remove();
 
-    const p2pDot = document.createElement("span");
-    p2pDot.id = "p2p-indicator";
-    p2pDot.style.display = "none";
-    container.appendChild(p2pDot);
+    const connDot = document.createElement("span");
+    connDot.id = "connection-indicator";
+    connDot.style.display = "none";
+    container.appendChild(connDot);
 
     if (isDesktop() && sessionStore) {
       const storeState = sessionStore.getState();
@@ -862,7 +862,7 @@ export function createShortcutBar(options = {}) {
     // Floating island (Esc/Tab/keyboard on touch, plus utility buttons on tablet/desktop)
     renderKeyIsland();
 
-    if (updateP2PIndicator) updateP2PIndicator();
+    if (updateConnectionIndicator) updateConnectionIndicator();
   }
 
   let _islandResizeHandler = null;
@@ -988,10 +988,10 @@ export function createShortcutBar(options = {}) {
 
     }
 
-    // P2P connection dot — shown on all devices
+    // Connection dot — shown on all devices
     const dot = document.createElement("span");
-    dot.id = "island-p2p-dot";
-    dot.className = "island-p2p-dot";
+    dot.id = "island-connection-dot";
+    dot.className = "island-connection-dot";
     island.appendChild(dot);
 
     // Clamp island position to stay within viewport (with 8px margin)
