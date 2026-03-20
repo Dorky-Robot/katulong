@@ -135,58 +135,57 @@ export const scrollToBottom = (term, { smooth = true } = {}) => {
  * scrolling is not supported. This bridge converts vertical touch-drag
  * gestures into term.scrollLines() calls.
  *
- * Uses a single document-level handler (installed once) that maps touch
- * events to the terminal they started in. This avoids adding non-passive
- * listeners to terminal elements, which would block iOS Safari's native
- * touch gesture pipeline even if preventDefault is never called.
+ * Uses pointer events (not touch events) because:
+ * - Pointer events are the modern unified API for mouse/touch/pen
+ * - They fire reliably on Android Chrome without compositor interference
+ *   (Android's compositor can consume touch events for native scroll
+ *   before JavaScript sees them, even with touch-action:none)
+ * - They work identically across iOS Safari, Android Chrome, and desktop
+ *
+ * Each terminal gets its own pointer handler on its element, using
+ * setPointerCapture to ensure all pointermove events route to the
+ * terminal even if the finger moves outside it.
  *
  * Call once per terminal (idempotent via WeakSet).
  */
 const _touchScrollAttached = new WeakSet();
-let _documentHandlerInstalled = false;
-const _terminals = new Set(); // all registered terminals
 
-function _installDocumentTouchHandler() {
-  if (_documentHandlerInstalled) return;
-  _documentHandlerInstalled = true;
+export function initTouchScroll(term) {
+  if (_touchScrollAttached.has(term)) return;
+  _touchScrollAttached.add(term);
 
-  let activeTerm = null;
+  const el = term.element;
+  if (!el) return;
+
+  let activePointerId = -1;
   let startY = 0;
   let lastY = 0;
   let scrolling = false;
   let accDelta = 0;
 
-  function cellHeight(term) {
+  function cellHeight() {
     try {
       return term._core._renderService.dimensions.css.cell.height;
     } catch {
-      const rect = term.element.getBoundingClientRect();
+      const rect = el.getBoundingClientRect();
       return rect.height / term.rows;
     }
   }
 
-  function termFromTouch(target) {
-    for (const term of _terminals) {
-      if (term.element && term.element.contains(target)) return term;
-    }
-    return null;
-  }
-
-  document.addEventListener("touchstart", (e) => {
-    activeTerm = null;
-    if (e.touches.length !== 1) return;
-    const term = termFromTouch(e.target);
-    if (!term) return;
-    activeTerm = term;
-    startY = e.touches[0].clientY;
+  el.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch" || activePointerId !== -1) return;
+    activePointerId = e.pointerId;
+    startY = e.clientY;
     lastY = startY;
     scrolling = false;
     accDelta = 0;
-  }, { passive: true });
+    // Capture so pointermove keeps firing even if finger leaves element
+    el.setPointerCapture(e.pointerId);
+  });
 
-  document.addEventListener("touchmove", (e) => {
-    if (!activeTerm || e.touches.length !== 1) return;
-    const y = e.touches[0].clientY;
+  el.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== activePointerId) return;
+    const y = e.clientY;
     const dy = lastY - y; // positive = finger up = scroll down
     lastY = y;
 
@@ -196,23 +195,21 @@ function _installDocumentTouchHandler() {
     }
 
     accDelta += dy;
-    const rowH = cellHeight(activeTerm);
+    const rowH = cellHeight();
     const lines = Math.trunc(accDelta / rowH);
     if (lines !== 0) {
-      activeTerm.scrollLines(lines);
+      term.scrollLines(lines);
       accDelta -= lines * rowH;
     }
-  }, { passive: true });
+  });
 
-  document.addEventListener("touchend", () => { activeTerm = null; }, { passive: true });
-  document.addEventListener("touchcancel", () => { activeTerm = null; }, { passive: true });
-}
+  el.addEventListener("pointerup", (e) => {
+    if (e.pointerId === activePointerId) activePointerId = -1;
+  });
 
-export function initTouchScroll(term) {
-  if (_touchScrollAttached.has(term)) return;
-  _touchScrollAttached.add(term);
-  _terminals.add(term);
-  _installDocumentTouchHandler();
+  el.addEventListener("pointercancel", (e) => {
+    if (e.pointerId === activePointerId) activePointerId = -1;
+  });
 }
 
 /**
