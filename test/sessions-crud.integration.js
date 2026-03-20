@@ -120,14 +120,16 @@ describe("Sessions CRUD Integration", () => {
   });
 
   it("POST /sessions returns 400 for invalid characters only", async () => {
-    const { status } = await request("POST", "/sessions", { name: "!!!" });
+    // All non-printable-ASCII chars get stripped, leaving empty → 400
+    const { status } = await request("POST", "/sessions", { name: "\x01\x02\x03" });
     assert.equal(status, 400);
   });
 
   it("POST /sessions sanitizes name (strips invalid chars)", async () => {
-    const { status, body } = await request("POST", "/sessions", { name: "hello world!" });
+    // Non-ASCII chars are stripped; printable ASCII (including !) is kept
+    const { status, body } = await request("POST", "/sessions", { name: "hello\x00world" });
     assert.equal(status, 201);
-    assert.equal(body.name, "hello world");
+    assert.equal(body.name, "helloworld");
 
     // Cleanup using the name returned by the server
     await request("DELETE", `/sessions/${encodeURIComponent(body.name)}`);

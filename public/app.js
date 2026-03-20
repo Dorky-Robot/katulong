@@ -206,6 +206,18 @@
         });
         kb.init();
 
+        // On touch devices (iPad/phone), xterm.js selection is canvas-based
+        // so the native iOS "Copy" menu reads an empty DOM selection.  Fix by
+        // writing selected text to the system clipboard automatically.
+        if (window.matchMedia("(pointer: coarse)").matches) {
+          entry.term.onSelectionChange(() => {
+            const text = entry.term.getSelection();
+            if (text) {
+              navigator.clipboard.writeText(text).catch(() => {});
+            }
+          });
+        }
+
         // Track user-initiated scrolling so rapid output doesn't
         // fight the user's scroll position.
         initScrollTracking(entry.term);
