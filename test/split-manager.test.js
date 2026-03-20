@@ -74,6 +74,11 @@ function setupGlobals() {
     addEventListener: () => {},
     removeEventListener: () => {},
   });
+  globalThis.screen = {
+    orientation: { type: "landscape-primary", addEventListener: () => {} },
+    width: 1024,
+    height: 768,
+  };
   globalThis.document = globalThis.document || {};
   globalThis.document.createElement = () => createMockElement();
   globalThis.requestAnimationFrame = (fn) => fn();
@@ -355,11 +360,9 @@ describe('split-manager', () => {
     });
 
     it('returns column for portrait', () => {
-      globalThis.window.matchMedia = (query) => ({
-        matches: query.includes("portrait"),
-        addEventListener: () => {},
-        removeEventListener: () => {},
-      });
+      globalThis.screen.orientation = { type: "portrait-primary", addEventListener: () => {} };
+      globalThis.screen.width = 768;
+      globalThis.screen.height = 1024;
       const sm2 = createSplitManager({ terminalContainer, terminalPool, sendResize });
       assert.strictEqual(sm2.getDirection(), "column");
     });

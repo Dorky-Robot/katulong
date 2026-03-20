@@ -37,7 +37,14 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
   const focusCleanups = [];
 
   function getDirection() {
-    return window.matchMedia("(orientation: landscape)").matches ? "row" : "column";
+    // Use screen orientation API (physical device orientation) rather than
+    // viewport aspect ratio, so the split direction stays correct regardless
+    // of window size (e.g., iPad multitasking split).
+    if (screen.orientation?.type) {
+      return screen.orientation.type.startsWith("landscape") ? "row" : "column";
+    }
+    // Fallback: check screen dimensions (physical, not viewport)
+    return screen.width > screen.height ? "row" : "column";
   }
 
   // ── Split lifecycle ──────────────────────────────────────────────────
@@ -215,13 +222,23 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
 
   // ── Orientation change ───────────────────────────────────────────────
 
-  window.matchMedia("(orientation: landscape)").addEventListener("change", () => {
-    if (active) {
-      applyLayout();
-      // Re-render tab bar to match new orientation (row ↔ column tab groups)
-      if (_onSplitChanged) _onSplitChanged({ isSplit: true, pane1: pane1Session, pane2: pane2Session });
-    }
-  });
+  // Listen for device orientation changes
+  if (screen.orientation) {
+    screen.orientation.addEventListener("change", () => {
+      if (active) {
+        applyLayout();
+        if (_onSplitChanged) _onSplitChanged({ isSplit: true, pane1: pane1Session, pane2: pane2Session });
+      }
+    });
+  } else {
+    // Fallback for browsers without screen.orientation API
+    window.matchMedia("(orientation: landscape)").addEventListener("change", () => {
+      if (active) {
+        applyLayout();
+        if (_onSplitChanged) _onSplitChanged({ isSplit: true, pane1: pane1Session, pane2: pane2Session });
+      }
+    });
+  }
 
   return {
     split,
