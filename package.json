@@ -43,7 +43,6 @@
     "@simplewebauthn/server": "^13.0.0",
     "dotenv": "^17.2.4",
     "katulong-tala": "file:plugins/katulong-tala",
-    "node-datachannel": "^0.32.1",
     "ws": "^8.18.2"
   },
   "devDependencies": {

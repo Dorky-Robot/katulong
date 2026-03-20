@@ -24,7 +24,6 @@
     import { createWindowTabSet } from "/lib/window-tab-set.js";
     import { createPasteHandler } from "/lib/paste-handler.js";
     import { createNetworkMonitor } from "/lib/network-monitor.js";
-    import { createP2PManager, createP2PIndicator } from "/lib/p2p-manager.js";
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
@@ -70,11 +69,6 @@
           ws: null,
           attached: false,
           reconnectDelay: 1000
-        },
-        p2p: {
-          peer: null,
-          connected: false,
-          retryTimer: 0,
         },
         scroll: {
           userScrolledUpBeforeDisconnect: false
@@ -125,53 +119,15 @@
     // Subscribe to shortcuts changes for render side effects
     // Note: shortcuts store subscription moved after renderBar is defined (line ~640)
 
-    // --- P2P Manager ---
+    // --- Connection Indicator ---
 
-    // Initialize P2P manager
-    const p2pManager = createP2PManager({
-      onStateChange: (p2pState) => {
-        state.update('p2p.connected', p2pState.connected);
-        state.update('p2p.peer', p2pState.peer);
-        updateP2PIndicator();
-      },
-      onData: (str) => {
-        try {
-          const msg = JSON.parse(str);
-          if (msg.type === "output") {
-            // Route through the WS connection's sequencing layer (handles both
-            // sequenced and unsequenced output, nudge timer reset, etc.)
-            if (wsConnection) {
-              wsConnection.pushP2POutput(msg.seq, msg.data, msg.session);
-            } else {
-              const term = (msg.session && terminalPool.get(msg.session)?.term)
-                || terminalPool.getActive()?.term;
-              if (term) terminalWriteWithScroll(term, msg.data);
-            }
-          }
-        } catch {
-          // ignore malformed P2P data
-        }
-      },
-      getWS: () => state.connection.ws
-    });
-
-    // P2P UI indicator
-    const p2pIndicator = createP2PIndicator({
-      p2pManager,
-      getConnectionState: () => ({ attached: state.connection.attached })
-    });
-    const updateP2PIndicator = () => {
-      p2pIndicator.update();
+    const updateConnectionIndicator = () => {
       const attached = state.connection.attached;
-      const p2pConnected = state.p2p.connected;
-      const title = p2pConnected ? "Connected (direct)" : attached ? "Connected (relay)" : "Disconnected";
-      // Sync all connection dots (sidebar + tab bar + key island)
-      for (const id of ["sidebar-p2p-dot", "p2p-indicator", "island-p2p-dot"]) {
+      const title = attached ? "Connected" : "Disconnected";
+      for (const id of ["sidebar-connection-dot", "connection-indicator", "island-connection-dot"]) {
         const dot = document.getElementById(id);
         if (!dot) continue;
-        dot.classList.toggle("connected", p2pConnected);
-        dot.classList.toggle("relay", attached && !p2pConnected);
-        dot.classList.toggle("disconnected", !attached && !p2pConnected);
+        dot.classList.toggle("connected", attached);
         dot.title = title;
       }
     };
@@ -377,7 +333,6 @@
 
     // Create buffered input sender
     const inputSender = createInputSender({
-      p2pManager,
       getWebSocket: () => state.connection.ws,
       getSession: () => state.session.name,
       onInput: () => wsConnection?.nudgeOnInput(),
@@ -885,7 +840,7 @@
       },
       sendFn: rawSend,
       get term() { return getTerm(); },
-      updateP2PIndicator,
+      updateConnectionIndicator,
       getInstanceIcon,
       getSessionIcon,
       sessionStore,
@@ -1164,8 +1119,7 @@
 
     const networkMonitor = createNetworkMonitor({
       onNetworkChange: () => {
-        if (!state.connection.ws || state.connection.ws.readyState !== 1) return;
-        p2pManager.create();
+        // Network changed — WebSocket will handle reconnection if needed
       }
     });
     networkMonitor.init();
@@ -1176,8 +1130,7 @@
       term: getTerm,
       getTermForSession: (session) => terminalPool.get(session)?.term || null,
       state,
-      p2pManager,
-      updateP2PIndicator,
+      updateConnectionIndicator,
       isAtBottom,
       invalidateSessions: (name) => invalidateSessions(sessionStore, name),
       updateSessionUI: (name) => {

@@ -3,26 +3,10 @@ import assert from "node:assert/strict";
 
 // Mock dependencies before importing ws-manager
 const authModuleUrl = new URL("../lib/auth.js", import.meta.url).href;
-const p2pModuleUrl = new URL("../lib/p2p.js", import.meta.url).href;
-const lanModuleUrl = new URL("../lib/lan.js", import.meta.url).href;
 
 mock.module(authModuleUrl, {
   namedExports: {
     loadState: () => null,
-  },
-});
-
-mock.module(p2pModuleUrl, {
-  namedExports: {
-    createServerPeer: () => ({}),
-    destroyPeer: () => {},
-    p2pAvailable: false,
-  },
-});
-
-mock.module(lanModuleUrl, {
-  namedExports: {
-    getLanAddresses: () => [],
   },
 });
 
@@ -98,8 +82,8 @@ describe("createWebSocketManager", () => {
       const ws1 = createMockWs();
       const ws2 = createMockWs();
 
-      wsMgr.wsClients.set("client-1", { ws: ws1, p2pPeer: null, p2pConnected: false });
-      wsMgr.wsClients.set("client-2", { ws: ws2, p2pPeer: null, p2pConnected: false });
+      wsMgr.wsClients.set("client-1", { ws: ws1 });
+      wsMgr.wsClients.set("client-2", { ws: ws2 });
       sessionManager._setSession("client-1", "alpha");
       sessionManager._setSession("client-2", "beta");
 
@@ -112,7 +96,7 @@ describe("createWebSocketManager", () => {
 
     it("skips clients with closed WebSocket", () => {
       const ws = createMockWs(3); // CLOSED
-      wsMgr.wsClients.set("client-1", { ws, p2pPeer: null, p2pConnected: false });
+      wsMgr.wsClients.set("client-1", { ws });
       sessionManager._setSession("client-1", "alpha");
 
       wsMgr.sendToSession("alpha", { type: "output", data: "hello" });
@@ -123,8 +107,8 @@ describe("createWebSocketManager", () => {
       const ws1 = createMockWs();
       const ws2 = createMockWs();
 
-      wsMgr.wsClients.set("client-1", { ws: ws1, p2pPeer: null, p2pConnected: false });
-      wsMgr.wsClients.set("client-2", { ws: ws2, p2pPeer: null, p2pConnected: false });
+      wsMgr.wsClients.set("client-1", { ws: ws1 });
+      wsMgr.wsClients.set("client-2", { ws: ws2 });
       sessionManager._setSession("client-1", "alpha");
       sessionManager._setSession("client-2", "alpha");
 
@@ -155,8 +139,8 @@ describe("createWebSocketManager", () => {
       const ws1 = createMockWs();
       const ws2 = createMockWs();
 
-      wsMgr.wsClients.set("client-1", { ws: ws1, p2pPeer: null });
-      wsMgr.wsClients.set("client-2", { ws: ws2, p2pPeer: null });
+      wsMgr.wsClients.set("client-1", { ws: ws1 });
+      wsMgr.wsClients.set("client-2", { ws: ws2 });
 
       wsMgr.closeAllWebSockets(1001, "Server shutdown");
 
@@ -169,7 +153,7 @@ describe("createWebSocketManager", () => {
   describe("bridge subscriber", () => {
     it("routes output to correct session via bridge", () => {
       const ws = createMockWs();
-      wsMgr.wsClients.set("client-1", { ws, p2pPeer: null, p2pConnected: false });
+      wsMgr.wsClients.set("client-1", { ws });
       sessionManager._setSession("client-1", "alpha");
 
       bridge.relay({ type: "output", session: "alpha", data: "test output", seq: 0 });
@@ -180,7 +164,7 @@ describe("createWebSocketManager", () => {
 
     it("passes seq field through in output messages", () => {
       const ws = createMockWs();
-      wsMgr.wsClients.set("client-1", { ws, p2pPeer: null, p2pConnected: false });
+      wsMgr.wsClients.set("client-1", { ws });
       sessionManager._setSession("client-1", "alpha");
 
       bridge.relay({ type: "output", session: "alpha", data: "data", seq: 42 });
@@ -191,7 +175,7 @@ describe("createWebSocketManager", () => {
 
     it("routes exit events to correct session", () => {
       const ws = createMockWs();
-      wsMgr.wsClients.set("client-1", { ws, p2pPeer: null, p2pConnected: false });
+      wsMgr.wsClients.set("client-1", { ws });
       sessionManager._setSession("client-1", "alpha");
 
       bridge.relay({ type: "exit", session: "alpha", code: 0 });
@@ -202,7 +186,7 @@ describe("createWebSocketManager", () => {
 
     it("routes session-renamed to clients under the new name", () => {
       const ws = createMockWs();
-      wsMgr.wsClients.set("client-1", { ws, p2pPeer: null, p2pConnected: false });
+      wsMgr.wsClients.set("client-1", { ws });
       // Simulate tracker having already renamed (as session-manager does before relay)
       sessionManager._setSession("client-1", "new-name");
 
@@ -214,7 +198,7 @@ describe("createWebSocketManager", () => {
 
     it("closes all websockets on close-all-websockets bridge event", () => {
       const ws = createMockWs();
-      wsMgr.wsClients.set("client-1", { ws, p2pPeer: null });
+      wsMgr.wsClients.set("client-1", { ws });
 
       bridge.relay({ type: "close-all-websockets", code: 1008, reason: "Auth reset" });
 
@@ -226,8 +210,8 @@ describe("createWebSocketManager", () => {
       const ws1 = createMockWs();
       const ws2 = createMockWs();
 
-      wsMgr.wsClients.set("client-1", { ws: ws1, credentialId: "cred-1", p2pPeer: null });
-      wsMgr.wsClients.set("client-2", { ws: ws2, credentialId: "cred-2", p2pPeer: null });
+      wsMgr.wsClients.set("client-1", { ws: ws1, credentialId: "cred-1" });
+      wsMgr.wsClients.set("client-2", { ws: ws2, credentialId: "cred-2" });
 
       bridge.relay({ type: "close-credential-websockets", credentialId: "cred-1" });
 
@@ -296,8 +280,8 @@ describe("createWebSocketManager", () => {
       const ws1 = createMockWs();
       const ws2 = createMockWs();
 
-      wsMgr.wsClients.set("active-client", { ws: ws1, p2pPeer: null, p2pConnected: false });
-      wsMgr.wsClients.set("passive-client", { ws: ws2, p2pPeer: null, p2pConnected: false });
+      wsMgr.wsClients.set("active-client", { ws: ws1 });
+      wsMgr.wsClients.set("passive-client", { ws: ws2 });
       sessionManager._setSession("active-client", "alpha");
       sessionManager._setSession("passive-client", "alpha");
 

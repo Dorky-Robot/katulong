@@ -10,7 +10,6 @@
  */
 export function createInputSender(options = {}) {
   const {
-    p2pManager,
     getWebSocket,
     getSession,
     onInput
@@ -34,15 +33,9 @@ export function createInputSender(options = {}) {
 
         const payload = JSON.stringify({ type: "input", data: sendBuf, session: getSession ? getSession() : undefined });
 
-        // Try P2P first, fall back to WebSocket
-        if (p2pManager && p2pManager.send(payload)) {
-          // Sent via P2P successfully
-        } else {
-          // Fall back to WebSocket
-          const ws = getWebSocket ? getWebSocket() : null;
-          if (ws && ws.readyState === 1) {
-            ws.send(payload);
-          }
+        const ws = getWebSocket ? getWebSocket() : null;
+        if (ws && ws.readyState === 1) {
+          ws.send(payload);
         }
 
         sendBuf = "";

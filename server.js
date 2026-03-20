@@ -8,7 +8,7 @@ import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
 import envConfig, { ensureDataDir } from "./lib/env-config.js";
 import { log } from "./lib/log.js";
-import { initP2P } from "./lib/p2p.js";
+
 import {
   loadState, validateSession, refreshSessionActivity, withStateLock,
 } from "./lib/auth.js";
@@ -70,8 +70,6 @@ if (process.platform === "linux" && !process.env.DISPLAY) {
     });
   } catch { /* no Xvfb — clipboard will use file-based fallback */ }
 }
-
-await initP2P();
 
 const RP_NAME = "Katulong";
 

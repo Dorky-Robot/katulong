@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
  * Clipboard bridge tests
  *
  * Covers the container-specific clipboard flow:
- *   Xvfb auto-detection, xclip set/read, and P2P send fallback.
+ *   Xvfb auto-detection and xclip set/read.
  *
  * These tests require xclip and Xvfb to be available in the test environment
  * (they are installed in the kubo container). Tests are skipped gracefully
@@ -119,45 +119,6 @@ describe("Clipboard bridge — xclip round-trip", { skip: !isLinux && "Linux-onl
       }),
       "xclip should fail when DISPLAY is empty"
     );
-  });
-});
-
-describe("Clipboard bridge — P2P send fallback", () => {
-  it("peer.send() returns false when DataChannel is not open", async () => {
-    // Import p2p module — createServerPeer returns null if WebRTC not available
-    const { createServerPeer, p2pAvailable } = await import("../lib/p2p.js");
-    if (!p2pAvailable) return; // Skip if WebRTC not available
-
-    const peer = createServerPeer(
-      () => {},  // onSignal
-      () => {},  // onData
-      () => {},  // onClose
-      () => {}   // onConnect
-    );
-    if (!peer) return;
-
-    try {
-      // DataChannel hasn't been created yet — send should return false
-      const sent = peer.send("test data");
-      assert.equal(sent, false, "send() should return false when DataChannel is not open");
-    } finally {
-      peer.destroy();
-    }
-  });
-
-  it("peer.send() returns boolean (not undefined)", async () => {
-    const { createServerPeer, p2pAvailable } = await import("../lib/p2p.js");
-    if (!p2pAvailable) return;
-
-    const peer = createServerPeer(() => {}, () => {}, () => {}, () => {});
-    if (!peer) return;
-
-    try {
-      const result = peer.send("test");
-      assert.equal(typeof result, "boolean", "send() must return a boolean for fallback logic");
-    } finally {
-      peer.destroy();
-    }
   });
 });
 
