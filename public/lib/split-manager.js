@@ -6,10 +6,24 @@
  * Only two splits maximum. Drag a tab into the terminal area to split.
  */
 
-// Detect tablet: has touch + wide screen. Media queries are unreliable on iPad
-// (Magic Keyboard changes pointer type), so use maxTouchPoints instead.
+// Detect iPad: touch-capable + wide screen + no fine pointer (mouse/trackpad) as primary.
+// iPads with Magic Keyboard report (pointer: fine) but (any-pointer: coarse) is still true.
+// Desktop touchscreens have (pointer: fine) AND no (any-pointer: coarse) from a separate
+// touch digitizer — but actually they do, so we also check for the absence of a desktop UA.
+// Simplest reliable check: coarse touch available + tablet-sized + NOT a desktop OS.
 function detectTablet() {
-  return navigator.maxTouchPoints > 0 && window.innerWidth >= 768;
+  if (navigator.maxTouchPoints === 0) return false;
+  if (window.innerWidth < 768) return false;
+  // Exclude desktop: desktops have (pointer: fine) as primary and no coarse-only mode
+  // iPads always have (any-pointer: coarse). Desktop touch laptops also have it, but
+  // they additionally match (hover: hover) which iPads without a trackpad don't.
+  // With Magic Keyboard, iPad matches (hover: hover) too, so fall back to UA sniffing.
+  const ua = navigator.userAgent || "";
+  // iPad Safari reports as "Macintosh" but has maxTouchPoints > 0
+  const isIPad = /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  // Android tablets
+  const isAndroidTablet = /Android/.test(ua) && !/Mobile/.test(ua);
+  return isIPad || isAndroidTablet;
 }
 
 export function createSplitManager({ terminalContainer, terminalPool, sendResize }) {

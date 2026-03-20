@@ -57,9 +57,13 @@ function createMockTerminalPool() {
 
 // Minimal browser globals for split-manager
 function setupGlobals() {
-  // navigator.maxTouchPoints is read-only in Node — use defineProperty
+  // navigator is read-only in Node — use defineProperty
   Object.defineProperty(globalThis, 'navigator', {
-    value: { maxTouchPoints: 5 },
+    value: {
+      maxTouchPoints: 5,
+      // iPad Safari UA (reports as Macintosh with touch)
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+    },
     writable: true,
     configurable: true,
   });
@@ -121,6 +125,12 @@ describe('split-manager', () => {
 
     it('isTablet returns false when narrow screen', () => {
       globalThis.window.innerWidth = 600;
+      assert.strictEqual(sm.isTablet(), false);
+    });
+
+    it('isTablet returns false for desktop with touch (non-iPad UA)', () => {
+      globalThis.navigator.maxTouchPoints = 10;
+      globalThis.navigator.userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
       assert.strictEqual(sm.isTablet(), false);
     });
   });

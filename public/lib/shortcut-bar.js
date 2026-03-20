@@ -67,9 +67,13 @@ export function createShortcutBar(options = {}) {
     return window.matchMedia("(pointer: coarse)").matches;
   }
 
-  /** Detect tablet: touch-capable + large screen (works even with Magic Keyboard) */
+  /** Detect iPad/tablet: same logic as split-manager's detectTablet */
   function isTabletLocal() {
-    return navigator.maxTouchPoints > 0 && window.innerWidth >= 768;
+    if (navigator.maxTouchPoints === 0 || window.innerWidth < 768) return false;
+    const ua = navigator.userAgent || "";
+    const isIPad = /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    const isAndroidTablet = /Android/.test(ua) && !/Mobile/.test(ua);
+    return isIPad || isAndroidTablet;
   }
 
   function isPhone() {
