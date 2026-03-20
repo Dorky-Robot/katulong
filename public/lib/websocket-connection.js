@@ -313,10 +313,21 @@ export function createWebSocketConnection(deps = {}) {
       }
       case 'seqOutput': {
         nudgeTimer.reset();
-        if (effect.seq !== undefined && seqBuffer.isInitialized()) {
-          seqBuffer.push(effect.seq, effect.data);
+        if (effect.seq !== undefined) {
+          // Sequenced output — must go through seqBuffer for ordering.
+          // If seq-init hasn't arrived yet (e.g., P2P output racing ahead
+          // of seq-init on WebSocket), drop the data rather than writing
+          // directly.  The catchup mechanism will recover it once the
+          // buffer is initialized.  Writing directly caused duplicate
+          // output (data written immediately AND replayed via catchup),
+          // which was the primary source of garbled text on P2P→WS
+          // transitions.
+          if (seqBuffer.isInitialized()) {
+            seqBuffer.push(effect.seq, effect.data);
+          }
         } else {
-          // No seq (backward compat) or seq-init not yet received — write directly
+          // Unsequenced output (scrollback replay, backward compat) —
+          // write directly to the terminal.
           const term = effect.useOutputTerm !== false ? getOutputTerm(effect.session) : getTerm();
           if (term) scheduleWrite(term, effect.data);
         }
