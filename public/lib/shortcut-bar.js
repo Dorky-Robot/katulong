@@ -896,6 +896,26 @@ export function createShortcutBar(options = {}) {
         island.appendChild(btn);
       }
 
+      // Copy button — copies xterm selection to clipboard (iOS can't copy
+      // canvas-based selection via the native context menu)
+      {
+        const copyBtn = document.createElement("button");
+        copyBtn.className = "key-island-btn key-island-icon";
+        copyBtn.setAttribute("aria-label", "Copy selection");
+        copyBtn.innerHTML = '<i class="ph ph-copy"></i>';
+        copyBtn.addEventListener("click", () => {
+          const term = options.term;
+          if (term && term.hasSelection()) {
+            navigator.clipboard.writeText(term.getSelection()).then(() => {
+              copyBtn.innerHTML = '<i class="ph ph-check"></i>';
+              setTimeout(() => { copyBtn.innerHTML = '<i class="ph ph-copy"></i>'; }, 1000);
+            }).catch(() => {});
+          }
+          if (term) term.focus();
+        });
+        island.appendChild(copyBtn);
+      }
+
       if (onShortcutsClick) {
         const kbBtn = document.createElement("button");
         kbBtn.className = "key-island-btn key-island-icon";
