@@ -15,7 +15,7 @@
     import { showToast, isImageFile, uploadImageToTerminal as uploadImageToTerminalFn, uploadImagesToTerminal as uploadImagesToTerminalFn, onPasteComplete } from "/lib/image-upload.js";
     import { createJoystickManager } from "/lib/joystick.js";
     import { attachTouchSelect } from "/lib/touch-select.js";
-    import { createPullToRefreshManager } from "/lib/pull-to-refresh.js";
+
     import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
     import { createTabManager } from "/lib/tab-manager.js";
     import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll, initScrollTracking } from "/lib/scroll-utils.js";
@@ -405,20 +405,7 @@
 
 
 
-    // --- Pull-to-refresh (composable gesture handler) ---
-    const pullToRefresh = createPullToRefreshManager({
-      container: termContainer,
-      isAtBottom,
-      getTerm,
-      onRefresh: () => {
-        if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN && state.connection.attached) {
-          rawSend("\x0C"); // Ctrl-L: refresh screen
-        } else {
-          if (state.connection.ws) state.connection.ws.close();
-        }
-      }
-    });
-    pullToRefresh.init();
+
 
     // --- Shortcuts popup (reactive component) ---
 
