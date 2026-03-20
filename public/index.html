@@ -82,7 +82,7 @@
     /* --- Reset & base --- */
     * { margin: 0; padding: 0; box-sizing: border-box; }
     button, input { font-family: inherit; }
-    html, body { height: 100dvh; background: var(--bg); overflow: hidden; color: var(--text); font-family: var(--font-mono); }
+    html, body { height: 100dvh; background: var(--bg); overflow: hidden; overscroll-behavior: none; color: var(--text); font-family: var(--font-mono); }
 
     /* --- Focus & motion --- */
     :focus-visible {
@@ -195,7 +195,7 @@
     #terminal-container { flex: 1; min-width: 0; position: relative; z-index: 1; overflow: hidden; background: var(--bg); }
     .terminal-pane { position: absolute; inset: 0 0 0 4px; display: none; }
     .terminal-pane.active { display: block; }
-    .terminal-pane .xterm, #terminal-container .xterm { height: 100%; overflow: hidden; }
+    .terminal-pane .xterm, #terminal-container .xterm { height: 100%; overflow: hidden; touch-action: none; }
     #terminal-container .xterm-viewport,
     #terminal-container .xterm-scrollable-element {
       -webkit-overflow-scrolling: touch;
