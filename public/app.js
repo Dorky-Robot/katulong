@@ -34,7 +34,7 @@
     import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
-    import { createCardCarousel } from "/lib/card-carousel.js";
+    import { createCardCarousel, isCarouselDevice } from "/lib/card-carousel.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -264,10 +264,41 @@
             ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows, cached: true }));
           }
         }
+        // Subscribe to all other visible cards
+        syncCarouselSubscriptions();
       },
       onCardDismissed: (sessionName) => {
         // Detach: remove from this window's tab set (session stays on server)
         if (windowTabSet) windowTabSet.removeTab(sessionName);
+        wsConnection.sendUnsubscribe(sessionName);
+      },
+      onTabRenamed: async (oldName, newName) => {
+        try {
+          await api.put(`/sessions/${encodeURIComponent(oldName)}`, { name: newName });
+          carousel.renameCard(oldName, newName);
+          windowTabSet.renameTab(oldName, newName);
+          terminalPool.rename(oldName, newName);
+          invalidateSessions(sessionStore, newName);
+          if (state.session.name === oldName) {
+            state.update('session.name', newName);
+            document.title = newName;
+            const url = new URL(window.location);
+            url.searchParams.set("s", newName);
+            history.replaceState(null, "", url);
+          }
+        } catch (err) {
+          console.error("[Carousel] Rename failed:", err);
+        }
+      },
+      onAllCardsDismissed: () => {
+        // All cards dismissed — clear state so refresh shows blank stage
+        wsConnection.disconnect();
+        state.update('session.name', null);
+        document.title = "katulong";
+        const url = new URL(window.location);
+        url.searchParams.delete("s");
+        history.replaceState(null, "", url);
+        sessionStorage.setItem("katulong-empty-state", "1");
       },
       onAddClick: (anchorEl) => {
         // Show the same add menu as the tab bar's + button (new session + detached sessions)
@@ -279,6 +310,39 @@
         }
       },
     });
+
+    /** Subscribe to all non-focused carousel cards so their output streams in */
+    function syncCarouselSubscriptions() {
+      if (!carousel.isActive()) return;
+      const cards = carousel.getCards();
+      const focused = carousel.getFocusedCard();
+      for (const session of cards) {
+        if (session !== focused) {
+          wsConnection.sendSubscribe(session);
+        }
+      }
+      // Send resize for all cards so PTYs get SIGWINCH at the correct
+      // carousel card dimensions — TUIs like Claude Code won't reflow
+      // unless they receive a resize after the subscribe buffer replay.
+      carousel.fitAll();
+    }
+
+    /** Route a session to the appropriate view (carousel on iPad, switchSession on desktop) */
+    function routeToSession(name) {
+      if (!isCarouselDevice()) {
+        switchSession(name);
+        return;
+      }
+      if (carousel.isActive()) {
+        if (!carousel.getCards().includes(name)) carousel.addCard(name);
+        carousel.focusCard(name);
+      } else {
+        const allNames = windowTabSet ? [...windowTabSet.getTabs()] : [];
+        if (!allNames.includes(name)) allNames.push(name);
+        carousel.activate(allNames.length > 0 ? allNames : [name], name);
+        if (shortcutBarInstance) shortcutBarInstance.render(name);
+      }
+    }
 
     /** Fit the active terminal after a visibility change (e.g. closing file browser/port forward) */
     function fitActiveTerminal() {
@@ -561,13 +625,12 @@
         // Re-enable reconnect if we were in empty state
         wsConnection.enableReconnect();
         windowTabSet.addTab(data.name);
-        // In carousel mode, add as a new card
-        if (carousel.isActive()) {
-          carousel.addCard(data.name);
-          carousel.focusCard(data.name);
-          return;
+        // routeToSession handles both iPad (carousel) and desktop (switchSession)
+        routeToSession(data.name);
+        // If carousel was just activated from empty state, reconnect WS
+        if (isCarouselDevice() && carousel.isActive()) {
+          wsConnection.connect();
         }
-        switchSession(data.name);
       } catch (err) {
         console.error("Failed to create session:", err);
         showToast(`Failed to create session: ${err.message}`);
@@ -604,12 +667,9 @@
         windowTabSet.addTab(name);
       }
 
-      // In carousel mode, focus the card (or add it if not visible)
-      if (carousel.isActive()) {
-        if (!carousel.getCards().includes(name)) {
-          carousel.addCard(name);
-        }
-        carousel.focusCard(name);
+      // On iPad/tablet, route through carousel (onFocusChange handles state sync)
+      if (isCarouselDevice()) {
+        routeToSession(name);
         invalidateSessions(sessionStore, name);
         return;
       }
@@ -1197,6 +1257,7 @@
       updateConnectionIndicator,
       isAtBottom,
       invalidateSessions: (name) => invalidateSessions(sessionStore, name),
+      syncCarouselSubscriptions: () => syncCarouselSubscriptions(),
       updateSessionUI: (name) => {
         pendingSwitch = null;
         document.title = name;
@@ -1283,10 +1344,9 @@
           const url = new URL(window.location);
           url.searchParams.set("s", name);
           history.replaceState(null, "", url);
-          // On iPad, activate carousel with all tab-set sessions
-          if (navigator.maxTouchPoints > 0 && (/iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))) {
+          if (isCarouselDevice()) {
             const tabSessions = windowTabSet.getTabs();
-            const allNames = tabSessions.length > 0 ? tabSessions : [name];
+            const allNames = tabSessions.length > 0 ? [...tabSessions] : [name];
             if (!allNames.includes(name)) allNames.unshift(name);
             carousel.activate(allNames, name);
             renderBar(name);
@@ -1304,10 +1364,10 @@
         // User can create or pick a session via the sidebar.
       });
     } else {
-      // Explicit ?s= session — activate carousel on iPad
-      if (navigator.maxTouchPoints > 0 && (/iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))) {
+      // Explicit ?s= session — activate carousel on iPad/tablet
+      if (isCarouselDevice()) {
         const tabSessions = windowTabSet.getTabs();
-        const allNames = tabSessions.length > 0 ? tabSessions : [state.session.name];
+        const allNames = tabSessions.length > 0 ? [...tabSessions] : [state.session.name];
         if (state.session.name && !allNames.includes(state.session.name)) allNames.unshift(state.session.name);
         carousel.activate(allNames, state.session.name);
         renderBar(state.session.name);

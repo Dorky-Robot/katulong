@@ -70,6 +70,24 @@ export function createWebSocketConnection(deps = {}) {
     },
   });
 
+  // Per-session seq buffers for multi-session subscriptions (carousel mode)
+  const seqBuffers = new Map();
+
+  function getOrCreateSeqBuffer(sessionName) {
+    if (seqBuffers.has(sessionName)) return seqBuffers.get(sessionName);
+    const buf = createSeqBuffer({
+      onFlush: (data) => {
+        const term = getOutputTerm(sessionName);
+        if (term) scheduleWrite(term, data);
+      },
+      onGapTimeout: (expectedSeq) => {
+        sendCatchup(sessionName, expectedSeq);
+      },
+    });
+    seqBuffers.set(sessionName, buf);
+    return buf;
+  }
+
   const nudgeTimer = createNudgeTimer({
     getWS: () => state.connection.ws,
   });
@@ -109,7 +127,8 @@ export function createWebSocketConnection(deps = {}) {
         { type: 'updateConnectionIndicator' },
         { type: 'fit' },
         { type: 'invalidateSessions', name: msg.session },
-        { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect }
+        { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect },
+        { type: 'syncCarouselSubscriptions' }
       ]
     }),
 
@@ -124,6 +143,20 @@ export function createWebSocketConnection(deps = {}) {
         { type: 'invalidateSessions', name: msg.session },
         { type: 'fit' },
         { type: 'scrollToBottomIfNeeded', condition: true }
+      ]
+    }),
+
+    'subscribed': (msg) => ({
+      stateUpdates: {},
+      effects: [
+        // seq-init will come separately from the server
+      ]
+    }),
+
+    'unsubscribed': (msg) => ({
+      stateUpdates: {},
+      effects: [
+        { type: 'seqClear', session: msg.session }
       ]
     }),
 
@@ -270,7 +303,11 @@ export function createWebSocketConnection(deps = {}) {
           // output (data written immediately AND replayed via catchup),
           // which was the primary source of garbled text on P2P→WS
           // transitions.
-          if (seqBuffer.isInitialized()) {
+          // Try per-session buffer first (subscription), fall back to primary
+          const sessionBuf = effect.session ? seqBuffers.get(effect.session) : null;
+          if (sessionBuf && sessionBuf.isInitialized()) {
+            sessionBuf.push(effect.seq, effect.data);
+          } else if (seqBuffer.isInitialized()) {
             seqBuffer.push(effect.seq, effect.data);
           }
         } else {
@@ -282,11 +319,22 @@ export function createWebSocketConnection(deps = {}) {
         break;
       }
       case 'seqClear':
-        seqBuffer.clear();
+        if (effect.session && seqBuffers.has(effect.session)) {
+          seqBuffers.get(effect.session).clear();
+          seqBuffers.delete(effect.session);
+        } else {
+          seqBuffer.clear();
+        }
         nudgeTimer.stop();
         break;
       case 'seqInit':
-        seqBuffer.init(effect.seq);
+        if (effect.session) {
+          // Per-session subscription buffer
+          const buf = getOrCreateSeqBuffer(effect.session);
+          buf.init(effect.seq);
+        } else {
+          seqBuffer.init(effect.seq);
+        }
         nudgeTimer.start();
         break;
       case 'seqStatus': {
@@ -327,6 +375,9 @@ export function createWebSocketConnection(deps = {}) {
         break;
       case 'updateSessionUI':
         if (deps.updateSessionUI) deps.updateSessionUI(effect.name);
+        break;
+      case 'syncCarouselSubscriptions':
+        if (deps.syncCarouselSubscriptions) deps.syncCarouselSubscriptions();
         break;
       case 'refreshTokensAfterRegistration':
         if (deps.refreshTokensAfterRegistration) deps.refreshTokensAfterRegistration();
@@ -450,6 +501,9 @@ export function createWebSocketConnection(deps = {}) {
       state.connection.attached = false;
       nudgeTimer.stop();
       seqBuffer.clear();
+      // Clear all per-session subscription buffers
+      for (const buf of seqBuffers.values()) buf.clear();
+      seqBuffers.clear();
       if (deps.updateConnectionIndicator) deps.updateConnectionIndicator();
       if (deps.onDisconnect) deps.onDisconnect();
 
@@ -534,6 +588,18 @@ export function createWebSocketConnection(deps = {}) {
     /** Reset nudge backoff on user input so gap detection stays responsive. */
     nudgeOnInput() {
       nudgeTimer.nudge();
+    },
+    sendSubscribe(sessionName) {
+      const ws = state.connection.ws;
+      if (ws?.readyState === 1) {
+        ws.send(JSON.stringify({ type: "subscribe", session: sessionName }));
+      }
+    },
+    sendUnsubscribe(sessionName) {
+      const ws = state.connection.ws;
+      if (ws?.readyState === 1) {
+        ws.send(JSON.stringify({ type: "unsubscribe", session: sessionName }));
+      }
     },
   };
 }

@@ -207,27 +207,19 @@
       background: var(--bg);
     }
     .carousel-card {
-      flex: 0 0 47%; min-width: 280px;
+      flex: 0 0 calc(50% - 5px); min-width: 280px; max-width: 100%;
       display: flex; flex-direction: column; overflow: hidden;
       scroll-snap-align: center; position: relative;
       border-radius: 12px;
       background: var(--bg-surface);
       box-shadow: 0 2px 12px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.04);
-      transition: flex-basis 0.3s ease, flex-grow 0.3s ease, opacity 0.25s ease, transform 0.3s ease;
+      transition: flex-basis 0.3s ease, opacity 0.25s ease, transform 0.3s ease;
     }
     /* Disable transitions during active resize drag */
     .carousel-card.resizing { transition: none; }
-    .carousel-card.entering {
-      opacity: 0; transform: scale(0.92);
-    }
-    /* Single card: starts full width but can be resized narrower (stays centered) */
+    /* Single card: full width */
     .carousel-card:only-of-type {
       flex: 1 1 100%; min-width: 200px; max-width: 100%;
-    }
-    /* Two cards: each takes exactly half minus gap */
-    .carousel-card:first-of-type:nth-last-of-type(2),
-    .carousel-card:first-of-type:nth-last-of-type(2) ~ .carousel-card {
-      flex: 0 0 calc(50% - 5px); min-width: 0;
     }
     .carousel-card.focused {
       box-shadow: 0 2px 16px rgba(0,0,0,0.35), 0 0 0 2px var(--accent-active);
@@ -236,32 +228,50 @@
       position: relative; inset: auto;
       flex: 1; display: block;
       min-width: 0; min-height: 0; overflow: hidden;
-      border-radius: 0 0 12px 12px;
+      border-radius: 12px;
+      padding: 6px 4px 4px 6px;
     }
-    .card-title {
-      flex-shrink: 0; height: 24px;
+    /* Carousel header — sits above the cards, shows titles inline */
+    .carousel-header {
+      flex-shrink: 0; height: 44px;
       display: flex; align-items: center; justify-content: center;
-      background: var(--bg-surface); border-bottom: 1px solid var(--border);
-      padding: 0 4px; gap: 4px;
-      border-radius: 12px 12px 0 0;
+      gap: 8px; padding: 4px 52px;
+      background: var(--bg);
+      overflow-x: auto; overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
     }
-    .card-title-input {
-      background: none; border: none; text-align: center;
-      font-size: 11px; color: var(--text-dim); font-family: var(--font-mono);
-      width: 100%; max-width: 200px; padding: 0 4px; outline: none;
-      -webkit-user-select: none; user-select: none;
+    .carousel-header-tab {
+      flex-shrink: 0; display: flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 8px; height: 36px;
+      cursor: pointer; border: none; background: none;
+      transition: background 0.15s;
     }
-    .card-title-input:focus {
-      color: var(--text); background: var(--bg-input); border-radius: 4px;
-      -webkit-user-select: text; user-select: text;
+    .carousel-header-tab:hover { background: rgba(255,255,255,0.04); }
+    .carousel-header-tab.active { background: rgba(255,255,255,0.06); }
+    .carousel-header-tab .header-tab-name {
+      font-size: 13px; color: var(--text-dim); font-family: var(--font-mono);
+      max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      text-shadow: 0 1px 0 rgba(0,0,0,0.4);
+      letter-spacing: 0.02em;
     }
-    .card-dismiss {
-      flex-shrink: 0; width: 18px; height: 18px; border: none; border-radius: 4px;
+    .carousel-header-tab.active .header-tab-name {
+      color: var(--text);
+      text-shadow: 0 1px 0 rgba(0,0,0,0.5), 0 0 8px rgba(255,255,255,0.04);
+    }
+    .carousel-header-tab .header-tab-dismiss {
+      width: 18px; height: 18px; border: none; border-radius: 4px;
       background: none; color: var(--text-dim); font-size: 0.7rem;
       cursor: pointer; display: flex; align-items: center; justify-content: center;
-      opacity: 0.4; transition: opacity 0.15s;
+      opacity: 0; transition: opacity 0.15s;
     }
-    .card-dismiss:hover { opacity: 1; color: var(--danger); }
+    .carousel-header-tab:hover .header-tab-dismiss { opacity: 0.6; }
+    .carousel-header-tab .header-tab-dismiss:hover { opacity: 1; color: var(--danger); }
+    .header-tab-rename {
+      all: unset; font: inherit; color: var(--text); background: var(--bg-input);
+      border-radius: 4px; padding: 0 4px; width: 100%; min-width: 3rem;
+      text-align: center; cursor: text; font-size: 13px;
+    }
+    .carousel-header-tab { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
     .carousel-handle {
       position: absolute; top: 0; bottom: 0; width: 32px;
       cursor: col-resize; background: transparent; touch-action: none; z-index: 3;
@@ -269,12 +279,15 @@
     .carousel-handle-left { left: -8px; }
     .carousel-handle-right { right: -8px; }
     .carousel-add {
-      flex-shrink: 0; width: 44px;
+      position: fixed; top: 8px; right: 8px; z-index: 100;
+      width: 36px; height: 36px; border-radius: 8px;
       display: flex; align-items: center; justify-content: center;
-      background: none; border: none; color: var(--text-dim);
-      font-size: 1.5rem; cursor: pointer;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      color: var(--text-muted); font-size: 1.25rem; cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      -webkit-touch-callout: none; -webkit-user-select: none;
     }
-    .carousel-add:hover { color: var(--text); }
+    .carousel-add:hover { color: var(--text); background: var(--accent); }
 
     .terminal-pane .xterm, #terminal-container .xterm { height: 100%; overflow: hidden; touch-action: none; }
     #terminal-container .xterm-viewport,
