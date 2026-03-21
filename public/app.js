@@ -618,12 +618,21 @@
         windowTabSet.addTab(name);
       }
 
-      // In carousel mode, focus the card (or add it if not visible)
+      // On iPad, always use carousel
+      const isIPadActivate = navigator.maxTouchPoints > 0 && (/iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
       if (carousel.isActive()) {
         if (!carousel.getCards().includes(name)) {
           carousel.addCard(name);
         }
         carousel.focusCard(name);
+        invalidateSessions(sessionStore, name);
+        return;
+      }
+      if (isIPadActivate && !carousel.isActive()) {
+        // Reactivate carousel (e.g., after all cards were dismissed)
+        state.update('session.name', name);
+        carousel.activate([name], name);
+        if (shortcutBarInstance) shortcutBarInstance.render(name);
         invalidateSessions(sessionStore, name);
         return;
       }
