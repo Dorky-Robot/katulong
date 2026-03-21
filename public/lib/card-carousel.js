@@ -236,6 +236,17 @@ export function createCardCarousel({
     if (headerEl) { headerEl.remove(); headerEl = null; }
   }
 
+  /** Scroll the focused card fully into view after layout settles */
+  function scrollToFocused() {
+    if (!focusedSession) return;
+    const el = cardEls.get(focusedSession);
+    if (el?.wrapper?.scrollIntoView) {
+      requestAnimationFrame(() => {
+        el.wrapper.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      });
+    }
+  }
+
   // ── Layout ───────────────────────────────────────────────────────────
 
   function buildLayout() {
@@ -281,8 +292,9 @@ export function createCardCarousel({
     // Show the floating + button
     showAddButton();
 
-    // Fit terminals after layout
+    // Fit terminals after layout, then scroll focused card into view
     fitAll();
+    scrollToFocused();
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────
@@ -368,7 +380,7 @@ export function createCardCarousel({
       wrapper.style.flex = "";
       wrapper.style.opacity = "";
       wrapper.style.transform = "";
-      wrapper.scrollIntoView({ behavior: "smooth", inline: "center" });
+      wrapper.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
     });
 
     fitAll();
@@ -413,6 +425,7 @@ export function createCardCarousel({
             wrapper.classList.toggle("focused", name === focusedSession);
           }
           updateHeaderFocus(focusedSession);
+          scrollToFocused();
         } else {
           focusedSession = null;
           deactivate();
@@ -454,15 +467,10 @@ export function createCardCarousel({
     }
     updateHeaderFocus(sessionName);
 
-    // Focus the terminal
+    // Focus the terminal and scroll into view
     const entry = terminalPool.get(sessionName);
     if (entry?.term?.focus) entry.term.focus();
-
-    // Scroll focused card to center
-    const el = cardEls.get(sessionName);
-    if (el?.wrapper?.scrollIntoView) {
-      el.wrapper.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-    }
+    scrollToFocused();
 
     if (onFocusChange) onFocusChange(sessionName);
     save();
