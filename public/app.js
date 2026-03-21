@@ -264,10 +264,13 @@
             ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows, cached: true }));
           }
         }
+        // Subscribe to all other visible cards
+        syncCarouselSubscriptions();
       },
       onCardDismissed: (sessionName) => {
         // Detach: remove from this window's tab set (session stays on server)
         if (windowTabSet) windowTabSet.removeTab(sessionName);
+        wsConnection.sendUnsubscribe(sessionName);
       },
       onAllCardsDismissed: () => {
         // All cards dismissed — clear state so refresh shows blank stage
@@ -289,6 +292,18 @@
         }
       },
     });
+
+    /** Subscribe to all non-focused carousel cards so their output streams in */
+    function syncCarouselSubscriptions() {
+      if (!carousel.isActive()) return;
+      const cards = carousel.getCards();
+      const focused = carousel.getFocusedCard();
+      for (const session of cards) {
+        if (session !== focused) {
+          wsConnection.sendSubscribe(session);
+        }
+      }
+    }
 
     /** Route a session to the appropriate view (carousel on iPad, switchSession on desktop) */
     function routeToSession(name) {
