@@ -34,7 +34,7 @@
     import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
-    import { createCardCarousel } from "/lib/card-carousel.js";
+    import { createCardCarousel, isCarouselDevice } from "/lib/card-carousel.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -289,6 +289,23 @@
         }
       },
     });
+
+    /** Route a session to the appropriate view (carousel on iPad, switchSession on desktop) */
+    function routeToSession(name) {
+      if (!isCarouselDevice()) {
+        switchSession(name);
+        return;
+      }
+      if (carousel.isActive()) {
+        if (!carousel.getCards().includes(name)) carousel.addCard(name);
+        carousel.focusCard(name);
+      } else {
+        const allNames = windowTabSet ? [...windowTabSet.getTabs()] : [];
+        if (!allNames.includes(name)) allNames.push(name);
+        carousel.activate(allNames.length > 0 ? allNames : [name], name);
+        if (shortcutBarInstance) shortcutBarInstance.render(name);
+      }
+    }
 
     /** Fit the active terminal after a visibility change (e.g. closing file browser/port forward) */
     function fitActiveTerminal() {
@@ -571,27 +588,13 @@
         // Re-enable reconnect if we were in empty state
         wsConnection.enableReconnect();
         windowTabSet.addTab(data.name);
-        // On iPad, always use carousel
-        const isIPad = navigator.maxTouchPoints > 0 && (/iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
-        if (carousel.isActive()) {
-          carousel.addCard(data.name);
-          carousel.focusCard(data.name);
-          return;
-        }
-        if (isIPad) {
-          // Reactivate carousel (e.g., after all cards were dismissed)
-          state.update('session.name', data.name);
-          document.title = data.name;
-          const url = new URL(window.location);
-          url.searchParams.set("s", data.name);
-          history.replaceState(null, "", url);
-          carousel.activate([data.name], data.name);
-          if (shortcutBarInstance) shortcutBarInstance.render(data.name);
+        // routeToSession handles both iPad (carousel) and desktop (switchSession)
+        routeToSession(data.name);
+        // If carousel was just activated from empty state, reconnect WS
+        if (isCarouselDevice() && carousel.isActive()) {
           wsConnection.enableReconnect();
           wsConnection.connect();
-          return;
         }
-        switchSession(data.name);
       } catch (err) {
         console.error("Failed to create session:", err);
         showToast(`Failed to create session: ${err.message}`);
@@ -628,21 +631,9 @@
         windowTabSet.addTab(name);
       }
 
-      // On iPad, always use carousel
-      const isIPadActivate = navigator.maxTouchPoints > 0 && (/iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
-      if (carousel.isActive()) {
-        if (!carousel.getCards().includes(name)) {
-          carousel.addCard(name);
-        }
-        carousel.focusCard(name);
-        invalidateSessions(sessionStore, name);
-        return;
-      }
-      if (isIPadActivate && !carousel.isActive()) {
-        // Reactivate carousel (e.g., after all cards were dismissed)
-        state.update('session.name', name);
-        carousel.activate([name], name);
-        if (shortcutBarInstance) shortcutBarInstance.render(name);
+      // On iPad/tablet, route through carousel (onFocusChange handles state sync)
+      if (isCarouselDevice()) {
+        routeToSession(name);
         invalidateSessions(sessionStore, name);
         return;
       }
@@ -1316,10 +1307,9 @@
           const url = new URL(window.location);
           url.searchParams.set("s", name);
           history.replaceState(null, "", url);
-          // On iPad, activate carousel with all tab-set sessions
-          if (navigator.maxTouchPoints > 0 && (/iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))) {
+          if (isCarouselDevice()) {
             const tabSessions = windowTabSet.getTabs();
-            const allNames = tabSessions.length > 0 ? tabSessions : [name];
+            const allNames = tabSessions.length > 0 ? [...tabSessions] : [name];
             if (!allNames.includes(name)) allNames.unshift(name);
             carousel.activate(allNames, name);
             renderBar(name);
@@ -1337,10 +1327,10 @@
         // User can create or pick a session via the sidebar.
       });
     } else {
-      // Explicit ?s= session — activate carousel on iPad
-      if (navigator.maxTouchPoints > 0 && (/iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))) {
+      // Explicit ?s= session — activate carousel on iPad/tablet
+      if (isCarouselDevice()) {
         const tabSessions = windowTabSet.getTabs();
-        const allNames = tabSessions.length > 0 ? tabSessions : [state.session.name];
+        const allNames = tabSessions.length > 0 ? [...tabSessions] : [state.session.name];
         if (state.session.name && !allNames.includes(state.session.name)) allNames.unshift(state.session.name);
         carousel.activate(allNames, state.session.name);
         renderBar(state.session.name);

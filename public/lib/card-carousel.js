@@ -12,6 +12,16 @@
 
 const STORAGE_KEY = "katulong-carousel";
 
+/**
+ * Detect iPad / tablet devices that should use the card carousel.
+ * Works for real iPads and "Desktop-mode" iPads that report as Macintosh.
+ */
+export function isCarouselDevice() {
+  return navigator.maxTouchPoints > 0 &&
+    (/iPad/.test(navigator.userAgent) ||
+     (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
+}
+
 export function createCardCarousel({
   container,
   terminalPool,
@@ -24,7 +34,7 @@ export function createCardCarousel({
   let active = false;
   let cards = [];           // ordered session names
   let focusedSession = null;
-  const cardEls = new Map(); // sessionName -> { wrapper, titleInput }
+  const cardEls = new Map(); // sessionName -> { wrapper }
 
   // ── Persistence ──────────────────────────────────────────────────────
 
@@ -60,7 +70,6 @@ export function createCardCarousel({
     wrapper.className = "carousel-card";
     wrapper.dataset.session = sessionName;
 
-    // Title bar
     // Focus on tap
     wrapper.addEventListener("pointerdown", () => {
       if (active && focusedSession !== sessionName) {
@@ -153,6 +162,7 @@ export function createCardCarousel({
 
   let headerEl = null;
 
+  /** Full rebuild of the header — used only by buildLayout/activate */
   function buildHeader() {
     // Remove old header
     if (headerEl) headerEl.remove();
@@ -160,22 +170,7 @@ export function createCardCarousel({
     headerEl.className = "carousel-header";
 
     for (const session of cards) {
-      const tab = document.createElement("button");
-      tab.className = "carousel-header-tab" + (session === focusedSession ? " active" : "");
-      tab.dataset.session = session;
-
-      const name = document.createElement("span");
-      name.className = "header-tab-name";
-      name.textContent = session;
-      tab.appendChild(name);
-
-      const dismiss = document.createElement("button");
-      dismiss.className = "header-tab-dismiss";
-      dismiss.innerHTML = '<i class="ph ph-x"></i>';
-      dismiss.addEventListener("click", (e) => { e.stopPropagation(); removeCard(session); });
-      tab.appendChild(dismiss);
-
-      tab.addEventListener("click", () => focusCard(session));
+      const tab = _createHeaderTab(session);
       headerEl.appendChild(tab);
     }
 
@@ -183,15 +178,62 @@ export function createCardCarousel({
     container.parentElement?.insertBefore(headerEl, container);
   }
 
-  function removeHeader() {
-    if (headerEl) { headerEl.remove(); headerEl = null; }
+  /** Create a single header tab element */
+  function _createHeaderTab(session) {
+    const tab = document.createElement("button");
+    tab.className = "carousel-header-tab" + (session === focusedSession ? " active" : "");
+    tab.dataset.session = session;
+
+    const name = document.createElement("span");
+    name.className = "header-tab-name";
+    name.textContent = session;
+    tab.appendChild(name);
+
+    const dismiss = document.createElement("button");
+    dismiss.className = "header-tab-dismiss";
+    dismiss.innerHTML = '<i class="ph ph-x"></i>';
+    dismiss.addEventListener("click", (e) => { e.stopPropagation(); removeCard(session); });
+    tab.appendChild(dismiss);
+
+    tab.addEventListener("click", () => focusCard(session));
+    return tab;
   }
 
-  function updateHeaderActive() {
+  /** Add a single tab to the header incrementally */
+  function addHeaderTab(sessionName) {
+    if (!headerEl) return;
+    const tab = _createHeaderTab(sessionName);
+    headerEl.appendChild(tab);
+  }
+
+  /** Remove a single tab from the header incrementally */
+  function removeHeaderTab(sessionName) {
+    if (!headerEl) return;
+    const tab = headerEl.querySelector(`.carousel-header-tab[data-session="${sessionName}"]`);
+    if (tab) tab.remove();
+  }
+
+  /** Rename a tab in the header incrementally */
+  function renameHeaderTab(oldName, newName) {
+    if (!headerEl) return;
+    const tab = headerEl.querySelector(`.carousel-header-tab[data-session="${oldName}"]`);
+    if (tab) {
+      tab.dataset.session = newName;
+      const nameEl = tab.querySelector(".header-tab-name");
+      if (nameEl) nameEl.textContent = newName;
+    }
+  }
+
+  /** Update which header tab has the active class */
+  function updateHeaderFocus(sessionName) {
     if (!headerEl) return;
     for (const tab of headerEl.querySelectorAll(".carousel-header-tab")) {
-      tab.classList.toggle("active", tab.dataset.session === focusedSession);
+      tab.classList.toggle("active", tab.dataset.session === sessionName);
     }
+  }
+
+  function removeHeader() {
+    if (headerEl) { headerEl.remove(); headerEl = null; }
   }
 
   // ── Layout ───────────────────────────────────────────────────────────
@@ -202,8 +244,9 @@ export function createCardCarousel({
       el.remove();
     }
     // Move any terminal panes back to container root before rebuilding
+    // (safely handles terminals already in wrappers)
     terminalPool.forEach((_name, entry) => {
-      if (entry.container.parentElement !== container) {
+      if (entry.container.parentElement && entry.container.parentElement !== container) {
         container.appendChild(entry.container);
       }
     });
@@ -257,6 +300,10 @@ export function createCardCarousel({
 
     buildLayout();
     save();
+
+    // Notify listener of the initial focused session so app.js
+    // doesn't need to duplicate state sync after activation
+    if (onFocusChange && focusedSession) onFocusChange(focusedSession);
   }
 
   function deactivate() {
@@ -303,14 +350,14 @@ export function createCardCarousel({
     const entry = terminalPool.getOrCreate(sessionName);
     terminalPool.protect(sessionName);
 
-    // Create the card wrapper and insert it before the + button
-    const { wrapper, titleInput } = createCardWrapper(sessionName);
+    // Surgically insert the card — no full rebuild
+    const { wrapper } = createCardWrapper(sessionName);
     wrapper.appendChild(entry.container);
     attachEdgeHandles(wrapper, sessionName);
-    cardEls.set(sessionName, { wrapper, titleInput });
+    cardEls.set(sessionName, { wrapper });
 
     container.appendChild(wrapper);
-    buildHeader();
+    addHeaderTab(sessionName);
 
     // Animate: start collapsed, then grow to natural size
     wrapper.style.flex = "0 0 0px";
@@ -353,6 +400,9 @@ export function createCardCarousel({
 
       if (onCardDismissed) onCardDismissed(sessionName);
 
+      // Remove header tab incrementally
+      removeHeaderTab(sessionName);
+
       // Shift focus
       if (focusedSession === sessionName) {
         if (cards.length > 0) {
@@ -362,6 +412,7 @@ export function createCardCarousel({
           for (const [name, { wrapper }] of cardEls) {
             wrapper.classList.toggle("focused", name === focusedSession);
           }
+          updateHeaderFocus(focusedSession);
         } else {
           focusedSession = null;
           deactivate();
@@ -369,7 +420,6 @@ export function createCardCarousel({
         }
       }
 
-      buildHeader();
       fitAll();
       save();
     };
@@ -385,7 +435,7 @@ export function createCardCarousel({
       el.wrapper.style.transform = "scale(0.92)";
       el.wrapper.style.overflow = "hidden";
       el.wrapper.addEventListener("transitionend", finish, { once: true });
-      setTimeout(finish, 400);
+      setTimeout(finish, 350);
     } else {
       doRemove();
     }
@@ -402,7 +452,7 @@ export function createCardCarousel({
     for (const [name, { wrapper }] of cardEls) {
       wrapper.classList.toggle("focused", name === sessionName);
     }
-    updateHeaderActive();
+    updateHeaderFocus(sessionName);
 
     // Focus the terminal
     const entry = terminalPool.get(sessionName);
@@ -433,8 +483,8 @@ export function createCardCarousel({
       cardEls.set(newName, el);
     }
 
-    // Rebuild header to show new name
-    buildHeader();
+    // Update header tab incrementally
+    renameHeaderTab(oldName, newName);
     save();
   }
 
@@ -443,15 +493,13 @@ export function createCardCarousel({
   function fitAll() {
     if (!active) return;
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        for (const session of cards) {
-          const entry = terminalPool.get(session);
-          if (!entry) continue;
-          entry.fit.fit();
-          if (entry.term.refresh) entry.term.refresh(0, entry.term.rows - 1);
-          if (sendResize) sendResize(session, entry.term.cols, entry.term.rows);
-        }
-      });
+      for (const session of cards) {
+        const entry = terminalPool.get(session);
+        if (!entry) continue;
+        entry.fit.fit();
+        if (entry.term.refresh) entry.term.refresh(0, entry.term.rows - 1);
+        if (sendResize) sendResize(session, entry.term.cols, entry.term.rows);
+      }
     });
   }
 

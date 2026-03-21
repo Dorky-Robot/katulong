@@ -121,8 +121,60 @@ function setupGlobals() {
 async function importCarousel() {
   const url = new URL('../public/lib/card-carousel.js', import.meta.url);
   const mod = await import(url.href + '?t=' + Date.now() + Math.random());
-  return mod.createCardCarousel;
+  return { createCardCarousel: mod.createCardCarousel, isCarouselDevice: mod.isCarouselDevice };
 }
+
+describe('isCarouselDevice()', () => {
+  it('returns true for iPad UA with touch', async () => {
+    setupGlobals();
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { maxTouchPoints: 5, userAgent: "Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15" },
+      writable: true, configurable: true,
+    });
+    const { isCarouselDevice } = await importCarousel();
+    assert.strictEqual(isCarouselDevice(), true);
+  });
+
+  it('returns true for Macintosh UA with multiple touch points (desktop-mode iPad)', async () => {
+    setupGlobals();
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { maxTouchPoints: 5, userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15" },
+      writable: true, configurable: true,
+    });
+    const { isCarouselDevice } = await importCarousel();
+    assert.strictEqual(isCarouselDevice(), true);
+  });
+
+  it('returns false for desktop Mac (no touch)', async () => {
+    setupGlobals();
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { maxTouchPoints: 0, userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" },
+      writable: true, configurable: true,
+    });
+    const { isCarouselDevice } = await importCarousel();
+    assert.strictEqual(isCarouselDevice(), false);
+  });
+
+  it('returns false for Windows desktop', async () => {
+    setupGlobals();
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { maxTouchPoints: 0, userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+      writable: true, configurable: true,
+    });
+    const { isCarouselDevice } = await importCarousel();
+    assert.strictEqual(isCarouselDevice(), false);
+  });
+
+  it('returns false for Macintosh with only 1 touch point', async () => {
+    setupGlobals();
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { maxTouchPoints: 1, userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15" },
+      writable: true, configurable: true,
+    });
+    const { isCarouselDevice } = await importCarousel();
+    assert.strictEqual(isCarouselDevice(), false);
+  });
+});
 
 describe('card-carousel', () => {
   let createCardCarousel;
@@ -136,7 +188,8 @@ describe('card-carousel', () => {
 
   beforeEach(async () => {
     setupGlobals();
-    createCardCarousel = await importCarousel();
+    const mod = await importCarousel();
+    createCardCarousel = mod.createCardCarousel;
     container = createMockElement("div");
     terminalPool = createMockTerminalPool();
     sendResize = mock.fn();
@@ -198,6 +251,21 @@ describe('card-carousel', () => {
     it('calls sendResize for visible cards', () => {
       carousel.activate(["a", "b"], "a");
       assert.ok(sendResize.mock.callCount() >= 2);
+    });
+
+    it('fires onFocusChange for the initial focused session', () => {
+      carousel.activate(["a", "b"], "b");
+      assert.ok(onFocusChange.mock.callCount() >= 1);
+      // The last call should be for the focused session
+      const lastCall = onFocusChange.mock.calls[onFocusChange.mock.callCount() - 1];
+      assert.strictEqual(lastCall.arguments[0], "b");
+    });
+
+    it('fires onFocusChange with first session when no focused specified', () => {
+      carousel.activate(["x", "y"]);
+      assert.ok(onFocusChange.mock.callCount() >= 1);
+      const lastCall = onFocusChange.mock.calls[onFocusChange.mock.callCount() - 1];
+      assert.strictEqual(lastCall.arguments[0], "x");
     });
   });
 
@@ -313,14 +381,16 @@ describe('card-carousel', () => {
     });
 
     it('fires onFocusChange', () => {
+      const before = onFocusChange.mock.callCount();
       carousel.focusCard("b");
-      assert.strictEqual(onFocusChange.mock.callCount(), 1);
-      assert.strictEqual(onFocusChange.mock.calls[0].arguments[0], "b");
+      assert.strictEqual(onFocusChange.mock.callCount(), before + 1);
+      assert.strictEqual(onFocusChange.mock.calls[onFocusChange.mock.callCount() - 1].arguments[0], "b");
     });
 
     it('does not fire onFocusChange if already focused', () => {
+      const before = onFocusChange.mock.callCount();
       carousel.focusCard("a");
-      assert.strictEqual(onFocusChange.mock.callCount(), 0);
+      assert.strictEqual(onFocusChange.mock.callCount(), before);
     });
 
     it('ignores unknown sessions', () => {
