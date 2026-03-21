@@ -163,13 +163,28 @@ export function createCardCarousel({
     }
   }
 
-  function createAddButton() {
-    const btn = document.createElement("button");
-    btn.className = "carousel-add";
-    btn.setAttribute("aria-label", "Add session");
-    btn.innerHTML = '<i class="ph ph-plus-circle"></i>';
-    btn.addEventListener("click", () => { if (onAddClick) onAddClick(btn); });
-    return btn;
+  let addBtn = null;
+
+  function ensureAddButton() {
+    if (addBtn) return;
+    addBtn = document.createElement("button");
+    addBtn.className = "carousel-add";
+    addBtn.setAttribute("aria-label", "Add session");
+    addBtn.innerHTML = '<i class="ph ph-plus-circle"></i>';
+    addBtn.addEventListener("click", () => { if (onAddClick) onAddClick(addBtn); });
+  }
+
+  function showAddButton() {
+    ensureAddButton();
+    if (!addBtn.parentElement) {
+      // Place it outside the scrollable carousel (fixed position via CSS)
+      const target = document.getElementById("main-stage") || container.parentElement || document.body;
+      if (target) target.appendChild(addBtn);
+    }
+  }
+
+  function hideAddButton() {
+    if (addBtn?.parentElement) addBtn.remove();
   }
 
   // ── Layout ───────────────────────────────────────────────────────────
@@ -203,8 +218,8 @@ export function createCardCarousel({
       container.appendChild(wrapper);
     }
 
-    // Add button at the end
-    container.appendChild(createAddButton());
+    // Show the floating + button
+    showAddButton();
 
     // Fit terminals after layout
     fitAll();
@@ -245,6 +260,7 @@ export function createCardCarousel({
     // Clean up carousel DOM
     delete container.dataset.carousel;
     container.innerHTML = "";
+    hideAddButton();
     cardEls.clear();
 
     active = false;
@@ -270,8 +286,7 @@ export function createCardCarousel({
     attachEdgeHandles(wrapper, sessionName);
     cardEls.set(sessionName, { wrapper, titleInput });
 
-    const addBtn = container.querySelector(".carousel-add");
-    container.insertBefore(wrapper, addBtn);
+    container.appendChild(wrapper);
 
     // Animate: start collapsed, then grow to natural size
     wrapper.style.flex = "0 0 0px";
