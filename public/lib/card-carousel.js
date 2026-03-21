@@ -35,7 +35,7 @@ export function createCardCarousel({
   let active = false;
   let cards = [];           // ordered session names
   let focusedSession = null;
-  const cardEls = new Map(); // sessionName -> { wrapper }
+  const cardEls = new Map(); // sessionName -> { wrapper, intendedWidth }
 
   // ── Persistence ──────────────────────────────────────────────────────
 
@@ -100,12 +100,16 @@ export function createCardCarousel({
       function onMove(cx) {
         const dx = cx - startX;
         const delta = side === "right" ? dx : -dx;
-        const newWidth = Math.max(200, startWidth + delta);
+        const maxWidth = container.clientWidth - 12;
+        const newWidth = Math.max(200, Math.min(startWidth + delta, maxWidth));
         wrapper.style.flex = `0 0 ${newWidth}px`;
       }
 
       function onEnd() {
         wrapper.classList.remove("resizing");
+        // Store the intended width so it survives browser resizes
+        const el = cardEls.get(sessionName);
+        if (el) el.intendedWidth = wrapper.getBoundingClientRect().width;
         fitAll();
         save();
       }
@@ -470,14 +474,17 @@ export function createCardCarousel({
   }
 
   /** Scroll the focused card fully into view after layout settles */
-  function scrollToFocused() {
+  function scrollToFocused(smooth) {
     if (!focusedSession) return;
     const el = cardEls.get(focusedSession);
-    if (el?.wrapper?.scrollIntoView) {
-      requestAnimationFrame(() => {
-        el.wrapper.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-      });
-    }
+    if (!el?.wrapper) return;
+    const behavior = smooth === false ? "instant" : "smooth";
+    // Wait for layout to settle (fitAll uses setTimeout 50ms, so 80ms
+    // ensures flex widths have been applied before we measure scroll).
+    setTimeout(() => {
+      if (!active) return;
+      el.wrapper.scrollIntoView({ behavior, inline: "center", block: "nearest" });
+    }, 80);
   }
 
   // ── Layout ───────────────────────────────────────────────────────────
@@ -530,6 +537,18 @@ export function createCardCarousel({
     // Fit terminals after layout, then scroll focused card into view
     fitAll();
     scrollToFocused();
+
+    // After the flex layout settles, capture each card's intended width
+    // so it can be preserved across browser resizes.
+    setTimeout(() => {
+      if (!active) return;
+      for (const [, el] of cardEls) {
+        if (!el.intendedWidth) {
+          const w = el.wrapper.getBoundingClientRect().width;
+          if (w > 0) el.intendedWidth = w;
+        }
+      }
+    }, 100);
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────
@@ -622,6 +641,9 @@ export function createCardCarousel({
     setTimeout(() => {
       wrapper.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
       fitAll();
+      // Capture intended width after layout settles
+      const el = cardEls.get(sessionName);
+      if (el) el.intendedWidth = wrapper.getBoundingClientRect().width;
     }, 350);
 
     save();
@@ -758,7 +780,44 @@ export function createCardCarousel({
   // ── Resize listener ──────────────────────────────────────────────────
 
   window.addEventListener("resize", () => {
-    if (active) fitAll();
+    if (!active) return;
+    const maxWidth = container.clientWidth - 12; // account for container padding
+
+    // Find the largest intended width to decide if we need to scale
+    let needsScale = false;
+    for (const [, el] of cardEls) {
+      if (el.intendedWidth && el.intendedWidth > maxWidth) {
+        needsScale = true;
+        break;
+      }
+    }
+
+    if (needsScale) {
+      // At least one card exceeds the viewport — scale all proportionally
+      // so they shrink together rather than only clamping the oversized ones.
+      let maxIntended = 0;
+      for (const [, el] of cardEls) {
+        if (el.intendedWidth && el.intendedWidth > maxIntended) {
+          maxIntended = el.intendedWidth;
+        }
+      }
+      const scale = maxIntended > 0 ? maxWidth / maxIntended : 1;
+      for (const [, el] of cardEls) {
+        const intended = el.intendedWidth || maxWidth;
+        const w = Math.max(200, Math.round(intended * scale));
+        el.wrapper.style.flex = `0 0 ${w}px`;
+      }
+    } else {
+      // All cards fit — restore their intended widths
+      for (const [, el] of cardEls) {
+        if (el.intendedWidth) {
+          el.wrapper.style.flex = `0 0 ${el.intendedWidth}px`;
+        }
+      }
+    }
+
+    fitAll();
+    scrollToFocused(false); // instant snap during resize, no smooth animation
   });
 
   return {

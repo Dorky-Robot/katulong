@@ -321,6 +321,10 @@
           wsConnection.sendSubscribe(session);
         }
       }
+      // Send resize for all cards so PTYs get SIGWINCH at the correct
+      // carousel card dimensions — TUIs like Claude Code won't reflow
+      // unless they receive a resize after the subscribe buffer replay.
+      carousel.fitAll();
     }
 
     /** Route a session to the appropriate view (carousel on iPad, switchSession on desktop) */
@@ -1254,6 +1258,7 @@
       updateConnectionIndicator,
       isAtBottom,
       invalidateSessions: (name) => invalidateSessions(sessionStore, name),
+      syncCarouselSubscriptions: () => syncCarouselSubscriptions(),
       updateSessionUI: (name) => {
         pendingSwitch = null;
         document.title = name;

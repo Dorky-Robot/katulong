@@ -127,7 +127,8 @@ export function createWebSocketConnection(deps = {}) {
         { type: 'updateConnectionIndicator' },
         { type: 'fit' },
         { type: 'invalidateSessions', name: msg.session },
-        { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect }
+        { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect },
+        { type: 'syncCarouselSubscriptions' }
       ]
     }),
 
@@ -374,6 +375,9 @@ export function createWebSocketConnection(deps = {}) {
         break;
       case 'updateSessionUI':
         if (deps.updateSessionUI) deps.updateSessionUI(effect.name);
+        break;
+      case 'syncCarouselSubscriptions':
+        if (deps.syncCarouselSubscriptions) deps.syncCarouselSubscriptions();
         break;
       case 'refreshTokensAfterRegistration':
         if (deps.refreshTokensAfterRegistration) deps.refreshTokensAfterRegistration();
