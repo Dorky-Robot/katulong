@@ -201,14 +201,21 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
     const entry = terminalPool.get(session);
     if (!entry) return;
     entry.fit.fit();
+    // Force canvas repaint after DOM reparenting — xterm's WebGL/canvas
+    // renderer can lose its rendering state when moved between parents.
+    if (entry.term.refresh) entry.term.refresh(0, entry.term.rows - 1);
     if (sendResize) sendResize(session, entry.term.cols, entry.term.rows);
   }
 
   function fitAll() {
     if (!active) return;
+    // Double-rAF: first frame for DOM layout to settle after reparenting,
+    // second frame for xterm to measure and render correctly.
     requestAnimationFrame(() => {
-      fitPane(pane1Session);
-      fitPane(pane2Session);
+      requestAnimationFrame(() => {
+        fitPane(pane1Session);
+        fitPane(pane2Session);
+      });
     });
   }
 
