@@ -308,6 +308,7 @@ export function createCardCarousel({
     cardEls.set(sessionName, { wrapper, titleInput });
 
     container.appendChild(wrapper);
+    buildHeader();
 
     // Animate: start collapsed, then grow to natural size
     wrapper.style.flex = "0 0 0px";
