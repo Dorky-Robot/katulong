@@ -507,7 +507,11 @@ export function createCardCarousel({
 
   function fitAll() {
     if (!active) return;
-    requestAnimationFrame(() => {
+    // Use setTimeout instead of rAF — the flex layout needs a
+    // full layout pass to settle before xterm can measure its container.
+    // rAF fires before layout on iPad Safari in some cases.
+    setTimeout(() => {
+      if (!active) return;
       for (const session of cards) {
         const entry = terminalPool.get(session);
         if (!entry) continue;
@@ -515,7 +519,7 @@ export function createCardCarousel({
         if (entry.term.refresh) entry.term.refresh(0, entry.term.rows - 1);
         if (sendResize) sendResize(session, entry.term.cols, entry.term.rows);
       }
-    });
+    }, 50);
   }
 
   // ── Resize listener ──────────────────────────────────────────────────
