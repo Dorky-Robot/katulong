@@ -196,8 +196,16 @@ export function createCardCarousel({
   // ── Layout ───────────────────────────────────────────────────────────
 
   function buildLayout() {
-    // Clear container
-    container.innerHTML = "";
+    // Remove carousel elements but preserve terminal panes
+    for (const el of [...container.querySelectorAll(".carousel-card, .carousel-handle")]) {
+      el.remove();
+    }
+    // Move any terminal panes back to container root before rebuilding
+    terminalPool.forEach((_name, entry) => {
+      if (entry.container.parentElement !== container) {
+        container.appendChild(entry.container);
+      }
+    });
     cardEls.clear();
 
     if (!active || cards.length === 0) return;
@@ -258,16 +266,19 @@ export function createCardCarousel({
       terminalPool.unprotect(session);
     }
 
-    // Move all terminal panes back to container root
+    // Move all terminal panes back to container root (out of card wrappers)
     terminalPool.forEach((_name, entry) => {
       if (entry.container.parentElement !== container) {
         container.appendChild(entry.container);
       }
+      entry.container.style.display = "";
     });
 
-    // Clean up carousel DOM
+    // Remove only carousel elements (card wrappers, handles), NOT terminal panes
     delete container.dataset.carousel;
-    container.innerHTML = "";
+    for (const el of [...container.querySelectorAll(".carousel-card, .carousel-handle")]) {
+      el.remove();
+    }
     removeHeader();
     // Keep the + button visible so the user can create new sessions
     cardEls.clear();
