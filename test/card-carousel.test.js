@@ -248,8 +248,10 @@ describe('card-carousel', () => {
       assert.strictEqual(terminalPool.protect.mock.callCount(), 2);
     });
 
-    it('calls sendResize for visible cards', () => {
+    it('calls sendResize for visible cards', async () => {
       carousel.activate(["a", "b"], "a");
+      // fitAll uses setTimeout(50) for layout settling
+      await new Promise(r => setTimeout(r, 100));
       assert.ok(sendResize.mock.callCount() >= 2);
     });
 

@@ -272,6 +272,24 @@
         if (windowTabSet) windowTabSet.removeTab(sessionName);
         wsConnection.sendUnsubscribe(sessionName);
       },
+      onTabRenamed: async (oldName, newName) => {
+        try {
+          await api.put(`/sessions/${encodeURIComponent(oldName)}`, { name: newName });
+          carousel.renameCard(oldName, newName);
+          windowTabSet.renameTab(oldName, newName);
+          terminalPool.rename(oldName, newName);
+          invalidateSessions(sessionStore, newName);
+          if (state.session.name === oldName) {
+            state.update('session.name', newName);
+            document.title = newName;
+            const url = new URL(window.location);
+            url.searchParams.set("s", newName);
+            history.replaceState(null, "", url);
+          }
+        } catch (err) {
+          console.error("[Carousel] Rename failed:", err);
+        }
+      },
       onAllCardsDismissed: () => {
         // All cards dismissed — clear state so refresh shows blank stage
         wsConnection.disconnect();

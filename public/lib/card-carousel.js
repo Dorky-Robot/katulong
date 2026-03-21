@@ -30,6 +30,7 @@ export function createCardCarousel({
   onCardDismissed,
   onAddClick,
   onAllCardsDismissed,
+  onTabRenamed,
 }) {
   let active = false;
   let cards = [];           // ordered session names
@@ -178,16 +179,16 @@ export function createCardCarousel({
     container.parentElement?.insertBefore(headerEl, container);
   }
 
-  /** Create a single header tab element */
+  /** Create a single header tab element with rename + drag-reorder */
   function _createHeaderTab(session) {
     const tab = document.createElement("button");
     tab.className = "carousel-header-tab" + (session === focusedSession ? " active" : "");
     tab.dataset.session = session;
 
-    const name = document.createElement("span");
-    name.className = "header-tab-name";
-    name.textContent = session;
-    tab.appendChild(name);
+    const nameEl = document.createElement("span");
+    nameEl.className = "header-tab-name";
+    nameEl.textContent = session;
+    tab.appendChild(nameEl);
 
     const dismiss = document.createElement("button");
     dismiss.className = "header-tab-dismiss";
@@ -195,8 +196,240 @@ export function createCardCarousel({
     dismiss.addEventListener("click", (e) => { e.stopPropagation(); removeCard(session); });
     tab.appendChild(dismiss);
 
+    // Double-tap to rename
+    tab.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      _startTabRename(tab, session);
+    });
+
+    // Single tap to focus
     tab.addEventListener("click", () => focusCard(session));
+
+    // Drag-to-reorder (touch)
+    tab.addEventListener("touchstart", (e) => {
+      if (e.target.closest(".header-tab-dismiss")) return;
+      _onTabDragStart(e, tab, session);
+    }, { passive: false });
+
+    // Drag-to-reorder (mouse)
+    tab.addEventListener("mousedown", (e) => {
+      if (e.button !== 0 || e.target.closest(".header-tab-dismiss")) return;
+      _onTabMouseDragStart(e, tab, session);
+    });
+
     return tab;
+  }
+
+  // ── Inline rename ────────────────────────────────────────────────────
+
+  function _startTabRename(tab, session) {
+    const nameEl = tab.querySelector(".header-tab-name");
+    if (!nameEl) return;
+
+    const input = document.createElement("input");
+    input.className = "header-tab-rename";
+    input.value = session;
+    input.setAttribute("autocorrect", "off");
+    input.setAttribute("autocapitalize", "off");
+    input.setAttribute("spellcheck", "false");
+    nameEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let committed = false;
+    function commit() {
+      if (committed) return;
+      committed = true;
+      const newName = input.value.trim();
+      if (newName && newName !== session && onTabRenamed) {
+        onTabRenamed(session, newName);
+      }
+      // Restore span (rename callback will rebuild header if successful)
+      const span = document.createElement("span");
+      span.className = "header-tab-name";
+      span.textContent = newName || session;
+      if (input.parentNode) input.replaceWith(span);
+    }
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(); }
+      if (e.key === "Escape") { committed = true; const span = document.createElement("span"); span.className = "header-tab-name"; span.textContent = session; if (input.parentNode) input.replaceWith(span); }
+      e.stopPropagation();
+    });
+    input.addEventListener("blur", commit);
+    input.addEventListener("mousedown", (e) => e.stopPropagation());
+    input.addEventListener("touchstart", (e) => e.stopPropagation());
+  }
+
+  // ── Tab drag-to-reorder ──────────────────────────────────────────────
+
+  let tabDrag = null;
+  const TAB_DRAG_DEAD_ZONE = 5;
+
+  function _onTabDragStart(e, tab, session) {
+    if (cards.length < 2) return;
+    e.preventDefault(); // prevent native scroll during drag
+
+    const touch = e.touches[0];
+    const startX = touch.clientX;
+    let started = false;
+
+    const onMove = (te) => {
+      const t = te.touches[0];
+      const dx = t.clientX - startX;
+      if (!started) {
+        if (Math.abs(dx) < TAB_DRAG_DEAD_ZONE) return;
+        started = true;
+        _beginTabDrag(tab, session, startX);
+      }
+      te.preventDefault();
+      _updateTabDrag(t.clientX);
+    };
+    const onEnd = () => {
+      document.removeEventListener("touchmove", onMove);
+      document.removeEventListener("touchend", onEnd);
+      if (started) _endTabDrag();
+      else focusCard(session);
+    };
+    document.addEventListener("touchmove", onMove, { passive: false });
+    document.addEventListener("touchend", onEnd);
+  }
+
+  function _onTabMouseDragStart(e, tab, session) {
+    if (cards.length < 2) return;
+    const startX = e.clientX;
+    let started = false;
+
+    const onMove = (me) => {
+      const dx = me.clientX - startX;
+      if (!started) {
+        if (Math.abs(dx) < TAB_DRAG_DEAD_ZONE) return;
+        started = true;
+        _beginTabDrag(tab, session, startX);
+      }
+      _updateTabDrag(me.clientX);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      if (started) _endTabDrag();
+      else focusCard(session);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  function _beginTabDrag(tab, session, startX) {
+    if (!headerEl) return;
+    const tabs = [...headerEl.querySelectorAll(".carousel-header-tab")];
+    const dragIndex = tabs.indexOf(tab);
+    if (dragIndex === -1) return;
+
+    const rects = tabs.map(t => {
+      const r = t.getBoundingClientRect();
+      return { left: r.left, width: r.width, center: r.left + r.width / 2 };
+    });
+
+    const ghost = tab.cloneNode(true);
+    ghost.className = "carousel-header-tab tab-drag-ghost";
+    ghost.style.width = rects[dragIndex].width + "px";
+    ghost.style.height = tab.offsetHeight + "px";
+    document.body.appendChild(ghost);
+
+    tab.style.opacity = "0";
+    tabs.forEach((t, i) => { if (i !== dragIndex) t.style.transition = "transform 0.2s ease"; });
+
+    tabDrag = {
+      tab, session, ghost, tabs, rects, dragIndex,
+      currentIndex: dragIndex,
+      grabOffset: startX - rects[dragIndex].left,
+    };
+  }
+
+  function _updateTabDrag(cx) {
+    if (!tabDrag) return;
+    const { ghost, tabs, rects, dragIndex, grabOffset } = tabDrag;
+
+    const gx = cx - grabOffset;
+    const gy = tabDrag.tab.getBoundingClientRect().top;
+    ghost.style.transform = `translate3d(${gx}px, ${gy}px, 0)`;
+
+    let newIndex = rects.length - 1;
+    for (let i = 0; i < rects.length; i++) {
+      if (cx < rects[i].center) { newIndex = i; break; }
+    }
+    tabDrag.currentIndex = newIndex;
+
+    const gap = headerEl ? parseFloat(getComputedStyle(headerEl).gap) || 0 : 0;
+    for (let i = 0; i < tabs.length; i++) {
+      if (i === dragIndex) continue;
+      let shift = 0;
+      if (dragIndex < newIndex) {
+        if (i > dragIndex && i <= newIndex) shift = -(rects[dragIndex].width + gap);
+      } else if (dragIndex > newIndex) {
+        if (i >= newIndex && i < dragIndex) shift = rects[dragIndex].width + gap;
+      }
+      tabs[i].style.transform = shift ? `translateX(${shift}px)` : "";
+    }
+  }
+
+  function _endTabDrag() {
+    if (!tabDrag) return;
+    const { tab, ghost, tabs, dragIndex, currentIndex } = tabDrag;
+
+    ghost.remove();
+    tab.style.opacity = "";
+    tabs.forEach(t => { t.style.transition = ""; t.style.transform = ""; });
+
+    if (currentIndex !== dragIndex) {
+      // Reorder cards array
+      const [moved] = cards.splice(dragIndex, 1);
+      cards.splice(currentIndex, 0, moved);
+
+      // Animate card wrappers to new order
+      _animateCardReorder();
+      buildHeader();
+      save();
+    }
+
+    tabDrag = null;
+  }
+
+  function _animateCardReorder() {
+    // Capture current positions
+    const positions = new Map();
+    for (const [session, { wrapper }] of cardEls) {
+      positions.set(session, wrapper.getBoundingClientRect());
+    }
+
+    // Reorder DOM to match cards array
+    for (const session of cards) {
+      const el = cardEls.get(session);
+      if (el) container.appendChild(el.wrapper);
+    }
+
+    // FLIP animation: animate from old position to new
+    for (const [session, { wrapper }] of cardEls) {
+      const oldRect = positions.get(session);
+      const newRect = wrapper.getBoundingClientRect();
+      if (!oldRect) continue;
+      const dx = oldRect.left - newRect.left;
+      if (Math.abs(dx) < 1) continue;
+      wrapper.style.transition = "none";
+      wrapper.style.transform = `translateX(${dx}px)`;
+      wrapper.offsetHeight; // force reflow
+      wrapper.style.transition = "transform 0.3s ease";
+      wrapper.style.transform = "";
+    }
+
+    // Clean up transitions after animation
+    setTimeout(() => {
+      for (const [, { wrapper }] of cardEls) {
+        wrapper.style.transition = "";
+      }
+      fitAll();
+    }, 350);
   }
 
   /** Add a single tab to the header incrementally */
