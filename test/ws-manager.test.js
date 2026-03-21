@@ -54,6 +54,7 @@ function createMockSessionManager() {
     detachClient: (clientId) => { clientSessions.delete(clientId); },
     getSessionForClient: (clientId) => clientSessions.get(clientId) || null,
     isClientSubscribedTo: (clientId, sessionName) => clientSessions.get(clientId) === sessionName,
+    getSubscriptionsForClient: () => new Set(),
     getSession: (name) => mockSessions.get(name) || null,
     writeInput: () => {},
     resizeClient: () => {},

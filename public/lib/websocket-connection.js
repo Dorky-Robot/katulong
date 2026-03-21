@@ -57,20 +57,9 @@ export function createWebSocketConnection(deps = {}) {
     }
   }
 
-  // Sequence tracking for ordered output delivery
-  const seqBuffer = createSeqBuffer({
-    onFlush: (data) => {
-      // Route through the same RAF batching path used by direct writes
-      const term = getOutputTerm(state.session.name);
-      if (term) scheduleWrite(term, data);
-    },
-    onGapTimeout: (expectedSeq) => {
-      // Catchup trigger 1/2: gap in seq-ordered stream (see also seqStatus effect)
-      sendCatchup(state.session.name, expectedSeq);
-    },
-  });
-
-  // Per-session seq buffers for multi-session subscriptions (carousel mode)
+  // Per-session seq buffers — each session is an independent channel with its
+  // own byte-offset sequence stream, gap detection, and catchup capability.
+  // Both the primary session and subscriptions use this single Map.
   const seqBuffers = new Map();
 
   function getOrCreateSeqBuffer(sessionName) {
@@ -294,22 +283,17 @@ export function createWebSocketConnection(deps = {}) {
       }
       case 'seqOutput': {
         nudgeTimer.reset();
-        if (effect.seq !== undefined) {
-          // Sequenced output — must go through seqBuffer for ordering.
-          // If seq-init hasn't arrived yet (e.g., P2P output racing ahead
-          // of seq-init on WebSocket), drop the data rather than writing
-          // directly.  The catchup mechanism will recover it once the
-          // buffer is initialized.  Writing directly caused duplicate
-          // output (data written immediately AND replayed via catchup),
-          // which was the primary source of garbled text on P2P→WS
-          // transitions.
-          // Try per-session buffer first (subscription), fall back to primary
-          const sessionBuf = effect.session ? seqBuffers.get(effect.session) : null;
-          if (sessionBuf && sessionBuf.isInitialized()) {
-            sessionBuf.push(effect.seq, effect.data);
-          } else if (seqBuffer.isInitialized()) {
-            seqBuffer.push(effect.seq, effect.data);
+        if (effect.seq !== undefined && effect.session) {
+          // Sequenced output — route through the session's seq buffer for
+          // byte-offset ordering.  If seq-init hasn't arrived yet, drop
+          // the data; the catchup mechanism will recover it once the
+          // buffer is initialized.
+          const buf = seqBuffers.get(effect.session);
+          if (buf && buf.isInitialized()) {
+            buf.push(effect.seq, effect.data);
           }
+          // else: buffer not yet initialized — data is dropped and will
+          // be recovered via catchup after seq-init arrives.
         } else {
           // Unsequenced output (scrollback replay, backward compat) —
           // write directly to the terminal.
@@ -319,35 +303,39 @@ export function createWebSocketConnection(deps = {}) {
         break;
       }
       case 'seqClear':
-        if (effect.session && seqBuffers.has(effect.session)) {
-          seqBuffers.get(effect.session).clear();
-          seqBuffers.delete(effect.session);
+        if (effect.session) {
+          // Clear a specific session's buffer (e.g. unsubscribe)
+          const buf = seqBuffers.get(effect.session);
+          if (buf) { buf.clear(); seqBuffers.delete(effect.session); }
         } else {
-          seqBuffer.clear();
+          // Clear all buffers (e.g. attach/switch resets primary channel)
+          for (const buf of seqBuffers.values()) buf.clear();
+          seqBuffers.clear();
         }
         nudgeTimer.stop();
         break;
       case 'seqInit':
         if (effect.session) {
-          // Per-session subscription buffer
           const buf = getOrCreateSeqBuffer(effect.session);
           buf.init(effect.seq);
-        } else {
-          seqBuffer.init(effect.seq);
         }
         nudgeTimer.start();
         break;
       case 'seqStatus': {
         // Catchup trigger 2/2: nudge poll revealed lag (see also onGapTimeout)
-        const expected = seqBuffer.getExpectedSeq();
-        if (seqBuffer.isInitialized() && effect.seq > expected) {
-          sendCatchup(effect.session, expected);
+        if (!effect.session) break;
+        const buf = seqBuffers.get(effect.session);
+        if (buf && buf.isInitialized() && effect.seq > buf.getExpectedSeq()) {
+          sendCatchup(effect.session, buf.getExpectedSeq());
         }
         break;
       }
       case 'seqReset':
-        // Data evicted — force reconnect to get fresh buffer replay
-        seqBuffer.clear();
+        // Data evicted — clear session buffer and force reconnect for fresh replay
+        if (effect.session) {
+          const buf = seqBuffers.get(effect.session);
+          if (buf) { buf.clear(); seqBuffers.delete(effect.session); }
+        }
         if (state.connection.ws) state.connection.ws.close();
         break;
       case 'terminalReset': {
@@ -500,8 +488,6 @@ export function createWebSocketConnection(deps = {}) {
       state.scroll.userScrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
       state.connection.attached = false;
       nudgeTimer.stop();
-      seqBuffer.clear();
-      // Clear all per-session subscription buffers
       for (const buf of seqBuffers.values()) buf.clear();
       seqBuffers.clear();
       if (deps.updateConnectionIndicator) deps.updateConnectionIndicator();
