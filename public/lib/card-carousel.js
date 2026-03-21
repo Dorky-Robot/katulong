@@ -266,12 +266,13 @@ export function createCardCarousel({
       terminalPool.unprotect(session);
     }
 
-    // Move all terminal panes back to container root (out of card wrappers)
+    // Move all terminal panes back to container root, hidden
     terminalPool.forEach((_name, entry) => {
       if (entry.container.parentElement !== container) {
         container.appendChild(entry.container);
       }
-      entry.container.style.display = "";
+      entry.container.classList.remove("active");
+      entry.container.style.display = "none";
     });
 
     // Remove only carousel elements (card wrappers, handles), NOT terminal panes
