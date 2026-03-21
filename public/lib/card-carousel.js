@@ -60,45 +60,6 @@ export function createCardCarousel({
     wrapper.dataset.session = sessionName;
 
     // Title bar
-    const titleBar = document.createElement("div");
-    titleBar.className = "card-title";
-
-    const titleInput = document.createElement("input");
-    titleInput.className = "card-title-input";
-    titleInput.value = sessionName;
-    titleInput.setAttribute("autocorrect", "off");
-    titleInput.setAttribute("autocapitalize", "off");
-    titleInput.setAttribute("spellcheck", "false");
-    titleInput.readOnly = true;
-
-    // Tap to edit
-    titleInput.addEventListener("dblclick", (e) => {
-      e.stopPropagation();
-      titleInput.readOnly = false;
-      titleInput.select();
-    });
-    titleInput.addEventListener("blur", () => { titleInput.readOnly = true; });
-    titleInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); titleInput.blur(); }
-      if (e.key === "Escape") { titleInput.value = sessionName; titleInput.blur(); }
-      e.stopPropagation();
-    });
-
-    titleBar.appendChild(titleInput);
-
-    // Dismiss button
-    const dismissBtn = document.createElement("button");
-    dismissBtn.className = "card-dismiss";
-    dismissBtn.setAttribute("aria-label", `Close ${sessionName}`);
-    dismissBtn.innerHTML = '<i class="ph ph-x"></i>';
-    dismissBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      removeCard(sessionName);
-    });
-    titleBar.appendChild(dismissBtn);
-
-    wrapper.appendChild(titleBar);
-
     // Focus on tap
     wrapper.addEventListener("pointerdown", () => {
       if (active && focusedSession !== sessionName) {
@@ -106,7 +67,7 @@ export function createCardCarousel({
       }
     });
 
-    return { wrapper, titleInput };
+    return { wrapper };
   }
 
   /** Create left/right edge resize handles inside a card wrapper */
@@ -187,6 +148,51 @@ export function createCardCarousel({
     if (addBtn?.parentElement) addBtn.remove();
   }
 
+  // ── Header ──────────────────────────────────────────────────────────
+
+  let headerEl = null;
+
+  function buildHeader() {
+    // Remove old header
+    if (headerEl) headerEl.remove();
+    headerEl = document.createElement("div");
+    headerEl.className = "carousel-header";
+
+    for (const session of cards) {
+      const tab = document.createElement("button");
+      tab.className = "carousel-header-tab" + (session === focusedSession ? " active" : "");
+      tab.dataset.session = session;
+
+      const name = document.createElement("span");
+      name.className = "header-tab-name";
+      name.textContent = session;
+      tab.appendChild(name);
+
+      const dismiss = document.createElement("button");
+      dismiss.className = "header-tab-dismiss";
+      dismiss.innerHTML = '<i class="ph ph-x"></i>';
+      dismiss.addEventListener("click", (e) => { e.stopPropagation(); removeCard(session); });
+      tab.appendChild(dismiss);
+
+      tab.addEventListener("click", () => focusCard(session));
+      headerEl.appendChild(tab);
+    }
+
+    // Insert header before the carousel container
+    container.parentElement?.insertBefore(headerEl, container);
+  }
+
+  function removeHeader() {
+    if (headerEl) { headerEl.remove(); headerEl = null; }
+  }
+
+  function updateHeaderActive() {
+    if (!headerEl) return;
+    for (const tab of headerEl.querySelectorAll(".carousel-header-tab")) {
+      tab.classList.toggle("active", tab.dataset.session === focusedSession);
+    }
+  }
+
   // ── Layout ───────────────────────────────────────────────────────────
 
   function buildLayout() {
@@ -201,7 +207,7 @@ export function createCardCarousel({
     for (let i = 0; i < cards.length; i++) {
       const session = cards[i];
       const entry = terminalPool.getOrCreate(session);
-      const { wrapper, titleInput } = createCardWrapper(session);
+      const { wrapper } = createCardWrapper(session);
 
       // Move the terminal pane into the card wrapper
       wrapper.appendChild(entry.container);
@@ -214,10 +220,12 @@ export function createCardCarousel({
       // Attach left/right edge resize handles
       attachEdgeHandles(wrapper, session);
 
-      cardEls.set(session, { wrapper, titleInput });
+      cardEls.set(session, { wrapper });
       container.appendChild(wrapper);
     }
 
+    // Build the shared header bar above the cards
+    buildHeader();
     // Show the floating + button
     showAddButton();
 
@@ -260,6 +268,7 @@ export function createCardCarousel({
     // Clean up carousel DOM
     delete container.dataset.carousel;
     container.innerHTML = "";
+    removeHeader();
     hideAddButton();
     cardEls.clear();
 
@@ -373,10 +382,11 @@ export function createCardCarousel({
 
     focusedSession = sessionName;
 
-    // Update focused class
+    // Update focused class on cards and header tabs
     for (const [name, { wrapper }] of cardEls) {
       wrapper.classList.toggle("focused", name === sessionName);
     }
+    updateHeaderActive();
 
     // Focus the terminal
     const entry = terminalPool.get(sessionName);
@@ -399,15 +409,16 @@ export function createCardCarousel({
     cards[idx] = newName;
     if (focusedSession === oldName) focusedSession = newName;
 
-    // Update the title input
+    // Update card wrapper
     const el = cardEls.get(oldName);
     if (el) {
-      el.titleInput.value = newName;
       el.wrapper.dataset.session = newName;
       cardEls.delete(oldName);
       cardEls.set(newName, el);
     }
 
+    // Rebuild header to show new name
+    buildHeader();
     save();
   }
 
