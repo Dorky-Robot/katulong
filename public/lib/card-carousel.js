@@ -19,6 +19,7 @@ export function createCardCarousel({
   onFocusChange,
   onCardDismissed,
   onAddClick,
+  onAllCardsDismissed,
 }) {
   let active = false;
   let cards = [];           // ordered session names
@@ -289,6 +290,7 @@ export function createCardCarousel({
     focusedSession = null;
 
     save();
+    if (onAllCardsDismissed) onAllCardsDismissed();
   }
 
   // ── Card management ──────────────────────────────────────────────────

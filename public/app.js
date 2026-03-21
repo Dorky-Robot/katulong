@@ -269,6 +269,16 @@
         // Detach: remove from this window's tab set (session stays on server)
         if (windowTabSet) windowTabSet.removeTab(sessionName);
       },
+      onAllCardsDismissed: () => {
+        // All cards dismissed — clear state so refresh shows blank stage
+        wsConnection.disconnect();
+        state.update('session.name', null);
+        document.title = "katulong";
+        const url = new URL(window.location);
+        url.searchParams.delete("s");
+        history.replaceState(null, "", url);
+        sessionStorage.setItem("katulong-empty-state", "1");
+      },
       onAddClick: (anchorEl) => {
         // Show the same add menu as the tab bar's + button (new session + detached sessions)
         // shortcutBarInstance is created after carousel but only called lazily
