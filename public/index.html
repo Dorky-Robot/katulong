@@ -253,13 +253,18 @@
       cursor: pointer; border: none; background: none;
       transition: background 0.15s;
     }
-    .carousel-header-tab:hover { background: var(--accent); }
-    .carousel-header-tab.active { background: var(--accent); }
+    .carousel-header-tab:hover { background: rgba(255,255,255,0.04); }
+    .carousel-header-tab.active { background: rgba(255,255,255,0.06); }
     .carousel-header-tab .header-tab-name {
-      font-size: 13px; color: var(--text-muted); font-family: var(--font-mono);
+      font-size: 13px; color: var(--text-dim); font-family: var(--font-mono);
       max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      text-shadow: 0 1px 0 rgba(0,0,0,0.4);
+      letter-spacing: 0.02em;
     }
-    .carousel-header-tab.active .header-tab-name { color: var(--text); }
+    .carousel-header-tab.active .header-tab-name {
+      color: var(--text);
+      text-shadow: 0 1px 0 rgba(0,0,0,0.5), 0 0 8px rgba(255,255,255,0.04);
+    }
     .carousel-header-tab .header-tab-dismiss {
       width: 18px; height: 18px; border: none; border-radius: 4px;
       background: none; color: var(--text-dim); font-size: 0.7rem;
