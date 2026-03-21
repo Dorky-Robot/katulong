@@ -121,6 +121,7 @@ export function createCardCarousel({
       function onStart(cx) {
         startX = cx;
         startWidth = wrapper.getBoundingClientRect().width;
+        wrapper.classList.add("resizing");
         return true;
       }
 
@@ -132,6 +133,7 @@ export function createCardCarousel({
       }
 
       function onEnd() {
+        wrapper.classList.remove("resizing");
         fitAll();
         save();
       }
