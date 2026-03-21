@@ -49,13 +49,28 @@ export function createWindowTabSet({ sessionStore, getCurrentSession }) {
     };
   } catch { /* BroadcastChannel not available — degrade gracefully */ }
 
-  // Prune tabs when sessions disappear from the server
+  // Prune tabs when sessions disappear from the server.
+  // Wait for multiple confirmations before pruning to avoid removing tabs
+  // during initial load when the server list may be incomplete (e.g., only
+  // the attached session is returned before the full list is fetched).
+  let pruneConfirmations = 0;
+  const PRUNE_THRESHOLD = 2; // require 2 consistent updates before pruning
+
   if (sessionStore) {
     sessionStore.subscribe(() => {
       const { sessions: serverList, loading } = sessionStore.getState();
       // Don't prune while loading or before first fetch completes
       if (loading || !serverList || serverList.length === 0) return;
       const serverSessions = new Set(serverList.map(s => s.name));
+      // Check if any tabs would be pruned
+      const wouldPrune = tabs.some(n => !serverSessions.has(n) && !recentlyAdded.has(n));
+      if (wouldPrune) {
+        pruneConfirmations++;
+        // Only prune after the server consistently reports the same list
+        if (pruneConfirmations < PRUNE_THRESHOLD) return;
+      } else {
+        pruneConfirmations = 0;
+      }
       const before = tabs.length;
       // Keep recently-added tabs that the server hasn't confirmed yet
       tabs = tabs.filter(n => serverSessions.has(n) || recentlyAdded.has(n));

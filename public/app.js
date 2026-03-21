@@ -605,7 +605,11 @@
         windowTabSet.addTab(name);
       }
 
-      // In split mode, switch the correct pane instead of breaking the split
+      // In split mode, switch the correct pane instead of breaking the split.
+      // IMPORTANT: Do NOT send a WebSocket "switch" message here. The server
+      // only sends output for the switched-to session — sending "switch" would
+      // kill output for the other split pane. Input routing already works via
+      // the "session" field in input messages (see input-sender.js).
       if (splitManager.isSplit()) {
         const pane = splitManager.getPaneForSession(name);
         const paneActive = pane === 1 ? splitManager.getPane1() : splitManager.getPane2();
@@ -620,16 +624,6 @@
         history.replaceState(null, "", url);
         if (shortcutBarInstance) shortcutBarInstance.render(name);
         invalidateSessions(sessionStore, name);
-
-        // Switch WS session
-        const ws = state.connection.ws;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          const entry = terminalPool.get(name);
-          if (entry) {
-            pendingSwitch = name;
-            ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows, cached: true }));
-          }
-        }
         return;
       }
 

@@ -236,7 +236,9 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
 
   function setupFocusTracking() {
     cleanupFocusTracking();
-    // Only register on the two active split panes, not all pool entries
+    // Register on both the container (pointerdown) and the xterm terminal
+    // (onFocus) for reliable input routing. pointerdown catches taps that
+    // don't focus the terminal; onFocus catches keyboard/programmatic focus.
     for (const session of [pane1Session, pane2Session]) {
       if (!session) continue;
       const entry = terminalPool.get(session);
@@ -246,6 +248,9 @@ export function createSplitManager({ terminalContainer, terminalPool, sendResize
       };
       entry.container.addEventListener("pointerdown", handler);
       focusCleanups.push(() => entry.container.removeEventListener("pointerdown", handler));
+      // xterm onFocus returns a disposable
+      const disposable = entry.term.onFocus?.(handler);
+      if (disposable) focusCleanups.push(() => disposable.dispose());
     }
   }
 
