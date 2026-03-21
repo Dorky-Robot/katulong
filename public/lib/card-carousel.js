@@ -5,9 +5,9 @@
  * at full available height. Single card = full width. Multiple cards share
  * width proportionally with horizontal scroll if they overflow.
  *
- * Each card has a subtle editable title (session name) centered at the top.
- * Cards can be reordered by dragging, resized by dragging edges, and
- * dismissed (detaches tmux session, doesn't kill it).
+ * A shared header bar above the cards shows session names as tabs.
+ * Cards can be resized by dragging edges and dismissed (detaches tmux
+ * session, doesn't kill it).
  */
 
 const STORAGE_KEY = "katulong-carousel";
@@ -404,7 +404,7 @@ export function createCardCarousel({
         el.wrapper.remove();
       }
       cardEls.delete(sessionName);
-      cards.splice(cards.indexOf(sessionName), 1);
+      cards.splice(idx, 1);
       terminalPool.unprotect(sessionName);
 
       // Move terminal pane back to container root (hidden by default CSS)
