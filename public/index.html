@@ -218,13 +218,10 @@
     .carousel-card.entering {
       opacity: 0; transform: scale(0.92);
     }
-    /* Single card: full width, no floating look — feels like a normal terminal */
+    /* Single card: starts full width but can be resized narrower (stays centered) */
     .carousel-card:only-of-type {
-      flex: 1 1 100%; min-width: 0; max-width: 100%;
-      border-radius: 0; box-shadow: none;
+      flex: 1 1 100%; min-width: 200px; max-width: 100%;
     }
-    .carousel-card:only-of-type > .terminal-pane { border-radius: 0; }
-    .carousel-card:only-of-type .card-title { border-radius: 0; }
     /* Two cards: each takes exactly half minus gap */
     .carousel-card:first-of-type:nth-last-of-type(2),
     .carousel-card:first-of-type:nth-last-of-type(2) ~ .carousel-card {
@@ -264,11 +261,11 @@
     }
     .card-dismiss:hover { opacity: 1; color: var(--danger); }
     .carousel-handle {
-      position: absolute; top: 0; bottom: 0; width: 12px;
+      position: absolute; top: 0; bottom: 0; width: 32px;
       cursor: col-resize; background: transparent; touch-action: none; z-index: 3;
     }
-    .carousel-handle-left { left: -6px; }
-    .carousel-handle-right { right: -6px; }
+    .carousel-handle-left { left: -8px; }
+    .carousel-handle-right { right: -8px; }
     .carousel-add {
       flex-shrink: 0; width: 44px;
       display: flex; align-items: center; justify-content: center;
