@@ -269,7 +269,7 @@ export function createCardCarousel({
     delete container.dataset.carousel;
     container.innerHTML = "";
     removeHeader();
-    hideAddButton();
+    // Keep the + button visible so the user can create new sessions
     cardEls.clear();
 
     active = false;
