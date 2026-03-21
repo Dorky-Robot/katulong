@@ -34,7 +34,6 @@
     import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
-    import { createSplitManager } from "/lib/split-manager.js";
     import { createCardCarousel } from "/lib/card-carousel.js";
 
     // --- Modal Manager ---
@@ -241,46 +240,6 @@
     const getFit = () => terminalPool.getActive()?.fit;
     const getSearchAddon = () => terminalPool.getActive()?.searchAddon;
 
-    // --- Split Manager (iPad/tablet only) ---
-    const splitManager = createSplitManager({
-      terminalContainer: document.getElementById("terminal-container"),
-      terminalPool,
-      sendResize: (session, cols, rows) => {
-        if (state.connection.ws?.readyState === 1) {
-          state.connection.ws.send(JSON.stringify({ type: "resize", session, cols, rows }));
-        }
-      }
-    });
-
-    // When the user taps a split pane, update state.session.name for input routing
-    splitManager.onFocusChange = (sessionName) => {
-      if (sessionName !== state.session.name) {
-        state.update('session.name', sessionName);
-        document.title = sessionName;
-        const url = new URL(window.location);
-        url.searchParams.set("s", sessionName);
-        history.replaceState(null, "", url);
-        if (shortcutBarInstance) shortcutBarInstance.render(sessionName);
-      }
-    };
-
-    // When split state changes, clean up protection and re-render
-    splitManager.onSplitChanged = ({ isSplit, pane1, pane2 }) => {
-      if (!isSplit) {
-        // Unsplit: unprotect all, update state
-        terminalPool.forEach((name) => terminalPool.unprotect(name));
-        if (pane1) {
-          state.update('session.name', pane1);
-          document.title = pane1;
-          const url = new URL(window.location);
-          url.searchParams.set("s", pane1);
-          history.replaceState(null, "", url);
-        }
-      }
-      if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
-      fitActiveTerminal();
-    };
-
     // --- Card Carousel (iPad/tablet) ---
     const carousel = createCardCarousel({
       container: document.getElementById("terminal-container"),
@@ -322,11 +281,6 @@
         // In carousel mode, fit all visible cards
         if (carousel.isActive()) {
           carousel.fitAll();
-          return;
-        }
-        // In split mode, fit both panes
-        if (splitManager.isSplit()) {
-          splitManager.fitAll();
           return;
         }
         const active = terminalPool.getActive();
@@ -608,13 +562,6 @@
           carousel.focusCard(data.name);
           return;
         }
-        // When split, assign new session to the focused pane
-        if (splitManager.isSplit()) {
-          const focusedPane = splitManager.getPaneForSession(state.session.name);
-          if (focusedPane === 2) {
-            splitManager.addToPane2(data.name);
-          }
-        }
         switchSession(data.name);
       } catch (err) {
         console.error("Failed to create session:", err);
@@ -662,24 +609,6 @@
         return;
       }
 
-      // In split mode, switch the correct pane instead of breaking the split.
-      if (splitManager.isSplit()) {
-        const pane = splitManager.getPaneForSession(name);
-        const paneActive = pane === 1 ? splitManager.getPane1() : splitManager.getPane2();
-        // Only re-apply layout if the pane's active session actually changes
-        if (paneActive !== name) {
-          splitManager.switchPaneSession(pane, name);
-        }
-        state.update('session.name', name);
-        document.title = name;
-        const url = new URL(window.location);
-        url.searchParams.set("s", name);
-        history.replaceState(null, "", url);
-        if (shortcutBarInstance) shortcutBarInstance.render(name);
-        invalidateSessions(sessionStore, name);
-        return;
-      }
-
       const ws = state.connection.ws;
       const wsOpen = ws && ws.readyState === WebSocket.OPEN;
 
@@ -718,11 +647,7 @@
     }
 
     function switchSession(name) {
-      // In split mode, allow switching even if it's the "current" session
-      // (it might be active in the other pane)
-      if (!splitManager.isSplit()) {
-        if (name === state.session.name || name === pendingSwitch) return;
-      }
+      if (name === state.session.name || name === pendingSwitch) return;
       const url = new URL(window.location);
       url.searchParams.set("s", name);
       history.pushState(null, "", url);
@@ -935,11 +860,6 @@
         windowTabSet.renameTab(oldName, newName);
         terminalPool.rename(oldName, newName);
         notepad.rename(oldName, newName);
-        // Update split pane assignment for renamed session
-        if (splitManager.isInPane2(oldName)) {
-          splitManager.removeFromPane2(oldName);
-          splitManager.addToPane2(newName);
-        }
         invalidateSessions(sessionStore, newName);
         if (state.session.name === oldName) {
           state.update('session.name', newName);
@@ -976,28 +896,6 @@
         url.searchParams.delete("s");
         history.replaceState(null, "", url);
       },
-      onSplitDrop: (sessionName, pane) => {
-        // pane 1 = left/top zone, pane 2 = right/bottom zone
-        const currentActive = state.session.name;
-        if (pane === 1) {
-          // Dragged tab goes to pane 1 (left), current stays pane 2 (right)
-          splitManager.split(sessionName, currentActive);
-        } else {
-          // Current stays pane 1 (left), dragged tab goes to pane 2 (right)
-          splitManager.split(currentActive, sessionName);
-        }
-        // Protect both sessions from pool eviction
-        terminalPool.protect(splitManager.getPane1());
-        terminalPool.protect(splitManager.getPane2());
-        // Ensure WS knows about both sessions
-        const ws = state.connection.ws;
-        if (ws?.readyState === WebSocket.OPEN) {
-          const entry = terminalPool.get(sessionName);
-          if (entry) {
-            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows, cached: terminalPool.has(sessionName) }));
-          }
-        }
-      },
       sendFn: rawSend,
       get term() { return getTerm(); },
       updateConnectionIndicator,
@@ -1005,8 +903,6 @@
       getSessionIcon,
       sessionStore,
       windowTabSet,
-      // On iPad, carousel replaces split — don't pass splitManager so drag-to-split is disabled
-      splitManager: splitManager.isTablet() ? null : splitManager,
       carousel,
     });
 
@@ -1313,14 +1209,6 @@
       },
       onSessionRemoved: (name) => {
         windowTabSet.onSessionKilled(name);
-        // Clean up split state for removed session
-        if (splitManager.isSplit()) {
-          const otherSession = splitManager.getOtherSession(name);
-          if (name === splitManager.getPane1() || name === splitManager.getPane2()) {
-            splitManager.unsplit(otherSession);
-          }
-          splitManager.removeFromPane2(name);
-        }
         terminalPool.dispose(name);
         fetch("/sessions").then(r => r.json()).then(allSessions => {
           // Filter out the session that was just removed (may still be in the response)
@@ -1391,7 +1279,7 @@
           url.searchParams.set("s", name);
           history.replaceState(null, "", url);
           // On iPad, activate carousel with all tab-set sessions
-          if (splitManager.isTablet()) {
+          if (navigator.maxTouchPoints > 0 && (/iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))) {
             const tabSessions = windowTabSet.getTabs();
             const allNames = tabSessions.length > 0 ? tabSessions : [name];
             if (!allNames.includes(name)) allNames.unshift(name);
@@ -1412,7 +1300,7 @@
       });
     } else {
       // Explicit ?s= session — activate carousel on iPad
-      if (splitManager.isTablet()) {
+      if (navigator.maxTouchPoints > 0 && (/iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))) {
         const tabSessions = windowTabSet.getTabs();
         const allNames = tabSessions.length > 0 ? tabSessions : [state.session.name];
         if (state.session.name && !allNames.includes(state.session.name)) allNames.unshift(state.session.name);
@@ -1431,8 +1319,6 @@
       const carouselState = carousel.restore();
       if (carouselState && carouselState.sessions.length > 0 && !carousel.isActive()) {
         carousel.activate(carouselState.sessions, carouselState.focused);
-      } else if (!splitManager.isSplit()) {
-        splitManager.restore();
       }
     }, 500);
 

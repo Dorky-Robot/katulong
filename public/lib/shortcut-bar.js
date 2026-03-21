@@ -18,7 +18,6 @@ const DESKTOP_MQ = "(pointer: fine)";
 const TABLET_MQ = "(pointer: coarse) and (min-width: 768px)";
 const TABLET_ANY_MQ = "(any-pointer: coarse) and (min-width: 768px)";
 const DRAG_OUT_THRESHOLD = 60; // px below bar to trigger tear-off (desktop)
-const SPLIT_THRESHOLD = 15; // px below bar to trigger split preview (tablet)
 const DRAG_DEAD_ZONE = 5; // px before drag starts
 const LONG_PRESS_MS = 300; // ms before touch becomes drag
 
@@ -45,14 +44,12 @@ export function createShortcutBar(options = {}) {
     onDictationClick,
     onNotepadClick,
     onAllTabsClosed,
-    onSplitDrop,
     sendFn,
     updateConnectionIndicator,
     getInstanceIcon,
     getSessionIcon,
     sessionStore,
     windowTabSet,
-    splitManager,
     carousel,
   } = options;
 
@@ -70,15 +67,6 @@ export function createShortcutBar(options = {}) {
 
   function isTouch() {
     return window.matchMedia("(pointer: coarse)").matches;
-  }
-
-  /** Detect iPad/tablet: same logic as split-manager's detectTablet */
-  function isTabletLocal() {
-    if (navigator.maxTouchPoints === 0 || window.innerWidth < 768) return false;
-    const ua = navigator.userAgent || "";
-    const isIPad = /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-    const isAndroidTablet = /Android/.test(ua) && !/Mobile/.test(ua);
-    return isIPad || isAndroidTablet;
   }
 
   function isPhone() {
@@ -454,12 +442,6 @@ export function createShortcutBar(options = {}) {
     // a second competing drag that makes the ghost jump around.
     if (drag) return;
 
-    // On iPad, synthesized mouse events from touch trigger native text
-    // selection / drag unless we prevent default immediately.
-    if (splitManager?.isTablet()) {
-      e.preventDefault();
-    }
-
     const startX = e.clientX;
     const startY = e.clientY;
     let started = false;
@@ -483,7 +465,7 @@ export function createShortcutBar(options = {}) {
       document.removeEventListener("mouseup", onUp);
 
       if (!started) {
-        if (splitManager?.isSplit() || name !== currentSessionName) {
+        if (name !== currentSessionName) {
           if (onTabClick) onTabClick(name);
         }
         return;
@@ -498,12 +480,6 @@ export function createShortcutBar(options = {}) {
 
   function onTabTouchStart(e, tab, name) {
     if (e.target.closest(".tab-close")) return;
-
-    // On iPad, prevent default immediately to suppress native drag/selection
-    // gestures that fight with our custom drag and cause jittery movement.
-    if (splitManager?.isTablet()) {
-      e.preventDefault();
-    }
 
     // Long-press to drag: short touches allow native horizontal scroll of the tab area.
     // After LONG_PRESS_MS without significant movement, we enter drag mode.
@@ -556,7 +532,7 @@ export function createShortcutBar(options = {}) {
         if (longPressed) {
           // Long press without drag — show context menu
           showTabContextMenu({ preventDefault() {}, currentTarget: tab }, name);
-        } else if (splitManager?.isSplit() || name !== currentSessionName) {
+        } else if (name !== currentSessionName) {
           if (onTabClick) onTabClick(name);
         }
         return;
@@ -606,8 +582,6 @@ export function createShortcutBar(options = {}) {
     // Cache ghost height and bar rect to avoid forced layout reflows every frame
     const ghostHeight = ghost.offsetHeight;
     const barRectCached = container.getBoundingClientRect();
-    const isTabletCached = splitManager?.isTablet() || isTabletLocal();
-
     drag = {
       tab, name, ghost, tabs, rects, dragIndex,
       currentIndex: dragIndex,
@@ -616,7 +590,6 @@ export function createShortcutBar(options = {}) {
       barBottom: barRectCached.bottom,
       barLeft: barRectCached.left,
       barWidth: barRectCached.width,
-      isTabletCached,
       tornOff: false,
       isTouch: !!fromTouch,
     };
@@ -633,79 +606,8 @@ export function createShortcutBar(options = {}) {
       ? `translate3d(${gx}px, ${gy}px, 0) scale(1.08)`
       : `translate3d(${gx}px, ${gy}px, 0)`;
 
-    // Track last position for cross-pane transfer detection in endDrag
-    drag.lastCx = cx;
-    drag.lastCy = cy;
-
-    // Use cached values — no getBoundingClientRect() in the hot path
-    const isTabletDevice = drag.isTabletCached;
-    const belowBar = cy > drag.barBottom + SPLIT_THRESHOLD;
-
-    // iPad/tablet: drag below bar enters split preview (replaces tear-off).
-    if (isTabletDevice && splitManager && !splitManager.isSplit() && belowBar) {
-      if (!drag.splitPreview) {
-        drag.splitPreview = true;
-        ghost.classList.add("tab-tear-off");
-        tabs.forEach((t, i) => { if (i !== dragIndex) t.style.transform = ""; });
-
-        // Build the split overlay directly here (inline) so it's guaranteed to render.
-        const tc = document.getElementById("terminal-container");
-        const dir = window.matchMedia("(orientation: landscape)").matches ? "row" : "column";
-        const overlay = document.createElement("div");
-        overlay.id = "split-overlay";
-        overlay.className = "split-overlay overlay-" + dir;
-        for (let i = 0; i < 2; i++) {
-          const zone = document.createElement("div");
-          zone.dataset.pane = String(i + 1);
-          zone.className = "split-zone";
-          const label = document.createElement("div");
-          label.textContent = i === 0 ? "\u25C0 Drop here" : "Drop here \u25B6";
-          zone.appendChild(label);
-          overlay.appendChild(zone);
-        }
-        tc.appendChild(overlay);
-        // Dim the active terminal pane
-        const activePane = tc.querySelector(".terminal-pane.active");
-        if (activePane) activePane.classList.add("split-dimmed");
-        drag.splitOverlayEl = overlay;
-        drag.splitActivePane = activePane;
-      }
-
-      // Update hover state on zones
-      const overlay = drag.splitOverlayEl;
-      if (overlay) {
-        const tcRect = document.getElementById("terminal-container").getBoundingClientRect();
-        const dir = window.matchMedia("(orientation: landscape)").matches ? "row" : "column";
-        const zones = overlay.children;
-        let hoverPane;
-        if (dir === "row") {
-          hoverPane = cx < tcRect.left + tcRect.width / 2 ? 1 : 2;
-        } else {
-          hoverPane = cy < tcRect.top + tcRect.height / 2 ? 1 : 2;
-        }
-        for (let i = 0; i < zones.length; i++) {
-          const isHover = (i + 1) === hoverPane;
-          zones[i].classList.toggle("hover", isHover);
-        }
-        drag.splitHoverPane = hoverPane;
-      }
-      return;
-    }
-    // Once split preview is active, keep it open even if the finger drifts
-    // slightly above the threshold (iOS touch imprecision on lift).
-    // The preview stays until endDrag — just stop updating the hover zone.
-    if (drag.splitPreview) {
-      return;
-    }
-
-    // When split is active, skip tab reorder shifts — just let the ghost follow
-    // the finger. Cross-pane transfer is handled in endDrag based on drop position.
-    if (splitManager?.isSplit()) {
-      return;
-    }
-
-    // Tear-off only for mouse on non-tablet — touch can't open new windows (Safari blocks popups)
-    if (!isTabletDevice && !drag.isTouch && cy > drag.barBottom + DRAG_OUT_THRESHOLD) {
+    // Tear-off only for mouse (not touch — touch can't open new windows; Safari blocks popups)
+    if (!drag.isTouch && cy > drag.barBottom + DRAG_OUT_THRESHOLD) {
       if (!drag.tornOff) {
         drag.tornOff = true;
         ghost.classList.add("tab-tear-off");
@@ -754,17 +656,12 @@ export function createShortcutBar(options = {}) {
     return parseFloat(getComputedStyle(area).gap) || 0;
   }
 
-  /** Clean up all drag state: ghost, overlay, dimmed pane, stale refs */
+  /** Clean up all drag state: ghost, stale refs */
   function cleanupDrag() {
     if (!drag) return;
     if (drag.ghost) drag.ghost.remove();
     if (drag.tab) drag.tab.classList.remove("tab-dragging");
     if (drag.tabs) drag.tabs.forEach(t => { t.style.transition = ""; t.style.transform = ""; });
-    // Clean up split overlay
-    if (drag.splitOverlayEl) drag.splitOverlayEl.remove();
-    if (drag.splitActivePane) drag.splitActivePane.classList.remove("split-dimmed");
-    // Remove any orphaned overlay by ID
-    document.getElementById("split-overlay")?.remove();
     drag = null;
   }
 
@@ -772,59 +669,7 @@ export function createShortcutBar(options = {}) {
     if (!drag) return;
     const { name, dragIndex, currentIndex, tornOff } = drag;
 
-    // Extract split state before cleanup
-    const wasSplitPreview = drag.splitPreview;
-    const splitHoverPane = drag.splitHoverPane;
-    const lastCx = drag.lastCx;
-
     cleanupDrag();
-
-    // Split drop: tab was dragged to a split zone on iPad (initial split creation)
-    if (wasSplitPreview && splitHoverPane) {
-      if (onSplitDrop) onSplitDrop(name, splitHoverPane);
-      render(currentSessionName);
-      return;
-    }
-
-    // Cross-pane transfer: drag a tab past the divider to move it to the other pane
-    if (splitManager?.isSplit() && lastCx != null) {
-      const barRect = container.getBoundingClientRect();
-      const barMid = barRect.left + barRect.width / 2;
-      const currentPane = splitManager.getPaneForSession(name);
-      const targetPane = lastCx > barMid ? 2 : 1;
-
-      if (targetPane !== currentPane) {
-        // Move tab to the other pane
-        if (targetPane === 2) {
-          splitManager.addToPane2(name);
-        } else {
-          splitManager.removeFromPane2(name);
-        }
-
-        // Check if the old pane has any remaining tabs
-        const allTabs = windowTabSet ? windowTabSet.getTabs() : [];
-        const oldPaneTabs = allTabs.filter(t => t !== name &&
-          (currentPane === 1 ? !splitManager.isInPane2(t) : splitManager.isInPane2(t)));
-
-        if (oldPaneTabs.length === 0) {
-          // No tabs left in old pane — unsplit, keeping the transferred tab's pane
-          splitManager.unsplit(name);
-          render(currentSessionName);
-          return;
-        }
-
-        // If this tab was the active session in its old pane, switch that pane
-        const oldPaneActive = currentPane === 1 ? splitManager.getPane1() : splitManager.getPane2();
-        if (oldPaneActive === name) {
-          splitManager.switchPaneSession(currentPane, oldPaneTabs[0]);
-        }
-
-        // Make the transferred tab active in the target pane
-        splitManager.switchPaneSession(targetPane, name);
-        render(currentSessionName);
-        return;
-      }
-    }
 
     if (tornOff) {
       openInNewWindow(name);
@@ -877,19 +722,6 @@ export function createShortcutBar(options = {}) {
     closeBtn.innerHTML = '<i class="ph ph-x"></i>';
     closeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      // When split, closing the last tab in a pane unsplits
-      if (splitManager?.isSplit()) {
-        const pane = splitManager.getPaneForSession(s.name);
-        const paneActive = pane === 1 ? splitManager.getPane1() : splitManager.getPane2();
-        if (s.name === paneActive) {
-          // Closing the active session in this pane — unsplit
-          const otherSession = splitManager.getOtherSession(s.name);
-          splitManager.unsplit(otherSession);
-          if (windowTabSet) windowTabSet.removeTab(s.name);
-          render(otherSession);
-          return;
-        }
-      }
       closeTab(s.name);
     });
     tab.appendChild(closeBtn);
@@ -916,86 +748,22 @@ export function createShortcutBar(options = {}) {
 
   function renderDesktopTabs(sessionName, sessions) {
 
-    const isSplit = splitManager?.isSplit();
+    const tabScroll = document.createElement("div");
+    tabScroll.className = "tab-scroll-area";
 
-    if (isSplit) {
-      // Split mode: two separate tab groups, one per pane
-      const dir = splitManager.getDirection();
-      const isRow = dir === "row";
-      const p1Active = splitManager.getPane1();
-      const p2Active = splitManager.getPane2();
-      const pane1Tabs = sessions.filter(s => !splitManager.isInPane2(s.name));
-      const pane2Tabs = sessions.filter(s => splitManager.isInPane2(s.name));
-
-      // Remove any previous pane 2 tab bar from the terminal container
-      const existingPane2Tabs = document.querySelector(".split-pane-2 .split-pane-tabs");
-      if (existingPane2Tabs) existingPane2Tabs.innerHTML = "";
-
-      // Helper: build a tab group with + button
-      function buildTabGroup(tabs, activeSession) {
-        const group = document.createElement("div");
-        group.className = "tab-scroll-area";
-        for (const s of tabs) {
-          group.appendChild(createTabEl(s, s.name === activeSession));
-        }
-        const addBtn = document.createElement("button");
-        addBtn.className = "tab-bar-add";
-        addBtn.tabIndex = -1;
-        addBtn.setAttribute("aria-label", "New session");
-        addBtn.innerHTML = '<i class="ph ph-plus-circle"></i>';
-        addBtn.addEventListener("click", () => showAddMenu(addBtn));
-        group.appendChild(addBtn);
-        return group;
-      }
-
-      if (isRow) {
-        // Landscape: both tab groups side by side in the shortcut bar
-        const splitBar = document.createElement("div");
-        splitBar.style.cssText = "display:flex; flex:1; min-width:0; gap:0;";
-
-        const group1 = buildTabGroup(pane1Tabs, p1Active);
-        group1.style.cssText += "flex:1; min-width:0; border-right:2px solid var(--accent-active);";
-        splitBar.appendChild(group1);
-
-        const group2 = buildTabGroup(pane2Tabs, p2Active);
-        group2.style.cssText += "flex:1; min-width:0; padding-left:var(--space-xs);";
-        splitBar.appendChild(group2);
-
-        container.appendChild(splitBar);
-      } else {
-        // Portrait: pane 1 tabs in the shortcut bar, pane 2 tabs populated
-        // in the .split-pane-tabs element that split-manager created inside .split-pane-2
-        const group1 = buildTabGroup(pane1Tabs, p1Active);
-        container.appendChild(group1);
-
-        const pane2TabsEl = document.querySelector(".split-pane-2 .split-pane-tabs");
-        if (pane2TabsEl) {
-          const pane2Bar = buildTabGroup(pane2Tabs, p2Active);
-          // Move children from the built group into the split-pane-tabs element
-          while (pane2Bar.firstChild) {
-            pane2TabsEl.appendChild(pane2Bar.firstChild);
-          }
-        }
-      }
-    } else {
-      // Normal mode: single tab group
-      const tabScroll = document.createElement("div");
-      tabScroll.className = "tab-scroll-area";
-
-      for (const s of sessions) {
-        tabScroll.appendChild(createTabEl(s, s.name === sessionName));
-      }
-
-      const addBtn = document.createElement("button");
-      addBtn.className = "tab-bar-add";
-      addBtn.tabIndex = -1;
-      addBtn.setAttribute("aria-label", "New session");
-      addBtn.innerHTML = '<i class="ph ph-plus-circle"></i>';
-      addBtn.addEventListener("click", () => showAddMenu(addBtn));
-      tabScroll.appendChild(addBtn);
-
-      container.appendChild(tabScroll);
+    for (const s of sessions) {
+      tabScroll.appendChild(createTabEl(s, s.name === sessionName));
     }
+
+    const addBtn = document.createElement("button");
+    addBtn.className = "tab-bar-add";
+    addBtn.tabIndex = -1;
+    addBtn.setAttribute("aria-label", "New session");
+    addBtn.innerHTML = '<i class="ph ph-plus-circle"></i>';
+    addBtn.addEventListener("click", () => showAddMenu(addBtn));
+    tabScroll.appendChild(addBtn);
+
+    container.appendChild(tabScroll);
 
   }
 
