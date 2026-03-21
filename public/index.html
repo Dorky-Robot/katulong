@@ -196,48 +196,60 @@
     .terminal-pane { position: absolute; inset: 0 0 0 4px; display: none; }
     .terminal-pane.active { display: block; }
 
-    /* --- Split layout --- */
-    #terminal-container[data-split="row"] { display: flex; flex-direction: row; }
-    #terminal-container[data-split="column"] { display: flex; flex-direction: column; }
-    .split-pane {
-      flex: 1; min-width: 0; min-height: 0;
-      display: flex; flex-direction: column; overflow: hidden;
+    /* --- Card Carousel (iPad) --- */
+    #terminal-container[data-carousel] {
+      display: flex; flex-direction: row;
+      overflow-x: auto; overflow-y: hidden;
+      scroll-snap-type: x proximity;
+      -webkit-overflow-scrolling: touch;
     }
-    .split-pane > .terminal-pane {
+    .carousel-card {
+      flex: 1 1 0; min-width: 280px;
+      display: flex; flex-direction: column; overflow: hidden;
+      scroll-snap-align: start; position: relative;
+    }
+    .carousel-card:only-of-type { flex: 1 1 100%; min-width: 0; }
+    .carousel-card.focused { outline: 2px solid var(--accent-active); outline-offset: -2px; }
+    .carousel-card > .terminal-pane {
       position: relative; inset: auto;
       flex: 1; display: block;
       min-width: 0; min-height: 0; overflow: hidden;
     }
-    .split-divider { flex-shrink: 0; background: var(--accent-active); }
-    #terminal-container[data-split="row"] > .split-divider { width: 3px; cursor: col-resize; }
-    #terminal-container[data-split="column"] > .split-divider { height: 3px; cursor: row-resize; }
-    .split-pane-tabs {
-      flex-shrink: 0; display: flex; align-items: center;
-      gap: var(--space-xs); padding: 2px var(--space-xs);
-      background: var(--bg-surface); border-bottom: 1px solid var(--border);
-      overflow-x: auto;
-    }
-    .split-pane-tabs .tab-bar-tab { flex-shrink: 0; }
-    .split-pane-tabs .tab-bar-add { flex-shrink: 0; }
-    .split-hidden { display: none !important; }
-    .split-dimmed { opacity: 0.25; transition: opacity 0.2s; }
-    .split-overlay {
-      position: absolute; inset: 0; z-index: 9999;
-      display: flex; gap: 8px; padding: 8px; pointer-events: all;
-    }
-    .split-overlay.overlay-row { flex-direction: row; }
-    .split-overlay.overlay-column { flex-direction: column; }
-    .split-zone {
-      flex: 1; border: 3px dashed var(--border); border-radius: 12px;
+    .card-title {
+      flex-shrink: 0; height: 24px;
       display: flex; align-items: center; justify-content: center;
-      transition: border-color 0.15s, background 0.15s;
-      font-size: 1rem; color: var(--text-dim); font-family: var(--font-mono);
+      background: var(--bg-surface); border-bottom: 1px solid var(--border);
+      padding: 0 4px; gap: 4px;
     }
-    .split-zone.hover {
-      border-color: var(--accent-active);
-      background: color-mix(in srgb, var(--accent-active) 12%, transparent);
-      color: var(--accent-active);
+    .card-title-input {
+      background: none; border: none; text-align: center;
+      font-size: 11px; color: var(--text-dim); font-family: var(--font-mono);
+      width: 100%; max-width: 200px; padding: 0 4px; outline: none;
+      -webkit-user-select: none; user-select: none;
     }
+    .card-title-input:focus {
+      color: var(--text); background: var(--bg-input); border-radius: 4px;
+      -webkit-user-select: text; user-select: text;
+    }
+    .card-dismiss {
+      flex-shrink: 0; width: 18px; height: 18px; border: none; border-radius: 4px;
+      background: none; color: var(--text-dim); font-size: 0.7rem;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      opacity: 0.4; transition: opacity 0.15s;
+    }
+    .card-dismiss:hover { opacity: 1; color: var(--danger); }
+    .carousel-handle {
+      flex-shrink: 0; width: 6px; cursor: col-resize;
+      background: var(--border); touch-action: none;
+    }
+    .carousel-handle:hover, .carousel-handle:active { background: var(--accent-active); }
+    .carousel-add {
+      flex-shrink: 0; width: 44px;
+      display: flex; align-items: center; justify-content: center;
+      background: none; border: none; color: var(--text-dim);
+      font-size: 1.5rem; cursor: pointer;
+    }
+    .carousel-add:hover { color: var(--text); }
 
     .terminal-pane .xterm, #terminal-container .xterm { height: 100%; overflow: hidden; touch-action: none; }
     #terminal-container .xterm-viewport,

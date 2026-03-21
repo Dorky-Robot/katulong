@@ -35,6 +35,7 @@
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
     import { createSplitManager } from "/lib/split-manager.js";
+    import { createCardCarousel } from "/lib/card-carousel.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -280,9 +281,49 @@
       fitActiveTerminal();
     };
 
+    // --- Card Carousel (iPad/tablet) ---
+    const carousel = createCardCarousel({
+      container: document.getElementById("terminal-container"),
+      terminalPool,
+      sendResize: (session, cols, rows) => {
+        if (state.connection.ws?.readyState === 1) {
+          state.connection.ws.send(JSON.stringify({ type: "resize", session, cols, rows }));
+        }
+      },
+      onFocusChange: (sessionName) => {
+        state.update('session.name', sessionName);
+        document.title = sessionName;
+        const url = new URL(window.location);
+        url.searchParams.set("s", sessionName);
+        history.replaceState(null, "", url);
+        if (shortcutBarInstance) shortcutBarInstance.render(sessionName);
+        // Switch WS to get output for this card
+        const ws = state.connection.ws;
+        if (ws?.readyState === WebSocket.OPEN) {
+          const entry = terminalPool.get(sessionName);
+          if (entry) {
+            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows, cached: true }));
+          }
+        }
+      },
+      onCardDismissed: (sessionName) => {
+        // Detach: remove from this window's tab set (session stays on server)
+        if (windowTabSet) windowTabSet.removeTab(sessionName);
+      },
+      onAddClick: () => {
+        // Reuse existing createNewSession logic
+        createNewSession();
+      },
+    });
+
     /** Fit the active terminal after a visibility change (e.g. closing file browser/port forward) */
     function fitActiveTerminal() {
       requestAnimationFrame(() => {
+        // In carousel mode, fit all visible cards
+        if (carousel.isActive()) {
+          carousel.fitAll();
+          return;
+        }
         // In split mode, fit both panes
         if (splitManager.isSplit()) {
           splitManager.fitAll();
@@ -561,6 +602,20 @@
         // Re-enable reconnect if we were in empty state
         wsConnection.enableReconnect();
         windowTabSet.addTab(data.name);
+        // On iPad: activate carousel if not already active, then add as a card
+        if (!carousel.isActive() && splitManager.isTablet()) {
+          // First time creating a second session on iPad — enter carousel mode
+          const existingSession = state.session.name;
+          if (existingSession) {
+            carousel.activate([existingSession, data.name], data.name);
+            return;
+          }
+        }
+        if (carousel.isActive()) {
+          carousel.addCard(data.name);
+          carousel.focusCard(data.name);
+          return;
+        }
         // When split, assign new session to the focused pane
         if (splitManager.isSplit()) {
           const focusedPane = splitManager.getPaneForSession(state.session.name);
@@ -605,11 +660,17 @@
         windowTabSet.addTab(name);
       }
 
+      // In carousel mode, focus the card (or add it if not visible)
+      if (carousel.isActive()) {
+        if (!carousel.getCards().includes(name)) {
+          carousel.addCard(name);
+        }
+        carousel.focusCard(name);
+        invalidateSessions(sessionStore, name);
+        return;
+      }
+
       // In split mode, switch the correct pane instead of breaking the split.
-      // IMPORTANT: Do NOT send a WebSocket "switch" message here. The server
-      // only sends output for the switched-to session — sending "switch" would
-      // kill output for the other split pane. Input routing already works via
-      // the "session" field in input messages (see input-sender.js).
       if (splitManager.isSplit()) {
         const pane = splitManager.getPaneForSession(name);
         const paneActive = pane === 1 ? splitManager.getPane1() : splitManager.getPane2();
@@ -1353,10 +1414,14 @@
     loadShortcuts();
     getTerm()?.focus();
 
-    // Restore split layout from sessionStorage after a short delay
+    // Restore carousel or split layout from sessionStorage after a short delay
     // to ensure terminals are created and the WS connection is active.
     setTimeout(() => {
-      if (!splitManager.isSplit()) {
+      // Try carousel first (preferred on iPad)
+      const carouselState = carousel.restore();
+      if (carouselState && carouselState.sessions.length > 1) {
+        carousel.activate(carouselState.sessions, carouselState.focused);
+      } else if (!splitManager.isSplit()) {
         splitManager.restore();
       }
     }, 500);
