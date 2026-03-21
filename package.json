@@ -1,6 +1,6 @@
 {
   "name": "katulong",
-  "version": "0.31.15",
+  "version": "0.31.16",
   "description": "Self-hosted web terminal for remote machines. Browser-based shell access with tmux sessions, file browser, and WebAuthn security.",
   "keywords": [
     "web-terminal",
@@ -17,9 +17,7 @@
   "private": true,
   "type": "module",
   "katulong": {
-    "plugins": [
-      "katulong-tala"
-    ]
+    "plugins": []
   },
   "bin": {
     "katulong": "./bin/katulong"
@@ -42,7 +40,6 @@
   "dependencies": {
     "@simplewebauthn/server": "^13.0.0",
     "dotenv": "^17.2.4",
-    "katulong-tala": "file:plugins/katulong-tala",
     "ws": "^8.18.2"
   },
   "devDependencies": {
