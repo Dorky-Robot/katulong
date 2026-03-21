@@ -109,66 +109,56 @@ export function createCardCarousel({
     return { wrapper, titleInput };
   }
 
-  function createResizeHandle(leftSession, rightSession) {
-    const handle = document.createElement("div");
-    handle.className = "carousel-handle";
-    handle.setAttribute("aria-label", "Resize");
+  /** Create left/right edge resize handles inside a card wrapper */
+  function attachEdgeHandles(wrapper, sessionName) {
+    for (const side of ["left", "right"]) {
+      const handle = document.createElement("div");
+      handle.className = `carousel-handle carousel-handle-${side}`;
 
-    let startX = 0;
-    let startWidthLeft = 0;
-    let startWidthRight = 0;
-    let leftCard = null;
-    let rightCard = null;
+      let startX = 0;
+      let startWidth = 0;
 
-    function onStart(cx) {
-      leftCard = cardEls.get(leftSession)?.wrapper;
-      rightCard = cardEls.get(rightSession)?.wrapper;
-      if (!leftCard || !rightCard) return false;
-      startX = cx;
-      startWidthLeft = leftCard.getBoundingClientRect().width;
-      startWidthRight = rightCard.getBoundingClientRect().width;
-      return true;
+      function onStart(cx) {
+        startX = cx;
+        startWidth = wrapper.getBoundingClientRect().width;
+        return true;
+      }
+
+      function onMove(cx) {
+        const dx = cx - startX;
+        const delta = side === "right" ? dx : -dx;
+        const newWidth = Math.max(200, startWidth + delta);
+        wrapper.style.flex = `0 0 ${newWidth}px`;
+      }
+
+      function onEnd() {
+        fitAll();
+        save();
+      }
+
+      handle.addEventListener("touchstart", (e) => {
+        if (e.touches.length !== 1) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onStart(e.touches[0].clientX);
+        const move = (te) => { te.preventDefault(); onMove(te.touches[0].clientX); };
+        const end = () => { document.removeEventListener("touchmove", move); document.removeEventListener("touchend", end); onEnd(); };
+        document.addEventListener("touchmove", move, { passive: false });
+        document.addEventListener("touchend", end);
+      }, { passive: false });
+
+      handle.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onStart(e.clientX);
+        const move = (me) => { me.preventDefault(); onMove(me.clientX); };
+        const end = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", end); onEnd(); };
+        document.addEventListener("mousemove", move);
+        document.addEventListener("mouseup", end);
+      });
+
+      wrapper.appendChild(handle);
     }
-
-    function onMove(cx) {
-      if (!leftCard || !rightCard) return;
-      const dx = cx - startX;
-      const newLeft = Math.max(200, startWidthLeft + dx);
-      const newRight = Math.max(200, startWidthRight - dx);
-      leftCard.style.flex = `0 0 ${newLeft}px`;
-      rightCard.style.flex = `0 0 ${newRight}px`;
-    }
-
-    function onEnd() {
-      leftCard = null;
-      rightCard = null;
-      // Refit terminals after resize
-      fitAll();
-      save();
-    }
-
-    // Touch
-    handle.addEventListener("touchstart", (e) => {
-      if (e.touches.length !== 1) return;
-      e.preventDefault();
-      if (!onStart(e.touches[0].clientX)) return;
-      const move = (te) => { te.preventDefault(); onMove(te.touches[0].clientX); };
-      const end = () => { document.removeEventListener("touchmove", move); document.removeEventListener("touchend", end); onEnd(); };
-      document.addEventListener("touchmove", move, { passive: false });
-      document.addEventListener("touchend", end);
-    }, { passive: false });
-
-    // Mouse
-    handle.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      if (!onStart(e.clientX)) return;
-      const move = (me) => { me.preventDefault(); onMove(me.clientX); };
-      const end = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", end); onEnd(); };
-      document.addEventListener("mousemove", move);
-      document.addEventListener("mouseup", end);
-    });
-
-    return handle;
   }
 
   function createAddButton() {
@@ -204,13 +194,11 @@ export function createCardCarousel({
         wrapper.classList.add("focused");
       }
 
+      // Attach left/right edge resize handles
+      attachEdgeHandles(wrapper, session);
+
       cardEls.set(session, { wrapper, titleInput });
       container.appendChild(wrapper);
-
-      // Resize handle between cards (not after the last one)
-      if (i < cards.length - 1) {
-        container.appendChild(createResizeHandle(session, cards[i + 1]));
-      }
     }
 
     // Add button at the end
@@ -277,14 +265,10 @@ export function createCardCarousel({
     // Create the card wrapper and insert it before the + button
     const { wrapper, titleInput } = createCardWrapper(sessionName);
     wrapper.appendChild(entry.container);
+    attachEdgeHandles(wrapper, sessionName);
     cardEls.set(sessionName, { wrapper, titleInput });
 
-    // Insert a resize handle before the new card (if there are other cards)
     const addBtn = container.querySelector(".carousel-add");
-    if (cards.length > 1) {
-      const prevSession = cards[cards.length - 2];
-      container.insertBefore(createResizeHandle(prevSession, sessionName), addBtn);
-    }
     container.insertBefore(wrapper, addBtn);
 
     // Animate: start collapsed, then grow to natural size
@@ -311,13 +295,8 @@ export function createCardCarousel({
     const el = cardEls.get(sessionName);
 
     const doRemove = () => {
-      // Remove the card wrapper and its preceding resize handle from DOM
+      // Remove the card wrapper (edge handles are children, removed with it)
       if (el?.wrapper?.parentElement) {
-        // Find and remove the adjacent resize handle
-        const prev = el.wrapper.previousElementSibling;
-        const next = el.wrapper.nextElementSibling;
-        if (prev?.classList?.contains("carousel-handle")) prev.remove();
-        else if (next?.classList?.contains("carousel-handle")) next.remove();
         el.wrapper.remove();
       }
       cardEls.delete(sessionName);
@@ -385,6 +364,12 @@ export function createCardCarousel({
     // Focus the terminal
     const entry = terminalPool.get(sessionName);
     if (entry?.term?.focus) entry.term.focus();
+
+    // Scroll focused card to center
+    const el = cardEls.get(sessionName);
+    if (el?.wrapper?.scrollIntoView) {
+      el.wrapper.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    }
 
     if (onFocusChange) onFocusChange(sessionName);
     save();
