@@ -269,9 +269,14 @@
         // Detach: remove from this window's tab set (session stays on server)
         if (windowTabSet) windowTabSet.removeTab(sessionName);
       },
-      onAddClick: () => {
-        // Reuse existing createNewSession logic
-        createNewSession();
+      onAddClick: (anchorEl) => {
+        // Show the same add menu as the tab bar's + button (new session + detached sessions)
+        // shortcutBarInstance is created after carousel but only called lazily
+        if (shortcutBarInstance?.showAddMenu) {
+          shortcutBarInstance.showAddMenu(anchorEl);
+        } else {
+          createNewSession();
+        }
       },
     });
 

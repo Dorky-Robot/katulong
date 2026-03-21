@@ -168,7 +168,7 @@ export function createCardCarousel({
     btn.className = "carousel-add";
     btn.setAttribute("aria-label", "Add session");
     btn.innerHTML = '<i class="ph ph-plus-circle"></i>';
-    btn.addEventListener("click", () => { if (onAddClick) onAddClick(); });
+    btn.addEventListener("click", () => { if (onAddClick) onAddClick(btn); });
     return btn;
   }
 

@@ -1157,6 +1157,7 @@ export function createShortcutBar(options = {}) {
 
   return {
     render,
+    showAddMenu,
     setPortProxyEnabled(enabled) {
       portProxyEnabled = enabled;
       const btn = document.getElementById("bar-portfwd-btn");
