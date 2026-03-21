@@ -203,23 +203,44 @@
       scroll-snap-type: x proximity;
       -webkit-overflow-scrolling: touch;
     }
-    .carousel-card {
-      flex: 1 1 0; min-width: 280px;
-      display: flex; flex-direction: column; overflow: hidden;
-      scroll-snap-align: start; position: relative;
+    #terminal-container[data-carousel] {
+      gap: 10px; padding: 6px;
+      background: var(--bg);
     }
-    .carousel-card:only-of-type { flex: 1 1 100%; min-width: 0; }
-    .carousel-card.focused { outline: 2px solid var(--accent-active); outline-offset: -2px; }
+    .carousel-card {
+      flex: 0 0 47%; min-width: 280px;
+      display: flex; flex-direction: column; overflow: hidden;
+      scroll-snap-align: center; position: relative;
+      border-radius: 12px;
+      background: var(--bg-surface);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.04);
+      transition: flex-basis 0.3s ease, flex-grow 0.3s ease, opacity 0.25s ease, transform 0.3s ease;
+    }
+    .carousel-card.entering {
+      opacity: 0; transform: scale(0.92);
+    }
+    /* Single card: full width, subtle shadow */
+    .carousel-card:only-of-type { flex: 1 1 100%; min-width: 0; border-radius: 8px; }
+    /* Two cards: each takes exactly half minus gap */
+    .carousel-card:first-of-type:nth-last-of-type(2),
+    .carousel-card:first-of-type:nth-last-of-type(2) ~ .carousel-card {
+      flex: 0 0 calc(50% - 5px); min-width: 0;
+    }
+    .carousel-card.focused {
+      box-shadow: 0 2px 16px rgba(0,0,0,0.35), 0 0 0 2px var(--accent-active);
+    }
     .carousel-card > .terminal-pane {
       position: relative; inset: auto;
       flex: 1; display: block;
       min-width: 0; min-height: 0; overflow: hidden;
+      border-radius: 0 0 12px 12px;
     }
     .card-title {
       flex-shrink: 0; height: 24px;
       display: flex; align-items: center; justify-content: center;
       background: var(--bg-surface); border-bottom: 1px solid var(--border);
       padding: 0 4px; gap: 4px;
+      border-radius: 12px 12px 0 0;
     }
     .card-title-input {
       background: none; border: none; text-align: center;
@@ -239,10 +260,10 @@
     }
     .card-dismiss:hover { opacity: 1; color: var(--danger); }
     .carousel-handle {
-      flex-shrink: 0; width: 6px; cursor: col-resize;
-      background: var(--border); touch-action: none;
+      flex-shrink: 0; width: 12px; cursor: col-resize;
+      background: transparent; touch-action: none;
+      margin: 0 -6px; z-index: 2; position: relative;
     }
-    .carousel-handle:hover, .carousel-handle:active { background: var(--accent-active); }
     .carousel-add {
       flex-shrink: 0; width: 44px;
       display: flex; align-items: center; justify-content: center;

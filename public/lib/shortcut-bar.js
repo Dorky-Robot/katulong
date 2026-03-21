@@ -53,6 +53,7 @@ export function createShortcutBar(options = {}) {
     sessionStore,
     windowTabSet,
     splitManager,
+    carousel,
   } = options;
 
   let currentSessionName = "";
@@ -1091,6 +1092,15 @@ export function createShortcutBar(options = {}) {
     connDot.id = "connection-indicator";
     connDot.style.display = "none";
     container.appendChild(connDot);
+
+    // When carousel is active, cards ARE the tabs — hide the tab bar entirely
+    if (carousel?.isActive()) {
+      container.style.display = "none";
+      renderKeyIsland();
+      if (updateConnectionIndicator) updateConnectionIndicator();
+      return;
+    }
+    container.style.display = "";
 
     if (isDesktop() && sessionStore) {
       const storeState = sessionStore.getState();

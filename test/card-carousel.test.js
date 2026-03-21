@@ -58,6 +58,9 @@ function createMockElement(tag) {
     select: () => {},
     setAttribute: (k, v) => { el[`_attr_${k}`] = v; },
     getAttribute: (k) => el[`_attr_${k}`] || null,
+    scrollIntoView: () => {},
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 100 }),
+    get offsetHeight() { return 100; },
     _classes: classes,
     _styles: styles,
     _children: children,
@@ -259,32 +262,40 @@ describe('card-carousel', () => {
       carousel.activate(["a", "b", "c"], "b");
     });
 
-    it('removes the card', () => {
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+    it('removes the card', async () => {
       carousel.removeCard("b");
+      await wait(400);
       assert.deepStrictEqual(carousel.getCards(), ["a", "c"]);
     });
 
-    it('fires onCardDismissed', () => {
+    it('fires onCardDismissed', async () => {
       carousel.removeCard("b");
+      await wait(400);
       assert.strictEqual(onCardDismissed.mock.callCount(), 1);
     });
 
-    it('shifts focus to adjacent card when focused card is removed', () => {
+    it('shifts focus to adjacent card when focused card is removed', async () => {
       carousel.removeCard("b");
-      // Should focus "c" (next) or "a" (previous)
+      await wait(400);
       assert.ok(["a", "c"].includes(carousel.getFocusedCard()));
     });
 
-    it('deactivates when last card is removed', () => {
+    it('deactivates when last card is removed', async () => {
       carousel.removeCard("a");
+      await wait(400);
       carousel.removeCard("b");
+      await wait(400);
       carousel.removeCard("c");
+      await wait(400);
       assert.strictEqual(carousel.isActive(), false);
     });
 
-    it('unprotects the removed card', () => {
+    it('unprotects the removed card', async () => {
       const before = terminalPool.unprotect.mock.callCount();
       carousel.removeCard("b");
+      await wait(400);
       assert.ok(terminalPool.unprotect.mock.callCount() > before);
     });
   });

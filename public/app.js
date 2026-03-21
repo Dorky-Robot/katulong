@@ -602,15 +602,7 @@
         // Re-enable reconnect if we were in empty state
         wsConnection.enableReconnect();
         windowTabSet.addTab(data.name);
-        // On iPad: activate carousel if not already active, then add as a card
-        if (!carousel.isActive() && splitManager.isTablet()) {
-          // First time creating a second session on iPad — enter carousel mode
-          const existingSession = state.session.name;
-          if (existingSession) {
-            carousel.activate([existingSession, data.name], data.name);
-            return;
-          }
-        }
+        // In carousel mode, add as a new card
         if (carousel.isActive()) {
           carousel.addCard(data.name);
           carousel.focusCard(data.name);
@@ -1013,7 +1005,9 @@
       getSessionIcon,
       sessionStore,
       windowTabSet,
-      splitManager,
+      // On iPad, carousel replaces split — don't pass splitManager so drag-to-split is disabled
+      splitManager: splitManager.isTablet() ? null : splitManager,
+      carousel,
     });
 
     // Re-render bar if pointer capability changes (e.g., external mouse connected)
@@ -1396,8 +1390,17 @@
           const url = new URL(window.location);
           url.searchParams.set("s", name);
           history.replaceState(null, "", url);
-          terminalPool.activate(name);
-          renderBar(name);
+          // On iPad, activate carousel with all tab-set sessions
+          if (splitManager.isTablet()) {
+            const tabSessions = windowTabSet.getTabs();
+            const allNames = tabSessions.length > 0 ? tabSessions : [name];
+            if (!allNames.includes(name)) allNames.unshift(name);
+            carousel.activate(allNames, name);
+            renderBar(name);
+          } else {
+            terminalPool.activate(name);
+            renderBar(name);
+          }
           windowTabSet.addTab(name);
           wsConnection.connect();
         }
@@ -1408,18 +1411,25 @@
         // User can create or pick a session via the sidebar.
       });
     } else {
-      renderBar(state.session.name);
+      // Explicit ?s= session — activate carousel on iPad
+      if (splitManager.isTablet()) {
+        const tabSessions = windowTabSet.getTabs();
+        const allNames = tabSessions.length > 0 ? tabSessions : [state.session.name];
+        if (state.session.name && !allNames.includes(state.session.name)) allNames.unshift(state.session.name);
+        carousel.activate(allNames, state.session.name);
+        renderBar(state.session.name);
+      } else {
+        renderBar(state.session.name);
+      }
       wsConnection.connect();
     }
     loadShortcuts();
     getTerm()?.focus();
 
-    // Restore carousel or split layout from sessionStorage after a short delay
-    // to ensure terminals are created and the WS connection is active.
+    // Restore carousel state from sessionStorage after a short delay
     setTimeout(() => {
-      // Try carousel first (preferred on iPad)
       const carouselState = carousel.restore();
-      if (carouselState && carouselState.sessions.length > 1) {
+      if (carouselState && carouselState.sessions.length > 0 && !carousel.isActive()) {
         carousel.activate(carouselState.sessions, carouselState.focused);
       } else if (!splitManager.isSplit()) {
         splitManager.restore();

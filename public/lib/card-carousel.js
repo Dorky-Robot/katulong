@@ -113,7 +113,61 @@ export function createCardCarousel({
     const handle = document.createElement("div");
     handle.className = "carousel-handle";
     handle.setAttribute("aria-label", "Resize");
-    // Touch/mouse resize could be added here later
+
+    let startX = 0;
+    let startWidthLeft = 0;
+    let startWidthRight = 0;
+    let leftCard = null;
+    let rightCard = null;
+
+    function onStart(cx) {
+      leftCard = cardEls.get(leftSession)?.wrapper;
+      rightCard = cardEls.get(rightSession)?.wrapper;
+      if (!leftCard || !rightCard) return false;
+      startX = cx;
+      startWidthLeft = leftCard.getBoundingClientRect().width;
+      startWidthRight = rightCard.getBoundingClientRect().width;
+      return true;
+    }
+
+    function onMove(cx) {
+      if (!leftCard || !rightCard) return;
+      const dx = cx - startX;
+      const newLeft = Math.max(200, startWidthLeft + dx);
+      const newRight = Math.max(200, startWidthRight - dx);
+      leftCard.style.flex = `0 0 ${newLeft}px`;
+      rightCard.style.flex = `0 0 ${newRight}px`;
+    }
+
+    function onEnd() {
+      leftCard = null;
+      rightCard = null;
+      // Refit terminals after resize
+      fitAll();
+      save();
+    }
+
+    // Touch
+    handle.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) return;
+      e.preventDefault();
+      if (!onStart(e.touches[0].clientX)) return;
+      const move = (te) => { te.preventDefault(); onMove(te.touches[0].clientX); };
+      const end = () => { document.removeEventListener("touchmove", move); document.removeEventListener("touchend", end); onEnd(); };
+      document.addEventListener("touchmove", move, { passive: false });
+      document.addEventListener("touchend", end);
+    }, { passive: false });
+
+    // Mouse
+    handle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      if (!onStart(e.clientX)) return;
+      const move = (me) => { me.preventDefault(); onMove(me.clientX); };
+      const end = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", end); onEnd(); };
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", end);
+    });
+
     return handle;
   }
 
@@ -221,6 +275,18 @@ export function createCardCarousel({
     terminalPool.protect(sessionName);
 
     buildLayout();
+
+    // Animate the new card in
+    const el = cardEls.get(sessionName);
+    if (el?.wrapper) {
+      el.wrapper.classList.add("entering");
+      // Force reflow then remove the class to trigger transition
+      el.wrapper.offsetHeight;
+      requestAnimationFrame(() => el.wrapper.classList.remove("entering"));
+      // Scroll the new card into view
+      requestAnimationFrame(() => el.wrapper.scrollIntoView({ behavior: "smooth", inline: "center" }));
+    }
+
     save();
   }
 
@@ -229,31 +295,46 @@ export function createCardCarousel({
     const idx = cards.indexOf(sessionName);
     if (idx === -1) return;
 
-    cards.splice(idx, 1);
-    terminalPool.unprotect(sessionName);
+    // Animate out
+    const el = cardEls.get(sessionName);
+    const doRemove = () => {
+      cards.splice(cards.indexOf(sessionName), 1);
+      terminalPool.unprotect(sessionName);
 
-    // Move terminal back to container root before removing wrapper
-    const entry = terminalPool.get(sessionName);
-    if (entry) {
-      container.appendChild(entry.container);
-    }
+      // Move terminal back to container root
+      const entry = terminalPool.get(sessionName);
+      if (entry) container.appendChild(entry.container);
 
-    if (onCardDismissed) onCardDismissed(sessionName);
+      if (onCardDismissed) onCardDismissed(sessionName);
 
-    // Shift focus if the removed card was focused
-    if (focusedSession === sessionName) {
-      if (cards.length > 0) {
-        focusedSession = cards[Math.min(idx, cards.length - 1)];
-        if (onFocusChange) onFocusChange(focusedSession);
-      } else {
-        focusedSession = null;
-        deactivate();
-        return;
+      // Shift focus
+      if (focusedSession === sessionName) {
+        if (cards.length > 0) {
+          focusedSession = cards[Math.min(idx, cards.length - 1)];
+          if (onFocusChange) onFocusChange(focusedSession);
+        } else {
+          focusedSession = null;
+          deactivate();
+          return;
+        }
       }
-    }
 
-    buildLayout();
-    save();
+      buildLayout();
+      save();
+    };
+
+    if (el?.wrapper?.style) {
+      let done = false;
+      const finish = () => { if (!done) { done = true; doRemove(); } };
+      el.wrapper.style.transition = "flex-basis 0.25s ease, opacity 0.2s ease, transform 0.25s ease";
+      el.wrapper.style.opacity = "0";
+      el.wrapper.style.transform = "scale(0.92)";
+      el.wrapper.style.flex = "0 0 0px";
+      el.wrapper.addEventListener("transitionend", finish, { once: true });
+      setTimeout(finish, 350);
+    } else {
+      doRemove();
+    }
   }
 
   function focusCard(sessionName) {
