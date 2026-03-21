@@ -49,6 +49,8 @@ function createMockElement(tag) {
     },
     get firstChild() { return children[0] || null; },
     get nextSibling() { return null; },
+    get previousElementSibling() { return null; },
+    get nextElementSibling() { return null; },
     get parentElement() { return el._parentElement || null; },
     set parentElement(v) { el._parentElement = v; },
     get innerHTML() { return ""; },

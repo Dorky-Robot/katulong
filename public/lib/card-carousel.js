@@ -271,22 +271,35 @@ export function createCardCarousel({
     if (cards.includes(sessionName)) return;
 
     cards.push(sessionName);
-    terminalPool.getOrCreate(sessionName);
+    const entry = terminalPool.getOrCreate(sessionName);
     terminalPool.protect(sessionName);
 
-    buildLayout();
+    // Create the card wrapper and insert it before the + button
+    const { wrapper, titleInput } = createCardWrapper(sessionName);
+    wrapper.appendChild(entry.container);
+    cardEls.set(sessionName, { wrapper, titleInput });
 
-    // Animate the new card in
-    const el = cardEls.get(sessionName);
-    if (el?.wrapper) {
-      el.wrapper.classList.add("entering");
-      // Force reflow then remove the class to trigger transition
-      el.wrapper.offsetHeight;
-      requestAnimationFrame(() => el.wrapper.classList.remove("entering"));
-      // Scroll the new card into view
-      requestAnimationFrame(() => el.wrapper.scrollIntoView({ behavior: "smooth", inline: "center" }));
+    // Insert a resize handle before the new card (if there are other cards)
+    const addBtn = container.querySelector(".carousel-add");
+    if (cards.length > 1) {
+      const prevSession = cards[cards.length - 2];
+      container.insertBefore(createResizeHandle(prevSession, sessionName), addBtn);
     }
+    container.insertBefore(wrapper, addBtn);
 
+    // Animate: start collapsed, then grow to natural size
+    wrapper.style.flex = "0 0 0px";
+    wrapper.style.opacity = "0";
+    wrapper.style.transform = "scale(0.95)";
+    wrapper.offsetHeight; // force reflow
+    requestAnimationFrame(() => {
+      wrapper.style.flex = "";
+      wrapper.style.opacity = "";
+      wrapper.style.transform = "";
+      wrapper.scrollIntoView({ behavior: "smooth", inline: "center" });
+    });
+
+    fitAll();
     save();
   }
 
@@ -295,15 +308,28 @@ export function createCardCarousel({
     const idx = cards.indexOf(sessionName);
     if (idx === -1) return;
 
-    // Animate out
     const el = cardEls.get(sessionName);
+
     const doRemove = () => {
+      // Remove the card wrapper and its preceding resize handle from DOM
+      if (el?.wrapper?.parentElement) {
+        // Find and remove the adjacent resize handle
+        const prev = el.wrapper.previousElementSibling;
+        const next = el.wrapper.nextElementSibling;
+        if (prev?.classList?.contains("carousel-handle")) prev.remove();
+        else if (next?.classList?.contains("carousel-handle")) next.remove();
+        el.wrapper.remove();
+      }
+      cardEls.delete(sessionName);
       cards.splice(cards.indexOf(sessionName), 1);
       terminalPool.unprotect(sessionName);
 
-      // Move terminal back to container root
+      // Move terminal pane back to container root (hidden by default CSS)
       const entry = terminalPool.get(sessionName);
-      if (entry) container.appendChild(entry.container);
+      if (entry) {
+        entry.container.style.display = "none";
+        container.appendChild(entry.container);
+      }
 
       if (onCardDismissed) onCardDismissed(sessionName);
 
@@ -312,6 +338,10 @@ export function createCardCarousel({
         if (cards.length > 0) {
           focusedSession = cards[Math.min(idx, cards.length - 1)];
           if (onFocusChange) onFocusChange(focusedSession);
+          // Update focused class
+          for (const [name, { wrapper }] of cardEls) {
+            wrapper.classList.toggle("focused", name === focusedSession);
+          }
         } else {
           focusedSession = null;
           deactivate();
@@ -319,19 +349,22 @@ export function createCardCarousel({
         }
       }
 
-      buildLayout();
+      fitAll();
       save();
     };
 
+    // Animate out: shrink + fade, then remove
     if (el?.wrapper?.style) {
       let done = false;
       const finish = () => { if (!done) { done = true; doRemove(); } };
-      el.wrapper.style.transition = "flex-basis 0.25s ease, opacity 0.2s ease, transform 0.25s ease";
+      el.wrapper.style.transition = "flex 0.3s ease, opacity 0.2s ease, transform 0.3s ease, min-width 0.3s ease";
+      el.wrapper.style.flex = "0 0 0px";
+      el.wrapper.style.minWidth = "0";
       el.wrapper.style.opacity = "0";
       el.wrapper.style.transform = "scale(0.92)";
-      el.wrapper.style.flex = "0 0 0px";
+      el.wrapper.style.overflow = "hidden";
       el.wrapper.addEventListener("transitionend", finish, { once: true });
-      setTimeout(finish, 350);
+      setTimeout(finish, 400);
     } else {
       doRemove();
     }
