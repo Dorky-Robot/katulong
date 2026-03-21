@@ -629,7 +629,6 @@
         routeToSession(data.name);
         // If carousel was just activated from empty state, reconnect WS
         if (isCarouselDevice() && carousel.isActive()) {
-          wsConnection.enableReconnect();
           wsConnection.connect();
         }
       } catch (err) {

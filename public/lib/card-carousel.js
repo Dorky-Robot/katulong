@@ -109,7 +109,8 @@ export function createCardCarousel({
         wrapper.classList.remove("resizing");
         // Store the intended width so it survives browser resizes
         const el = cardEls.get(sessionName);
-        if (el) el.intendedWidth = wrapper.getBoundingClientRect().width;
+        const w = wrapper.getBoundingClientRect().width;
+        if (el && w > 0) el.intendedWidth = w;
         fitAll();
         save();
       }
@@ -657,12 +658,17 @@ export function createCardCarousel({
     const el = cardEls.get(sessionName);
 
     const doRemove = () => {
+      // Re-lookup index at removal time — the array may have changed
+      // during the animation delay (e.g. another card removed/reordered).
+      const currentIdx = cards.indexOf(sessionName);
+      if (currentIdx === -1) return;
+
       // Remove the card wrapper (edge handles are children, removed with it)
       if (el?.wrapper?.parentElement) {
         el.wrapper.remove();
       }
       cardEls.delete(sessionName);
-      cards.splice(idx, 1);
+      cards.splice(currentIdx, 1);
       terminalPool.unprotect(sessionName);
 
       // Move terminal pane back to container root (hidden by default CSS)
@@ -680,7 +686,7 @@ export function createCardCarousel({
       // Shift focus
       if (focusedSession === sessionName) {
         if (cards.length > 0) {
-          focusedSession = cards[Math.min(idx, cards.length - 1)];
+          focusedSession = cards[Math.min(currentIdx, cards.length - 1)];
           if (onFocusChange) onFocusChange(focusedSession);
           // Update focused class
           for (const [name, { wrapper }] of cardEls) {
