@@ -240,29 +240,29 @@
     }
     /* Carousel header — sits above the cards, shows titles inline */
     .carousel-header {
-      flex-shrink: 0; height: 32px;
+      flex-shrink: 0; height: 44px;
       display: flex; align-items: center; justify-content: center;
-      gap: 12px; padding: 0 48px;
+      gap: 8px; padding: 4px 52px;
       background: var(--bg);
       overflow-x: auto; overflow-y: hidden;
       -webkit-overflow-scrolling: touch;
     }
     .carousel-header-tab {
-      flex-shrink: 0; display: flex; align-items: center; gap: 4px;
-      padding: 2px 8px; border-radius: 6px;
+      flex-shrink: 0; display: flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 8px; height: 36px;
       cursor: pointer; border: none; background: none;
       transition: background 0.15s;
     }
     .carousel-header-tab:hover { background: var(--accent); }
     .carousel-header-tab.active { background: var(--accent); }
     .carousel-header-tab .header-tab-name {
-      font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);
-      max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 13px; color: var(--text-muted); font-family: var(--font-mono);
+      max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .carousel-header-tab.active .header-tab-name { color: var(--text); }
     .carousel-header-tab .header-tab-dismiss {
-      width: 14px; height: 14px; border: none; border-radius: 3px;
-      background: none; color: var(--text-dim); font-size: 0.6rem;
+      width: 18px; height: 18px; border: none; border-radius: 4px;
+      background: none; color: var(--text-dim); font-size: 0.7rem;
       cursor: pointer; display: flex; align-items: center; justify-content: center;
       opacity: 0; transition: opacity 0.15s;
     }
@@ -276,7 +276,7 @@
     .carousel-handle-right { right: -8px; }
     .carousel-add {
       position: fixed; top: 8px; right: 8px; z-index: 100;
-      width: 36px; height: 36px; border-radius: 50%;
+      width: 36px; height: 36px; border-radius: 8px;
       display: flex; align-items: center; justify-content: center;
       background: var(--bg-surface); border: 1px solid var(--border);
       color: var(--text-muted); font-size: 1.25rem; cursor: pointer;
