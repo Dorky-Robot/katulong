@@ -380,10 +380,14 @@ export function createCardCarousel({
       wrapper.style.flex = "";
       wrapper.style.opacity = "";
       wrapper.style.transform = "";
-      wrapper.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
     });
 
-    fitAll();
+    // Scroll into view AFTER the grow animation finishes (300ms CSS transition)
+    setTimeout(() => {
+      wrapper.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      fitAll();
+    }, 350);
+
     save();
   }
 
