@@ -570,8 +570,15 @@
         }
         if (isIPad) {
           // Reactivate carousel (e.g., after all cards were dismissed)
+          state.update('session.name', data.name);
+          document.title = data.name;
+          const url = new URL(window.location);
+          url.searchParams.set("s", data.name);
+          history.replaceState(null, "", url);
           carousel.activate([data.name], data.name);
           if (shortcutBarInstance) shortcutBarInstance.render(data.name);
+          wsConnection.enableReconnect();
+          wsConnection.connect();
           return;
         }
         switchSession(data.name);
