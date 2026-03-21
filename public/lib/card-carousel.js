@@ -272,7 +272,9 @@ export function createCardCarousel({
       const entry = terminalPool.getOrCreate(session);
       const { wrapper } = createCardWrapper(session);
 
-      // Move the terminal pane into the card wrapper
+      // Move the terminal pane into the card wrapper and ensure it's visible
+      // (deactivate sets display:none which overrides CSS)
+      entry.container.style.display = "";
       wrapper.appendChild(entry.container);
 
       // Mark focused
@@ -364,6 +366,7 @@ export function createCardCarousel({
 
     // Surgically insert the card — no full rebuild
     const { wrapper } = createCardWrapper(sessionName);
+    entry.container.style.display = "";
     wrapper.appendChild(entry.container);
     attachEdgeHandles(wrapper, sessionName);
     cardEls.set(sessionName, { wrapper });
