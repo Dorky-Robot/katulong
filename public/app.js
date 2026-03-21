@@ -561,10 +561,17 @@
         // Re-enable reconnect if we were in empty state
         wsConnection.enableReconnect();
         windowTabSet.addTab(data.name);
-        // In carousel mode, add as a new card
+        // On iPad, always use carousel
+        const isIPad = navigator.maxTouchPoints > 0 && (/iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
         if (carousel.isActive()) {
           carousel.addCard(data.name);
           carousel.focusCard(data.name);
+          return;
+        }
+        if (isIPad) {
+          // Reactivate carousel (e.g., after all cards were dismissed)
+          carousel.activate([data.name], data.name);
+          if (shortcutBarInstance) shortcutBarInstance.render(data.name);
           return;
         }
         switchSession(data.name);

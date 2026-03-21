@@ -354,6 +354,7 @@ export function createCardCarousel({
         }
       }
 
+      buildHeader();
       fitAll();
       save();
     };
