@@ -13,6 +13,7 @@
 import { keysToSequence, sendSequence } from "/lib/key-mapping.js";
 import { invalidateSessions } from "/lib/stores.js";
 import { api } from "/lib/api-client.js";
+import { detectPlatform } from "/lib/platform.js";
 
 const DRAG_OUT_THRESHOLD = 60; // px below bar to trigger tear-off (desktop)
 const DRAG_DEAD_ZONE = 5; // px before drag starts
@@ -54,14 +55,8 @@ export function createShortcutBar(options = {}) {
   let portProxyEnabled = true;
   let activeMenu = null; // currently open context/dropdown menu
 
-  /** Returns "desktop", "ipad", or "phone" — single source of truth for UI mode */
-  function platformMode() {
-    const ua = navigator.userAgent || "";
-    const isIPad = /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-    if (isIPad) return "ipad";
-    if (window.matchMedia("(pointer: coarse)").matches) return "phone";
-    return "desktop";
-  }
+  // Platform is detected once — it doesn't change at runtime
+  const platform = detectPlatform();
 
   function safeInstanceIcon() {
     const raw = getInstanceIcon ? getInstanceIcon() : "terminal-window";
@@ -477,12 +472,12 @@ export function createShortcutBar(options = {}) {
   function onTabTouchStart(e, tab, name) {
     if (e.target.closest(".tab-close")) return;
 
-    const mode = platformMode();
+
     const initialTouch = e.touches[0];
     const startX = initialTouch.clientX;
     const startY = initialTouch.clientY;
 
-    if (mode === "ipad") {
+    if (platform === "ipad") {
       // iPad: immediate drag on horizontal movement (like the carousel header did).
       // No long-press required — feels snappy and natural on touch.
       e.preventDefault();
@@ -711,8 +706,8 @@ export function createShortcutBar(options = {}) {
       }
     }
 
-    // drag is null now, so render() will execute (not defer)
-    render(_pendingRender || currentSessionName);
+    // drag is null now — flush any deferred render
+    render(currentSessionName);
   }
 
   // ── Render ─────────────────────────────────────────────────────────
@@ -871,61 +866,57 @@ export function createShortcutBar(options = {}) {
     }
   }
 
-  // Persistent iPad + button — lives outside #shortcut-bar so render() can't destroy it
-  let _ipadAddBtn = null;
-
-  function ensureIPadAddButton() {
-    if (!_ipadAddBtn) {
-      _ipadAddBtn = document.createElement("button");
-      _ipadAddBtn.className = "ipad-add-btn";
-      _ipadAddBtn.id = "ipad-add-btn";
-      _ipadAddBtn.tabIndex = -1;
-      _ipadAddBtn.setAttribute("aria-label", "New session");
-      _ipadAddBtn.innerHTML = '<i class="ph ph-plus-circle"></i>';
-      _ipadAddBtn.addEventListener("click", () => showAddMenu(_ipadAddBtn));
-    }
-    // Always re-append (render() wipes container.innerHTML)
-    container.appendChild(_ipadAddBtn);
+  /** Build the session list from stores (shared by desktop + iPad paths) */
+  function getSessionList() {
+    if (!sessionStore) return [];
+    const allSessions = sessionStore.getState().sessions || [];
+    if (!windowTabSet) return allSessions;
+    const tabNames = windowTabSet.getTabs();
+    const sessionMap = new Map(allSessions.map(s => [s.name, s]));
+    return tabNames.map(n => sessionMap.get(n) || { name: n }).filter(Boolean);
   }
 
-  function removeIPadAddButton() {
-    if (_ipadAddBtn) { _ipadAddBtn.remove(); _ipadAddBtn = null; }
-  }
-
+  /** iPad bar: [+] button (absolute positioned) + tabs in scroll area */
   function renderIPadBar(sessionName, sessions) {
-    // + button is a separate fixed element outside the bar (see ensureIPadAddButton)
-    ensureIPadAddButton();
+    const addBtn = document.createElement("button");
+    addBtn.className = "ipad-add-btn";
+    addBtn.tabIndex = -1;
+    addBtn.setAttribute("aria-label", "New session");
+    addBtn.innerHTML = '<i class="ph ph-plus-circle"></i>';
+    addBtn.addEventListener("click", () => showAddMenu(addBtn));
+    container.appendChild(addBtn);
 
-    // Tabs in the bar
     const tabArea = document.createElement("div");
     tabArea.className = "tab-scroll-area";
-
     for (const s of sessions) {
       tabArea.appendChild(createTabEl(s, s.name === sessionName));
     }
-
     container.appendChild(tabArea);
   }
 
-  let _pendingRender = null;
+  // ── Render gate ────────────────────────────────────────────────────
+  // All renders flow through this gate. During drag, renders are
+  // deferred (not lost) and replayed when drag ends.
+
+  let needsRender = false;
+
+  function requestRender(sessionName) {
+    currentSessionName = sessionName;
+    if (drag) { needsRender = true; return; }
+    render(sessionName);
+  }
 
   function render(sessionName) {
     if (!container) return;
     currentSessionName = sessionName;
+    needsRender = false;
 
-    // If a drag is active, defer the render until drag ends.
-    if (drag) {
-      _pendingRender = sessionName;
-      return;
-    }
-    _pendingRender = null;
-
-    // Abort any in-flight drag before wiping the DOM (cleans up overlay, ghost, refs)
     cleanupDrag();
 
     container.innerHTML = "";
     document.getElementById("key-island")?.remove();
 
+    // Connection indicator (hidden by default, shown by updateConnectionIndicator)
     const connDot = document.createElement("span");
     connDot.id = "connection-indicator";
     connDot.style.display = "none";
@@ -933,36 +924,21 @@ export function createShortcutBar(options = {}) {
 
     container.style.display = "";
 
-    // Set platform class on container and body
-    const mode = platformMode();
+    // Platform class — set once, never changes (platform is const)
     container.classList.remove("bar-desktop", "bar-ipad", "bar-phone");
-    container.classList.add(`bar-${mode}`);
-    document.body.dataset.platform = mode;
+    container.classList.add(`bar-${platform}`);
+    document.body.dataset.platform = platform;
 
-    // Clean up iPad-specific elements when not on iPad
-    if (mode !== "ipad") removeIPadAddButton();
-
-    if ((mode === "desktop" || mode === "ipad") && sessionStore) {
-      const storeState = sessionStore.getState();
-      const allSessions = storeState.sessions || [];
-
-      // Filter to this window's tab set, preserving tab set order
-      let sessions;
-      if (windowTabSet) {
-        const tabNames = windowTabSet.getTabs();
-        const sessionMap = new Map(allSessions.map(s => [s.name, s]));
-        sessions = tabNames.map(n => sessionMap.get(n) || { name: n }).filter(Boolean);
-      } else {
-        sessions = allSessions;
-      }
-
-      if (mode === "ipad") {
+    // Dispatch to platform-specific renderer
+    if (platform === "phone" || !sessionStore) {
+      renderPhoneBar(sessionName);
+    } else {
+      const sessions = getSessionList();
+      if (platform === "ipad") {
         renderIPadBar(sessionName, sessions);
       } else {
         renderDesktopTabs(sessionName, sessions);
       }
-    } else {
-      renderPhoneBar(sessionName);
     }
 
     // Floating island (Esc/Tab/keyboard on touch, plus utility buttons on tablet/desktop)
@@ -989,8 +965,8 @@ export function createShortcutBar(options = {}) {
     island.id = "key-island";
 
     // Pinned keys and keyboard shortcut button — touch only (desktop has real keyboard)
-    const mode = platformMode();
-    if (mode !== "desktop") {
+
+    if (platform !== "desktop") {
       for (const s of pinnedKeys) {
         const btn = document.createElement("button");
         btn.className = "key-island-btn";
@@ -1043,7 +1019,7 @@ export function createShortcutBar(options = {}) {
     }
 
     // Utility buttons — skip on phone (they're in the toolbar)
-    if (mode !== "phone") {
+    if (platform !== "phone") {
       if (onNotepadClick) {
         const btn = document.createElement("button");
         btn.className = "key-island-btn key-island-icon";
@@ -1215,38 +1191,23 @@ export function createShortcutBar(options = {}) {
     document.body.appendChild(island);
   }
 
-  // Debounced render for store-triggered updates — prevents cascade of
-  // re-renders when multiple stores update in quick succession (e.g. after
-  // a tab reorder triggers both windowTabSet and sessionStore updates).
-  let _storeRenderTimer = null;
-  function scheduleStoreRender() {
-    if (drag) return;
-    if (_storeRenderTimer) return; // already scheduled
-    _storeRenderTimer = requestAnimationFrame(() => {
-      _storeRenderTimer = null;
-      if (drag) return;
-      render(currentSessionName);
+  // Store subscribers — coalesce rapid updates into a single render via rAF.
+  // requestRender() handles the drag-deferral check.
+  let _rafId = null;
+  function onStoreChange() {
+    if (!currentSessionName || platform === "phone") return;
+    if (_rafId) return;
+    _rafId = requestAnimationFrame(() => {
+      _rafId = null;
+      requestRender(currentSessionName);
     });
   }
 
-  if (sessionStore) {
-    sessionStore.subscribe(() => {
-      if (currentSessionName && platformMode() !== "phone") {
-        scheduleStoreRender();
-      }
-    });
-  }
-
-  if (windowTabSet) {
-    windowTabSet.subscribe(() => {
-      if (currentSessionName && platformMode() !== "phone") {
-        scheduleStoreRender();
-      }
-    });
-  }
+  if (sessionStore) sessionStore.subscribe(onStoreChange);
+  if (windowTabSet) windowTabSet.subscribe(onStoreChange);
 
   return {
-    render,
+    render: requestRender,
     showAddMenu,
     setPortProxyEnabled(enabled) {
       portProxyEnabled = enabled;

@@ -9,16 +9,15 @@
  * the shortcut bar — the carousel only manages the card tile layout.
  */
 
+import { isIPad } from "./platform.js";
+
 const STORAGE_KEY = "katulong-carousel";
 
 /**
  * Detect iPad / tablet devices that should use the card carousel.
- * Works for real iPads and "Desktop-mode" iPads that report as Macintosh.
  */
 export function isCarouselDevice() {
-  return navigator.maxTouchPoints > 0 &&
-    (/iPad/.test(navigator.userAgent) ||
-     (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
+  return isIPad();
 }
 
 export function createCardCarousel({
