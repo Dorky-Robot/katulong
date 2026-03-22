@@ -272,24 +272,6 @@
         if (windowTabSet) windowTabSet.removeTab(sessionName);
         wsConnection.sendUnsubscribe(sessionName);
       },
-      onTabRenamed: async (oldName, newName) => {
-        try {
-          await api.put(`/sessions/${encodeURIComponent(oldName)}`, { name: newName });
-          carousel.renameCard(oldName, newName);
-          windowTabSet.renameTab(oldName, newName);
-          terminalPool.rename(oldName, newName);
-          invalidateSessions(sessionStore, newName);
-          if (state.session.name === oldName) {
-            state.update('session.name', newName);
-            document.title = newName;
-            const url = new URL(window.location);
-            url.searchParams.set("s", newName);
-            history.replaceState(null, "", url);
-          }
-        } catch (err) {
-          console.error("[Carousel] Rename failed:", err);
-        }
-      },
       onAllCardsDismissed: () => {
         // All cards dismissed — clear state so refresh shows blank stage
         wsConnection.disconnect();
@@ -299,15 +281,6 @@
         url.searchParams.delete("s");
         history.replaceState(null, "", url);
         sessionStorage.setItem("katulong-empty-state", "1");
-      },
-      onAddClick: (anchorEl) => {
-        // Show the same add menu as the tab bar's + button (new session + detached sessions)
-        // shortcutBarInstance is created after carousel but only called lazily
-        if (shortcutBarInstance?.showAddMenu) {
-          shortcutBarInstance.showAddMenu(anchorEl);
-        } else {
-          createNewSession();
-        }
       },
     });
 
@@ -918,13 +891,20 @@
       ],
       onSessionClick: openSessionManager,
       onNewSessionClick: createNewSession,
-      onTabClick: (name) => switchSession(name),
+      onTabClick: (name) => {
+        if (isCarouselDevice() && carousel.isActive()) {
+          routeToSession(name);
+        } else {
+          switchSession(name);
+        }
+      },
       onNotepadClick: () => toggleNotepad(),
       get notepad() { return notepad; },
       onTabRenamed: (oldName, newName) => {
         windowTabSet.renameTab(oldName, newName);
         terminalPool.rename(oldName, newName);
         notepad.rename(oldName, newName);
+        if (carousel.isActive()) carousel.renameCard(oldName, newName);
         invalidateSessions(sessionStore, newName);
         if (state.session.name === oldName) {
           state.update('session.name', newName);
@@ -970,6 +950,15 @@
       windowTabSet,
       carousel,
     });
+
+    // Sync carousel card order when tabs are reordered via the shortcut bar
+    if (windowTabSet) {
+      windowTabSet.subscribe(() => {
+        if (carousel.isActive()) {
+          carousel.reorderCards(windowTabSet.getTabs());
+        }
+      });
+    }
 
     // Re-render bar if pointer capability changes (e.g., external mouse connected)
     window.matchMedia("(pointer: fine)").addEventListener("change", () => {
