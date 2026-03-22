@@ -203,7 +203,7 @@
       overflow-x: auto; overflow-y: hidden;
       scroll-snap-type: x proximity;
       -webkit-overflow-scrolling: touch;
-      gap: 10px; padding: 6px;
+      gap: 10px; padding: 6px 6px 4px;
       background: var(--bg);
     }
     .carousel-card {
@@ -232,63 +232,12 @@
       padding: 6px 4px 4px 6px;
     }
     /* Carousel header — sits above the cards, shows titles inline */
-    .carousel-header {
-      flex-shrink: 0; height: 44px;
-      display: flex; align-items: center; justify-content: center;
-      gap: 8px; padding: 4px 52px;
-      background: var(--bg);
-      overflow-x: auto; overflow-y: hidden;
-      -webkit-overflow-scrolling: touch;
-    }
-    .carousel-header-tab {
-      flex-shrink: 0; display: flex; align-items: center; gap: 6px;
-      padding: 6px 12px; border-radius: 8px; height: 36px;
-      cursor: pointer; border: none; background: none;
-      transition: background 0.15s;
-    }
-    .carousel-header-tab:hover { background: rgba(255,255,255,0.04); }
-    .carousel-header-tab.active { background: rgba(255,255,255,0.06); }
-    .carousel-header-tab .header-tab-name {
-      font-size: 13px; color: var(--text-dim); font-family: var(--font-mono);
-      max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      text-shadow: 0 1px 0 rgba(0,0,0,0.4);
-      letter-spacing: 0.02em;
-    }
-    .carousel-header-tab.active .header-tab-name {
-      color: var(--text);
-      text-shadow: 0 1px 0 rgba(0,0,0,0.5), 0 0 8px rgba(255,255,255,0.04);
-    }
-    .carousel-header-tab .header-tab-dismiss {
-      width: 18px; height: 18px; border: none; border-radius: 4px;
-      background: none; color: var(--text-dim); font-size: 0.7rem;
-      cursor: pointer; display: flex; align-items: center; justify-content: center;
-      opacity: 0; transition: opacity 0.15s;
-    }
-    .carousel-header-tab:hover .header-tab-dismiss { opacity: 0.6; }
-    .carousel-header-tab .header-tab-dismiss:hover { opacity: 1; color: var(--danger); }
-    .header-tab-rename {
-      all: unset; font: inherit; color: var(--text); background: var(--bg-input);
-      border-radius: 4px; padding: 0 4px; width: 100%; min-width: 3rem;
-      text-align: center; cursor: text; font-size: 13px;
-    }
-    .carousel-header-tab { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
     .carousel-handle {
       position: absolute; top: 0; bottom: 0; width: 32px;
       cursor: col-resize; background: transparent; touch-action: none; z-index: 3;
     }
     .carousel-handle-left { left: -8px; }
     .carousel-handle-right { right: -8px; }
-    .carousel-add {
-      position: fixed; top: 8px; right: 8px; z-index: 100;
-      width: 36px; height: 36px; border-radius: 8px;
-      display: flex; align-items: center; justify-content: center;
-      background: var(--bg-surface); border: 1px solid var(--border);
-      color: var(--text-muted); font-size: 1.25rem; cursor: pointer;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      -webkit-touch-callout: none; -webkit-user-select: none;
-    }
-    .carousel-add:hover { color: var(--text); background: var(--accent); }
-
     .terminal-pane .xterm, #terminal-container .xterm { height: 100%; overflow: hidden; touch-action: none; }
     #terminal-container .xterm-viewport,
     #terminal-container .xterm-scrollable-element {
@@ -358,7 +307,7 @@
 
     /* --- Shortcut bar --- */
     #shortcut-bar {
-      flex-shrink: 0; z-index: var(--z-bar);
+      flex-shrink: 0; z-index: var(--z-bar); order: -1;
       height: var(--height-btn-md); background: var(--bg); border-bottom: 1px solid var(--border);
       display: flex; align-items: center; padding: 0 var(--space-1_5); gap: var(--space-xs);
       overflow: hidden;
@@ -470,7 +419,7 @@
 
     /* --- Desktop tab bar (session tabs in shortcut bar) --- */
     .tab-bar-tab {
-      flex: 0 1 auto; min-width: 2rem; height: var(--height-btn-sm); padding: 0 var(--space-2_5);
+      flex: 1 1 0; min-width: 2rem; max-width: 10rem; height: var(--height-btn-sm); padding: 0 var(--space-2_5);
       border: 1px solid var(--border); border-radius: var(--radius-sm);
       background: var(--bg-input); color: var(--text-muted);
       font-size: 0.8125rem; font-family: var(--font-mono);
@@ -480,7 +429,7 @@
       -webkit-touch-callout: none;
     }
     .tab-bar-tab i.ph { font-size: 1rem; flex-shrink: 0; }
-    .tab-bar-tab .tab-label { pointer-events: none; overflow: hidden; text-overflow: ellipsis; }
+    .tab-bar-tab .tab-label { pointer-events: none; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     .tab-rename-input { all: unset; font: inherit; color: inherit; width: 100%; min-width: 3rem; background: transparent; border-bottom: 1px solid currentColor; cursor: text; }
     .tab-bar-tab.active {
       background: var(--accent); color: var(--text);
@@ -496,12 +445,22 @@
       font-size: 0.75rem; color: var(--text-dim);
       opacity: 0; transition: opacity 0.1s;
       margin-left: 0.25rem; flex-shrink: 0;
+      /* Enlarge touch target without changing visual size */
+      padding: 0.5rem; box-sizing: content-box;
+      margin: -0.5rem -0.5rem -0.5rem 0;
     }
     .tab-bar-tab:hover .tab-close { opacity: 1; }
     .tab-close:hover { color: var(--text); background: rgba(255,255,255,0.1); }
     .tab-bar-tab.active .tab-close:hover { color: var(--danger); }
 
     .tab-bar-tab.tab-long-press { transform: scale(1.05); transition: transform 0.15s; }
+
+    /* Progressive tab shrinking — hide elements when tabs are too narrow */
+    .tabs-compact .tab-close { display: none; }
+    .tabs-icon-only .tab-close,
+    .tabs-icon-only .tab-label,
+    .tabs-icon-only .tab-notes-dot { display: none; }
+    .tabs-icon-only .tab-bar-tab { justify-content: center; padding: 0; min-width: 2rem; }
 
     /* Drag ghost (follows cursor while dragging) */
     .tab-drag-ghost {
@@ -612,18 +571,38 @@
     }
     .island-connection-dot.connected { background: var(--success); }
 
-    /* iPad/tablet with desktop tabs */
-    @media (pointer: coarse) and (min-width: 768px) {
-      /* Hide sidebar on tablet when showing desktop tabs */
-      #sidebar { display: none !important; }
-      #sidebar-backdrop { display: none !important; }
-      /* Close button always visible on touch (no hover) */
-      .tab-close { opacity: 0.6; }
+    /* iPad: hide sidebar, tab bar at bottom, close always visible */
+    [data-platform="ipad"] #sidebar { display: none !important; }
+    [data-platform="ipad"] #sidebar-backdrop { display: none !important; }
+    #shortcut-bar.bar-ipad {
+      order: 1; /* after terminal = bottom */
+      border-bottom: none;
+      border-top: 1px solid var(--border);
+      height: 4rem;
+      padding-top: var(--space-xs);
+      padding-left: calc(3.5rem + var(--space-sm)); /* space for fixed + button */
+      padding-right: 8rem; /* reserve space for joystick */
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      gap: var(--space-sm);
     }
-    /* Traffic light gap only in PWA/standalone mode */
-    @media (display-mode: standalone) and (pointer: coarse) and (min-width: 768px) {
-      #shortcut-bar { padding-left: 5rem; }
+    #shortcut-bar.bar-ipad .tab-close { opacity: 0.6; }
+    /* iPad tabs: taller for touch, shrink to fit */
+    #shortcut-bar.bar-ipad .tab-bar-tab {
+      flex: 1 1 0; min-width: 3rem; max-width: 12rem;
+      height: 2.5rem; padding: 0 var(--space-md);
     }
+    /* iPad + button: absolutely positioned within the shortcut bar's padding area */
+    #shortcut-bar.bar-ipad { position: relative; }
+    .ipad-add-btn {
+      position: absolute; top: 0; left: 0; bottom: 0;
+      width: 3.5rem;
+      border: none; background: transparent;
+      color: var(--text-muted); font-size: 1.25rem; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      -webkit-touch-callout: none; -webkit-user-select: none;
+      z-index: 2;
+    }
+    .ipad-add-btn:active { color: var(--accent); }
 
     /* --- Shared modal --- */
     .modal-overlay {
@@ -799,6 +778,14 @@
     @media (pointer: coarse) {
       #joystick { display: flex; }
     }
+    /* Hide joystick when a fine pointer (trackpad/mouse) is connected */
+    @media (any-pointer: fine) {
+      #joystick { display: none !important; }
+      #enter-progress-ring { display: none !important; }
+    }
+    /* Hide joystick when hardware keyboard detected (JS-driven) */
+    #joystick.hw-keyboard { display: none !important; }
+    #joystick.hw-keyboard ~ #enter-progress-ring { display: none !important; }
 
     /* --- Enter key progress ring --- */
     #enter-progress-ring {
@@ -874,7 +861,7 @@
         :root { --bar-top-pad: 1.5rem; }
         #sidebar-toolbar { height: calc(var(--height-btn-md) + var(--bar-top-pad)); padding-top: var(--bar-top-pad); }
         #sidebar.collapsed #sidebar-toolbar { padding-top: calc(var(--bar-top-pad) + 0.5rem); }
-        #shortcut-bar { height: calc(var(--height-btn-md) + var(--bar-top-pad)); padding-top: var(--bar-top-pad); }
+        /* shortcut-bar is at the bottom on iPad, no top padding needed */
       }
     }
     .sidebar-icon-btn {
@@ -1892,8 +1879,8 @@
     </aside>
     <div id="sidebar-backdrop"></div>
     <div id="main-stage">
-      <nav id="shortcut-bar" role="toolbar" aria-label="Shortcut bar"></nav>
       <div id="terminal-container"></div>
+      <nav id="shortcut-bar" role="toolbar" aria-label="Shortcut bar"></nav>
       <div id="helm-view"></div>
       <div id="file-browser"></div>
       <div id="port-forward"></div>
