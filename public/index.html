@@ -777,11 +777,11 @@
     @media (pointer: coarse) {
       #joystick { display: flex; }
     }
-    /* iPad: center joystick on the browser's bottom-right rounded corner.
-       Position from viewport edge using safe-area insets — no layout math. */
+    /* iPad: anchor joystick at the safe-area corner so it visually aligns
+       with the browser's bottom-right rounded corner. */
     [data-platform="ipad"] #joystick {
-      right: calc(env(safe-area-inset-right, 0px) - 2.5rem + 20px);
-      bottom: calc(env(safe-area-inset-bottom, 0px) - 2.5rem + 20px);
+      right: env(safe-area-inset-right, 0px);
+      bottom: env(safe-area-inset-bottom, 0px);
     }
     /* Hide joystick when hardware keyboard detected (JS-driven) */
     #joystick.hw-keyboard { display: none !important; }
@@ -798,8 +798,8 @@
       z-index: calc(var(--z-bar) + 1);
     }
     [data-platform="ipad"] #enter-progress-ring {
-      right: calc(env(safe-area-inset-right, 0px) - 2.5rem + 20px);
-      bottom: calc(env(safe-area-inset-bottom, 0px) - 2.5rem + 20px);
+      right: env(safe-area-inset-right, 0px);
+      bottom: env(safe-area-inset-bottom, 0px);
     }
     #enter-progress-ring.active {
       display: block;
