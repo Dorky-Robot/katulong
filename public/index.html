@@ -777,13 +777,13 @@
     @media (pointer: coarse) {
       #joystick { display: flex; }
     }
-    /* iPad: anchor joystick at the browser's bottom-right rounded corner.
-       Use left/top with dvw/dvh (dynamic viewport units) so the position
-       is immune to layout viewport shifts from xterm scrollbars etc. */
+    /* iPad: position joystick near the bottom-right, inset enough to
+       clear Stage Manager's corner resize handle (~30px touch zone).
+       Use left/top with dvw/dvh so position is immune to layout shifts. */
     [data-platform="ipad"] #joystick {
       right: auto; bottom: auto;
-      left: calc(100dvw - 5rem);
-      top: calc(100dvh - 5rem);
+      left: calc(100dvw - 5rem - 1.5rem);
+      top: calc(100dvh - 5rem - 1.5rem);
     }
     /* Hide joystick when hardware keyboard detected (JS-driven) */
     #joystick.hw-keyboard { display: none !important; }
@@ -801,8 +801,8 @@
     }
     [data-platform="ipad"] #enter-progress-ring {
       right: auto; bottom: auto;
-      left: calc(100dvw - 5rem);
-      top: calc(100dvh - 5rem);
+      left: calc(100dvw - 5rem - 1.5rem);
+      top: calc(100dvh - 5rem - 1.5rem);
     }
     #enter-progress-ring.active {
       display: block;
