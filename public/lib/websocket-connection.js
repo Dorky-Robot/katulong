@@ -7,8 +7,6 @@
 
 import { scrollToBottom, terminalWriteWithScroll, isAtBottom } from "/lib/scroll-utils.js";
 import { basePath } from "/lib/base-path.js";
-import { createSeqBuffer } from "/lib/seq-buffer.js";
-import { createNudgeTimer } from "/lib/nudge-timer.js";
 
 /**
  * Connection state machine: DISCONNECTED → CONNECTING → CONNECTED → ATTACHED
@@ -48,56 +46,41 @@ export function createWebSocketConnection(deps = {}) {
   let reconnectTimeout = null;
   let suppressReconnect = false;
 
-  // Helper: send a catchup request to the server
-  // (Catchup trigger 1/2: gap timeout in seq-buffer; 2/2: nudge poll in seqStatus effect)
-  function sendCatchup(session, fromSeq) {
+  // --- Pull-based output: each session is an event topic (like Kafka). ---
+  // Clients maintain a cursor (byte offset) into the session's RingBuffer
+  // and pull data when ready.  The server sends lightweight "data-available"
+  // notifications; clients respond with pull requests at their own pace.
+  // Natural backpressure: the next pull only fires after xterm finishes
+  // processing the previous write.
+
+  const pullStates = new Map(); // sessionName -> { cursor, pulling, writing, pending }
+
+  function sendPull(sessionName) {
+    const ps = pullStates.get(sessionName);
+    if (!ps || ps.pulling) return;
     const ws = state.connection.ws;
-    if (ws && ws.readyState === 1 && session) {
-      ws.send(JSON.stringify({ type: "catchup", session, fromSeq }));
+    if (!ws || ws.readyState !== 1) return;
+    ps.pulling = true;
+    ws.send(JSON.stringify({ type: "pull", session: sessionName, fromSeq: ps.cursor }));
+  }
+
+  function initPullState(sessionName, cursor) {
+    const existing = pullStates.get(sessionName);
+    if (existing) {
+      existing.cursor = cursor;
+      existing.pulling = false;
+      existing.writing = false;
+      existing.pending = false;
+    } else {
+      pullStates.set(sessionName, { cursor, pulling: false, writing: false, pending: false });
     }
   }
 
-  // Per-session seq buffers — each session is an independent channel with its
-  // own byte-offset sequence stream, gap detection, and catchup capability.
-  // Both the primary session and subscriptions use this single Map.
-  const seqBuffers = new Map();
-
-  function getOrCreateSeqBuffer(sessionName) {
-    if (seqBuffers.has(sessionName)) return seqBuffers.get(sessionName);
-    const buf = createSeqBuffer({
-      onFlush: (data) => {
-        const term = getOutputTerm(sessionName);
-        if (term) scheduleWrite(term, data);
-      },
-      onGapTimeout: (expectedSeq) => {
-        sendCatchup(sessionName, expectedSeq);
-      },
-    });
-    seqBuffers.set(sessionName, buf);
-    return buf;
-  }
-
-  const nudgeTimer = createNudgeTimer({
-    getWS: () => state.connection.ws,
-  });
-
-  // Output write batching: accumulate incoming data per terminal and flush
-  // once per animation frame to reduce xterm.js write/render passes.
-  const pendingWrites = new Map(); // term -> string
-  let rafScheduled = false;
-
-  function scheduleWrite(term, data) {
-    const pending = pendingWrites.get(term);
-    pendingWrites.set(term, pending !== undefined ? pending + data : data);
-    if (!rafScheduled) {
-      rafScheduled = true;
-      requestAnimationFrame(() => {
-        rafScheduled = false;
-        for (const [t, buf] of pendingWrites) {
-          terminalWriteWithScroll(t, buf);
-        }
-        pendingWrites.clear();
-      });
+  function clearPullStates(sessionName) {
+    if (sessionName) {
+      pullStates.delete(sessionName);
+    } else {
+      pullStates.clear();
     }
   }
 
@@ -149,11 +132,30 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
+    // Unsequenced output (scrollback replay on attach/switch) — write directly
     output: (msg) => ({
       stateUpdates: {},
       effects: [
-        { type: 'seqOutput', data: msg.data, session: msg.session, seq: msg.seq }
+        { type: 'terminalWrite', data: msg.data, session: msg.session, preserveScroll: true, useOutputTerm: true }
       ]
+    }),
+
+    // Server notifies that new data is available for a session topic
+    'data-available': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'dataAvailable', session: msg.session }]
+    }),
+
+    // Response to a pull request — contains data from cursor to head
+    'pull-response': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'pullResponse', session: msg.session, data: msg.data, cursor: msg.cursor }]
+    }),
+
+    // Cursor was evicted — server sends a pane snapshot to recover
+    'pull-snapshot': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'pullSnapshot', session: msg.session, data: msg.data, cursor: msg.cursor }]
     }),
 
     reload: () => ({
@@ -199,24 +201,10 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
+    // seq-init: server tells us where the log head is — initialize pull cursor
     'seq-init': (msg) => ({
       stateUpdates: {},
-      effects: [{ type: 'seqInit', session: msg.session, seq: msg.seq }]
-    }),
-
-    'seq-status': (msg) => ({
-      stateUpdates: {},
-      effects: [{ type: 'seqStatus', session: msg.session, seq: msg.seq }]
-    }),
-
-    'catchup-data': (msg) => ({
-      stateUpdates: {},
-      effects: [{ type: 'seqOutput', data: msg.data, session: msg.session, seq: msg.seq }]
-    }),
-
-    'seq-reset': (msg) => ({
-      stateUpdates: {},
-      effects: [{ type: 'seqReset', session: msg.session }]
+      effects: [{ type: 'pullInit', session: msg.session, seq: msg.seq }]
     }),
 
     'server-draining': () => ({
@@ -281,63 +269,81 @@ export function createWebSocketConnection(deps = {}) {
         }
         break;
       }
-      case 'seqOutput': {
-        nudgeTimer.reset();
-        if (effect.seq !== undefined && effect.session) {
-          // Sequenced output — route through the session's seq buffer for
-          // byte-offset ordering.  If seq-init hasn't arrived yet, drop
-          // the data; the catchup mechanism will recover it once the
-          // buffer is initialized.
-          const buf = seqBuffers.get(effect.session);
-          if (buf && buf.isInitialized()) {
-            buf.push(effect.seq, effect.data);
-          }
-          // else: buffer not yet initialized — data is dropped and will
-          // be recovered via catchup after seq-init arrives.
-        } else {
-          // Unsequenced output (scrollback replay, backward compat) —
-          // write directly to the terminal.
-          const term = effect.useOutputTerm !== false ? getOutputTerm(effect.session) : getTerm();
-          if (term) scheduleWrite(term, effect.data);
-        }
-        break;
-      }
       case 'seqClear':
+        clearPullStates(effect.session || null);
+        break;
+      case 'pullInit':
+        // Initialize pull cursor and send first pull
         if (effect.session) {
-          // Clear a specific session's buffer (e.g. unsubscribe)
-          const buf = seqBuffers.get(effect.session);
-          if (buf) { buf.clear(); seqBuffers.delete(effect.session); }
+          initPullState(effect.session, effect.seq);
+          sendPull(effect.session);
+        }
+        break;
+      case 'dataAvailable': {
+        // Server notifies new data — trigger pull if not already busy
+        const ps = pullStates.get(effect.session);
+        if (!ps) break; // not initialized yet
+        if (ps.pulling || ps.writing) {
+          ps.pending = true; // will pull again after current op completes
+          break;
+        }
+        sendPull(effect.session);
+        break;
+      }
+      case 'pullResponse': {
+        const ps = pullStates.get(effect.session);
+        if (!ps) break;
+        ps.pulling = false;
+        if (effect.data && effect.data.length > 0) {
+          ps.writing = true;
+          const term = getOutputTerm(effect.session);
+          if (term) {
+            terminalWriteWithScroll(term, effect.data, () => {
+              ps.writing = false;
+              ps.cursor = effect.cursor;
+              if (ps.pending) {
+                ps.pending = false;
+                sendPull(effect.session);
+              }
+            });
+          } else {
+            // No terminal (session evicted from pool) — advance cursor, skip render
+            ps.writing = false;
+            ps.cursor = effect.cursor;
+          }
         } else {
-          // Clear all buffers (e.g. attach/switch resets primary channel)
-          for (const buf of seqBuffers.values()) buf.clear();
-          seqBuffers.clear();
-        }
-        nudgeTimer.stop();
-        break;
-      case 'seqInit':
-        if (effect.session) {
-          const buf = getOrCreateSeqBuffer(effect.session);
-          buf.init(effect.seq);
-        }
-        nudgeTimer.start();
-        break;
-      case 'seqStatus': {
-        // Catchup trigger 2/2: nudge poll revealed lag (see also onGapTimeout)
-        if (!effect.session) break;
-        const buf = seqBuffers.get(effect.session);
-        if (buf && buf.isInitialized() && effect.seq > buf.getExpectedSeq()) {
-          sendCatchup(effect.session, buf.getExpectedSeq());
+          // Already caught up
+          ps.cursor = effect.cursor;
+          if (ps.pending) {
+            ps.pending = false;
+            sendPull(effect.session);
+          }
         }
         break;
       }
-      case 'seqReset':
-        // Data evicted — clear session buffer and force reconnect for fresh replay
-        if (effect.session) {
-          const buf = seqBuffers.get(effect.session);
-          if (buf) { buf.clear(); seqBuffers.delete(effect.session); }
+      case 'pullSnapshot': {
+        // Cursor was evicted — reset terminal and write the snapshot
+        const ps = pullStates.get(effect.session);
+        if (!ps) break;
+        ps.pulling = false;
+        const term = getOutputTerm(effect.session);
+        if (term) {
+          term.clear();
+          term.reset();
+          ps.writing = true;
+          terminalWriteWithScroll(term, effect.data || "", () => {
+            ps.writing = false;
+            ps.cursor = effect.cursor;
+            if (ps.pending) {
+              ps.pending = false;
+              sendPull(effect.session);
+            }
+          });
+        } else {
+          ps.cursor = effect.cursor;
         }
-        if (state.connection.ws) state.connection.ws.close();
         break;
+      }
       case 'terminalReset': {
         const term = getTerm();
         if (!term) break;
@@ -348,11 +354,7 @@ export function createWebSocketConnection(deps = {}) {
       case 'terminalWrite': {
         const term = effect.useOutputTerm ? getOutputTerm(effect.session) : getTerm();
         if (!term) break;
-        if (effect.preserveScroll) {
-          scheduleWrite(term, effect.data);
-        } else {
-          term.write(effect.data);
-        }
+        terminalWriteWithScroll(term, effect.data);
         break;
       }
       case 'reload':
@@ -487,9 +489,7 @@ export function createWebSocketConnection(deps = {}) {
       const term = getTerm();
       state.scroll.userScrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
       state.connection.attached = false;
-      nudgeTimer.stop();
-      for (const buf of seqBuffers.values()) buf.clear();
-      seqBuffers.clear();
+      clearPullStates();
       if (deps.updateConnectionIndicator) deps.updateConnectionIndicator();
       if (deps.onDisconnect) deps.onDisconnect();
 
@@ -571,10 +571,6 @@ export function createWebSocketConnection(deps = {}) {
     wsMessageHandlers,
     executeEffect,
     getConnectionState: () => connectionState,
-    /** Reset nudge backoff on user input so gap detection stays responsive. */
-    nudgeOnInput() {
-      nudgeTimer.nudge();
-    },
     sendSubscribe(sessionName) {
       const ws = state.connection.ws;
       if (ws?.readyState === 1) {

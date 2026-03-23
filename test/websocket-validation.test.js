@@ -306,41 +306,24 @@ describe("validateMessage", () => {
     assert.match(result.error, /object/i);
   });
 
-  it("validates seq-query messages (no fields required)", () => {
-    const result = validateMessage({ type: "seq-query" });
+  it("validates pull messages with required fromSeq", () => {
+    const result = validateMessage({ type: "pull", fromSeq: 0 });
     assert.strictEqual(result.valid, true);
   });
 
-  it("validates catchup messages with required fromSeq", () => {
-    const result = validateMessage({ type: "catchup", fromSeq: 0 });
+  it("validates pull with session field", () => {
+    const result = validateMessage({ type: "pull", session: "alpha", fromSeq: 100 });
     assert.strictEqual(result.valid, true);
   });
 
-  it("validates catchup with session field", () => {
-    const result = validateMessage({ type: "catchup", session: "alpha", fromSeq: 100 });
-    assert.strictEqual(result.valid, true);
-  });
-
-  it("rejects catchup with missing fromSeq", () => {
-    const result = validateMessage({ type: "catchup" });
+  it("rejects pull with missing fromSeq", () => {
+    const result = validateMessage({ type: "pull" });
     assert.strictEqual(result.valid, false);
     assert.match(result.error, /fromSeq/i);
   });
 
-  it("rejects catchup with negative fromSeq", () => {
-    const result = validateMessage({ type: "catchup", fromSeq: -1 });
-    assert.strictEqual(result.valid, false);
-    assert.match(result.error, /fromSeq/i);
-  });
-
-  it("rejects catchup with non-integer fromSeq", () => {
-    const result = validateMessage({ type: "catchup", fromSeq: 1.5 });
-    assert.strictEqual(result.valid, false);
-    assert.match(result.error, /fromSeq/i);
-  });
-
-  it("rejects catchup with string fromSeq", () => {
-    const result = validateMessage({ type: "catchup", fromSeq: "100" });
+  it("rejects pull with negative fromSeq", () => {
+    const result = validateMessage({ type: "pull", fromSeq: -1 });
     assert.strictEqual(result.valid, false);
     assert.match(result.error, /fromSeq/i);
   });

@@ -192,8 +192,11 @@
       flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
     }
     /* --- Terminal --- */
-    #terminal-container { flex: 1; min-width: 0; position: relative; z-index: 1; overflow: hidden; background: var(--bg); }
-    .terminal-pane { position: absolute; inset: 0 0 0 4px; display: none; }
+    /* terminal-container: layout only (flex sizing + stacking context for panes) */
+    #terminal-container { flex: 1; min-width: 0; position: relative; z-index: 1; background: var(--bg); }
+    /* terminal-pane: stacking + containment — contain:paint clips all child
+       rendering (including system carets) to the pane boundary. */
+    .terminal-pane { position: absolute; inset: 0 0 0 4px; display: none; contain: paint; overflow: hidden; }
     .terminal-pane.active { display: block; }
 
     /* --- Card Carousel (iPad) --- */
@@ -210,7 +213,7 @@
       flex: 0 0 calc(50% - 5px); min-width: 280px; max-width: 100%;
       display: flex; flex-direction: column; overflow: hidden;
       scroll-snap-align: center; position: relative;
-      border-radius: 12px;
+      border-radius: 20px;
       background: var(--bg-surface);
       box-shadow: 0 2px 12px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.04);
       transition: flex-basis 0.3s ease, opacity 0.25s ease, transform 0.3s ease;
@@ -227,8 +230,8 @@
     .carousel-card > .terminal-pane {
       position: relative; inset: auto;
       flex: 1; display: block;
-      min-width: 0; min-height: 0; overflow: hidden;
-      border-radius: 12px;
+      min-width: 0; min-height: 0;
+      border-radius: 20px;
       padding: 6px 4px 4px 6px;
     }
     /* Carousel header — sits above the cards, shows titles inline */
@@ -238,7 +241,7 @@
     }
     .carousel-handle-left { left: -8px; }
     .carousel-handle-right { right: -8px; }
-    .terminal-pane .xterm, #terminal-container .xterm { height: 100%; overflow: hidden; touch-action: none; }
+    .terminal-pane .xterm, #terminal-container .xterm { height: 100%; touch-action: none; }
     #terminal-container .xterm-viewport,
     #terminal-container .xterm-scrollable-element {
       -webkit-overflow-scrolling: touch;
@@ -247,17 +250,12 @@
     /* Override xterm.css default #000 background so the gap below terminal rows
        matches the theme instead of showing a black strip. */
     #terminal-container .xterm-viewport { background-color: var(--bg) !important; }
-    /* Hide xterm's helper textarea caret so it never renders outside the terminal box.
-       xterm.js repositions this textarea via inline styles for IME — clip it to the
-       terminal bounds and force the caret invisible regardless. */
-    #terminal-container .xterm .xterm-helper-textarea {
-      caret-color: transparent !important;
-      color: transparent !important;
-      background: transparent !important;
-      border: none !important;
-      outline: none !important;
-      clip: rect(0, 0, 0, 0) !important;
-      clip-path: inset(50%) !important;
+    /* xterm's input textarea is moved into this off-screen wrapper at the DOM
+       level (see terminal-pool.js) so the system caret can never appear in the
+       visible terminal area.  No opacity/clip-path hacks needed. */
+    .xterm-input-clip {
+      position: fixed; left: -9999px; top: 0;
+      width: 1px; height: 1px; overflow: hidden;
     }
 
     /* --- Search bar --- */
@@ -581,7 +579,7 @@
       height: 4rem;
       padding-top: var(--space-xs);
       padding-left: calc(3.5rem + var(--space-sm)); /* space for fixed + button */
-      padding-right: 8rem; /* reserve space for joystick */
+      padding-right: var(--space-sm);
       padding-bottom: env(safe-area-inset-bottom, 0px);
       gap: var(--space-sm);
     }
@@ -764,7 +762,8 @@
 
     /* --- Joystick zone (touch devices only) --- */
     #joystick {
-      display: none; position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 50;
+      display: none; position: fixed; z-index: var(--z-bar);
+      right: 1.5rem; bottom: 1.5rem;
       width: 5rem; height: 5rem; border-radius: 50%;
       border: 1.5px dashed var(--border);
       background: transparent;
@@ -778,10 +777,12 @@
     @media (pointer: coarse) {
       #joystick { display: flex; }
     }
-    /* Hide joystick when a fine pointer (trackpad/mouse) is connected */
-    @media (any-pointer: fine) {
-      #joystick { display: none !important; }
-      #enter-progress-ring { display: none !important; }
+    /* iPad: center on card's bottom-right corner arc (radius 20px) */
+    /* right  = container-padding(6px) + radius(20px) - half-joystick(2.5rem) */
+    /* bottom = tab-bar(4rem) + safe-area + container-padding(4px) + radius(20px) - half-joystick(2.5rem) */
+    [data-platform="ipad"] #joystick {
+      right: calc(6px + 20px - 2.5rem);
+      bottom: calc(4rem + env(safe-area-inset-bottom, 0px) + 4px + 20px - 2.5rem);
     }
     /* Hide joystick when hardware keyboard detected (JS-driven) */
     #joystick.hw-keyboard { display: none !important; }
@@ -791,12 +792,15 @@
     #enter-progress-ring {
       display: none;
       position: fixed;
-      bottom: 1.5rem;
-      right: 1.5rem;
+      right: 1.5rem; bottom: 1.5rem;
       width: 5rem;
       height: 5rem;
       pointer-events: none;
-      z-index: 51;
+      z-index: calc(var(--z-bar) + 1);
+    }
+    [data-platform="ipad"] #enter-progress-ring {
+      right: calc(6px + 20px - 2.5rem);
+      bottom: calc(4rem + env(safe-area-inset-bottom, 0px) + 4px + 20px - 2.5rem);
     }
     #enter-progress-ring.active {
       display: block;
@@ -1887,6 +1891,13 @@
       <div id="plugin-panels"></div>
     </div>
   </div>
+
+  <!-- Joystick: fixed to viewport, outside all layout containers -->
+  <div id="joystick" aria-label="Swipe or hold joystick for arrows, long-press center for Enter"></div>
+  <svg id="enter-progress-ring" viewBox="0 0 80 80">
+    <circle cx="40" cy="40" r="36" />
+  </svg>
+
   <div id="search-bar" role="search" aria-label="Find in terminal">
     <input id="search-input" type="text" placeholder="Find..." aria-label="Search terminal">
     <button id="search-close" class="btn btn--icon-only btn--sm" aria-label="Close search">
@@ -1987,13 +1998,6 @@
     </div>
   </div>
 
-  <!-- Joystick swipe zone -->
-  <div id="joystick" aria-label="Swipe or hold joystick for arrows, long-press center for Enter"></div>
-
-  <!-- Enter key progress ring -->
-  <svg id="enter-progress-ring" viewBox="0 0 80 80">
-    <circle cx="40" cy="40" r="36" />
-  </svg>
 
 
 

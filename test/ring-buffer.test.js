@@ -10,14 +10,12 @@ describe("RingBuffer", () => {
 
       assert.strictEqual(stats.items, 0);
       assert.strictEqual(stats.bytes, 0);
-      assert.strictEqual(buffer.maxItems, 5000);
-      assert.strictEqual(buffer.maxBytes, 5 * 1024 * 1024);
+      assert.strictEqual(buffer.maxBytes, 20 * 1024 * 1024);
     });
 
-    it("creates buffer with custom limits", () => {
-      const buffer = new RingBuffer(100, 1024);
+    it("creates buffer with custom byte limit", () => {
+      const buffer = new RingBuffer(1024);
 
-      assert.strictEqual(buffer.maxItems, 100);
       assert.strictEqual(buffer.maxBytes, 1024);
     });
   });
@@ -44,34 +42,9 @@ describe("RingBuffer", () => {
     });
   });
 
-  describe("eviction by item count", () => {
-    it("evicts oldest items when maxItems exceeded", () => {
-      const buffer = new RingBuffer(3, 1000000);
-      buffer.push("first");
-      buffer.push("second");
-      buffer.push("third");
-      buffer.push("fourth");  // Should evict "first"
-
-      assert.strictEqual(buffer.toString(), "secondthirdfourth");
-      assert.strictEqual(buffer.stats().items, 3);
-    });
-
-    it("evicts multiple items when far over limit", () => {
-      const buffer = new RingBuffer(2, 1000000);
-      buffer.push("a");
-      buffer.push("b");
-      buffer.push("c");
-      buffer.push("d");
-      buffer.push("e");
-
-      assert.strictEqual(buffer.toString(), "de");
-      assert.strictEqual(buffer.stats().items, 2);
-    });
-  });
-
   describe("eviction by byte size", () => {
     it("evicts oldest items when maxBytes exceeded", () => {
-      const buffer = new RingBuffer(1000, 10);  // 10 byte limit
+      const buffer = new RingBuffer(10);  // 10 byte limit
       buffer.push("abcd");   // 4 bytes
       buffer.push("efgh");   // 4 bytes, total 8
       buffer.push("ijkl");   // 4 bytes, total 12 -> evict "abcd", leaves 8
@@ -81,7 +54,7 @@ describe("RingBuffer", () => {
     });
 
     it("evicts multiple items when far over byte limit", () => {
-      const buffer = new RingBuffer(1000, 5);
+      const buffer = new RingBuffer(5);
       buffer.push("abc");   // 3 bytes
       buffer.push("def");   // 3 bytes, total 6 -> evict "abc", leaves 3
       buffer.push("ghi");   // 3 bytes, total 6 -> evict "def", leaves 3
@@ -91,19 +64,9 @@ describe("RingBuffer", () => {
     });
   });
 
-  describe("eviction by either limit", () => {
-    it("evicts based on item limit when hit first", () => {
-      const buffer = new RingBuffer(2, 1000);
-      buffer.push("a");
-      buffer.push("b");
-      buffer.push("c");  // Item limit hit
-
-      assert.strictEqual(buffer.toString(), "bc");
-      assert.strictEqual(buffer.stats().items, 2);
-    });
-
-    it("evicts based on byte limit when hit first", () => {
-      const buffer = new RingBuffer(100, 5);
+  describe("eviction with tight byte limit", () => {
+    it("evicts based on byte limit", () => {
+      const buffer = new RingBuffer(5);
       buffer.push("abc");
       buffer.push("def");  // Byte limit hit
 
@@ -167,7 +130,7 @@ describe("RingBuffer", () => {
     });
 
     it("handles single large item exceeding byte limit", () => {
-      const buffer = new RingBuffer(100, 5);
+      const buffer = new RingBuffer(5);
       buffer.push("verylongstring");  // 14 bytes, exceeds limit
 
       // Should keep the item even though it exceeds limit
@@ -176,29 +139,29 @@ describe("RingBuffer", () => {
     });
 
     it("maintains correct state after multiple evictions", () => {
-      const buffer = new RingBuffer(3, 20);
+      const buffer = new RingBuffer(20);
 
       for (let i = 0; i < 10; i++) {
         buffer.push(`item${i}`);
       }
 
       const stats = buffer.stats();
-      assert.ok(stats.items <= 3);
       assert.ok(stats.bytes <= 20);
     });
   });
 
   describe("eviction performance", () => {
-    it("evicts efficiently under high item count (O(n) not O(n^2))", () => {
-      const buffer = new RingBuffer(5000, 5 * 1024 * 1024);
+    it("evicts efficiently under high byte pressure (O(n) not O(n^2))", () => {
+      // Each chunk is ~10 bytes; 50000 bytes keeps roughly 5000 items
+      const buffer = new RingBuffer(50000);
 
-      // Push 10000 items — eviction must drain 5000 of them without quadratic cost
+      // Push 10000 items — eviction must drain old items without quadratic cost
       for (let i = 0; i < 10000; i++) {
         buffer.push(`chunk${i}\n`);
       }
 
       const stats = buffer.stats();
-      assert.ok(stats.items <= 5000, `expected ≤5000 items, got ${stats.items}`);
+      assert.ok(stats.bytes <= 50000, `expected ≤50000 bytes, got ${stats.bytes}`);
       // Most recent item should be present
       assert.ok(buffer.toString().includes("chunk9999"));
     });
@@ -206,7 +169,7 @@ describe("RingBuffer", () => {
 
   describe("real-world terminal output simulation", () => {
     it("handles typical terminal output patterns", () => {
-      const buffer = new RingBuffer(5000, 5 * 1024 * 1024);
+      const buffer = new RingBuffer();
 
       // Simulate command output
       buffer.push("$ ls -la\n");
@@ -221,7 +184,7 @@ describe("RingBuffer", () => {
     });
 
     it("handles large streaming output", () => {
-      const buffer = new RingBuffer(100, 1024);
+      const buffer = new RingBuffer(1024);
 
       // Simulate large log output
       for (let i = 0; i < 200; i++) {
@@ -229,7 +192,6 @@ describe("RingBuffer", () => {
       }
 
       const stats = buffer.stats();
-      assert.ok(stats.items <= 100);
       assert.ok(stats.bytes <= 1024);
 
       // Should contain recent lines

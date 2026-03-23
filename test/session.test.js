@@ -166,13 +166,11 @@ describe("stripDaResponses", () => {
 describe("RingBuffer", () => {
   it("initializes with default limits", () => {
     const buf = new RingBuffer();
-    assert.strictEqual(buf.maxItems, 5000);
-    assert.strictEqual(buf.maxBytes, 5 * 1024 * 1024);
+    assert.strictEqual(buf.maxBytes, 20 * 1024 * 1024);
   });
 
-  it("initializes with custom limits", () => {
-    const buf = new RingBuffer(100, 1024);
-    assert.strictEqual(buf.maxItems, 100);
+  it("initializes with custom byte limit", () => {
+    const buf = new RingBuffer(1024);
     assert.strictEqual(buf.maxBytes, 1024);
   });
 
@@ -183,13 +181,12 @@ describe("RingBuffer", () => {
     assert.strictEqual(buf.toString(), "hello world");
   });
 
-  it("evicts when item limit exceeded", () => {
-    const buf = new RingBuffer(3, 10000);
-    buf.push("a");
-    buf.push("b");
-    buf.push("c");
-    buf.push("d");
-    assert.strictEqual(buf.toString(), "bcd");
+  it("evicts when byte limit exceeded", () => {
+    const buf = new RingBuffer(3);
+    buf.push("ab");   // 2 bytes
+    buf.push("cd");   // 2 bytes, total 4 -> evict "ab", leaves 2
+    buf.push("ef");   // 2 bytes, total 4 -> evict "cd", leaves 2
+    assert.strictEqual(buf.toString(), "ef");
   });
 
   it("reports stats", () => {
@@ -316,16 +313,13 @@ describe("Session", () => {
     it("initializes output buffer with default limits", () => {
       const session = new Session("test", "test");
       assert.ok(session.outputBuffer);
-      assert.strictEqual(session.outputBuffer.maxItems, 5000);
-      assert.strictEqual(session.outputBuffer.maxBytes, 5 * 1024 * 1024);
+      assert.strictEqual(session.outputBuffer.maxBytes, 20 * 1024 * 1024);
     });
 
-    it("initializes output buffer with custom limits", () => {
+    it("initializes output buffer with custom byte limit", () => {
       const session = new Session("test", "test", {
-        maxBufferItems: 100,
         maxBufferBytes: 1024,
       });
-      assert.strictEqual(session.outputBuffer.maxItems, 100);
       assert.strictEqual(session.outputBuffer.maxBytes, 1024);
     });
   });
@@ -584,16 +578,15 @@ describe("Session", () => {
   });
 
   describe("buffer overflow handling", () => {
-    it("respects buffer limits", () => {
+    it("respects byte limit", () => {
       const { session } = createSimpleTestSession("test", {
-        maxBufferItems: 3,
-        maxBufferBytes: 100,
+        maxBufferBytes: 18,  // fits 3 lines of 6 bytes each
       });
 
-      session.outputBuffer.push("line1\n");
-      session.outputBuffer.push("line2\n");
-      session.outputBuffer.push("line3\n");
-      session.outputBuffer.push("line4\n"); // Should evict line1
+      session.outputBuffer.push("line1\n");  // 6 bytes
+      session.outputBuffer.push("line2\n");  // 6 bytes, total 12
+      session.outputBuffer.push("line3\n");  // 6 bytes, total 18
+      session.outputBuffer.push("line4\n");  // 6 bytes, total 24 -> evict "line1\n", leaves 18
 
       const buffer = session.getBuffer();
       assert.ok(!buffer.includes("line1"));

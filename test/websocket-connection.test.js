@@ -132,22 +132,16 @@ describe("wsMessageHandlers", () => {
   });
 
   describe("output", () => {
-    it("emits seqOutput with data, session, and seq", () => {
-      const result = handlers.output({ data: "hello", session: "alpha", seq: 42 });
+    it("emits terminalWrite for scrollback replay", () => {
+      const result = handlers.output({ data: "hello", session: "alpha" });
       assert.deepStrictEqual(result.stateUpdates, {});
       assert.strictEqual(result.effects.length, 1);
       const eff = result.effects[0];
-      assert.strictEqual(eff.type, "seqOutput");
+      assert.strictEqual(eff.type, "terminalWrite");
       assert.strictEqual(eff.data, "hello");
       assert.strictEqual(eff.session, "alpha");
-      assert.strictEqual(eff.seq, 42);
-    });
-
-    it("passes undefined seq for unsequenced output (backward compat)", () => {
-      const result = handlers.output({ data: "hello", session: "alpha" });
-      const eff = result.effects[0];
-      assert.strictEqual(eff.type, "seqOutput");
-      assert.strictEqual(eff.seq, undefined);
+      assert.strictEqual(eff.preserveScroll, true);
+      assert.strictEqual(eff.useOutputTerm, true);
     });
   });
 

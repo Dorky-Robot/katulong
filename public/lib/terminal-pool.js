@@ -61,6 +61,20 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
 
     term.open(container);
 
+    // Decouple xterm's input textarea from the rendering tree.
+    // xterm repositions the textarea at the cursor on every cursor move
+    // (_syncTextArea), including during DEC synchronized output frames.
+    // WebKit renders the system caret independently of opacity/clip-path,
+    // so the only reliable fix is to move it off-screen at the DOM level.
+    // The textarea keeps focus and receives key events from any position.
+    const textarea = container.querySelector(".xterm-helper-textarea");
+    if (textarea) {
+      const clip = document.createElement("div");
+      clip.className = "xterm-input-clip";
+      textarea.parentNode.insertBefore(clip, textarea);
+      clip.appendChild(textarea);
+    }
+
     const entry = { term, fit, searchAddon, container, sessionName, lastUsed: Date.now() };
     pool.set(sessionName, entry);
 
@@ -95,10 +109,6 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
       if (!pool.has(sessionName)) return;
       entry.fit.fit();
       entry.term.focus();
-      // Prevent the browser from scrolling the outer page when focus()
-      // triggers scrollIntoView on the textarea helper.
-      window.scrollTo(0, 0);
-      document.documentElement.scrollTop = 0;
     });
 
     return entry;
