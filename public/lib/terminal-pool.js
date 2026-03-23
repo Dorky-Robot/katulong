@@ -129,6 +129,10 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
       if (!pool.has(sessionName)) return;
       entry.fit.fit();
       entry.term.focus();
+      // Safari shifts the visual viewport when focusing the off-screen
+      // textarea, which displaces all position:fixed elements (joystick).
+      // Reset scroll to keep the viewport anchored at (0,0).
+      window.scrollTo(0, 0);
     });
 
     return entry;
