@@ -11,8 +11,24 @@ import { FitAddon } from "/vendor/xterm/addon-fit.esm.js";
 import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
 import { SearchAddon } from "/vendor/xterm/addon-search.esm.js";
 import { ClipboardAddon } from "/vendor/xterm/addon-clipboard.esm.js";
+import { WebglAddon } from "/vendor/xterm/addon-webgl.esm.js";
 
 const MAX_POOL_SIZE = 5;
+
+/** Load WebGL renderer with automatic fallback to DOM on failure. */
+function loadWebGL(term) {
+  try {
+    const addon = new WebglAddon();
+    addon.onContextLoss(() => {
+      // Browser dropped the WebGL context (GPU driver, memory pressure,
+      // device sleep).  Dispose and fall back to the DOM renderer.
+      addon.dispose();
+    });
+    term.loadAddon(addon);
+  } catch {
+    // WebGL2 not available — DOM renderer stays active
+  }
+}
 
 /**
  * Create a terminal pool.
@@ -60,6 +76,10 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     parentEl.appendChild(container);
 
     term.open(container);
+
+    // GPU-accelerated rendering via WebGL. Falls back to default DOM
+    // renderer on context loss or if WebGL2 is unavailable.
+    loadWebGL(term);
 
     // Decouple xterm's input textarea from the rendering tree.
     // xterm repositions the textarea at the cursor on every cursor move
