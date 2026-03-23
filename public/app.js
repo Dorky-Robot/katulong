@@ -419,7 +419,7 @@
     const inputSender = createInputSender({
       getWebSocket: () => state.connection.ws,
       getSession: () => state.session.name,
-      onInput: () => wsConnection?.nudgeOnInput(),
+      onInput: () => {},
     });
 
     const rawSend = (data) => inputSender.send(data);
@@ -680,8 +680,6 @@
       // Attach scroll-to-bottom button listener to the new viewport.
       // scroll events don't bubble, so we must listen on the viewport directly.
       _attachScrollButton();
-      // Reset outer page scroll in case the browser shifted it
-      requestAnimationFrame(() => window.scrollTo(0, 0));
     }
 
     function switchSession(name) {

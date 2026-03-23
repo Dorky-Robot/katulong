@@ -153,26 +153,15 @@ describe("createWebSocketManager", () => {
   });
 
   describe("bridge subscriber", () => {
-    it("routes output to correct session via bridge", () => {
+    it("routes data-available notification to correct session via bridge", () => {
       const ws = createMockWs();
       wsMgr.wsClients.set("client-1", { ws });
       sessionManager._setSession("client-1", "alpha");
 
-      bridge.relay({ type: "output", session: "alpha", data: "test output", seq: 0 });
+      bridge.relay({ type: "data-available", session: "alpha" });
 
       assert.equal(ws.sent.length, 1);
-      assert.deepEqual(JSON.parse(ws.sent[0]), { type: "output", session: "alpha", data: "test output", seq: 0 });
-    });
-
-    it("passes seq field through in output messages", () => {
-      const ws = createMockWs();
-      wsMgr.wsClients.set("client-1", { ws });
-      sessionManager._setSession("client-1", "alpha");
-
-      bridge.relay({ type: "output", session: "alpha", data: "data", seq: 42 });
-
-      const parsed = JSON.parse(ws.sent[0]);
-      assert.equal(parsed.seq, 42);
+      assert.deepEqual(JSON.parse(ws.sent[0]), { type: "data-available", session: "alpha" });
     });
 
     it("routes exit events to correct session", () => {
@@ -294,45 +283,15 @@ describe("createWebSocketManager", () => {
       assert.deepEqual(JSON.parse(ws2.sent[0]), { type: "resize-sync", cols: 120, rows: 40 });
     });
 
-    it("seq-query responds with seq-status", async () => {
-      const ws = createMockWs();
-      wsMgr.handleConnection(ws);
-      const clientId = [...wsMgr.wsClients.keys()][0];
-
-      // Register a mock session with outputBuffer
-      sessionManager._addSession("test-session", {
-        outputBuffer: { totalBytes: 500 },
-      });
-
-      // Attach first
-      await ws._handlers.message(Buffer.from(JSON.stringify({
-        type: "attach", session: "test-session", cols: 80, rows: 24,
-      })));
-      await new Promise(r => setTimeout(r, 10));
-
-      ws.sent.length = 0; // clear attach messages
-
-      // Send seq-query
-      await ws._handlers.message(Buffer.from(JSON.stringify({
-        type: "seq-query",
-      })));
-      await new Promise(r => setTimeout(r, 10));
-
-      assert.ok(ws.sent.length >= 1);
-      const statusMsg = ws.sent.map(s => JSON.parse(s)).find(m => m.type === "seq-status");
-      assert.ok(statusMsg, "should receive seq-status");
-      assert.equal(statusMsg.session, "test-session");
-      assert.equal(statusMsg.seq, 500);
-    });
-
-    it("catchup responds with catchup-data when data available", async () => {
+    it("pull responds with pull-response when data available", async () => {
       const ws = createMockWs();
       wsMgr.handleConnection(ws);
 
       sessionManager._addSession("test-session", {
+        tmuxName: "katulong_test-session",
         outputBuffer: {
           totalBytes: 100,
-          sliceFrom: (offset) => offset >= 100 ? "" : "catchup-data-here",
+          sliceFrom: (offset) => offset >= 100 ? "" : "pulled-data-here",
         },
       });
 
@@ -344,42 +303,14 @@ describe("createWebSocketManager", () => {
       ws.sent.length = 0;
 
       await ws._handlers.message(Buffer.from(JSON.stringify({
-        type: "catchup", session: "test-session", fromSeq: 50,
+        type: "pull", session: "test-session", fromSeq: 50,
       })));
       await new Promise(r => setTimeout(r, 10));
 
-      const catchupMsg = ws.sent.map(s => JSON.parse(s)).find(m => m.type === "catchup-data");
-      assert.ok(catchupMsg, "should receive catchup-data");
-      assert.equal(catchupMsg.data, "catchup-data-here");
-      assert.equal(catchupMsg.seq, 50);
-    });
-
-    it("catchup responds with seq-reset when data evicted", async () => {
-      const ws = createMockWs();
-      wsMgr.handleConnection(ws);
-
-      sessionManager._addSession("test-session", {
-        outputBuffer: {
-          totalBytes: 100,
-          sliceFrom: () => null, // data evicted
-        },
-      });
-
-      await ws._handlers.message(Buffer.from(JSON.stringify({
-        type: "attach", session: "test-session", cols: 80, rows: 24,
-      })));
-      await new Promise(r => setTimeout(r, 10));
-
-      ws.sent.length = 0;
-
-      await ws._handlers.message(Buffer.from(JSON.stringify({
-        type: "catchup", session: "test-session", fromSeq: 0,
-      })));
-      await new Promise(r => setTimeout(r, 10));
-
-      const resetMsg = ws.sent.map(s => JSON.parse(s)).find(m => m.type === "seq-reset");
-      assert.ok(resetMsg, "should receive seq-reset");
-      assert.equal(resetMsg.session, "test-session");
+      const pullMsg = ws.sent.map(s => JSON.parse(s)).find(m => m.type === "pull-response");
+      assert.ok(pullMsg, "should receive pull-response");
+      assert.equal(pullMsg.data, "pulled-data-here");
+      assert.equal(pullMsg.cursor, 100);
     });
 
     it("attach sends seq-init after buffer replay", async () => {
