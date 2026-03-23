@@ -777,12 +777,11 @@
     @media (pointer: coarse) {
       #joystick { display: flex; }
     }
-    /* iPad: center on card's bottom-right corner arc (radius 20px) */
-    /* right  = container-padding(6px) + radius(20px) - half-joystick(2.5rem) */
-    /* bottom = tab-bar(4rem) + safe-area + container-padding(4px) + radius(20px) - half-joystick(2.5rem) */
+    /* iPad: center joystick on the browser's bottom-right rounded corner.
+       Position from viewport edge using safe-area insets — no layout math. */
     [data-platform="ipad"] #joystick {
-      right: calc(6px + 20px - 2.5rem);
-      bottom: calc(4rem + env(safe-area-inset-bottom, 0px) + 4px + 20px - 2.5rem);
+      right: calc(env(safe-area-inset-right, 0px) - 2.5rem + 20px);
+      bottom: calc(env(safe-area-inset-bottom, 0px) - 2.5rem + 20px);
     }
     /* Hide joystick when hardware keyboard detected (JS-driven) */
     #joystick.hw-keyboard { display: none !important; }
@@ -799,8 +798,8 @@
       z-index: calc(var(--z-bar) + 1);
     }
     [data-platform="ipad"] #enter-progress-ring {
-      right: calc(6px + 20px - 2.5rem);
-      bottom: calc(4rem + env(safe-area-inset-bottom, 0px) + 4px + 20px - 2.5rem);
+      right: calc(env(safe-area-inset-right, 0px) - 2.5rem + 20px);
+      bottom: calc(env(safe-area-inset-bottom, 0px) - 2.5rem + 20px);
     }
     #enter-progress-ring.active {
       display: block;

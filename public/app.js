@@ -149,7 +149,7 @@
         convertEol: true,
         macOptionIsMeta: true,
         minimumContrastRatio: 4.5,
-        cursorInactiveStyle: 'outline',
+        cursorInactiveStyle: 'none',
         rightClickSelectsWord: true,
         rescaleOverlappingGlyphs: true,
       },

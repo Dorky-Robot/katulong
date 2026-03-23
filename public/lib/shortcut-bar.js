@@ -469,9 +469,13 @@ export function createShortcutBar(options = {}) {
     document.addEventListener("mouseup", onUp);
   }
 
+  // Double-tap tracking for tab rename (touch devices)
+  let lastTapTab = null;
+  let lastTapTime = 0;
+  const DOUBLE_TAP_MS = 300;
+
   function onTabTouchStart(e, tab, name) {
     if (e.target.closest(".tab-close")) return;
-
 
     const initialTouch = e.touches[0];
     const startX = initialTouch.clientX;
@@ -501,8 +505,17 @@ export function createShortcutBar(options = {}) {
         if (started) {
           endDrag();
         } else {
-          // Tap without drag — switch tab
-          if (name !== currentSessionName && onTabClick) onTabClick(name);
+          // Tap without drag — check for double-tap to rename
+          const now = Date.now();
+          if (lastTapTab === tab && now - lastTapTime < DOUBLE_TAP_MS) {
+            lastTapTab = null;
+            lastTapTime = 0;
+            startTabRename(tab, name);
+          } else {
+            lastTapTab = tab;
+            lastTapTime = now;
+            if (name !== currentSessionName && onTabClick) onTabClick(name);
+          }
         }
       };
       document.addEventListener("touchmove", onMove, { passive: false });
@@ -555,8 +568,18 @@ export function createShortcutBar(options = {}) {
       if (!started) {
         if (longPressed) {
           showTabContextMenu({ preventDefault() {}, currentTarget: tab }, name);
-        } else if (name !== currentSessionName) {
-          if (onTabClick) onTabClick(name);
+        } else {
+          // Short tap — check for double-tap to rename
+          const now = Date.now();
+          if (lastTapTab === tab && now - lastTapTime < DOUBLE_TAP_MS) {
+            lastTapTab = null;
+            lastTapTime = 0;
+            startTabRename(tab, name);
+          } else {
+            lastTapTab = tab;
+            lastTapTime = now;
+            if (name !== currentSessionName && onTabClick) onTabClick(name);
+          }
         }
         return;
       }
