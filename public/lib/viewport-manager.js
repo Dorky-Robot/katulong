@@ -4,56 +4,28 @@
  * Handles viewport resizing, scroll button UI, and terminal gesture handlers.
  */
 
-import { withPreservedScroll, viewportOf, isAtBottom, scrollToBottom } from "/lib/scroll-utils.js";
+import { viewportOf, isAtBottom, scrollToBottom } from "/lib/scroll-utils.js";
 
 /**
- * Create viewport manager for responsive terminal layout
+ * Viewport Manager
+ *
+ * Handles CSS viewport variables (for modals during keyboard),
+ * scroll-to-bottom button, and terminal touch-to-focus.
  */
 export function createViewportManager(options = {}) {
-  const {
-    termContainer,
-    bar,
-    onWebSocketResize,
-  } = options;
+  const { termContainer } = options;
 
-  // Support both direct references and getter functions for pooled terminals
   const getTerm = typeof options.term === "function" ? options.term : () => options.term;
-  const getScale = options.scale || null; // function(term, container) to scale terminal
-
-  // Scroll button elements
   const scrollBtn = document.getElementById("scroll-bottom");
-  const getViewport = () => { const t = getTerm(); return t ? viewportOf(t) : null; };
 
-  const appLayout = document.getElementById("app-layout");
-
-  // Resize viewport to match visual viewport (handles mobile keyboard)
+  // Update CSS custom properties for modal positioning when keyboard opens.
+  // Layout height is handled by CSS 100dvh — no JS height manipulation needed.
   function resizeToViewport() {
-    const term = getTerm();
-    if (!term) return;
-    withPreservedScroll(term, () => {
-      const vv = window.visualViewport;
-      // In Chromium mobile emulation (isMobile: true), vv.height can be 0 during
-      // initial JS module execution before the visual viewport is fully initialised.
-      // Fall back to window.innerHeight so the terminal container gets a valid height.
-      const vvH = (vv && vv.height > 0) ? vv.height : window.innerHeight;
-      const innerH = window.innerHeight;
-      // Only override layout height when a keyboard or similar input is shrinking
-      // the visual viewport (vv.height significantly less than innerHeight).
-      // Otherwise let CSS 100dvh handle layout — this avoids a gap on iPad
-      // where the floating toolbar reduces visualViewport.height but the app
-      // should still fill the full screen.
-      const keyboardOpen = innerH - vvH > 100;
-      const h = keyboardOpen ? vvH : innerH;
-      const layoutHeight = h + "px";
-      if (appLayout) {
-        appLayout.style.height = layoutHeight;
-      } else {
-        termContainer.style.height = layoutHeight;
-      }
-      const s = document.documentElement.style;
-      s.setProperty("--viewport-h", h + "px");
-      s.setProperty("--viewport-top", (vv ? vv.offsetTop : 0) + "px");
-    });
+    const vv = window.visualViewport;
+    const h = (vv && vv.height > 0) ? vv.height : window.innerHeight;
+    const s = document.documentElement.style;
+    s.setProperty("--viewport-h", h + "px");
+    s.setProperty("--viewport-top", (vv ? vv.offsetTop : 0) + "px");
   }
 
   // Initialize viewport resize handlers
@@ -136,6 +108,5 @@ export function createViewportManager(options = {}) {
   return {
     init,
     attachScrollButton,
-    resizeToViewport,
   };
 }

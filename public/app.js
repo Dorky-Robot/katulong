@@ -880,14 +880,7 @@
 
     const viewportManager = createViewportManager({
       term: getTerm,
-      scale: fitActiveTerminal,
       termContainer,
-      bar,
-      onWebSocketResize: (cols, rows) => {
-        if (state.connection.ws?.readyState === 1) {
-          state.connection.ws.send(JSON.stringify({ type: "resize", session: state.session.name, cols, rows }));
-        }
-      }
     });
     viewportManager.init();
     _attachScrollButton = () => viewportManager.attachScrollButton();
