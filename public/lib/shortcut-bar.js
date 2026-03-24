@@ -10,10 +10,13 @@
  * regardless of window size.
  */
 
-import { keysToSequence, sendSequence } from "/lib/key-mapping.js";
 import { invalidateSessions } from "/lib/stores.js";
 import { api } from "/lib/api-client.js";
 import { detectPlatform } from "/lib/platform.js";
+import { renderKeyIsland } from "/lib/key-island.js";
+import { renderDesktopTabs } from "/lib/shortcut-bar-desktop.js";
+import { renderIPadBar } from "/lib/shortcut-bar-ipad.js";
+import { renderPhoneBar } from "/lib/shortcut-bar-phone.js";
 
 const DRAG_OUT_THRESHOLD = 60; // px below bar to trigger tear-off (desktop)
 const DRAG_DEAD_ZONE = 5; // px before drag starts
@@ -796,97 +799,25 @@ export function createShortcutBar(options = {}) {
     return tab;
   }
 
-  function renderDesktopTabs(sessionName, sessions) {
-
-    // + button sits outside the scroll area so it stays fixed during drag
-    const addBtn = document.createElement("button");
-    addBtn.className = "tab-bar-add";
-    addBtn.tabIndex = -1;
-    addBtn.setAttribute("aria-label", "New session");
-    addBtn.innerHTML = '<i class="ph ph-plus-circle"></i>';
-    addBtn.addEventListener("click", () => showAddMenu(addBtn));
-    container.appendChild(addBtn);
-
-    const tabScroll = document.createElement("div");
-    tabScroll.className = "tab-scroll-area";
-
-    for (const s of sessions) {
-      tabScroll.appendChild(createTabEl(s, s.name === sessionName));
-    }
-
-    container.appendChild(tabScroll);
-
-    // Shrink tabs to fit: progressively hide close buttons then labels
-    // when there are too many tabs to fit at full width.
-    requestAnimationFrame(() => {
-      if (!tabScroll.isConnected) return;
-      const areaWidth = tabScroll.clientWidth;
-      const tabCount = sessions.length;
-      if (tabCount === 0) return;
-      const gap = parseFloat(getComputedStyle(tabScroll).gap) || 0;
-      const availPerTab = (areaWidth - gap * (tabCount - 1)) / tabCount;
-
-      // Thresholds (px): below these, hide elements to save space
-      const HIDE_CLOSE = 5.5 * 16;  // ~88px — hide close button
-      const ICON_ONLY = 3 * 16;     // ~48px — hide label, icon only
-
-      if (availPerTab < ICON_ONLY) {
-        tabScroll.classList.add("tabs-icon-only");
-      } else if (availPerTab < HIDE_CLOSE) {
-        tabScroll.classList.add("tabs-compact");
-      }
-    });
-
+  function _renderDesktopTabs(sessionName, sessions) {
+    renderDesktopTabs({ container, sessionName, sessions, createTabEl, showAddMenu });
   }
 
-  function renderPhoneBar(sessionName) {
-    const sessBtn = document.createElement("button");
-    sessBtn.className = "session-btn";
-    sessBtn.tabIndex = -1;
-    sessBtn.setAttribute("aria-label", `Session: ${sessionName}`);
-    const iconEl = document.createElement("i");
-    iconEl.className = `ph ph-${iconForSession(sessionName)}`;
-    sessBtn.appendChild(iconEl);
-    sessBtn.appendChild(document.createTextNode(" "));
-    sessBtn.appendChild(document.createTextNode(sessionName));
-    if (onSessionClick) {
-      sessBtn.addEventListener("click", onSessionClick);
-    }
-    container.appendChild(sessBtn);
-
-    const newSessBtn = document.createElement("button");
-    newSessBtn.className = "bar-new-session-btn";
-    newSessBtn.style.display = "flex";
-    newSessBtn.tabIndex = -1;
-    newSessBtn.setAttribute("aria-label", "New session");
-    newSessBtn.innerHTML = '<i class="ph ph-plus"></i>';
-    newSessBtn.addEventListener("click", () => showAddMenu(newSessBtn));
-    container.appendChild(newSessBtn);
-
-    const spacer = document.createElement("span");
-    spacer.className = "bar-spacer";
-    container.appendChild(spacer);
-
-    const utils = [
-      { icon: "terminal-window", label: "Terminal", click: onTerminalClick },
-      { icon: "note-pencil", label: "Notes", click: onNotepadClick },
-      { icon: "folder-open", label: "Files", click: onFilesClick },
-      { icon: "plug", label: "Port Forward", click: onPortForwardClick, id: "bar-portfwd-btn", hidden: !portProxyEnabled },
-      ...(options.pluginButtons || []).map(p => ({ icon: p.icon, label: p.label, click: p.click })),
-      { icon: "gear", label: "Settings", click: onSettingsClick },
-    ];
-    for (const u of utils) {
-      if (!u.click) continue;
-      const btn = document.createElement("button");
-      btn.className = "bar-icon-btn";
-      btn.tabIndex = -1;
-      btn.setAttribute("aria-label", u.label);
-      btn.innerHTML = `<i class="ph ph-${u.icon}"></i>`;
-      if (u.id) btn.id = u.id;
-      if (u.hidden) btn.style.display = "none";
-      btn.addEventListener("click", u.click);
-      container.appendChild(btn);
-    }
+  function _renderPhoneBar(sessionName) {
+    renderPhoneBar({
+      container,
+      sessionName,
+      sessionIcon: iconForSession(sessionName),
+      onSessionClick,
+      showAddMenu,
+      onTerminalClick,
+      onNotepadClick,
+      onFilesClick,
+      onPortForwardClick,
+      onSettingsClick,
+      portProxyEnabled,
+      pluginButtons: options.pluginButtons,
+    });
   }
 
   /** Build the session list from stores (shared by desktop + iPad paths) */
@@ -899,22 +830,8 @@ export function createShortcutBar(options = {}) {
     return tabNames.map(n => sessionMap.get(n) || { name: n }).filter(Boolean);
   }
 
-  /** iPad bar: [+] button (absolute positioned) + tabs in scroll area */
-  function renderIPadBar(sessionName, sessions) {
-    const addBtn = document.createElement("button");
-    addBtn.className = "ipad-add-btn";
-    addBtn.tabIndex = -1;
-    addBtn.setAttribute("aria-label", "New session");
-    addBtn.innerHTML = '<i class="ph ph-plus-circle"></i>';
-    addBtn.addEventListener("click", () => showAddMenu(addBtn));
-    container.appendChild(addBtn);
-
-    const tabArea = document.createElement("div");
-    tabArea.className = "tab-scroll-area";
-    for (const s of sessions) {
-      tabArea.appendChild(createTabEl(s, s.name === sessionName));
-    }
-    container.appendChild(tabArea);
+  function _renderIPadBar(sessionName, sessions) {
+    renderIPadBar({ container, sessionName, sessions, createTabEl, showAddMenu });
   }
 
   // ── Render gate ────────────────────────────────────────────────────
@@ -954,264 +871,33 @@ export function createShortcutBar(options = {}) {
 
     // Dispatch to platform-specific renderer
     if (platform === "phone" || !sessionStore) {
-      renderPhoneBar(sessionName);
+      _renderPhoneBar(sessionName);
     } else {
       const sessions = getSessionList();
       if (platform === "ipad") {
-        renderIPadBar(sessionName, sessions);
+        _renderIPadBar(sessionName, sessions);
       } else {
-        renderDesktopTabs(sessionName, sessions);
+        _renderDesktopTabs(sessionName, sessions);
       }
     }
 
     // Floating island (Esc/Tab/keyboard on touch, plus utility buttons on tablet/desktop)
-    renderKeyIsland();
+    renderKeyIsland({
+      platform,
+      pinnedKeys,
+      sendFn,
+      getTerm: () => options.term,
+      onShortcutsClick,
+      onDictationClick,
+      onNotepadClick,
+      onFilesClick,
+      onPortForwardClick,
+      onSettingsClick,
+      portProxyEnabled,
+      pluginButtons: options.pluginButtons,
+    });
 
     if (updateConnectionIndicator) updateConnectionIndicator();
-  }
-
-  let _islandResizeHandler = null;
-
-  /** Floating pill with Esc/Tab/keyboard for touch devices in desktop tab mode */
-  function renderKeyIsland() {
-    // Remove previous island and its resize listeners
-    document.getElementById("key-island")?.remove();
-    if (_islandResizeHandler) {
-      window.removeEventListener("resize", _islandResizeHandler);
-      if (window.visualViewport) {
-        window.visualViewport.removeEventListener("resize", _islandResizeHandler);
-      }
-      _islandResizeHandler = null;
-    }
-
-    const island = document.createElement("div");
-    island.id = "key-island";
-
-    // Pinned keys and keyboard shortcut button — touch only (desktop has real keyboard)
-
-    if (platform !== "desktop") {
-      for (const s of pinnedKeys) {
-        const btn = document.createElement("button");
-        btn.className = "key-island-btn";
-        btn.textContent = s.label;
-        btn.setAttribute("aria-label", `Send ${s.label}`);
-        btn.addEventListener("click", () => {
-          if (sendFn) sendSequence(keysToSequence(s.keys), sendFn);
-          if (options.term) options.term.focus();
-        });
-        island.appendChild(btn);
-      }
-
-      // Copy button — copies xterm selection to clipboard (iOS can't copy
-      // canvas-based selection via the native context menu)
-      {
-        const copyBtn = document.createElement("button");
-        copyBtn.className = "key-island-btn key-island-icon";
-        copyBtn.setAttribute("aria-label", "Copy selection");
-        copyBtn.innerHTML = '<i class="ph ph-copy"></i>';
-        copyBtn.addEventListener("click", () => {
-          const term = options.term;
-          if (term && term.hasSelection()) {
-            navigator.clipboard.writeText(term.getSelection()).then(() => {
-              copyBtn.innerHTML = '<i class="ph ph-check"></i>';
-              setTimeout(() => { copyBtn.innerHTML = '<i class="ph ph-copy"></i>'; }, 1000);
-            }).catch(() => {});
-          }
-          if (term) term.focus();
-        });
-        island.appendChild(copyBtn);
-      }
-
-      if (onShortcutsClick) {
-        const kbBtn = document.createElement("button");
-        kbBtn.className = "key-island-btn key-island-icon";
-        kbBtn.setAttribute("aria-label", "Open shortcuts");
-        kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
-        kbBtn.addEventListener("click", onShortcutsClick);
-        island.appendChild(kbBtn);
-      }
-
-      if (onDictationClick) {
-        const btn = document.createElement("button");
-        btn.className = "key-island-btn key-island-icon";
-        btn.setAttribute("aria-label", "Text input");
-        btn.innerHTML = '<i class="ph ph-chat-text"></i>';
-        btn.addEventListener("click", onDictationClick);
-        island.appendChild(btn);
-      }
-    }
-
-    // Utility buttons — skip on phone (they're in the toolbar)
-    if (platform !== "phone") {
-      if (onNotepadClick) {
-        const btn = document.createElement("button");
-        btn.className = "key-island-btn key-island-icon";
-        btn.setAttribute("aria-label", "Notes");
-        btn.innerHTML = '<i class="ph ph-note-pencil"></i>';
-        btn.addEventListener("click", onNotepadClick);
-        island.appendChild(btn);
-      }
-
-      if (onFilesClick) {
-        const btn = document.createElement("button");
-        btn.className = "key-island-btn key-island-icon";
-        btn.setAttribute("aria-label", "Files");
-        btn.innerHTML = '<i class="ph ph-folder-open"></i>';
-        btn.addEventListener("click", onFilesClick);
-        island.appendChild(btn);
-      }
-
-      if (onPortForwardClick) {
-        const btn = document.createElement("button");
-        btn.className = "key-island-btn key-island-icon";
-        btn.id = "bar-portfwd-btn";
-        btn.setAttribute("aria-label", "Port Forward");
-        btn.innerHTML = '<i class="ph ph-plug"></i>';
-        btn.addEventListener("click", onPortForwardClick);
-        if (!portProxyEnabled) btn.style.display = "none";
-        island.appendChild(btn);
-      }
-
-      // Plugin buttons
-      for (const p of (options.pluginButtons || [])) {
-        if (!p.click) continue;
-        const btn = document.createElement("button");
-        btn.className = "key-island-btn key-island-icon";
-        btn.setAttribute("aria-label", p.label);
-        btn.innerHTML = `<i class="ph ph-${p.icon}"></i>`;
-        btn.addEventListener("click", p.click);
-        island.appendChild(btn);
-      }
-
-      if (onSettingsClick) {
-        const btn = document.createElement("button");
-        btn.className = "key-island-btn key-island-icon";
-        btn.setAttribute("aria-label", "Settings");
-        btn.innerHTML = '<i class="ph ph-gear"></i>';
-        btn.addEventListener("click", onSettingsClick);
-        island.appendChild(btn);
-      }
-
-    }
-
-    // Connection dot — shown on all devices
-    const dot = document.createElement("span");
-    dot.id = "island-connection-dot";
-    dot.className = "island-connection-dot";
-    island.appendChild(dot);
-
-    // Clamp island position to stay within viewport (with 8px margin)
-    function clampIsland() {
-      const rect = island.getBoundingClientRect();
-      if (rect.width === 0) return; // not visible yet
-      const margin = 8;
-      const vw = window.visualViewport?.width ?? window.innerWidth;
-      const vh = window.visualViewport?.height ?? window.innerHeight;
-      // If fully visible with margin, nothing to do
-      if (rect.left >= margin && rect.top >= margin &&
-          rect.right <= vw - margin && rect.bottom <= vh - margin) return;
-      // Nudge into view
-      const nx = Math.max(margin, Math.min(rect.left, vw - rect.width - margin));
-      const ny = Math.max(margin, Math.min(rect.top, vh - rect.height - margin));
-      island.style.left = nx + "px";
-      island.style.top = ny + "px";
-      island.style.bottom = "auto";
-      island.style.right = "auto";
-      localStorage.setItem("katulong-key-island-pos", JSON.stringify({ x: nx, y: ny }));
-    }
-
-    // Restore saved position (clamped to current viewport)
-    const saved = localStorage.getItem("katulong-key-island-pos");
-    if (saved) {
-      try {
-        const { x, y } = JSON.parse(saved);
-        if (Number.isFinite(x) && Number.isFinite(y)) {
-          island.style.left = x + "px";
-          island.style.top = y + "px";
-          island.style.bottom = "auto";
-        }
-      } catch {}
-    }
-
-    // Clamp after layout (when dimensions are known) and on every resize
-    _islandResizeHandler = clampIsland;
-    requestAnimationFrame(() => clampIsland());
-    window.addEventListener("resize", clampIsland);
-    // Also observe the visual viewport (fires more reliably on iOS/iPad)
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", clampIsland);
-    }
-
-    // Drag to reposition (touch + mouse, with dead zone so clicks/taps still work)
-    let dragState = null;
-
-    function islandDragMove(cx, cy) {
-      if (!dragState) return;
-      if (!dragState.dragging) {
-        const dx = cx - dragState.startX;
-        const dy = cy - dragState.startY;
-        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-        dragState.dragging = true;
-      }
-      const x = cx - dragState.offsetX;
-      const y = cy - dragState.offsetY;
-      const margin = 8;
-      const maxX = (window.visualViewport?.width ?? window.innerWidth) - island.offsetWidth - margin;
-      const maxY = (window.visualViewport?.height ?? window.innerHeight) - island.offsetHeight - margin;
-      island.style.left = Math.max(margin, Math.min(x, maxX)) + "px";
-      island.style.top = Math.max(margin, Math.min(y, maxY)) + "px";
-      island.style.bottom = "auto";
-      island.style.right = "auto";
-    }
-
-    function islandDragEnd() {
-      if (dragState?.dragging) {
-        localStorage.setItem("katulong-key-island-pos", JSON.stringify({
-          x: parseInt(island.style.left),
-          y: parseInt(island.style.top),
-        }));
-      }
-      dragState = null;
-    }
-
-    // Touch drag (skip if tapping the connection dot or a button)
-    island.addEventListener("touchstart", (e) => {
-      if (e.touches.length !== 1) return;
-      if (e.target.closest("button")) return;
-      const t = e.touches[0];
-      const rect = island.getBoundingClientRect();
-      dragState = { startX: t.clientX, startY: t.clientY, offsetX: t.clientX - rect.left, offsetY: t.clientY - rect.top, dragging: false };
-    }, { passive: false });
-    island.addEventListener("touchmove", (e) => {
-      if (!dragState) return;
-      const t = e.touches[0];
-      islandDragMove(t.clientX, t.clientY);
-      if (dragState?.dragging) { e.preventDefault(); e.stopPropagation(); }
-    }, { passive: false });
-    island.addEventListener("touchend", (e) => {
-      if (dragState?.dragging) e.preventDefault();
-      islandDragEnd();
-    });
-
-    // Mouse drag
-    island.addEventListener("mousedown", (e) => {
-      if (e.target.closest("button")) return; // let button clicks through
-      const rect = island.getBoundingClientRect();
-      dragState = { startX: e.clientX, startY: e.clientY, offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top, dragging: false };
-      const onMouseMove = (me) => {
-        islandDragMove(me.clientX, me.clientY);
-        if (dragState?.dragging) { me.preventDefault(); }
-      };
-      const onMouseUp = () => {
-        document.removeEventListener("mousemove", onMouseMove);
-        document.removeEventListener("mouseup", onMouseUp);
-        islandDragEnd();
-      };
-      document.addEventListener("mousemove", onMouseMove);
-      document.addEventListener("mouseup", onMouseUp);
-    });
-
-    document.body.appendChild(island);
   }
 
   // Store subscribers — coalesce rapid updates into a single render via rAF.

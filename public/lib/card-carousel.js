@@ -379,19 +379,23 @@ export function createCardCarousel({
 
   function fitAll() {
     if (!active) return;
-    setTimeout(() => {
+    requestAnimationFrame(() => {
       if (!active) return;
       terminalPool.scaleAll();
-      // Send resize for row changes (cols are fixed)
       for (const session of cards) {
         const entry = terminalPool.get(session);
         if (entry && sendResize) sendResize(session, entry.term.cols, entry.term.rows);
       }
-    }, 50);
+    });
   }
 
-  // ── Resize listener ──────────────────────────────────────────────────
-
+  // Rescale terminals on orientation change / window resize.
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    if (!active) return;
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { resizeTimer = null; fitAll(); }, 150);
+  });
 
   return {
     isActive: () => active,
