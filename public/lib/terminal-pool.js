@@ -72,7 +72,9 @@ function scaleToFit(term, container) {
   const cellHeight = dims?.css?.cell?.height
     ? dims.css.cell.height / (term.options.fontSize || 14) * fontSize
     : fontSize * 1.2;
-  const rows = Math.max(2, Math.floor(rect.height / cellHeight));
+  const padTop = term.options.paddingTop || 0;
+  const padBottom = term.options.paddingBottom || 0;
+  const rows = Math.max(2, Math.floor((rect.height - padTop - padBottom) / cellHeight));
 
   if (term.cols !== FIXED_COLS || term.rows !== rows) {
     term.resize(FIXED_COLS, rows);

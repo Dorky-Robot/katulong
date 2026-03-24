@@ -189,6 +189,20 @@ export function renderKeyIsland(opts) {
     localStorage.setItem("katulong-key-island-pos", JSON.stringify({ x: nx, y: ny }));
   }
 
+  // iPad default: top center (instead of bottom-left)
+  if (platform === "ipad" && !localStorage.getItem("katulong-key-island-pos")) {
+    island.style.bottom = "auto";
+    island.style.top = "8px";
+    island.style.left = "50%";
+    island.style.transform = "translateX(-50%)";
+    // After layout, convert to pixel position so drag works normally
+    requestAnimationFrame(() => {
+      const rect = island.getBoundingClientRect();
+      island.style.left = rect.left + "px";
+      island.style.transform = "";
+    });
+  }
+
   // Restore saved position (clamped to current viewport)
   const saved = localStorage.getItem("katulong-key-island-pos");
   if (saved) {

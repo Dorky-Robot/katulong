@@ -17,6 +17,7 @@
     import { attachTouchSelect } from "/lib/touch-select.js";
 
     import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
+    import { isIPad } from "/lib/platform.js";
     import { createTabManager } from "/lib/tab-manager.js";
     import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll, initScrollTracking, initTouchScroll } from "/lib/scroll-utils.js";
     import { keysToSequence, sendSequence, displayKey, keysLabel, keysString, VALID_KEYS, normalizeKey } from "/lib/key-mapping.js";
@@ -152,6 +153,7 @@
         cursorInactiveStyle: 'none',
         rightClickSelectsWord: true,
         rescaleOverlappingGlyphs: true,
+        ...(isIPad() ? { paddingTop: 10, paddingBottom: 10 } : {}),
       },
       onTerminalCreated: (sessionName, entry) => {
         // Wire up keyboard handler for each new terminal
