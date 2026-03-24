@@ -95,9 +95,7 @@ export function createWebSocketConnection(deps = {}) {
       effects: [
         { type: 'seqClear' },
         { type: 'terminalReset' },
-        { type: 'updateSessionUI', name: msg.session },
         { type: 'updateConnectionIndicator' },
-        { type: 'fit' },
         { type: 'invalidateSessions', name: msg.session },
         { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect },
         { type: 'syncCarouselSubscriptions' }
@@ -111,9 +109,7 @@ export function createWebSocketConnection(deps = {}) {
       },
       effects: [
         { type: 'seqClear' },
-        { type: 'updateSessionUI', name: msg.session },
         { type: 'invalidateSessions', name: msg.session },
-        { type: 'fit' },
         { type: 'scrollToBottomIfNeeded', condition: true }
       ]
     }),

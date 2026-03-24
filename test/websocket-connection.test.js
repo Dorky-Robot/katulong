@@ -92,14 +92,12 @@ describe("wsMessageHandlers", () => {
       assert.strictEqual(result.stateUpdates["scroll.userScrolledUpBeforeDisconnect"], false);
     });
 
-    it("emits terminalReset, updateSessionUI, updateConnectionIndicator, fit effects", () => {
+    it("emits terminalReset and updateConnectionIndicator effects", () => {
       const state = makeState();
       const result = handlers.attached({ session: "alpha" }, state);
       const effectTypes = result.effects.map(e => e.type);
       assert.ok(effectTypes.includes("terminalReset"));
-      assert.ok(effectTypes.includes("updateSessionUI"));
       assert.ok(effectTypes.includes("updateConnectionIndicator"));
-      assert.ok(effectTypes.includes("fit"));
     });
 
     it("includes invalidateSessions with server-confirmed session name", () => {
@@ -117,17 +115,10 @@ describe("wsMessageHandlers", () => {
       assert.strictEqual(result.stateUpdates["connection.attached"], true);
     });
 
-    it("emits updateSessionUI with new name", () => {
-      const result = handlers.switched({ session: "new-session" });
-      const ui = result.effects.find(e => e.type === "updateSessionUI");
-      assert.strictEqual(ui.name, "new-session");
-    });
-
-    it("emits invalidateSessions and fit", () => {
+    it("emits invalidateSessions", () => {
       const result = handlers.switched({ session: "s" });
       const effectTypes = result.effects.map(e => e.type);
       assert.ok(effectTypes.includes("invalidateSessions"));
-      assert.ok(effectTypes.includes("fit"));
     });
   });
 
