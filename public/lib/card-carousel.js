@@ -67,27 +67,43 @@ export function createCardCarousel({
     wrapper.className = "carousel-card";
     wrapper.dataset.session = sessionName;
 
-    // Focus on tap
-    wrapper.addEventListener("pointerdown", () => {
-      if (active && focusedSession !== sessionName) {
-        focusCard(sessionName);
-      }
+    // Focus on tap — but only for direct taps on the card wrapper itself,
+    // not for events bubbling up from the terminal or keyboard input.
+    wrapper.addEventListener("pointerdown", (e) => {
+      if (!active || focusedSession === sessionName) return;
+      // Ignore if the event originated from inside a terminal pane
+      if (e.target.closest(".terminal-pane, .xterm")) return;
+      focusCard(sessionName);
     });
 
     return { wrapper };
   }
 
 
-  /** Scroll the focused card into view. */
-  function scrollToFocused(smooth) {
+  /**
+   * Position all cards via translateX relative to the focused card.
+   * Focused = translateX(0), neighbors offset by calc(100% + 16px).
+   * Far cards are hidden via visibility:hidden.
+   */
+  function positionCards(animate = true) {
     if (!focusedSession) return;
-    const el = cardEls.get(focusedSession);
-    if (!el?.wrapper) return;
-    const behavior = smooth === false ? "instant" : "smooth";
-    setTimeout(() => {
-      if (!active) return;
-      el.wrapper.scrollIntoView({ behavior, inline: "start", block: "nearest" });
-    }, 80);
+    const focusedIdx = cards.indexOf(focusedSession);
+    if (focusedIdx === -1) return;
+
+    for (const [session, { wrapper }] of cardEls) {
+      const idx = cards.indexOf(session);
+      const offset = idx - focusedIdx;
+
+      if (!animate) wrapper.style.transition = 'none';
+      wrapper.style.transform = `translateX(calc(${offset} * (100% + 16px)))`;
+      wrapper.classList.toggle("focused", offset === 0);
+      wrapper.classList.toggle("carousel-hidden", Math.abs(offset) > 1);
+
+      if (!animate) {
+        wrapper.offsetHeight; // force reflow
+        requestAnimationFrame(() => { wrapper.style.transition = ""; });
+      }
+    }
   }
 
   // ── Layout ───────────────────────────────────────────────────────────
@@ -115,17 +131,12 @@ export function createCardCarousel({
 
       entry.container.style.display = "";
       wrapper.appendChild(entry.container);
-
-      if (session === focusedSession) {
-        wrapper.classList.add("focused");
-      }
-
       cardEls.set(session, { wrapper });
       container.appendChild(wrapper);
     }
 
+    positionCards(false); // instant positioning on build
     fitAll();
-    scrollToFocused();
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────
@@ -199,21 +210,8 @@ export function createCardCarousel({
 
     container.appendChild(wrapper);
 
-    // Animate: start collapsed, then grow to full width
-    wrapper.style.flex = "0 0 0px";
-    wrapper.style.opacity = "0";
-    wrapper.style.transform = "scale(0.95)";
-    wrapper.offsetHeight; // force reflow
-    requestAnimationFrame(() => {
-      wrapper.style.flex = "";
-      wrapper.style.opacity = "";
-      wrapper.style.transform = "";
-    });
-
-    setTimeout(() => {
-      wrapper.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
-      fitAll();
-    }, 350);
+    positionCards(false);
+    fitAll();
 
     save();
   }
@@ -253,37 +251,21 @@ export function createCardCarousel({
         if (cards.length > 0) {
           focusedSession = cards[Math.min(currentIdx, cards.length - 1)];
           if (onFocusChange) onFocusChange(focusedSession);
-          // Update focused class
-          for (const [name, { wrapper }] of cardEls) {
-            wrapper.classList.toggle("focused", name === focusedSession);
-          }
-          scrollToFocused();
+          positionCards(true);
         } else {
           focusedSession = null;
           deactivate();
           return;
         }
+      } else {
+        positionCards(true);
       }
 
       fitAll();
       save();
     };
 
-    // Animate out: shrink + fade, then remove
-    if (el?.wrapper?.style) {
-      let done = false;
-      const finish = () => { if (!done) { done = true; doRemove(); } };
-      el.wrapper.style.transition = "flex 0.3s ease, opacity 0.2s ease, transform 0.3s ease, min-width 0.3s ease";
-      el.wrapper.style.flex = "0 0 0px";
-      el.wrapper.style.minWidth = "0";
-      el.wrapper.style.opacity = "0";
-      el.wrapper.style.transform = "scale(0.92)";
-      el.wrapper.style.overflow = "hidden";
-      el.wrapper.addEventListener("transitionend", finish, { once: true });
-      setTimeout(finish, 350);
-    } else {
-      doRemove();
-    }
+    doRemove();
   }
 
   function focusCard(sessionName) {
@@ -293,16 +275,14 @@ export function createCardCarousel({
 
     focusedSession = sessionName;
 
-    // Update focused class on cards
-    for (const [name, { wrapper }] of cardEls) {
-      wrapper.classList.toggle("focused", name === sessionName);
-    }
+    // Slide cards to new positions (animated)
+    positionCards(true);
 
-    // Focus the terminal, move controls into this card, and scroll into view
+    // Focus the terminal, rescale it, and move controls into this card
     const entry = terminalPool.get(sessionName);
     if (entry?.term?.focus) entry.term.focus();
     terminalPool.attachControls(sessionName);
-    scrollToFocused();
+    fitAll();
 
     if (onFocusChange) onFocusChange(sessionName);
     save();
@@ -338,39 +318,8 @@ export function createCardCarousel({
 
     cards = newOrder;
 
-    // FLIP animation: capture old positions, reorder DOM, animate
-    const positions = new Map();
-    for (const [session, { wrapper }] of cardEls) {
-      positions.set(session, wrapper.getBoundingClientRect());
-    }
-
-    // Reorder DOM to match cards array
-    for (const session of cards) {
-      const el = cardEls.get(session);
-      if (el) container.appendChild(el.wrapper);
-    }
-
-    // Animate from old position to new
-    for (const [session, { wrapper }] of cardEls) {
-      const oldRect = positions.get(session);
-      const newRect = wrapper.getBoundingClientRect();
-      if (!oldRect) continue;
-      const dx = oldRect.left - newRect.left;
-      if (Math.abs(dx) < 1) continue;
-      wrapper.style.transition = "none";
-      wrapper.style.transform = `translateX(${dx}px)`;
-      wrapper.offsetHeight; // force reflow
-      wrapper.style.transition = "transform 0.3s ease";
-      wrapper.style.transform = "";
-    }
-
-    // Clean up transitions after animation
-    setTimeout(() => {
-      for (const [, { wrapper }] of cardEls) {
-        wrapper.style.transition = "";
-      }
-      fitAll();
-    }, 350);
+    positionCards(true);
+    fitAll();
 
     save();
   }
@@ -396,6 +345,8 @@ export function createCardCarousel({
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => { resizeTimer = null; fitAll(); }, 150);
   });
+
+
 
   return {
     isActive: () => active,
