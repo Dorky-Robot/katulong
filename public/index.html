@@ -206,8 +206,9 @@
       overflow-x: auto; overflow-y: hidden;
       scroll-snap-type: x proximity;
       -webkit-overflow-scrolling: touch;
-      gap: 10px; padding: 6px 6px 4px;
+      gap: 10px; padding: 6px;
       background: var(--bg);
+      min-height: 0; /* prevent flex child from overflowing parent */
     }
     /* Each card fills the container width. Scroll horizontally between cards.
        FitAddon adjusts terminal cols/rows to match — like zooming an image. */
@@ -226,7 +227,7 @@
     .carousel-card > .terminal-pane {
       position: relative; inset: auto;
       flex: 1; display: block;
-      min-width: 0; min-height: 0;
+      min-width: 0; min-height: 0; overflow: hidden;
       border-radius: 20px;
       padding: 6px 4px 4px 6px;
     }
