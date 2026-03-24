@@ -384,9 +384,10 @@ export function createCardCarousel({
       wrapper.classList.toggle("focused", name === sessionName);
     }
 
-    // Focus the terminal and scroll into view
+    // Focus the terminal, move controls into this card, and scroll into view
     const entry = terminalPool.get(sessionName);
     if (entry?.term?.focus) entry.term.focus();
+    terminalPool.attachControls(sessionName);
     scrollToFocused();
 
     if (onFocusChange) onFocusChange(sessionName);

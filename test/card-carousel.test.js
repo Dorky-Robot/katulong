@@ -88,6 +88,7 @@ function createMockTerminalPool() {
     },
     forEach: (fn) => { for (const [name, entry] of pool) fn(name, entry); },
     activate: mock.fn(),
+    attachControls: mock.fn(),
     has: (name) => pool.has(name),
     protect: mock.fn(),
     unprotect: mock.fn(),

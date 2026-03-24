@@ -112,11 +112,20 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     return entry;
   }
 
-  // Per-terminal UI: joystick and scroll button live inside the active pane
+  // Per-terminal UI: joystick and scroll button live inside the focused pane
   // so each terminal card acts as a self-contained screen (like a phone).
   const joystickEl = document.getElementById("joystick");
   const progressRing = document.getElementById("enter-progress-ring");
   const scrollBtn = document.getElementById("scroll-bottom");
+
+  /** Move per-terminal UI (joystick, scroll button) into a session's pane. */
+  function attachControls(sessionName) {
+    const entry = pool.get(sessionName);
+    if (!entry) return;
+    if (joystickEl) entry.container.appendChild(joystickEl);
+    if (progressRing) entry.container.appendChild(progressRing);
+    if (scrollBtn) entry.container.appendChild(scrollBtn);
+  }
 
   function activate(sessionName) {
     const entry = getOrCreate(sessionName);
@@ -129,10 +138,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     activeSession = sessionName;
     entry.lastUsed = Date.now();
 
-    // Reparent per-terminal UI into the active pane
-    if (joystickEl) entry.container.appendChild(joystickEl);
-    if (progressRing) entry.container.appendChild(progressRing);
-    if (scrollBtn) entry.container.appendChild(scrollBtn);
+    attachControls(sessionName);
 
     // Fit after visibility change (needs to be visible for correct dimensions).
     // Guard against the entry being disposed before the rAF fires.
@@ -196,6 +202,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     get,
     getOrCreate,
     activate,
+    attachControls,
     dispose,
     getActive,
     getActiveName,
