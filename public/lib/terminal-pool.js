@@ -259,6 +259,19 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     }
   }
 
+  // Auto-rescale active terminal when container size changes (browser resize,
+  // orientation change, split view, etc.).
+  let lastW = 0, lastH = 0;
+  const ro = new ResizeObserver(([entry]) => {
+    const { width, height } = entry.contentRect;
+    if (width === lastW && height === lastH) return;
+    lastW = width; lastH = height;
+    if (!activeSession) return;
+    const active = pool.get(activeSession);
+    if (active) scaleToFit(active.term, active.container);
+  });
+  ro.observe(parentEl);
+
   return {
     get,
     getOrCreate,

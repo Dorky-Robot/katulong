@@ -265,6 +265,8 @@
         }
         // Subscribe to all other visible cards
         syncCarouselSubscriptions();
+        // Reattach scroll-to-bottom button to the newly focused terminal
+        _attachScrollButton();
       },
       onCardDismissed: (sessionName) => {
         // Detach: remove from this window's tab set (session stays on server)

@@ -201,33 +201,31 @@
 
     /* --- Card Carousel (iPad) --- */
     #terminal-container[data-carousel] {
-      display: flex; flex-direction: row;
-      align-items: stretch;
-      overflow-x: auto; overflow-y: hidden;
-      scroll-snap-type: x mandatory;
-      -webkit-overflow-scrolling: touch;
-      gap: 12px; padding: 8px;
+      position: relative;
+      overflow: clip;
       background: var(--bg);
-      min-height: 0;
     }
-    /* Each card fills the container. Fixed cols, font scales to fit. */
+    /* Cards positioned absolutely, slid via translateX. Only focused + neighbors visible. */
     .carousel-card {
-      flex: 0 0 calc(100% - 16px); /* full width minus padding */
-      display: flex; flex-direction: column; overflow: hidden;
-      scroll-snap-align: start; position: relative;
+      position: absolute;
+      top: 72px; bottom: 16px; left: 24px; right: 24px;
+      display: flex; flex-direction: column; overflow: hidden; contain: paint;
       border-radius: 16px;
       background: var(--bg-surface);
-      box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.4);
+      transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+      will-change: transform;
     }
     .carousel-card.focused {
-      box-shadow: 0 2px 16px rgba(0,0,0,0.3), 0 0 0 2px var(--accent-active);
+      z-index: 2;
     }
+    .carousel-card.carousel-hidden { visibility: hidden; }
     .carousel-card > .terminal-pane {
       position: relative; inset: auto;
       flex: 1; display: block;
       min-width: 0; min-height: 0; overflow: hidden;
       border-radius: 16px;
-      padding: 4px;
+      padding: 0;
     }
     .terminal-pane .xterm, #terminal-container .xterm { height: 100%; touch-action: none; }
     #terminal-container .xterm-viewport,
@@ -434,7 +432,7 @@
       margin-left: 0.25rem; flex-shrink: 0;
       /* Enlarge touch target without changing visual size */
       padding: 0.5rem; box-sizing: content-box;
-      margin: -0.5rem -0.5rem -0.5rem 0;
+      margin: -0.5rem -0.5rem -0.5rem auto;
     }
     .tab-bar-tab:hover .tab-close { opacity: 1; }
     .tab-close:hover { color: var(--text); background: rgba(255,255,255,0.1); }
