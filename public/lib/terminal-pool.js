@@ -15,7 +15,7 @@ import { WebglAddon } from "/vendor/xterm/addon-webgl.esm.js";
 const MAX_POOL_SIZE = 5;
 // Fixed column width — all terminals share this regardless of screen size.
 // Font size scales to fit the container width. Rows vary with height.
-const FIXED_COLS = 120;
+const FIXED_COLS = 80;
 
 /** Load WebGL renderer with automatic fallback to DOM on failure. */
 function loadWebGL(term) {
