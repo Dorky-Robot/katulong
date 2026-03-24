@@ -686,8 +686,6 @@
       }
       if (shortcutBarInstance) shortcutBarInstance.render(name);
       invalidateSessions(sessionStore, name);
-      // Reflow terminal to current window size after activation
-      fitActiveTerminal();
       // Attach scroll-to-bottom button listener to the new viewport.
       // scroll events don't bubble, so we must listen on the viewport directly.
       _attachScrollButton();
@@ -806,7 +804,6 @@
         if (!enabled && portForwardEl.classList.contains("active")) {
           closePortForward();
           getTerm()?.focus();
-          fitActiveTerminal();
         }
       }
     });
@@ -1047,7 +1044,6 @@
       if (notepad.isActive()) notepad.hide();
       if (helmViewEl?.classList.contains("active")) hideHelmView();
       getTerm()?.focus();
-      fitActiveTerminal();
     }
 
     function closePortForward() {
@@ -1067,7 +1063,6 @@
       if (isActive) {
         closeFileBrowser();
         getTerm()?.focus();
-        fitActiveTerminal();
       } else {
         // Close other panels if open (mutual exclusion)
         if (portForwardEl.classList.contains("active")) closePortForward();
@@ -1097,7 +1092,6 @@
       if (isActive) {
         closePortForward();
         getTerm()?.focus();
-        fitActiveTerminal();
       } else {
         // Close other panels if open (mutual exclusion)
         if (fileBrowserEl.classList.contains("active")) closeFileBrowser();
@@ -1189,7 +1183,6 @@
       helmViewEl.classList.remove("active");
       termContainer.classList.remove("helm-hidden");
       getTerm()?.focus();
-      fitActiveTerminal();
     }
 
     function toggleHelmView() {
