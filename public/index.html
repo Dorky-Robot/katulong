@@ -209,8 +209,10 @@
       gap: 10px; padding: 6px 6px 4px;
       background: var(--bg);
     }
+    /* Card widths are set explicitly in pixels by JS (buildLayout/addCard).
+       No CSS flex-basis default — prevents jarring reflow on resize. */
     .carousel-card {
-      flex: 0 0 calc(50% - 5px); min-width: 280px; max-width: 100%;
+      flex: 0 0 auto; min-width: 200px;
       display: flex; flex-direction: column; overflow: hidden;
       scroll-snap-align: center; position: relative;
       border-radius: 20px;
@@ -220,10 +222,6 @@
     }
     /* Disable transitions during active resize drag */
     .carousel-card.resizing { transition: none; }
-    /* Single card: full width */
-    .carousel-card:only-of-type {
-      flex: 1 1 100%; min-width: 200px; max-width: 100%;
-    }
     .carousel-card.focused {
       box-shadow: 0 2px 16px rgba(0,0,0,0.35), 0 0 0 2px var(--accent-active);
     }

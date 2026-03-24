@@ -170,10 +170,29 @@ export function createCardCarousel({
 
     container.dataset.carousel = "true";
 
+    // Determine initial card widths:
+    //   1 card  → 100% of container
+    //   2 cards → 50% each if container is wide enough (~70% of max iPad width),
+    //             otherwise 100% each (scroll horizontally)
+    //   3+ cards → 100% each (scroll horizontally)
+    const containerWidth = container.clientWidth - 12; // account for padding
+    const WIDE_THRESHOLD = 750; // ~70% of 1024px (iPad landscape)
+
     for (let i = 0; i < cards.length; i++) {
       const session = cards[i];
       const entry = terminalPool.getOrCreate(session);
       const { wrapper } = createCardWrapper(session);
+
+      // Set explicit pixel width — no CSS-driven reflow
+      let cardWidth;
+      if (cards.length === 1) {
+        cardWidth = containerWidth;
+      } else if (cards.length === 2 && containerWidth >= WIDE_THRESHOLD) {
+        cardWidth = Math.floor((containerWidth - 10) / 2); // split minus gap
+      } else {
+        cardWidth = containerWidth; // full-width, scroll horizontally
+      }
+      wrapper.style.flex = `0 0 ${cardWidth}px`;
 
       // Move the terminal pane into the card wrapper and ensure it's visible
       // (deactivate sets display:none which overrides CSS)
@@ -188,25 +207,13 @@ export function createCardCarousel({
       // Attach left/right edge resize handles
       attachEdgeHandles(wrapper, session);
 
-      cardEls.set(session, { wrapper });
+      cardEls.set(session, { wrapper, intendedWidth: cardWidth });
       container.appendChild(wrapper);
     }
 
     // Fit terminals after layout, then scroll focused card into view
     fitAll();
     scrollToFocused();
-
-    // After the flex layout settles, capture each card's intended width
-    // so it can be preserved across browser resizes.
-    setTimeout(() => {
-      if (!active) return;
-      for (const [, el] of cardEls) {
-        if (!el.intendedWidth) {
-          const w = el.wrapper.getBoundingClientRect().width;
-          if (w > 0) el.intendedWidth = w;
-        }
-      }
-    }, 100);
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────
@@ -281,13 +288,18 @@ export function createCardCarousel({
 
     container.appendChild(wrapper);
 
-    // Animate: start collapsed, then grow to natural size
+    // New cards get full container width (scroll horizontally to reach them)
+    const cardWidth = container.clientWidth - 12;
+    const el = cardEls.get(sessionName);
+    if (el) el.intendedWidth = cardWidth;
+
+    // Animate: start collapsed, then grow to intended size
     wrapper.style.flex = "0 0 0px";
     wrapper.style.opacity = "0";
     wrapper.style.transform = "scale(0.95)";
     wrapper.offsetHeight; // force reflow
     requestAnimationFrame(() => {
-      wrapper.style.flex = "";
+      wrapper.style.flex = `0 0 ${cardWidth}px`;
       wrapper.style.opacity = "";
       wrapper.style.transform = "";
     });
@@ -296,9 +308,6 @@ export function createCardCarousel({
     setTimeout(() => {
       wrapper.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
       fitAll();
-      // Capture intended width after layout settles
-      const el = cardEls.get(sessionName);
-      if (el) el.intendedWidth = wrapper.getBoundingClientRect().width;
     }, 350);
 
     save();
@@ -482,45 +491,12 @@ export function createCardCarousel({
 
   // ── Resize listener ──────────────────────────────────────────────────
 
+  // On window resize: refit terminals inside their cards but don't change
+  // card widths — the user controls widths via drag handles.
   window.addEventListener("resize", () => {
     if (!active) return;
-    const maxWidth = container.clientWidth - 12; // account for container padding
-
-    // Find the largest intended width to decide if we need to scale
-    let needsScale = false;
-    for (const [, el] of cardEls) {
-      if (el.intendedWidth && el.intendedWidth > maxWidth) {
-        needsScale = true;
-        break;
-      }
-    }
-
-    if (needsScale) {
-      // At least one card exceeds the viewport — scale all proportionally
-      // so they shrink together rather than only clamping the oversized ones.
-      let maxIntended = 0;
-      for (const [, el] of cardEls) {
-        if (el.intendedWidth && el.intendedWidth > maxIntended) {
-          maxIntended = el.intendedWidth;
-        }
-      }
-      const scale = maxIntended > 0 ? maxWidth / maxIntended : 1;
-      for (const [, el] of cardEls) {
-        const intended = el.intendedWidth || maxWidth;
-        const w = Math.max(200, Math.round(intended * scale));
-        el.wrapper.style.flex = `0 0 ${w}px`;
-      }
-    } else {
-      // All cards fit — restore their intended widths
-      for (const [, el] of cardEls) {
-        if (el.intendedWidth) {
-          el.wrapper.style.flex = `0 0 ${el.intendedWidth}px`;
-        }
-      }
-    }
-
     fitAll();
-    scrollToFocused(false); // instant snap during resize, no smooth animation
+    scrollToFocused(false);
   });
 
   return {
