@@ -259,16 +259,6 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     }
   }
 
-  /** Font-only adjustment: scale text to fit width without changing cols/rows. */
-  function adjustFontSize(sessionName, width) {
-    const entry = pool.get(sessionName);
-    if (!entry) return;
-    const fontSize = fontSizeForWidth(entry.term, width);
-    if (entry.term.options.fontSize !== fontSize) {
-      entry.term.options.fontSize = fontSize;
-    }
-  }
-
   return {
     get,
     getOrCreate,
@@ -284,7 +274,6 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     unprotect,
     scale,
     scaleAll,
-    adjustFontSize,
     FIXED_COLS,
     get size() { return pool.size; },
   };

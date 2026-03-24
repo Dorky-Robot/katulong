@@ -69,16 +69,6 @@ export function createViewportManager(options = {}) {
     window.addEventListener("load", resizeToViewport);
   }
 
-  // Flag to suppress resize echo when applying server-dictated dimensions
-  let isSyncResize = false;
-
-  // Initialize terminal ResizeObserver for WebSocket resize events
-  // No ResizeObserver-driven rescaling — fixed cols means terminal dimensions
-  // are set once on activation/switch, not continuously adjusted.
-  function initTerminalResizeObserver() {
-    return { disconnect() {} }; // no-op
-  }
-
   // --- Scroll-to-bottom button ---
   //
   // xterm.js 6 uses a custom scrollable element with its own scroll
@@ -139,20 +129,13 @@ export function createViewportManager(options = {}) {
   // Initialize all viewport features
   function init() {
     initViewportResize();
-    const resizeObserver = initTerminalResizeObserver();
     initScrollButton();
     initTerminalGestures();
-    return resizeObserver;
   }
 
   return {
     init,
     attachScrollButton,
     resizeToViewport,
-    initViewportResize,
-    initTerminalResizeObserver,
-    initScrollButton,
-    initTerminalGestures,
-    setSyncResize(v) { isSyncResize = v; },
   };
 }

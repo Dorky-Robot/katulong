@@ -78,9 +78,7 @@ export function createCardCarousel({
   }
 
 
-  /** Scroll the focused card into view, left-aligned so the left edge
-   *  and resize handle are accessible even when the card is wider than
-   *  the viewport. */
+  /** Scroll the focused card into view. */
   function scrollToFocused(smooth) {
     if (!focusedSession) return;
     const el = cardEls.get(focusedSession);
@@ -394,8 +392,6 @@ export function createCardCarousel({
 
   // ── Resize listener ──────────────────────────────────────────────────
 
-  // No JS resize handler — CSS handles card sizing (flex: 0 0 calc(100% - 16px)).
-  // Terminal font size is set once on activation; the card clips overflow.
 
   return {
     isActive: () => active,

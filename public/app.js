@@ -1298,7 +1298,6 @@
       poolRename: (oldName, newName) => terminalPool.rename(oldName, newName),
       tabRename: (oldName, newName) => windowTabSet.renameTab(oldName, newName),
       fit: fitActiveTerminal,
-      setSyncResize: (v) => viewportManager.setSyncResize(v),
       // Helm mode
       onHelmModeChanged,
       onHelmEvent: (session, event) => helmComponent?.helmEvent(session, event),
