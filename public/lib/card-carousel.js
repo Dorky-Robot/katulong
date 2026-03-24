@@ -77,64 +77,6 @@ export function createCardCarousel({
     return { wrapper };
   }
 
-  /** Create left/right edge resize handles inside a card wrapper */
-  function attachEdgeHandles(wrapper, sessionName) {
-    for (const side of ["left", "right"]) {
-      const handle = document.createElement("div");
-      handle.className = `carousel-handle carousel-handle-${side}`;
-
-      let startX = 0;
-      let startWidth = 0;
-
-      function onStart(cx) {
-        startX = cx;
-        startWidth = wrapper.getBoundingClientRect().width;
-        wrapper.classList.add("resizing");
-        return true;
-      }
-
-      function onMove(cx) {
-        const dx = cx - startX;
-        const delta = side === "right" ? dx : -dx;
-        const maxWidth = container.clientWidth - 12;
-        const newWidth = Math.max(200, Math.min(startWidth + delta, maxWidth));
-        wrapper.style.flex = `0 0 ${newWidth}px`;
-      }
-
-      function onEnd() {
-        wrapper.classList.remove("resizing");
-        // Store the intended width so it survives browser resizes
-        const el = cardEls.get(sessionName);
-        const w = wrapper.getBoundingClientRect().width;
-        if (el && w > 0) el.intendedWidth = w;
-        fitAll();
-        save();
-      }
-
-      handle.addEventListener("touchstart", (e) => {
-        if (e.touches.length !== 1) return;
-        e.preventDefault();
-        e.stopPropagation();
-        onStart(e.touches[0].clientX);
-        const move = (te) => { te.preventDefault(); onMove(te.touches[0].clientX); };
-        const end = () => { document.removeEventListener("touchmove", move); document.removeEventListener("touchend", end); onEnd(); };
-        document.addEventListener("touchmove", move, { passive: false });
-        document.addEventListener("touchend", end);
-      }, { passive: false });
-
-      handle.addEventListener("mousedown", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onStart(e.clientX);
-        const move = (me) => { me.preventDefault(); onMove(me.clientX); };
-        const end = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", end); onEnd(); };
-        document.addEventListener("mousemove", move);
-        document.addEventListener("mouseup", end);
-      });
-
-      wrapper.appendChild(handle);
-    }
-  }
 
   /** Scroll the focused card into view, left-aligned so the left edge
    *  and resize handle are accessible even when the card is wider than
@@ -154,11 +96,10 @@ export function createCardCarousel({
 
   function buildLayout() {
     // Remove carousel elements but preserve terminal panes
-    for (const el of [...container.querySelectorAll(".carousel-card, .carousel-handle")]) {
+    for (const el of [...container.querySelectorAll(".carousel-card")]) {
       el.remove();
     }
     // Move any terminal panes back to container root before rebuilding
-    // (safely handles terminals already in wrappers)
     terminalPool.forEach((_name, entry) => {
       if (entry.container.parentElement && entry.container.parentElement !== container) {
         container.appendChild(entry.container);
@@ -170,48 +111,21 @@ export function createCardCarousel({
 
     container.dataset.carousel = "true";
 
-    // Determine initial card widths:
-    //   1 card  → 100% of container
-    //   2 cards → 50% each if container is wide enough (~70% of max iPad width),
-    //             otherwise 100% each (scroll horizontally)
-    //   3+ cards → 100% each (scroll horizontally)
-    const containerWidth = container.clientWidth - 12; // account for padding
-    const WIDE_THRESHOLD = 750; // ~70% of 1024px (iPad landscape)
-
-    for (let i = 0; i < cards.length; i++) {
-      const session = cards[i];
+    for (const session of cards) {
       const entry = terminalPool.getOrCreate(session);
       const { wrapper } = createCardWrapper(session);
 
-      // Set explicit pixel width — no CSS-driven reflow
-      let cardWidth;
-      if (cards.length === 1) {
-        cardWidth = containerWidth;
-      } else if (cards.length === 2 && containerWidth >= WIDE_THRESHOLD) {
-        cardWidth = Math.floor((containerWidth - 10) / 2); // split minus gap
-      } else {
-        cardWidth = containerWidth; // full-width, scroll horizontally
-      }
-      wrapper.style.flex = `0 0 ${cardWidth}px`;
-
-      // Move the terminal pane into the card wrapper and ensure it's visible
-      // (deactivate sets display:none which overrides CSS)
       entry.container.style.display = "";
       wrapper.appendChild(entry.container);
 
-      // Mark focused
       if (session === focusedSession) {
         wrapper.classList.add("focused");
       }
 
-      // Attach left/right edge resize handles
-      attachEdgeHandles(wrapper, session);
-
-      cardEls.set(session, { wrapper, intendedWidth: cardWidth });
+      cardEls.set(session, { wrapper });
       container.appendChild(wrapper);
     }
 
-    // Fit terminals after layout, then scroll focused card into view
     fitAll();
     scrollToFocused();
   }
@@ -283,28 +197,21 @@ export function createCardCarousel({
     const { wrapper } = createCardWrapper(sessionName);
     entry.container.style.display = "";
     wrapper.appendChild(entry.container);
-    attachEdgeHandles(wrapper, sessionName);
     cardEls.set(sessionName, { wrapper });
 
     container.appendChild(wrapper);
 
-    // New cards get full container width (scroll horizontally to reach them)
-    const cardWidth = container.clientWidth - 12;
-    const el = cardEls.get(sessionName);
-    if (el) el.intendedWidth = cardWidth;
-
-    // Animate: start collapsed, then grow to intended size
+    // Animate: start collapsed, then grow to full width
     wrapper.style.flex = "0 0 0px";
     wrapper.style.opacity = "0";
     wrapper.style.transform = "scale(0.95)";
     wrapper.offsetHeight; // force reflow
     requestAnimationFrame(() => {
-      wrapper.style.flex = `0 0 ${cardWidth}px`;
+      wrapper.style.flex = "";
       wrapper.style.opacity = "";
       wrapper.style.transform = "";
     });
 
-    // Scroll into view AFTER the grow animation finishes (300ms CSS transition)
     setTimeout(() => {
       wrapper.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
       fitAll();

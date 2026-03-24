@@ -209,19 +209,17 @@
       gap: 10px; padding: 6px 6px 4px;
       background: var(--bg);
     }
-    /* Card widths are set explicitly in pixels by JS (buildLayout/addCard).
-       No CSS flex-basis default — prevents jarring reflow on resize. */
+    /* Each card fills the container width. Scroll horizontally between cards.
+       FitAddon adjusts terminal cols/rows to match — like zooming an image. */
     .carousel-card {
-      flex: 0 0 auto; min-width: 200px;
+      flex: 0 0 100%; min-width: 0;
       display: flex; flex-direction: column; overflow: hidden;
-      scroll-snap-align: center; position: relative;
+      scroll-snap-align: start; position: relative;
       border-radius: 20px;
       background: var(--bg-surface);
       box-shadow: 0 2px 12px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.04);
-      transition: flex-basis 0.3s ease, opacity 0.25s ease, transform 0.3s ease;
+      transition: opacity 0.25s ease, transform 0.3s ease;
     }
-    /* Disable transitions during active resize drag */
-    .carousel-card.resizing { transition: none; }
     .carousel-card.focused {
       box-shadow: 0 2px 16px rgba(0,0,0,0.35), 0 0 0 2px var(--accent-active);
     }
@@ -232,13 +230,6 @@
       border-radius: 20px;
       padding: 6px 4px 4px 6px;
     }
-    /* Carousel header — sits above the cards, shows titles inline */
-    .carousel-handle {
-      position: absolute; top: 0; bottom: 0; width: 32px;
-      cursor: col-resize; background: transparent; touch-action: none; z-index: 3;
-    }
-    .carousel-handle-left { left: -8px; }
-    .carousel-handle-right { right: -8px; }
     .terminal-pane .xterm, #terminal-container .xterm { height: 100%; touch-action: none; }
     #terminal-container .xterm-viewport,
     #terminal-container .xterm-scrollable-element {
