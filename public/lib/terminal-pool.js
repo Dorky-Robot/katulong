@@ -7,27 +7,66 @@
  */
 
 import { Terminal } from "/vendor/xterm/xterm.esm.js";
-import { FitAddon } from "/vendor/xterm/addon-fit.esm.js";
 import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
 import { SearchAddon } from "/vendor/xterm/addon-search.esm.js";
 import { ClipboardAddon } from "/vendor/xterm/addon-clipboard.esm.js";
 import { WebglAddon } from "/vendor/xterm/addon-webgl.esm.js";
 
 const MAX_POOL_SIZE = 5;
+// Fixed column width — all terminals share this regardless of screen size.
+// Font size scales to fit the container width. Rows vary with height.
+const FIXED_COLS = 120;
 
 /** Load WebGL renderer with automatic fallback to DOM on failure. */
 function loadWebGL(term) {
   try {
     const addon = new WebglAddon();
     addon.onContextLoss(() => {
-      // Browser dropped the WebGL context (GPU driver, memory pressure,
-      // device sleep).  Dispose and fall back to the DOM renderer.
       addon.dispose();
     });
     term.loadAddon(addon);
   } catch {
     // WebGL2 not available — DOM renderer stays active
   }
+}
+
+/**
+ * Scale terminal to fit container width at FIXED_COLS.
+ * Adjusts fontSize so the fixed column count fills the container width.
+ * Rows are calculated from the remaining height at that font size.
+ * Returns { cols, rows } or null if container is not visible.
+ */
+function scaleToFit(term, container) {
+  const rect = container.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return null;
+
+  // Measure character width ratio at current font size
+  const testSize = 14;
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  const family = term.options.fontFamily || "monospace";
+  ctx.font = `${testSize}px ${family.split(",")[0].trim().replace(/'/g, "")}`;
+  const charWidth = ctx.measureText("W").width;
+  const charRatio = charWidth / testSize; // ~0.6 for most monospace fonts
+
+  // Calculate font size that fits FIXED_COLS in the container width
+  // Account for some padding (scrollbar ~14px, left margin ~4px)
+  const availableWidth = rect.width - 18;
+  const fontSize = Math.max(6, Math.floor(availableWidth / (FIXED_COLS * charRatio)));
+
+  // Calculate rows from height at this font size
+  const lineHeight = Math.ceil(fontSize * (term.options.lineHeight || 1));
+  const rows = Math.max(2, Math.floor(rect.height / lineHeight));
+
+  // Apply
+  if (term.options.fontSize !== fontSize) {
+    term.options.fontSize = fontSize;
+  }
+  if (term.cols !== FIXED_COLS || term.rows !== rows) {
+    term.resize(FIXED_COLS, rows);
+  }
+
+  return { cols: FIXED_COLS, rows };
 }
 
 /**
@@ -62,10 +101,8 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     }
 
     const term = new Terminal(terminalOptions);
-    const fit = new FitAddon();
     const searchAddon = new SearchAddon();
 
-    term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.loadAddon(searchAddon);
     term.loadAddon(new ClipboardAddon());
@@ -95,7 +132,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
       clip.appendChild(textarea);
     }
 
-    const entry = { term, fit, searchAddon, container, sessionName, lastUsed: Date.now() };
+    const entry = { term, searchAddon, container, sessionName, lastUsed: Date.now() };
     pool.set(sessionName, entry);
 
     if (onTerminalCreated) onTerminalCreated(sessionName, entry);
@@ -144,7 +181,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     // Guard against the entry being disposed before the rAF fires.
     requestAnimationFrame(() => {
       if (!pool.has(sessionName)) return;
-      entry.fit.fit();
+      scaleToFit(entry.term, entry.container);
       entry.term.focus();
     });
 
@@ -198,6 +235,19 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
   function protect(sessionName) { protectedSessions.add(sessionName); }
   function unprotect(sessionName) { protectedSessions.delete(sessionName); }
 
+  /** Scale a terminal to fit its container at FIXED_COLS. */
+  function scale(sessionName) {
+    const entry = pool.get(sessionName);
+    if (entry) scaleToFit(entry.term, entry.container);
+  }
+
+  /** Scale all terminals in the pool. */
+  function scaleAll() {
+    for (const [, entry] of pool) {
+      scaleToFit(entry.term, entry.container);
+    }
+  }
+
   return {
     get,
     getOrCreate,
@@ -211,6 +261,9 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     forEach,
     protect,
     unprotect,
+    scale,
+    scaleAll,
+    FIXED_COLS,
     get size() { return pool.size; },
   };
 }

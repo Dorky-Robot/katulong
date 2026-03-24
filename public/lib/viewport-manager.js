@@ -18,7 +18,7 @@ export function createViewportManager(options = {}) {
 
   // Support both direct references and getter functions for pooled terminals
   const getTerm = typeof options.term === "function" ? options.term : () => options.term;
-  const getFit = typeof options.fit === "function" ? options.fit : () => options.fit;
+  const getScale = options.scale || null; // function(term, container) to scale terminal
 
   // Scroll button elements
   const scrollBtn = document.getElementById("scroll-bottom");
@@ -75,16 +75,13 @@ export function createViewportManager(options = {}) {
   // Initialize terminal ResizeObserver for WebSocket resize events
   function initTerminalResizeObserver() {
     const ro = new ResizeObserver(() => {
-      // Skip when terminal is hidden (e.g. file browser is active).
-      // fit.fit() on a display:none element produces 0 dimensions which
-      // corrupts the PTY session via an invalid resize message.
       if (termContainer.offsetParent === null) return;
-      // Skip if this resize was triggered by a server resize-sync message
       if (isSyncResize) return;
       const term = getTerm();
-      const fit = getFit();
-      if (!term || !fit) return;
-      withPreservedScroll(term, () => fit.fit());
+      if (!term) return;
+      if (getScale) {
+        getScale();
+      }
       if (onWebSocketResize) {
         onWebSocketResize(term.cols, term.rows);
       }

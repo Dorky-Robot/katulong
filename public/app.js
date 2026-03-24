@@ -237,7 +237,6 @@
 
     // Convenience accessors — always reference the active terminal
     const getTerm = () => terminalPool.getActive()?.term;
-    const getFit = () => terminalPool.getActive()?.fit;
     const getSearchAddon = () => terminalPool.getActive()?.searchAddon;
 
     // --- Card Carousel (iPad/tablet) ---
@@ -317,21 +316,17 @@
       }
     }
 
-    /** Fit the active terminal after a visibility change (e.g. closing file browser/port forward) */
+    /** Scale the active terminal to fit its container at fixed cols. */
     function fitActiveTerminal() {
       requestAnimationFrame(() => {
-        // In carousel mode, fit all visible cards
         if (carousel.isActive()) {
           carousel.fitAll();
           return;
         }
         const active = terminalPool.getActive();
         if (!active) return;
-        withPreservedScroll(active.term, () => active.fit.fit());
-        // After fit, send updated dimensions to the server.
-        // The ResizeObserver only fires when the container element changes size,
-        // but fit() can change the terminal rows/cols without the container
-        // changing (e.g. on initial attach when the container was already laid out).
+        terminalPool.scale(active.sessionName);
+        // Send row update to server (cols are fixed)
         if (state.connection.ws?.readyState === 1) {
           state.connection.ws.send(JSON.stringify({ type: "resize", session: state.session.name, cols: active.term.cols, rows: active.term.rows }));
         }
@@ -885,7 +880,7 @@
 
     const viewportManager = createViewportManager({
       term: getTerm,
-      fit: getFit,
+      scale: fitActiveTerminal,
       termContainer,
       bar,
       onWebSocketResize: (cols, rows) => {

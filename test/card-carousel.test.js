@@ -79,7 +79,6 @@ function createMockTerminalPool() {
       if (!pool.has(name)) {
         pool.set(name, {
           term: { cols: 80, rows: 24, refresh: mock.fn(), focus: mock.fn() },
-          fit: { fit: mock.fn() },
           container: createMockElement("div"),
           sessionName: name,
         });
@@ -89,6 +88,7 @@ function createMockTerminalPool() {
     forEach: (fn) => { for (const [name, entry] of pool) fn(name, entry); },
     activate: mock.fn(),
     attachControls: mock.fn(),
+    scaleAll: mock.fn(),
     has: (name) => pool.has(name),
     protect: mock.fn(),
     unprotect: mock.fn(),
