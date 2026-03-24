@@ -73,28 +73,10 @@ export function createViewportManager(options = {}) {
   let isSyncResize = false;
 
   // Initialize terminal ResizeObserver for WebSocket resize events
+  // No ResizeObserver-driven rescaling — fixed cols means terminal dimensions
+  // are set once on activation/switch, not continuously adjusted.
   function initTerminalResizeObserver() {
-    let lastWidth = 0;
-    let lastHeight = 0;
-    const ro = new ResizeObserver((entries) => {
-      if (termContainer.offsetParent === null) return;
-      if (isSyncResize) return;
-      const rect = entries[0]?.contentRect;
-      const width = rect?.width || termContainer.clientWidth;
-      const height = rect?.height || termContainer.clientHeight;
-      // Skip if neither dimension changed (prevents feedback loops
-      // from xterm content changes triggering the observer).
-      if (width === lastWidth && height === lastHeight) return;
-      lastWidth = width;
-      lastHeight = height;
-      if (getScale) getScale();
-      const term = getTerm();
-      if (term && onWebSocketResize) {
-        onWebSocketResize(term.cols, term.rows);
-      }
-    });
-    ro.observe(termContainer);
-    return ro;
+    return { disconnect() {} }; // no-op
   }
 
   // --- Scroll-to-bottom button ---

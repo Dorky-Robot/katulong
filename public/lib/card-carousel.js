@@ -394,17 +394,8 @@ export function createCardCarousel({
 
   // ── Resize listener ──────────────────────────────────────────────────
 
-  // On window resize: refit terminals. Debounce to let layout settle.
-  let resizeTimer = null;
-  window.addEventListener("resize", () => {
-    if (!active) return;
-    if (resizeTimer) clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => {
-      resizeTimer = null;
-      fitAll();
-      scrollToFocused(false);
-    }, 150);
-  });
+  // No resize handler — fixed cols means terminal content doesn't change
+  // when the browser resizes. Font size is set once on activation/switch.
 
   return {
     isActive: () => active,
