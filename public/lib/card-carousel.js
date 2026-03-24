@@ -394,12 +394,16 @@ export function createCardCarousel({
 
   // ── Resize listener ──────────────────────────────────────────────────
 
-  // On window resize: refit terminals inside their cards but don't change
-  // card widths — the user controls widths via drag handles.
+  // On window resize: refit terminals. Debounce to let layout settle.
+  let resizeTimer = null;
   window.addEventListener("resize", () => {
     if (!active) return;
-    fitAll();
-    scrollToFocused(false);
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      resizeTimer = null;
+      fitAll();
+      scrollToFocused(false);
+    }, 150);
   });
 
   return {

@@ -75,14 +75,18 @@ export function createViewportManager(options = {}) {
   // Initialize terminal ResizeObserver for WebSocket resize events
   function initTerminalResizeObserver() {
     let lastWidth = 0;
+    let lastHeight = 0;
     const ro = new ResizeObserver((entries) => {
       if (termContainer.offsetParent === null) return;
       if (isSyncResize) return;
-      // Only rescale when the container width actually changes.
-      // Height changes from terminal content don't need rescaling.
-      const width = entries[0]?.contentRect?.width || termContainer.clientWidth;
-      if (width === lastWidth) return;
+      const rect = entries[0]?.contentRect;
+      const width = rect?.width || termContainer.clientWidth;
+      const height = rect?.height || termContainer.clientHeight;
+      // Skip if neither dimension changed (prevents feedback loops
+      // from xterm content changes triggering the observer).
+      if (width === lastWidth && height === lastHeight) return;
       lastWidth = width;
+      lastHeight = height;
       if (getScale) getScale();
       const term = getTerm();
       if (term && onWebSocketResize) {
