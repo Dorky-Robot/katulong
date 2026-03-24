@@ -40,28 +40,34 @@ function scaleToFit(term, container) {
   const rect = container.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return null;
 
-  // Measure character width ratio at current font size
-  const testSize = 14;
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  const family = term.options.fontFamily || "monospace";
-  ctx.font = `${testSize}px ${family.split(",")[0].trim().replace(/'/g, "")}`;
-  const charWidth = ctx.measureText("W").width;
-  const charRatio = charWidth / testSize; // ~0.6 for most monospace fonts
+  // Use xterm's actual cell dimensions if available (after first render).
+  // Falls back to font measurement for the initial call before open().
+  const dims = term._core?._renderService?.dimensions;
+  let charWidth, cellHeight;
+
+  if (dims?.css?.cell?.width && dims?.css?.cell?.height) {
+    // xterm knows its exact cell dimensions
+    const currentFontSize = term.options.fontSize || 14;
+    charWidth = dims.css.cell.width / currentFontSize; // ratio per px of fontSize
+    cellHeight = dims.css.cell.height / currentFontSize;
+  } else {
+    // Fallback: measure from canvas
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    const family = term.options.fontFamily || "monospace";
+    ctx.font = `14px ${family.split(",")[0].trim().replace(/'/g, "")}`;
+    charWidth = ctx.measureText("W").width / 14;
+    cellHeight = 1.2; // approximate
+  }
 
   // Calculate font size that fits FIXED_COLS in the container width
-  // Account for some padding (scrollbar ~14px, left margin ~4px)
-  const availableWidth = rect.width - 18;
-  const fontSize = Math.max(6, Math.floor(availableWidth / (FIXED_COLS * charRatio)));
+  const availableWidth = rect.width - 18; // scrollbar + margin
+  const fontSize = Math.max(6, Math.floor(availableWidth / (FIXED_COLS * charWidth)));
 
-  // Calculate rows from height at this font size.
-  // xterm adds internal padding (~4px) and cell height is slightly larger
-  // than lineHeight, so subtract a buffer to avoid overflow.
-  const cellHeight = Math.ceil(fontSize * 1.2); // xterm cell height ≈ fontSize × 1.2
-  const availableHeight = rect.height - 8; // small buffer for padding
-  const rows = Math.max(2, Math.floor(availableHeight / cellHeight));
+  // Calculate rows from height using the cell height ratio
+  const rows = Math.max(2, Math.floor(rect.height / (fontSize * cellHeight)));
 
-  // Apply
+  // Apply — set fontSize first, then resize
   if (term.options.fontSize !== fontSize) {
     term.options.fontSize = fontSize;
   }
