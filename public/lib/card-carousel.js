@@ -31,7 +31,7 @@ export function createCardCarousel({
   let active = false;
   let cards = [];           // ordered session names
   let focusedSession = null;
-  const cardEls = new Map(); // sessionName -> { wrapper, intendedWidth }
+  const cardEls = new Map(); // sessionName -> { wrapper }
 
   // ── Persistence ──────────────────────────────────────────────────────
 
@@ -170,7 +170,7 @@ export function createCardCarousel({
 
     // Remove only carousel elements (card wrappers, handles), NOT terminal panes
     delete container.dataset.carousel;
-    for (const el of [...container.querySelectorAll(".carousel-card, .carousel-handle")]) {
+    for (const el of [...container.querySelectorAll(".carousel-card")]) {
       el.remove();
     }
     cardEls.clear();

@@ -202,34 +202,32 @@
     /* --- Card Carousel (iPad) --- */
     #terminal-container[data-carousel] {
       display: flex; flex-direction: row;
-      align-items: stretch; justify-content: center;
+      align-items: stretch;
       overflow-x: auto; overflow-y: hidden;
-      scroll-snap-type: x proximity;
+      scroll-snap-type: x mandatory;
       -webkit-overflow-scrolling: touch;
-      gap: 10px; padding: 6px;
+      gap: 12px; padding: 8px;
       background: var(--bg);
-      min-height: 0; /* prevent flex child from overflowing parent */
+      min-height: 0;
     }
-    /* Each card fills the container width. Scroll horizontally between cards.
-       FitAddon adjusts terminal cols/rows to match — like zooming an image. */
+    /* Each card fills the container. Fixed cols, font scales to fit. */
     .carousel-card {
-      flex: 0 0 100%; min-width: 0;
+      flex: 0 0 calc(100% - 16px); /* full width minus padding */
       display: flex; flex-direction: column; overflow: hidden;
       scroll-snap-align: start; position: relative;
-      border-radius: 20px;
+      border-radius: 16px;
       background: var(--bg-surface);
-      box-shadow: 0 2px 12px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.04);
-      transition: opacity 0.25s ease, transform 0.3s ease;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.2);
     }
     .carousel-card.focused {
-      box-shadow: 0 2px 16px rgba(0,0,0,0.35), 0 0 0 2px var(--accent-active);
+      box-shadow: 0 2px 16px rgba(0,0,0,0.3), 0 0 0 2px var(--accent-active);
     }
     .carousel-card > .terminal-pane {
       position: relative; inset: auto;
       flex: 1; display: block;
       min-width: 0; min-height: 0; overflow: hidden;
-      border-radius: 20px;
-      padding: 6px 4px 4px 6px;
+      border-radius: 16px;
+      padding: 4px;
     }
     .terminal-pane .xterm, #terminal-container .xterm { height: 100%; touch-action: none; }
     #terminal-container .xterm-viewport,
