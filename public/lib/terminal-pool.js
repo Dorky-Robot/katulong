@@ -112,6 +112,12 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     return entry;
   }
 
+  // Per-terminal UI: joystick and scroll button live inside the active pane
+  // so each terminal card acts as a self-contained screen (like a phone).
+  const joystickEl = document.getElementById("joystick");
+  const progressRing = document.getElementById("enter-progress-ring");
+  const scrollBtn = document.getElementById("scroll-bottom");
+
   function activate(sessionName) {
     const entry = getOrCreate(sessionName);
 
@@ -123,16 +129,17 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     activeSession = sessionName;
     entry.lastUsed = Date.now();
 
+    // Reparent per-terminal UI into the active pane
+    if (joystickEl) entry.container.appendChild(joystickEl);
+    if (progressRing) entry.container.appendChild(progressRing);
+    if (scrollBtn) entry.container.appendChild(scrollBtn);
+
     // Fit after visibility change (needs to be visible for correct dimensions).
     // Guard against the entry being disposed before the rAF fires.
     requestAnimationFrame(() => {
       if (!pool.has(sessionName)) return;
       entry.fit.fit();
       entry.term.focus();
-      // Safari shifts the visual viewport when focusing the off-screen
-      // textarea, which displaces all position:fixed elements (joystick).
-      // Reset scroll to keep the viewport anchored at (0,0).
-      window.scrollTo(0, 0);
     });
 
     return entry;

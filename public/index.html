@@ -278,9 +278,9 @@
     }
     #search-input:focus { border-color: var(--accent-active); }
 
-    /* --- Scroll to bottom --- */
+    /* --- Scroll to bottom (lives inside active terminal pane) --- */
     #scroll-bottom {
-      position: fixed; bottom: calc(1rem + env(safe-area-inset-bottom, 0px)); right: calc(1.5rem + env(safe-area-inset-right, 0px)); z-index: 10;
+      position: absolute; bottom: 1rem; right: 1rem; z-index: 10;
       width: 2.5rem; height: 2.5rem; border-radius: 50%; border: none;
       background: var(--overlay-bg); color: var(--text); font-size: 1.25rem;
       cursor: pointer; display: none; align-items: center; justify-content: center;
@@ -288,7 +288,8 @@
     }
     #scroll-bottom:active { opacity: 0.7; }
     @media (pointer: coarse) {
-      #scroll-bottom { right: calc(1.5rem + 5.5rem + env(safe-area-inset-right, 0px)); bottom: 2.75rem; }
+      /* Offset left to avoid overlap with the joystick */
+      #scroll-bottom { right: calc(1rem + 5.5rem); bottom: 1.5rem; }
     }
 
     /* --- Swipe feedback --- */
@@ -761,9 +762,11 @@
     .dictation-send-btn:active { opacity: 0.8; }
 
     /* --- Joystick zone (touch devices only) --- */
+    /* Joystick lives inside the active terminal pane (reparented by JS).
+       Position absolute within the pane — no viewport math needed. */
     #joystick {
-      display: none; position: fixed; z-index: var(--z-bar);
-      right: 1.5rem; bottom: 1.5rem;
+      display: none; position: absolute; z-index: var(--z-bar);
+      right: 1rem; bottom: 1rem;
       width: 5rem; height: 5rem; border-radius: 50%;
       border: 1.5px dashed var(--border);
       background: transparent;
@@ -777,32 +780,19 @@
     @media (pointer: coarse) {
       #joystick { display: flex; }
     }
-    /* iPad: position joystick near the bottom-right, inset enough to
-       clear Stage Manager's corner resize handle (~30px touch zone).
-       Use left/top with dvw/dvh so position is immune to layout shifts. */
-    [data-platform="ipad"] #joystick {
-      right: auto; bottom: auto;
-      left: calc(100dvw - 5rem - 1.5rem);
-      top: calc(100dvh - 5rem - 1.5rem);
-    }
-    /* Hide joystick when hardware keyboard detected (JS-driven) */
+    /* Hide joystick when hardware keyboard is connected */
     #joystick.hw-keyboard { display: none !important; }
     #joystick.hw-keyboard ~ #enter-progress-ring { display: none !important; }
 
     /* --- Enter key progress ring --- */
     #enter-progress-ring {
       display: none;
-      position: fixed;
-      right: 1.5rem; bottom: 1.5rem;
+      position: absolute;
+      right: 1rem; bottom: 1rem;
       width: 5rem;
       height: 5rem;
       pointer-events: none;
       z-index: calc(var(--z-bar) + 1);
-    }
-    [data-platform="ipad"] #enter-progress-ring {
-      right: auto; bottom: auto;
-      left: calc(100dvw - 5rem - 1.5rem);
-      top: calc(100dvh - 5rem - 1.5rem);
     }
     #enter-progress-ring.active {
       display: block;
