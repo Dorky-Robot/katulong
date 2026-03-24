@@ -36,45 +36,47 @@ function loadWebGL(term) {
  * Rows are calculated from the remaining height at that font size.
  * Returns { cols, rows } or null if container is not visible.
  */
+/** Measure char width ratio for the terminal's font family. */
+function getCharRatio(term) {
+  const dims = term._core?._renderService?.dimensions;
+  if (dims?.css?.cell?.width) {
+    return dims.css.cell.width / (term.options.fontSize || 14);
+  }
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  const family = term.options.fontFamily || "monospace";
+  ctx.font = `14px ${family.split(",")[0].trim().replace(/'/g, "")}`;
+  return ctx.measureText("W").width / 14;
+}
+
+/** Calculate font size that fits FIXED_COLS in the given width. */
+function fontSizeForWidth(term, width) {
+  const charRatio = getCharRatio(term);
+  const availableWidth = width - 18; // scrollbar + margin
+  return Math.max(6, Math.floor(availableWidth / (FIXED_COLS * charRatio)));
+}
+
+/**
+ * Full init: set font size, cols, and rows for a terminal in its container.
+ * Called once on activation/session switch — NOT on browser resize.
+ */
 function scaleToFit(term, container) {
   const rect = container.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return null;
 
-  // Use xterm's actual cell dimensions if available (after first render).
-  // Falls back to font measurement for the initial call before open().
+  const fontSize = fontSizeForWidth(term, rect.width);
+  term.options.fontSize = fontSize;
+
+  // Calculate rows from height
   const dims = term._core?._renderService?.dimensions;
-  let charWidth, cellHeight;
+  const cellHeight = dims?.css?.cell?.height
+    ? dims.css.cell.height / (term.options.fontSize || 14) * fontSize
+    : fontSize * 1.2;
+  const rows = Math.max(2, Math.floor(rect.height / cellHeight));
 
-  if (dims?.css?.cell?.width && dims?.css?.cell?.height) {
-    // xterm knows its exact cell dimensions
-    const currentFontSize = term.options.fontSize || 14;
-    charWidth = dims.css.cell.width / currentFontSize; // ratio per px of fontSize
-    cellHeight = dims.css.cell.height / currentFontSize;
-  } else {
-    // Fallback: measure from canvas
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    const family = term.options.fontFamily || "monospace";
-    ctx.font = `14px ${family.split(",")[0].trim().replace(/'/g, "")}`;
-    charWidth = ctx.measureText("W").width / 14;
-    cellHeight = 1.2; // approximate
-  }
-
-  // Calculate font size that fits FIXED_COLS in the container width
-  const availableWidth = rect.width - 18; // scrollbar + margin
-  const fontSize = Math.max(6, Math.floor(availableWidth / (FIXED_COLS * charWidth)));
-
-  // Calculate rows from height using the cell height ratio
-  const rows = Math.max(2, Math.floor(rect.height / (fontSize * cellHeight)));
-
-  // Apply — set fontSize first, then resize
-  if (term.options.fontSize !== fontSize) {
-    term.options.fontSize = fontSize;
-  }
   if (term.cols !== FIXED_COLS || term.rows !== rows) {
     term.resize(FIXED_COLS, rows);
   }
-
   return { cols: FIXED_COLS, rows };
 }
 
@@ -244,16 +246,26 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
   function protect(sessionName) { protectedSessions.add(sessionName); }
   function unprotect(sessionName) { protectedSessions.delete(sessionName); }
 
-  /** Scale a terminal to fit its container at FIXED_COLS. */
+  /** Full init: set font size + cols + rows for a terminal. */
   function scale(sessionName) {
     const entry = pool.get(sessionName);
     if (entry) scaleToFit(entry.term, entry.container);
   }
 
-  /** Scale all terminals in the pool. */
+  /** Full init for all terminals. */
   function scaleAll() {
     for (const [, entry] of pool) {
       scaleToFit(entry.term, entry.container);
+    }
+  }
+
+  /** Font-only adjustment: scale text to fit width without changing cols/rows. */
+  function adjustFontSize(sessionName, width) {
+    const entry = pool.get(sessionName);
+    if (!entry) return;
+    const fontSize = fontSizeForWidth(entry.term, width);
+    if (entry.term.options.fontSize !== fontSize) {
+      entry.term.options.fontSize = fontSize;
     }
   }
 
@@ -272,6 +284,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     unprotect,
     scale,
     scaleAll,
+    adjustFontSize,
     FIXED_COLS,
     get size() { return pool.size; },
   };

@@ -394,8 +394,19 @@ export function createCardCarousel({
 
   // ── Resize listener ──────────────────────────────────────────────────
 
-  // No resize handler — fixed cols means terminal content doesn't change
-  // when the browser resizes. Font size is set once on activation/switch.
+  // On browser resize: adjust font size so the fixed-col terminal fits
+  // the new container width. No col/row changes = no reflow, no flicker.
+  window.addEventListener("resize", () => {
+    if (!active) return;
+    for (const session of cards) {
+      const entry = terminalPool.get(session);
+      if (!entry) continue;
+      const rect = entry.container.getBoundingClientRect();
+      if (rect.width > 0) {
+        terminalPool.adjustFontSize(session, rect.width);
+      }
+    }
+  });
 
   return {
     isActive: () => active,
