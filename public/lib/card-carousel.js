@@ -136,17 +136,17 @@ export function createCardCarousel({
     }
   }
 
-  /** Scroll the focused card fully into view after layout settles */
+  /** Scroll the focused card into view, left-aligned so the left edge
+   *  and resize handle are accessible even when the card is wider than
+   *  the viewport. */
   function scrollToFocused(smooth) {
     if (!focusedSession) return;
     const el = cardEls.get(focusedSession);
     if (!el?.wrapper) return;
     const behavior = smooth === false ? "instant" : "smooth";
-    // Wait for layout to settle (fitAll uses setTimeout 50ms, so 80ms
-    // ensures flex widths have been applied before we measure scroll).
     setTimeout(() => {
       if (!active) return;
-      el.wrapper.scrollIntoView({ behavior, inline: "center", block: "nearest" });
+      el.wrapper.scrollIntoView({ behavior, inline: "start", block: "nearest" });
     }, 80);
   }
 
@@ -306,7 +306,7 @@ export function createCardCarousel({
 
     // Scroll into view AFTER the grow animation finishes (300ms CSS transition)
     setTimeout(() => {
-      wrapper.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      wrapper.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
       fitAll();
     }, 350);
 
