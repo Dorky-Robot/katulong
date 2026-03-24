@@ -54,9 +54,12 @@ function scaleToFit(term, container) {
   const availableWidth = rect.width - 18;
   const fontSize = Math.max(6, Math.floor(availableWidth / (FIXED_COLS * charRatio)));
 
-  // Calculate rows from height at this font size
-  const lineHeight = Math.ceil(fontSize * (term.options.lineHeight || 1));
-  const rows = Math.max(2, Math.floor(rect.height / lineHeight));
+  // Calculate rows from height at this font size.
+  // xterm adds internal padding (~4px) and cell height is slightly larger
+  // than lineHeight, so subtract a buffer to avoid overflow.
+  const cellHeight = Math.ceil(fontSize * 1.2); // xterm cell height ≈ fontSize × 1.2
+  const availableHeight = rect.height - 8; // small buffer for padding
+  const rows = Math.max(2, Math.floor(availableHeight / cellHeight));
 
   // Apply
   if (term.options.fontSize !== fontSize) {
