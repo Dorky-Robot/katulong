@@ -192,11 +192,15 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     // Guard against the entry being disposed before the rAF fires.
     requestAnimationFrame(() => {
       if (!pool.has(sessionName)) return;
-      const dims = scaleToFit(entry.term, entry.container);
+      const oldCols = entry.term.cols;
+      const oldRows = entry.term.rows;
+      scaleToFit(entry.term, entry.container);
       entry.term.focus();
-      // Notify server of actual dimensions after fit — the switch message
-      // may have sent stale dimensions before scaleToFit ran.
-      if (dims && onResize) onResize(sessionName, dims.cols, dims.rows);
+      // Only notify server if dimensions actually changed — otherwise
+      // the resize triggers tmux redraws that duplicate content.
+      if (onResize && (entry.term.cols !== oldCols || entry.term.rows !== oldRows)) {
+        onResize(sessionName, entry.term.cols, entry.term.rows);
+      }
     });
 
     return entry;
