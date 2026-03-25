@@ -67,12 +67,12 @@ export function createCardCarousel({
     wrapper.className = "carousel-card";
     wrapper.dataset.session = sessionName;
 
-    // Focus on tap — but only for direct taps on the card wrapper itself,
-    // not for events bubbling up from the terminal or keyboard input.
+    // Tap on a non-focused card to make it active.
+    // For the focused card, let events pass through to the terminal normally.
     wrapper.addEventListener("pointerdown", (e) => {
       if (!active || focusedSession === sessionName) return;
-      // Ignore if the event originated from inside a terminal pane
-      if (e.target.closest(".terminal-pane, .xterm")) return;
+      e.preventDefault();
+      e.stopPropagation();
       focusCard(sessionName);
     });
 
@@ -95,9 +95,13 @@ export function createCardCarousel({
       const offset = idx - focusedIdx;
 
       if (!animate) wrapper.style.transition = 'none';
-      wrapper.style.transform = `translateX(calc(${offset} * (100% + 16px)))`;
+      // Use the card's actual width + gap for offset so neighbors peek on wide screens
+      const cardW = wrapper.offsetWidth || wrapper.getBoundingClientRect().width;
+      const gap = 16;
+      wrapper.style.transform = `translateX(${offset * (cardW + gap)}px)`;
       wrapper.classList.toggle("focused", offset === 0);
-      wrapper.classList.toggle("carousel-hidden", Math.abs(offset) > 1);
+      // Show neighbors within 2 positions (visible on wide screens)
+      wrapper.classList.toggle("carousel-hidden", Math.abs(offset) > 2);
 
       if (!animate) {
         wrapper.offsetHeight; // force reflow
