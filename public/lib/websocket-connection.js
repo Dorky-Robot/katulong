@@ -54,6 +54,7 @@ export function createWebSocketConnection(deps = {}) {
   // processing the previous write.
 
   const pullStates = new Map(); // sessionName -> { cursor, pulling, writing, pending }
+  const subscribedSessions = new Set(); // tracks active subscriptions to avoid duplicates
 
   function sendPull(sessionName) {
     const ps = pullStates.get(sessionName);
@@ -117,7 +118,9 @@ export function createWebSocketConnection(deps = {}) {
     'subscribed': (msg) => ({
       stateUpdates: {},
       effects: [
-        // seq-init will come separately from the server
+        // Reset this session's terminal before the snapshot arrives so
+        // stale content from a previous subscribe doesn't remain.
+        { type: 'terminalResetSession', session: msg.session },
       ]
     }),
 
@@ -356,6 +359,15 @@ export function createWebSocketConnection(deps = {}) {
         term.reset();
         break;
       }
+      case 'terminalResetSession': {
+        // Reset a specific session's terminal (used before subscribe snapshot
+        // replay so stale content doesn't persist).
+        const term = getOutputTerm(effect.session);
+        if (!term) break;
+        term.clear();
+        term.reset();
+        break;
+      }
       case 'terminalWrite': {
         const term = effect.useOutputTerm ? getOutputTerm(effect.session) : getTerm();
         if (!term) break;
@@ -495,6 +507,7 @@ export function createWebSocketConnection(deps = {}) {
       state.scroll.userScrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
       state.connection.attached = false;
       clearPullStates();
+      subscribedSessions.clear();
       if (deps.updateConnectionIndicator) deps.updateConnectionIndicator();
       if (deps.onDisconnect) deps.onDisconnect();
 
@@ -578,11 +591,13 @@ export function createWebSocketConnection(deps = {}) {
     getConnectionState: () => connectionState,
     sendSubscribe(sessionName) {
       const ws = state.connection.ws;
-      if (ws?.readyState === 1) {
+      if (ws?.readyState === 1 && !subscribedSessions.has(sessionName)) {
+        subscribedSessions.add(sessionName);
         ws.send(JSON.stringify({ type: "subscribe", session: sessionName }));
       }
     },
     sendUnsubscribe(sessionName) {
+      subscribedSessions.delete(sessionName);
       const ws = state.connection.ws;
       if (ws?.readyState === 1) {
         ws.send(JSON.stringify({ type: "unsubscribe", session: sessionName }));
