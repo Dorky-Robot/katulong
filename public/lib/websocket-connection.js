@@ -53,35 +53,32 @@ export function createWebSocketConnection(deps = {}) {
   // Natural backpressure: the next pull only fires after xterm finishes
   // processing the previous write.
 
-  const pullStates = new Map(); // sessionName -> { cursor, pulling, writing, pending, pollTimer, backoffMs, emptyCount }
+  const pullStates = new Map(); // sessionName -> { cursor, pulling, writing, pending, pollTimer }
 
-  // Adaptive polling: start at 30fps, back off exponentially on empty responses.
-  // Server-side "data-available" push resets backoff for instant wake-up.
-  const POLL_MIN_MS = 33;   // ~30 fps
-  const POLL_MAX_MS = 1000; // back off to 1fps when idle
+  // Hybrid pull + push: pull at up to 30fps while data is flowing, then go
+  // idle and wait for the server's "data-available" push to wake back up.
+  // This avoids continuous polling (which caused xterm write contention)
+  // while still delivering low-latency output during active bursts.
+  const PULL_INTERVAL_MS = 33; // ~30 fps cap during active output
 
-  function schedulePoll(sessionName) {
+  /**
+   * Schedule one more pull after a brief delay.  Only used when the last
+   * pull returned data — keeps pulling at 30fps during output bursts.
+   * When a pull returns empty, we stop and wait for data-available.
+   */
+  function scheduleFollowUp(sessionName) {
     const ps = pullStates.get(sessionName);
-    if (!ps) return;
-    if (ps.pollTimer) return; // already scheduled
+    if (!ps || ps.pollTimer) return;
     ps.pollTimer = setTimeout(() => {
       ps.pollTimer = null;
       sendPull(sessionName);
-    }, ps.backoffMs);
+    }, PULL_INTERVAL_MS);
   }
 
-  function resetBackoff(sessionName) {
+  function cancelFollowUp(sessionName) {
     const ps = pullStates.get(sessionName);
     if (!ps) return;
-    ps.backoffMs = POLL_MIN_MS;
-    ps.emptyCount = 0;
-  }
-
-  function increaseBackoff(sessionName) {
-    const ps = pullStates.get(sessionName);
-    if (!ps) return;
-    ps.emptyCount++;
-    ps.backoffMs = Math.min(POLL_MIN_MS * Math.pow(2, ps.emptyCount), POLL_MAX_MS);
+    if (ps.pollTimer) { clearTimeout(ps.pollTimer); ps.pollTimer = null; }
   }
 
   function sendPull(sessionName) {
@@ -102,12 +99,10 @@ export function createWebSocketConnection(deps = {}) {
       existing.writing = false;
       existing.pending = false;
       existing.pollTimer = null;
-      existing.backoffMs = POLL_MIN_MS;
-      existing.emptyCount = 0;
     } else {
       pullStates.set(sessionName, {
         cursor, pulling: false, writing: false, pending: false,
-        pollTimer: null, backoffMs: POLL_MIN_MS, emptyCount: 0,
+        pollTimer: null,
       });
     }
   }
@@ -317,12 +312,10 @@ export function createWebSocketConnection(deps = {}) {
         }
         break;
       case 'dataAvailable': {
-        // Server push nudge — reset backoff and pull immediately
+        // Server push nudge — pull immediately
         const ps = pullStates.get(effect.session);
         if (!ps) break;
-        resetBackoff(effect.session);
-        // Cancel any pending slow poll — we want to pull now
-        if (ps.pollTimer) { clearTimeout(ps.pollTimer); ps.pollTimer = null; }
+        cancelFollowUp(effect.session);
         if (ps.pulling || ps.writing) {
           ps.pending = true;
           break;
@@ -335,8 +328,7 @@ export function createWebSocketConnection(deps = {}) {
         if (!ps) break;
         ps.pulling = false;
         if (effect.data && effect.data.length > 0) {
-          // Got data — reset to max polling rate
-          resetBackoff(effect.session);
+          // Got data — write it and schedule a follow-up pull at 30fps
           ps.writing = true;
           const term = getOutputTerm(effect.session);
           if (term) {
@@ -347,26 +339,23 @@ export function createWebSocketConnection(deps = {}) {
                 ps.pending = false;
                 sendPull(effect.session);
               } else {
-                schedulePoll(effect.session);
+                // More data likely incoming — keep pulling at 30fps
+                scheduleFollowUp(effect.session);
               }
             });
           } else {
-            // No terminal (session evicted from pool) — advance cursor, skip render
             ps.writing = false;
             ps.cursor = effect.cursor;
-            schedulePoll(effect.session);
+            scheduleFollowUp(effect.session);
           }
         } else {
-          // No new data — back off
+          // Caught up — go idle and wait for server push
           ps.cursor = effect.cursor;
-          increaseBackoff(effect.session);
           if (ps.pending) {
             ps.pending = false;
-            resetBackoff(effect.session);
             sendPull(effect.session);
-          } else {
-            schedulePoll(effect.session);
           }
+          // No scheduleFollowUp — we wait for data-available
         }
         break;
       }
@@ -375,7 +364,6 @@ export function createWebSocketConnection(deps = {}) {
         const ps = pullStates.get(effect.session);
         if (!ps) break;
         ps.pulling = false;
-        resetBackoff(effect.session);
         const term = getOutputTerm(effect.session);
         if (term) {
           term.clear();
@@ -388,12 +376,11 @@ export function createWebSocketConnection(deps = {}) {
               ps.pending = false;
               sendPull(effect.session);
             } else {
-              schedulePoll(effect.session);
+              scheduleFollowUp(effect.session);
             }
           });
         } else {
           ps.cursor = effect.cursor;
-          schedulePoll(effect.session);
         }
         break;
       }
