@@ -563,13 +563,11 @@
       order: 1; /* after terminal = bottom */
       border-bottom: none;
       border-top: 1px solid var(--border);
-      height: auto;
-      min-height: calc(2.5rem + 0.75rem + 0.75rem + env(safe-area-inset-bottom, 0px)); /* tab + padding top/bottom + safe area */
-      padding-top: 0.75rem;
+      height: 4rem;
+      padding-top: var(--space-xs);
       padding-left: calc(3.5rem + var(--space-sm)); /* space for fixed + button */
       padding-right: var(--space-sm);
-      padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
-      align-items: center;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
       gap: var(--space-sm);
     }
     #shortcut-bar.bar-ipad .tab-close { opacity: 0.6; }
@@ -581,7 +579,7 @@
     /* iPad + button: absolutely positioned within the shortcut bar's padding area */
     #shortcut-bar.bar-ipad { position: relative; }
     .ipad-add-btn {
-      position: absolute; top: 0; left: 0; bottom: env(safe-area-inset-bottom, 0px);
+      position: absolute; top: 0; left: 0; bottom: 0;
       width: 3.5rem;
       border: none; background: transparent;
       color: var(--text-muted); font-size: 1.25rem; cursor: pointer;

@@ -1,8 +1,8 @@
 class Katulong < Formula
   desc "Self-hosted web terminal with tmux sessions and WebAuthn security"
   homepage "https://github.com/Dorky-Robot/katulong"
-  url "https://github.com/Dorky-Robot/katulong/archive/refs/tags/v0.37.8.tar.gz"
-  sha256 "f364fe4aa84556b179fbc888494d2f7a31806fe9cc17dd7c8e097bc0ecbc3336"
+  url "https://github.com/Dorky-Robot/katulong/archive/refs/tags/v0.36.1.tar.gz"
+  sha256 "80254e68f0a55f3d2bcf16ebbce26f55397bf67e7760a10a13c981843e52af1c"
   license "MIT"
 
   depends_on "node"
@@ -16,16 +16,16 @@ class Katulong < Formula
   end
 
   def post_install
-    # After brew upgrade the old server process may still be running (holding
-    # the port) even though its Cellar path was removed.  Stop it first, then
-    # start the new version.  The update command also handles this, so
-    # post_install is a belt-and-suspenders safety net.
+    # Use the katulong CLI itself to handle the upgrade lifecycle.
+    # `katulong service restart` does launchctl unload/load if the
+    # LaunchAgent is installed; `katulong restart` does stop+start
+    # otherwise. This avoids duplicating process/launchd management
+    # in Ruby.
     katulong = bin/"katulong"
     if (Pathname.new(Dir.home) / "Library/LaunchAgents/com.dorkyrobot.katulong.plist").exist?
       system katulong, "service", "restart"
     else
-      system katulong, "stop"
-      system katulong, "start"
+      system katulong, "restart"
     end
   end
 

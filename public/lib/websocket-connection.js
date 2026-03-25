@@ -198,13 +198,9 @@ export function createWebSocketConnection(deps = {}) {
     }),
 
     // seq-init: server tells us where the log head is — initialize pull cursor
-    // Also carries cursor position for syncing xterm with tmux on tab switch.
     'seq-init': (msg) => ({
       stateUpdates: {},
-      effects: [
-        { type: 'pullInit', session: msg.session, seq: msg.seq },
-        ...(msg.cursorRow != null ? [{ type: 'cursorSync', session: msg.session, row: msg.cursorRow, col: msg.cursorCol }] : []),
-      ]
+      effects: [{ type: 'pullInit', session: msg.session, seq: msg.seq }]
     }),
 
     'server-draining': () => ({
@@ -279,15 +275,6 @@ export function createWebSocketConnection(deps = {}) {
           sendPull(effect.session);
         }
         break;
-      case 'cursorSync': {
-        // Position xterm's cursor to match tmux's actual cursor.
-        // Uses ANSI CUP (Cursor Position): ESC [ row ; col H
-        const term = getOutputTerm(effect.session);
-        if (term && effect.row != null && effect.col != null) {
-          term.write(`\x1b[${effect.row};${effect.col}H`);
-        }
-        break;
-      }
       case 'dataAvailable': {
         // Server notifies new data — trigger pull if not already busy
         const ps = pullStates.get(effect.session);

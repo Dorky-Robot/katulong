@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tunnels --version)",
+      "Bash(/opt/homebrew/bin/tunnels --version 2>/dev/null)",
+      "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage 2>&1)",
+      "Bash(lsof -ti:3003)",
+      "Bash(xargs kill:*)",
+      "Bash(pkill -f cloudflared.*3003)",
+      "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage --status 2>&1)",
+      "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage --stop 3003)",
+      "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage)"
+    ]
+  }
+}
