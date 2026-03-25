@@ -275,7 +275,12 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     lastW = width; lastH = height;
     if (!activeSession) return;
     const active = pool.get(activeSession);
-    if (active) scaleToFit(active.term, active.container);
+    if (active) {
+      scaleToFit(active.term, active.container);
+      // Force xterm to repaint after resize — the canvas renderer can
+      // go blank after orientation change or split view resize.
+      active.term.refresh(0, active.term.rows - 1);
+    }
   });
   ro.observe(parentEl);
 
@@ -294,6 +299,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     unprotect,
     scale,
     scaleAll,
+    setActive(name) { activeSession = name; },
     FIXED_COLS,
     get size() { return pool.size; },
   };

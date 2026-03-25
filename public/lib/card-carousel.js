@@ -159,6 +159,14 @@ export function createCardCarousel({
     buildLayout();
     save();
 
+    // Set active in pool so getTerm() works immediately
+    if (focusedSession) {
+      terminalPool.setActive(focusedSession);
+      terminalPool.attachControls(focusedSession);
+      const entry = terminalPool.get(focusedSession);
+      if (entry?.term?.focus) entry.term.focus();
+    }
+
     // Notify listener of the initial focused session so app.js
     // doesn't need to duplicate state sync after activation
     if (onFocusChange && focusedSession) onFocusChange(focusedSession);
@@ -282,6 +290,8 @@ export function createCardCarousel({
     // Slide cards to new positions (animated)
     positionCards(true);
 
+    // Mark as active in pool so getTerm() returns the right terminal
+    terminalPool.setActive(sessionName);
     // Focus the terminal, rescale it, and move controls into this card
     const entry = terminalPool.get(sessionName);
     if (entry?.term?.focus) entry.term.focus();
