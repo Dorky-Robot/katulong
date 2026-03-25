@@ -43,6 +43,8 @@ function createMockBridge() {
 function createMockSessionManager() {
   // Track client-session bindings (single source of truth, like client-tracker)
   const clientSessions = new Map();
+  // Track subscriptions (clientId -> Set<sessionName>)
+  const clientSubscriptions = new Map();
   // Mock sessions with outputBuffer for seq tracking
   const mockSessions = new Map();
   return {
@@ -51,13 +53,32 @@ function createMockSessionManager() {
       const s = mockSessions.get(session);
       return { buffer: "", alive: true, seq: s?.outputBuffer?.totalBytes };
     },
-    detachClient: (clientId) => { clientSessions.delete(clientId); },
+    subscribeClient: async (clientId, sessionName) => {
+      if (!clientSubscriptions.has(clientId)) clientSubscriptions.set(clientId, new Set());
+      clientSubscriptions.get(clientId).add(sessionName);
+      const s = mockSessions.get(sessionName);
+      return {
+        buffer: s?._subscribeBuffer || "",
+        seq: s?.outputBuffer?.totalBytes,
+        alive: s?.alive ?? true,
+      };
+    },
+    unsubscribeClient: (clientId, sessionName) => {
+      const subs = clientSubscriptions.get(clientId);
+      if (subs) subs.delete(sessionName);
+    },
+    detachClient: (clientId) => { clientSessions.delete(clientId); clientSubscriptions.delete(clientId); },
     getSessionForClient: (clientId) => clientSessions.get(clientId) || null,
-    isClientSubscribedTo: (clientId, sessionName) => clientSessions.get(clientId) === sessionName,
-    getSubscriptionsForClient: () => new Set(),
+    isClientSubscribedTo: (clientId, sessionName) => {
+      if (clientSessions.get(clientId) === sessionName) return true;
+      const subs = clientSubscriptions.get(clientId);
+      return subs ? subs.has(sessionName) : false;
+    },
+    getSubscriptionsForClient: (clientId) => clientSubscriptions.get(clientId) || new Set(),
     getSession: (name) => mockSessions.get(name) || null,
     writeInput: () => {},
     resizeClient: () => {},
+    resizeSession: () => {},
     // Test helper: pre-set a client's session binding
     _setSession(clientId, session) { clientSessions.set(clientId, session); },
     _renameSession(oldName, newName) {
@@ -330,6 +351,96 @@ describe("createWebSocketManager", () => {
       assert.ok(seqInitMsg, "should receive seq-init");
       assert.equal(seqInitMsg.session, "test-session");
       assert.equal(seqInitMsg.seq, 250);
+    });
+
+    it("subscribe sends buffer snapshot so carousel tiles are not blank", async () => {
+      const ws = createMockWs();
+      wsMgr.handleConnection(ws);
+
+      sessionManager._addSession("bg-session", {
+        _subscribeBuffer: "$ hello world\r\nprompt> ",
+        outputBuffer: { totalBytes: 500 },
+        alive: true,
+      });
+
+      // Attach to a primary session first
+      await ws._handlers.message(Buffer.from(JSON.stringify({
+        type: "attach", session: "bg-session", cols: 80, rows: 24,
+      })));
+      await new Promise(r => setTimeout(r, 10));
+      ws.sent.length = 0; // clear attach messages
+
+      // Now subscribe to the background session
+      await ws._handlers.message(Buffer.from(JSON.stringify({
+        type: "subscribe", session: "bg-session",
+      })));
+      await new Promise(r => setTimeout(r, 10));
+
+      const msgs = ws.sent.map(s => JSON.parse(s));
+      const subscribedMsg = msgs.find(m => m.type === "subscribed");
+      assert.ok(subscribedMsg, "should receive subscribed");
+      assert.equal(subscribedMsg.session, "bg-session");
+
+      const outputMsg = msgs.find(m => m.type === "output");
+      assert.ok(outputMsg, "should receive output with buffer snapshot");
+      assert.equal(outputMsg.session, "bg-session");
+      assert.equal(outputMsg.data, "$ hello world\r\nprompt> ");
+
+      const seqMsg = msgs.find(m => m.type === "seq-init");
+      assert.ok(seqMsg, "should receive seq-init");
+      assert.equal(seqMsg.seq, 500);
+    });
+
+    it("subscribe with empty buffer sends no output message", async () => {
+      const ws = createMockWs();
+      wsMgr.handleConnection(ws);
+
+      sessionManager._addSession("empty-session", {
+        _subscribeBuffer: "",
+        outputBuffer: { totalBytes: 0 },
+        alive: true,
+      });
+
+      await ws._handlers.message(Buffer.from(JSON.stringify({
+        type: "attach", session: "empty-session", cols: 80, rows: 24,
+      })));
+      await new Promise(r => setTimeout(r, 10));
+      ws.sent.length = 0;
+
+      await ws._handlers.message(Buffer.from(JSON.stringify({
+        type: "subscribe", session: "empty-session",
+      })));
+      await new Promise(r => setTimeout(r, 10));
+
+      const msgs = ws.sent.map(s => JSON.parse(s));
+      const outputMsg = msgs.find(m => m.type === "output");
+      assert.equal(outputMsg, undefined, "should NOT send output when buffer is empty");
+    });
+
+    it("subscribe sends exit for dead session", async () => {
+      const ws = createMockWs();
+      wsMgr.handleConnection(ws);
+
+      sessionManager._addSession("dead-session", {
+        _subscribeBuffer: "final output",
+        outputBuffer: { totalBytes: 100 },
+        alive: false,
+      });
+
+      await ws._handlers.message(Buffer.from(JSON.stringify({
+        type: "attach", session: "dead-session", cols: 80, rows: 24,
+      })));
+      await new Promise(r => setTimeout(r, 10));
+      ws.sent.length = 0;
+
+      await ws._handlers.message(Buffer.from(JSON.stringify({
+        type: "subscribe", session: "dead-session",
+      })));
+      await new Promise(r => setTimeout(r, 10));
+
+      const msgs = ws.sent.map(s => JSON.parse(s));
+      const exitMsg = msgs.find(m => m.type === "exit");
+      assert.ok(exitMsg, "should send exit for dead session");
     });
   });
 });

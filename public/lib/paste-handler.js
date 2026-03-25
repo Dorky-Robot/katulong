@@ -88,6 +88,36 @@ export function createPasteHandler(options = {}) {
       const text = await navigator.clipboard.readText();
       if (text && onTextPaste) { onTextPaste(text); return; }
     } catch { /* clipboard API not available */ }
+
+    // Last resort: trigger a synthetic paste via a temporary contenteditable
+    // element. On iPad Safari, when both Clipboard APIs are denied or
+    // unavailable, focusing a contenteditable and calling
+    // document.execCommand("paste") causes Safari to fire a real paste event
+    // with clipboardData populated — which our handlePaste listener catches.
+    try {
+      triggerSyntheticPaste(sessionName);
+    } catch { /* best-effort */ }
+  }
+
+  /**
+   * Trigger a synthetic paste by focusing a hidden contenteditable element
+   * and calling execCommand("paste"). Safari fires a real paste event with
+   * clipboardData that our capture-phase handlePaste listener intercepts.
+   */
+  function triggerSyntheticPaste(_sessionName) {
+    const el = document.createElement("div");
+    el.contentEditable = "true";
+    el.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0;";
+    document.body.appendChild(el);
+    el.focus();
+    // Capture session for the paste event that will fire synchronously
+    _capturedSession = _sessionName;
+    _blocked = false;
+    try {
+      document.execCommand("paste");
+    } finally {
+      el.remove();
+    }
   }
 
   /**
