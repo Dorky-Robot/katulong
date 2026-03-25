@@ -334,11 +334,11 @@ export function createCardCarousel({
     if (!active) return;
     requestAnimationFrame(() => {
       if (!active) return;
+      // Scale all terminals to fit their containers. Server resize is
+      // handled by the terminal pool's onResize callback (which only
+      // fires when dimensions actually change). We don't send resize
+      // here — doing so triggers tmux redraws that duplicate content.
       terminalPool.scaleAll();
-      for (const session of cards) {
-        const entry = terminalPool.get(session);
-        if (entry && sendResize) sendResize(session, entry.term.cols, entry.term.rows);
-      }
     });
   }
 
