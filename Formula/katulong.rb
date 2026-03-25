@@ -16,16 +16,14 @@ class Katulong < Formula
   end
 
   def post_install
-    # Use the katulong CLI itself to handle the upgrade lifecycle.
-    # `katulong service restart` does launchctl unload/load if the
-    # LaunchAgent is installed; `katulong restart` does stop+start
-    # otherwise. This avoids duplicating process/launchd management
-    # in Ruby.
+    # After brew upgrade the old server process is dead (old Cellar path
+    # removed).  Start the new version unconditionally — `katulong start`
+    # is a no-op if already running, so this is safe for fresh installs too.
     katulong = bin/"katulong"
     if (Pathname.new(Dir.home) / "Library/LaunchAgents/com.dorkyrobot.katulong.plist").exist?
       system katulong, "service", "restart"
     else
-      system katulong, "restart"
+      system katulong, "start"
     end
   end
 
