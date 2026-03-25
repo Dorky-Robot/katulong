@@ -28,6 +28,7 @@ import { createFileBrowserRoutes } from "./lib/file-browser.js";
 import { createPortProxyRoutes, proxyWebSocket } from "./lib/port-proxy.js";
 import { createWebSocketManager } from "./lib/ws-manager.js";
 import { createHelmSessionManager } from "./lib/helm-session-manager.js";
+import { createTopicBroker } from "./lib/topic-broker.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 import { loadPlugins } from "./lib/plugin-loader.js";
 
@@ -253,6 +254,7 @@ const routes = [
     getDraining: () => draining,
     shortcutsPath: join(DATA_DIR, "shortcuts.json"),
     auth, csrf,
+    topicBroker: createTopicBroker(),
   }),
   ...createFileBrowserRoutes({ json, parseJSON, auth, csrf }),
   ...createPortProxyRoutes({ auth, PORT, configManager }),
