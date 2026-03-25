@@ -35,6 +35,7 @@
     "test:e2e:smoke": "npx playwright test test/e2e/smoke.e2e.js --project=desktop",
     "test:e2e:sharded": "bash scripts/run-e2e-sharded.sh",
     "test:e2e:clean": "bash test/e2e/cleanup-test-server.sh",
+    "test:garble": "node --test test/harness/garble-detection.js",
     "prepare": "husky || true"
   },
   "dependencies": {
