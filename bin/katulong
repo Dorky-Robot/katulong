@@ -17,6 +17,8 @@ const COMMANDS = {
   status: "Check if Katulong is running",
   logs: "Stream server logs",
   open: "Open Katulong in your browser",
+  attach: "Open a terminal tab in the browser (creates session if needed)",
+  notify: "Send a native notification to connected browsers",
   info: "Show system information and configuration",
   update: "Update Katulong to the latest version",
   token: "Manage setup tokens (create, list, revoke)",
@@ -57,6 +59,8 @@ EXAMPLES:
   katulong credential list    List registered passkeys
   katulong session list       List active PTY sessions
   katulong session kill dev   Kill a PTY session
+  katulong attach myapp       Open "myapp" tab in browser (creates if needed)
+  katulong notify "done"      Send notification to connected browsers
   katulong notes read         Read notes for current session
   katulong notes todos        List unchecked todos
   katulong notes check "fix"  Check off a matching todo

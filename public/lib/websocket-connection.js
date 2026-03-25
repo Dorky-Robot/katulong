@@ -183,6 +183,17 @@ export function createWebSocketConnection(deps = {}) {
       effects: [{ type: 'refreshTokensAfterRegistration' }]
     }),
 
+    // CLI-driven UI actions
+    'open-tab': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'openTab', session: msg.session }]
+    }),
+
+    'notification': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'showNotification', title: msg.title, message: msg.message }]
+    }),
+
     'paste-complete': (msg) => ({
       stateUpdates: {},
       effects: [
@@ -407,6 +418,13 @@ export function createWebSocketConnection(deps = {}) {
         break;
       case 'tabIconChanged':
         if (deps.onTabIconChanged) deps.onTabIconChanged(effect.session, effect.icon);
+        break;
+      // CLI-driven UI actions
+      case 'openTab':
+        if (deps.onOpenTab) deps.onOpenTab(effect.session);
+        break;
+      case 'showNotification':
+        if (deps.onNotification) deps.onNotification(effect.title, effect.message);
         break;
     }
   }
