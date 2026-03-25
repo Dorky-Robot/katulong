@@ -891,6 +891,81 @@
       tokenListComponent.mount(tokensList);
     }
 
+    // --- API key management ---
+    {
+      const createBtn = document.getElementById("settings-create-apikey");
+      const form = document.getElementById("apikey-create-form");
+      const nameInput = document.getElementById("apikey-name-input");
+      const submitBtn = document.getElementById("apikey-form-submit");
+      const cancelBtn = document.getElementById("apikey-form-cancel");
+      const listEl = document.getElementById("apikeys-list");
+
+      async function loadApiKeys() {
+        if (!listEl) return;
+        try {
+          const keys = await api.get("/api/api-keys");
+          if (!keys.length) {
+            listEl.innerHTML = '<p class="tokens-loading">No API keys yet.</p>';
+            return;
+          }
+          listEl.innerHTML = keys.map(k => `
+            <div class="token-item" data-id="${k.id}">
+              <div class="token-item-info">
+                <span class="token-item-name">${k.name}</span>
+                <span class="token-item-meta">${k.prefix}... · ${k.lastUsedAt ? "used " + new Date(k.lastUsedAt).toLocaleDateString() : "never used"}</span>
+              </div>
+              <button class="token-item-revoke" data-id="${k.id}">Revoke</button>
+            </div>
+          `).join("");
+          listEl.querySelectorAll(".token-item-revoke").forEach(btn => {
+            btn.addEventListener("click", async () => {
+              if (!confirm("Revoke this API key?")) return;
+              await api.del(`/api/api-keys/${btn.dataset.id}`);
+              loadApiKeys();
+            });
+          });
+        } catch { listEl.innerHTML = '<p class="tokens-loading">Failed to load.</p>'; }
+      }
+
+      if (createBtn && form) {
+        createBtn.addEventListener("click", () => { form.style.display = ""; createBtn.style.display = "none"; nameInput?.focus(); });
+        cancelBtn?.addEventListener("click", () => { form.style.display = "none"; createBtn.style.display = ""; });
+        submitBtn?.addEventListener("click", async () => {
+          const name = nameInput?.value?.trim();
+          if (!name) return;
+          try {
+            const data = await api.post("/api/api-keys", { name });
+            form.style.display = "none";
+            createBtn.style.display = "";
+            nameInput.value = "";
+            // Show the key once
+            const keyDisplay = document.createElement("div");
+            keyDisplay.className = "token-item token-item-new";
+            keyDisplay.innerHTML = `
+              <div class="token-item-info">
+                <span class="token-item-name">${data.name}</span>
+                <code class="token-value" style="display:block;margin-top:0.25rem;font-size:0.75rem;word-break:break-all;color:var(--success);">${data.key}</code>
+                <span class="token-item-meta">Copy this key now — it won't be shown again.</span>
+              </div>
+            `;
+            keyDisplay.querySelector("code").addEventListener("click", () => {
+              navigator.clipboard.writeText(data.key).then(() => showToast("Copied!"));
+            });
+            listEl.prepend(keyDisplay);
+            setTimeout(() => { keyDisplay.remove(); loadApiKeys(); }, 30000);
+          } catch (err) { showToast(err.message, true); }
+        });
+      }
+
+      // Lazy-load when API tab is shown
+      const settingsTabs = document.querySelectorAll(".settings-tab");
+      settingsTabs.forEach(tab => {
+        tab.addEventListener("click", () => {
+          if (tab.dataset.tab === "api") loadApiKeys();
+        });
+      });
+    }
+
     // --- Dictation modal (reactive component) ---
 
     const dictationModal = createDictationModal({
