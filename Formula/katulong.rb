@@ -1,8 +1,8 @@
 class Katulong < Formula
   desc "Self-hosted web terminal with tmux sessions and WebAuthn security"
   homepage "https://github.com/Dorky-Robot/katulong"
-  url "https://github.com/Dorky-Robot/katulong/archive/refs/tags/v0.39.3.tar.gz"
-  sha256 "fed19acd6417a54171b8c3b52855fc2283095a5eee916e2b528e974f27e6144e"
+  url "https://github.com/Dorky-Robot/katulong/archive/refs/tags/v0.39.4.tar.gz"
+  sha256 "42f064348d6081fd4ab4baa8ebe6d2daecb9894f65711f287e19c14d4ad5fab4"
   license "MIT"
 
   depends_on "node"
@@ -16,11 +16,16 @@ class Katulong < Formula
   end
 
   def post_install
-    # Use the katulong CLI itself to handle the upgrade lifecycle.
-    # `katulong service restart` does launchctl unload/load if the
-    # LaunchAgent is installed; `katulong restart` does stop+start
-    # otherwise. This avoids duplicating process/launchd management
-    # in Ruby.
+    # When `katulong update` is driving the upgrade, it creates a sentinel
+    # file and handles the smoke-test-and-swap restart itself.  Skip here
+    # so we don't race with that process or hit EPERM on the plist.
+    sentinel = Pathname.new(Dir.home) / ".katulong" / ".update-in-progress"
+    if sentinel.exist?
+      ohai "Restart managed by `katulong update` — skipping post_install restart"
+      return
+    end
+
+    # Standalone `brew upgrade` (not via `katulong update`): restart normally.
     katulong = bin/"katulong"
     if (Pathname.new(Dir.home) / "Library/LaunchAgents/com.dorkyrobot.katulong.plist").exist?
       system katulong, "service", "restart"
