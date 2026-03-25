@@ -235,6 +235,25 @@
       border-radius: 16px;
       padding: 0;
     }
+    /* Dashboard tile: CSS Grid of sub-tiles */
+    .dashboard-grid {
+      display: grid;
+      width: 100%; height: 100%;
+      box-sizing: border-box;
+    }
+    .dashboard-slot {
+      overflow: hidden;
+      border-radius: var(--radius-md, 8px);
+      position: relative;
+      min-width: 0; min-height: 0;
+    }
+    .dashboard-slot > .terminal-pane {
+      position: relative; inset: auto;
+      flex: 1; display: block;
+      width: 100%; height: 100%;
+      min-width: 0; min-height: 0; overflow: hidden;
+      padding: 0;
+    }
     .terminal-pane .xterm, #terminal-container .xterm { height: 100%; touch-action: none; }
     #terminal-container .xterm-viewport,
     #terminal-container .xterm-scrollable-element {

@@ -71,30 +71,25 @@ function createMockElement(tag) {
   return el;
 }
 
-function createMockTerminalPool() {
-  const pool = new Map();
+/** Create a mock tile that tracks lifecycle calls. */
+function createMockTile(id) {
   return {
-    get: (name) => pool.get(name) || null,
-    getOrCreate: (name) => {
-      if (!pool.has(name)) {
-        pool.set(name, {
-          term: { cols: 80, rows: 24, refresh: mock.fn(), focus: mock.fn() },
-          container: createMockElement("div"),
-          sessionName: name,
-        });
-      }
-      return pool.get(name);
-    },
-    forEach: (fn) => { for (const [name, entry] of pool) fn(name, entry); },
-    setActive: mock.fn(),
-    attachControls: mock.fn(),
-    scaleAll: mock.fn(),
-    has: (name) => pool.has(name),
-    protect: mock.fn(),
-    unprotect: mock.fn(),
-    setActive: mock.fn(),
-    _pool: pool,
+    type: "mock",
+    sessionName: id,
+    mount: mock.fn(),
+    unmount: mock.fn(),
+    focus: mock.fn(),
+    blur: mock.fn(),
+    resize: mock.fn(),
+    getTitle: () => id,
+    getIcon: () => "terminal-window",
+    serialize: () => ({ type: "mock", sessionName: id }),
   };
+}
+
+/** Create tile entries (id + tile) for the carousel. */
+function makeTiles(...names) {
+  return names.map(n => ({ id: n, tile: createMockTile(n) }));
 }
 
 function setupGlobals() {
@@ -181,11 +176,9 @@ describe('isCarouselDevice()', () => {
 describe('card-carousel', () => {
   let createCardCarousel;
   let container;
-  let terminalPool;
-  let sendResize;
   let onFocusChange;
   let onCardDismissed;
-  let onAddClick;
+  let onAllCardsDismissed;
   let carousel;
 
   beforeEach(async () => {
@@ -193,14 +186,14 @@ describe('card-carousel', () => {
     const mod = await importCarousel();
     createCardCarousel = mod.createCardCarousel;
     container = createMockElement("div");
-    terminalPool = createMockTerminalPool();
-    sendResize = mock.fn();
     onFocusChange = mock.fn();
     onCardDismissed = mock.fn();
-    onAddClick = mock.fn();
+    onAllCardsDismissed = mock.fn();
     carousel = createCardCarousel({
-      container, terminalPool, sendResize,
-      onFocusChange, onCardDismissed, onAddClick,
+      container,
+      onFocusChange,
+      onCardDismissed,
+      onAllCardsDismissed,
     });
   });
 
@@ -220,53 +213,47 @@ describe('card-carousel', () => {
 
   describe('activate()', () => {
     it('sets active', () => {
-      carousel.activate(["a", "b"], "a");
+      carousel.activate(makeTiles("a", "b"), "a");
       assert.strictEqual(carousel.isActive(), true);
     });
 
     it('sets cards in order', () => {
-      carousel.activate(["a", "b", "c"], "b");
+      carousel.activate(makeTiles("a", "b", "c"), "b");
       assert.deepStrictEqual(carousel.getCards(), ["a", "b", "c"]);
     });
 
     it('sets focused card', () => {
-      carousel.activate(["a", "b"], "b");
+      carousel.activate(makeTiles("a", "b"), "b");
       assert.strictEqual(carousel.getFocusedCard(), "b");
     });
 
     it('sets data-carousel attribute on container', () => {
-      carousel.activate(["a"], "a");
+      carousel.activate(makeTiles("a"), "a");
       assert.strictEqual(container.dataset.carousel, "true");
     });
 
-    it('creates terminal entries in pool', () => {
-      carousel.activate(["a", "b"], "a");
-      assert.ok(terminalPool.get("a"));
-      assert.ok(terminalPool.get("b"));
+    it('mounts tiles', () => {
+      const tiles = makeTiles("a", "b");
+      carousel.activate(tiles, "a");
+      assert.strictEqual(tiles[0].tile.mount.mock.callCount(), 1);
+      assert.strictEqual(tiles[1].tile.mount.mock.callCount(), 1);
     });
 
-    it('protects all cards from LRU eviction', () => {
-      carousel.activate(["a", "b"], "a");
-      assert.strictEqual(terminalPool.protect.mock.callCount(), 2);
+    it('focuses the initial tile', () => {
+      const tiles = makeTiles("a", "b");
+      carousel.activate(tiles, "a");
+      assert.strictEqual(tiles[0].tile.focus.mock.callCount(), 1);
     });
 
-    it('scales all terminals on activate', async () => {
-      carousel.activate(["a", "b"], "a");
-      await new Promise(r => setTimeout(r, 100));
-      // fitAll calls scaleAll but no longer sends resize (to prevent duplication)
-      assert.ok(terminalPool.scaleAll.mock.callCount() >= 1);
-    });
-
-    it('fires onFocusChange for the initial focused session', () => {
-      carousel.activate(["a", "b"], "b");
+    it('fires onFocusChange for the initial focused tile', () => {
+      carousel.activate(makeTiles("a", "b"), "b");
       assert.ok(onFocusChange.mock.callCount() >= 1);
-      // The last call should be for the focused session
       const lastCall = onFocusChange.mock.calls[onFocusChange.mock.callCount() - 1];
       assert.strictEqual(lastCall.arguments[0], "b");
     });
 
-    it('fires onFocusChange with first session when no focused specified', () => {
-      carousel.activate(["x", "y"]);
+    it('fires onFocusChange with first tile when no focused specified', () => {
+      carousel.activate(makeTiles("x", "y"));
       assert.ok(onFocusChange.mock.callCount() >= 1);
       const lastCall = onFocusChange.mock.calls[onFocusChange.mock.callCount() - 1];
       assert.strictEqual(lastCall.arguments[0], "x");
@@ -274,8 +261,10 @@ describe('card-carousel', () => {
   });
 
   describe('deactivate()', () => {
+    let tiles;
     beforeEach(() => {
-      carousel.activate(["a", "b"], "a");
+      tiles = makeTiles("a", "b");
+      carousel.activate(tiles, "a");
     });
 
     it('sets inactive', () => {
@@ -298,85 +287,75 @@ describe('card-carousel', () => {
       assert.strictEqual(container.dataset.carousel, undefined);
     });
 
-    it('unprotects all cards', () => {
+    it('unmounts all tiles', () => {
       carousel.deactivate();
-      assert.ok(terminalPool.unprotect.mock.callCount() >= 2);
+      assert.strictEqual(tiles[0].tile.unmount.mock.callCount(), 1);
+      assert.strictEqual(tiles[1].tile.unmount.mock.callCount(), 1);
     });
   });
 
   describe('addCard()', () => {
     beforeEach(() => {
-      carousel.activate(["a"], "a");
+      carousel.activate(makeTiles("a"), "a");
     });
 
     it('adds a card to the end', () => {
-      carousel.addCard("b");
+      carousel.addCard("b", createMockTile("b"));
       assert.deepStrictEqual(carousel.getCards(), ["a", "b"]);
     });
 
-    it('creates the terminal in the pool', () => {
-      carousel.addCard("b");
-      assert.ok(terminalPool.get("b"));
-    });
-
-    it('protects the new card', () => {
-      const before = terminalPool.protect.mock.callCount();
-      carousel.addCard("b");
-      assert.ok(terminalPool.protect.mock.callCount() > before);
+    it('mounts the new tile', () => {
+      const tile = createMockTile("b");
+      carousel.addCard("b", tile);
+      assert.strictEqual(tile.mount.mock.callCount(), 1);
     });
 
     it('does not add duplicate cards', () => {
-      carousel.addCard("a");
+      carousel.addCard("a", createMockTile("a"));
       assert.deepStrictEqual(carousel.getCards(), ["a"]);
     });
   });
 
   describe('removeCard()', () => {
+    let tiles;
     beforeEach(() => {
-      carousel.activate(["a", "b", "c"], "b");
+      tiles = makeTiles("a", "b", "c");
+      carousel.activate(tiles, "b");
     });
 
-    const wait = (ms) => new Promise(r => setTimeout(r, ms));
-
-    it('removes the card', async () => {
+    it('removes the card', () => {
       carousel.removeCard("b");
-      await wait(400);
       assert.deepStrictEqual(carousel.getCards(), ["a", "c"]);
     });
 
-    it('fires onCardDismissed', async () => {
+    it('fires onCardDismissed', () => {
       carousel.removeCard("b");
-      await wait(400);
       assert.strictEqual(onCardDismissed.mock.callCount(), 1);
     });
 
-    it('shifts focus to adjacent card when focused card is removed', async () => {
+    it('unmounts the removed tile', () => {
       carousel.removeCard("b");
-      await wait(400);
+      assert.strictEqual(tiles[1].tile.unmount.mock.callCount(), 1);
+    });
+
+    it('shifts focus to adjacent card when focused card is removed', () => {
+      carousel.removeCard("b");
       assert.ok(["a", "c"].includes(carousel.getFocusedCard()));
     });
 
-    it('deactivates when last card is removed', async () => {
+    it('deactivates when last card is removed', () => {
       carousel.removeCard("a");
-      await wait(400);
       carousel.removeCard("b");
-      await wait(400);
       carousel.removeCard("c");
-      await wait(400);
       assert.strictEqual(carousel.isActive(), false);
-    });
-
-    it('unprotects the removed card', async () => {
-      const before = terminalPool.unprotect.mock.callCount();
-      carousel.removeCard("b");
-      await wait(400);
-      assert.ok(terminalPool.unprotect.mock.callCount() > before);
     });
   });
 
   describe('focusCard()', () => {
+    let tiles;
     beforeEach(() => {
-      carousel.activate(["a", "b"], "a");
+      tiles = makeTiles("a", "b");
+      carousel.activate(tiles, "a");
     });
 
     it('changes the focused card', () => {
@@ -391,13 +370,19 @@ describe('card-carousel', () => {
       assert.strictEqual(onFocusChange.mock.calls[onFocusChange.mock.callCount() - 1].arguments[0], "b");
     });
 
+    it('calls focus on the new tile and blur on the old', () => {
+      carousel.focusCard("b");
+      assert.strictEqual(tiles[0].tile.blur.mock.callCount(), 1);
+      assert.ok(tiles[1].tile.focus.mock.callCount() >= 1);
+    });
+
     it('does not fire onFocusChange if already focused', () => {
       const before = onFocusChange.mock.callCount();
       carousel.focusCard("a");
       assert.strictEqual(onFocusChange.mock.callCount(), before);
     });
 
-    it('ignores unknown sessions', () => {
+    it('ignores unknown tile IDs', () => {
       carousel.focusCard("unknown");
       assert.strictEqual(carousel.getFocusedCard(), "a");
     });
@@ -405,7 +390,7 @@ describe('card-carousel', () => {
 
   describe('renameCard()', () => {
     beforeEach(() => {
-      carousel.activate(["a", "b"], "a");
+      carousel.activate(makeTiles("a", "b"), "a");
     });
 
     it('updates the card name in the list', () => {
@@ -424,112 +409,78 @@ describe('card-carousel', () => {
     });
   });
 
-  describe('pointerdown tap-to-focus', () => {
-    it('fires focusCard when tapping a non-focused card wrapper', () => {
-      carousel.activate(["a", "b"], "a");
-      // Simulate a pointerdown event on card "b"'s wrapper
-      const bEntry = terminalPool.getOrCreate("b");
-      const bWrapper = bEntry.container.parentElement; // wrapper is parent
-      const listeners = bWrapper._listeners["pointerdown"];
-      assert.ok(listeners && listeners.length > 0, "should have pointerdown listener");
-
-      const event = {
-        preventDefault: mock.fn(),
-        stopPropagation: mock.fn(),
-        pointerId: 1,
-        pointerType: "touch",
-      };
-      listeners[0](event);
-      assert.strictEqual(carousel.getFocusedCard(), "b");
-      assert.strictEqual(event.preventDefault.mock.callCount(), 1);
-      assert.strictEqual(event.stopPropagation.mock.callCount(), 1);
+  describe('getTile()', () => {
+    it('returns the tile for a given ID', () => {
+      const tiles = makeTiles("a");
+      carousel.activate(tiles, "a");
+      const tile = carousel.getTile("a");
+      assert.strictEqual(tile.type, "mock");
     });
 
-    it('pointerdown on focused card calls term.focus() for Safari gesture context', () => {
-      carousel.activate(["a", "b"], "a");
-      const aEntry = terminalPool.getOrCreate("a");
-      const aWrapper = aEntry.container.parentElement;
-      const listeners = aWrapper._listeners["pointerdown"];
+    it('returns null for unknown ID', () => {
+      carousel.activate(makeTiles("a"), "a");
+      assert.strictEqual(carousel.getTile("unknown"), null);
+    });
+  });
 
-      const event = {
-        preventDefault: mock.fn(),
-        stopPropagation: mock.fn(),
-        pointerId: 1,
-        pointerType: "touch",
-      };
-      const focusBefore = aEntry.term.focus.mock.callCount();
-      listeners[0](event);
-      // Should still be "a" and event should NOT be prevented
-      assert.strictEqual(carousel.getFocusedCard(), "a");
-      assert.strictEqual(event.preventDefault.mock.callCount(), 0);
-      // But term.focus() SHOULD have been called (Safari needs gesture context)
-      assert.ok(aEntry.term.focus.mock.callCount() > focusBefore, "should call term.focus() on focused card tap");
+  describe('findCard()', () => {
+    it('finds a card by predicate', () => {
+      carousel.activate(makeTiles("a", "b"), "a");
+      const found = carousel.findCard((tile) => tile.sessionName === "b");
+      assert.strictEqual(found, "b");
     });
 
-    it('uses click event as fallback for missed pointerdown', () => {
-      carousel.activate(["a", "b"], "a");
-      const bEntry = terminalPool.getOrCreate("b");
-      const bWrapper = bEntry.container.parentElement;
-      const clickListeners = bWrapper._listeners["click"];
-      assert.ok(clickListeners && clickListeners.length > 0, "should have click listener");
-
-      clickListeners[0]({
-        preventDefault: mock.fn(),
-        stopPropagation: mock.fn(),
-      });
-      assert.strictEqual(carousel.getFocusedCard(), "b");
-    });
-
-    it('click on already-focused card calls term.focus() for Safari gesture context', () => {
-      carousel.activate(["a", "b"], "a");
-      const aEntry = terminalPool.getOrCreate("a");
-      const aWrapper = aEntry.container.parentElement;
-      const clickListeners = aWrapper._listeners["click"];
-
-      const focusBefore = aEntry.term.focus.mock.callCount();
-      if (clickListeners && clickListeners.length > 0) {
-        clickListeners[0]({
-          preventDefault: mock.fn(),
-          stopPropagation: mock.fn(),
-        });
-      }
-      // Focus should not have changed card
-      assert.strictEqual(carousel.getFocusedCard(), "a");
-      // But term.focus() should have been called
-      assert.ok(aEntry.term.focus.mock.callCount() > focusBefore, "should call term.focus() on focused card click");
+    it('returns null when no match', () => {
+      carousel.activate(makeTiles("a"), "a");
+      const found = carousel.findCard((tile) => tile.sessionName === "z");
+      assert.strictEqual(found, null);
     });
   });
 
   describe('persistence', () => {
     it('saves state on activate', () => {
-      carousel.activate(["a", "b"], "a");
+      carousel.activate(makeTiles("a", "b"), "a");
       const saved = JSON.parse(sessionStorage.getItem("katulong-carousel"));
-      assert.deepStrictEqual(saved.cards, ["a", "b"]);
+      assert.strictEqual(saved.cards.length, 2);
+      assert.strictEqual(saved.cards[0].id, "a");
+      assert.strictEqual(saved.cards[1].id, "b");
       assert.strictEqual(saved.focused, "a");
     });
 
     it('saves state on addCard', () => {
-      carousel.activate(["a"], "a");
-      carousel.addCard("b");
+      carousel.activate(makeTiles("a"), "a");
+      carousel.addCard("b", createMockTile("b"));
       const saved = JSON.parse(sessionStorage.getItem("katulong-carousel"));
-      assert.deepStrictEqual(saved.cards, ["a", "b"]);
+      assert.strictEqual(saved.cards.length, 2);
     });
 
     it('clears state on deactivate', () => {
-      carousel.activate(["a"], "a");
+      carousel.activate(makeTiles("a"), "a");
       carousel.deactivate();
       assert.strictEqual(sessionStorage.getItem("katulong-carousel"), null);
     });
 
     it('restore() returns saved state', () => {
-      carousel.activate(["a", "b"], "b");
+      carousel.activate(makeTiles("a", "b"), "b");
       const restored = carousel.restore();
-      assert.deepStrictEqual(restored.sessions, ["a", "b"]);
+      assert.strictEqual(restored.tiles.length, 2);
       assert.strictEqual(restored.focused, "b");
     });
 
     it('restore() returns null when no saved state', () => {
       assert.strictEqual(carousel.restore(), null);
+    });
+
+    it('restore() handles legacy string array format', () => {
+      sessionStorage.setItem("katulong-carousel", JSON.stringify({
+        cards: ["x", "y"],
+        focused: "y",
+      }));
+      const restored = carousel.restore();
+      assert.strictEqual(restored.tiles.length, 2);
+      assert.strictEqual(restored.tiles[0].type, "terminal");
+      assert.strictEqual(restored.tiles[0].sessionName, "x");
+      assert.strictEqual(restored.focused, "y");
     });
   });
 });

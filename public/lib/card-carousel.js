@@ -1,9 +1,10 @@
 /**
  * Card Carousel (iPad/tablet only)
  *
- * Horizontal strip of terminal "cards". Each card is a live xterm.js terminal
- * at full available height. Single card = full width. Multiple cards share
- * width proportionally with horizontal scroll if they overflow.
+ * Horizontal strip of tile "cards". Each card is a generic container that
+ * holds a TilePrototype instance (terminal, dashboard, web preview, etc.).
+ * Single card = full width. Multiple cards share width proportionally with
+ * horizontal scroll if they overflow.
  *
  * Tab management (rendering, drag-reorder, rename, + button) is handled by
  * the shortcut bar — the carousel only manages the card tile layout.
@@ -22,25 +23,33 @@ export function isCarouselDevice() {
 
 export function createCardCarousel({
   container,
-  terminalPool,
-  sendResize,
   onFocusChange,
   onCardDismissed,
   onAllCardsDismissed,
+  createTileContext,
 }) {
   let active = false;
-  let cards = [];           // ordered session names
-  let focusedSession = null;
-  const cardEls = new Map(); // sessionName -> { wrapper }
+  let cards = [];             // ordered tile IDs
+  let focusedId = null;
+  const cardEls = new Map();  // tileId -> { wrapper, tile, context }
 
   // ── Persistence ──────────────────────────────────────────────────────
 
   function save() {
     try {
       if (active && cards.length > 0) {
+        const serialized = cards.map(id => {
+          const entry = cardEls.get(id);
+          if (!entry) return null;
+          const base = { id, type: entry.tile.type };
+          if (typeof entry.tile.serialize === "function") {
+            Object.assign(base, entry.tile.serialize());
+          }
+          return base;
+        }).filter(Boolean);
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
-          cards: [...cards],
-          focused: focusedSession,
+          cards: serialized,
+          focused: focusedId,
         }));
       } else {
         sessionStorage.removeItem(STORAGE_KEY);
@@ -53,25 +62,37 @@ export function createCardCarousel({
       const raw = sessionStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       const state = JSON.parse(raw);
-      if (state.cards?.length > 0) {
-        return { sessions: state.cards, focused: state.focused };
+      if (!state.cards?.length) return null;
+
+      // Detect legacy format (array of session name strings)
+      if (typeof state.cards[0] === "string") {
+        return {
+          tiles: state.cards.map(name => ({
+            id: name,
+            type: "terminal",
+            sessionName: name,
+          })),
+          focused: state.focused,
+        };
       }
+
+      return { tiles: state.cards, focused: state.focused };
     } catch { /* ignore */ }
     return null;
   }
 
   // ── DOM helpers ──────────────────────────────────────────────────────
 
-  function createCardWrapper(sessionName) {
+  function createCardWrapper(tileId) {
     const wrapper = document.createElement("div");
     wrapper.className = "carousel-card";
-    wrapper.dataset.session = sessionName;
+    wrapper.dataset.tileId = tileId;
 
     // Tap on a non-focused card to make it active.
-    // For the focused card, let events pass through to the terminal normally.
+    // For the focused card, let events pass through normally.
     //
     // We listen on BOTH pointerdown and click because on iPad, the focused
-    // card's terminal scroll handler calls setPointerCapture() on pointerdown,
+    // card's scroll handler calls setPointerCapture() on pointerdown,
     // which can steal subsequent pointer events. A tap on a non-focused card
     // that overlaps with pointer capture may never fire pointerdown on the
     // wrapper. The click event always fires after pointerup regardless of
@@ -80,39 +101,37 @@ export function createCardCarousel({
 
     wrapper.addEventListener("pointerdown", (e) => {
       if (!active) return;
-      if (focusedSession === sessionName) {
-        // Focused card: ensure terminal has keyboard focus. Safari/iPad
-        // silently ignores programmatic focus() calls outside user gesture
-        // handlers, so the term.focus() in focusCard/activate may have been
-        // a no-op. This pointerdown IS a user gesture, so focus works here.
-        const entry = terminalPool.get(sessionName);
-        if (entry?.term?.focus) entry.term.focus();
+      if (focusedId === tileId) {
+        // Focused card: call tile.focus() in user gesture context.
+        // Safari/iPad silently ignores programmatic focus() calls outside
+        // user gesture handlers, so this ensures the tile can grab focus.
+        const entry = cardEls.get(tileId);
+        if (entry) entry.tile.focus();
         return;
       }
       handledByPointerdown = true;
       e.preventDefault();
       e.stopPropagation();
-      focusCard(sessionName);
+      focusCard(tileId);
     });
 
     wrapper.addEventListener("click", (e) => {
       if (!active) return;
-      if (focusedSession === sessionName) {
-        // Focused card click: ensure terminal focus (user gesture context)
-        const entry = terminalPool.get(sessionName);
-        if (entry?.term?.focus) entry.term.focus();
+      if (focusedId === tileId) {
+        // Focused card click: ensure tile focus (user gesture context)
+        const entry = cardEls.get(tileId);
+        if (entry) entry.tile.focus();
         return;
       }
       // Skip if pointerdown already handled this interaction
       if (handledByPointerdown) { handledByPointerdown = false; return; }
       e.preventDefault();
       e.stopPropagation();
-      focusCard(sessionName);
+      focusCard(tileId);
     });
 
-    return { wrapper };
+    return wrapper;
   }
-
 
   /**
    * Position all cards via translateX relative to the focused card.
@@ -120,15 +139,15 @@ export function createCardCarousel({
    * Far cards are hidden via visibility:hidden.
    */
   function positionCards(animate = true) {
-    if (!focusedSession) return;
-    const focusedIdx = cards.indexOf(focusedSession);
+    if (!focusedId) return;
+    const focusedIdx = cards.indexOf(focusedId);
     if (focusedIdx === -1) return;
 
-    for (const [session, { wrapper }] of cardEls) {
-      const idx = cards.indexOf(session);
+    for (const [id, { wrapper }] of cardEls) {
+      const idx = cards.indexOf(id);
       const offset = idx - focusedIdx;
 
-      if (!animate) wrapper.style.transition = 'none';
+      if (!animate) wrapper.style.transition = "none";
       // Use the card's actual width + gap for offset so neighbors peek on wide screens
       const cardW = wrapper.offsetWidth || wrapper.getBoundingClientRect().width;
       const gap = 16;
@@ -147,29 +166,25 @@ export function createCardCarousel({
   // ── Layout ───────────────────────────────────────────────────────────
 
   function buildLayout() {
-    // Remove carousel elements but preserve terminal panes
+    // Remove carousel wrapper elements
     for (const el of [...container.querySelectorAll(".carousel-card")]) {
       el.remove();
     }
-    // Move any terminal panes back to container root before rebuilding
-    terminalPool.forEach((_name, entry) => {
-      if (entry.container.parentElement && entry.container.parentElement !== container) {
-        container.appendChild(entry.container);
-      }
-    });
     cardEls.clear();
 
     if (!active || cards.length === 0) return;
 
     container.dataset.carousel = "true";
 
-    for (const session of cards) {
-      const entry = terminalPool.getOrCreate(session);
-      const { wrapper } = createCardWrapper(session);
-
-      entry.container.style.display = "";
-      wrapper.appendChild(entry.container);
-      cardEls.set(session, { wrapper });
+    // Re-mount tiles into fresh wrappers.
+    // We iterate a snapshot of `cards` because tiles are already tracked
+    // in the tiles map passed to activate().
+    for (const id of cards) {
+      const entry = cardEls.get(id);
+      if (!entry) continue;
+      const wrapper = createCardWrapper(id);
+      entry.tile.mount(wrapper, entry.context);
+      entry.wrapper = wrapper;
       container.appendChild(wrapper);
     }
 
@@ -177,53 +192,53 @@ export function createCardCarousel({
     fitAll();
   }
 
-  // ── Lifecycle ────────────────────────────────────────────────────────
+  // ── Lifecycle ──────────────────────────────────────────────────────
 
-  function activate(sessions, focused) {
+  /**
+   * Activate the carousel with the given tiles.
+   * @param {Array<{id: string, tile: TilePrototype}>} tiles
+   * @param {string} focused — tile ID to focus initially
+   */
+  function activate(tiles, focused) {
     active = true;
-    cards = [...sessions];
-    focusedSession = focused || sessions[0] || null;
+    cards = tiles.map(t => t.id);
+    focusedId = focused || cards[0] || null;
 
-    // Ensure all terminals exist and are protected
-    for (const session of cards) {
-      terminalPool.getOrCreate(session);
-      terminalPool.protect(session);
+    // Store tile references and create contexts
+    for (const { id, tile } of tiles) {
+      const ctx = createTileContext ? createTileContext(id, tile) : { tileId: id };
+      const wrapper = createCardWrapper(id);
+      tile.mount(wrapper, ctx);
+      cardEls.set(id, { wrapper, tile, context: ctx });
+      container.appendChild(wrapper);
     }
 
-    buildLayout();
+    container.dataset.carousel = "true";
+    positionCards(false);
     save();
 
-    // Set active in pool so getTerm() works immediately
-    if (focusedSession) {
-      terminalPool.setActive(focusedSession);
-      terminalPool.attachControls(focusedSession);
-      const entry = terminalPool.get(focusedSession);
-      if (entry?.term?.focus) entry.term.focus();
+    // Focus the initial tile
+    if (focusedId) {
+      const entry = cardEls.get(focusedId);
+      if (entry) entry.tile.focus();
     }
 
-    // Notify listener of the initial focused session so app.js
+    // Notify listener of the initial focused tile so app.js
     // doesn't need to duplicate state sync after activation
-    if (onFocusChange && focusedSession) onFocusChange(focusedSession);
+    if (onFocusChange && focusedId) onFocusChange(focusedId);
+
+    fitAll();
   }
 
   function deactivate() {
     if (!active) return;
 
-    // Unprotect and move terminals back to container
-    for (const session of cards) {
-      terminalPool.unprotect(session);
+    // Unmount all tiles
+    for (const [, entry] of cardEls) {
+      entry.tile.unmount();
     }
 
-    // Move all terminal panes back to container root, hidden
-    terminalPool.forEach((_name, entry) => {
-      if (entry.container.parentElement !== container) {
-        container.appendChild(entry.container);
-      }
-      entry.container.classList.remove("active");
-      entry.container.style.display = "none";
-    });
-
-    // Remove only carousel elements (card wrappers, handles), NOT terminal panes
+    // Remove card wrappers
     delete container.dataset.carousel;
     for (const el of [...container.querySelectorAll(".carousel-card")]) {
       el.remove();
@@ -232,74 +247,69 @@ export function createCardCarousel({
 
     active = false;
     cards = [];
-    focusedSession = null;
+    focusedId = null;
 
     save();
     if (onAllCardsDismissed) onAllCardsDismissed();
   }
 
-  // ── Card management ──────────────────────────────────────────────────
+  // ── Card management ────────────────────────────────────────────────
 
-  function addCard(sessionName) {
+  /**
+   * Add a tile to the carousel.
+   * @param {string} tileId
+   * @param {TilePrototype} tile
+   */
+  function addCard(tileId, tile) {
     if (!active) return;
-    if (cards.includes(sessionName)) return;
+    if (cards.includes(tileId)) return;
 
-    cards.push(sessionName);
-    const entry = terminalPool.getOrCreate(sessionName);
-    terminalPool.protect(sessionName);
-
-    // Surgically insert the card — no full rebuild
-    const { wrapper } = createCardWrapper(sessionName);
-    entry.container.style.display = "";
-    wrapper.appendChild(entry.container);
-    cardEls.set(sessionName, { wrapper });
+    cards.push(tileId);
+    const ctx = createTileContext ? createTileContext(tileId, tile) : { tileId };
+    const wrapper = createCardWrapper(tileId);
+    tile.mount(wrapper, ctx);
+    cardEls.set(tileId, { wrapper, tile, context: ctx });
 
     container.appendChild(wrapper);
 
     positionCards(false);
     fitAll();
-
     save();
   }
 
-  function removeCard(sessionName) {
+  function removeCard(tileId) {
     if (!active) return;
-    const idx = cards.indexOf(sessionName);
+    const idx = cards.indexOf(tileId);
     if (idx === -1) return;
 
-    const el = cardEls.get(sessionName);
+    const entry = cardEls.get(tileId);
 
     const doRemove = () => {
-      // Re-lookup index at removal time — the array may have changed
-      // during the animation delay (e.g. another card removed/reordered).
-      const currentIdx = cards.indexOf(sessionName);
+      const currentIdx = cards.indexOf(tileId);
       if (currentIdx === -1) return;
 
-      // Remove the card wrapper (edge handles are children, removed with it)
-      if (el?.wrapper?.parentElement) {
-        el.wrapper.remove();
-      }
-      cardEls.delete(sessionName);
-      cards.splice(currentIdx, 1);
-      terminalPool.unprotect(sessionName);
-
-      // Move terminal pane back to container root (hidden by default CSS)
-      const entry = terminalPool.get(sessionName);
+      // Unmount the tile and remove the wrapper
       if (entry) {
-        entry.container.style.display = "none";
-        container.appendChild(entry.container);
+        entry.tile.unmount();
+        if (entry.wrapper?.parentElement) {
+          entry.wrapper.remove();
+        }
       }
+      cardEls.delete(tileId);
+      cards.splice(currentIdx, 1);
 
-      if (onCardDismissed) onCardDismissed(sessionName);
+      if (onCardDismissed) onCardDismissed(tileId);
 
       // Shift focus
-      if (focusedSession === sessionName) {
+      if (focusedId === tileId) {
         if (cards.length > 0) {
-          focusedSession = cards[Math.min(currentIdx, cards.length - 1)];
-          if (onFocusChange) onFocusChange(focusedSession);
+          focusedId = cards[Math.min(currentIdx, cards.length - 1)];
+          const newEntry = cardEls.get(focusedId);
+          if (newEntry) newEntry.tile.focus();
+          if (onFocusChange) onFocusChange(focusedId);
           positionCards(true);
         } else {
-          focusedSession = null;
+          focusedId = null;
           deactivate();
           return;
         }
@@ -314,79 +324,74 @@ export function createCardCarousel({
     doRemove();
   }
 
-  function focusCard(sessionName) {
+  function focusCard(tileId) {
     if (!active) return;
-    if (!cards.includes(sessionName)) return;
-    if (focusedSession === sessionName) return;
+    if (!cards.includes(tileId)) return;
+    if (focusedId === tileId) return;
 
-    focusedSession = sessionName;
+    // Blur the previously focused tile
+    const prevEntry = cardEls.get(focusedId);
+    if (prevEntry) prevEntry.tile.blur();
+
+    focusedId = tileId;
 
     // Slide cards to new positions (animated)
     positionCards(true);
 
-    // Mark as active in pool so getTerm() returns the right terminal
-    terminalPool.setActive(sessionName);
-    // Focus the terminal, rescale it, and move controls into this card
-    const entry = terminalPool.get(sessionName);
-    if (entry?.term?.focus) entry.term.focus();
-    terminalPool.attachControls(sessionName);
-    fitAll();
+    // Focus the new tile
+    const entry = cardEls.get(tileId);
+    if (entry) entry.tile.focus();
 
-    if (onFocusChange) onFocusChange(sessionName);
+    fitAll();
+    if (onFocusChange) onFocusChange(tileId);
     save();
   }
 
-  function renameCard(oldName, newName) {
-    const idx = cards.indexOf(oldName);
+  function renameCard(oldId, newId) {
+    const idx = cards.indexOf(oldId);
     if (idx === -1) return;
 
-    cards[idx] = newName;
-    if (focusedSession === oldName) focusedSession = newName;
+    cards[idx] = newId;
+    if (focusedId === oldId) focusedId = newId;
 
-    // Update card wrapper
-    const el = cardEls.get(oldName);
-    if (el) {
-      el.wrapper.dataset.session = newName;
-      cardEls.delete(oldName);
-      cardEls.set(newName, el);
+    const entry = cardEls.get(oldId);
+    if (entry) {
+      entry.wrapper.dataset.tileId = newId;
+      cardEls.delete(oldId);
+      cardEls.set(newId, entry);
     }
 
     save();
   }
 
   /** Reorder cards to match the given order (called when tabs are reordered) */
-  function reorderCards(orderedNames) {
-    // Filter to only names that are actually in the carousel
-    const newOrder = orderedNames.filter(n => cards.includes(n));
-    // Add any cards not in the ordered list (shouldn't happen, but be safe)
-    for (const n of cards) {
-      if (!newOrder.includes(n)) newOrder.push(n);
+  function reorderCards(orderedIds) {
+    const newOrder = orderedIds.filter(id => cards.includes(id));
+    for (const id of cards) {
+      if (!newOrder.includes(id)) newOrder.push(id);
     }
-    if (newOrder.join(",") === cards.join(",")) return; // no change
+    if (newOrder.join(",") === cards.join(",")) return;
 
     cards = newOrder;
 
     positionCards(true);
     fitAll();
-
     save();
   }
 
-  // ── Fit ──────────────────────────────────────────────────────────────
+  // ── Fit ────────────────────────────────────────────────────────────
 
   function fitAll() {
     if (!active) return;
     requestAnimationFrame(() => {
       if (!active) return;
-      // Scale all terminals to fit their containers. Server resize is
-      // handled by the terminal pool's onResize callback (which only
-      // fires when dimensions actually change). We don't send resize
-      // here — doing so triggers tmux redraws that duplicate content.
-      terminalPool.scaleAll();
+      for (const [, entry] of cardEls) {
+        entry.tile.resize();
+      }
     });
   }
 
-  // Rescale terminals on orientation change / window resize.
+  // Rescale tiles on orientation change / window resize.
   let resizeTimer = null;
   window.addEventListener("resize", () => {
     if (!active) return;
@@ -394,12 +399,27 @@ export function createCardCarousel({
     resizeTimer = setTimeout(() => { resizeTimer = null; fitAll(); }, 150);
   });
 
+  // ── Tile access ────────────────────────────────────────────────────
 
+  /** Get the tile instance for a given ID. */
+  function getTile(tileId) {
+    return cardEls.get(tileId)?.tile || null;
+  }
+
+  /** Find the tile ID for a tile matching a predicate. */
+  function findCard(predicate) {
+    for (const [id, { tile }] of cardEls) {
+      if (predicate(tile, id)) return id;
+    }
+    return null;
+  }
 
   return {
     isActive: () => active,
     getCards: () => [...cards],
-    getFocusedCard: () => focusedSession,
+    getFocusedCard: () => focusedId,
+    getTile,
+    findCard,
     activate,
     deactivate,
     addCard,

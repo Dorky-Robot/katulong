@@ -35,6 +35,9 @@
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
     import { createCardCarousel, isCarouselDevice } from "/lib/card-carousel.js";
+    import { registerTileType, createTile } from "/lib/tile-registry.js";
+    import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
+    import { createDashboardTileFactory } from "/lib/tiles/dashboard-tile.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -236,16 +239,44 @@
     const getTerm = () => terminalPool.getActive()?.term;
     const getSearchAddon = () => terminalPool.getActive()?.searchAddon;
 
+    // --- Tile Registry ---
+    registerTileType("terminal", createTerminalTileFactory({ terminalPool }));
+    registerTileType("dashboard", createDashboardTileFactory({ createTileFn: createTile }));
+
+    /** Create a terminal tile for a session, using the session name as tile ID. */
+    function makeTerminalTile(sessionName) {
+      return { id: sessionName, tile: createTile("terminal", { sessionName }) };
+    }
+
+    /** Resolve the session name for a tile ID (works for terminal tiles). */
+    function tileSessionName(tileId) {
+      const tile = carousel.getTile(tileId);
+      return tile?.sessionName || tileId;
+    }
+
     // --- Card Carousel (iPad/tablet) ---
     const carousel = createCardCarousel({
       container: document.getElementById("terminal-container"),
-      terminalPool,
-      sendResize: (session, cols, rows) => {
-        if (state.connection.ws?.readyState === 1) {
-          state.connection.ws.send(JSON.stringify({ type: "resize", session, cols, rows }));
-        }
-      },
-      onFocusChange: (sessionName) => {
+      createTileContext: (tileId, _tile) => ({
+        tileId,
+        sendWs(msg) {
+          const ws = state.connection.ws;
+          if (ws?.readyState === 1) ws.send(JSON.stringify(msg));
+        },
+        onWsMessage(_type, _handler) {
+          // Terminal tiles use the existing pull-based output system.
+          // Non-terminal tiles will use this in the future.
+          return () => {};
+        },
+        setTitle(_title) {
+          // Future: update tab bar dynamically
+        },
+        setIcon(_icon) {
+          // Future: update tab icon dynamically
+        },
+      }),
+      onFocusChange: (tileId) => {
+        const sessionName = tileSessionName(tileId);
         state.update('session.name', sessionName);
         document.title = sessionName;
         const url = new URL(window.location);
@@ -271,7 +302,8 @@
         // Reattach scroll-to-bottom button to the newly focused terminal
         _attachScrollButton();
       },
-      onCardDismissed: (sessionName) => {
+      onCardDismissed: (tileId) => {
+        const sessionName = tileSessionName(tileId);
         // Detach: remove from this window's tab set (session stays on server)
         if (windowTabSet) windowTabSet.removeTab(sessionName);
         wsConnection.sendUnsubscribe(sessionName);
@@ -293,15 +325,17 @@
       if (!carousel.isActive()) return;
       const cards = carousel.getCards();
       const focused = carousel.getFocusedCard();
-      for (const session of cards) {
-        if (session !== focused) {
+      for (const tileId of cards) {
+        const tile = carousel.getTile(tileId);
+        // Only subscribe terminal tiles to WS output
+        if (tile?.type === "terminal" && tileId !== focused) {
           // Send cols/rows so the server resizes the PTY before serializing
           // the snapshot. Without this, the snapshot wraps at the wrong
           // column width and live output renders garbled.
-          const entry = terminalPool.get(session);
+          const entry = terminalPool.get(tile.sessionName);
           const cols = entry?.term?.cols;
           const rows = entry?.term?.rows;
-          wsConnection.sendSubscribe(session, cols, rows);
+          wsConnection.sendSubscribe(tile.sessionName, cols, rows);
         }
       }
       carousel.fitAll();
@@ -314,12 +348,18 @@
         return;
       }
       if (carousel.isActive()) {
-        if (!carousel.getCards().includes(name)) carousel.addCard(name);
-        carousel.focusCard(name);
+        // Check if a terminal tile for this session already exists
+        const existing = carousel.findCard((tile) => tile.sessionName === name);
+        if (!existing) {
+          const { id, tile } = makeTerminalTile(name);
+          carousel.addCard(id, tile);
+        }
+        carousel.focusCard(existing || name);
       } else {
         const allNames = windowTabSet ? [...windowTabSet.getTabs()] : [];
         if (!allNames.includes(name)) allNames.push(name);
-        carousel.activate(allNames.length > 0 ? allNames : [name], name);
+        const tiles = allNames.map(n => makeTerminalTile(n));
+        carousel.activate(tiles, name);
         if (shortcutBarInstance) shortcutBarInstance.render(name);
       }
     }
@@ -1452,7 +1492,7 @@
             const tabSessions = windowTabSet.getTabs();
             const allNames = tabSessions.length > 0 ? [...tabSessions] : [name];
             if (!allNames.includes(name)) allNames.unshift(name);
-            carousel.activate(allNames, name);
+            carousel.activate(allNames.map(n => makeTerminalTile(n)), name);
             renderBar(name);
           } else {
             terminalPool.activate(name);
@@ -1473,7 +1513,7 @@
         const tabSessions = windowTabSet.getTabs();
         const allNames = tabSessions.length > 0 ? [...tabSessions] : [state.session.name];
         if (state.session.name && !allNames.includes(state.session.name)) allNames.unshift(state.session.name);
-        carousel.activate(allNames, state.session.name);
+        carousel.activate(allNames.map(n => makeTerminalTile(n)), state.session.name);
         renderBar(state.session.name);
       } else {
         renderBar(state.session.name);
@@ -1486,8 +1526,12 @@
     // Restore carousel state from sessionStorage after a short delay
     setTimeout(() => {
       const carouselState = carousel.restore();
-      if (carouselState && carouselState.sessions.length > 0 && !carousel.isActive()) {
-        carousel.activate(carouselState.sessions, carouselState.focused);
+      if (carouselState && carouselState.tiles?.length > 0 && !carousel.isActive()) {
+        const tiles = carouselState.tiles.map(t => {
+          const tile = createTile(t.type, t);
+          return { id: t.id, tile };
+        });
+        carousel.activate(tiles, carouselState.focused);
       }
     }, 500);
 
