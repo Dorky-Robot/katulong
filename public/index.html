@@ -208,7 +208,7 @@
     /* Cards positioned absolutely, slid via translateX. Only focused + neighbors visible. */
     .carousel-card {
       position: absolute;
-      top: 72px; bottom: 16px; left: 24px; right: 24px;
+      top: 8px; bottom: 16px; left: 24px; right: 24px;
       display: flex; flex-direction: column; overflow: hidden; contain: paint;
       border-radius: 16px;
       background: var(--bg-surface);
@@ -333,27 +333,6 @@
         padding-top: env(titlebar-area-height, var(--height-btn-md));
       }
     }
-
-    /* Toolbar color variants — custom properties */
-    [data-toolbar-color="blue"]   { --tb-bg: #89b4fa; --tb-accent: #7aa2f7; --tb-btn-border: #6690e0; --tb-text: #1e1e2e; --tb-btn-bg: rgba(255,255,255,0.3); }
-    [data-toolbar-color="purple"] { --tb-bg: #cba6f7; --tb-accent: #b4a1e8; --tb-btn-border: #a090d6; --tb-text: #1e1e2e; --tb-btn-bg: rgba(255,255,255,0.3); }
-    [data-toolbar-color="green"]  { --tb-bg: #a6e3a1; --tb-accent: #94d890; --tb-btn-border: #7fc97a; --tb-text: #1e1e2e; --tb-btn-bg: rgba(255,255,255,0.3); }
-    [data-toolbar-color="red"]    { --tb-bg: #f38ba8; --tb-accent: #e57996; --tb-btn-border: #d66884; --tb-text: #1e1e2e; --tb-btn-bg: rgba(255,255,255,0.3); }
-    [data-toolbar-color="orange"] { --tb-bg: #fab387; --tb-accent: #f5a76e; --tb-btn-border: #f09955; --tb-text: #1e1e2e; --tb-btn-bg: rgba(255,255,255,0.3); }
-    [data-toolbar-color="pink"]   { --tb-bg: #f5c2e7; --tb-accent: #f0b3de; --tb-btn-border: #e8a4d5; --tb-text: #1e1e2e; --tb-btn-bg: rgba(255,255,255,0.3); }
-    [data-toolbar-color="teal"]   { --tb-bg: #94e2d5; --tb-accent: #81d8cc; --tb-btn-border: #6ec9bc; --tb-text: #1e1e2e; --tb-btn-bg: rgba(255,255,255,0.3); }
-    [data-toolbar-color="yellow"] { --tb-bg: #f9e2af; --tb-accent: #f5d99d; --tb-btn-border: #f0ce8b; --tb-text: #1e1e2e; --tb-btn-bg: rgba(255,255,255,0.3); }
-
-    #shortcut-bar[data-toolbar-color] { background: var(--tb-bg, var(--bg-surface)); border-bottom-color: var(--tb-accent, var(--border)); color: var(--tb-text, var(--text)); }
-    #shortcut-bar[data-toolbar-color] .session-btn { background: var(--tb-accent, var(--accent)); color: var(--tb-text, var(--text)); }
-    #shortcut-bar[data-toolbar-color] .session-btn i { color: var(--tb-text, var(--text)); }
-    #shortcut-bar[data-toolbar-color] .shortcut-btn,
-    #shortcut-bar[data-toolbar-color] .bar-icon-btn { color: var(--tb-text, var(--text)); border-color: var(--tb-btn-border, var(--border)); background: var(--tb-btn-bg, var(--bg-input)); }
-    #shortcut-bar[data-toolbar-color] #connection-indicator { background: var(--tb-text, var(--text-dim)); }
-    #shortcut-bar[data-toolbar-color] #connection-indicator.connected { background: #40a02b; }
-    #shortcut-bar[data-toolbar-color] .tab-bar-tab { background: var(--tb-btn-bg, var(--bg-input)); color: var(--tb-text, var(--text-muted)); border-color: var(--tb-btn-border, var(--border)); }
-    #shortcut-bar[data-toolbar-color] .tab-bar-tab.active { background: var(--tb-accent, var(--accent)); color: var(--tb-text, var(--text)); }
-    #shortcut-bar[data-toolbar-color] .tab-bar-add { color: var(--tb-text, var(--text-muted)); }
 
     .shortcut-btn {
       flex-shrink: 0; height: var(--height-btn-sm); padding: 0 var(--space-md);
@@ -1076,28 +1055,6 @@
     .settings-label {
       color: var(--text); font-size: 0.875rem; font-family: var(--font-mono);
     }
-    .instance-name-input {
-      flex: 1; max-width: 300px; height: var(--height-btn-sm); padding: 0 var(--space-md);
-      border: 1px solid var(--border); border-radius: var(--radius-sm);
-      background: var(--bg-input); color: var(--text); font-size: 0.875rem;
-      font-family: var(--font-mono);
-    }
-    .instance-name-input:focus {
-      outline: none; border-color: var(--accent);
-    }
-    .instance-icon-btn {
-      display: flex; align-items: center; gap: var(--space-sm);
-      height: var(--height-btn-sm); padding: 0 var(--space-md);
-      border: 1px solid var(--border); border-radius: var(--radius-sm);
-      background: var(--bg-input); color: var(--text); font-size: 0.75rem;
-      font-family: var(--font-mono); cursor: pointer; transition: border-color 150ms ease;
-    }
-    .instance-icon-btn:hover {
-      border-color: var(--accent);
-    }
-    .instance-icon-btn i {
-      font-size: 1.25rem;
-    }
     /* Toggle switch */
     .toggle-switch { position: relative; display: inline-block; width: 40px; height: 22px; }
     .toggle-switch input { opacity: 0; width: 0; height: 0; }
@@ -1112,84 +1069,6 @@
     }
     .toggle-switch input:checked + .toggle-slider { background: var(--accent); }
     .toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
-    .icon-picker-overlay {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0, 0, 0, 0.5); z-index: var(--z-modal-nested);
-      display: flex; align-items: center; justify-content: center;
-    }
-    .icon-picker-modal {
-      background: var(--bg-surface); border: 1px solid var(--border);
-      border-radius: var(--radius-md); width: min(600px, 90vw);
-      max-height: 80vh; display: flex; flex-direction: column;
-    }
-    .icon-picker-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: var(--space-lg); border-bottom: 1px solid var(--border);
-    }
-    .icon-picker-header h3 {
-      margin: 0; font-size: 1rem; font-weight: 500;
-    }
-    .icon-picker-close {
-      background: none; border: none; color: var(--text-muted);
-      cursor: pointer; padding: var(--space-xs); font-size: 1.25rem;
-      display: flex; align-items: center; justify-content: center;
-    }
-    .icon-picker-close:hover {
-      color: var(--text);
-    }
-    .icon-picker-content {
-      padding: var(--space-lg); overflow-y: auto; flex: 1;
-    }
-    .icon-picker-category {
-      margin-bottom: var(--space-xl);
-    }
-    .icon-picker-category:last-child {
-      margin-bottom: 0;
-    }
-    .icon-picker-category h4 {
-      margin: 0 0 var(--space-md) 0; font-size: 0.875rem;
-      font-weight: 500; color: var(--text-muted);
-    }
-    .icon-picker-grid {
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
-      gap: var(--space-sm);
-    }
-    .icon-picker-icon {
-      display: flex; align-items: center; justify-content: center;
-      height: 60px; border: 1px solid var(--border); border-radius: var(--radius-sm);
-      background: var(--bg); cursor: pointer; transition: all 150ms ease;
-    }
-    .icon-picker-icon:hover {
-      border-color: var(--accent); background: var(--bg-surface);
-    }
-    .icon-picker-icon.selected {
-      border-color: var(--accent); background: var(--accent);
-    }
-    .icon-picker-icon.selected i {
-      color: white;
-    }
-    .icon-picker-icon i {
-      font-size: 2rem; color: var(--text);
-    }
-    .toolbar-color-picker {
-      display: flex; gap: var(--space-sm); flex-wrap: wrap;
-    }
-    .toolbar-color-swatch {
-      width: 2.5rem; height: 2.5rem; border-radius: var(--radius-sm);
-      border: 2px solid transparent; cursor: pointer;
-      transition: all 150ms ease; position: relative;
-    }
-    .toolbar-color-swatch:hover {
-      transform: scale(1.1); border-color: var(--text-dim);
-    }
-    .toolbar-color-swatch.selected {
-      border-color: var(--accent-active); box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent-active);
-    }
-    .toolbar-color-swatch.selected::after {
-      content: '✓'; position: absolute; top: 50%; left: 50%;
-      transform: translate(-50%, -50%); color: white; font-weight: bold;
-      text-shadow: 0 0 2px rgba(0,0,0,0.5);
-    }
     .theme-toggle {
       display: flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden;
     }
@@ -1988,39 +1867,12 @@
 
           <!-- Tab navigation -->
           <div class="settings-tabs" role="tablist">
-            <button class="settings-tab active" data-tab="theme" role="tab" aria-selected="true">Theme</button>
+            <button class="settings-tab active" data-tab="theme" role="tab" aria-selected="true">General</button>
             <button class="settings-tab" data-tab="remote" role="tab" aria-selected="false">Remote</button>
           </div>
 
           <!-- Theme tab content -->
           <div class="settings-tab-content active" id="settings-tab-theme">
-            <div class="settings-row">
-              <span class="settings-label">Instance Name</span>
-              <input type="text" id="instance-name-input" class="instance-name-input" placeholder="My Katulong" maxlength="100" />
-            </div>
-            <p class="tab-description" style="margin-top: 0.5rem; margin-bottom: 1.5rem;">
-              This name helps you identify this Katulong instance when you have multiple devices.
-            </p>
-
-            <div class="settings-row">
-              <span class="settings-label">Instance Icon</span>
-              <button class="instance-icon-btn" id="instance-icon-btn" type="button">
-                <i class="ph ph-terminal-window" id="instance-icon-display"></i>
-                <span>Change</span>
-              </button>
-            </div>
-            <p class="tab-description" style="margin-top: 0.5rem; margin-bottom: 1.5rem;">
-              Choose an icon to visually identify this instance.
-            </p>
-
-            <div class="settings-row">
-              <span class="settings-label">Toolbar Color</span>
-              <div class="toolbar-color-picker" id="toolbar-color-picker"></div>
-            </div>
-            <p class="tab-description" style="margin-top: 0.5rem; margin-bottom: 1.5rem;">
-              Choose a color for the toolbar.
-            </p>
-
             <div class="settings-row">
               <span class="settings-label">Theme</span>
               <div class="theme-toggle" role="radiogroup" aria-label="Theme selection">
@@ -2035,15 +1887,13 @@
                 </button>
               </div>
             </div>
-          </div>
 
-          <div class="settings-row" id="notification-permission-row">
+            <div class="settings-row" id="notification-permission-row">
               <span class="settings-label">Notifications</span>
-              <button class="btn btn-sm" id="notification-permission-btn" type="button">Enable</button>
+              <span id="notification-permission-status" style="font-size: 0.8rem; color: var(--text-muted);"></span>
             </div>
-            <p class="tab-description" style="margin-top: 0.5rem; margin-bottom: 1.5rem;">
-              Allow native notifications from <code>katulong notify</code> commands.
-            </p>
+            <p class="tab-description" id="notification-permission-desc" style="margin-top: 0.5rem; margin-bottom: 1.5rem;"></p>
+          </div>
 
           <!-- Remote tab content -->
           <div class="settings-tab-content" id="settings-tab-remote">
@@ -2086,32 +1936,6 @@
             <button class="settings-logout-btn" id="settings-logout">End Session</button>
             <span class="settings-version" id="settings-version"></span>
           </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Icon Picker Modal -->
-  <div class="icon-picker-overlay" id="icon-picker-overlay" style="display: none;">
-    <div class="icon-picker-modal">
-      <div class="icon-picker-header">
-        <h3>Choose an Icon</h3>
-        <button class="icon-picker-close" id="icon-picker-close" aria-label="Close">
-          <i class="ph ph-x"></i>
-        </button>
-      </div>
-      <div class="icon-picker-content">
-        <div class="icon-picker-category">
-          <h4>Computers & Devices</h4>
-          <div class="icon-picker-grid" data-category="computersdevices"></div>
-        </div>
-        <div class="icon-picker-category">
-          <h4>Locations</h4>
-          <div class="icon-picker-grid" data-category="locations"></div>
-        </div>
-        <div class="icon-picker-category">
-          <h4>Objects & Symbols</h4>
-          <div class="icon-picker-grid" data-category="objectssymbols"></div>
         </div>
       </div>
     </div>

@@ -96,22 +96,13 @@
 
     const state = createAppState();
 
-    // --- Instance Icon ---
-    let instanceIcon = "terminal-window";
     let shortcutBarInstance = null;
-    const getInstanceIcon = () => instanceIcon;
+    const getInstanceIcon = () => "terminal-window";
 
     // --- Per-session tab icon overrides ---
     // sessionName -> Phosphor icon name (set via OSC 7337 from terminal processes)
     const sessionIcons = new Map();
     const getSessionIcon = (name) => sessionIcons.get(name) || null;
-    const setInstanceIcon = (icon) => {
-      instanceIcon = icon.replace(/[^a-z0-9-]/g, "");
-      // Re-render shortcut bar to show new icon
-      if (shortcutBarInstance) {
-        shortcutBarInstance.render(state.session.name);
-      }
-    };
 
     // --- Shortcuts state management (reactive store) ---
     const shortcutsStore = createShortcutsStore();
@@ -777,28 +768,6 @@
 
     const settingsHandlers = createSettingsHandlers({
       onThemeChange: (theme) => applyTheme(theme),
-      onInstanceIconChange: setInstanceIcon,
-      onToolbarColorChange: (color) => {
-        const bar = document.getElementById("shortcut-bar");
-        if (bar) {
-          if (color && color !== "default") {
-            bar.setAttribute("data-toolbar-color", color);
-          } else {
-            bar.removeAttribute("data-toolbar-color");
-          }
-        }
-        // Sync native title bar color (PWA Window Controls Overlay)
-        const metaTheme = document.querySelector('meta[name="theme-color"]');
-        if (metaTheme) {
-          const colorMap = {
-            blue: "#89b4fa", purple: "#cba6f7", green: "#a6e3a1", red: "#f38ba8",
-            orange: "#fab387", pink: "#f5c2e7", teal: "#94e2d5", yellow: "#f9e2af"
-          };
-          const effective = document.documentElement.getAttribute("data-theme");
-          const surfaceColor = effective === "light" ? "#ffffff" : "#313244";
-          metaTheme.content = (color && color !== "default") ? colorMap[color] || surfaceColor : surfaceColor;
-        }
-      },
       onPortProxyChange: (enabled) => {
         const btn = document.getElementById("sidebar-portfwd-btn");
         if (btn) btn.style.display = enabled ? "" : "none";
@@ -828,21 +797,64 @@
     settingsTabManager.init();
 
     // --- Notification permission ---
-    const notifBtn = document.getElementById("notification-permission-btn");
-    const notifRow = document.getElementById("notification-permission-row");
-    function updateNotifBtn() {
-      if (!("Notification" in window)) {
-        notifRow.style.display = "none";
-        return;
+    {
+      const statusEl = document.getElementById("notification-permission-status");
+      const descEl = document.getElementById("notification-permission-desc");
+      const row = document.getElementById("notification-permission-row");
+      if (row && statusEl && descEl) {
+        if ("Notification" in window) {
+          const perm = Notification.permission;
+          if (perm === "granted") {
+            statusEl.textContent = "Enabled";
+            statusEl.style.color = "var(--success)";
+            descEl.textContent = "You\u2019ll receive alerts from katulong notify commands.";
+          } else if (perm === "denied") {
+            statusEl.textContent = "Blocked";
+            statusEl.style.color = "var(--error, #f38ba8)";
+            descEl.textContent = "Notifications were blocked. Reset in your browser or system settings.";
+          } else {
+            // Create enable button inline
+            statusEl.innerHTML = "";
+            const btn = document.createElement("button");
+            btn.className = "shortcut-btn";
+            btn.textContent = "Enable";
+            btn.addEventListener("click", () => {
+              Notification.requestPermission().then((p) => {
+                if (p === "granted") {
+                  btn.replaceWith(document.createTextNode("Enabled"));
+                  statusEl.style.color = "var(--success)";
+                  descEl.textContent = "You\u2019ll receive alerts from katulong notify commands.";
+                } else {
+                  btn.replaceWith(document.createTextNode("Blocked"));
+                  statusEl.style.color = "var(--error, #f38ba8)";
+                  descEl.textContent = "Notifications were blocked. Reset in your browser or system settings.";
+                }
+              });
+            });
+            statusEl.appendChild(btn);
+            descEl.textContent = "Receive alerts from katulong notify commands.";
+          }
+        } else {
+          // Notification API not available — detect browser and show install instructions
+          statusEl.textContent = "Not available";
+          statusEl.style.color = "var(--text-muted)";
+          const ua = navigator.userAgent;
+          const isIPad = /iPad/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+          const isIPhone = /iPhone/.test(ua);
+          const isSafari = /Safari/.test(ua) && !/Chrome/.test(ua);
+          const isAndroid = /Android/.test(ua);
+          if ((isIPad || isIPhone) && isSafari) {
+            descEl.innerHTML = 'To enable notifications, install as an app:<br>Tap <strong>\u{1F4E4} Share</strong> \u2192 <strong>Add to Home Screen</strong>.';
+          } else if (isAndroid) {
+            descEl.innerHTML = 'To enable notifications, install as an app:<br>Tap <strong>\u22EE Menu</strong> \u2192 <strong>Install app</strong> or <strong>Add to Home screen</strong>.';
+          } else if (/Chrome/.test(ua)) {
+            descEl.innerHTML = 'To enable notifications, install as an app:<br>Click the <strong>install icon</strong> in the address bar, or <strong>\u22EE Menu \u2192 Install</strong>.';
+          } else {
+            descEl.textContent = "Notifications require installing this site as an app (PWA).";
+          }
+        }
       }
-      const perm = Notification.permission;
-      notifBtn.textContent = perm === "granted" ? "Enabled" : perm === "denied" ? "Blocked" : "Enable";
-      notifBtn.disabled = perm !== "default";
     }
-    updateNotifBtn();
-    notifBtn.addEventListener("click", () => {
-      Notification.requestPermission().then(updateNotifBtn);
-    });
 
     // --- Token management ---
 
