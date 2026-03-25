@@ -1334,16 +1334,9 @@
         switchSession(session);
       },
       onNotification: (title, message) => {
-        // Native OS notification via Web Notifications API
-        if (Notification.permission === "granted") {
+        if ("Notification" in window && Notification.permission === "granted") {
           new Notification(title, { body: message, icon: "/vendor/icon-192.png" });
-        } else if (Notification.permission !== "denied") {
-          Notification.requestPermission().then((perm) => {
-            if (perm === "granted") new Notification(title, { body: message, icon: "/vendor/icon-192.png" });
-          });
         }
-        // Always show in-app toast as fallback
-        showToast(message);
       },
     });
     wsConnection.initVisibilityReconnect();

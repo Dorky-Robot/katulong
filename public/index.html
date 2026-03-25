@@ -216,6 +216,10 @@
       transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
       will-change: transform;
     }
+    /* In standalone PWA, leave room for iPad traffic lights + floating island */
+    @media (display-mode: standalone) {
+      .carousel-card { top: 72px; }
+    }
     .carousel-card.focused {
       z-index: 2;
     }
