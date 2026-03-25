@@ -125,7 +125,11 @@ export function createShortcutBar(options = {}) {
         delBtn.innerHTML = '<i class="ph ph-trash"></i>';
         delBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          // Remove item from menu with slide-out animation
+          // Run delete action first (may show confirm dialog).
+          // Only animate removal if the action wasn't cancelled.
+          const cancelled = item.deleteAction(row);
+          if (cancelled === false) return;
+          // Slide-out animation after confirmed delete
           row.style.pointerEvents = "none";
           row.style.transition = "opacity 0.2s, max-height 0.2s, padding 0.2s, margin 0.2s";
           row.style.overflow = "hidden";
@@ -136,7 +140,6 @@ export function createShortcutBar(options = {}) {
             row.style.padding = "0 0.75rem";
           });
           setTimeout(() => row.remove(), 250);
-          item.deleteAction(row);
         });
         row.appendChild(delBtn);
       }
@@ -164,9 +167,11 @@ export function createShortcutBar(options = {}) {
         left = window.innerWidth - menuRect.width - 8;
       }
       menu.style.left = Math.max(8, left) + "px";
-      // Open above if not enough space below
+      // Open above if not enough space below, anchored at bottom
+      // so the menu grows downward (items slide down, not push up)
       if (rect.bottom + 4 + menuRect.height > vh - 8) {
-        menu.style.top = (rect.top - menuRect.height - 4) + "px";
+        menu.style.bottom = (vh - rect.top + 4) + "px";
+        menu.style.top = "auto";
       } else {
         menu.style.top = rect.bottom + 4 + "px";
       }
@@ -334,7 +339,7 @@ export function createShortcutBar(options = {}) {
             if (onTabClick) onTabClick(s.name);
           },
           deleteAction: () => {
-            if (!confirm(`Kill session "${s.name}"?\n\nThis will terminate the tmux session and all its processes.`)) return;
+            if (!confirm(`Kill session "${s.name}"?\n\nThis will terminate the tmux session and all its processes.`)) return false;
             api.delete(`/sessions/${encodeURIComponent(s.name)}`).then(() => {
               if (windowTabSet) windowTabSet.onSessionKilled(s.name);
               if (sessionStore) invalidateSessions(sessionStore, currentSessionName);
@@ -355,7 +360,7 @@ export function createShortcutBar(options = {}) {
           const msg = s.attached
             ? `"${s.name}" has attached clients. Kill it anyway?`
             : `Kill tmux session "${s.name}"?`;
-          if (!confirm(msg)) return;
+          if (!confirm(msg)) return false;
           deleteUnmanagedSession(s.name);
         };
         items.push(item);
