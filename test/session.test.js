@@ -455,18 +455,20 @@ describe("Session", () => {
       assert.strictEqual(session.getBuffer(), "Hello World");
     });
 
-    it("calls onSnapshot callback", () => {
-      const snapEvents = [];
+    it("calls onData callback", () => {
+      const dataEvents = [];
       const { session } = createSimpleTestSession("test", {
-        onSnapshot: (name, snapshot) => snapEvents.push({ name, snapshot }),
+        onData: (name, data) => dataEvents.push({ name, data }),
       });
 
       // Simulate what the control mode parser does
-      session._onSnapshot("test", { type: "full", lines: ["test output"] });
+      const data = "test output";
+      session.outputBuffer.push(data);
+      session._onData("test", data);
 
-      assert.strictEqual(snapEvents.length, 1);
-      assert.strictEqual(snapEvents[0].name, "test");
-      assert.strictEqual(snapEvents[0].snapshot.type, "full");
+      assert.strictEqual(dataEvents.length, 1);
+      assert.strictEqual(dataEvents[0].name, "test");
+      assert.strictEqual(dataEvents[0].data, "test output");
     });
   });
 
@@ -596,32 +598,36 @@ describe("Session", () => {
 });
 
 describe("output dispatch", () => {
-  it("pushes %output data to RingBuffer and updates lastOutputTime", () => {
-    const { session, mockProc } = createWiredTestSession("test", {
-      onSnapshot: () => {},
+  it("dispatches onData synchronously for each %output line", () => {
+    const dataEvents = [];
+    const { mockProc } = createWiredTestSession("test", {
+      onData: (name, data) => dataEvents.push({ name, data }),
     });
 
     mockProc.simulateOutput("%0", "hello");
-    assert.strictEqual(session.getBuffer(), "hello");
-    assert.ok(session._lastOutputTime > 0, "lastOutputTime should be set");
+    assert.strictEqual(dataEvents.length, 1);
+    assert.strictEqual(dataEvents[0].data, "hello");
   });
 
-  it("accumulates multiple output chunks in the RingBuffer", () => {
-    const { session, mockProc } = createWiredTestSession("test", {
-      onSnapshot: () => {},
+  it("dispatches each output chunk individually", () => {
+    const dataEvents = [];
+    const { mockProc } = createWiredTestSession("test", {
+      onData: (name, data) => dataEvents.push({ name, data }),
     });
 
     mockProc.simulateOutput("%0", "aaa");
     mockProc.simulateOutput("%0", "bbb");
     mockProc.simulateOutput("%0", "ccc");
 
-    assert.strictEqual(session.outputBuffer.items.length, 3);
-    assert.strictEqual(session.getBuffer(), "aaabbbccc");
+    assert.strictEqual(dataEvents.length, 3);
+    assert.strictEqual(dataEvents[0].data, "aaa");
+    assert.strictEqual(dataEvents[1].data, "bbb");
+    assert.strictEqual(dataEvents[2].data, "ccc");
   });
 
   it("preserves individual chunks in the RingBuffer", () => {
     const { session, mockProc } = createWiredTestSession("test", {
-      onSnapshot: () => {},
+      onData: () => {},
     });
 
     mockProc.simulateOutput("%0", "aaa");
@@ -632,34 +638,41 @@ describe("output dispatch", () => {
   });
 
   it("does not dispatch after detach", () => {
+    const dataEvents = [];
     const { session, mockProc } = createWiredTestSession("test", {
-      onSnapshot: () => {},
+      onData: (name, data) => dataEvents.push({ name, data }),
     });
 
     mockProc.simulateOutput("%0", "before");
+    assert.strictEqual(dataEvents.length, 1);
+
     session.detach();
-    // After detach, _onSnapshot is nulled so snapshot loop won't fire
-    assert.strictEqual(session._onSnapshot, null);
+    mockProc.simulateOutput("%0", "after");
+    assert.strictEqual(dataEvents.length, 1);
   });
 
   it("does not dispatch after kill", () => {
+    const dataEvents = [];
     const { session, mockProc } = createWiredTestSession("test", {
-      onSnapshot: () => {},
+      onData: (name, data) => dataEvents.push({ name, data }),
     });
 
     mockProc.simulateOutput("%0", "before");
     session.kill();
-    assert.strictEqual(session._onSnapshot, null);
+    mockProc.simulateOutput("%0", "after");
+    assert.strictEqual(dataEvents.length, 1);
   });
 
-  it("processes %output on process close for decoder tail", () => {
-    const { session, mockProc } = createWiredTestSession("test", {
-      onSnapshot: () => {},
+  it("dispatches on process close for decoder tail", () => {
+    const dataEvents = [];
+    const { mockProc } = createWiredTestSession("test", {
+      onData: (name, data) => dataEvents.push({ name, data }),
     });
 
     mockProc.simulateOutput("%0", "data");
     mockProc.simulateClose(0);
-    assert.strictEqual(session.getBuffer(), "data");
+    assert.strictEqual(dataEvents.length, 1);
+    assert.strictEqual(dataEvents[0].data, "data");
   });
 });
 

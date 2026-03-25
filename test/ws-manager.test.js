@@ -49,7 +49,7 @@ function createMockSessionManager() {
     attachClient: async (clientId, session) => {
       clientSessions.set(clientId, session);
       const s = mockSessions.get(session);
-      return { buffer: "shell prompt\n", alive: true };
+      return { buffer: "", alive: true, seq: s?.outputBuffer?.totalBytes };
     },
     detachClient: (clientId) => { clientSessions.delete(clientId); },
     getSessionForClient: (clientId) => clientSessions.get(clientId) || null,
@@ -153,18 +153,15 @@ describe("createWebSocketManager", () => {
   });
 
   describe("bridge subscriber", () => {
-    it("routes snapshot notification to correct session via bridge", () => {
+    it("routes data-available notification to correct session via bridge", () => {
       const ws = createMockWs();
       wsMgr.wsClients.set("client-1", { ws });
       sessionManager._setSession("client-1", "alpha");
 
-      bridge.relay({ type: "snapshot", session: "alpha", snapshotType: "full", lines: ["hello"] });
+      bridge.relay({ type: "data-available", session: "alpha" });
 
       assert.equal(ws.sent.length, 1);
-      const msg = JSON.parse(ws.sent[0]);
-      assert.equal(msg.type, "term-update");
-      assert.equal(msg.session, "alpha");
-      assert.equal(msg.action, "full");
+      assert.deepEqual(JSON.parse(ws.sent[0]), { type: "data-available", session: "alpha" });
     });
 
     it("routes exit events to correct session", () => {
@@ -286,7 +283,37 @@ describe("createWebSocketManager", () => {
       assert.deepEqual(JSON.parse(ws2.sent[0]), { type: "resize-sync", cols: 120, rows: 40 });
     });
 
-    it("attach sends term-update with initial buffer", async () => {
+    it("pull responds with pull-response when data available", async () => {
+      const ws = createMockWs();
+      wsMgr.handleConnection(ws);
+
+      sessionManager._addSession("test-session", {
+        tmuxName: "katulong_test-session",
+        outputBuffer: {
+          totalBytes: 100,
+          sliceFrom: (offset) => offset >= 100 ? "" : "pulled-data-here",
+        },
+      });
+
+      await ws._handlers.message(Buffer.from(JSON.stringify({
+        type: "attach", session: "test-session", cols: 80, rows: 24,
+      })));
+      await new Promise(r => setTimeout(r, 10));
+
+      ws.sent.length = 0;
+
+      await ws._handlers.message(Buffer.from(JSON.stringify({
+        type: "pull", session: "test-session", fromSeq: 50,
+      })));
+      await new Promise(r => setTimeout(r, 10));
+
+      const pullMsg = ws.sent.map(s => JSON.parse(s)).find(m => m.type === "pull-response");
+      assert.ok(pullMsg, "should receive pull-response");
+      assert.equal(pullMsg.data, "pulled-data-here");
+      assert.equal(pullMsg.cursor, 100);
+    });
+
+    it("attach sends seq-init after buffer replay", async () => {
       const ws = createMockWs();
       wsMgr.handleConnection(ws);
 
@@ -299,10 +326,10 @@ describe("createWebSocketManager", () => {
       })));
       await new Promise(r => setTimeout(r, 10));
 
-      const updateMsg = ws.sent.map(s => JSON.parse(s)).find(m => m.type === "term-update");
-      assert.ok(updateMsg, "should receive term-update");
-      assert.equal(updateMsg.session, "test-session");
-      assert.equal(updateMsg.action, "full");
+      const seqInitMsg = ws.sent.map(s => JSON.parse(s)).find(m => m.type === "seq-init");
+      assert.ok(seqInitMsg, "should receive seq-init");
+      assert.equal(seqInitMsg.session, "test-session");
+      assert.equal(seqInitMsg.seq, 250);
     });
   });
 });
