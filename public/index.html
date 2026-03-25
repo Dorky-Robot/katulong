@@ -564,6 +564,7 @@
       border-bottom: none;
       border-top: 1px solid var(--border);
       height: auto;
+      min-height: calc(2.5rem + 0.75rem + 0.75rem + env(safe-area-inset-bottom, 0px)); /* tab + padding top/bottom + safe area */
       padding-top: 0.75rem;
       padding-left: calc(3.5rem + var(--space-sm)); /* space for fixed + button */
       padding-right: var(--space-sm);
