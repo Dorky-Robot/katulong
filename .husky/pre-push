@@ -91,7 +91,7 @@ HALF_CPUS=$(( NCPUS / 2 ))
 # false failures on systems with older Node versions.
 MOCK_MODULE_OK=0
 if node --experimental-test-module-mocks -e \
-  "const t = require('node:test'); if (typeof t.mock?.module !== 'function') process.exit(1)" \
+  'const t = require("node:test"); if (typeof t.mock?.module !== "function") process.exit(1)' \
   >/dev/null 2>&1; then
   MOCK_MODULE_OK=1
 fi
