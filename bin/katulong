@@ -90,8 +90,11 @@ async function main() {
     process.exit(0);
   }
 
+  // Hidden internal commands (not shown in help)
+  const INTERNAL_COMMANDS = ["_finish-upgrade"];
+
   // Dispatch to command handler
-  if (!COMMANDS[command]) {
+  if (!COMMANDS[command] && !INTERNAL_COMMANDS.includes(command)) {
     console.error(`Error: Unknown command '${command}'`);
     console.error(`Run 'katulong --help' for usage information`);
     process.exit(1);
