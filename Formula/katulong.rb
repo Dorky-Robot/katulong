@@ -16,13 +16,15 @@ class Katulong < Formula
   end
 
   def post_install
-    # After brew upgrade the old server process is dead (old Cellar path
-    # removed).  Start the new version unconditionally — `katulong start`
-    # is a no-op if already running, so this is safe for fresh installs too.
+    # After brew upgrade the old server process may still be running (holding
+    # the port) even though its Cellar path was removed.  Stop it first, then
+    # start the new version.  The update command also handles this, so
+    # post_install is a belt-and-suspenders safety net.
     katulong = bin/"katulong"
     if (Pathname.new(Dir.home) / "Library/LaunchAgents/com.dorkyrobot.katulong.plist").exist?
       system katulong, "service", "restart"
     else
+      system katulong, "stop"
       system katulong, "start"
     end
   end
