@@ -131,6 +131,12 @@
 
     const terminalPool = createTerminalPool({
       parentEl: document.getElementById("terminal-container"),
+      onResize: (sessionName, cols, rows) => {
+        const ws = state.connection.ws;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "resize", session: sessionName, cols, rows }));
+        }
+      },
       terminalOptions: {
         fontSize: 14,
         fontFamily: "'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace",

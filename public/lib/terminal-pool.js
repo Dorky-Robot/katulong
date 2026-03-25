@@ -89,7 +89,7 @@ function scaleToFit(term, container) {
  * @param {function} opts.onTerminalCreated - Called after a new terminal is created: (sessionName, entry) => void
  * @returns {object} Pool API
  */
-export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreated }) {
+export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreated, onResize }) {
   // sessionName -> { term, fit, searchAddon, container, lastUsed }
   const pool = new Map();
   let activeSession = null;
@@ -192,8 +192,11 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     // Guard against the entry being disposed before the rAF fires.
     requestAnimationFrame(() => {
       if (!pool.has(sessionName)) return;
-      scaleToFit(entry.term, entry.container);
+      const dims = scaleToFit(entry.term, entry.container);
       entry.term.focus();
+      // Notify server of actual dimensions after fit — the switch message
+      // may have sent stale dimensions before scaleToFit ran.
+      if (dims && onResize) onResize(sessionName, dims.cols, dims.rows);
     });
 
     return entry;

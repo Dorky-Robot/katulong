@@ -280,7 +280,6 @@ export function createWebSocketConnection(deps = {}) {
         clearPullStates(effect.session || null);
         break;
       case 'pullInit':
-        // Initialize pull cursor and send first pull
         if (effect.session) {
           initPullState(effect.session, effect.seq);
           sendPull(effect.session);
@@ -314,7 +313,6 @@ export function createWebSocketConnection(deps = {}) {
               }
             });
           } else {
-            // No terminal (session evicted from pool) — advance cursor, skip render
             ps.writing = false;
             ps.cursor = effect.cursor;
           }
