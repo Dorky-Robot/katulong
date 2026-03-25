@@ -827,6 +827,23 @@
     });
     settingsTabManager.init();
 
+    // --- Notification permission ---
+    const notifBtn = document.getElementById("notification-permission-btn");
+    const notifRow = document.getElementById("notification-permission-row");
+    function updateNotifBtn() {
+      if (!("Notification" in window)) {
+        notifRow.style.display = "none";
+        return;
+      }
+      const perm = Notification.permission;
+      notifBtn.textContent = perm === "granted" ? "Enabled" : perm === "denied" ? "Blocked" : "Enable";
+      notifBtn.disabled = perm !== "default";
+    }
+    updateNotifBtn();
+    notifBtn.addEventListener("click", () => {
+      Notification.requestPermission().then(updateNotifBtn);
+    });
+
     // --- Token management ---
 
     const tokenStore = createTokenStore();
