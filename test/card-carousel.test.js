@@ -86,7 +86,7 @@ function createMockTerminalPool() {
       return pool.get(name);
     },
     forEach: (fn) => { for (const [name, entry] of pool) fn(name, entry); },
-    activate: mock.fn(),
+    setActive: mock.fn(),
     attachControls: mock.fn(),
     scaleAll: mock.fn(),
     has: (name) => pool.has(name),
@@ -420,6 +420,77 @@ describe('card-carousel', () => {
     it('preserves order', () => {
       carousel.renameCard("b", "b-renamed");
       assert.deepStrictEqual(carousel.getCards(), ["a", "b-renamed"]);
+    });
+  });
+
+  describe('pointerdown tap-to-focus', () => {
+    it('fires focusCard when tapping a non-focused card wrapper', () => {
+      carousel.activate(["a", "b"], "a");
+      // Simulate a pointerdown event on card "b"'s wrapper
+      const bEntry = terminalPool.getOrCreate("b");
+      const bWrapper = bEntry.container.parentElement; // wrapper is parent
+      const listeners = bWrapper._listeners["pointerdown"];
+      assert.ok(listeners && listeners.length > 0, "should have pointerdown listener");
+
+      const event = {
+        preventDefault: mock.fn(),
+        stopPropagation: mock.fn(),
+        pointerId: 1,
+        pointerType: "touch",
+      };
+      listeners[0](event);
+      assert.strictEqual(carousel.getFocusedCard(), "b");
+      assert.strictEqual(event.preventDefault.mock.callCount(), 1);
+      assert.strictEqual(event.stopPropagation.mock.callCount(), 1);
+    });
+
+    it('does NOT intercept pointerdown on the already-focused card', () => {
+      carousel.activate(["a", "b"], "a");
+      const aEntry = terminalPool.getOrCreate("a");
+      const aWrapper = aEntry.container.parentElement;
+      const listeners = aWrapper._listeners["pointerdown"];
+
+      const event = {
+        preventDefault: mock.fn(),
+        stopPropagation: mock.fn(),
+        pointerId: 1,
+        pointerType: "touch",
+      };
+      listeners[0](event);
+      // Should still be "a" and event should NOT be prevented
+      assert.strictEqual(carousel.getFocusedCard(), "a");
+      assert.strictEqual(event.preventDefault.mock.callCount(), 0);
+    });
+
+    it('uses click event as fallback for missed pointerdown', () => {
+      carousel.activate(["a", "b"], "a");
+      const bEntry = terminalPool.getOrCreate("b");
+      const bWrapper = bEntry.container.parentElement;
+      const clickListeners = bWrapper._listeners["click"];
+      assert.ok(clickListeners && clickListeners.length > 0, "should have click listener");
+
+      clickListeners[0]({
+        preventDefault: mock.fn(),
+        stopPropagation: mock.fn(),
+      });
+      assert.strictEqual(carousel.getFocusedCard(), "b");
+    });
+
+    it('click on already-focused card does not re-trigger focus', () => {
+      carousel.activate(["a", "b"], "a");
+      const aEntry = terminalPool.getOrCreate("a");
+      const aWrapper = aEntry.container.parentElement;
+      const clickListeners = aWrapper._listeners["click"];
+
+      const before = onFocusChange.mock.callCount();
+      if (clickListeners && clickListeners.length > 0) {
+        clickListeners[0]({
+          preventDefault: mock.fn(),
+          stopPropagation: mock.fn(),
+        });
+      }
+      // Focus should not have changed
+      assert.strictEqual(carousel.getFocusedCard(), "a");
     });
   });
 

@@ -69,8 +69,27 @@ export function createCardCarousel({
 
     // Tap on a non-focused card to make it active.
     // For the focused card, let events pass through to the terminal normally.
+    //
+    // We listen on BOTH pointerdown and click because on iPad, the focused
+    // card's terminal scroll handler calls setPointerCapture() on pointerdown,
+    // which can steal subsequent pointer events. A tap on a non-focused card
+    // that overlaps with pointer capture may never fire pointerdown on the
+    // wrapper. The click event always fires after pointerup regardless of
+    // capture, so it serves as a reliable fallback.
+    let handledByPointerdown = false;
+
     wrapper.addEventListener("pointerdown", (e) => {
       if (!active || focusedSession === sessionName) return;
+      handledByPointerdown = true;
+      e.preventDefault();
+      e.stopPropagation();
+      focusCard(sessionName);
+    });
+
+    wrapper.addEventListener("click", (e) => {
+      if (!active || focusedSession === sessionName) return;
+      // Skip if pointerdown already handled this interaction
+      if (handledByPointerdown) { handledByPointerdown = false; return; }
       e.preventDefault();
       e.stopPropagation();
       focusCard(sessionName);
