@@ -98,10 +98,10 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
-    // Server sends terminal mutations (scroll, row updates, or full repaint)
-    'term-update': (msg) => ({
+    // Server sends screen state: changed rows + cursor position
+    'screen': (msg) => ({
       stateUpdates: {},
-      effects: [{ type: 'termUpdate', session: msg.session, action: msg.action, lines: msg.lines, rows: msg.rows, count: msg.count, newLines: msg.newLines, cursorX: msg.cursorX, cursorY: msg.cursorY }]
+      effects: [{ type: 'paintScreen', session: msg.session, rows: msg.rows, cx: msg.cx, cy: msg.cy }]
     }),
 
     reload: () => ({
@@ -210,52 +210,20 @@ export function createWebSocketConnection(deps = {}) {
         }
         break;
       }
-      case 'termUpdate': {
+      case 'paintScreen': {
+        // Paint changed rows and position cursor. That's it.
         const term = getOutputTerm(effect.session);
         if (!term) break;
         let seq = '';
-
-        if (effect.action === 'cursor') {
-          // Cursor-only update — just reposition
-        } else if (effect.action === 'scroll') {
-          // Natural scroll: move to bottom, emit newlines to push content
-          // into scrollback, then write new lines at bottom
-          const rows = term.rows;
-          seq += `\x1b[${rows};1H`; // move to last row
-          for (let i = 0; i < (effect.count || 1); i++) {
-            seq += '\n'; // scroll up naturally
-          }
-          // Write new content at the bottom rows
-          const newLines = effect.newLines || [];
-          for (let i = 0; i < newLines.length; i++) {
-            const row = rows - newLines.length + i + 1;
-            seq += `\x1b[${row};1H\x1b[2K${newLines[i]}`;
-          }
-        } else if (effect.action === 'mutations') {
-          // In-place updates: position cursor at each changed row
-          for (const row of effect.rows) {
-            seq += `\x1b[${row.row + 1};1H\x1b[2K${row.content}`;
-          }
-        } else if (effect.action === 'full') {
-          // Full repaint: likely a screen buffer switch (e.g., TUI exit).
-          // Clear scrollback to remove stale alternate screen content,
-          // then write all rows fresh.
-          term.clear();
-          const lines = effect.lines || [];
-          const totalRows = Math.max(lines.length, term.rows);
-          for (let i = 0; i < totalRows; i++) {
-            seq += `\x1b[${i + 1};1H\x1b[2K${lines[i] || ''}`;
-          }
+        const rows = effect.rows || [];
+        for (const [row, content] of rows) {
+          seq += `\x1b[${row + 1};1H\x1b[2K${content}`;
         }
-
-        // Always restore cursor to tmux's actual position (clamped to viewport)
-        if (effect.cursorX !== undefined && effect.cursorY !== undefined) {
-          const row = Math.min(effect.cursorY + 1, term.rows);
-          const col = Math.min(effect.cursorX + 1, term.cols);
-          seq += `\x1b[${row};${col}H`;
-        }
-
-        if (seq) term.write(seq);
+        // Position cursor where tmux says it is
+        const cy = Math.min((effect.cy || 0) + 1, term.rows);
+        const cx = Math.min((effect.cx || 0) + 1, term.cols);
+        seq += `\x1b[${cy};${cx}H`;
+        term.write(seq);
         break;
       }
       case 'terminalReset': {

@@ -153,18 +153,18 @@ describe("createWebSocketManager", () => {
   });
 
   describe("bridge subscriber", () => {
-    it("routes snapshot notification to correct session via bridge", () => {
+    it("routes screen update to correct session via bridge", () => {
       const ws = createMockWs();
       wsMgr.wsClients.set("client-1", { ws });
       sessionManager._setSession("client-1", "alpha");
 
-      bridge.relay({ type: "snapshot", session: "alpha", snapshotType: "full", lines: ["hello"] });
+      bridge.relay({ type: "screen", session: "alpha", rows: [[0, "hello"]], cx: 0, cy: 0 });
 
       assert.equal(ws.sent.length, 1);
       const msg = JSON.parse(ws.sent[0]);
-      assert.equal(msg.type, "term-update");
+      assert.equal(msg.type, "screen");
       assert.equal(msg.session, "alpha");
-      assert.equal(msg.action, "full");
+      assert.deepEqual(msg.rows, [[0, "hello"]]);
     });
 
     it("routes exit events to correct session", () => {
@@ -286,7 +286,7 @@ describe("createWebSocketManager", () => {
       assert.deepEqual(JSON.parse(ws2.sent[0]), { type: "resize-sync", cols: 120, rows: 40 });
     });
 
-    it("attach sends term-update with initial buffer", async () => {
+    it("attach sends screen with initial buffer", async () => {
       const ws = createMockWs();
       wsMgr.handleConnection(ws);
 
@@ -297,12 +297,15 @@ describe("createWebSocketManager", () => {
       await ws._handlers.message(Buffer.from(JSON.stringify({
         type: "attach", session: "test-session", cols: 80, rows: 24,
       })));
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise(r => setTimeout(r, 50));
 
-      const updateMsg = ws.sent.map(s => JSON.parse(s)).find(m => m.type === "term-update");
-      assert.ok(updateMsg, "should receive term-update");
-      assert.equal(updateMsg.session, "test-session");
-      assert.equal(updateMsg.action, "full");
+      const msgs = ws.sent.map(s => JSON.parse(s));
+      // Should have: attached, then screen
+      const attachedMsg = msgs.find(m => m.type === "attached");
+      assert.ok(attachedMsg, "should receive attached");
+      const screenMsg = msgs.find(m => m.type === "screen");
+      assert.ok(screenMsg, `should receive screen, got types: ${msgs.map(m => m.type).join(", ")}`);
+      assert.equal(screenMsg.session, "test-session");
     });
   });
 });

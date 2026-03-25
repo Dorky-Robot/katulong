@@ -564,6 +564,7 @@
       border-bottom: none;
       border-top: 1px solid var(--border);
       height: auto;
+      min-height: 3.5rem;
       padding-top: 0.75rem;
       padding-left: calc(3.5rem + var(--space-sm)); /* space for fixed + button */
       padding-right: var(--space-sm);
@@ -770,6 +771,8 @@
     /* Hide joystick when hardware keyboard is connected */
     #joystick.hw-keyboard { display: none !important; }
     #joystick.hw-keyboard ~ #enter-progress-ring { display: none !important; }
+    /* Hide joystick when not inside a terminal pane */
+    body > #joystick { display: none !important; }
 
     /* --- Enter key progress ring --- */
     #enter-progress-ring {
