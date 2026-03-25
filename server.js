@@ -134,6 +134,25 @@ function isAuthenticated(req) {
     log.debug("Auth bypassed: localhost", { ip: req.socket.remoteAddress });
     return { authenticated: true, sessionToken: null, credentialId: null };
   }
+  // API key auth via Bearer token
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const apiKey = authHeader.slice(7);
+    const state = loadState();
+    if (state) {
+      const keyData = state.findApiKey(apiKey);
+      if (keyData) {
+        req._apiKeyAuth = true;
+        withStateLock((s) => {
+          if (!s) return {};
+          return { state: s.updateApiKeyActivity(keyData.id) };
+        }).catch(() => {});
+        return { authenticated: true, sessionToken: null, credentialId: null, apiKeyId: keyData.id };
+      }
+    }
+    return null; // Invalid API key — don't fall through to cookie
+  }
+
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies.get("katulong_session");
   if (!token) {
