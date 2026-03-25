@@ -190,7 +190,7 @@ describe("loadState caching", () => {
   });
 
   it("returns cached value on second call without re-reading disk", () => {
-    const state = { user: null, credentials: [], sessions: {}, setupTokens: [] };
+    const state = { user: null, credentials: [], sessions: {}, setupTokens: [], apiKeys: [] };
     saveState(state);
 
     const first = loadState();
@@ -203,8 +203,8 @@ describe("loadState caching", () => {
   });
 
   it("saveState updates the cache immediately", () => {
-    const stateA = { user: { id: "a", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] };
-    const stateB = { user: { id: "b", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] };
+    const stateA = { user: { id: "a", name: "owner" }, credentials: [], sessions: {}, setupTokens: [], apiKeys: [] };
+    const stateB = { user: { id: "b", name: "owner" }, credentials: [], sessions: {}, setupTokens: [], apiKeys: [] };
 
     saveState(stateA);
     assert.deepEqual(loadState().toJSON(), stateA);
@@ -214,12 +214,12 @@ describe("loadState caching", () => {
   });
 
   it("_invalidateCache forces a re-read from disk", () => {
-    const original = { user: { id: "1", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] };
+    const original = { user: { id: "1", name: "owner" }, credentials: [], sessions: {}, setupTokens: [], apiKeys: [] };
     saveState(original);
     assert.deepEqual(loadState().toJSON(), original);
 
     // Write different user.json directly to disk
-    const updated = { user: { id: "2", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] };
+    const updated = { user: { id: "2", name: "owner" }, credentials: [], sessions: {}, setupTokens: [], apiKeys: [] };
     writeAuthFixture(DATA_DIR, updated);
 
     // Cache still holds old value
@@ -236,13 +236,13 @@ describe("loadState caching", () => {
 
     assert.equal(loadState(), null);
     // Write state files — but cache should still return null
-    writeAuthFixture(DATA_DIR, { user: { id: "test", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] });
+    writeAuthFixture(DATA_DIR, { user: { id: "test", name: "owner" }, credentials: [], sessions: {}, setupTokens: [], apiKeys: [] });
     assert.equal(loadState(), null, "null should be cached too");
 
     _invalidateCache();
     const loaded = loadState();
     assert.ok(loaded, "should load state after invalidation");
-    assert.deepEqual(loaded.toJSON(), { user: { id: "test", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] }, "after invalidation should read new files");
+    assert.deepEqual(loaded.toJSON(), { user: { id: "test", name: "owner" }, credentials: [], sessions: {}, setupTokens: [], apiKeys: [] }, "after invalidation should read new files");
   });
 
   it("loadState migrates and cleans up orphaned sessions", () => {
@@ -343,6 +343,7 @@ describe("loadState - credential metadata migration", () => {
       ],
       sessions: {},
       setupTokens: [],
+      apiKeys: [],
     };
 
     writeAuthFixture(DATA_DIR, state);
@@ -377,6 +378,7 @@ describe("loadState - credential metadata migration", () => {
       ],
       sessions: {},
       setupTokens: [],
+      apiKeys: [],
     };
 
     writeAuthFixture(DATA_DIR, state);
@@ -398,6 +400,7 @@ describe("loadState - credential metadata migration", () => {
       credentials: [{ id: "cred1", publicKey: "key1", counter: 0 }],
       sessions: {},
       setupTokens: [],
+      apiKeys: [],
     };
 
     writeAuthFixture(DATA_DIR, state);
@@ -442,6 +445,7 @@ describe("loadState - session lastActivityAt migration", () => {
         "tok1": { expiry: now + 10000, credentialId: "cred1" }, // missing lastActivityAt
       },
       setupTokens: [],
+      apiKeys: [],
     };
 
     writeAuthFixture(DATA_DIR, state);
@@ -466,6 +470,7 @@ describe("loadState - session lastActivityAt migration", () => {
         "tok1": { expiry: now + 10000, credentialId: "cred1", lastActivityAt: past },
       },
       setupTokens: [],
+      apiKeys: [],
     };
 
     writeAuthFixture(DATA_DIR, state);
@@ -486,6 +491,7 @@ describe("loadState - session lastActivityAt migration", () => {
         "tok1": { expiry: now + 10000, credentialId: "cred1" },
       },
       setupTokens: [],
+      apiKeys: [],
     };
 
     writeAuthFixture(DATA_DIR, state);
@@ -509,6 +515,7 @@ describe("loadState - session lastActivityAt migration", () => {
         "tok1": { expiry: now + 10000, credentialId: "cred1" },
       },
       setupTokens: [],
+      apiKeys: [],
     };
 
     writeAuthFixture(DATA_DIR, state);
@@ -585,7 +592,7 @@ describe("loadState - corrupted state file handling", () => {
     assert.equal(loadState(), null, "should be null when corrupt");
 
     // Now fix the files
-    const validState = { user: { id: "recover", name: "owner" }, credentials: [], sessions: {}, setupTokens: [] };
+    const validState = { user: { id: "recover", name: "owner" }, credentials: [], sessions: {}, setupTokens: [], apiKeys: [] };
     writeAuthFixture(DATA_DIR, validState);
     _invalidateCache();
     const result = loadState();

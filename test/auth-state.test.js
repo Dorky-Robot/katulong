@@ -705,6 +705,7 @@ describe("AuthState", () => {
         credentials: [{ id: "cred1" }],
         sessions: { token1: 999999 },
         setupTokens: [],
+        apiKeys: [],
       });
     });
 
@@ -717,7 +718,7 @@ describe("AuthState", () => {
 
       const json = JSON.stringify(state);
 
-      assert.strictEqual(json, '{"user":{"id":"user123","name":"owner"},"credentials":[],"sessions":{},"setupTokens":[]}');
+      assert.strictEqual(json, '{"user":{"id":"user123","name":"owner"},"credentials":[],"sessions":{},"setupTokens":[],"apiKeys":[]}');
     });
   });
 

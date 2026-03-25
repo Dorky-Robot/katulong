@@ -92,6 +92,7 @@ function createMockTerminalPool() {
     has: (name) => pool.has(name),
     protect: mock.fn(),
     unprotect: mock.fn(),
+    setActive: mock.fn(),
     _pool: pool,
   };
 }
@@ -249,11 +250,11 @@ describe('card-carousel', () => {
       assert.strictEqual(terminalPool.protect.mock.callCount(), 2);
     });
 
-    it('calls sendResize for visible cards', async () => {
+    it('scales all terminals on activate', async () => {
       carousel.activate(["a", "b"], "a");
-      // fitAll uses setTimeout(50) for layout settling
       await new Promise(r => setTimeout(r, 100));
-      assert.ok(sendResize.mock.callCount() >= 2);
+      // fitAll calls scaleAll but no longer sends resize (to prevent duplication)
+      assert.ok(terminalPool.scaleAll.mock.callCount() >= 1);
     });
 
     it('fires onFocusChange for the initial focused session', () => {
