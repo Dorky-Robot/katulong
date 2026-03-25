@@ -46,43 +46,9 @@ export function createWebSocketConnection(deps = {}) {
   let reconnectTimeout = null;
   let suppressReconnect = false;
 
-  // --- Pull-based output: each session is an event topic (like Kafka). ---
-  // Clients maintain a cursor (byte offset) into the session's RingBuffer
-  // and pull data when ready.  The server sends lightweight "data-available"
-  // notifications; clients respond with pull requests at their own pace.
-  // Natural backpressure: the next pull only fires after xterm finishes
-  // processing the previous write.
-
-  const pullStates = new Map(); // sessionName -> { cursor, pulling, writing, pending }
-
-  function sendPull(sessionName) {
-    const ps = pullStates.get(sessionName);
-    if (!ps || ps.pulling) return;
-    const ws = state.connection.ws;
-    if (!ws || ws.readyState !== 1) return;
-    ps.pulling = true;
-    ws.send(JSON.stringify({ type: "pull", session: sessionName, fromSeq: ps.cursor }));
-  }
-
-  function initPullState(sessionName, cursor) {
-    const existing = pullStates.get(sessionName);
-    if (existing) {
-      existing.cursor = cursor;
-      existing.pulling = false;
-      existing.writing = false;
-      existing.pending = false;
-    } else {
-      pullStates.set(sessionName, { cursor, pulling: false, writing: false, pending: false });
-    }
-  }
-
-  function clearPullStates(sessionName) {
-    if (sessionName) {
-      pullStates.delete(sessionName);
-    } else {
-      pullStates.clear();
-    }
-  }
+  // --- Snapshot-based output: server captures terminal state at ~30fps ---
+  // No client-side cursor, pull, or drift detection needed.
+  // The server sends complete screen snapshots; the client just renders them.
 
   // --- Pure WebSocket message handlers (functional core) ---
   const wsMessageHandlers = {
@@ -93,7 +59,6 @@ export function createWebSocketConnection(deps = {}) {
         'scroll.userScrolledUpBeforeDisconnect': false
       },
       effects: [
-        { type: 'seqClear' },
         { type: 'terminalReset' },
         { type: 'updateConnectionIndicator' },
         { type: 'invalidateSessions', name: msg.session },
@@ -108,7 +73,6 @@ export function createWebSocketConnection(deps = {}) {
         'session.name': msg.session,
       },
       effects: [
-        { type: 'seqClear' },
         { type: 'invalidateSessions', name: msg.session },
         { type: 'scrollToBottomIfNeeded', condition: true }
       ]
@@ -123,9 +87,7 @@ export function createWebSocketConnection(deps = {}) {
 
     'unsubscribed': (msg) => ({
       stateUpdates: {},
-      effects: [
-        { type: 'seqClear', session: msg.session }
-      ]
+      effects: []
     }),
 
     // Unsequenced output (scrollback replay on attach/switch) — write directly
@@ -136,22 +98,10 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
-    // Server notifies that new data is available for a session topic
-    'data-available': (msg) => ({
+    // Server sends terminal mutations (scroll, row updates, or full repaint)
+    'term-update': (msg) => ({
       stateUpdates: {},
-      effects: [{ type: 'dataAvailable', session: msg.session }]
-    }),
-
-    // Response to a pull request — contains data from cursor to head
-    'pull-response': (msg) => ({
-      stateUpdates: {},
-      effects: [{ type: 'pullResponse', session: msg.session, data: msg.data, cursor: msg.cursor }]
-    }),
-
-    // Cursor was evicted — server sends a pane snapshot to recover
-    'pull-snapshot': (msg) => ({
-      stateUpdates: {},
-      effects: [{ type: 'pullSnapshot', session: msg.session, data: msg.data, cursor: msg.cursor }]
+      effects: [{ type: 'termUpdate', session: msg.session, action: msg.action, lines: msg.lines, rows: msg.rows, count: msg.count, newLines: msg.newLines, cursorX: msg.cursorX, cursorY: msg.cursorY }]
     }),
 
     reload: () => ({
@@ -197,11 +147,6 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
-    // seq-init: server tells us where the log head is — initialize pull cursor
-    'seq-init': (msg) => ({
-      stateUpdates: {},
-      effects: [{ type: 'pullInit', session: msg.session, seq: msg.seq }]
-    }),
 
     'server-draining': () => ({
       stateUpdates: {},
@@ -265,79 +210,52 @@ export function createWebSocketConnection(deps = {}) {
         }
         break;
       }
-      case 'seqClear':
-        clearPullStates(effect.session || null);
-        break;
-      case 'pullInit':
-        // Initialize pull cursor and send first pull
-        if (effect.session) {
-          initPullState(effect.session, effect.seq);
-          sendPull(effect.session);
-        }
-        break;
-      case 'dataAvailable': {
-        // Server notifies new data — trigger pull if not already busy
-        const ps = pullStates.get(effect.session);
-        if (!ps) break; // not initialized yet
-        if (ps.pulling || ps.writing) {
-          ps.pending = true; // will pull again after current op completes
-          break;
-        }
-        sendPull(effect.session);
-        break;
-      }
-      case 'pullResponse': {
-        const ps = pullStates.get(effect.session);
-        if (!ps) break;
-        ps.pulling = false;
-        if (effect.data && effect.data.length > 0) {
-          ps.writing = true;
-          const term = getOutputTerm(effect.session);
-          if (term) {
-            terminalWriteWithScroll(term, effect.data, () => {
-              ps.writing = false;
-              ps.cursor = effect.cursor;
-              if (ps.pending) {
-                ps.pending = false;
-                sendPull(effect.session);
-              }
-            });
-          } else {
-            // No terminal (session evicted from pool) — advance cursor, skip render
-            ps.writing = false;
-            ps.cursor = effect.cursor;
-          }
-        } else {
-          // Already caught up
-          ps.cursor = effect.cursor;
-          if (ps.pending) {
-            ps.pending = false;
-            sendPull(effect.session);
-          }
-        }
-        break;
-      }
-      case 'pullSnapshot': {
-        // Cursor was evicted — reset terminal and write the snapshot
-        const ps = pullStates.get(effect.session);
-        if (!ps) break;
-        ps.pulling = false;
+      case 'termUpdate': {
         const term = getOutputTerm(effect.session);
-        if (term) {
+        if (!term) break;
+        let seq = '';
+
+        if (effect.action === 'cursor') {
+          // Cursor-only update — just reposition
+        } else if (effect.action === 'scroll') {
+          // Natural scroll: move to bottom, emit newlines to push content
+          // into scrollback, then write new lines at bottom
+          const rows = term.rows;
+          seq += `\x1b[${rows};1H`; // move to last row
+          for (let i = 0; i < (effect.count || 1); i++) {
+            seq += '\n'; // scroll up naturally
+          }
+          // Write new content at the bottom rows
+          const newLines = effect.newLines || [];
+          for (let i = 0; i < newLines.length; i++) {
+            const row = rows - newLines.length + i + 1;
+            seq += `\x1b[${row};1H\x1b[2K${newLines[i]}`;
+          }
+        } else if (effect.action === 'mutations') {
+          // In-place updates: position cursor at each changed row
+          for (const row of effect.rows) {
+            seq += `\x1b[${row.row + 1};1H\x1b[2K${row.content}`;
+          }
+        } else if (effect.action === 'full') {
+          // Full repaint: likely a screen buffer switch (e.g., TUI exit).
+          // Clear scrollback to remove stale alternate screen content,
+          // then write all rows fresh.
           term.clear();
-          term.reset();
-          ps.writing = true;
-          terminalWriteWithScroll(term, effect.data || "", () => {
-            ps.writing = false;
-            ps.cursor = effect.cursor;
-            if (ps.pending) {
-              ps.pending = false;
-              sendPull(effect.session);
-            }
-          });
-        } else {
-          ps.cursor = effect.cursor;
+          const lines = effect.lines || [];
+          const totalRows = Math.max(lines.length, term.rows);
+          for (let i = 0; i < totalRows; i++) {
+            seq += `\x1b[${i + 1};1H\x1b[2K${lines[i] || ''}`;
+          }
         }
+
+        // Always restore cursor to tmux's actual position (clamped to viewport)
+        if (effect.cursorX !== undefined && effect.cursorY !== undefined) {
+          const row = Math.min(effect.cursorY + 1, term.rows);
+          const col = Math.min(effect.cursorX + 1, term.cols);
+          seq += `\x1b[${row};${col}H`;
+        }
+
+        if (seq) term.write(seq);
         break;
       }
       case 'terminalReset': {
@@ -478,7 +396,6 @@ export function createWebSocketConnection(deps = {}) {
       const term = getTerm();
       state.scroll.userScrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
       state.connection.attached = false;
-      clearPullStates();
       if (deps.updateConnectionIndicator) deps.updateConnectionIndicator();
       if (deps.onDisconnect) deps.onDisconnect();
 

@@ -160,8 +160,15 @@ export function initTouchScroll(term) {
   let activePointerId = -1;
   let startY = 0;
   let lastY = 0;
+  let lastTime = 0;
   let scrolling = false;
   let accDelta = 0;
+  let velocity = 0; // px/ms
+  let inertiaRAF = 0;
+
+  // Track recent velocities for a smooth average
+  const velocitySamples = [];
+  const MAX_SAMPLES = 5;
 
   function cellHeight() {
     try {
@@ -172,11 +179,62 @@ export function initTouchScroll(term) {
     }
   }
 
+  function stopInertia() {
+    if (inertiaRAF) {
+      cancelAnimationFrame(inertiaRAF);
+      inertiaRAF = 0;
+    }
+    velocity = 0;
+    velocitySamples.length = 0;
+  }
+
+  function startInertia() {
+    if (velocitySamples.length === 0) return;
+    // Average recent velocity samples
+    velocity = velocitySamples.reduce((a, b) => a + b, 0) / velocitySamples.length;
+    // Minimum threshold — don't animate tiny flicks
+    if (Math.abs(velocity) < 0.3) { velocity = 0; return; }
+
+    let lastFrame = performance.now();
+    const FRICTION = 0.95; // deceleration per frame (~60fps)
+    const MIN_VELOCITY = 0.1; // px/ms — stop threshold
+
+    function frame(now) {
+      const dt = now - lastFrame;
+      lastFrame = now;
+
+      // Apply friction
+      velocity *= Math.pow(FRICTION, dt / 16.67); // normalize to 60fps
+
+      if (Math.abs(velocity) < MIN_VELOCITY) {
+        velocity = 0;
+        inertiaRAF = 0;
+        return;
+      }
+
+      // Convert velocity (px/ms) * dt (ms) = px scrolled this frame
+      const pxDelta = velocity * dt;
+      accDelta += pxDelta;
+      const rowH = cellHeight();
+      const lines = Math.trunc(accDelta / rowH);
+      if (lines !== 0) {
+        term.scrollLines(lines);
+        accDelta -= lines * rowH;
+      }
+
+      inertiaRAF = requestAnimationFrame(frame);
+    }
+
+    inertiaRAF = requestAnimationFrame(frame);
+  }
+
   el.addEventListener("pointerdown", (e) => {
     if (e.pointerType !== "touch" || activePointerId !== -1) return;
+    stopInertia();
     activePointerId = e.pointerId;
     startY = e.clientY;
     lastY = startY;
+    lastTime = performance.now();
     scrolling = false;
     accDelta = 0;
     // Capture so pointermove keeps firing even if finger leaves element
@@ -186,12 +244,21 @@ export function initTouchScroll(term) {
   el.addEventListener("pointermove", (e) => {
     if (e.pointerId !== activePointerId) return;
     const y = e.clientY;
+    const now = performance.now();
+    const dt = now - lastTime;
     const dy = lastY - y; // positive = finger up = scroll down
     lastY = y;
+    lastTime = now;
 
     if (!scrolling) {
       if (Math.abs(y - startY) < 10) return;
       scrolling = true;
+    }
+
+    // Track velocity (px/ms)
+    if (dt > 0) {
+      velocitySamples.push(dy / dt);
+      if (velocitySamples.length > MAX_SAMPLES) velocitySamples.shift();
     }
 
     accDelta += dy;
@@ -204,11 +271,15 @@ export function initTouchScroll(term) {
   });
 
   el.addEventListener("pointerup", (e) => {
-    if (e.pointerId === activePointerId) activePointerId = -1;
+    if (e.pointerId !== activePointerId) return;
+    activePointerId = -1;
+    if (scrolling) startInertia();
   });
 
   el.addEventListener("pointercancel", (e) => {
-    if (e.pointerId === activePointerId) activePointerId = -1;
+    if (e.pointerId !== activePointerId) return;
+    activePointerId = -1;
+    stopInertia();
   });
 }
 
