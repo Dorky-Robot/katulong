@@ -588,7 +588,50 @@ describe("Garble Detection", { timeout: 120000 }, () => {
     assert.ok(hasMarker, "Subscribe snapshot should contain the marker line");
   });
 
-  it("Scenario I: real Claude Code session with tab switching (EXPENSIVE)", async () => {
+  it("Scenario I: switch to brand-new session — output appears", async () => {
+    // Simulates creating a new session and switching to it.
+    // The switch must NOT use cached:true for a fresh terminal,
+    // otherwise the server skips buffer replay and resize, and
+    // the client never sees the initial prompt or typed output.
+    await request("POST", "/sessions", { name: "garble-i-existing" });
+    await sleep(1500);
+
+    const client = new TestClient();
+    await client.connect();
+    await client.attach("garble-i-existing");
+    await client.waitForQuiet(500, 3000);
+
+    // Create a new session (use unique name to avoid conflicts)
+    const newName = `garble-i-new-${Date.now()}`;
+    const newResp = await request("POST", "/sessions", { name: newName });
+    assert.ok(newResp.status >= 200 && newResp.status < 300, `Should create new session (got ${newResp.status})`);
+    await sleep(1500); // Let shell start
+
+    // Switch to the new session (non-cached, since terminal is fresh)
+    await client.switchTo(newName, 80, 24, false);
+    await client.waitForQuiet(1000, 5000);
+
+    // Type something and wait for output
+    client.sendInput("echo garble-test-marker-i\n");
+    await client.waitForQuiet(1000, 5000);
+
+    const allLines = extractVisibleLines(client.allOutput);
+    const hasPrompt = allLines.some(l => /[$%#>]\s*$/.test(l) || l.includes(">"));
+    const hasMarker = allLines.some(l => l.includes("garble-test-marker-i"));
+
+    client.close();
+
+    console.log(`  Output lines: ${allLines.length}`);
+    console.log(`  Has prompt: ${hasPrompt}, Has typed output: ${hasMarker}`);
+    if (allLines.length > 0) {
+      console.log(`  Last 3 lines: ${allLines.slice(-3).join(" | ")}`);
+    }
+
+    assert.ok(allLines.length > 0, "Should have output from new session (not stuck)");
+    assert.ok(hasMarker, "Typed command output should be visible (not frozen)");
+  });
+
+  it("Scenario J: real Claude Code session with tab switching (EXPENSIVE)", async () => {
     // This test launches actual Claude Code, sends it a prompt, and
     // switches tabs while it's thinking/streaming. This is the scenario
     // that triggers the most garbling in practice.

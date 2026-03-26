@@ -257,7 +257,13 @@
         if (ws?.readyState === WebSocket.OPEN) {
           const entry = terminalPool.get(sessionName);
           if (entry) {
-            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows, cached: true }));
+            // Only mark as cached if the terminal already has content.
+            // A freshly created session's terminal is empty — sending
+            // cached:true would skip the buffer replay and resize,
+            // leaving the terminal stuck with no visible output.
+            const hasContent = entry.term.buffer?.active?.baseY > 0 ||
+              entry.term.buffer?.active?.cursorY > 0;
+            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows, cached: hasContent }));
           }
         }
         // Subscribe to all other visible cards
