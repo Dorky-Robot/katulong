@@ -74,15 +74,44 @@ cd katulong && npm install && npm link
 ## Quick start
 
 ```bash
-katulong start        # Start the server
-katulong open         # Open in your default browser
-katulong status       # Check if it's running
-katulong logs         # View logs
-katulong update       # Update to the latest version
-katulong stop         # Stop everything
+katulong start                          # Start the server
+katulong browse                         # Open in your default browser
+katulong status                         # Check if it's running
+katulong session create myapp --open    # Create session + open in browser
+katulong logs                           # View logs
+katulong update                         # Update to the latest version
+katulong stop                           # Stop everything
 ```
 
-Visit `/` for the default session. Visit `/?s=myproject` for a named session.
+### CLI commands
+
+```bash
+# Server
+katulong start | stop | restart | status | logs | update
+
+# Browser
+katulong browse                         # Open localhost in browser
+
+# Sessions
+katulong session create <name> [--open] # Create (--open shows in browser)
+katulong session list                   # List sessions
+katulong session kill <name>            # Kill a session
+
+# Messaging (inter-session pub/sub)
+katulong pub <topic> <message>          # Publish to a topic
+katulong sub <topic> [--once] [--json]  # Subscribe (streams to stdout)
+katulong topics                         # List active topics
+katulong notify <message>               # Send native notification
+
+# Auth
+katulong token create <name>            # Create setup token (shows QR code)
+katulong apikey create <name>           # Create API key for external access
+katulong credential list                # List registered passkeys
+
+# Other
+katulong info                           # System info
+katulong service install                # Auto-start on login (macOS)
+```
 
 ## Security
 

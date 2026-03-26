@@ -46,12 +46,12 @@ Stream server logs.
 katulong logs
 ```
 
-### open
+### browse
 
 Open Katulong in your default browser.
 
 ```bash
-katulong open
+katulong browse
 ```
 
 ### info
@@ -70,6 +70,79 @@ Update Katulong to the latest version.
 katulong update             # Update and restart
 katulong update --check     # Check if update is available
 katulong update --no-restart # Update code but skip restart
+```
+
+## Pub/Sub Messaging
+
+Topics-based messaging between sessions, scripts, and browser clients. Enables inter-session coordination and event-driven workflows.
+
+### pub
+
+Publish a message to a topic.
+
+```bash
+katulong pub deploy "v1.2.3 deployed"
+echo '{"status":"pass"}' | katulong pub ci/result   # reads from stdin
+```
+
+### sub
+
+Subscribe to a topic. Blocks and streams messages to stdout.
+
+```bash
+katulong sub deploy                    # print messages as they arrive
+katulong sub deploy --once             # wait for one message, exit
+katulong sub deploy --json             # JSON envelope output
+```
+
+### topics
+
+List active topics and subscriber counts.
+
+```bash
+katulong topics
+katulong topics --json
+```
+
+### notify
+
+Send a native OS notification to all connected browser clients.
+
+```bash
+katulong notify "deploy complete"
+katulong notify --title "Build" "Tests passed"
+```
+
+## API Key Management
+
+API keys allow external access to katulong via `Authorization: Bearer <key>` header.
+
+### apikey create
+
+Create a new API key. Shows a QR code for easy copying.
+
+```bash
+katulong apikey create "CI pipeline"
+katulong apikey create "monitoring" --json
+```
+
+The key is shown **once** — save it immediately.
+
+### apikey list
+
+List all API keys.
+
+```bash
+katulong apikey list
+katulong apikey list --json
+```
+
+### apikey revoke
+
+Revoke an API key by ID.
+
+```bash
+katulong apikey revoke abc123def456
 ```
 
 ## Token Management

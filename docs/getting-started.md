@@ -46,7 +46,7 @@ Starts the server on port 3001 (HTTP).
 ### 2. Open in Browser
 
 ```bash
-katulong open
+katulong browse
 ```
 
 Or visit **http://localhost:3001** manually.
