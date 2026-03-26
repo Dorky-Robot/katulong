@@ -18,6 +18,12 @@ Remote access model: the server binds to localhost and an external tunnel tool (
 
 Image paste across machines (e.g., iPad → tunnel → Mac mini) requires a three-layer interception in `public/lib/paste-handler.js`: (1) block xterm's keydown `\x16`, (2) handle the paste event, (3) Clipboard API fallback for WebKit which suppresses paste after `preventDefault` on keydown. See `docs/clipboard-bridge.md` for the full architecture — **read it before modifying paste-handler.js, image-upload.js, or the upload route in routes.js**.
 
+## Worktree-first workflow
+
+**Always start work in a git worktree.** Before making any code changes, create a worktree so the main repo directory stays clean and available for parallel agents.
+
+Use `git worktree add` (or the EnterWorktree tool in Claude Code) to create an isolated working copy for your branch. Do all development, commits, and pushes from the worktree. This allows multiple agents to work on different tasks simultaneously without conflicts in the main checkout.
+
 ## Development principles
 
 ### Boy Scout Rule
