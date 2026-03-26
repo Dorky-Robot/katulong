@@ -353,7 +353,7 @@ describe("createWebSocketManager", () => {
       assert.equal(seqInitMsg.seq, 250);
     });
 
-    it("subscribe sends buffer snapshot so carousel tiles are not blank", async () => {
+    it("subscribe sends buffer snapshot bundled in subscribed message", async () => {
       const ws = createMockWs();
       wsMgr.handleConnection(ws);
 
@@ -363,16 +363,14 @@ describe("createWebSocketManager", () => {
         alive: true,
       });
 
-      // Attach to a primary session first
       await ws._handlers.message(Buffer.from(JSON.stringify({
         type: "attach", session: "bg-session", cols: 80, rows: 24,
       })));
       await new Promise(r => setTimeout(r, 10));
-      ws.sent.length = 0; // clear attach messages
+      ws.sent.length = 0;
 
-      // Now subscribe to the background session with cols/rows
       await ws._handlers.message(Buffer.from(JSON.stringify({
-        type: "subscribe", session: "bg-session", cols: 60, rows: 24,
+        type: "subscribe", session: "bg-session",
       })));
       await new Promise(r => setTimeout(r, 10));
 
@@ -380,11 +378,7 @@ describe("createWebSocketManager", () => {
       const subscribedMsg = msgs.find(m => m.type === "subscribed");
       assert.ok(subscribedMsg, "should receive subscribed");
       assert.equal(subscribedMsg.session, "bg-session");
-
-      const outputMsg = msgs.find(m => m.type === "output");
-      assert.ok(outputMsg, "should receive output with buffer snapshot");
-      assert.equal(outputMsg.session, "bg-session");
-      assert.equal(outputMsg.data, "$ hello world\r\nprompt> ");
+      assert.equal(subscribedMsg.data, "$ hello world\r\nprompt> ");
 
       const seqMsg = msgs.find(m => m.type === "seq-init");
       assert.ok(seqMsg, "should receive seq-init");
@@ -413,8 +407,9 @@ describe("createWebSocketManager", () => {
       await new Promise(r => setTimeout(r, 10));
 
       const msgs = ws.sent.map(s => JSON.parse(s));
-      const outputMsg = msgs.find(m => m.type === "output");
-      assert.equal(outputMsg, undefined, "should NOT send output when buffer is empty");
+      const subscribedMsg = msgs.find(m => m.type === "subscribed");
+      assert.ok(subscribedMsg, "should receive subscribed");
+      assert.equal(subscribedMsg.data, "", "empty buffer should send empty string");
     });
 
     it("subscribe sends exit for dead session", async () => {

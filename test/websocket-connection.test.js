@@ -122,20 +122,6 @@ describe("wsMessageHandlers", () => {
     });
   });
 
-  describe("output", () => {
-    it("emits terminalWrite for scrollback replay", () => {
-      const result = handlers.output({ data: "hello", session: "alpha" });
-      assert.deepStrictEqual(result.stateUpdates, {});
-      assert.strictEqual(result.effects.length, 1);
-      const eff = result.effects[0];
-      assert.strictEqual(eff.type, "terminalWrite");
-      assert.strictEqual(eff.data, "hello");
-      assert.strictEqual(eff.session, "alpha");
-      assert.strictEqual(eff.preserveScroll, true);
-      assert.strictEqual(eff.useOutputTerm, true);
-    });
-  });
-
   describe("reload", () => {
     it("emits reload effect with no state updates", () => {
       const result = handlers.reload();
