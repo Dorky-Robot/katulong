@@ -131,7 +131,10 @@ export function createWebSocketConnection(deps = {}) {
       effects: [
         { type: 'seqClear' },
         { type: 'clearSubscriptions' },
-        { type: 'terminalReset' },
+        // No terminalReset — the terminal pool keeps each session's xterm
+        // intact. Resetting here causes a flicker (blank frame between
+        // clear and snapshot write). The output message writes the snapshot
+        // to the correct session's terminal via getOutputTerm(session).
         { type: 'invalidateSessions', name: msg.session },
         { type: 'scrollToBottomIfNeeded', condition: true },
         { type: 'syncCarouselSubscriptions' },
