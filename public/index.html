@@ -1877,6 +1877,7 @@
           <div class="settings-tabs" role="tablist">
             <button class="settings-tab active" data-tab="theme" role="tab" aria-selected="true">General</button>
             <button class="settings-tab" data-tab="remote" role="tab" aria-selected="false">Remote</button>
+            <button class="settings-tab" data-tab="api" role="tab" aria-selected="false">API</button>
           </div>
 
           <!-- Theme tab content -->
@@ -1938,6 +1939,45 @@
             <button class="settings-pair-btn" id="settings-create-token">
               <i class="ph ph-plus"></i> Generate New Token
             </button>
+          </div>
+
+          <!-- API tab content -->
+          <div class="settings-tab-content" id="settings-tab-api">
+            <p class="tab-description" id="api-base-url"></p>
+
+            <div class="token-create-form" id="apikey-create-form" style="display: none;">
+              <div class="token-form-header"><h4>Generate new API key</h4></div>
+              <div class="token-form-field">
+                <label for="apikey-name-input">Key name</label>
+                <input type="text" id="apikey-name-input" placeholder="e.g., CI pipeline, monitoring script" />
+                <p class="token-form-hint">What will this key be used for?</p>
+              </div>
+              <div class="token-form-actions">
+                <button class="token-form-cancel" id="apikey-form-cancel">Cancel</button>
+                <button class="token-form-submit" id="apikey-form-submit">Generate key</button>
+              </div>
+            </div>
+
+            <div class="tokens-list" id="apikeys-list">
+              <p class="tokens-loading">Loading API keys...</p>
+            </div>
+            <button class="settings-pair-btn" id="settings-create-apikey">
+              <i class="ph ph-plus"></i> Generate New API Key
+            </button>
+
+            <h4 style="margin-top: var(--space-xl); font-size: 0.875rem; color: var(--text-muted);">Endpoints</h4>
+            <div class="tab-description" style="font-family: var(--font-mono); font-size: 0.75rem; line-height: 1.8;">
+              <code>GET /sessions</code> — list sessions<br>
+              <code>POST /sessions</code> — create session<br>
+              <code>POST /attach</code> — open tab in browser<br>
+              <code>POST /notify</code> — send notification<br>
+              <code>POST /pub</code> — publish to topic<br>
+              <code>GET /sub/:topic</code> — subscribe (SSE)<br>
+              <code>GET /api/topics</code> — list active topics<br>
+            </div>
+            <p class="tab-description" style="margin-top: 0.5rem;">
+              Authenticate with <code>Authorization: Bearer &lt;key&gt;</code>
+            </p>
           </div>
 
           <div class="settings-footer">
