@@ -11,6 +11,7 @@
  */
 
 import { isIPad } from "./platform.js";
+import { createTileChrome } from "./tile-chrome.js";
 
 const STORAGE_KEY = "katulong-carousel";
 
@@ -31,7 +32,7 @@ export function createCardCarousel({
   let active = false;
   let cards = [];             // ordered tile IDs
   let focusedId = null;
-  const cardEls = new Map();  // tileId -> { wrapper, tile, context }
+  const cardEls = new Map();  // tileId -> { wrapper, frontFace, backFace, tile, backTile, context, flipped }
 
   // ── Persistence ──────────────────────────────────────────────────────
 
@@ -88,6 +89,25 @@ export function createCardCarousel({
     wrapper.className = "carousel-card";
     wrapper.dataset.tileId = tileId;
 
+    // ── Flip structure ───────────────────────────────────────────────
+    // wrapper (.carousel-card)          — perspective container
+    //   └─ inner (.card-inner)          — rotates on flip
+    //       ├─ frontFace (.card-face.card-front) — primary tile
+    //       └─ backFace (.card-face.card-back)   — secondary tile (lazy)
+    const inner = document.createElement("div");
+    inner.className = "card-inner";
+
+    const frontFace = document.createElement("div");
+    frontFace.className = "card-face card-front";
+    inner.appendChild(frontFace);
+
+    const backFace = document.createElement("div");
+    backFace.className = "card-face card-back";
+    inner.appendChild(backFace);
+
+    wrapper.appendChild(inner);
+
+    // ── Tap handling ─────────────────────────────────────────────────
     // Tap on a non-focused card to make it active.
     // For the focused card, let events pass through normally.
     //
@@ -102,11 +122,11 @@ export function createCardCarousel({
     wrapper.addEventListener("pointerdown", (e) => {
       if (!active) return;
       if (focusedId === tileId) {
-        // Focused card: call tile.focus() in user gesture context.
-        // Safari/iPad silently ignores programmatic focus() calls outside
-        // user gesture handlers, so this ensures the tile can grab focus.
         const entry = cardEls.get(tileId);
-        if (entry) entry.tile.focus();
+        if (entry) {
+          const visibleTile = entry.flipped ? entry.backTile : entry.tile;
+          if (visibleTile) visibleTile.focus();
+        }
         return;
       }
       handledByPointerdown = true;
@@ -118,19 +138,20 @@ export function createCardCarousel({
     wrapper.addEventListener("click", (e) => {
       if (!active) return;
       if (focusedId === tileId) {
-        // Focused card click: ensure tile focus (user gesture context)
         const entry = cardEls.get(tileId);
-        if (entry) entry.tile.focus();
+        if (entry) {
+          const visibleTile = entry.flipped ? entry.backTile : entry.tile;
+          if (visibleTile) visibleTile.focus();
+        }
         return;
       }
-      // Skip if pointerdown already handled this interaction
       if (handledByPointerdown) { handledByPointerdown = false; return; }
       e.preventDefault();
       e.stopPropagation();
       focusCard(tileId);
     });
 
-    return wrapper;
+    return { wrapper, inner, frontFace, backFace };
   }
 
   /**
@@ -182,14 +203,42 @@ export function createCardCarousel({
     for (const id of cards) {
       const entry = cardEls.get(id);
       if (!entry) continue;
-      const wrapper = createCardWrapper(id);
-      entry.tile.mount(wrapper, entry.context);
+      const { wrapper, inner, frontFace, backFace } = createCardWrapper(id);
+      const frontChrome = createTileChrome(frontFace);
+      entry.tile.mount(frontChrome.contentEl, entry.context);
+      if (entry.backTile) {
+        const backChrome = createTileChrome(backFace);
+        entry.backTile.mount(backChrome.contentEl, entry.context);
+        entry.backChrome = backChrome;
+      }
+      if (entry.flipped) inner.classList.add("flipped");
       entry.wrapper = wrapper;
+      entry.inner = inner;
+      entry.frontFace = frontFace;
+      entry.backFace = backFace;
+      entry.frontChrome = frontChrome;
       container.appendChild(wrapper);
     }
 
     positionCards(false); // instant positioning on build
     fitAll();
+  }
+
+  // ── Tile context builder ────────────────────────────────────────────
+
+  /** Build a TileContext for a tile, including chrome and flip access. */
+  function buildTileContext(tileId, tile, entry) {
+    const base = createTileContext ? createTileContext(tileId, tile) : { tileId };
+    // Determine which chrome this tile is mounted in
+    const isFront = tile === entry.tile;
+    return {
+      ...base,
+      flip: () => flipCard(tileId),
+      get chrome() {
+        // Return the chrome for whichever face this tile is on
+        return isFront ? entry.frontChrome?.chrome : entry.backChrome?.chrome;
+      },
+    };
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────
@@ -206,10 +255,13 @@ export function createCardCarousel({
 
     // Store tile references and create contexts
     for (const { id, tile } of tiles) {
-      const ctx = createTileContext ? createTileContext(id, tile) : { tileId: id };
-      const wrapper = createCardWrapper(id);
-      tile.mount(wrapper, ctx);
-      cardEls.set(id, { wrapper, tile, context: ctx });
+      const { wrapper, inner, frontFace, backFace } = createCardWrapper(id);
+      const frontChrome = createTileChrome(frontFace);
+      const entry = { wrapper, inner, frontFace, backFace, frontChrome, backChrome: null, tile, backTile: null, context: null, flipped: false };
+      const ctx = buildTileContext(id, tile, entry);
+      entry.context = ctx;
+      tile.mount(frontChrome.contentEl, ctx);
+      cardEls.set(id, entry);
       container.appendChild(wrapper);
     }
 
@@ -233,9 +285,12 @@ export function createCardCarousel({
   function deactivate() {
     if (!active) return;
 
-    // Unmount all tiles
+    // Unmount all tiles and destroy chrome
     for (const [, entry] of cardEls) {
       entry.tile.unmount();
+      if (entry.backTile) entry.backTile.unmount();
+      if (entry.frontChrome) entry.frontChrome.destroy();
+      if (entry.backChrome) entry.backChrome.destroy();
     }
 
     // Remove card wrappers
@@ -265,10 +320,13 @@ export function createCardCarousel({
     if (cards.includes(tileId)) return;
 
     cards.push(tileId);
-    const ctx = createTileContext ? createTileContext(tileId, tile) : { tileId };
-    const wrapper = createCardWrapper(tileId);
-    tile.mount(wrapper, ctx);
-    cardEls.set(tileId, { wrapper, tile, context: ctx });
+    const { wrapper, inner, frontFace, backFace } = createCardWrapper(tileId);
+    const frontChrome = createTileChrome(frontFace);
+    const entry = { wrapper, inner, frontFace, backFace, frontChrome, backChrome: null, tile, backTile: null, context: null, flipped: false };
+    const ctx = buildTileContext(tileId, tile, entry);
+    entry.context = ctx;
+    tile.mount(frontChrome.contentEl, ctx);
+    cardEls.set(tileId, entry);
 
     container.appendChild(wrapper);
 
@@ -288,9 +346,12 @@ export function createCardCarousel({
       const currentIdx = cards.indexOf(tileId);
       if (currentIdx === -1) return;
 
-      // Unmount the tile and remove the wrapper
+      // Unmount tiles, destroy chrome, remove the wrapper
       if (entry) {
         entry.tile.unmount();
+        if (entry.backTile) entry.backTile.unmount();
+        if (entry.frontChrome) entry.frontChrome.destroy();
+        if (entry.backChrome) entry.backChrome.destroy();
         if (entry.wrapper?.parentElement) {
           entry.wrapper.remove();
         }
@@ -329,18 +390,24 @@ export function createCardCarousel({
     if (!cards.includes(tileId)) return;
     if (focusedId === tileId) return;
 
-    // Blur the previously focused tile
+    // Blur the previously focused tile (whichever face is visible)
     const prevEntry = cardEls.get(focusedId);
-    if (prevEntry) prevEntry.tile.blur();
+    if (prevEntry) {
+      const prevTile = prevEntry.flipped ? prevEntry.backTile : prevEntry.tile;
+      if (prevTile) prevTile.blur();
+    }
 
     focusedId = tileId;
 
     // Slide cards to new positions (animated)
     positionCards(true);
 
-    // Focus the new tile
+    // Focus the new tile (whichever face is visible)
     const entry = cardEls.get(tileId);
-    if (entry) entry.tile.focus();
+    if (entry) {
+      const visibleTile = entry.flipped ? entry.backTile : entry.tile;
+      if (visibleTile) visibleTile.focus();
+    }
 
     fitAll();
     if (onFocusChange) onFocusChange(tileId);
@@ -387,6 +454,7 @@ export function createCardCarousel({
       if (!active) return;
       for (const [, entry] of cardEls) {
         entry.tile.resize();
+        if (entry.backTile) entry.backTile.resize();
       }
     });
   }
@@ -401,7 +469,7 @@ export function createCardCarousel({
 
   // ── Tile access ────────────────────────────────────────────────────
 
-  /** Get the tile instance for a given ID. */
+  /** Get the tile instance for a given ID (front face). */
   function getTile(tileId) {
     return cardEls.get(tileId)?.tile || null;
   }
@@ -412,6 +480,60 @@ export function createCardCarousel({
       if (predicate(tile, id)) return id;
     }
     return null;
+  }
+
+  // ── Flip ──────────────────────────────────────────────────────────
+
+  /**
+   * Assign a back-face tile to a card. The back tile is mounted lazily
+   * and revealed with flipCard().
+   */
+  function setBackTile(tileId, backTile) {
+    const entry = cardEls.get(tileId);
+    if (!entry) return;
+
+    // Unmount previous back tile and chrome if any
+    if (entry.backTile) entry.backTile.unmount();
+    if (entry.backChrome) entry.backChrome.destroy();
+
+    // Create chrome for the back face
+    const backChrome = createTileChrome(entry.backFace);
+    entry.backChrome = backChrome;
+    entry.backTile = backTile;
+
+    const ctx = buildTileContext(tileId, backTile, entry);
+    backTile.mount(backChrome.contentEl, ctx);
+    backTile.resize();
+  }
+
+  /**
+   * Flip a card to show its other face. If no back tile is set, this is a no-op.
+   * @param {string} tileId
+   * @param {boolean} [toBack] — force direction. Omit to toggle.
+   */
+  function flipCard(tileId, toBack) {
+    const entry = cardEls.get(tileId);
+    if (!entry || !entry.backTile) return;
+
+    const shouldFlip = toBack !== undefined ? toBack : !entry.flipped;
+    if (shouldFlip === entry.flipped) return;
+
+    entry.flipped = shouldFlip;
+    entry.inner.classList.toggle("flipped", shouldFlip);
+
+    // Focus the now-visible face
+    const visibleTile = shouldFlip ? entry.backTile : entry.tile;
+    const hiddenTile = shouldFlip ? entry.tile : entry.backTile;
+    if (hiddenTile) hiddenTile.blur();
+    if (visibleTile) {
+      visibleTile.resize();
+      visibleTile.focus();
+    }
+  }
+
+  /** Check if a card is currently showing its back face. */
+  function isFlipped(tileId) {
+    return cardEls.get(tileId)?.flipped || false;
   }
 
   return {
@@ -431,5 +553,8 @@ export function createCardCarousel({
     save,
     restore,
     buildLayout,
+    setBackTile,
+    flipCard,
+    isFlipped,
   };
 }

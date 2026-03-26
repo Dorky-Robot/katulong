@@ -13,9 +13,12 @@
  *
  * @param {object} deps
  * @param {object} deps.terminalPool — the terminal pool instance
+ * @param {object} [deps.carousel] — carousel instance (for setBackTile)
+ * @param {function} [deps.createTileFn] — createTile from registry
  * @returns {(options: { sessionName: string }) => TilePrototype}
  */
-export function createTerminalTileFactory({ terminalPool }) {
+export function createTerminalTileFactory(deps) {
+  const { terminalPool, createTileFn } = deps;
   return function createTerminalTile({ sessionName }) {
     let mounted = false;
     let container = null;
@@ -26,13 +29,15 @@ export function createTerminalTileFactory({ terminalPool }) {
       /** The session name this tile wraps. */
       sessionName,
 
-      mount(el, _ctx) {
+      mount(el, ctx) {
         container = el;
         const entry = terminalPool.getOrCreate(sessionName);
         terminalPool.protect(sessionName);
         entry.container.style.display = "";
         el.appendChild(entry.container);
         mounted = true;
+
+        // No toolbar for plain terminals — session name is shown in the tab bar.
       },
 
       unmount() {
