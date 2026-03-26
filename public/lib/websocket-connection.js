@@ -56,6 +56,11 @@ export function createWebSocketConnection(deps = {}) {
   const pullStates = new Map(); // sessionName -> { cursor, pulling, writing, pending }
   const subscribedSessions = new Set(); // tracks active subscriptions to avoid duplicates
 
+  // Safety timeout: if a pull response doesn't arrive within this window,
+  // assume it was dropped (backpressure, session gone, etc.) and unstick.
+  const PULL_TIMEOUT_MS = 5000;
+  const pullTimers = new Map(); // sessionName -> timeoutId
+
   function sendPull(sessionName) {
     const ps = pullStates.get(sessionName);
     if (!ps || ps.pulling) return;
@@ -63,6 +68,17 @@ export function createWebSocketConnection(deps = {}) {
     if (!ws || ws.readyState !== 1) return;
     ps.pulling = true;
     ws.send(JSON.stringify({ type: "pull", session: sessionName, fromSeq: ps.cursor }));
+
+    // Safety net: if no response arrives, unstick the pull state
+    clearTimeout(pullTimers.get(sessionName));
+    pullTimers.set(sessionName, setTimeout(() => {
+      const ps = pullStates.get(sessionName);
+      if (ps?.pulling) {
+        ps.pulling = false;
+        // Retry the pull — server may have dropped our request
+        sendPull(sessionName);
+      }
+    }, PULL_TIMEOUT_MS));
   }
 
   function initPullState(sessionName, cursor) {
@@ -80,8 +96,12 @@ export function createWebSocketConnection(deps = {}) {
   function clearPullStates(sessionName) {
     if (sessionName) {
       pullStates.delete(sessionName);
+      clearTimeout(pullTimers.get(sessionName));
+      pullTimers.delete(sessionName);
     } else {
       pullStates.clear();
+      for (const t of pullTimers.values()) clearTimeout(t);
+      pullTimers.clear();
     }
   }
 
@@ -303,11 +323,23 @@ export function createWebSocketConnection(deps = {}) {
         const ps = pullStates.get(effect.session);
         if (!ps) break;
         ps.pulling = false;
+        clearTimeout(pullTimers.get(effect.session));
         if (effect.data && effect.data.length > 0) {
           ps.writing = true;
           const term = getOutputTerm(effect.session);
           if (term) {
+            // Safety: if xterm's write callback never fires (terminal hidden/disposed),
+            // unstick after a timeout so pulls can resume.
+            const writeTimeout = setTimeout(() => {
+              if (ps.writing) {
+                ps.writing = false;
+                ps.cursor = effect.cursor;
+                if (ps.pending) { ps.pending = false; sendPull(effect.session); }
+              }
+            }, 3000);
+
             terminalWriteWithScroll(term, effect.data, () => {
+              clearTimeout(writeTimeout);
               ps.writing = false;
               ps.cursor = effect.cursor;
               if (ps.pending) {
@@ -334,12 +366,22 @@ export function createWebSocketConnection(deps = {}) {
         const ps = pullStates.get(effect.session);
         if (!ps) break;
         ps.pulling = false;
+        clearTimeout(pullTimers.get(effect.session));
         const term = getOutputTerm(effect.session);
         if (term) {
           term.clear();
           term.reset();
           ps.writing = true;
+          const writeTimeout = setTimeout(() => {
+            if (ps.writing) {
+              ps.writing = false;
+              ps.cursor = effect.cursor;
+              if (ps.pending) { ps.pending = false; sendPull(effect.session); }
+            }
+          }, 3000);
+
           terminalWriteWithScroll(term, effect.data || "", () => {
+            clearTimeout(writeTimeout);
             ps.writing = false;
             ps.cursor = effect.cursor;
             if (ps.pending) {
