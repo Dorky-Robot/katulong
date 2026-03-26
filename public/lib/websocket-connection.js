@@ -130,6 +130,7 @@ export function createWebSocketConnection(deps = {}) {
       },
       effects: [
         { type: 'seqClear' },
+        { type: 'terminalReset' },
         { type: 'invalidateSessions', name: msg.session },
         { type: 'scrollToBottomIfNeeded', condition: true }
       ]

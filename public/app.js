@@ -283,18 +283,16 @@
         url.searchParams.set("s", sessionName);
         history.replaceState(null, "", url);
         if (shortcutBarInstance) shortcutBarInstance.render(sessionName);
-        // Switch WS to get output for this card
+        // Switch WS to get output for this card.
+        // Always use cached:false — the server needs to send the buffer
+        // replay and resize for the terminal to show output. The "cached"
+        // optimization was causing new sessions to appear frozen because
+        // the server skipped the snapshot for empty terminals.
         const ws = state.connection.ws;
         if (ws?.readyState === WebSocket.OPEN) {
           const entry = terminalPool.get(sessionName);
           if (entry) {
-            // Only mark as cached if the terminal already has content.
-            // A freshly created session's terminal is empty — sending
-            // cached:true would skip the buffer replay and resize,
-            // leaving the terminal stuck with no visible output.
-            const hasContent = entry.term.buffer?.active?.baseY > 0 ||
-              entry.term.buffer?.active?.cursorY > 0;
-            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows, cached: hasContent }));
+            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows, cached: false }));
           }
         }
         // Subscribe to all other visible cards
