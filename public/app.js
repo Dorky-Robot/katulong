@@ -283,16 +283,12 @@
         url.searchParams.set("s", sessionName);
         history.replaceState(null, "", url);
         if (shortcutBarInstance) shortcutBarInstance.render(sessionName);
-        // Switch WS to get output for this card.
-        // Always use cached:false — the server needs to send the buffer
-        // replay and resize for the terminal to show output. The "cached"
-        // optimization was causing new sessions to appear frozen because
-        // the server skipped the snapshot for empty terminals.
+        // Switch WS to get output for this card
         const ws = state.connection.ws;
         if (ws?.readyState === WebSocket.OPEN) {
           const entry = terminalPool.get(sessionName);
           if (entry) {
-            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows, cached: false }));
+            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
           }
         }
         // Subscribe to all other visible cards
@@ -327,13 +323,7 @@
         const tile = carousel.getTile(tileId);
         // Only subscribe terminal tiles to WS output
         if (tile?.type === "terminal" && tileId !== focused) {
-          // Send cols/rows so the server resizes the PTY before serializing
-          // the snapshot. Without this, the snapshot wraps at the wrong
-          // column width and live output renders garbled.
-          const entry = terminalPool.get(tile.sessionName);
-          const cols = entry?.term?.cols;
-          const rows = entry?.term?.rows;
-          wsConnection.sendSubscribe(tile.sessionName, cols, rows);
+          wsConnection.sendSubscribe(tile.sessionName);
         }
       }
       carousel.fitAll();
@@ -724,7 +714,7 @@
       if (wsOpen) {
         // Switch session over the existing WebSocket — no disconnect/reconnect needed
         pendingSwitch = name;
-        ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows, cached: wasCached }));
+        ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows }));
       } else if (!ws || ws.readyState === WebSocket.CLOSED) {
         // No WebSocket yet — set session name for the attach message, then connect
         state.update('session.name', name);
