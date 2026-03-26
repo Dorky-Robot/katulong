@@ -38,6 +38,7 @@
     import { registerTileType, createTile } from "/lib/tile-registry.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
     import { createDashboardTileFactory } from "/lib/tiles/dashboard-tile.js";
+    import { createHtmlTileFactory } from "/lib/tiles/html-tile.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -240,8 +241,15 @@
     const getSearchAddon = () => terminalPool.getActive()?.searchAddon;
 
     // --- Tile Registry ---
-    registerTileType("terminal", createTerminalTileFactory({ terminalPool }));
+    // terminalDeps uses a getter for carousel since it's created after the registry.
+    const terminalDeps = {
+      terminalPool,
+      createTileFn: createTile,
+      get carousel() { return carousel; },
+    };
+    registerTileType("terminal", createTerminalTileFactory(terminalDeps));
     registerTileType("dashboard", createDashboardTileFactory({ createTileFn: createTile }));
+    registerTileType("html", createHtmlTileFactory());
 
     /** Create a terminal tile for a session, using the session name as tile ID. */
     function makeTerminalTile(sessionName) {
@@ -283,12 +291,16 @@
         url.searchParams.set("s", sessionName);
         history.replaceState(null, "", url);
         if (shortcutBarInstance) shortcutBarInstance.render(sessionName);
-        // Switch WS to get output for this card
+        // Switch WS to get output for this card.
+        // Always use cached:false — the server needs to send the buffer
+        // replay and resize for the terminal to show output. The "cached"
+        // optimization was causing new sessions to appear frozen because
+        // the server skipped the snapshot for empty terminals.
         const ws = state.connection.ws;
         if (ws?.readyState === WebSocket.OPEN) {
           const entry = terminalPool.get(sessionName);
           if (entry) {
-            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
+            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows, cached: false }));
           }
         }
         // Subscribe to all other visible cards
@@ -323,7 +335,13 @@
         const tile = carousel.getTile(tileId);
         // Only subscribe terminal tiles to WS output
         if (tile?.type === "terminal" && tileId !== focused) {
-          wsConnection.sendSubscribe(tile.sessionName);
+          // Send cols/rows so the server resizes the PTY before serializing
+          // the snapshot. Without this, the snapshot wraps at the wrong
+          // column width and live output renders garbled.
+          const entry = terminalPool.get(tile.sessionName);
+          const cols = entry?.term?.cols;
+          const rows = entry?.term?.rows;
+          wsConnection.sendSubscribe(tile.sessionName, cols, rows);
         }
       }
       carousel.fitAll();
@@ -714,7 +732,7 @@
       if (wsOpen) {
         // Switch session over the existing WebSocket — no disconnect/reconnect needed
         pendingSwitch = name;
-        ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows }));
+        ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows, cached: wasCached }));
       } else if (!ws || ws.readyState === WebSocket.CLOSED) {
         // No WebSocket yet — set session name for the attach message, then connect
         state.update('session.name', name);
@@ -1032,6 +1050,28 @@
       ],
       onSessionClick: openSessionManager,
       onNewSessionClick: createNewSession,
+      tileTypes: [
+        { type: "terminal", name: "Terminal", icon: "terminal-window" },
+        { type: "html", name: "HTML View", icon: "code" },
+        { type: "dashboard", name: "Dashboard", icon: "squares-four" },
+      ],
+      onCreateTile: (type, _meta) => {
+        if (type === "terminal") {
+          // Terminal tiles create a server-side session
+          createNewSession();
+        } else if (isCarouselDevice()) {
+          // Non-terminal tiles: create directly in the carousel
+          const id = `${type}-${Date.now().toString(36)}`;
+          const options = type === "dashboard"
+            ? { cols: 2, rows: 1, title: "Dashboard", slots: [] }
+            : { title: `New ${_meta?.name || type}`, html: `<div style="padding:40px;text-align:center;opacity:0.5"><h2>${_meta?.name || type}</h2><p>Empty tile — content will appear here.</p></div>` };
+          const tile = createTile(type, options);
+          carousel.addCard(id, tile);
+          carousel.focusCard(id);
+          windowTabSet.addTab(id);
+          if (shortcutBarInstance) shortcutBarInstance.render(id);
+        }
+      },
       onTabClick: (name) => {
         if (isCarouselDevice() && carousel.isActive()) {
           routeToSession(name);
@@ -1526,3 +1566,6 @@
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
+
+    // Expose tile system for console testing / plugin development
+    window.__tiles = { carousel, createTile, registerTileType };

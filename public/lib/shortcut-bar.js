@@ -34,6 +34,8 @@ export function createShortcutBar(options = {}) {
     ],
     onSessionClick,
     onNewSessionClick,
+    onCreateTile,
+    tileTypes = [],
     onTabClick,
     onTabRenamed,
     onAdoptSession,
@@ -316,13 +318,25 @@ export function createShortcutBar(options = {}) {
 
     const openTabs = windowTabSet ? new Set(windowTabSet.getTabs()) : new Set();
 
-    const items = [
-      {
+    const items = [];
+
+    // Tile types — "New Terminal" replaces "New session"
+    if (tileTypes.length > 0) {
+      for (const tt of tileTypes) {
+        items.push({
+          icon: tt.icon || "plus",
+          label: `New ${tt.name}`,
+          action: () => { if (onCreateTile) onCreateTile(tt.type, tt); },
+        });
+      }
+    } else {
+      // Fallback: no tile types registered, show classic "New session"
+      items.push({
         icon: "plus",
         label: "New session",
-        action: () => { if (onNewSessionClick) onNewSessionClick(); }
-      }
-    ];
+        action: () => { if (onNewSessionClick) onNewSessionClick(); },
+      });
+    }
 
     // Managed sessions not open as tabs in this window
     const closedManaged = managed.filter(s => !openTabs.has(s.name));

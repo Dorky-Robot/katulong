@@ -199,6 +199,12 @@
     .terminal-pane { position: absolute; inset: 0 0 0 4px; display: none; contain: paint; overflow: hidden; }
     .terminal-pane.active { display: block; }
 
+    /* In carousel mode, all terminal panes stay visible — each one lives
+       inside its own card wrapper so they don't overlap. Without this,
+       swiping away from a terminal hides it (display:none) which freezes
+       xterm.js rendering, making neighbor cards look frozen. */
+    #terminal-container[data-carousel] .terminal-pane { display: block; }
+
     /* --- Card Carousel (iPad) --- */
     #terminal-container[data-carousel] {
       position: relative;
@@ -213,16 +219,106 @@
       width: calc(100% - 48px);
       max-width: 560px;
       margin-left: calc(min(100% - 48px, 560px) / -2); /* center: offset by half width */
-      display: flex; flex-direction: column; overflow: hidden;
-      border-radius: 16px;
-      background: var(--bg);
-      -webkit-backface-visibility: hidden;
-      backface-visibility: hidden;
-      isolation: isolate;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.4);
+      /* No background, shadow, or border-radius here — those live on the faces */
       transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
       will-change: transform;
+      perspective: 1200px;
     }
+    /* Flip container — the whole visible card rotates */
+    .card-inner {
+      position: relative;
+      width: 100%; height: 100%;
+      transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+      transform-style: preserve-3d;
+    }
+    .card-inner.flipped {
+      transform: rotateY(180deg);
+    }
+    /* Each face IS the visible card — shadow, radius, background all here */
+    .card-face {
+      position: absolute;
+      inset: 0;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      border-radius: 16px;
+      background: transparent;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.4);
+    }
+    .card-back {
+      transform: rotateY(180deg);
+      background: var(--bg, #181825);
+    }
+    /* ── Tile chrome zones ─────────────────────────────── */
+    .tile-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px 0 20px;
+      flex-shrink: 0;
+      min-height: var(--height-btn-sm, 32px);
+      background: transparent;
+    }
+    .tile-toolbar.chrome-empty { display: none; }
+    .tile-toolbar-left { display: flex; gap: 4px; align-items: center; }
+    .tile-toolbar-title {
+      flex: 1;
+      font-size: 13px;
+      font-weight: 600;
+      opacity: 0.7;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding: 0 8px;
+    }
+    .tile-toolbar-right { display: flex; gap: 4px; align-items: center; margin-left: auto; }
+    .tile-toolbar-btn {
+      display: flex; align-items: center; justify-content: center;
+      width: 28px; height: 28px;
+      border: none; background: transparent; color: inherit;
+      border-radius: var(--radius-sm, 6px);
+      opacity: 0.6;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .tile-toolbar-btn:hover, .tile-toolbar-btn:active { opacity: 1; background: rgba(255,255,255,0.1); }
+    .tile-body {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .tile-sidebar {
+      overflow: auto;
+      flex-shrink: 0;
+    }
+    .tile-sidebar.chrome-empty { display: none; }
+    .tile-sidebar.chrome-collapsed { width: 0 !important; overflow: hidden; }
+    .tile-content {
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .tile-shelf {
+      flex-shrink: 0;
+      padding: 4px 8px;
+    }
+    .tile-shelf.chrome-empty { display: none; }
+    /* HTML tile content */
+    .html-tile-content {
+      flex: 1;
+      overflow: auto;
+      padding: 16px 20px;
+      color: var(--fg, #e0e0e0);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+    .html-tile-content h1, .html-tile-content h2, .html-tile-content h3 { margin: 0 0 8px; }
+    .html-tile-content p { margin: 0 0 12px; }
     /* In standalone PWA, leave room for iPad traffic lights + floating island */
     @media (display-mode: standalone) {
       .carousel-card { top: 72px; }
@@ -231,15 +327,12 @@
       z-index: 2;
     }
     .carousel-card.carousel-hidden { visibility: hidden; }
-    .carousel-card > .terminal-pane,
-    .carousel-card > .dashboard-grid,
-    .carousel-card > * {
+    .tile-content > .terminal-pane {
       position: relative; inset: auto;
       flex: 1; display: block;
       min-width: 0; min-height: 0; overflow: hidden;
       border-radius: 16px;
       padding: 8px 0 8px 20px;
-      background: var(--bg);
     }
     /* Dashboard tile: CSS Grid of sub-tiles */
     .dashboard-grid {
