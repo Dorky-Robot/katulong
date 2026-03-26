@@ -79,7 +79,16 @@ export function createCardCarousel({
     let handledByPointerdown = false;
 
     wrapper.addEventListener("pointerdown", (e) => {
-      if (!active || focusedSession === sessionName) return;
+      if (!active) return;
+      if (focusedSession === sessionName) {
+        // Focused card: ensure terminal has keyboard focus. Safari/iPad
+        // silently ignores programmatic focus() calls outside user gesture
+        // handlers, so the term.focus() in focusCard/activate may have been
+        // a no-op. This pointerdown IS a user gesture, so focus works here.
+        const entry = terminalPool.get(sessionName);
+        if (entry?.term?.focus) entry.term.focus();
+        return;
+      }
       handledByPointerdown = true;
       e.preventDefault();
       e.stopPropagation();
@@ -87,7 +96,13 @@ export function createCardCarousel({
     });
 
     wrapper.addEventListener("click", (e) => {
-      if (!active || focusedSession === sessionName) return;
+      if (!active) return;
+      if (focusedSession === sessionName) {
+        // Focused card click: ensure terminal focus (user gesture context)
+        const entry = terminalPool.get(sessionName);
+        if (entry?.term?.focus) entry.term.focus();
+        return;
+      }
       // Skip if pointerdown already handled this interaction
       if (handledByPointerdown) { handledByPointerdown = false; return; }
       e.preventDefault();

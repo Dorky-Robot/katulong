@@ -445,7 +445,7 @@ describe('card-carousel', () => {
       assert.strictEqual(event.stopPropagation.mock.callCount(), 1);
     });
 
-    it('does NOT intercept pointerdown on the already-focused card', () => {
+    it('pointerdown on focused card calls term.focus() for Safari gesture context', () => {
       carousel.activate(["a", "b"], "a");
       const aEntry = terminalPool.getOrCreate("a");
       const aWrapper = aEntry.container.parentElement;
@@ -457,10 +457,13 @@ describe('card-carousel', () => {
         pointerId: 1,
         pointerType: "touch",
       };
+      const focusBefore = aEntry.term.focus.mock.callCount();
       listeners[0](event);
       // Should still be "a" and event should NOT be prevented
       assert.strictEqual(carousel.getFocusedCard(), "a");
       assert.strictEqual(event.preventDefault.mock.callCount(), 0);
+      // But term.focus() SHOULD have been called (Safari needs gesture context)
+      assert.ok(aEntry.term.focus.mock.callCount() > focusBefore, "should call term.focus() on focused card tap");
     });
 
     it('uses click event as fallback for missed pointerdown', () => {
@@ -477,21 +480,23 @@ describe('card-carousel', () => {
       assert.strictEqual(carousel.getFocusedCard(), "b");
     });
 
-    it('click on already-focused card does not re-trigger focus', () => {
+    it('click on already-focused card calls term.focus() for Safari gesture context', () => {
       carousel.activate(["a", "b"], "a");
       const aEntry = terminalPool.getOrCreate("a");
       const aWrapper = aEntry.container.parentElement;
       const clickListeners = aWrapper._listeners["click"];
 
-      const before = onFocusChange.mock.callCount();
+      const focusBefore = aEntry.term.focus.mock.callCount();
       if (clickListeners && clickListeners.length > 0) {
         clickListeners[0]({
           preventDefault: mock.fn(),
           stopPropagation: mock.fn(),
         });
       }
-      // Focus should not have changed
+      // Focus should not have changed card
       assert.strictEqual(carousel.getFocusedCard(), "a");
+      // But term.focus() should have been called
+      assert.ok(aEntry.term.focus.mock.callCount() > focusBefore, "should call term.focus() on focused card click");
     });
   });
 
