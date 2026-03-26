@@ -29,6 +29,14 @@
       window.history.replaceState({}, document.title, window.location.pathname);
     }
 
+    // Auto-fill setup token from URL (for QR code links)
+    const setupTokenParam = urlParams.get("setup_token");
+    if (setupTokenParam) {
+      const tokenInput = document.getElementById("setup-token");
+      if (tokenInput) tokenInput.value = setupTokenParam;
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
     // --- WebAuthn Support Checks ---
     // WebAuthn support and error functions imported from /lib/webauthn-errors.js
 
