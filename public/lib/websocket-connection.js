@@ -130,9 +130,11 @@ export function createWebSocketConnection(deps = {}) {
       },
       effects: [
         { type: 'seqClear' },
+        { type: 'clearSubscriptions' },
         { type: 'terminalReset' },
         { type: 'invalidateSessions', name: msg.session },
-        { type: 'scrollToBottomIfNeeded', condition: true }
+        { type: 'scrollToBottomIfNeeded', condition: true },
+        { type: 'syncCarouselSubscriptions' },
       ]
     }),
 
@@ -308,6 +310,12 @@ export function createWebSocketConnection(deps = {}) {
           initPullState(effect.session, effect.seq);
           sendPull(effect.session);
         }
+        break;
+      case 'clearSubscriptions':
+        // Clear the dedup set so syncCarouselSubscriptions can re-subscribe
+        // background tiles after a switch. Without this, the dedup blocks
+        // re-subscribes and background tiles stop updating.
+        subscribedSessions.clear();
         break;
       case 'dataAvailable': {
         // Server notifies new data — trigger pull if not already busy
