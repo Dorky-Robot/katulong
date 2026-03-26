@@ -16,8 +16,7 @@ const COMMANDS = {
   restart: "Restart the Katulong server",
   status: "Check if Katulong is running",
   logs: "Stream server logs",
-  open: "Open Katulong in your browser",
-  attach: "Open a terminal tab in the browser (creates session if needed)",
+  browse: "Open Katulong in your browser",
   notify: "Send a native notification to connected browsers",
   pub: "Publish a message to a topic",
   sub: "Subscribe to a topic (streams to stdout)",
@@ -54,7 +53,7 @@ EXAMPLES:
   katulong stop               Stop the server
   katulong status             Check if running
   katulong logs               Stream server logs
-  katulong open               Open in browser
+  katulong browse              Open in browser
   katulong update             Update to latest version
   katulong update --check     Check if update is available
   katulong update --no-restart Update code but skip restart
@@ -63,7 +62,7 @@ EXAMPLES:
   katulong credential list    List registered passkeys
   katulong session list       List active PTY sessions
   katulong session kill dev   Kill a PTY session
-  katulong attach myapp       Open "myapp" tab in browser (creates if needed)
+  katulong session create myapp --open  Create session + open in browser
   katulong notify "done"      Send notification to connected browsers
   katulong notes read         Read notes for current session
   katulong notes todos        List unchecked todos
