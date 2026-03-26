@@ -255,6 +255,7 @@ const routes = [
     shortcutsPath: join(DATA_DIR, "shortcuts.json"),
     auth, csrf,
     topicBroker: createTopicBroker(),
+    getExternalUrl: () => _lastExternalUrl,
   }),
   ...createFileBrowserRoutes({ json, parseJSON, auth, csrf }),
   ...createPortProxyRoutes({ auth, PORT, configManager }),
@@ -272,8 +273,17 @@ function matchRoute(method, pathname) {
   return null;
 }
 
+// Track the last-seen external URL (from tunnel/remote connections)
+let _lastExternalUrl = null;
+
 async function handleRequest(req, res) {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
+
+  // Capture external URL from non-localhost requests
+  if (!isLocalRequest(req) && req.headers.host) {
+    const proto = isHttpsConnection(req) ? "https" : "http";
+    _lastExternalUrl = `${proto}://${req.headers.host}`;
+  }
 
   // Apply security headers to every response
   setSecurityHeaders(res);
