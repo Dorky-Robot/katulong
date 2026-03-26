@@ -142,37 +142,33 @@ class TestClient {
     this.ws.send(JSON.stringify({ type: "resize", cols, rows }));
   }
 
-  subscribe(session, cols, rows) {
+  subscribe(session) {
     this._subscribeScrollback = {};
     return new Promise((resolve) => {
-      // Listen for the subscribed + output + seq-init sequence
-      const orig = this._handleMessage.bind(this);
       const listener = (msg) => {
         if (msg.type === "subscribed" && msg.session === session) {
-          // Clear tracking for this subscribe
-          this._subscribeScrollback[session] = "";
-        }
-        if (msg.type === "output" && msg.session === session && this._subscribeScrollback[session] !== undefined) {
-          this._subscribeScrollback[session] += msg.data || "";
+          this._subscribeScrollback[session] = msg.data || "";
         }
         if (msg.type === "seq-init" && msg.session === session) {
           resolve();
         }
       };
       this._extraHandler = listener;
-      this.ws.send(JSON.stringify({ type: "subscribe", session, cols, rows }));
+      this.ws.send(JSON.stringify({ type: "subscribe", session }));
     });
   }
 
   _handleMessage(msg) {
     switch (msg.type) {
       case "attached":
+        this.scrollbackData += msg.data || "";
         if (this._attached) this._attached(msg);
         break;
       case "switched":
+        this.scrollbackData += msg.data || "";
         if (this._switched) this._switched(msg);
         break;
-      case "output":
+      case "subscribed":
         this.scrollbackData += msg.data || "";
         break;
       case "seq-init":
@@ -562,7 +558,7 @@ describe("Garble Detection", { timeout: 120000 }, () => {
     await subscriber.waitForQuiet(500, 2000);
     subscriber.scrollbackData = "";
     subscriber.pullData = "";
-    await subscriber.subscribe("garble-h-width", 60, 24);
+    await subscriber.subscribe("garble-h-width");
     await subscriber.waitForQuiet(500, 3000);
 
     // The subscribe snapshot should contain the marker

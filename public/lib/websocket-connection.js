@@ -54,7 +54,6 @@ export function createWebSocketConnection(deps = {}) {
   // processing the previous write.
 
   const pullStates = new Map(); // sessionName -> { cursor, pulling, writing, pending }
-  const subscribedSessions = new Set(); // tracks active subscriptions to avoid duplicates
 
   // Safety timeout: if a pull response doesn't arrive within this window,
   // assume it was dropped (backpressure, session gone, etc.) and unstick.
@@ -116,6 +115,7 @@ export function createWebSocketConnection(deps = {}) {
       effects: [
         { type: 'seqClear' },
         { type: 'terminalReset' },
+        ...(msg.data ? [{ type: 'terminalWrite', data: msg.data, session: msg.session, useOutputTerm: true }] : []),
         { type: 'updateConnectionIndicator' },
         { type: 'invalidateSessions', name: msg.session },
         { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect },
@@ -130,7 +130,6 @@ export function createWebSocketConnection(deps = {}) {
       },
       effects: [
         { type: 'seqClear' },
-        { type: 'clearSubscriptions' },
         // Reset + write snapshot in one batch — no flicker
         { type: 'terminalReset' },
         ...(msg.data ? [{ type: 'terminalWrite', data: msg.data, session: msg.session, useOutputTerm: true }] : []),
@@ -143,9 +142,8 @@ export function createWebSocketConnection(deps = {}) {
     'subscribed': (msg) => ({
       stateUpdates: {},
       effects: [
-        // Reset this session's terminal before the snapshot arrives so
-        // stale content from a previous subscribe doesn't remain.
         { type: 'terminalResetSession', session: msg.session },
+        ...(msg.data ? [{ type: 'terminalWrite', data: msg.data, session: msg.session, useOutputTerm: true }] : []),
       ]
     }),
 
@@ -153,14 +151,6 @@ export function createWebSocketConnection(deps = {}) {
       stateUpdates: {},
       effects: [
         { type: 'seqClear', session: msg.session }
-      ]
-    }),
-
-    // Unsequenced output (scrollback replay on attach/switch) — write directly
-    output: (msg) => ({
-      stateUpdates: {},
-      effects: [
-        { type: 'terminalWrite', data: msg.data, session: msg.session, preserveScroll: true, useOutputTerm: true }
       ]
     }),
 
@@ -282,6 +272,35 @@ export function createWebSocketConnection(deps = {}) {
     }),
   };
 
+  /** Write data to a terminal and advance the pull cursor. Shared by pullResponse/pullSnapshot. */
+  function writeAndAdvance(session, data, cursor) {
+    const ps = pullStates.get(session);
+    if (!ps) return;
+    ps.pulling = false;
+    clearTimeout(pullTimers.get(session));
+    if (data && data.length > 0) {
+      ps.writing = true;
+      const term = getOutputTerm(session);
+      if (term) {
+        const safety = setTimeout(() => {
+          if (ps.writing) { ps.writing = false; ps.cursor = cursor; if (ps.pending) { ps.pending = false; sendPull(session); } }
+        }, 3000);
+        terminalWriteWithScroll(term, data, () => {
+          clearTimeout(safety);
+          ps.writing = false;
+          ps.cursor = cursor;
+          if (ps.pending) { ps.pending = false; sendPull(session); }
+        });
+      } else {
+        ps.writing = false;
+        ps.cursor = cursor;
+      }
+    } else {
+      ps.cursor = cursor;
+      if (ps.pending) { ps.pending = false; sendPull(session); }
+    }
+  }
+
   // Effect executor (side effects at edges)
   function executeEffect(effect) {
     switch (effect.type) {
@@ -313,12 +332,6 @@ export function createWebSocketConnection(deps = {}) {
           sendPull(effect.session);
         }
         break;
-      case 'clearSubscriptions':
-        // Clear the dedup set so syncCarouselSubscriptions can re-subscribe
-        // background tiles after a switch. Without this, the dedup blocks
-        // re-subscribes and background tiles stop updating.
-        subscribedSessions.clear();
-        break;
       case 'dataAvailable': {
         // Server notifies new data — trigger pull if not already busy
         const ps = pullStates.get(effect.session);
@@ -330,79 +343,14 @@ export function createWebSocketConnection(deps = {}) {
         sendPull(effect.session);
         break;
       }
-      case 'pullResponse': {
-        const ps = pullStates.get(effect.session);
-        if (!ps) break;
-        ps.pulling = false;
-        clearTimeout(pullTimers.get(effect.session));
-        if (effect.data && effect.data.length > 0) {
-          ps.writing = true;
-          const term = getOutputTerm(effect.session);
-          if (term) {
-            // Safety: if xterm's write callback never fires (terminal hidden/disposed),
-            // unstick after a timeout so pulls can resume.
-            const writeTimeout = setTimeout(() => {
-              if (ps.writing) {
-                ps.writing = false;
-                ps.cursor = effect.cursor;
-                if (ps.pending) { ps.pending = false; sendPull(effect.session); }
-              }
-            }, 3000);
-
-            terminalWriteWithScroll(term, effect.data, () => {
-              clearTimeout(writeTimeout);
-              ps.writing = false;
-              ps.cursor = effect.cursor;
-              if (ps.pending) {
-                ps.pending = false;
-                sendPull(effect.session);
-              }
-            });
-          } else {
-            ps.writing = false;
-            ps.cursor = effect.cursor;
-          }
-        } else {
-          // Already caught up
-          ps.cursor = effect.cursor;
-          if (ps.pending) {
-            ps.pending = false;
-            sendPull(effect.session);
-          }
-        }
+      case 'pullResponse':
+        writeAndAdvance(effect.session, effect.data, effect.cursor);
         break;
-      }
       case 'pullSnapshot': {
-        // Cursor was evicted — reset terminal and write the snapshot
-        const ps = pullStates.get(effect.session);
-        if (!ps) break;
-        ps.pulling = false;
-        clearTimeout(pullTimers.get(effect.session));
+        // Cursor was evicted — reset terminal before writing snapshot
         const term = getOutputTerm(effect.session);
-        if (term) {
-          term.clear();
-          term.reset();
-          ps.writing = true;
-          const writeTimeout = setTimeout(() => {
-            if (ps.writing) {
-              ps.writing = false;
-              ps.cursor = effect.cursor;
-              if (ps.pending) { ps.pending = false; sendPull(effect.session); }
-            }
-          }, 3000);
-
-          terminalWriteWithScroll(term, effect.data || "", () => {
-            clearTimeout(writeTimeout);
-            ps.writing = false;
-            ps.cursor = effect.cursor;
-            if (ps.pending) {
-              ps.pending = false;
-              sendPull(effect.session);
-            }
-          });
-        } else {
-          ps.cursor = effect.cursor;
-        }
+        if (term) { term.clear(); term.reset(); }
+        writeAndAdvance(effect.session, effect.data || "", effect.cursor);
         break;
       }
       case 'terminalReset': {
@@ -520,7 +468,6 @@ export function createWebSocketConnection(deps = {}) {
       const cols = term?.cols || 80;
       const rows = term?.rows || 24;
       state.connection.ws.send(JSON.stringify({ type: "attach", session: state.session.name, cols, rows }));
-      state.connection.ws.send(JSON.stringify({ type: "resize", session: state.session.name, cols, rows }));
     };
 
     state.connection.ws.onmessage = (e) => {
@@ -560,7 +507,6 @@ export function createWebSocketConnection(deps = {}) {
       state.scroll.userScrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
       state.connection.attached = false;
       clearPullStates();
-      subscribedSessions.clear();
       if (deps.updateConnectionIndicator) deps.updateConnectionIndicator();
       if (deps.onDisconnect) deps.onDisconnect();
 
@@ -642,17 +588,13 @@ export function createWebSocketConnection(deps = {}) {
     wsMessageHandlers,
     executeEffect,
     getConnectionState: () => connectionState,
-    sendSubscribe(sessionName, cols, rows) {
+    sendSubscribe(sessionName) {
       const ws = state.connection.ws;
-      if (ws?.readyState === 1 && !subscribedSessions.has(sessionName)) {
-        subscribedSessions.add(sessionName);
-        const payload = { type: "subscribe", session: sessionName };
-        if (cols && rows) { payload.cols = cols; payload.rows = rows; }
-        ws.send(JSON.stringify(payload));
+      if (ws?.readyState === 1) {
+        ws.send(JSON.stringify({ type: "subscribe", session: sessionName }));
       }
     },
     sendUnsubscribe(sessionName) {
-      subscribedSessions.delete(sessionName);
       const ws = state.connection.ws;
       if (ws?.readyState === 1) {
         ws.send(JSON.stringify({ type: "unsubscribe", session: sessionName }));
