@@ -589,11 +589,13 @@ export function createWebSocketConnection(deps = {}) {
     wsMessageHandlers,
     executeEffect,
     getConnectionState: () => connectionState,
-    sendSubscribe(sessionName) {
+    sendSubscribe(sessionName, cols, rows) {
       const ws = state.connection.ws;
       if (ws?.readyState === 1 && !subscribedSessions.has(sessionName)) {
         subscribedSessions.add(sessionName);
-        ws.send(JSON.stringify({ type: "subscribe", session: sessionName }));
+        const payload = { type: "subscribe", session: sessionName };
+        if (cols && rows) { payload.cols = cols; payload.rows = rows; }
+        ws.send(JSON.stringify(payload));
       }
     },
     sendUnsubscribe(sessionName) {

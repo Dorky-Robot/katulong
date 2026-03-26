@@ -370,9 +370,9 @@ describe("createWebSocketManager", () => {
       await new Promise(r => setTimeout(r, 10));
       ws.sent.length = 0; // clear attach messages
 
-      // Now subscribe to the background session
+      // Now subscribe to the background session with cols/rows
       await ws._handlers.message(Buffer.from(JSON.stringify({
-        type: "subscribe", session: "bg-session",
+        type: "subscribe", session: "bg-session", cols: 60, rows: 24,
       })));
       await new Promise(r => setTimeout(r, 10));
 

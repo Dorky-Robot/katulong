@@ -108,38 +108,6 @@ class TestClient {
     });
   }
 
-  _handleMessage(msg) {
-    switch (msg.type) {
-      case "attached":
-        if (this._attached) this._attached(msg);
-        break;
-      case "switched":
-        if (this._switched) this._switched(msg);
-        break;
-      case "output":
-        this.scrollbackData += msg.data || "";
-        break;
-      case "seq-init":
-        this.seq = msg.seq;
-        // Auto-pull
-        this._sendPull();
-        break;
-      case "data-available":
-        if (!this.pulling) this._sendPull();
-        break;
-      case "pull-response":
-        this.pulling = false;
-        if (msg.data) this.pullData += msg.data;
-        this.seq = msg.cursor;
-        break;
-      case "pull-snapshot":
-        this.pulling = false;
-        if (msg.data) this.pullData += msg.data;
-        this.seq = msg.cursor;
-        break;
-    }
-  }
-
   _sendPull() {
     if (this.seq == null || this.pulling) return;
     this.pulling = true;
@@ -172,6 +140,60 @@ class TestClient {
 
   sendResize(cols, rows) {
     this.ws.send(JSON.stringify({ type: "resize", cols, rows }));
+  }
+
+  subscribe(session, cols, rows) {
+    this._subscribeScrollback = {};
+    return new Promise((resolve) => {
+      // Listen for the subscribed + output + seq-init sequence
+      const orig = this._handleMessage.bind(this);
+      const listener = (msg) => {
+        if (msg.type === "subscribed" && msg.session === session) {
+          // Clear tracking for this subscribe
+          this._subscribeScrollback[session] = "";
+        }
+        if (msg.type === "output" && msg.session === session && this._subscribeScrollback[session] !== undefined) {
+          this._subscribeScrollback[session] += msg.data || "";
+        }
+        if (msg.type === "seq-init" && msg.session === session) {
+          resolve();
+        }
+      };
+      this._extraHandler = listener;
+      this.ws.send(JSON.stringify({ type: "subscribe", session, cols, rows }));
+    });
+  }
+
+  _handleMessage(msg) {
+    switch (msg.type) {
+      case "attached":
+        if (this._attached) this._attached(msg);
+        break;
+      case "switched":
+        if (this._switched) this._switched(msg);
+        break;
+      case "output":
+        this.scrollbackData += msg.data || "";
+        break;
+      case "seq-init":
+        this.seq = msg.seq;
+        this._sendPull();
+        break;
+      case "data-available":
+        if (!this.pulling) this._sendPull();
+        break;
+      case "pull-response":
+        this.pulling = false;
+        if (msg.data) this.pullData += msg.data;
+        this.seq = msg.cursor;
+        break;
+      case "pull-snapshot":
+        this.pulling = false;
+        if (msg.data) this.pullData += msg.data;
+        this.seq = msg.cursor;
+        break;
+    }
+    if (this._extraHandler) this._extraHandler(msg);
   }
 
   // Wait for output to settle (no new messages for `quietMs`)
@@ -514,7 +536,59 @@ describe("Garble Detection", { timeout: 120000 }, () => {
     assert.ok(dupes.length <= 2, `Excessive duplicate prompts after rapid switches: ${dupes.length}`);
   });
 
-  it("Scenario H: real Claude Code session with tab switching (EXPENSIVE)", async () => {
+  it("Scenario H: subscribe with cols/rows — snapshot at correct width", async () => {
+    // This tests the carousel subscribe path. A session is created at
+    // 120x40, filled with wide output, then subscribed at 60x24 (carousel
+    // card dimensions). The subscribe snapshot should wrap at 60 cols.
+    await request("POST", "/sessions", { name: "garble-h-width" });
+    await sleep(1500);
+
+    // Attach at 120 cols and generate wide output
+    const writer = new TestClient();
+    await writer.connect();
+    await writer.attach("garble-h-width", 120, 40);
+    await writer.waitForQuiet(500, 3000);
+
+    // Generate output that fills 120 columns
+    writer.sendInput("echo 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'\n");
+    await writer.waitForQuiet(500, 3000);
+    writer.sendInput("echo 'marker-line-end'\n");
+    await writer.waitForQuiet(500, 3000);
+
+    // Now subscribe at 60 cols (simulating carousel card)
+    const subscriber = new TestClient();
+    await subscriber.connect();
+    await subscriber.attach("garble-h-width", 120, 40); // attach first
+    await subscriber.waitForQuiet(500, 2000);
+    subscriber.scrollbackData = "";
+    subscriber.pullData = "";
+    await subscriber.subscribe("garble-h-width", 60, 24);
+    await subscriber.waitForQuiet(500, 3000);
+
+    // The subscribe snapshot should contain the marker
+    const subData = subscriber._subscribeScrollback["garble-h-width"] || "";
+    const subLines = extractVisibleLines(subData);
+
+    // Check for escape sequence errors in the snapshot
+    const escErrors = validateEscapeSequences(subData);
+
+    writer.close();
+    subscriber.close();
+
+    console.log(`  Subscribe snapshot: ${subData.length} bytes, ${subLines.length} lines`);
+    console.log(`  Escape errors: ${escErrors.length}`);
+    if (subLines.length > 0) {
+      console.log(`  Last 3 lines: ${subLines.slice(-3).join(" | ")}`);
+    }
+
+    assert.ok(subData.length > 0, "Subscribe snapshot should not be empty");
+    assert.equal(escErrors.length, 0, `Broken escapes in subscribe snapshot: ${escErrors.length}`);
+    // Verify the marker is in the snapshot
+    const hasMarker = subLines.some(l => l.includes("marker-line-end"));
+    assert.ok(hasMarker, "Subscribe snapshot should contain the marker line");
+  });
+
+  it("Scenario I: real Claude Code session with tab switching (EXPENSIVE)", async () => {
     // This test launches actual Claude Code, sends it a prompt, and
     // switches tabs while it's thinking/streaming. This is the scenario
     // that triggers the most garbling in practice.

@@ -289,12 +289,15 @@
       const focused = carousel.getFocusedCard();
       for (const session of cards) {
         if (session !== focused) {
-          wsConnection.sendSubscribe(session);
+          // Send cols/rows so the server resizes the PTY before serializing
+          // the snapshot. Without this, the snapshot wraps at the wrong
+          // column width and live output renders garbled.
+          const entry = terminalPool.get(session);
+          const cols = entry?.term?.cols;
+          const rows = entry?.term?.rows;
+          wsConnection.sendSubscribe(session, cols, rows);
         }
       }
-      // Send resize for all cards so PTYs get SIGWINCH at the correct
-      // carousel card dimensions — TUIs like Claude Code won't reflow
-      // unless they receive a resize after the subscribe buffer replay.
       carousel.fitAll();
     }
 
