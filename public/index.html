@@ -213,11 +213,12 @@
       width: calc(100% - 48px);
       max-width: 560px;
       margin-left: calc(min(100% - 48px, 560px) / -2); /* center: offset by half width */
-      display: flex; flex-direction: column; overflow: hidden; contain: paint;
+      display: flex; flex-direction: column; overflow: hidden;
       border-radius: 16px;
       background: var(--bg);
       -webkit-backface-visibility: hidden;
       backface-visibility: hidden;
+      isolation: isolate;
       box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.4);
       transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
       will-change: transform;
@@ -230,12 +231,15 @@
       z-index: 2;
     }
     .carousel-card.carousel-hidden { visibility: hidden; }
-    .carousel-card > .terminal-pane {
+    .carousel-card > .terminal-pane,
+    .carousel-card > .dashboard-grid,
+    .carousel-card > * {
       position: relative; inset: auto;
       flex: 1; display: block;
       min-width: 0; min-height: 0; overflow: hidden;
       border-radius: 16px;
       padding: 8px 0 8px 20px;
+      background: var(--bg);
     }
     /* Dashboard tile: CSS Grid of sub-tiles */
     .dashboard-grid {
