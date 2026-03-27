@@ -185,6 +185,19 @@ describe("createWebSocketManager", () => {
       assert.deepEqual(JSON.parse(ws.sent[0]), { type: "data-available", session: "alpha" });
     });
 
+    it("routes resync snapshot to correct session", () => {
+      const ws = createMockWs();
+      wsMgr.wsClients.set("client-1", { ws });
+      sessionManager._setSession("client-1", "alpha");
+
+      bridge.relay({ type: "resync", session: "alpha", data: "snapshot-data", seq: 42 });
+
+      assert.equal(ws.sent.length, 1);
+      assert.deepEqual(JSON.parse(ws.sent[0]), {
+        type: "resync", session: "alpha", data: "snapshot-data", seq: 42,
+      });
+    });
+
     it("routes exit events to correct session", () => {
       const ws = createMockWs();
       wsMgr.wsClients.set("client-1", { ws });

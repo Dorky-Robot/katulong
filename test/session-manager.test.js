@@ -27,15 +27,17 @@ class MockSession {
     this.name = name;
     this.tmuxName = tmuxName;
     this.state = MockSession.STATE_ATTACHED;
-    this.outputBuffer = [];
     this._childCount = 0;
     this.external = options.external || false;
     this._written = [];
     this._resizes = [];
+    this._options = options;
+    this.outputBuffer = { totalBytes: 0 };
   }
 
   get alive() { return this.state === MockSession.STATE_ATTACHED; }
   attachControlMode() {}
+  serializeScreen() { return "mock-screen-snapshot"; }
   updateChildCount(count) { this._childCount = count; }
   write(data) { this._written.push(data); }
   resize(cols, rows) { this._resizes.push({ cols, rows }); }
@@ -85,6 +87,7 @@ mock.module(tmuxModuleUrl, {
     applyTmuxSessionOptions: async () => {},
     captureScrollback: async () => "",
     captureVisiblePane: async () => "$ prompt\n",
+    getCursorPosition: async () => ({ row: 0, col: 0 }),
     checkTmux: async () => {},
     cleanTmuxServerEnv: async () => {},
     setTmuxKatulongEnv: async () => {},
@@ -240,7 +243,7 @@ describe("session manager", () => {
       await mgr.createSession("sess");
       const result = await mgr.attachClient("client1", "sess", 80, 24);
       assert.strictEqual(result.alive, true);
-      assert.strictEqual(result.buffer, "$ prompt\n");
+      assert.strictEqual(result.buffer, "mock-screen-snapshot");
     });
 
     it("creates session on attach if missing", async () => {
@@ -331,6 +334,63 @@ describe("session manager", () => {
       // tmux sessions should still exist
       assert.ok(tmuxSessions.has("a"));
       assert.ok(tmuxSessions.has("b"));
+    });
+  });
+
+  describe("resync idle timer", () => {
+    it("sends resync message after idle period when session has subscribers", async () => {
+      const { mgr, bridge } = makeManager();
+      await mgr.createSession("resync-test");
+      // Attach a client so session has subscribers
+      await mgr.attachClient("c1", "resync-test", 80, 24);
+
+      // Write input to trigger notifyDataAvailable (which starts the resync timer)
+      const session = mgr.getSession("resync-test");
+      session._options?.onData?.("resync-test", "x");
+
+      // Wait for idle timeout (10s + buffer)
+      await new Promise(r => setTimeout(r, 11000));
+
+      const resyncMsg = bridge.messages.find(m => m.type === "resync" && m.session === "resync-test");
+      assert.ok(resyncMsg, "Should relay a resync message after idle");
+      assert.strictEqual(resyncMsg.data, "mock-screen-snapshot");
+      assert.strictEqual(resyncMsg.seq, 0);
+
+      mgr.shutdown();
+    });
+
+    it("does not send resync when no subscribers", async () => {
+      const { mgr, bridge } = makeManager();
+      await mgr.createSession("no-sub");
+
+      // Trigger notifyDataAvailable without any subscribers
+      const session = mgr.getSession("no-sub");
+      session._options?.onData?.("no-sub", "x");
+
+      await new Promise(r => setTimeout(r, 11000));
+
+      const resyncMsg = bridge.messages.find(m => m.type === "resync" && m.session === "no-sub");
+      assert.ok(!resyncMsg, "Should not send resync without subscribers");
+
+      mgr.shutdown();
+    });
+
+    it("cleans up resync timer on session delete", async () => {
+      const { mgr, bridge } = makeManager();
+      await mgr.createSession("del-resync");
+      await mgr.attachClient("c1", "del-resync", 80, 24);
+
+      // Trigger data to start timer
+      const session = mgr.getSession("del-resync");
+      session._options?.onData?.("del-resync", "x");
+
+      // Delete session before timer fires
+      mgr.deleteSession("del-resync");
+
+      await new Promise(r => setTimeout(r, 11000));
+
+      const resyncMsg = bridge.messages.find(m => m.type === "resync" && m.session === "del-resync");
+      assert.ok(!resyncMsg, "Should not send resync after session deleted");
     });
   });
 
