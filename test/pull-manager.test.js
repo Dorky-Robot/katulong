@@ -6,7 +6,7 @@
  * safety timeouts, and multi-session isolation.
  */
 
-import { describe, it, beforeEach, mock } from "node:test";
+import { describe, it, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { createPullManager } from "../public/lib/pull-manager.js";
 
@@ -22,6 +22,11 @@ describe("PullManager", () => {
       onWrite: (name, data, done) => { writes.push({ name, data, done }); },
       onReset: (name) => resets.push(name),
     });
+  });
+
+  afterEach(() => {
+    // Clear all pull timers to prevent test hangs
+    pm.clear();
   });
 
   describe("init", () => {
