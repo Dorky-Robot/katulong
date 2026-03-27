@@ -58,12 +58,20 @@ export async function loadExtensions() {
 
       const mod = await import(`/extensions/${dirName}/tile.js`);
 
-      if (typeof mod.createTileFactory !== "function") {
-        console.warn(`[extensions] ${ext.name} does not export createTileFactory`);
+      // Support both export styles:
+      //   export function createTileFactory() { return (options) => tile }
+      //   export default function setup(sdk, options) { return tile }
+      let factory;
+      if (typeof mod.createTileFactory === "function") {
+        factory = mod.createTileFactory();
+      } else if (typeof mod.default === "function") {
+        const setupFn = mod.default;
+        factory = (options = {}) => setupFn(null, options);
+      } else {
+        console.warn(`[extensions] ${ext.name}: no createTileFactory or default export`);
         continue;
       }
 
-      const factory = mod.createTileFactory();
       registerTileType(ext.type, factory);
 
       extensionTypes.push({

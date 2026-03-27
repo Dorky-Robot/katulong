@@ -1061,12 +1061,41 @@
         if (type === "terminal") {
           // Terminal tiles create a server-side session
           createNewSession();
-        } else if (isCarouselDevice()) {
-          // Extension tiles: create directly in the carousel
+        } else {
+          // Extension tiles
           const id = `${type}-${Date.now().toString(36)}`;
           const tile = createTile(type, { title: _meta?.name || type });
-          carousel.addCard(id, tile);
-          carousel.focusCard(id);
+
+          if (isCarouselDevice() && carousel.isActive()) {
+            carousel.addCard(id, tile);
+            carousel.focusCard(id);
+          } else {
+            // Non-carousel: mount tile into the main terminal area
+            const termArea = document.getElementById("terminal") || document.querySelector(".terminal-container");
+            if (termArea) {
+              // Create a container for the extension tile
+              const tileContainer = document.createElement("div");
+              tileContainer.id = `tile-${id}`;
+              tileContainer.style.cssText = "position:absolute;inset:0;z-index:50;background:#1a1a1a;";
+              termArea.parentElement.style.position = "relative";
+              termArea.parentElement.appendChild(tileContainer);
+
+              // Mount the tile
+              tile.mount(tileContainer, {
+                tileId: id,
+                setTitle: (t) => { windowTabSet.renameTab?.(id, t); },
+                setIcon: () => {},
+                sendWs: (msg) => { /* TODO: wire to WS */ },
+                flip: () => {},
+                chrome: {},
+              });
+
+              // Store ref for cleanup
+              tileContainer._tile = tile;
+              tileContainer._tileId = id;
+            }
+          }
+
           windowTabSet.addTab(id);
           if (shortcutBarInstance) shortcutBarInstance.render(id);
         }

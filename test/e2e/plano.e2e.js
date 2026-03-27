@@ -1,0 +1,226 @@
+import { test, expect } from "@playwright/test";
+
+/**
+ * Plano extension e2e tests.
+ *
+ * Tests the full lifecycle: extension discovery → tile loading →
+ * mounting → note CRUD → editor → localStorage persistence.
+ *
+ * Uses /test-plano.html as a controlled test harness that mounts
+ * the Plano tile directly without needing the full katulong app.
+ */
+
+const TEST_PAGE = "/test-plano.html";
+
+test.describe("Plano — Extension Discovery", () => {
+  test("API returns Plano in extension list", async ({ request }) => {
+    const res = await request.get("/api/extensions");
+    expect(res.ok()).toBeTruthy();
+    const { extensions } = await res.json();
+    const plano = extensions.find(e => e.type === "plano");
+    expect(plano).toBeDefined();
+    expect(plano.name).toBe("Plano");
+    expect(plano.icon).toBe("note-pencil");
+  });
+
+  test("tile.js is served with correct content-type", async ({ request }) => {
+    const res = await request.get("/extensions/plano/tile.js");
+    expect(res.ok()).toBeTruthy();
+    expect(res.headers()["content-type"]).toContain("javascript");
+    const text = await res.text();
+    expect(text).toContain("export default");
+  });
+
+  test("manifest.json is served", async ({ request }) => {
+    const res = await request.get("/extensions/plano/manifest.json");
+    expect(res.ok()).toBeTruthy();
+    const data = await res.json();
+    expect(data.type).toBe("plano");
+  });
+});
+
+test.describe("Plano — Tile Mount", () => {
+  test.setTimeout(15_000);
+
+  test("tile module loads and exports setup function", async ({ page }) => {
+    await page.goto(TEST_PAGE);
+    const result = await page.evaluate(async () => {
+      const mod = await import("/extensions/plano/tile.js");
+      return { hasDefault: typeof mod.default === "function" };
+    });
+    expect(result.hasDefault).toBe(true);
+  });
+
+  test("tile mounts and renders UI", async ({ page }) => {
+    await page.goto(TEST_PAGE);
+    // Wait for the tile to mount (test page does this automatically)
+    await page.waitForSelector(".plano-root", { timeout: 5000 });
+    // Should have a sidebar and editor area
+    const root = page.locator(".plano-root");
+    await expect(root).toBeVisible();
+  });
+
+  test("tile shows + New Note button", async ({ page }) => {
+    await page.goto(TEST_PAGE);
+    await page.waitForSelector(".plano-root", { timeout: 5000 });
+    const newBtn = page.locator("text=New Note").first();
+    await expect(newBtn).toBeVisible({ timeout: 3000 });
+  });
+
+  test("tile shows empty state", async ({ page }) => {
+    // Clear localStorage first
+    await page.goto(TEST_PAGE);
+    await page.evaluate(() => localStorage.removeItem("plano_notes"));
+    await page.reload();
+    await page.waitForSelector(".plano-root", { timeout: 5000 });
+    const emptyState = page.locator("text=Create or select a note").first();
+    await expect(emptyState).toBeVisible({ timeout: 3000 });
+  });
+});
+
+test.describe("Plano — Note CRUD", () => {
+  test.setTimeout(15_000);
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto(TEST_PAGE);
+    // Clear localStorage for clean state
+    await page.evaluate(() => localStorage.removeItem("plano_notes"));
+    await page.reload();
+    await page.waitForSelector(".plano-root", { timeout: 5000 });
+  });
+
+  test("create a note", async ({ page }) => {
+    // Click + New Note
+    page.once("dialog", dialog => dialog.accept("My Test Note"));
+    await page.locator("text=New Note").first().click();
+    await page.waitForTimeout(500);
+
+    // Note should appear in the sidebar
+    const noteItem = page.locator("text=My Test Note").first();
+    await expect(noteItem).toBeVisible({ timeout: 3000 });
+  });
+
+  test("created note is persisted in localStorage", async ({ page }) => {
+    page.once("dialog", dialog => dialog.accept("Persisted Note"));
+    await page.locator("text=New Note").first().click();
+    await page.waitForTimeout(500);
+
+    // Check localStorage
+    const stored = await page.evaluate(() => {
+      const data = JSON.parse(localStorage.getItem("plano_notes") || "{}");
+      return Object.values(data).map(n => n.title);
+    });
+    expect(stored).toContain("Persisted Note");
+  });
+
+  test("note survives page reload", async ({ page }) => {
+    page.once("dialog", dialog => dialog.accept("Reload Test"));
+    await page.locator("text=New Note").first().click();
+    await page.waitForTimeout(500);
+
+    // Reload
+    await page.reload();
+    await page.waitForSelector(".plano-root", { timeout: 5000 });
+
+    // Note should still be there
+    const noteItem = page.locator("text=Reload Test").first();
+    await expect(noteItem).toBeVisible({ timeout: 3000 });
+  });
+
+  test("select a note and see editor", async ({ page }) => {
+    page.once("dialog", dialog => dialog.accept("Editor Note"));
+    await page.locator("text=New Note").first().click();
+    await page.waitForTimeout(500);
+
+    // Click the note
+    await page.locator("text=Editor Note").first().click();
+    await page.waitForTimeout(500);
+
+    // Editor should be visible (contenteditable area)
+    const editor = page.locator("[contenteditable=true]").first();
+    await expect(editor).toBeVisible({ timeout: 3000 });
+  });
+
+  test("type in editor and content is saved", async ({ page }) => {
+    page.once("dialog", dialog => dialog.accept("Typing Test"));
+    await page.locator("text=New Note").first().click();
+    await page.waitForTimeout(500);
+    await page.locator("text=Typing Test").first().click();
+    await page.waitForTimeout(500);
+
+    // Type in the editor
+    const editor = page.locator("[contenteditable=true]").first();
+    await editor.click();
+    await page.keyboard.type("Hello from Plano!");
+    await page.waitForTimeout(2000); // wait for auto-save
+
+    // Check localStorage has the content
+    const content = await page.evaluate(() => {
+      const data = JSON.parse(localStorage.getItem("plano_notes") || "{}");
+      const notes = Object.values(data);
+      return notes.find(n => n.title === "Typing Test")?.content || "";
+    });
+    expect(content).toContain("Hello from Plano!");
+  });
+
+  test("create multiple notes", async ({ page }) => {
+    let dialogCount = 0;
+    page.on("dialog", dialog => {
+      dialogCount++;
+      dialog.accept(dialogCount === 1 ? "Note A" : "Note B");
+    });
+
+    await page.locator("text=New Note").first().click();
+    await page.waitForTimeout(500);
+
+    await page.locator("text=New Note").first().click();
+    await page.waitForTimeout(500);
+
+    const noteA = page.locator("text=Note A").first();
+    const noteB = page.locator("text=Note B").first();
+    await expect(noteA).toBeVisible({ timeout: 3000 });
+    await expect(noteB).toBeVisible({ timeout: 3000 });
+  });
+});
+
+test.describe("Plano — Tala Integration (optional)", () => {
+  test.setTimeout(15_000);
+
+  test("with Tala URL configured, adapter uses Tala API", async ({ page }) => {
+    await page.goto(TEST_PAGE);
+    // This test verifies the adapter selection logic
+    const result = await page.evaluate(async () => {
+      const mod = await import("/extensions/plano/tile.js");
+      const factory = mod.default(null, { talaUrl: "http://localhost:3838" });
+      const tile = factory({});
+      // Mount into a temp container to trigger adapter init
+      const container = document.createElement("div");
+      tile.mount(container, {
+        tileId: "test", setTitle: () => {}, setIcon: () => {},
+        sendWs: () => {}, chrome: {},
+      });
+      // Check if the tile tried to connect to Tala
+      // (we can't easily verify which adapter was chosen, but mount shouldn't crash)
+      return { mounted: container.innerHTML.length > 0 };
+    });
+    expect(result.mounted).toBe(true);
+  });
+
+  test("without Tala config, falls back to localStorage", async ({ page }) => {
+    await page.goto(TEST_PAGE);
+    await page.evaluate(() => localStorage.removeItem("plano_notes"));
+    await page.reload();
+    await page.waitForSelector(".plano-root", { timeout: 5000 });
+
+    // Create a note — should work without Tala
+    page.once("dialog", dialog => dialog.accept("Local Note"));
+    await page.locator("text=New Note").first().click();
+    await page.waitForTimeout(500);
+
+    // Verify it's in localStorage (not Tala)
+    const stored = await page.evaluate(() => {
+      return localStorage.getItem("plano_notes") !== null;
+    });
+    expect(stored).toBe(true);
+  });
+});

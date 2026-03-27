@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head><title>Plano Test</title></head>
+<body style="background:#1a1a1a;color:#eee;font-family:monospace;padding:0;margin:0;">
+<div id="tile-container" style="width:100%;height:100vh;"></div>
+<script type="module">
+try {
+  const mod = await import("/extensions/plano/tile.js");
+  const factory = mod.default(null, {});
+  const tile = factory({});
+  const container = document.getElementById("tile-container");
+  tile.mount(container, {
+    tileId: "test-plano",
+    setTitle: (t) => { document.title = "Plano: " + t; },
+    setIcon: () => {},
+    sendWs: () => {},
+    flip: () => {},
+    chrome: {},
+  });
+} catch (e) {
+  document.getElementById("tile-container").innerHTML =
+    `<div style="padding:20px;color:#f88;">Error: ${e.message}<br><pre>${e.stack}</pre></div>`;
+}
+</script>
+</body>
+</html>
