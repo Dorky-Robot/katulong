@@ -380,9 +380,9 @@ describe("createWebSocketManager", () => {
       assert.equal(subscribedMsg.session, "bg-session");
       assert.equal(subscribedMsg.data, "$ hello world\r\nprompt> ");
 
-      // No seq-init for subscribe — background tiles are snapshot-only
       const seqMsg = msgs.find(m => m.type === "seq-init");
-      assert.equal(seqMsg, undefined, "subscribe should NOT send seq-init");
+      assert.ok(seqMsg, "should receive seq-init");
+      assert.equal(seqMsg.seq, 500);
     });
 
     it("subscribe with empty buffer sends no output message", async () => {

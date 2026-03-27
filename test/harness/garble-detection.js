@@ -148,6 +148,8 @@ class TestClient {
       const listener = (msg) => {
         if (msg.type === "subscribed" && msg.session === session) {
           this._subscribeScrollback[session] = msg.data || "";
+        }
+        if (msg.type === "seq-init" && msg.session === session) {
           resolve();
         }
       };
