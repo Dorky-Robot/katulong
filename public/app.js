@@ -1081,6 +1081,7 @@
               termArea.parentElement.appendChild(tileContainer);
 
               // Mount the tile
+              try {
               tile.mount(tileContainer, {
                 tileId: id,
                 setTitle: (t) => { windowTabSet.renameTab?.(id, t); },
@@ -1089,6 +1090,10 @@
                 flip: () => {},
                 chrome: {},
               });
+              } catch (err) {
+                console.error("[tile-mount] Error mounting tile:", err);
+                tileContainer.innerHTML = `<div style="padding:20px;color:#f88;font-family:monospace;">Mount error: ${err.message}<br><pre>${err.stack}</pre></div>`;
+              }
 
               // Store ref for cleanup
               tileContainer._tile = tile;

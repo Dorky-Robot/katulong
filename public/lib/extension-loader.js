@@ -65,8 +65,18 @@ export async function loadExtensions() {
       if (typeof mod.createTileFactory === "function") {
         factory = mod.createTileFactory();
       } else if (typeof mod.default === "function") {
+        // default export might be: setup(sdk, options) → (tileOptions) → TilePrototype
+        // Call it once to get the tile factory, then use that factory
         const setupFn = mod.default;
-        factory = (options = {}) => setupFn(null, options);
+        const innerFactory = setupFn(null, {});
+        if (typeof innerFactory === "function") {
+          factory = innerFactory; // setup returned a factory
+        } else if (innerFactory && typeof innerFactory.mount === "function") {
+          factory = () => innerFactory; // setup returned a tile directly
+        } else {
+          console.warn(`[extensions] ${ext.name}: default export returned unexpected type`);
+          continue;
+        }
       } else {
         console.warn(`[extensions] ${ext.name}: no createTileFactory or default export`);
         continue;

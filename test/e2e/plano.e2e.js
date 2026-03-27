@@ -186,33 +186,83 @@ test.describe("Plano — Note CRUD", () => {
 test.describe("Plano — In Katulong App", () => {
   test.setTimeout(30_000);
 
-  test("clicking New Plano mounts the tile in the main UI", async ({ page }) => {
-    // Go to katulong with a session
+  test("clicking New Plano mounts tile with visible UI elements", async ({ page }) => {
     const sessionName = `plano-mount-${Date.now()}`;
     await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
-    // Wait for app to load
     await page.waitForSelector(".xterm-screen, .shortcut-bar, [class*=tab]", { timeout: 10000 });
     await page.waitForTimeout(1000);
 
     // Find and click the + button
-    const addBtn = page.locator("button").filter({ hasText: /^\+$/ }).first();
-    if (await addBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await addBtn.click();
-      await page.waitForTimeout(500);
+    const addBtn = page.locator(".tab-bar-add").first();
+    await expect(addBtn).toBeVisible({ timeout: 3000 });
+    await addBtn.click();
+    await page.waitForTimeout(500);
 
-      // Click Plano in the menu
-      const planoOption = page.locator("text=Plano").first();
-      if (await planoOption.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await planoOption.click();
-        await page.waitForTimeout(1000);
+    // Click New Plano in the dropdown menu
+    const planoOption = page.locator(".tab-menu-item:has-text('New Plano')").first();
+    await expect(planoOption).toBeVisible({ timeout: 3000 });
+    await planoOption.click();
+    await page.waitForTimeout(2000);
 
-        // The plano root should be visible somewhere in the page
-        const planoRoot = page.locator(".plano-root").first();
-        await expect(planoRoot).toBeVisible({ timeout: 5000 });
-      }
-    }
+    // The plano root should be visible
+    const planoRoot = page.locator(".plano-root").first();
+    await expect(planoRoot).toBeVisible({ timeout: 5000 });
+
+    // Should have a "+ New Note" button
+    const newNoteBtn = page.locator(".plano-root >> text=New Note").first();
+    await expect(newNoteBtn).toBeVisible({ timeout: 3000 });
+
+    // Should have an empty state or editor area
+    const emptyState = page.locator(".plano-root >> text=Create or select").first();
+    await expect(emptyState).toBeVisible({ timeout: 3000 });
+
+    // Check that tile container is NOT just a dark background
+    const bgColor = await planoRoot.evaluate(el => {
+      const style = window.getComputedStyle(el);
+      return style.backgroundColor;
+    });
+    // plano-root should have some content, not just the dark tile container
+    const childCount = await planoRoot.evaluate(el => el.children.length);
+    expect(childCount).toBeGreaterThan(0);
+
+    // Take a screenshot for debugging if needed
+    await page.screenshot({ path: "/tmp/plano-mount.png" });
 
     // Cleanup
+    await page.evaluate(
+      (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: "DELETE" }),
+      sessionName,
+    );
+  });
+
+  test("Plano tile tab appears and can be switched to", async ({ page }) => {
+    const sessionName = `plano-tab-${Date.now()}`;
+    await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
+    await page.waitForSelector(".xterm-screen, .shortcut-bar, [class*=tab]", { timeout: 10000 });
+    await page.waitForTimeout(1000);
+
+    const addBtn = page.locator(".tab-bar-add").first();
+    await addBtn.click();
+    await page.waitForTimeout(500);
+    await page.locator("text=New Plano").first().click();
+    await page.waitForTimeout(1000);
+
+    // Should have a plano tab in the tab bar
+    const planoTab = page.locator("[class*=tab]:has-text('plano')").first();
+    await expect(planoTab).toBeVisible({ timeout: 5000 });
+
+    // Click the terminal tab, then click plano tab — tile should reappear
+    const termTab = page.locator(`[class*=tab]:has-text('${sessionName.slice(0,10)}')`).first();
+    if (await termTab.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await termTab.click();
+      await page.waitForTimeout(500);
+      await planoTab.click();
+      await page.waitForTimeout(500);
+
+      const planoRoot = page.locator(".plano-root").first();
+      await expect(planoRoot).toBeVisible({ timeout: 3000 });
+    }
+
     await page.evaluate(
       (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: "DELETE" }),
       sessionName,
