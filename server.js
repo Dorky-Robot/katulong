@@ -31,6 +31,7 @@ import { createHelmSessionManager } from "./lib/helm-session-manager.js";
 import { createTopicBroker } from "./lib/topic-broker.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 import { loadPlugins } from "./lib/plugin-loader.js";
+import { createExtensionRoutes } from "./lib/extension-manager.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = envConfig.port;
@@ -257,6 +258,7 @@ const routes = [
     topicBroker: createTopicBroker(),
     getExternalUrl: () => _lastExternalUrl,
   }),
+  ...createExtensionRoutes({ json, auth, DATA_DIR }),
   ...createFileBrowserRoutes({ json, parseJSON, auth, csrf }),
   ...createPortProxyRoutes({ auth, PORT, configManager }),
   ...pluginRoutes,

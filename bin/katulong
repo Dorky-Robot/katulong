@@ -27,6 +27,7 @@ const COMMANDS = {
   token: "Manage setup tokens (create, list, revoke)",
   credential: "Manage passkey credentials (list, revoke)",
   session: "Manage terminal sessions (list, create, kill, rename)",
+  extensions: "Manage tile extensions (list, install, remove)",
   notes: "Read per-session notepad content (read, list)",
   service: "Manage macOS LaunchAgent (install, uninstall, restart, status)",
 };

@@ -37,8 +37,7 @@
     import { createCardCarousel, isCarouselDevice } from "/lib/card-carousel.js";
     import { registerTileType, createTile } from "/lib/tile-registry.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
-    import { createDashboardTileFactory } from "/lib/tiles/dashboard-tile.js";
-    import { createHtmlTileFactory } from "/lib/tiles/html-tile.js";
+    import { loadExtensions } from "/lib/extension-loader.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -249,8 +248,6 @@
       get carousel() { return carousel; },
     };
     registerTileType("terminal", createTerminalTileFactory(terminalDeps));
-    registerTileType("dashboard", createDashboardTileFactory({ createTileFn: createTile }));
-    registerTileType("html", createHtmlTileFactory());
 
     /** Create a terminal tile for a session, using the session name as tile ID. */
     function makeTerminalTile(sessionName) {
@@ -1033,6 +1030,11 @@
       dictationModal.open();
     }
 
+    // --- Load extensions ---
+    // Fetch installed extensions and register their tile types.
+    // Must happen after terminal tile registration but before shortcut bar.
+    const _extensionTileTypes = await loadExtensions();
+
     // --- Viewport manager & Shortcut bar ---
     // (Moved here after openSessionManager and openDictationModal are defined)
 
@@ -1053,20 +1055,16 @@
       onNewSessionClick: createNewSession,
       tileTypes: [
         { type: "terminal", name: "Terminal", icon: "terminal-window" },
-        { type: "html", name: "HTML View", icon: "code" },
-        { type: "dashboard", name: "Dashboard", icon: "squares-four" },
+        ..._extensionTileTypes,
       ],
       onCreateTile: (type, _meta) => {
         if (type === "terminal") {
           // Terminal tiles create a server-side session
           createNewSession();
         } else if (isCarouselDevice()) {
-          // Non-terminal tiles: create directly in the carousel
+          // Extension tiles: create directly in the carousel
           const id = `${type}-${Date.now().toString(36)}`;
-          const options = type === "dashboard"
-            ? { cols: 2, rows: 1, title: "Dashboard", slots: [] }
-            : { title: `New ${_meta?.name || type}`, html: `<div style="padding:40px;text-align:center;opacity:0.5"><h2>${_meta?.name || type}</h2><p>Empty tile — content will appear here.</p></div>` };
-          const tile = createTile(type, options);
+          const tile = createTile(type, { title: _meta?.name || type });
           carousel.addCard(id, tile);
           carousel.focusCard(id);
           windowTabSet.addTab(id);
