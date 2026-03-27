@@ -188,6 +188,10 @@ class TestClient {
         if (msg.data) this.pullData += msg.data;
         this.seq = msg.cursor;
         break;
+      case "resync":
+        // Resync resets and replays — store separately for inspection
+        if (msg.seq != null) this.seq = msg.seq;
+        break;
     }
     if (this._extraHandler) this._extraHandler(msg);
   }
@@ -627,7 +631,56 @@ describe("Garble Detection", { timeout: 300000 }, () => {
     assert.ok(hasMarker, "Typed command output should be visible (not frozen)");
   });
 
-  it("Scenario J: real Claude Code session with tab switching (EXPENSIVE)", async () => {
+  it("Scenario J: periodic resync arrives after idle period", async () => {
+    // Create a session, generate output, then wait ~12 seconds.
+    // The server should send a resync message with a valid snapshot.
+    await request("POST", "/sessions", { name: "garble-resync" });
+    await sleep(1500);
+
+    const client = new TestClient();
+    await client.connect();
+    await client.attach("garble-resync");
+    await client.waitForQuiet(500, 3000);
+
+    // Generate some output to start the resync idle timer
+    client.sendInput("echo 'resync-marker-output'\n");
+    await client.waitForQuiet(500, 3000);
+
+    // Record message count before waiting
+    const msgCountBefore = client.messages.length;
+
+    // Wait 12 seconds for the resync idle timer (10s) to fire
+    await sleep(12000);
+
+    // Check for a resync message
+    const resyncMessages = client.messages.filter(
+      m => m.type === "resync" && m.session === "garble-resync"
+    );
+
+    client.close();
+
+    console.log(`  Messages before wait: ${msgCountBefore}, after: ${client.messages.length}`);
+    console.log(`  Resync messages received: ${resyncMessages.length}`);
+
+    assert.ok(resyncMessages.length >= 1, "Should receive at least one resync message after idle");
+
+    // Validate the resync snapshot
+    const resync = resyncMessages[0];
+    assert.ok(resync.data, "Resync should contain snapshot data");
+    assert.ok(typeof resync.seq === "number", "Resync should contain seq number");
+
+    // Verify no broken escape sequences in the snapshot
+    const escErrors = validateEscapeSequences(resync.data);
+    console.log(`  Resync snapshot: ${resync.data.length} bytes, seq: ${resync.seq}, esc errors: ${escErrors.length}`);
+    assert.equal(escErrors.length, 0, `Broken escape sequences in resync snapshot: ${escErrors.length}`);
+
+    // Verify the snapshot contains our marker
+    const visibleLines = extractVisibleLines(resync.data);
+    const hasMarker = visibleLines.some(l => l.includes("resync-marker-output"));
+    assert.ok(hasMarker, "Resync snapshot should contain the marker output");
+  });
+
+  it("Scenario K: real Claude Code session with tab switching (EXPENSIVE)", async () => {
     // This test launches actual Claude Code, sends it a prompt, and
     // switches tabs while it's thinking/streaming. This is the scenario
     // that triggers the most garbling in practice.

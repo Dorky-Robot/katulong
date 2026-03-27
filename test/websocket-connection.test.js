@@ -169,6 +169,34 @@ describe("wsMessageHandlers", () => {
     });
   });
 
+  describe("resync", () => {
+    it("resets terminal session, writes snapshot, and reinits pull cursor", () => {
+      const result = handlers.resync({ session: "my-session", data: "snapshot-data", seq: 42 });
+      assert.deepStrictEqual(result.stateUpdates, {});
+      const effectTypes = result.effects.map(e => e.type);
+      assert.ok(effectTypes.includes("terminalResetSession"));
+      assert.ok(effectTypes.includes("terminalWrite"));
+      assert.ok(effectTypes.includes("pullInit"));
+      const reset = result.effects.find(e => e.type === "terminalResetSession");
+      assert.strictEqual(reset.session, "my-session");
+      const write = result.effects.find(e => e.type === "terminalWrite");
+      assert.strictEqual(write.data, "snapshot-data");
+      assert.strictEqual(write.session, "my-session");
+      assert.strictEqual(write.useOutputTerm, true);
+      const pull = result.effects.find(e => e.type === "pullInit");
+      assert.strictEqual(pull.session, "my-session");
+      assert.strictEqual(pull.seq, 42);
+    });
+
+    it("skips terminalWrite when data is empty", () => {
+      const result = handlers.resync({ session: "s", data: "", seq: 10 });
+      const effectTypes = result.effects.map(e => e.type);
+      assert.ok(!effectTypes.includes("terminalWrite"));
+      assert.ok(effectTypes.includes("terminalResetSession"));
+      assert.ok(effectTypes.includes("pullInit"));
+    });
+  });
+
   describe("credential-registered", () => {
     it("emits refreshTokensAfterRegistration", () => {
       const result = handlers["credential-registered"]();

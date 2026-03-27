@@ -105,6 +105,16 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
+    // Periodic idle resync: server sends a fresh snapshot to correct drift
+    resync: (msg) => ({
+      stateUpdates: {},
+      effects: [
+        { type: 'terminalResetSession', session: msg.session },
+        ...(msg.data ? [{ type: 'terminalWrite', data: msg.data, session: msg.session, useOutputTerm: true }] : []),
+        { type: 'pullInit', session: msg.session, seq: msg.seq },
+      ]
+    }),
+
     'subscribed': (msg) => ({
       stateUpdates: {},
       effects: [
