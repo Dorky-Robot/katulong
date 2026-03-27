@@ -7,6 +7,7 @@
 
 import { scrollToBottom, terminalWriteWithScroll, isAtBottom } from "/lib/scroll-utils.js";
 import { basePath } from "/lib/base-path.js";
+import { createPullManager } from "/lib/pull-manager.js";
 
 /**
  * Connection state machine: DISCONNECTED → CONNECTING → CONNECTED → ATTACHED
@@ -46,63 +47,28 @@ export function createWebSocketConnection(deps = {}) {
   let reconnectTimeout = null;
   let suppressReconnect = false;
 
-  // --- Pull-based output: each session is an event topic (like Kafka). ---
-  // Clients maintain a cursor (byte offset) into the session's RingBuffer
-  // and pull data when ready.  The server sends lightweight "data-available"
-  // notifications; clients respond with pull requests at their own pace.
-  // Natural backpressure: the next pull only fires after xterm finishes
-  // processing the previous write.
-
-  const pullStates = new Map(); // sessionName -> { cursor, pulling, writing, pending }
-
-  // Safety timeout: if a pull response doesn't arrive within this window,
-  // assume it was dropped (backpressure, session gone, etc.) and unstick.
-  const PULL_TIMEOUT_MS = 5000;
-  const pullTimers = new Map(); // sessionName -> timeoutId
-
-  function sendPull(sessionName) {
-    const ps = pullStates.get(sessionName);
-    if (!ps || ps.pulling) return;
-    const ws = state.connection.ws;
-    if (!ws || ws.readyState !== 1) return;
-    ps.pulling = true;
-    ws.send(JSON.stringify({ type: "pull", session: sessionName, fromSeq: ps.cursor }));
-
-    // Safety net: if no response arrives, unstick the pull state
-    clearTimeout(pullTimers.get(sessionName));
-    pullTimers.set(sessionName, setTimeout(() => {
-      const ps = pullStates.get(sessionName);
-      if (ps?.pulling) {
-        ps.pulling = false;
-        // Retry the pull — server may have dropped our request
-        sendPull(sessionName);
+  // --- Pull-based output ---
+  // Extracted to pull-manager.js: pure state machine with callbacks.
+  const pulls = createPullManager({
+    onSendPull(session, fromSeq) {
+      const ws = state.connection.ws;
+      if (ws?.readyState === 1) {
+        ws.send(JSON.stringify({ type: "pull", session, fromSeq }));
       }
-    }, PULL_TIMEOUT_MS));
-  }
-
-  function initPullState(sessionName, cursor) {
-    const existing = pullStates.get(sessionName);
-    if (existing) {
-      existing.cursor = cursor;
-      existing.pulling = false;
-      existing.writing = false;
-      existing.pending = false;
-    } else {
-      pullStates.set(sessionName, { cursor, pulling: false, writing: false, pending: false });
-    }
-  }
-
-  function clearPullStates(sessionName) {
-    if (sessionName) {
-      pullStates.delete(sessionName);
-      clearTimeout(pullTimers.get(sessionName));
-      pullTimers.delete(sessionName);
-    } else {
-      pullStates.clear();
-      for (const t of pullTimers.values()) clearTimeout(t);
-      pullTimers.clear();
-    }
-  }
+    },
+    onWrite(session, data, done) {
+      const term = getOutputTerm(session);
+      if (term) {
+        terminalWriteWithScroll(term, data, done);
+      } else {
+        done(); // no terminal — advance cursor anyway
+      }
+    },
+    onReset(session) {
+      const term = getOutputTerm(session);
+      if (term) { term.clear(); term.reset(); }
+    },
+  });
 
   // --- Pure WebSocket message handlers (functional core) ---
   const wsMessageHandlers = {
@@ -272,35 +238,6 @@ export function createWebSocketConnection(deps = {}) {
     }),
   };
 
-  /** Write data to a terminal and advance the pull cursor. Shared by pullResponse/pullSnapshot. */
-  function writeAndAdvance(session, data, cursor) {
-    const ps = pullStates.get(session);
-    if (!ps) return;
-    ps.pulling = false;
-    clearTimeout(pullTimers.get(session));
-    if (data && data.length > 0) {
-      ps.writing = true;
-      const term = getOutputTerm(session);
-      if (term) {
-        const safety = setTimeout(() => {
-          if (ps.writing) { ps.writing = false; ps.cursor = cursor; if (ps.pending) { ps.pending = false; sendPull(session); } }
-        }, 3000);
-        terminalWriteWithScroll(term, data, () => {
-          clearTimeout(safety);
-          ps.writing = false;
-          ps.cursor = cursor;
-          if (ps.pending) { ps.pending = false; sendPull(session); }
-        });
-      } else {
-        ps.writing = false;
-        ps.cursor = cursor;
-      }
-    } else {
-      ps.cursor = cursor;
-      if (ps.pending) { ps.pending = false; sendPull(session); }
-    }
-  }
-
   // Effect executor (side effects at edges)
   function executeEffect(effect) {
     switch (effect.type) {
@@ -324,35 +261,20 @@ export function createWebSocketConnection(deps = {}) {
         break;
       }
       case 'seqClear':
-        clearPullStates(effect.session || null);
+        pulls.clear(effect.session || null);
         break;
       case 'pullInit':
-        if (effect.session) {
-          initPullState(effect.session, effect.seq);
-          sendPull(effect.session);
-        }
+        if (effect.session) pulls.init(effect.session, effect.seq);
         break;
-      case 'dataAvailable': {
-        // Server notifies new data — trigger pull if not already busy
-        const ps = pullStates.get(effect.session);
-        if (!ps) break; // not initialized yet
-        if (ps.pulling || ps.writing) {
-          ps.pending = true; // will pull again after current op completes
-          break;
-        }
-        sendPull(effect.session);
+      case 'dataAvailable':
+        pulls.dataAvailable(effect.session);
         break;
-      }
       case 'pullResponse':
-        writeAndAdvance(effect.session, effect.data, effect.cursor);
+        pulls.pullResponse(effect.session, effect.data, effect.cursor);
         break;
-      case 'pullSnapshot': {
-        // Cursor was evicted — reset terminal before writing snapshot
-        const term = getOutputTerm(effect.session);
-        if (term) { term.clear(); term.reset(); }
-        writeAndAdvance(effect.session, effect.data || "", effect.cursor);
+      case 'pullSnapshot':
+        pulls.pullSnapshot(effect.session, effect.data || "", effect.cursor);
         break;
-      }
       case 'terminalReset': {
         const term = getTerm();
         if (!term) break;
@@ -506,7 +428,7 @@ export function createWebSocketConnection(deps = {}) {
       const term = getTerm();
       state.scroll.userScrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
       state.connection.attached = false;
-      clearPullStates();
+      pulls.clear();
       if (deps.updateConnectionIndicator) deps.updateConnectionIndicator();
       if (deps.onDisconnect) deps.onDisconnect();
 
