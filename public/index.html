@@ -222,31 +222,44 @@
       /* No background, shadow, or border-radius here — those live on the faces */
       transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
       will-change: transform;
-      perspective: 1200px;
     }
-    /* Flip container — the whole visible card rotates */
+    /* Flip container — 3D context only activated during flip.
+       iPadOS Safari drops wheel events inside preserve-3d +
+       backface-visibility:hidden contexts, so we avoid them
+       until actually flipping. */
     .card-inner {
       position: relative;
       width: 100%; height: 100%;
       transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-      transform-style: preserve-3d;
+    }
+    .carousel-card:has(.card-inner.flipped) {
+      perspective: 1200px;
     }
     .card-inner.flipped {
+      transform-style: preserve-3d;
       transform: rotateY(180deg);
+    }
+    .card-inner.flipped > .card-face {
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+    }
+    .card-inner.flipped > .card-back {
+      display: flex;
     }
     /* Each face IS the visible card — shadow, radius, background all here */
     .card-face {
       position: absolute;
       inset: 0;
-      backface-visibility: hidden;
-      -webkit-backface-visibility: hidden;
       display: flex; flex-direction: column;
       overflow: hidden;
       border-radius: 16px;
       background: transparent;
       box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.4);
     }
+    /* Back face hidden unless flipped — avoids backface-visibility which
+       breaks wheel events on iPadOS Safari */
     .card-back {
+      display: none;
       transform: rotateY(180deg);
       background: var(--bg, #181825);
     }
