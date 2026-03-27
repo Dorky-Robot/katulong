@@ -20,17 +20,21 @@ export function createTerminalKeyboard(options = {}) {
    * Initialize Tab key interception
    * Prevents browser focus navigation and sends \t to PTY
    */
+  let _tabHandler = null;
+
   function initTabHandler() {
-    document.addEventListener("keydown", (ev) => {
+    // Guard: only register one document-level Tab handler per terminal.
+    // The handler checks that THIS terminal's textarea is focused before
+    // sending, so multiple terminals in the pool don't double-fire.
+    if (_tabHandler) return;
+    _tabHandler = (ev) => {
       if (ev.key !== "Tab" || ev.ctrlKey || ev.altKey || ev.metaKey) return;
 
+      // Only handle if THIS terminal's helper textarea is focused
       const active = document.activeElement;
-      const inTerminal = active && (
-        active.classList.contains("xterm-helper-textarea") ||
-        active.closest("#terminal-container")
-      );
-
-      if (!inTerminal) return;
+      if (!active) return;
+      const textarea = term?.element?.querySelector(".xterm-helper-textarea");
+      if (active !== textarea) return;
 
       ev.preventDefault();
       ev.stopPropagation();
@@ -38,7 +42,8 @@ export function createTerminalKeyboard(options = {}) {
       if (onSend) {
         onSend(ev.shiftKey ? "\x1b[Z" : "\t");
       }
-    }, true); // Use capture phase
+    };
+    document.addEventListener("keydown", _tabHandler, true);
   }
 
   /**
