@@ -194,7 +194,9 @@ const sessionManager = createSessionManager({
   bridge,
   shell: envConfig.shell,
   home: envConfig.home,
+  dataDir: DATA_DIR,
 });
+await sessionManager.restoreSessions();
 
 // --- Periodic expired session pruning (1 hour) ---
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000;

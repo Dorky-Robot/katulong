@@ -27,7 +27,7 @@ class MockSession {
     this.name = name;
     this.tmuxName = tmuxName;
     this.state = MockSession.STATE_ATTACHED;
-    this.outputBuffer = [];
+    this.outputBuffer = { totalBytes: 0 };
     this._childCount = 0;
     this.external = options.external || false;
     this._written = [];
@@ -48,6 +48,7 @@ class MockSession {
     this.state = MockSession.STATE_KILLED;
     tmuxSessions.delete(this.tmuxName);
   }
+  serializeScreen() { return ""; }
   toJSON() {
     return { name: this.name, alive: this.alive, external: this.external };
   }
@@ -91,6 +92,7 @@ mock.module(tmuxModuleUrl, {
     tmuxListSessions: async () => [...tmuxSessions.keys()],
     tmuxKillSession: async (tmuxName) => { tmuxSessions.delete(tmuxName); },
     tmuxListSessionsDetailed: async () => new Map(),
+    getCursorPosition: async () => ({ row: 0, col: 0 }),
   },
 });
 
@@ -240,7 +242,7 @@ describe("session manager", () => {
       await mgr.createSession("sess");
       const result = await mgr.attachClient("client1", "sess", 80, 24);
       assert.strictEqual(result.alive, true);
-      assert.strictEqual(result.buffer, "$ prompt\n");
+      assert.strictEqual(result.buffer, "");
     });
 
     it("creates session on attach if missing", async () => {
