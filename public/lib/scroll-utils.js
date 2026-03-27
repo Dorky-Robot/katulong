@@ -234,7 +234,10 @@ export function initWheelScroll(term) {
   if (_wheelScrollAttached.has(term)) return;
   _wheelScrollAttached.add(term);
 
-  const el = term.element;
+  // Listen on the terminal pane (ancestor), not just the xterm element.
+  // On iPad Safari with trackpad, wheel events may target the pane wrapper
+  // rather than the xterm element deep in the DOM.
+  const el = term.element?.closest(".terminal-pane") || term.element;
   if (!el) return;
 
   let accDelta = 0;
