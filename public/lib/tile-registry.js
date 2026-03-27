@@ -55,13 +55,3 @@ export function createTile(type, options = {}) {
   }
   return factory(options);
 }
-
-/** List all registered type names. */
-export function getTileTypes() {
-  return [...registry.keys()];
-}
-
-/** Check if a tile type is registered. */
-export function hasTileType(type) {
-  return registry.has(type);
-}

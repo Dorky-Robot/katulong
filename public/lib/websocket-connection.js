@@ -13,7 +13,7 @@ import { createPullManager } from "/lib/pull-manager.js";
  * Connection state machine: DISCONNECTED → CONNECTING → CONNECTED → ATTACHED
  * Only valid transitions are forward through this sequence, or back to DISCONNECTED.
  */
-export const CONNECTION_STATES = {
+const CONNECTION_STATES = {
   DISCONNECTED: 'disconnected',
   CONNECTING: 'connecting',
   CONNECTED: 'connected',

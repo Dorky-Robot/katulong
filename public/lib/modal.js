@@ -11,7 +11,7 @@
 /**
  * Manages a single modal instance
  */
-export class ModalManager {
+class ModalManager {
   /**
    * Creates a modal manager instance
    * @param {string} modalId - ID of the modal element (without -overlay suffix)

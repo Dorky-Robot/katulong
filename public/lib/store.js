@@ -103,24 +103,6 @@ export function createStore(initialState, reducer, options = {}) {
  * @param {object} reducers - Object mapping state keys to reducers
  * @returns {Function} Combined reducer function
  */
-export function combineReducers(reducers) {
-  return (state = {}, action) => {
-    const nextState = {};
-    let hasChanged = false;
-
-    Object.keys(reducers).forEach(key => {
-      const reducer = reducers[key];
-      const prevStateForKey = state[key];
-      const nextStateForKey = reducer(prevStateForKey, action);
-
-      nextState[key] = nextStateForKey;
-      hasChanged = hasChanged || nextStateForKey !== prevStateForKey;
-    });
-
-    return hasChanged ? nextState : state;
-  };
-}
-
 /**
  * Creates a simple reducer from action handlers
  * @param {object} initialState - Initial state for this reducer
