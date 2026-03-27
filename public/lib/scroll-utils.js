@@ -252,9 +252,6 @@ export function initWheelScroll(term) {
   }
 
   el.addEventListener("wheel", (e) => {
-    // If xterm already handled this event, don't double-scroll
-    if (e.defaultPrevented) return;
-
     const dy = e.deltaY;
     if (dy === 0) return;
 
@@ -275,7 +272,8 @@ export function initWheelScroll(term) {
     }
 
     e.preventDefault();
-  }, { passive: false });
+    e.stopPropagation();
+  }, { capture: true, passive: false });
 }
 
 /**
