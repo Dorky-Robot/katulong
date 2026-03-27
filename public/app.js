@@ -18,7 +18,7 @@
 
     import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
     import { createTabManager } from "/lib/tab-manager.js";
-    import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll, initScrollTracking, initTouchScroll } from "/lib/scroll-utils.js";
+    import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll, initScrollTracking, initTouchScroll, initWheelScroll } from "/lib/scroll-utils.js";
     import { keysToSequence, sendSequence, displayKey, keysLabel, keysString, VALID_KEYS, normalizeKey } from "/lib/key-mapping.js";
     import { createShortcutBar } from "/lib/shortcut-bar.js";
     import { createWindowTabSet } from "/lib/window-tab-set.js";
@@ -184,6 +184,7 @@
         // fight the user's scroll position.
         initScrollTracking(entry.term);
         initTouchScroll(entry.term);
+        initWheelScroll(entry.term);
 
         // Attach scroll-to-bottom button to this terminal's viewport.
         // Deferred one frame so xterm.js has rendered the viewport element.

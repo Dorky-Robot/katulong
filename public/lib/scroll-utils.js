@@ -213,6 +213,69 @@ export function initTouchScroll(term) {
 }
 
 /**
+ * Enable wheel-based scrolling as a fallback for trackpad on iPad.
+ *
+ * On iPadOS Safari, trackpad two-finger scroll gestures generate standard
+ * `wheel` events.  xterm.js 6 normally handles these on its internal
+ * `.xterm-scrollable-element`, but the `touch-action: none` CSS on `.xterm`
+ * can prevent iPadOS Safari from dispatching wheel events to xterm's
+ * scrollable element for trackpad gestures.
+ *
+ * This handler listens on the terminal's root element and converts wheel
+ * deltas into `term.scrollLines()` calls.  It only acts when xterm has NOT
+ * already handled the event (checked via `defaultPrevented`), so on
+ * platforms where xterm's native wheel handling works, this is a no-op.
+ *
+ * Call once per terminal (idempotent via WeakSet).
+ */
+const _wheelScrollAttached = new WeakSet();
+
+export function initWheelScroll(term) {
+  if (_wheelScrollAttached.has(term)) return;
+  _wheelScrollAttached.add(term);
+
+  const el = term.element;
+  if (!el) return;
+
+  let accDelta = 0;
+
+  function cellHeight() {
+    try {
+      return term._core._renderService.dimensions.css.cell.height;
+    } catch {
+      const rect = el.getBoundingClientRect();
+      return rect.height / term.rows;
+    }
+  }
+
+  el.addEventListener("wheel", (e) => {
+    // If xterm already handled this event, don't double-scroll
+    if (e.defaultPrevented) return;
+
+    const dy = e.deltaY;
+    if (dy === 0) return;
+
+    // Normalize: deltaMode 0 = pixels, 1 = lines, 2 = pages
+    let pixels = dy;
+    if (e.deltaMode === 1) { // DOM_DELTA_LINE
+      pixels = dy * cellHeight();
+    } else if (e.deltaMode === 2) { // DOM_DELTA_PAGE
+      pixels = dy * cellHeight() * term.rows;
+    }
+
+    accDelta += pixels;
+    const rowH = cellHeight();
+    const lines = Math.trunc(accDelta / rowH);
+    if (lines !== 0) {
+      term.scrollLines(lines);
+      accDelta -= lines * rowH;
+    }
+
+    e.preventDefault();
+  }, { passive: false });
+}
+
+/**
  * Preserve scroll position during operation (composable).
  * Derives scroll state from the terminal buffer, not DOM.
  */
