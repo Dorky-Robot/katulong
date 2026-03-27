@@ -248,128 +248,50 @@ export function createWebSocketConnection(deps = {}) {
     }),
   };
 
-  // Effect executor (side effects at edges)
+  // Effect handlers — data-driven lookup instead of switch.
+  // Each handler receives the effect object.
+  const effectHandlers = {
+    updateConnectionIndicator: () => deps.updateConnectionIndicator?.(),
+    fit: () => { if (deps.fit) requestAnimationFrame(() => deps.fit()); },
+    log: (e) => console.log(e.message),
+    pasteComplete: (e) => deps.onPasteComplete?.(e.path),
+    scrollToBottomIfNeeded: (e) => { const t = getTerm(); if (e.condition && t) scrollToBottom(t); },
+    seqClear: (e) => pulls.clear(e.session || null),
+    pullInit: (e) => { if (e.session) pulls.init(e.session, e.seq); },
+    dataAvailable: (e) => pulls.dataAvailable(e.session),
+    pullResponse: (e) => pulls.pullResponse(e.session, e.data, e.cursor),
+    pullSnapshot: (e) => pulls.pullSnapshot(e.session, e.data || "", e.cursor),
+    terminalReset: () => { const t = getTerm(); if (t) { t.clear(); t.reset(); } },
+    terminalResetSession: (e) => { const t = getOutputTerm(e.session); if (t) { t.clear(); t.reset(); } },
+    terminalWrite: (e) => { const t = e.useOutputTerm ? getOutputTerm(e.session) : getTerm(); if (t) terminalWriteWithScroll(t, e.data); },
+    reload: () => location.reload(),
+    invalidateSessions: (e) => deps.invalidateSessions?.(e.name),
+    updateSessionUI: (e) => deps.updateSessionUI?.(e.name),
+    syncCarouselSubscriptions: () => deps.syncCarouselSubscriptions?.(),
+    refreshTokensAfterRegistration: () => deps.refreshTokensAfterRegistration?.(),
+    sessionRemoved: (e) => deps.onSessionRemoved?.(e.name),
+    poolRename: (e) => deps.poolRename?.(e.oldName, e.newName),
+    tabRename: (e) => deps.tabRename?.(e.oldName, e.newName),
+    resizeSync: (e) => {
+      const t = getTerm();
+      if (t && e.cols > 0 && e.rows > 0 && e.cols <= 1000 && e.rows <= 1000) t.resize(e.cols, e.rows);
+    },
+    fastReconnect: () => {
+      state.connection.reconnectDelay = 500;
+      if (state.connection.ws?.readyState === WebSocket.OPEN) state.connection.ws.close();
+    },
+    helmModeChanged: (e) => deps.onHelmModeChanged?.(e),
+    helmEvent: (e) => deps.onHelmEvent?.(e.session, e.event),
+    helmTurnComplete: (e) => deps.onHelmTurnComplete?.(e.session),
+    helmWaitingForInput: (e) => deps.onHelmWaitingForInput?.(e.session),
+    tabIconChanged: (e) => deps.onTabIconChanged?.(e.session, e.icon),
+    openTab: (e) => deps.onOpenTab?.(e.session),
+    showNotification: (e) => deps.onNotification?.(e.title, e.message),
+  };
+
   function executeEffect(effect) {
-    switch (effect.type) {
-      case 'updateConnectionIndicator':
-        if (deps.updateConnectionIndicator) deps.updateConnectionIndicator();
-        break;
-      case 'fit':
-        if (deps.fit) requestAnimationFrame(() => deps.fit());
-        break;
-      case 'log':
-        console.log(effect.message);
-        break;
-      case 'pasteComplete':
-        if (deps.onPasteComplete) deps.onPasteComplete(effect.path);
-        break;
-      case 'scrollToBottomIfNeeded': {
-        const term = getTerm();
-        if (effect.condition && term) {
-          scrollToBottom(term);
-        }
-        break;
-      }
-      case 'seqClear':
-        pulls.clear(effect.session || null);
-        break;
-      case 'pullInit':
-        if (effect.session) pulls.init(effect.session, effect.seq);
-        break;
-      case 'dataAvailable':
-        pulls.dataAvailable(effect.session);
-        break;
-      case 'pullResponse':
-        pulls.pullResponse(effect.session, effect.data, effect.cursor);
-        break;
-      case 'pullSnapshot':
-        pulls.pullSnapshot(effect.session, effect.data || "", effect.cursor);
-        break;
-      case 'terminalReset': {
-        const term = getTerm();
-        if (!term) break;
-        term.clear();
-        term.reset();
-        break;
-      }
-      case 'terminalResetSession': {
-        // Reset a specific session's terminal (used before subscribe snapshot
-        // replay so stale content doesn't persist).
-        const term = getOutputTerm(effect.session);
-        if (!term) break;
-        term.clear();
-        term.reset();
-        break;
-      }
-      case 'terminalWrite': {
-        const term = effect.useOutputTerm ? getOutputTerm(effect.session) : getTerm();
-        if (!term) break;
-        terminalWriteWithScroll(term, effect.data);
-        break;
-      }
-      case 'reload':
-        location.reload();
-        break;
-      case 'invalidateSessions':
-        if (deps.invalidateSessions) deps.invalidateSessions(effect.name);
-        break;
-      case 'updateSessionUI':
-        if (deps.updateSessionUI) deps.updateSessionUI(effect.name);
-        break;
-      case 'syncCarouselSubscriptions':
-        if (deps.syncCarouselSubscriptions) deps.syncCarouselSubscriptions();
-        break;
-      case 'refreshTokensAfterRegistration':
-        if (deps.refreshTokensAfterRegistration) deps.refreshTokensAfterRegistration();
-        break;
-      case 'sessionRemoved':
-        if (deps.onSessionRemoved) deps.onSessionRemoved(effect.name);
-        break;
-      case 'poolRename':
-        if (deps.poolRename) deps.poolRename(effect.oldName, effect.newName);
-        break;
-      case 'tabRename':
-        if (deps.tabRename) deps.tabRename(effect.oldName, effect.newName);
-        break;
-      case 'resizeSync': {
-        const term = getTerm();
-        if (!term) break;
-        // Bounds check — reject invalid dimensions that could crash xterm.js
-        if (effect.cols <= 0 || effect.rows <= 0 || effect.cols > 1000 || effect.rows > 1000) break;
-        term.resize(effect.cols, effect.rows);
-        break;
-      }
-      case 'fastReconnect':
-        // Reset reconnect delay for fast reconnection to new server
-        state.connection.reconnectDelay = 500;
-        if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
-          state.connection.ws.close();
-        }
-        break;
-      // Helm mode effects — delegated to app.js via deps
-      case 'helmModeChanged':
-        if (deps.onHelmModeChanged) deps.onHelmModeChanged(effect);
-        break;
-      case 'helmEvent':
-        if (deps.onHelmEvent) deps.onHelmEvent(effect.session, effect.event);
-        break;
-      case 'helmTurnComplete':
-        if (deps.onHelmTurnComplete) deps.onHelmTurnComplete(effect.session);
-        break;
-      case 'helmWaitingForInput':
-        if (deps.onHelmWaitingForInput) deps.onHelmWaitingForInput(effect.session);
-        break;
-      case 'tabIconChanged':
-        if (deps.onTabIconChanged) deps.onTabIconChanged(effect.session, effect.icon);
-        break;
-      // CLI-driven UI actions
-      case 'openTab':
-        if (deps.onOpenTab) deps.onOpenTab(effect.session);
-        break;
-      case 'showNotification':
-        if (deps.onNotification) deps.onNotification(effect.title, effect.message);
-        break;
-    }
+    const handler = effectHandlers[effect.type];
+    if (handler) handler(effect);
   }
 
   // WebSocket connection function
