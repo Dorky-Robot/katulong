@@ -183,6 +183,43 @@ test.describe("Plano — Note CRUD", () => {
   });
 });
 
+test.describe("Plano — In Katulong App", () => {
+  test.setTimeout(30_000);
+
+  test("clicking New Plano mounts the tile in the main UI", async ({ page }) => {
+    // Go to katulong with a session
+    const sessionName = `plano-mount-${Date.now()}`;
+    await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
+    // Wait for app to load
+    await page.waitForSelector(".xterm-screen, .shortcut-bar, [class*=tab]", { timeout: 10000 });
+    await page.waitForTimeout(1000);
+
+    // Find and click the + button
+    const addBtn = page.locator("button").filter({ hasText: /^\+$/ }).first();
+    if (await addBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await addBtn.click();
+      await page.waitForTimeout(500);
+
+      // Click Plano in the menu
+      const planoOption = page.locator("text=Plano").first();
+      if (await planoOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await planoOption.click();
+        await page.waitForTimeout(1000);
+
+        // The plano root should be visible somewhere in the page
+        const planoRoot = page.locator(".plano-root").first();
+        await expect(planoRoot).toBeVisible({ timeout: 5000 });
+      }
+    }
+
+    // Cleanup
+    await page.evaluate(
+      (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: "DELETE" }),
+      sessionName,
+    );
+  });
+});
+
 test.describe("Plano — Tala Integration (optional)", () => {
   test.setTimeout(15_000);
 

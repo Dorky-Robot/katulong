@@ -1071,7 +1071,7 @@
             carousel.focusCard(id);
           } else {
             // Non-carousel: mount tile into the main terminal area
-            const termArea = document.getElementById("terminal") || document.querySelector(".terminal-container");
+            const termArea = document.getElementById("terminal-container");
             if (termArea) {
               // Create a container for the extension tile
               const tileContainer = document.createElement("div");
