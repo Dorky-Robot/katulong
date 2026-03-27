@@ -304,6 +304,11 @@ export function createShortcutBar(options = {}) {
    * Show + button dropdown: new session + all tmux sessions not open as tabs
    */
   async function showAddMenu(addBtn) {
+    // Toggle: if menu is already open, just close it
+    if (activeMenu) {
+      closeMenu();
+      return;
+    }
     // Fetch managed sessions and unmanaged tmux sessions in parallel
     let managed = [];
     let unmanaged = [];
