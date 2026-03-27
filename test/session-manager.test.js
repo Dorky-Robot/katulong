@@ -50,6 +50,7 @@ class MockSession {
     this.state = MockSession.STATE_KILLED;
     tmuxSessions.delete(this.tmuxName);
   }
+  serializeScreen() { return ""; }
   toJSON() {
     return { name: this.name, alive: this.alive, external: this.external };
   }
@@ -94,6 +95,7 @@ mock.module(tmuxModuleUrl, {
     tmuxListSessions: async () => [...tmuxSessions.keys()],
     tmuxKillSession: async (tmuxName) => { tmuxSessions.delete(tmuxName); },
     tmuxListSessionsDetailed: async () => new Map(),
+    getCursorPosition: async () => ({ row: 0, col: 0 }),
   },
 });
 
