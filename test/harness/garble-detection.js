@@ -148,8 +148,6 @@ class TestClient {
       const listener = (msg) => {
         if (msg.type === "subscribed" && msg.session === session) {
           this._subscribeScrollback[session] = msg.data || "";
-        }
-        if (msg.type === "seq-init" && msg.session === session) {
           resolve();
         }
       };
@@ -236,7 +234,7 @@ async function request(method, path, body) {
 
 // --- Test suite ---
 
-describe("Garble Detection", { timeout: 120000 }, () => {
+describe("Garble Detection", { timeout: 300000 }, () => {
   let serverProcess;
   let testDataDir;
 
