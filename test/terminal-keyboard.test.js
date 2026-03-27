@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from "node:test";
+import { describe, it, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 
 /**
@@ -109,6 +109,133 @@ describe("Terminal keyboard — Tab", () => {
     const { handler } = createKeyHandler();
     const result = handler(makeEvent({ key: "Tab", type: "keydown" }));
     assert.equal(result, false);
+  });
+});
+
+// --- Tab capture-phase handler regression tests ---
+
+// Reimplements the Tab capture-phase handler from terminal-keyboard.js
+// to verify it only fires for the focused terminal.
+function createTabHandler(term, onSend) {
+  let _tabHandler = null;
+  function initTabHandler() {
+    if (_tabHandler) return;
+    _tabHandler = (ev) => {
+      if (ev.key !== "Tab" || ev.ctrlKey || ev.altKey || ev.metaKey) return;
+      const active = document.activeElement;
+      if (!active) return;
+      const textarea = term?.element?.querySelector(".xterm-helper-textarea");
+      if (active !== textarea) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (onSend) onSend(ev.shiftKey ? "\x1b[Z" : "\t");
+    };
+    document.addEventListener("keydown", _tabHandler, true);
+  }
+  return { initTabHandler };
+}
+
+function createMockTerm(id) {
+  const textarea = { _id: `textarea-${id}` };
+  return {
+    element: {
+      querySelector(sel) { return sel === ".xterm-helper-textarea" ? textarea : null; },
+    },
+    _textarea: textarea,
+  };
+}
+
+function setupDocMock() {
+  const listeners = {};
+  let _active = null;
+  globalThis.document = {
+    get activeElement() { return _active; },
+    addEventListener(type, fn, capture) {
+      const key = `${type}:${!!capture}`;
+      (listeners[key] = listeners[key] || []).push(fn);
+    },
+    removeEventListener(type, fn, capture) {
+      const key = `${type}:${!!capture}`;
+      if (listeners[key]) listeners[key] = listeners[key].filter(f => f !== fn);
+    },
+    _setActive(el) { _active = el; },
+    _listeners: listeners,
+  };
+  return listeners;
+}
+
+function makeTabEvent(opts = {}) {
+  return {
+    key: "Tab", shiftKey: false, ctrlKey: false, altKey: false, metaKey: false,
+    preventDefault: mock.fn(), stopPropagation: mock.fn(), ...opts,
+  };
+}
+
+describe("Terminal keyboard — Tab capture handler (regression)", () => {
+  let listeners;
+
+  beforeEach(() => {
+    listeners = setupDocMock();
+  });
+
+  it("REGRESSION: multiple terminals — only focused terminal sends Tab", () => {
+    const termA = createMockTerm("a");
+    const termB = createMockTerm("b");
+    const sendA = mock.fn();
+    const sendB = mock.fn();
+
+    createTabHandler(termA, sendA).initTabHandler();
+    createTabHandler(termB, sendB).initTabHandler();
+
+    // Focus terminal B
+    document._setActive(termB._textarea);
+
+    const ev = makeTabEvent();
+    for (const fn of (listeners["keydown:true"] || [])) fn(ev);
+
+    assert.equal(sendA.mock.callCount(), 0, "unfocused terminal A must NOT send Tab");
+    assert.equal(sendB.mock.callCount(), 1, "focused terminal B must send Tab exactly once");
+  });
+
+  it("REGRESSION: double initTabHandler does not duplicate listener", () => {
+    const term = createMockTerm("a");
+    const onSend = mock.fn();
+    const kb = createTabHandler(term, onSend);
+    kb.initTabHandler();
+    kb.initTabHandler();
+
+    document._setActive(term._textarea);
+
+    const ev = makeTabEvent();
+    for (const fn of (listeners["keydown:true"] || [])) fn(ev);
+
+    assert.equal(onSend.mock.callCount(), 1, "double init must not cause double send");
+  });
+
+  it("does not fire when non-terminal element is focused", () => {
+    const term = createMockTerm("a");
+    const onSend = mock.fn();
+    createTabHandler(term, onSend).initTabHandler();
+
+    document._setActive({ _id: "search-input" });
+
+    const ev = makeTabEvent();
+    for (const fn of (listeners["keydown:true"] || [])) fn(ev);
+
+    assert.equal(onSend.mock.callCount(), 0);
+  });
+
+  it("sends \\x1b[Z for Shift+Tab", () => {
+    const term = createMockTerm("a");
+    const onSend = mock.fn();
+    createTabHandler(term, onSend).initTabHandler();
+
+    document._setActive(term._textarea);
+
+    const ev = makeTabEvent({ shiftKey: true });
+    for (const fn of (listeners["keydown:true"] || [])) fn(ev);
+
+    assert.equal(onSend.mock.calls[0].arguments[0], "\x1b[Z");
   });
 });
 
