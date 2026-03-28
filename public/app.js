@@ -291,19 +291,9 @@
         url.searchParams.set("s", sessionName);
         history.replaceState(null, "", url);
         if (shortcutBarInstance) shortcutBarInstance.render(sessionName);
-        // Switch WS to get output for this card.
-        // Always use cached:false — the server needs to send the buffer
-        // replay and resize for the terminal to show output. The "cached"
-        // optimization was causing new sessions to appear frozen because
-        // the server skipped the snapshot for empty terminals.
-        const ws = state.connection.ws;
-        if (ws?.readyState === WebSocket.OPEN) {
-          const entry = terminalPool.get(sessionName);
-          if (entry) {
-            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows, cached: false }));
-          }
-        }
-        // Subscribe to all other visible cards
+        // Carousel swipe: just update input routing. No switch/snapshot
+        // needed — the terminal pool already has each session's xterm
+        // rendered in its card. All sessions are subscribed for output.
         syncCarouselSubscriptions();
         // Reattach scroll-to-bottom button to the newly focused terminal
         _attachScrollButton();
