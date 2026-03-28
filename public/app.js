@@ -1595,9 +1595,15 @@
       if (carouselState && carouselState.tiles?.length > 0 && !carousel.isActive()) {
         const tiles = carouselState.tiles.map(t => {
           const tile = createTile(t.type, t);
-          return { id: t.id, tile };
+          return { id: t.id, tile, state: t };
         });
-        carousel.activate(tiles, carouselState.focused);
+        carousel.activate(tiles.map(({ id, tile }) => ({ id, tile })), carouselState.focused);
+        // Restore per-tile state (e.g., Plano's active note)
+        for (const { tile, state: tileState } of tiles) {
+          if (typeof tile.restore === "function") {
+            tile.restore(tileState);
+          }
+        }
       }
     }, 500);
 

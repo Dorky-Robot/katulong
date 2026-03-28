@@ -250,6 +250,64 @@ test.describe("Plano — In Katulong App", () => {
   });
 });
 
+test.describe("Plano — Chrome Zones", () => {
+  test.setTimeout(15_000);
+
+  const CHROME_PAGE = "/test-plano.html?chrome=1";
+
+  test("toolbar shows Plano title in chrome mode", async ({ page }) => {
+    await page.goto(CHROME_PAGE);
+    await page.waitForSelector(".tile-toolbar", { timeout: 5000 });
+    const title = page.locator(".tile-toolbar-title");
+    await expect(title).toHaveText("Plano", { timeout: 3000 });
+  });
+
+  test("toolbar has New Note and Delete buttons", async ({ page }) => {
+    await page.goto(CHROME_PAGE);
+    await page.waitForSelector(".tile-toolbar", { timeout: 5000 });
+    const newBtn = page.locator('.tile-toolbar-btn[aria-label="New Note"]');
+    const deleteBtn = page.locator('.tile-toolbar-btn[aria-label="Delete Note"]');
+    await expect(newBtn).toBeVisible({ timeout: 3000 });
+    await expect(deleteBtn).toBeVisible({ timeout: 3000 });
+  });
+
+  test("sidebar mounts note list in chrome zone", async ({ page }) => {
+    await page.goto(CHROME_PAGE);
+    await page.waitForSelector(".tile-sidebar", { timeout: 5000 });
+    // Sidebar should be visible (not chrome-empty) since note list is mounted
+    const sidebar = page.locator(".tile-sidebar:not(.chrome-empty)");
+    await expect(sidebar).toBeVisible({ timeout: 3000 });
+    // Note list should be inside the sidebar
+    const notesList = page.locator(".tile-sidebar .plano-notes-list");
+    await expect(notesList).toBeAttached({ timeout: 3000 });
+  });
+
+  test("content area contains editor, not inline controls", async ({ page }) => {
+    await page.goto(CHROME_PAGE);
+    await page.waitForSelector(".tile-content", { timeout: 5000 });
+    // The inline fallback header should NOT be present inside tile-content
+    const inlineHeader = page.locator(".tile-content >> text=+ New Note");
+    await expect(inlineHeader).not.toBeVisible({ timeout: 2000 });
+    // Empty state should be inside tile-content
+    const emptyState = page.locator(".tile-content .plano-empty");
+    await expect(emptyState).toBeVisible({ timeout: 3000 });
+  });
+
+  test("create note via toolbar button in chrome mode", async ({ page }) => {
+    await page.goto(CHROME_PAGE);
+    await page.evaluate(() => localStorage.removeItem("plano_notes"));
+    await page.reload();
+    await page.waitForSelector(".tile-toolbar", { timeout: 5000 });
+    // Click the + button in the toolbar
+    page.once("dialog", dialog => dialog.accept("Chrome Note"));
+    await page.locator('.tile-toolbar-btn[aria-label="New Note"]').click();
+    await page.waitForTimeout(500);
+    // Note should appear in the sidebar
+    const noteItem = page.locator(".tile-sidebar .plano-note-item");
+    await expect(noteItem).toBeVisible({ timeout: 3000 });
+  });
+});
+
 test.describe("Plano — Tala Integration (optional)", () => {
   test.setTimeout(15_000);
 
