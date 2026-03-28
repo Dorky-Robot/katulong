@@ -58,25 +58,15 @@ export async function loadExtensions() {
 
       const mod = await import(`/extensions/${dirName}/tile.js`);
 
-      // Support both export styles:
-      //   export function createTileFactory() { return (options) => tile }
-      //   export default function setup(sdk, options) { return tile }
+      // Per the Tile SDK: export default function setup(sdk, options) → TilePrototype
+      // The loader calls setup() for each tile creation with the given options.
       let factory;
-      if (typeof mod.createTileFactory === "function") {
-        factory = mod.createTileFactory();
-      } else if (typeof mod.default === "function") {
-        // default export might be: setup(sdk, options) → (tileOptions) → TilePrototype
-        // Call it once to get the tile factory, then use that factory
+      if (typeof mod.default === "function") {
+        // setup(sdk, options) → TilePrototype (called fresh each time)
         const setupFn = mod.default;
-        const innerFactory = setupFn(null, {});
-        if (typeof innerFactory === "function") {
-          factory = innerFactory; // setup returned a factory
-        } else if (innerFactory && typeof innerFactory.mount === "function") {
-          factory = () => innerFactory; // setup returned a tile directly
-        } else {
-          console.warn(`[extensions] ${ext.name}: default export returned unexpected type`);
-          continue;
-        }
+        factory = (options = {}) => setupFn(null, options);
+      } else if (typeof mod.createTileFactory === "function") {
+        factory = mod.createTileFactory();
       } else {
         console.warn(`[extensions] ${ext.name}: no createTileFactory or default export`);
         continue;
