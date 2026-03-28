@@ -1033,7 +1033,17 @@
     // --- Load extensions ---
     // Fetch installed extensions and register their tile types.
     // Must happen after terminal tile registration but before shortcut bar.
-    const _extensionTileTypes = await loadExtensions();
+    const _extensionTileTypes = await loadExtensions({
+      sendWs: (msg) => {
+        const ws = state.connection.ws;
+        if (ws?.readyState === 1) ws.send(JSON.stringify(msg));
+      },
+      onWsMessage: (type, handler) => {
+        // TODO: wire to WSocket message router
+        return () => {};
+      },
+      platform: { version: state.config?.version },
+    });
 
     // --- Viewport manager & Shortcut bar ---
     // (Moved here after openSessionManager and openDictationModal are defined)

@@ -316,8 +316,7 @@ test.describe("Plano — Tala Integration (optional)", () => {
     // This test verifies the adapter selection logic
     const result = await page.evaluate(async () => {
       const mod = await import("/extensions/plano/tile.js");
-      const factory = mod.default(null, { talaUrl: "http://localhost:3838" });
-      const tile = factory({});
+      const tile = mod.default(null, { talaUrl: "http://localhost:3838" });
       // Mount into a temp container to trigger adapter init
       const container = document.createElement("div");
       await tile.mount(container, {

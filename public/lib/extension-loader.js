@@ -1,26 +1,27 @@
 /**
  * Extension Loader
  *
- * Fetches the list of installed extensions from /api/extensions and dynamically
- * imports each extension's tile.js module. Each module must export a
- * createTileFactory function that returns a TilePrototype factory.
- *
- * After loading, extensions are registered via registerTileType() and added
- * to the tileTypes menu array.
+ * Discovers installed extensions, loads their modules, and registers them
+ * in the tile registry. Each extension's setup() receives a real SDK object
+ * with storage, sessions, terminal, pubsub, etc.
  *
  * Usage:
- *   const extensionTypes = await loadExtensions();
- *   // extensionTypes is an array of { type, name, icon } for the tile menu
+ *   const extensionTypes = await loadExtensions({ sendWs, onWsMessage });
+ *   // extensionTypes = [{ type, name, icon }] for the tile menu
  */
 
 import { registerTileType, hasTileType } from "/lib/tile-registry.js";
+import { createTileSDK } from "/lib/tile-sdk-impl.js";
 
 /**
  * Load all installed extensions.
+ * @param {object} deps — platform dependencies for SDK creation
+ * @param {function} deps.sendWs — send WebSocket message
+ * @param {function} deps.onWsMessage — subscribe to WS messages
+ * @param {object} deps.platform — platform info
  * @returns {Promise<Array<{type: string, name: string, icon: string}>>}
- *   Menu entries for loaded extension tile types.
  */
-export async function loadExtensions() {
+export async function loadExtensions(deps = {}) {
   const extensionTypes = [];
 
   let extensions;
@@ -41,36 +42,30 @@ export async function loadExtensions() {
 
   for (const ext of extensions) {
     try {
-      // Skip if this type is already registered (built-in takes precedence)
       if (hasTileType(ext.type)) {
         console.warn(`[extensions] Type "${ext.type}" already registered, skipping ${ext.name}`);
         continue;
       }
 
-      // Dynamically import the extension's tile module.
-      // The module URL uses the extension's directory name (_dir is stripped
-      // server-side, so we derive it from the type or use the repo basename).
-      // Extensions are served at /extensions/<dir-name>/tile.js.
-      // We use the type as directory name since that's the convention.
+      // Derive the directory name from the repo or type
       const dirName = ext.repo
         ? ext.repo.split("/").pop().replace(/^katulong-tile-/, "")
         : ext.type;
 
       const mod = await import(`/extensions/${dirName}/tile.js`);
 
-      // Per the Tile SDK: export default function setup(sdk, options) → TilePrototype
-      // The loader calls setup() for each tile creation with the given options.
-      let factory;
-      if (typeof mod.default === "function") {
-        // setup(sdk, options) → TilePrototype (called fresh each time)
-        const setupFn = mod.default;
-        factory = (options = {}) => setupFn(null, options);
-      } else if (typeof mod.createTileFactory === "function") {
-        factory = mod.createTileFactory();
-      } else {
-        console.warn(`[extensions] ${ext.name}: no createTileFactory or default export`);
+      if (typeof mod.default !== "function") {
+        console.warn(`[extensions] ${ext.name}: no default export function`);
         continue;
       }
+
+      // Per the Tile SDK: export default function setup(sdk, options) → TilePrototype
+      // Build a real SDK for this tile type and call setup() fresh each time.
+      const setupFn = mod.default;
+      const factory = (options = {}) => {
+        const sdk = createTileSDK({ tileType: ext.type, ...deps });
+        return setupFn(sdk, { ...options, ...(ext.config || []).reduce((acc, c) => { if (c.default !== undefined) acc[c.key] = c.default; return acc; }, {}) });
+      };
 
       registerTileType(ext.type, factory);
 

@@ -11,8 +11,8 @@ const useChrome = params.get("chrome") === "1";
 
 try {
   const mod = await import("/extensions/plano/tile.js");
-  const factory = mod.default(null, {});
-  const tile = factory({});
+  // Per SDK: setup(sdk, options) → TilePrototype directly
+  const tile = mod.default(null, {});
   const container = document.getElementById("tile-container");
 
   if (useChrome) {
