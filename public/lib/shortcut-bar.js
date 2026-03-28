@@ -84,17 +84,25 @@ export function createShortcutBar(options = {}) {
       activeMenu.remove();
       activeMenu = null;
     }
+    _menuAnchor = null;
     document.removeEventListener("click", onDocClickCloseMenu, true);
   }
 
   function onDocClickCloseMenu(e) {
     if (activeMenu && !activeMenu.contains(e.target)) {
+      // Don't close if clicking the anchor button — let the toggle in
+      // showAddMenu handle it, otherwise capture phase closes the menu
+      // before the button's bubble handler can detect it's open.
+      if (_menuAnchor && _menuAnchor.contains(e.target)) return;
       closeMenu();
     }
   }
 
+  let _menuAnchor = null; // Track which element opened the menu
+
   function showMenu(items, anchorEl) {
     closeMenu();
+    _menuAnchor = anchorEl;
     const menu = document.createElement("div");
     menu.className = "tab-context-menu";
 
