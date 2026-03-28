@@ -262,12 +262,12 @@ test.describe("Plano — Tala Integration (optional)", () => {
       const tile = factory({});
       // Mount into a temp container to trigger adapter init
       const container = document.createElement("div");
-      tile.mount(container, {
+      await tile.mount(container, {
         tileId: "test", setTitle: () => {}, setIcon: () => {},
         sendWs: () => {}, chrome: {},
       });
-      // Check if the tile tried to connect to Tala
-      // (we can't easily verify which adapter was chosen, but mount shouldn't crash)
+      // Wait for async adapter init
+      await new Promise(r => setTimeout(r, 500));
       return { mounted: container.innerHTML.length > 0 };
     });
     expect(result.mounted).toBe(true);
