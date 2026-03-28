@@ -291,14 +291,21 @@
         url.searchParams.set("s", sessionName);
         history.replaceState(null, "", url);
         if (shortcutBarInstance) shortcutBarInstance.render(sessionName);
-        // Carousel swipe: just update input routing + resize.
-        // No switch/snapshot needed — the terminal pool already has
-        // each session's xterm rendered in its card.
+        // For terminals with content (tab switch): just resize, no switch needed.
+        // For empty terminals (new session): send switch to get seq-init + start pulling.
         const ws = state.connection.ws;
         if (ws?.readyState === WebSocket.OPEN) {
           const entry = terminalPool.get(sessionName);
           if (entry) {
-            ws.send(JSON.stringify({ type: "resize", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
+            const buf = entry.term.buffer?.active;
+            const isEmpty = buf && buf.baseY === 0 && buf.cursorY === 0 && buf.cursorX === 0;
+            if (isEmpty) {
+              // New session — need switch to get attached + seq-init
+              ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
+            } else {
+              // Existing session — just resize, content is already there
+              ws.send(JSON.stringify({ type: "resize", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
+            }
           }
         }
         syncCarouselSubscriptions();
