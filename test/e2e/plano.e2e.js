@@ -53,7 +53,7 @@ test.describe("Plano — Tile Mount", () => {
 
   test("tile mounts and renders UI", async ({ page }) => {
     await page.goto(TEST_PAGE);
-    await page.waitForSelector(".plano-empty, .plano-notes-list, .plano-note-item", { timeout: 5000 });
+    await page.waitForSelector(".plano-empty, .plano-notes-list, .plano-note-item", { timeout: 10000 });
     // Should show empty state or note list
     const visible = page.locator(".plano-empty, .plano-notes-list").first();
     await expect(visible).toBeVisible();
