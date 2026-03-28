@@ -330,15 +330,17 @@
       },
     });
 
-    /** Subscribe to all non-focused carousel cards so their output streams in */
+    /** Subscribe all carousel terminal tiles to WS output.
+     *  ALL tiles need subscriptions — including the focused one — because
+     *  carousel swipe doesn't send `switch` (no server round-trip). Without
+     *  a subscription, data-available notifications are dropped and the
+     *  terminal appears stuck. */
     function syncCarouselSubscriptions() {
       if (!carousel.isActive()) return;
       const cards = carousel.getCards();
-      const focused = carousel.getFocusedCard();
       for (const tileId of cards) {
         const tile = carousel.getTile(tileId);
-        // Only subscribe terminal tiles to WS output
-        if (tile?.type === "terminal" && tileId !== focused) {
+        if (tile?.type === "terminal") {
           // Send cols/rows so the server resizes the PTY before serializing
           // the snapshot. Without this, the snapshot wraps at the wrong
           // column width and live output renders garbled.
