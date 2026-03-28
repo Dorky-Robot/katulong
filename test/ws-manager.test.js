@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, mock } from "node:test";
+import { describe, it, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 
 // Mock dependencies before importing ws-manager
@@ -17,8 +17,14 @@ function createMockWs(readyState = 1) {
   return {
     readyState,
     send(data) { sent.push(data); },
-    close(code, reason) { this._closed = { code, reason }; this.readyState = 3; },
-    terminate() { this._terminated = true; this.readyState = 3; },
+    close(code, reason) {
+      this._closed = { code, reason }; this.readyState = 3;
+      if (this._handlers?.close) this._handlers.close();
+    },
+    terminate() {
+      this._terminated = true; this.readyState = 3;
+      if (this._handlers?.close) this._handlers.close();
+    },
     ping() {},
     on(event, handler) {
       if (!this._handlers) this._handlers = {};
@@ -36,6 +42,7 @@ function createMockBridge() {
   return {
     register(fn) { subscribers.push(fn); },
     relay(msg) { for (const fn of subscribers) fn(msg); },
+    removeAllListeners() { subscribers.length = 0; },
     subscribers,
   };
 }
@@ -98,6 +105,13 @@ describe("createWebSocketManager", () => {
     bridge = createMockBridge();
     sessionManager = createMockSessionManager();
     wsMgr = createWebSocketManager({ bridge, sessionManager });
+  });
+
+  afterEach(() => {
+    // Clear bridge subscribers and close all WS clients to prevent
+    // ping interval timers from keeping the event loop alive.
+    bridge.removeAllListeners();
+    wsMgr.closeAllWebSockets();
   });
 
   describe("sendToSession", () => {
