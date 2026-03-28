@@ -67,12 +67,17 @@ function scaleToFit(term, container) {
   const fontSize = fontSizeForWidth(term, rect.width);
   term.options.fontSize = fontSize;
 
-  // Calculate rows from height
+  // Calculate rows from height, accounting for container padding
+  const style = getComputedStyle(container);
+  const padTop = parseFloat(style.paddingTop) || 0;
+  const padBottom = parseFloat(style.paddingBottom) || 0;
+  const availableHeight = rect.height - padTop - padBottom;
+
   const dims = term._core?._renderService?.dimensions;
   const cellHeight = dims?.css?.cell?.height
     ? dims.css.cell.height / (term.options.fontSize || 14) * fontSize
     : fontSize * 1.2;
-  const rows = Math.max(2, Math.floor(rect.height / cellHeight));
+  const rows = Math.max(2, Math.floor(availableHeight / cellHeight));
 
   if (term.cols !== FIXED_COLS || term.rows !== rows) {
     term.resize(FIXED_COLS, rows);
