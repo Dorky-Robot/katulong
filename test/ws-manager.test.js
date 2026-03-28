@@ -380,7 +380,7 @@ describe("createWebSocketManager", () => {
       assert.equal(seqInitMsg.seq, 250);
     });
 
-    it("subscribe sends buffer snapshot bundled in subscribed message", async () => {
+    it("subscribe sends subscribed + seq-init without snapshot data", async () => {
       const ws = createMockWs();
       wsMgr.handleConnection(ws);
 
@@ -405,14 +405,14 @@ describe("createWebSocketManager", () => {
       const subscribedMsg = msgs.find(m => m.type === "subscribed");
       assert.ok(subscribedMsg, "should receive subscribed");
       assert.equal(subscribedMsg.session, "bg-session");
-      assert.equal(subscribedMsg.data, "$ hello world\r\nprompt> ");
+      assert.equal(subscribedMsg.data, undefined, "subscribe should NOT include snapshot data");
 
       const seqMsg = msgs.find(m => m.type === "seq-init");
       assert.ok(seqMsg, "should receive seq-init");
       assert.equal(seqMsg.seq, 500);
     });
 
-    it("subscribe with empty buffer sends no output message", async () => {
+    it("subscribe with empty session still sends subscribed + seq-init", async () => {
       const ws = createMockWs();
       wsMgr.handleConnection(ws);
 
@@ -436,7 +436,6 @@ describe("createWebSocketManager", () => {
       const msgs = ws.sent.map(s => JSON.parse(s));
       const subscribedMsg = msgs.find(m => m.type === "subscribed");
       assert.ok(subscribedMsg, "should receive subscribed");
-      assert.equal(subscribedMsg.data, "", "empty buffer should send empty string");
     });
 
     it("subscribe sends exit for dead session", async () => {
