@@ -380,7 +380,7 @@ describe("createWebSocketManager", () => {
       assert.equal(seqInitMsg.seq, 250);
     });
 
-    it("subscribe sends subscribed + seq-init without snapshot data", async () => {
+    it("subscribe sends subscribed with snapshot + seq-init", async () => {
       const ws = createMockWs();
       wsMgr.handleConnection(ws);
 
@@ -405,7 +405,8 @@ describe("createWebSocketManager", () => {
       const subscribedMsg = msgs.find(m => m.type === "subscribed");
       assert.ok(subscribedMsg, "should receive subscribed");
       assert.equal(subscribedMsg.session, "bg-session");
-      assert.equal(subscribedMsg.data, undefined, "subscribe should NOT include snapshot data");
+      // Snapshot included for fresh terminals on page refresh
+      assert.equal(typeof subscribedMsg.data, "string");
 
       const seqMsg = msgs.find(m => m.type === "seq-init");
       assert.ok(seqMsg, "should receive seq-init");

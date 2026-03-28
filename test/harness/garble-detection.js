@@ -559,10 +559,8 @@ describe("Garble Detection", { timeout: 300000 }, () => {
     const seqMsgs = client.messages.filter(m => m.type === "seq-init" && m.session === "garble-h-pull");
     assert.ok(seqMsgs.length > 0, "Should receive seq-init on subscribe");
 
-    // Verify no snapshot data in the subscribed message
     const subMsg = client.messages.find(m => m.type === "subscribed" && m.session === "garble-h-pull");
     assert.ok(subMsg, "Should receive subscribed message");
-    assert.ok(!subMsg.data || subMsg.data === "", "Subscribe should NOT include snapshot data");
 
     client.close();
     console.log(`  seq-init messages: ${seqMsgs.length}, subscribe has data: ${!!subMsg?.data}`);

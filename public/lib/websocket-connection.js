@@ -119,8 +119,10 @@ export function createWebSocketConnection(deps = {}) {
     'subscribed': (msg) => ({
       stateUpdates: {},
       effects: [
-        // No snapshot replay — the terminal pool keeps the session's xterm
-        // intact. Pull mechanism fills in any gap via seq-init.
+        // Write snapshot only if the terminal is empty (fresh from pool
+        // after page refresh). If the terminal already has content (tab
+        // switch), skip to avoid mid-frame garble from serializeScreen.
+        ...(msg.data ? [{ type: 'subscribeSnapshot', data: msg.data, session: msg.session }] : []),
       ]
     }),
 
@@ -265,6 +267,18 @@ export function createWebSocketConnection(deps = {}) {
     terminalReset: () => { const t = getTerm(); if (t) { t.clear(); t.reset(); } },
     terminalResetSession: (e) => { const t = getOutputTerm(e.session); if (t) { t.clear(); t.reset(); } },
     terminalWrite: (e) => { const t = e.useOutputTerm ? getOutputTerm(e.session) : getTerm(); if (t) terminalWriteWithScroll(t, e.data); },
+    subscribeSnapshot: (e) => {
+      // Only write snapshot if the terminal is empty (fresh after page refresh).
+      // If it already has content (tab switch), skip to avoid mid-frame garble.
+      const t = getOutputTerm(e.session);
+      if (!t) return;
+      const buf = t.buffer?.active;
+      const isEmpty = buf && buf.baseY === 0 && buf.cursorY === 0 && buf.cursorX === 0;
+      if (isEmpty && e.data) {
+        t.clear(); t.reset();
+        terminalWriteWithScroll(t, e.data);
+      }
+    },
     reload: () => location.reload(),
     invalidateSessions: (e) => deps.invalidateSessions?.(e.name),
     updateSessionUI: (e) => deps.updateSessionUI?.(e.name),
