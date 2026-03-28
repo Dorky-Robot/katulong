@@ -95,10 +95,11 @@ export function createWebSocketConnection(deps = {}) {
         'session.name': msg.session,
       },
       effects: [
-        { type: 'seqClear' },
-        // Reset + write snapshot in one batch — no flicker
-        { type: 'terminalReset' },
-        ...(msg.data ? [{ type: 'terminalWrite', data: msg.data, session: msg.session, useOutputTerm: true }] : []),
+        // No terminalReset — the terminal pool keeps each session's xterm
+        // intact with its content. No snapshot replay either — the pull
+        // mechanism resumes from the last known cursor and fills in any
+        // output that arrived while we were away. This eliminates the
+        // serialize snapshot (source of garble from mid-frame captures).
         { type: 'invalidateSessions', name: msg.session },
         { type: 'scrollToBottomIfNeeded', condition: true },
         { type: 'syncCarouselSubscriptions' },
@@ -118,8 +119,8 @@ export function createWebSocketConnection(deps = {}) {
     'subscribed': (msg) => ({
       stateUpdates: {},
       effects: [
-        { type: 'terminalResetSession', session: msg.session },
-        ...(msg.data ? [{ type: 'terminalWrite', data: msg.data, session: msg.session, useOutputTerm: true }] : []),
+        // No snapshot replay — the terminal pool keeps the session's xterm
+        // intact. Pull mechanism fills in any gap via seq-init.
       ]
     }),
 

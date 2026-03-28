@@ -536,56 +536,36 @@ describe("Garble Detection", { timeout: 300000 }, () => {
     assert.ok(dupes.length <= 2, `Excessive duplicate prompts after rapid switches: ${dupes.length}`);
   });
 
-  it("Scenario H: subscribe with cols/rows — snapshot at correct width", async () => {
-    // This tests the carousel subscribe path. A session is created at
-    // 120x40, filled with wide output, then subscribed at 60x24 (carousel
-    // card dimensions). The subscribe snapshot should wrap at 60 cols.
-    await request("POST", "/sessions", { name: "garble-h-width" });
+  it("Scenario H: subscribe uses pull mechanism — no snapshot needed", async () => {
+    // Subscribe no longer sends snapshot data — the client's terminal pool
+    // already has content. Subscribe just starts the pull mechanism via
+    // seq-init so live output flows to the background tile.
+    await request("POST", "/sessions", { name: "garble-h-pull" });
     await sleep(1500);
 
-    // Attach at 120 cols and generate wide output
-    const writer = new TestClient();
-    await writer.connect();
-    await writer.attach("garble-h-width", 120, 40);
-    await writer.waitForQuiet(500, 3000);
+    const client = new TestClient();
+    await client.connect();
+    await client.attach("garble-h-pull", 80, 24);
+    await client.waitForQuiet(500, 3000);
 
-    // Generate output that fills 120 columns
-    writer.sendInput("echo 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'\n");
-    await writer.waitForQuiet(500, 3000);
-    writer.sendInput("echo 'marker-line-end'\n");
-    await writer.waitForQuiet(500, 3000);
+    client.sendInput("echo 'subscribe-marker'\n");
+    await client.waitForQuiet(500, 3000);
 
-    // Now subscribe at 60 cols (simulating carousel card)
-    const subscriber = new TestClient();
-    await subscriber.connect();
-    await subscriber.attach("garble-h-width", 120, 40); // attach first
-    await subscriber.waitForQuiet(500, 2000);
-    subscriber.scrollbackData = "";
-    subscriber.pullData = "";
-    await subscriber.subscribe("garble-h-width");
-    await subscriber.waitForQuiet(500, 3000);
+    // Subscribe — should get seq-init but no snapshot data
+    await client.subscribe("garble-h-pull");
+    await client.waitForQuiet(500, 2000);
 
-    // The subscribe snapshot should contain the marker
-    const subData = subscriber._subscribeScrollback["garble-h-width"] || "";
-    const subLines = extractVisibleLines(subData);
+    // Verify seq-init arrived (pull mechanism initialized)
+    const seqMsgs = client.messages.filter(m => m.type === "seq-init" && m.session === "garble-h-pull");
+    assert.ok(seqMsgs.length > 0, "Should receive seq-init on subscribe");
 
-    // Check for escape sequence errors in the snapshot
-    const escErrors = validateEscapeSequences(subData);
+    // Verify no snapshot data in the subscribed message
+    const subMsg = client.messages.find(m => m.type === "subscribed" && m.session === "garble-h-pull");
+    assert.ok(subMsg, "Should receive subscribed message");
+    assert.ok(!subMsg.data || subMsg.data === "", "Subscribe should NOT include snapshot data");
 
-    writer.close();
-    subscriber.close();
-
-    console.log(`  Subscribe snapshot: ${subData.length} bytes, ${subLines.length} lines`);
-    console.log(`  Escape errors: ${escErrors.length}`);
-    if (subLines.length > 0) {
-      console.log(`  Last 3 lines: ${subLines.slice(-3).join(" | ")}`);
-    }
-
-    assert.ok(subData.length > 0, "Subscribe snapshot should not be empty");
-    assert.equal(escErrors.length, 0, `Broken escapes in subscribe snapshot: ${escErrors.length}`);
-    // Verify the marker is in the snapshot
-    const hasMarker = subLines.some(l => l.includes("marker-line-end"));
-    assert.ok(hasMarker, "Subscribe snapshot should contain the marker line");
+    client.close();
+    console.log(`  seq-init messages: ${seqMsgs.length}, subscribe has data: ${!!subMsg?.data}`);
   });
 
   it("Scenario I: switch to brand-new session — output appears", async () => {
