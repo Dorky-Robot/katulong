@@ -1067,8 +1067,13 @@
           const tile = createTile(type, { title: _meta?.name || type });
 
           if (isCarouselDevice() && carousel.isActive()) {
-            carousel.addCard(id, tile);
-            carousel.focusCard(id);
+            try {
+              carousel.addCard(id, tile);
+              carousel.focusCard(id);
+            } catch (err) {
+              console.error("[tile-carousel] Error adding tile:", err);
+              alert("Tile mount error: " + err.message);
+            }
           } else {
             // Non-carousel: mount tile into the main terminal area
             const termArea = document.getElementById("terminal-container");
