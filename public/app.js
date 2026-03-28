@@ -291,9 +291,16 @@
         url.searchParams.set("s", sessionName);
         history.replaceState(null, "", url);
         if (shortcutBarInstance) shortcutBarInstance.render(sessionName);
-        // Carousel swipe: just update input routing. No switch/snapshot
-        // needed — the terminal pool already has each session's xterm
-        // rendered in its card. All sessions are subscribed for output.
+        // Carousel swipe: just update input routing + resize.
+        // No switch/snapshot needed — the terminal pool already has
+        // each session's xterm rendered in its card.
+        const ws = state.connection.ws;
+        if (ws?.readyState === WebSocket.OPEN) {
+          const entry = terminalPool.get(sessionName);
+          if (entry) {
+            ws.send(JSON.stringify({ type: "resize", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
+          }
+        }
         syncCarouselSubscriptions();
         // Reattach scroll-to-bottom button to the newly focused terminal
         _attachScrollButton();
