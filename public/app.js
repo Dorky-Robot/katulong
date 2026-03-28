@@ -1086,10 +1086,12 @@
       onNotepadClick: () => toggleNotepad(),
       get notepad() { return notepad; },
       onTabRenamed: (oldName, newName) => {
-        windowTabSet.renameTab(oldName, newName);
+        // Rename carousel card BEFORE tab set — the tab set's notify()
+        // triggers reorderCards which needs the card ID already updated.
+        if (carousel.isActive()) carousel.renameCard(oldName, newName);
         terminalPool.rename(oldName, newName);
         notepad.rename(oldName, newName);
-        if (carousel.isActive()) carousel.renameCard(oldName, newName);
+        windowTabSet.renameTab(oldName, newName);
         invalidateSessions(sessionStore, newName);
         if (state.session.name === oldName) {
           state.update('session.name', newName);
