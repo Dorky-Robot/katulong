@@ -609,53 +609,33 @@ describe("Garble Detection", { timeout: 300000 }, () => {
     assert.ok(hasMarker, "Typed command output should be visible (not frozen)");
   });
 
-  it("Scenario J: periodic resync arrives after idle period", async () => {
-    // Create a session, generate output, then wait ~12 seconds.
-    // The server should send a resync message with a valid snapshot.
-    await request("POST", "/sessions", { name: "garble-resync" });
+  it("Scenario J: long-running session — pull keeps content clean", async () => {
+    // Verify that long-running sessions maintain clean output via the
+    // pull mechanism alone (no periodic resync which used serializeScreen
+    // and caused mid-frame garble).
+    await request("POST", "/sessions", { name: "garble-longrun" });
     await sleep(1500);
 
     const client = new TestClient();
     await client.connect();
-    await client.attach("garble-resync");
+    await client.attach("garble-longrun");
     await client.waitForQuiet(500, 3000);
 
-    // Generate some output to start the resync idle timer
-    client.sendInput("echo 'resync-marker-output'\n");
-    await client.waitForQuiet(500, 3000);
+    // Generate several rounds of output with gaps
+    for (let i = 0; i < 3; i++) {
+      client.sendInput(`echo 'round-${i}-marker'\n`);
+      await client.waitForQuiet(500, 3000);
+    }
 
-    // Record message count before waiting
-    const msgCountBefore = client.messages.length;
-
-    // Wait 12 seconds for the resync idle timer (10s) to fire
-    await sleep(12000);
-
-    // Check for a resync message
-    const resyncMessages = client.messages.filter(
-      m => m.type === "resync" && m.session === "garble-resync"
-    );
+    const allOutput = client.scrollbackData + client.pullData;
+    const allLines = extractVisibleLines(allOutput);
+    const escErrors = validateEscapeSequences(allOutput);
 
     client.close();
 
-    console.log(`  Messages before wait: ${msgCountBefore}, after: ${client.messages.length}`);
-    console.log(`  Resync messages received: ${resyncMessages.length}`);
-
-    assert.ok(resyncMessages.length >= 1, "Should receive at least one resync message after idle");
-
-    // Validate the resync snapshot
-    const resync = resyncMessages[0];
-    assert.ok(resync.data, "Resync should contain snapshot data");
-    assert.ok(typeof resync.seq === "number", "Resync should contain seq number");
-
-    // Verify no broken escape sequences in the snapshot
-    const escErrors = validateEscapeSequences(resync.data);
-    console.log(`  Resync snapshot: ${resync.data.length} bytes, seq: ${resync.seq}, esc errors: ${escErrors.length}`);
-    assert.equal(escErrors.length, 0, `Broken escape sequences in resync snapshot: ${escErrors.length}`);
-
-    // Verify the snapshot contains our marker
-    const visibleLines = extractVisibleLines(resync.data);
-    const hasMarker = visibleLines.some(l => l.includes("resync-marker-output"));
-    assert.ok(hasMarker, "Resync snapshot should contain the marker output");
+    console.log(`  Lines: ${allLines.length}, Esc errors: ${escErrors.length}`);
+    assert.equal(escErrors.length, 0, "No broken escape sequences in long-running session");
+    assert.ok(allLines.some(l => l.includes("round-2-marker")), "Should have all output rounds");
   });
 
   it("Scenario K: real Claude Code session with tab switching (EXPENSIVE)", async () => {
