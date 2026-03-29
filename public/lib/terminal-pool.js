@@ -15,7 +15,7 @@ import { WebglAddon } from "/vendor/xterm/addon-webgl.esm.js";
 const MAX_POOL_SIZE = 5;
 // Fixed column width — all terminals share this regardless of screen size.
 // Font size scales to fit the container width. Rows vary with height.
-const FIXED_COLS = 80;
+const FIXED_COLS = 100;
 
 /** Load WebGL renderer with automatic fallback to DOM on failure. */
 function loadWebGL(term) {
@@ -258,16 +258,28 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
   function protect(sessionName) { protectedSessions.add(sessionName); }
   function unprotect(sessionName) { protectedSessions.delete(sessionName); }
 
-  /** Full init: set font size + cols + rows for a terminal. */
+  /** Full init: set font size + cols + rows for a terminal.
+   *  Notifies the server if dimensions changed. */
   function scale(sessionName) {
     const entry = pool.get(sessionName);
-    if (entry) scaleToFit(entry.term, entry.container);
+    if (!entry) return;
+    const oldCols = entry.term.cols;
+    const oldRows = entry.term.rows;
+    scaleToFit(entry.term, entry.container);
+    if (onResize && (entry.term.cols !== oldCols || entry.term.rows !== oldRows)) {
+      onResize(sessionName, entry.term.cols, entry.term.rows);
+    }
   }
 
-  /** Full init for all terminals. */
+  /** Full init for all terminals. Notifies server for each that changed. */
   function scaleAll() {
-    for (const [, entry] of pool) {
+    for (const [name, entry] of pool) {
+      const oldCols = entry.term.cols;
+      const oldRows = entry.term.rows;
       scaleToFit(entry.term, entry.container);
+      if (onResize && (entry.term.cols !== oldCols || entry.term.rows !== oldRows)) {
+        onResize(name, entry.term.cols, entry.term.rows);
+      }
     }
   }
 

@@ -2,18 +2,18 @@
 
 ## Design Decision
 
-All terminals use **80 columns** (FIXED_COLS). This is pegged on both client and server.
+All terminals use **100 columns** (FIXED_COLS). This is pegged on both client and server.
 
 ### Why
 - Column width is the only dimension that causes **horizontal reflow** (text rewrapping)
 - Reflow during resize corrupts cursor-positioned TUI content (garbled text)
 - With fixed cols, resize only changes rows — which doesn't cause reflow
-- 80 cols is the universal terminal standard
+- 100 cols balances readability with screen usage on tablets
 
 ### Where it's enforced
-- **Client**: `public/lib/terminal-pool.js` → `FIXED_COLS = 80`
-- **Server**: `lib/session-manager.js` → `DEFAULT_COLS = 80`
-- **Headless xterm**: `lib/session.js` → `new Terminal({ cols: 80, ... })`
+- **Client**: `public/lib/terminal-pool.js` → `FIXED_COLS = 100`
+- **Server**: `lib/session-manager.js` → `DEFAULT_COLS = 100`
+- **Headless xterm**: `lib/session.js` → `new Terminal({ cols: 100, ... })`
 
 ### Rows
 Rows vary based on viewport height. This is safe because changing row count:
