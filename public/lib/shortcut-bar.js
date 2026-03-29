@@ -517,28 +517,42 @@ export function createShortcutBar(options = {}) {
     const startY = initialTouch.clientY;
 
     if (platform === "ipad") {
-      // iPad: immediate drag on horizontal movement (like the carousel header did).
-      // No long-press required — feels snappy and natural on touch.
+      // iPad: drag on horizontal movement, long press for context menu.
       e.preventDefault();
       let started = false;
+      let longPressed = false;
+
+      const longPressTimer = setTimeout(() => {
+        longPressed = true;
+        tab.classList.add("tab-long-press");
+      }, LONG_PRESS_MS);
 
       const onMove = (te) => {
         const t = te.touches[0];
         const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        if (!longPressed && (Math.abs(dx) > DRAG_DEAD_ZONE || Math.abs(dy) > DRAG_DEAD_ZONE)) {
+          clearTimeout(longPressTimer);
+        }
         if (!started) {
           if (Math.abs(dx) < DRAG_DEAD_ZONE) return;
           started = true;
+          clearTimeout(longPressTimer);
           beginDrag(tab, name, startX, true);
         }
         te.preventDefault();
         updateDrag(t.clientX, t.clientY);
       };
       const onEnd = () => {
+        clearTimeout(longPressTimer);
+        tab.classList.remove("tab-long-press");
         document.removeEventListener("touchmove", onMove);
         document.removeEventListener("touchend", onEnd);
         document.removeEventListener("touchcancel", onEnd);
         if (started) {
           endDrag();
+        } else if (longPressed) {
+          showTabContextMenu({ preventDefault() {}, currentTarget: tab }, name);
         } else {
           // Tap without drag — check for double-tap to rename
           const now = Date.now();
