@@ -1,26 +1,19 @@
 /**
- * Card Carousel (iPad/tablet only)
+ * Card Carousel
  *
  * Horizontal strip of tile "cards". Each card is a generic container that
  * holds a TilePrototype instance (terminal, dashboard, web preview, etc.).
  * Single card = full width. Multiple cards share width proportionally with
  * horizontal scroll if they overflow.
  *
+ * The carousel is always active on all devices (desktop, tablet, phone).
  * Tab management (rendering, drag-reorder, rename, + button) is handled by
  * the shortcut bar — the carousel only manages the card tile layout.
  */
 
-import { isIPad } from "./platform.js";
 import { createTileChrome } from "./tile-chrome.js";
 
 const STORAGE_KEY = "katulong-carousel";
-
-/**
- * Detect iPad / tablet devices that should use the card carousel.
- */
-export function isCarouselDevice() {
-  return isIPad();
-}
 
 export function createCardCarousel({
   container,
@@ -33,8 +26,16 @@ export function createCardCarousel({
   let cards = [];             // ordered tile IDs
   let focusedId = null;
   const cardEls = new Map();  // tileId -> { wrapper, frontFace, backFace, tile, backTile, context, flipped }
+  const subscribers = new Set();
 
-  // ── Persistence ──────────────────────────────────────────────────────
+  function notifySubscribers() {
+    const snapshot = { cards: [...cards], focused: focusedId };
+    for (const fn of subscribers) {
+      try { fn(snapshot); } catch (err) { console.error("[carousel] subscriber error:", err); }
+    }
+  }
+
+  // ── Persistence ��─────────────────────────────────────────────────────
 
   function save() {
     try {
@@ -280,6 +281,7 @@ export function createCardCarousel({
     if (onFocusChange && focusedId) onFocusChange(focusedId);
 
     fitAll();
+    notifySubscribers();
   }
 
   function deactivate() {
@@ -305,10 +307,11 @@ export function createCardCarousel({
     focusedId = null;
 
     save();
+    notifySubscribers();
     if (onAllCardsDismissed) onAllCardsDismissed();
   }
 
-  // ── Card management ────────────────────────────────────────────────
+  // ── Card management ─────────────────────��──────────────────────────
 
   /**
    * Add a tile to the carousel.
@@ -333,6 +336,7 @@ export function createCardCarousel({
     positionCards(false);
     fitAll();
     save();
+    notifySubscribers();
   }
 
   function removeCard(tileId) {
@@ -380,6 +384,7 @@ export function createCardCarousel({
 
       fitAll();
       save();
+      notifySubscribers();
     };
 
     doRemove();
@@ -412,6 +417,7 @@ export function createCardCarousel({
     fitAll();
     if (onFocusChange) onFocusChange(tileId);
     save();
+    notifySubscribers();
   }
 
   function renameCard(oldId, newId) {
@@ -429,6 +435,7 @@ export function createCardCarousel({
     }
 
     save();
+    notifySubscribers();
   }
 
   /** Reorder cards to match the given order (called when tabs are reordered) */
@@ -444,6 +451,7 @@ export function createCardCarousel({
     positionCards(true);
     fitAll();
     save();
+    notifySubscribers();
   }
 
   // ── Fit ────────────────────────────────────────────────────────────
@@ -556,5 +564,9 @@ export function createCardCarousel({
     setBackTile,
     flipCard,
     isFlipped,
+    subscribe(fn) {
+      subscribers.add(fn);
+      return () => subscribers.delete(fn);
+    },
   };
 }

@@ -1,12 +1,12 @@
 # Tile System
 
-The tile system is katulong's architecture for composable, pluggable UI surfaces on the iPad carousel. Instead of hardcoding terminal sessions as the only card type, tiles are generic containers with a standard interface that any content can fill.
+The tile system is katulong's core architecture. Everything is a tile — terminals, notes, dashboards, file browsers, custom extensions. The carousel doesn't know what's inside a tile; it only knows how to position, focus, and flip them. The terminal is just another tile type, not a special case.
 
 ## Core Concepts
 
-### Tiles are generic containers
+### Tiles are the primary abstraction
 
-A tile is a card in the carousel that can hold anything — a terminal, a dashboard, a web preview, a markdown document, AI chat, or custom content. The carousel doesn't know what's inside a tile; it only knows how to position, focus, and flip them.
+A tile is a card in the carousel that can hold any functionality. On tablets and phones, tiles appear as swipeable cards. On desktop, they work as tabs. Each tile manages its own UI, state, and lifecycle. Tiles communicate with each other and with the server through a pub/sub event system — like Excel cells that can reference and react to each other.
 
 ### Tile Prototype Interface
 
@@ -68,7 +68,7 @@ Factories are closures that capture shared dependencies (e.g. `terminalPool`) an
 
 ### Terminal Tile
 
-Wraps the existing `terminalPool` as a tile. Each instance manages a single tmux session.
+The only built-in tile. Wraps the `terminalPool` as a tile — each instance manages a single tmux session.
 
 ```js
 createTile("terminal", { sessionName: "dev" })
@@ -77,48 +77,9 @@ createTile("terminal", { sessionName: "dev" })
 - `mount()` → `terminalPool.getOrCreate()`, protects from LRU eviction
 - `focus()` → `setActive()`, `attachControls()`, `term.focus()`
 - `resize()` → `terminalPool.scale()`
-- The terminal's pull-based WebSocket output continues to work unchanged
+- Subscribes to its session topic for pull-based output
 
-### Dashboard Tile
-
-A configurable CSS Grid that contains sub-tiles. Any tile type can be nested.
-
-```js
-createTile("dashboard", {
-  cols: 3,                         // number of columns
-  rows: 2,                         // number of rows
-  maxCellWidth: "400px",           // optional max width per column
-  gap: 8,                          // gap between cells in px
-  title: "My Dashboard",
-  slots: [
-    { type: "terminal", sessionName: "dev" },
-    { type: "terminal", sessionName: "logs", colSpan: 2 },
-    { type: "terminal", sessionName: "tests" },
-  ]
-})
-```
-
-Options:
-
-| Option | Type | Description |
-|--------|------|-------------|
-| `cols` | number | Number of columns |
-| `rows` | number | Number of rows (auto-computed from slots if omitted) |
-| `cells` | number | Shorthand: auto-compute squarest grid for N cells |
-| `maxCellWidth` | string | CSS max-width per column (e.g. `"400px"`) |
-| `gap` | number | Gap between cells in px (default: 8) |
-| `title` | string | Custom dashboard title |
-| `slots` | array | Sub-tile definitions (see below) |
-
-Each slot can include `colSpan` and `rowSpan` to span multiple grid cells.
-
-The `cells` shorthand auto-picks the squarest arrangement:
-- `cells: 1` → 1x1
-- `cells: 2` → 2x1
-- `cells: 3` → 2x2 (with one empty)
-- `cells: 4` → 2x2
-- `cells: 6` → 3x2
-- `cells: 9` → 3x3
+All other tile types (notes, dashboards, file browser, etc.) are extensions installed in `~/.katulong/tiles/`. See [Tile SDK](tile-sdk.md) for how to build them.
 
 ## Flippable Cards
 
@@ -272,7 +233,9 @@ The persistence format supports backward compatibility — legacy formats (array
 
 ## Creating a New Tile Type
 
-To create a new tile type:
+There are two ways to create a tile: as a **built-in tile** (shipped with katulong source) or as an **extension tile** (installed in `~/.katulong/tiles/`).
+
+### Built-in tiles
 
 1. **Create the tile module** at `public/lib/tiles/my-tile.js`:
 
@@ -283,43 +246,14 @@ export function createMyTileFactory(deps) {
 
     return {
       type: "my-tile",
-
-      mount(el, ctx) {
-        container = el;
-        // Build your DOM, append to el
-        // Use ctx.chrome to populate toolbar/sidebar/shelf
-        // Use ctx.sendWs() to communicate with the server
-        // Use ctx.flip() to flip the card
-      },
-
-      unmount() {
-        // Clean up DOM, listeners, timers
-        container = null;
-      },
-
-      focus() {
-        // This tile is now visible and active
-      },
-
-      blur() {
-        // This tile lost focus (another card is active)
-      },
-
-      resize() {
-        // Container size changed, refit your content
-      },
-
-      getTitle() {
-        return options.title || "My Tile";
-      },
-
-      getIcon() {
-        return "browser";  // Phosphor icon name
-      },
-
-      serialize() {
-        return { type: "my-tile", ...options };
-      },
+      mount(el, ctx) { container = el; /* build DOM */ },
+      unmount() { container = null; },
+      focus() {},
+      blur() {},
+      resize() {},
+      getTitle() { return options.title || "My Tile"; },
+      getIcon() { return "browser"; },
+      serialize() { return { type: "my-tile", ...options }; },
     };
   };
 }
@@ -332,19 +266,106 @@ import { createMyTileFactory } from "/lib/tiles/my-tile.js";
 registerTileType("my-tile", createMyTileFactory({ ...deps }));
 ```
 
-3. **Create instances**:
+### Extension tiles
+
+Extension tiles live in `~/.katulong/tiles/<name>/` and are discovered automatically. They follow the same factory pattern but receive an SDK object instead of raw dependencies. See [Tile SDK](tile-sdk.md) for the full guide.
 
 ```js
-const tile = createTile("my-tile", { title: "Hello" });
-carousel.addCard("my-tile-1", tile);
+// ~/.katulong/tiles/my-tile/tile.js
+export default function setup(sdk, options) {
+  return function createMyTile(opts = {}) {
+    return {
+      type: "my-tile",
+      mount(el, ctx) { el.textContent = "Hello!"; },
+      unmount() {},
+      focus() {},
+      blur() {},
+      resize() {},
+      getTitle() { return "My Tile"; },
+      getIcon() { return "star"; },
+    };
+  };
+}
 ```
 
-## Future: Generative Tiles
+Extension tiles appear in the `+` menu alongside built-in tiles after a page refresh.
 
-A planned extension where processes (like Claude Code) can stream UI descriptions into tiles at runtime, using a compact DSL similar to [OpenUI Lang](https://www.openui.com/docs/openui-lang/specification). This would enable:
+## Extension System
 
-- Claude Code generating dashboards, charts, and status views on the fly
-- Scripts producing rich output beyond terminal text
-- Live-updating visualizations driven by process output
+The extension system allows tiles to be installed without modifying katulong's source code. Extensions are discovered at server startup and loaded by the client before carousel restore.
 
-The delivery mechanism would be OSC escape sequences or CLI commands, with the tile rendering a component library (stat cards, grids, charts, tables, markdown, code blocks) from the streamed descriptions.
+### Discovery (server)
+
+`lib/tile-extensions.js` scans `~/.katulong/tiles/` for directories containing both `manifest.json` and `tile.js`. It exposes two routes:
+
+- `GET /api/tile-extensions` — JSON list of discovered extensions (re-scanned on each request)
+- `GET /tiles/:name/:path` — serves extension files (JS, CSS, JSON, images) with correct MIME types
+
+Both routes require authentication. File serving includes path traversal protection and extension name validation.
+
+### Loading (client)
+
+`public/lib/tile-extension-loader.js` runs during the app boot sequence, **before** carousel restore:
+
+1. Fetches `/api/tile-extensions`
+2. For each extension, dynamically imports `/tiles/{name}/tile.js`
+3. Creates a namespaced SDK instance via `createTileSDK(type, deps)` from `public/lib/tile-sdk-impl.js`
+4. Calls `setup(sdk, options)` → gets back a factory function
+5. Registers the factory with `registerTileType(type, factory)`
+
+Because extensions load before restore, saved extension tiles in `sessionStorage` are recreated correctly. Unknown tile types during restore are skipped gracefully.
+
+### SDK
+
+Each extension gets its own SDK instance (`public/lib/tile-sdk-impl.js`) with:
+
+| API | Description |
+|-----|-------------|
+| `sdk.storage` | Namespaced localStorage (`katulong-tile-{type}:key`) |
+| `sdk.platform` | Device detection (isIPad, isPhone, isDesktop, isDark, version) |
+| `sdk.api` | HTTP client (get, post, put, del) with auth cookies |
+| `sdk.toast` | Toast notifications |
+| `sdk.ws` | WebSocket send/subscribe |
+| `sdk.pubsub` | In-browser event bus |
+| `sdk.sessions` | Terminal session management (list, create, kill) |
+
+See [Tile SDK](tile-sdk.md) for the full API reference.
+
+## Tile Orchestration
+
+Tiles can communicate through the pub/sub system, enabling workflows where one tile's output triggers another tile's action:
+
+- A terminal tile running a build → emits a `build:complete` event → a dashboard tile refreshes
+- A Plano tile with a task list → an agent picks up the next task → a terminal tile executes it
+- A CI tile detects a failure → emits an event → a notes tile auto-creates a bug report
+
+This is inspired by spreadsheets: each tile is like a cell, and the pub/sub events are like formulas that reference other cells. The difference is that the "formulas" are agents, APIs, and human input.
+
+### CLI Integration
+
+The `katulong pub` and `katulong sub` CLI commands let any process — scripts, agents, CI pipelines — participate in tile orchestration without being a tile themselves:
+
+```bash
+# Notify all subscribers of a topic
+katulong pub build:status '{"project":"katulong","status":"passed"}'
+
+# Subscribe to events from the terminal
+katulong sub deploy:progress
+```
+
+## Future Directions
+
+### Tile Marketplace
+
+A repository of community tiles installable via CLI:
+
+```bash
+katulong install dorky-robot/plano
+katulong install dorky-robot/diwa-insights
+```
+
+Tiles are cloned into `~/.katulong/tiles/` and available on next page load.
+
+### Generative Tiles
+
+Processes (like Claude Code) streaming UI descriptions into tiles at runtime. A terminal tile could emit structured output that a companion tile renders as charts, tables, or status cards — rich output beyond terminal text.

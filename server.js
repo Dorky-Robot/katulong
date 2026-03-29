@@ -31,6 +31,7 @@ import { createHelmSessionManager } from "./lib/helm-session-manager.js";
 import { createTopicBroker } from "./lib/topic-broker.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 import { loadPlugins } from "./lib/plugin-loader.js";
+import { createTileExtensionRoutes } from "./lib/tile-extensions.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = envConfig.port;
@@ -262,6 +263,7 @@ const routes = [
   ...createFileBrowserRoutes({ json, parseJSON, auth, csrf }),
   ...createPortProxyRoutes({ auth, PORT, configManager }),
   ...pluginRoutes,
+  ...createTileExtensionRoutes({ json, auth, DATA_DIR }),
 ];
 
 function matchRoute(method, pathname) {

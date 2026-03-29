@@ -34,11 +34,11 @@
     import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
-    import { createCardCarousel, isCarouselDevice } from "/lib/card-carousel.js";
+    import { createCardCarousel } from "/lib/card-carousel.js";
+    import { createSessionState } from "/lib/session-state.js";
     import { registerTileType, createTile } from "/lib/tile-registry.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
-    import { createDashboardTileFactory } from "/lib/tiles/dashboard-tile.js";
-    import { createHtmlTileFactory } from "/lib/tiles/html-tile.js";
+    import { loadTileExtensions } from "/lib/tile-extension-loader.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -99,6 +99,7 @@
     };
 
     const state = createAppState();
+    const sessionState = createSessionState();
 
     let shortcutBarInstance = null;
     const getInstanceIcon = () => "terminal-window";
@@ -128,7 +129,7 @@
       }
     };
 
-    if (state.session.name) document.title = state.session.name;
+    // document.title is managed by sessionState (set on creation from URL ?s= param)
 
     // --- Terminal pool ---
     // One xterm.js Terminal per managed session, visibility-toggled on switch.
@@ -248,8 +249,20 @@
       get carousel() { return carousel; },
     };
     registerTileType("terminal", createTerminalTileFactory(terminalDeps));
-    registerTileType("dashboard", createDashboardTileFactory({ createTileFn: createTile }));
-    registerTileType("html", createHtmlTileFactory());
+
+    // Load tile extensions (adds types to registry before carousel restore)
+    let extensionTileTypes = [];
+    const sdkDeps = {
+      getWs: () => state.connection.ws,
+      api: null, // SDK builds its own fetch-based client
+      toast: showToast,
+      platform: { version: document.documentElement.dataset.version || "unknown" },
+    };
+    try {
+      extensionTileTypes = await loadTileExtensions(sdkDeps, registerTileType);
+    } catch (err) {
+      console.error("[tile-ext] Extension loading failed:", err);
+    }
 
     /** Create a terminal tile for a session, using the session name as tile ID. */
     function makeTerminalTile(sessionName) {
@@ -286,10 +299,7 @@
       onFocusChange: (tileId) => {
         const sessionName = tileSessionName(tileId);
         state.update('session.name', sessionName);
-        document.title = sessionName;
-        const url = new URL(window.location);
-        url.searchParams.set("s", sessionName);
-        history.replaceState(null, "", url);
+        sessionState.set(sessionName);
         if (shortcutBarInstance) shortcutBarInstance.render(sessionName);
         // Carousel swipe: just update input routing + resize.
         // No switch/snapshot needed — the terminal pool already has
@@ -315,10 +325,7 @@
         // All cards dismissed — clear state so refresh shows blank stage
         wsConnection.disconnect();
         state.update('session.name', null);
-        document.title = "katulong";
-        const url = new URL(window.location);
-        url.searchParams.delete("s");
-        history.replaceState(null, "", url);
+        sessionState.set(null);
         sessionStorage.setItem("katulong-empty-state", "1");
       },
     });
@@ -344,18 +351,15 @@
       carousel.fitAll();
     }
 
-    /** Route a session to the appropriate view (carousel on iPad, switchSession on desktop) */
+    /** Route a session to the carousel: find-or-create terminal tile, focus it. */
     function routeToSession(name) {
-      if (!isCarouselDevice()) {
-        switchSession(name);
-        return;
-      }
       if (carousel.isActive()) {
         // Check if a terminal tile for this session already exists
         const existing = carousel.findCard((tile) => tile.sessionName === name);
         if (!existing) {
           const { id, tile } = makeTerminalTile(name);
           carousel.addCard(id, tile);
+          windowTabSet.addTab(id);
         }
         carousel.focusCard(existing || name);
       } else {
@@ -370,17 +374,7 @@
     /** Scale the active terminal to fit its container at fixed cols. */
     function fitActiveTerminal() {
       requestAnimationFrame(() => {
-        if (carousel.isActive()) {
-          carousel.fitAll();
-          return;
-        }
-        const active = terminalPool.getActive();
-        if (!active) return;
-        terminalPool.scale(active.sessionName);
-        // Send row update to server (cols are fixed)
-        if (state.connection.ws?.readyState === 1) {
-          state.connection.ws.send(JSON.stringify({ type: "resize", session: state.session.name, cols: active.term.cols, rows: active.term.rows }));
-        }
+        carousel.fitAll();
       });
     }
 
@@ -469,13 +463,6 @@
     });
 
     const rawSend = (data) => inputSender.send(data);
-
-    // Create the initial terminal now that rawSend is available.
-    // When no explicit ?s= param, activation is deferred until we
-    // resolve which session to attach to (or none).
-    if (explicitSession) {
-      terminalPool.activate(state.session.name);
-    }
 
     // --- Layout ---
 
@@ -660,10 +647,9 @@
         // Re-enable reconnect if we were in empty state
         wsConnection.enableReconnect();
         windowTabSet.addTab(data.name);
-        // routeToSession handles both iPad (carousel) and desktop (switchSession)
         routeToSession(data.name);
         // If carousel was just activated from empty state, reconnect WS
-        if (isCarouselDevice() && carousel.isActive()) {
+        if (carousel.isActive()) {
           wsConnection.connect();
         }
       } catch (err) {
@@ -684,6 +670,7 @@
     // Late-bound: viewportManager is created after activateSession but called lazily
     let _attachScrollButton = () => {};
 
+    /** Activate a session: close panels, find-or-create tile in carousel, focus it. */
     function activateSession(name) {
       // Close alternative views — switching sessions returns to terminal
       if (portForwardEl?.classList.contains("active")) closePortForward();
@@ -697,62 +684,22 @@
         hideHelmView();
       }
 
-      // Ensure session is in this window's tab set
-      if (!windowTabSet.hasTab(name)) {
-        windowTabSet.addTab(name);
-      }
-
-      // On iPad/tablet, route through carousel (onFocusChange handles state sync)
-      if (isCarouselDevice()) {
-        routeToSession(name);
-        invalidateSessions(sessionStore, name);
-        return;
-      }
-
-      const ws = state.connection.ws;
-      const wsOpen = ws && ws.readyState === WebSocket.OPEN;
-
-      const wasCached = terminalPool.has(name);
-      const entry = terminalPool.activate(name);
-
-      // If this is a fresh terminal (not cached), clear it so we start clean
-      if (!wasCached) {
-        entry.term.clear();
-        entry.term.reset();
-      }
-
-      // Visual updates only — state.session.name is set by the server's
-      // "switched" or "attached" confirmation to avoid stale routing during
-      // the switch window.
-      document.title = name;
-
-      if (wsOpen) {
-        // Switch session over the existing WebSocket — no disconnect/reconnect needed
-        pendingSwitch = name;
-        ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows, cached: wasCached }));
-      } else if (!ws || ws.readyState === WebSocket.CLOSED) {
-        // No WebSocket yet — set session name for the attach message, then connect
-        state.update('session.name', name);
-        wsConnection.connect();
-      }
-      if (shortcutBarInstance) shortcutBarInstance.render(name);
+      // Find-or-create terminal tile in carousel, focus it.
+      // routeToSession handles carousel activation and windowTabSet mirroring.
+      routeToSession(name);
       invalidateSessions(sessionStore, name);
-      // Attach scroll-to-bottom button listener to the new viewport.
-      // scroll events don't bubble, so we must listen on the viewport directly.
-      _attachScrollButton();
     }
 
     function switchSession(name) {
       if (name === state.session.name || name === pendingSwitch) return;
-      const url = new URL(window.location);
-      url.searchParams.set("s", name);
-      history.pushState(null, "", url);
+      sessionState.push(name);
+      state.update('session.name', name);
       activateSession(name);
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
     window.addEventListener("popstate", () => {
-      const name = new URLSearchParams(location.search).get("s");
+      const name = sessionState.fromUrl();
       if (!name) return; // bare URL without ?s= — stay on current session
       if (name !== state.session.name && name !== pendingSwitch) activateSession(name);
     });
@@ -762,11 +709,16 @@
     // --- Keyboard shortcuts (Cmd+Shift+[/], Cmd+?) ---
 
     function navigateTab(direction) {
-      const tabs = windowTabSet.getTabs();
+      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
       if (tabs.length <= 1) return;
       const idx = tabs.indexOf(state.session.name);
       if (idx === -1) return;
-      switchSession(tabs[(idx + direction + tabs.length) % tabs.length]);
+      const target = tabs[(idx + direction + tabs.length) % tabs.length];
+      if (carousel.isActive()) {
+        carousel.focusCard(target);
+      } else {
+        switchSession(target);
+      }
     }
 
     function toggleKeyboardHelp() {
@@ -1049,32 +1001,26 @@
       onNewSessionClick: createNewSession,
       tileTypes: [
         { type: "terminal", name: "Terminal", icon: "terminal-window" },
-        { type: "html", name: "HTML View", icon: "code" },
-        { type: "dashboard", name: "Dashboard", icon: "squares-four" },
+        ...extensionTileTypes.map(e => ({ type: e.type, name: e.name, icon: e.icon })),
       ],
       onCreateTile: (type, _meta) => {
         if (type === "terminal") {
-          // Terminal tiles create a server-side session
           createNewSession();
-        } else if (isCarouselDevice()) {
-          // Non-terminal tiles: create directly in the carousel
+        } else {
           const id = `${type}-${Date.now().toString(36)}`;
-          const options = type === "dashboard"
-            ? { cols: 2, rows: 1, title: "Dashboard", slots: [] }
-            : { title: `New ${_meta?.name || type}`, html: `<div style="padding:40px;text-align:center;opacity:0.5"><h2>${_meta?.name || type}</h2><p>Empty tile — content will appear here.</p></div>` };
-          const tile = createTile(type, options);
-          carousel.addCard(id, tile);
+          const tile = createTile(type, {});
+          if (!carousel.isActive()) {
+            carousel.activate([{ id, tile }], id);
+          } else {
+            carousel.addCard(id, tile);
+          }
           carousel.focusCard(id);
           windowTabSet.addTab(id);
           if (shortcutBarInstance) shortcutBarInstance.render(id);
         }
       },
       onTabClick: (name) => {
-        if (isCarouselDevice() && carousel.isActive()) {
-          routeToSession(name);
-        } else {
-          switchSession(name);
-        }
+        routeToSession(name);
       },
       onNotepadClick: () => toggleNotepad(),
       get notepad() { return notepad; },
@@ -1086,10 +1032,7 @@
         invalidateSessions(sessionStore, newName);
         if (state.session.name === oldName) {
           state.update('session.name', newName);
-          document.title = newName;
-          const url = new URL(window.location);
-          url.searchParams.set("s", newName);
-          history.replaceState(null, "", url);
+          sessionState.set(newName);
         }
       },
       onAdoptSession: async (name) => {
@@ -1114,10 +1057,7 @@
         terminalPool.forEach((name) => terminalPool.dispose(name));
         wsConnection.disconnect();
         state.update('session.name', null);
-        document.title = "katulong";
-        const url = new URL(window.location);
-        url.searchParams.delete("s");
-        history.replaceState(null, "", url);
+        sessionState.set(null);
       },
       sendFn: rawSend,
       get term() { return getTerm(); },
@@ -1129,14 +1069,17 @@
       carousel,
     });
 
-    // Sync carousel card order when tabs are reordered via the shortcut bar
-    if (windowTabSet) {
-      windowTabSet.subscribe(() => {
-        if (carousel.isActive()) {
-          carousel.reorderCards(windowTabSet.getTabs());
-        }
-      });
-    }
+    // Carousel is the single source of truth — mirror its state into windowTabSet.
+    // This is one-way: carousel -> windowTabSet. Tab drag reorder in shortcut bar
+    // calls carousel.reorderCards() directly (see endDrag in shortcut-bar.js).
+    carousel.subscribe(({ cards: cardIds }) => {
+      if (!windowTabSet) return;
+      const currentTabs = windowTabSet.getTabs();
+      // Sync tab list to match carousel card order
+      if (cardIds.join(",") !== currentTabs.join(",")) {
+        windowTabSet.reorderTabs(cardIds);
+      }
+    });
 
     // Re-render bar if pointer capability changes (e.g., external mouse connected)
     window.matchMedia("(pointer: fine)").addEventListener("change", () => {
@@ -1421,10 +1364,8 @@
       syncCarouselSubscriptions: () => syncCarouselSubscriptions(),
       updateSessionUI: (name) => {
         pendingSwitch = null;
-        document.title = name;
-        const url = new URL(window.location);
-        url.searchParams.set("s", name);
-        history.replaceState(null, "", url);
+        state.update('session.name', name);
+        sessionState.set(name);
         renderBar(name);
       },
       refreshTokensAfterRegistration: () => {
@@ -1447,16 +1388,13 @@
             // No sessions left — disconnect WS, clear UI, stay on page
             wsConnection.disconnect();
             state.update('session.name', null);
-            document.title = "katulong";
-            const url = new URL(window.location);
-            url.searchParams.delete("s");
-            history.replaceState(null, "", url);
+            sessionState.set(null);
             renderBar(null);
           }
         }).catch(() => {
           wsConnection.disconnect();
           state.update('session.name', null);
-          document.title = "katulong";
+          sessionState.set(null);
         });
       },
       onDisconnect: () => { pendingSwitch = null; },
@@ -1490,75 +1428,84 @@
     wsConnection.initVisibilityReconnect();
 
     // --- Boot ---
+    // Unified boot: restore carousel -> determine target session -> merge -> connect.
 
-    // If no explicit ?s= param, resolve an existing session before connecting
-    // to avoid creating a throwaway "default" tmux session.
-    // If user explicitly closed all tabs, stay in empty state.
-    const wasEmptyState = sessionStorage.getItem("katulong-empty-state");
-    if (wasEmptyState) sessionStorage.removeItem("katulong-empty-state");
+    async function boot() {
+      const wasEmptyState = sessionStorage.getItem("katulong-empty-state");
+      if (wasEmptyState) sessionStorage.removeItem("katulong-empty-state");
 
-    if (!explicitSession) {
-      fetch("/sessions").then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      }).then(sessions => {
-        // Guard: if the user already picked a session while the fetch was in-flight, skip
-        if (state.connection.ws || state.session.name !== null) return;
-        // If user explicitly closed all tabs, don't auto-attach
-        if (wasEmptyState) return;
-        if (sessions.length > 0 && sessions[0].name) {
-          const name = sessions[0].name;
-          state.update('session.name', name);
-          document.title = name;
-          const url = new URL(window.location);
-          url.searchParams.set("s", name);
-          history.replaceState(null, "", url);
-          if (isCarouselDevice()) {
-            const tabSessions = windowTabSet.getTabs();
-            const allNames = tabSessions.length > 0 ? [...tabSessions] : [name];
-            if (!allNames.includes(name)) allNames.unshift(name);
-            carousel.activate(allNames.map(n => makeTerminalTile(n)), name);
-            renderBar(name);
-          } else {
-            terminalPool.activate(name);
-            renderBar(name);
+      // 1. Restore carousel from sessionStorage (handles all tile types)
+      const carouselState = carousel.restore();
+      if (carouselState?.tiles?.length > 0 && !carousel.isActive()) {
+        const tiles = [];
+        for (const t of carouselState.tiles) {
+          try {
+            tiles.push({ id: t.id, tile: createTile(t.type, t) });
+          } catch (err) {
+            console.warn(`[carousel] Skipping unknown tile type "${t.type}" during restore`, err);
           }
-          windowTabSet.addTab(name);
-          wsConnection.connect();
         }
-        // If no sessions exist, stay empty — user can create one via session list
-      }).catch((err) => {
-        console.warn("Failed to fetch sessions on load:", err);
-        // Stay empty rather than creating a throwaway "default" session.
-        // User can create or pick a session via the sidebar.
-      });
-    } else {
-      // Explicit ?s= session — activate carousel on iPad/tablet
-      if (isCarouselDevice()) {
-        const tabSessions = windowTabSet.getTabs();
-        const allNames = tabSessions.length > 0 ? [...tabSessions] : [state.session.name];
-        if (state.session.name && !allNames.includes(state.session.name)) allNames.unshift(state.session.name);
-        carousel.activate(allNames.map(n => makeTerminalTile(n)), state.session.name);
-        renderBar(state.session.name);
-      } else {
-        renderBar(state.session.name);
+        if (tiles.length > 0) {
+          carousel.activate(tiles, carouselState.focused);
+          for (const t of tiles) windowTabSet.addTab(t.id);
+          if (shortcutBarInstance) shortcutBarInstance.render(carouselState.focused);
+        }
       }
-      wsConnection.connect();
+
+      // 2. Determine target session (explicit ?s= or first from /sessions API)
+      let targetSession = explicitSession || null;
+
+      if (!targetSession && !wasEmptyState) {
+        try {
+          const resp = await fetch("/sessions");
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const sessions = await resp.json();
+          // Guard: if the user already picked a session while the fetch was in-flight, skip
+          if (state.connection.ws || state.session.name !== null) return;
+          if (sessions.length > 0 && sessions[0].name) {
+            targetSession = sessions[0].name;
+          }
+        } catch (err) {
+          console.warn("Failed to fetch sessions on load:", err);
+          // Stay empty rather than creating a throwaway "default" session.
+        }
+      }
+
+      // 3. Merge target session into carousel (addCard if not present, focus it)
+      if (targetSession) {
+        state.update('session.name', targetSession);
+        sessionState.set(targetSession);
+
+        if (carousel.isActive()) {
+          // Carousel was restored — merge the target terminal session
+          const existing = carousel.findCard((tile) => tile.sessionName === targetSession);
+          if (!existing) {
+            const { id, tile } = makeTerminalTile(targetSession);
+            carousel.addCard(id, tile);
+            windowTabSet.addTab(id);
+          }
+          carousel.focusCard(existing || targetSession);
+        } else {
+          // No carousel restored — build from tab set + target
+          const tabSessions = windowTabSet.getTabs();
+          const allNames = tabSessions.length > 0 ? [...tabSessions] : [targetSession];
+          if (!allNames.includes(targetSession)) allNames.unshift(targetSession);
+          carousel.activate(allNames.map(n => makeTerminalTile(n)), targetSession);
+        }
+        windowTabSet.addTab(targetSession);
+        renderBar(targetSession);
+
+        // 4. Connect WebSocket
+        wsConnection.connect();
+      } else if (carousel.isActive()) {
+        // Carousel restored but no terminal session needed (e.g., only extension tiles)
+        renderBar(carousel.getFocusedCard());
+      }
     }
+
+    boot();
     loadShortcuts();
     getTerm()?.focus();
-
-    // Restore carousel state from sessionStorage after a short delay
-    setTimeout(() => {
-      const carouselState = carousel.restore();
-      if (carouselState && carouselState.tiles?.length > 0 && !carousel.isActive()) {
-        const tiles = carouselState.tiles.map(t => {
-          const tile = createTile(t.type, t);
-          return { id: t.id, tile };
-        });
-        carousel.activate(tiles, carouselState.focused);
-      }
-    }, 500);
 
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});

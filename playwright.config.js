@@ -50,7 +50,7 @@ export default defineConfig({
     },
     {
       name: "tablet",
-      testMatch: "sidebar.e2e.js",
+      testMatch: ["sidebar.e2e.js", "tiles.e2e.js"],
       use: {
         ...devices["iPad (gen 7)"],
         browserName: "chromium",

@@ -1,6 +1,6 @@
 # Getting Started
 
-Simple installation with Homebrew or npm.
+Install katulong and start your workspace.
 
 ## Installation
 
@@ -86,7 +86,7 @@ and enter the PIN to pair securely.
 ngrok http 3002
 ```
 
-Access your terminal from anywhere using ngrok or Cloudflare Tunnel.
+Access your workspace from anywhere using ngrok or Cloudflare Tunnel.
 
 ### LAN Access
 

@@ -751,7 +751,11 @@ export function createShortcutBar(options = {}) {
       const names = dragTabs.map(t => t.dataset.session);
       const [moved] = names.splice(dragIndex, 1);
       names.splice(currentIndex, 0, moved);
-      if (windowTabSet) {
+      // Carousel is the source of truth — reorder there first.
+      // The carousel subscriber mirrors the change to windowTabSet.
+      if (carousel?.isActive()) {
+        carousel.reorderCards(names);
+      } else if (windowTabSet) {
         windowTabSet.reorderTabs(names);
       }
     }
@@ -844,12 +848,15 @@ export function createShortcutBar(options = {}) {
     });
   }
 
-  /** Build the session list from stores (shared by desktop + iPad paths) */
+  /** Build the session list from carousel (source of truth) or stores as fallback. */
   function getSessionList() {
     if (!sessionStore) return [];
     const allSessions = sessionStore.getState().sessions || [];
-    if (!windowTabSet) return allSessions;
-    const tabNames = windowTabSet.getTabs();
+    // Carousel is the source of truth for tab order when active
+    const tabNames = carousel?.isActive()
+      ? carousel.getCards()
+      : (windowTabSet ? windowTabSet.getTabs() : []);
+    if (tabNames.length === 0) return allSessions;
     const sessionMap = new Map(allSessions.map(s => [s.name, s]));
     return tabNames.map(n => sessionMap.get(n) || { name: n }).filter(Boolean);
   }

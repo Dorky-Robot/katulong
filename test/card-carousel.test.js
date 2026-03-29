@@ -118,60 +118,8 @@ function setupGlobals() {
 async function importCarousel() {
   const url = new URL('../public/lib/card-carousel.js', import.meta.url);
   const mod = await import(url.href + '?t=' + Date.now() + Math.random());
-  return { createCardCarousel: mod.createCardCarousel, isCarouselDevice: mod.isCarouselDevice };
+  return { createCardCarousel: mod.createCardCarousel };
 }
-
-describe('isCarouselDevice()', () => {
-  it('returns true for iPad UA with touch', async () => {
-    setupGlobals();
-    Object.defineProperty(globalThis, 'navigator', {
-      value: { maxTouchPoints: 5, userAgent: "Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15" },
-      writable: true, configurable: true,
-    });
-    const { isCarouselDevice } = await importCarousel();
-    assert.strictEqual(isCarouselDevice(), true);
-  });
-
-  it('returns true for Macintosh UA with multiple touch points (desktop-mode iPad)', async () => {
-    setupGlobals();
-    Object.defineProperty(globalThis, 'navigator', {
-      value: { maxTouchPoints: 5, userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15" },
-      writable: true, configurable: true,
-    });
-    const { isCarouselDevice } = await importCarousel();
-    assert.strictEqual(isCarouselDevice(), true);
-  });
-
-  it('returns false for desktop Mac (no touch)', async () => {
-    setupGlobals();
-    Object.defineProperty(globalThis, 'navigator', {
-      value: { maxTouchPoints: 0, userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" },
-      writable: true, configurable: true,
-    });
-    const { isCarouselDevice } = await importCarousel();
-    assert.strictEqual(isCarouselDevice(), false);
-  });
-
-  it('returns false for Windows desktop', async () => {
-    setupGlobals();
-    Object.defineProperty(globalThis, 'navigator', {
-      value: { maxTouchPoints: 0, userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-      writable: true, configurable: true,
-    });
-    const { isCarouselDevice } = await importCarousel();
-    assert.strictEqual(isCarouselDevice(), false);
-  });
-
-  it('returns false for Macintosh with only 1 touch point', async () => {
-    setupGlobals();
-    Object.defineProperty(globalThis, 'navigator', {
-      value: { maxTouchPoints: 1, userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15" },
-      writable: true, configurable: true,
-    });
-    const { isCarouselDevice } = await importCarousel();
-    assert.strictEqual(isCarouselDevice(), false);
-  });
-});
 
 describe('card-carousel', () => {
   let createCardCarousel;

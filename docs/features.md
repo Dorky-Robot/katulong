@@ -1,53 +1,64 @@
 # Features
 
-Complete inventory of everything katulong can do.
+## Tile Platform
 
-## Web Terminal
+Katulong's core is a tile system — composable, extensible UI surfaces that can hold any functionality. On tablets, tiles appear as swipeable cards in a carousel. On desktop, they work as tabs.
 
-Full terminal emulator in the browser powered by xterm.js with WebGL rendering. Connects to tmux sessions via WebSocket for real-time I/O.
+- **Terminal tile** — full xterm.js terminal with tmux session persistence
+- **Extension tiles** — install from `~/.katulong/tiles/` or a marketplace
+- **Chrome zones** — each tile has optional toolbar, sidebar, and shelf areas
+- **Tile SDK** — storage, platform info, WebSocket, pub/sub, toast notifications
+- **Serialize/restore** — tiles persist across page reloads via sessionStorage
+
+## Tile Extension System
+
+Third-party tiles live in `~/.katulong/tiles/<name>/` with a `manifest.json` and `tile.js`. Katulong discovers them at startup and makes them available in the `+` menu.
+
+- **Discovery** — server scans `~/.katulong/tiles/` for valid extensions
+- **Dynamic loading** — client imports tile modules before carousel restore
+- **Namespaced SDK** — each extension gets isolated storage and platform APIs
+- **File serving** — extension assets served at `/tiles/<name>/` with path traversal protection
+
+See [Tile SDK](tile-sdk.md) for the full developer reference.
+
+## Terminal
+
+Full terminal emulator in the browser powered by xterm.js with WebGL rendering. The terminal is a tile — it follows the same lifecycle as any other tile, but connects to tmux sessions via WebSocket.
 
 - GPU-accelerated rendering via WebGL addon
 - Terminal pool pre-allocates xterm instances for instant session switching
+- Topic-based pull system for terminal output (each session is a pub/sub topic)
 - Output buffer replay on reconnect — pick up exactly where you left off
-- Coalesced output dispatch reduces partial-frame rendering in TUI apps
 
 ## Multi-Session Management
 
 Create, rename, switch, and destroy terminal sessions. Each session is a tmux session that persists across server restarts and reconnections.
 
-- Named sessions via URL — `/?s=myproject` connects to a session called "myproject"
+- Named sessions via URL — `/?s=myproject`
 - Create sessions with `POST /sessions` or from the UI
 - Rename sessions without losing state
 - Sessions survive server restarts — tmux owns the PTY
 
-## Tab Management
+## Pub/Sub Event System
 
-Multi-window support with tear-off tabs. Each tab connects to a different session.
+Topic-based messaging between tiles and between client and server. Terminal sessions are topics, but any tile can publish or subscribe to events.
 
-- Open multiple sessions as tabs in a single browser window
-- Tear off a tab into its own window
-- Tab bar shows all active sessions with quick switching
-- URL reflects current session for bookmarking
-
-## Tmux Session Browser
-
-Discover and adopt existing tmux sessions not created by katulong.
-
-- `GET /tmux-sessions` lists unmanaged tmux sessions
-- `POST /tmux-sessions/adopt` brings an external session under katulong management
-- Useful for attaching to sessions started via SSH or local terminal
+- **CLI integration** — `katulong pub <topic> <message>`, `katulong sub <topic>`
+- **WebSocket transport** — tiles subscribe via `sdk.ws.on()` or `sdk.pubsub`
+- **Tile orchestration** — tiles react to each other's events (like Excel cells with formulas)
+- **Server-side topic broker** — manages subscriptions and message delivery
 
 ## Mobile-First Design
 
 Responsive interface optimized for phones and tablets.
 
-- **Virtual keyboard handling** — autocorrect and autocapitalize disabled, keyboard detection keeps terminal in view
-- **Shortcut bar** — touch-optimized toolbar with essential keys (Tab, Ctrl, Esc, arrows) always accessible
-- **Full-screen text input** — dedicated textarea for commit messages, docs, or long-form text
+- **Carousel mode** — swipeable tile cards on iPad and mobile
+- **Virtual keyboard handling** — autocorrect disabled, keyboard detection keeps content in view
+- **Shortcut bar** — touch-optimized toolbar with essential keys (Tab, Ctrl, Esc, arrows)
+- **Full-screen text input** — dedicated textarea for commit messages and long-form text
 - **Dictation mode** — works with your phone's speech-to-text
-- **Swipe navigation** — joystick touch zone for arrow keys without obscuring the terminal
+- **Swipe navigation** — joystick touch zone for arrow keys
 - **PWA support** — install as a full-screen app, no app store needed
-- **Split phone/tablet layout** — different toolbar layouts for different device sizes
 
 ## File Browser
 
@@ -68,17 +79,12 @@ Three-layer interception handles browser clipboard restrictions:
 2. Handle the paste event with Clipboard API
 3. WebKit fallback for browsers that suppress paste after preventDefault
 
-Image paste uploads the image to the host and copies it to the macOS clipboard. See [Clipboard Bridge](clipboard-bridge.md) for the full architecture.
-
-## Drag-and-Drop Upload
-
-Drop files or images directly onto the terminal to upload them to the host. Images are copied to the macOS clipboard for pasting into other apps.
+See [Clipboard Bridge](clipboard-bridge.md) for the full architecture.
 
 ## Port Proxy
 
 Access localhost services running on the host from your browser, even when connecting via tunnel.
 
-- Enable via `PUT /api/config/port-proxy-enabled`
 - Proxies WebSocket upgrade requests to local ports
 - Useful for accessing dev servers, databases, or dashboards running on the host
 
@@ -88,9 +94,7 @@ Automatic WebRTC DataChannel upgrade for low-latency terminal I/O when the clien
 
 - Baseline: connect via tunnel (WebSocket over HTTPS)
 - Enhancement: when on the same LAN, upgrade to WebRTC DataChannel
-- Near-zero latency even though you connected via internet
 - Falls back to WebSocket seamlessly on failure
-- No STUN/TURN servers needed (LAN-only)
 - Connection indicator shows direct (green) vs relay (orange) status
 
 See [P2P Progressive Enhancement](p2p-progressive-enhancement.md) for technical details.
@@ -104,15 +108,6 @@ WebAuthn (passkeys) for secure, phishing-resistant authentication.
 - Localhost requests bypass auth automatically
 - 30-day session tokens with automatic pruning
 
-## Credential and Device Management
-
-Manage registered devices and access tokens.
-
-- `GET /api/credentials` lists all registered passkeys with metadata
-- Revoke individual credentials from any device
-- Setup tokens for pairing new devices (7-day TTL)
-- Token management via CLI or API
-
 ## Self-Updating
 
 One-command update with rolling restart:
@@ -120,10 +115,9 @@ One-command update with rolling restart:
 ```bash
 katulong update             # Update to latest version
 katulong update --check     # Check without applying
-katulong update --no-restart  # Update code, skip restart
 ```
 
-Sessions survive updates with ~2-5 second reconnect. The server drains gracefully — clients receive a `server-draining` message and fast-reconnect to the new instance.
+Sessions survive updates with ~2-5 second reconnect.
 
 ## Customizable Shortcuts
 
@@ -131,27 +125,11 @@ Visual shortcut bar with custom commands.
 
 - Pinned keys in the toolbar, full list in a popup
 - Cmd+Backspace (kill line), Option+Backspace (delete word)
-- Edit shortcuts via `GET /shortcuts` and `PUT /shortcuts`
+- Edit shortcuts via settings UI or API
 
 ## Instance Customization
 
 Personalize your katulong instance.
 
-- Custom instance name (shown in title bar and tabs)
-- Custom instance icon
-- Custom toolbar color
-- All settings persisted via `PUT /api/config/*`
-
-## Service Worker Caching
-
-Offline-capable with service worker caching of static assets. Cache-busted on server updates.
-
-## Three-Access-Method Detection
-
-Katulong automatically detects how you're connecting:
-
-- **Localhost** — direct access on the host machine, auth bypassed
-- **LAN** — access from another device on the local network
-- **Internet** — access via tunnel (ngrok, Cloudflare Tunnel, etc.)
-
-The access method determines auth requirements and available features (e.g., P2P is only available on LAN).
+- Custom instance name, icon, and toolbar color
+- All settings persisted via config API

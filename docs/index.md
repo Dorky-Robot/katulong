@@ -1,9 +1,8 @@
-# Your Terminal, Everywhere
+# Katulong
 
-Self-hosted web terminal with passwordless authentication.
-Access your shell from any device — desktop browser, phone, or tablet — over LAN or internet.
+A self-hosted tile platform for getting work done from any device.
 
-*Katulong* (kah-too-LONG) means "helper" in Tagalog — your always-ready terminal assistant.
+Katulong (kah-too-LONG, "helper" in Tagalog) turns your machine into a workspace you can access from any browser — desktop, phone, or tablet. Build tiles for any task: terminal access, project notes, dashboards, file management, or anything you need. The terminal tile gives you full shell access and pairs with tools like Claude Code for agentic workflows.
 
 ```bash
 brew tap dorky-robot/katulong
@@ -18,41 +17,57 @@ katulong start
 
 | | | |
 |:---:|:---:|:---:|
-| **Zero Passwords** | **WebAuthn** | **Self-Hosted** |
-| Passwordless auth everywhere | Secure passkey authentication | Your machine, your data |
+| **Tile Platform** | **WebAuthn** | **Self-Hosted** |
+| Terminal, notes, dashboards — all tiles | Secure passkey authentication | Your machine, your data |
 
 ## How It Works
 
-1. **Start katulong** — launches an HTTP/WebSocket server that manages tmux sessions
-2. **Open in browser** — an xterm.js frontend connects via WebSocket
+1. **Start katulong** — launches an HTTP/WebSocket server on your machine
+2. **Open in browser** — a tile-based workspace loads in any browser
 3. **Register a passkey** — first visit registers your device with WebAuthn
-4. **Access from anywhere** — use a tunnel (ngrok, Cloudflare) for remote access
+4. **Work from anywhere** — use a tunnel (Cloudflare, ngrok) for remote access
 
-Katulong automatically detects how you're connecting — localhost, LAN, or internet — and adjusts auth requirements accordingly.
+On tablets and phones, tiles appear as swipeable cards in a carousel. Each tile has optional chrome zones (toolbar, sidebar, shelf) for controls. Create multiple tiles, switch between them, and they persist across page reloads.
 
 ## Why Katulong
 
-Traditional remote access tools force you to choose between convenience and security. Web terminals are convenient but usually cloud-hosted. Katulong gives you both:
-
+- **Tile platform** — terminal, notes, dashboards, and custom tiles in one workspace
 - **Self-hosted** — runs on your machine, your data stays yours
 - **Passwordless** — WebAuthn passkeys, no passwords ever
-- **Multi-access** — browser, phone, tablet — whatever's handy
-- **Session persistence** — backed by tmux; sessions survive server restarts
-- **Tunnel-friendly** — designed for ngrok, Cloudflare Tunnel, or any reverse proxy
-- **File browser** — navigate, upload, download, and manage files on the host
-- **Remote clipboard** — paste text and images across machines via tunnel
-- **P2P enhancement** — automatic WebRTC upgrade on LAN for near-zero latency
+- **Multi-device** — browser, phone, tablet — whatever's handy
+- **Extensible** — install community tiles or build your own with the Tile SDK
+- **Agent-friendly** — terminal tile + pub/sub messaging enables agentic workflows
+- **Session persistence** — terminal sessions backed by tmux; survive server restarts
+- **Tunnel-friendly** — designed for Cloudflare Tunnel, ngrok, or any reverse proxy
 
 ## Architecture at a Glance
 
 ```
-Browser (xterm.js) ──WebSocket──→ Server (server.js)
-                                  Session manager ── tmux sessions
-                                  Auth middleware     PTY processes
-                                                     ring buffers
+Browser                          Server (server.js)
+├─ Tile Carousel (cards)         ├─ Tile Extensions (discovery, file serving)
+│  ├─ Terminal tiles ──WS──────► ├─ Session Manager ── tmux sessions
+│  ├─ Plano (notes) tiles        │                     PTY processes
+│  ├─ Dashboard tiles            │                     ring buffers
+│  └─ Extension tiles            ├─ Topic Broker (pub/sub event bus)
+├─ Tile SDK (storage, ws, api)   ├─ Auth middleware (WebAuthn)
+└─ Chrome zones (toolbar/sidebar)└─ Static files, file browser, port proxy
 ```
 
-The session manager runs in-process. Sessions are backed by tmux — restart the server freely, your sessions survive. The browser reconnects and replays the output buffer. You pick up exactly where you left off.
+Tiles communicate through a topic-based pub/sub system. Terminal tiles subscribe to session topics for output. Any tile can emit events that other tiles react to — enabling orchestration between tiles, like Excel cells referencing each other.
+
+## Part of the DorkyRobot Stack
+
+Katulong is the workspace layer of the [DorkyRobot](https://dorkyrobot.com) ecosystem:
+
+| Tool | Purpose |
+|------|---------|
+| **katulong** | Tile platform — the workspace where everything converges |
+| **kubo** | Isolated sandboxes for agent execution |
+| **tala** | Git-backed notes and context (API-first) |
+| **sipag** | Prompt templates and project scaffolding |
+| **tunnels** | Exposing services to the internet |
+| **yelo** | Cloud-based persistence |
+| **diwa** | Project insights and analytics |
 
 ## Quick Links
 
@@ -60,10 +75,9 @@ The session manager runs in-process. Sessions are backed by tmux — restart the
 |------|-------------------|
 | [Getting Started](getting-started.md) | Install, first launch, register a passkey |
 | [Features](features.md) | Everything katulong can do |
+| [Tile System](tile-system.md) | How tiles work — carousel, chrome zones, lifecycle |
+| [Tile SDK](tile-sdk.md) | Build your own tiles — SDK reference and examples |
 | [CLI Reference](cli-reference.md) | All commands and flags |
-| [Security](security/index.md) | Auth model, hardening, threat surface |
-| [Access Guide](access-guide/index.md) | Localhost, LAN, internet access setup |
 | [Architecture](architecture.md) | Server architecture, API, WebSocket protocol |
-| [P2P Enhancement](p2p-progressive-enhancement.md) | WebRTC progressive enhancement on LAN |
-| [Clipboard Bridge](clipboard-bridge.md) | Remote clipboard architecture |
+| [Security](security/index.md) | Auth model, hardening, threat surface |
 | [Use Cases](use-cases.md) | Real-world scenarios |

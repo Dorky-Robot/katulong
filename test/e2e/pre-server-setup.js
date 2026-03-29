@@ -4,8 +4,10 @@
  * Creates fixture auth state so the server loads it on startup
  */
 
-import { mkdirSync, rmSync } from 'fs';
-import { join } from 'path';
+import { mkdirSync, rmSync, cpSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { homedir } from 'os';
 import { TEST_DATA_DIR } from './test-config.js';
 import { writeAuthFixture } from '../helpers/auth-fixture.js';
 
@@ -71,6 +73,14 @@ function setupFixtureAuthState() {
   console.log('[Pre-Server Setup] Created fixture auth state at', TEST_DATA_DIR);
   console.log('[Pre-Server Setup] Fixture credential:', fixtureCredential.id);
   console.log('[Pre-Server Setup] Fixture token:', setupToken.name);
+
+  // Copy tile extensions into the test data directory so the server discovers them
+  const userTilesDir = join(homedir(), '.katulong', 'tiles');
+  const testTilesDir = join(TEST_DATA_DIR, 'tiles');
+  if (existsSync(userTilesDir)) {
+    cpSync(userTilesDir, testTilesDir, { recursive: true });
+    console.log('[Pre-Server Setup] Copied tile extensions from', userTilesDir);
+  }
 }
 
 // Run setup

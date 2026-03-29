@@ -4,24 +4,8 @@
  * Handles image file uploads with progress tracking and toast notifications.
  */
 
-/**
- * Show toast notification
- */
-export function showToast(msg, isError = false) {
-  const el = document.createElement("div");
-  el.className = `toast ${isError ? "toast-error" : ""}`;
-  el.textContent = msg;
-  document.body.appendChild(el);
-
-  requestAnimationFrame(() => {
-    el.classList.add("visible");
-  });
-
-  setTimeout(() => {
-    el.classList.remove("visible");
-    setTimeout(() => el.remove(), 300);
-  }, 3000);
-}
+import { showToast } from "./toast.js";
+export { showToast };
 
 /**
  * Check if file is an image
