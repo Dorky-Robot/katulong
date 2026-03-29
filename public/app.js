@@ -1503,9 +1503,11 @@
       }
     }
 
-    boot();
-    loadShortcuts();
-    getTerm()?.focus();
+    boot().then(() => {
+      loadShortcuts();
+      getTerm()?.focus();
+    });
+
 
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});

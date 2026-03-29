@@ -51,6 +51,8 @@ export async function waitForShellReady(page) {
  * Wait for app to be ready (terminal loaded and shell prompt visible)
  */
 export async function waitForAppReady(page) {
+  // Wait for carousel to activate (carousel-everywhere mode)
+  await page.waitForSelector('#terminal-container[data-carousel]', { timeout: 15000 });
   await page.waitForSelector(".xterm", { timeout: 10000 });
   await page.waitForSelector(".xterm-screen", { timeout: 5000 });
   await waitForShellReady(page);
