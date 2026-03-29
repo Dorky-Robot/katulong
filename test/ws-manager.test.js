@@ -62,12 +62,15 @@ function createMockSessionManager() {
     },
     subscribeClient: async (clientId, sessionName) => {
       if (!clientSubscriptions.has(clientId)) clientSubscriptions.set(clientId, new Set());
-      clientSubscriptions.get(clientId).add(sessionName);
+      const subs = clientSubscriptions.get(clientId);
+      const isNew = !subs.has(sessionName);
+      subs.add(sessionName);
       const s = mockSessions.get(sessionName);
       return {
-        buffer: s?._subscribeBuffer || "",
+        buffer: isNew ? (s?._subscribeBuffer || "") : "",
         seq: s?.outputBuffer?.totalBytes,
         alive: s?.alive ?? true,
+        isNew,
       };
     },
     unsubscribeClient: (clientId, sessionName) => {
