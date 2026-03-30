@@ -377,7 +377,9 @@
       }
     }
 
-    /** Scale the active terminal to fit its container at fixed cols. */
+    /** Scale the active terminal to fit its container at fixed cols.
+     *  The pool's onResize callback handles server notification when
+     *  dimensions actually change — no need to send unconditionally. */
     function fitActiveTerminal() {
       requestAnimationFrame(() => {
         if (carousel.isActive()) {
@@ -387,10 +389,6 @@
         const active = terminalPool.getActive();
         if (!active) return;
         terminalPool.scale(active.sessionName);
-        // Send row update to server (cols are fixed)
-        if (state.connection.ws?.readyState === 1) {
-          state.connection.ws.send(JSON.stringify({ type: "resize", session: state.session.name, cols: active.term.cols, rows: active.term.rows }));
-        }
       });
     }
 

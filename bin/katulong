@@ -27,6 +27,7 @@ const COMMANDS = {
   token: "Manage setup tokens (create, list, revoke)",
   credential: "Manage passkey credentials (list, revoke)",
   session: "Manage terminal sessions (list, create, kill, rename)",
+  crew: "Manage worker sessions organized by project",
   notes: "Read per-session notepad content (read, list)",
   service: "Manage macOS LaunchAgent (install, uninstall, restart, status)",
 };
@@ -63,6 +64,9 @@ EXAMPLES:
   katulong session list       List active PTY sessions
   katulong session kill dev   Kill a PTY session
   katulong session create myapp --open  Create session + open in browser
+  katulong crew spawn myapp worker1 --cmd "npm test"  Spawn a worker
+  katulong crew status myapp  Show workers in a project
+  katulong crew kill myapp    Kill all workers in a project
   katulong notify "done"      Send notification to connected browsers
   katulong notes read         Read notes for current session
   katulong notes todos        List unchecked todos
