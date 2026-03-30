@@ -84,13 +84,13 @@ describe("PullManager", () => {
       assert.equal(pm.get("a").pending, true);
     });
 
-    it("sets pending when writing", () => {
+    it("allows pull while writing (pipelining)", () => {
       pm.init("a", 0);
-      pm.pullResponse("a", "data", 10); // sets writing=true
+      pm.pullResponse("a", "data", 10); // sets writing=true, cursor=10
       sends.length = 0;
-      pm.dataAvailable("a");
-      assert.equal(sends.length, 0);
-      assert.equal(pm.get("a").pending, true);
+      pm.dataAvailable("a"); // should pull immediately — not blocked by writing
+      assert.equal(sends.length, 1);
+      assert.equal(sends[0].fromSeq, 10);
     });
 
     it("no-op for unknown session", () => {
@@ -113,15 +113,14 @@ describe("PullManager", () => {
       assert.equal(pm.get("a").cursor, 5);
     });
 
-    it("chains pending pull after write", () => {
+    it("cursor advances immediately on pullResponse", () => {
       pm.init("a", 0);
       pm.pullResponse("a", "data", 10);
-      pm.dataAvailable("a"); // sets pending
-      sends.length = 0;
-
-      writes[0].done(); // triggers pending pull
-      assert.equal(sends.length, 1);
-      assert.equal(sends[0].fromSeq, 10);
+      // Cursor should advance before write completes
+      assert.equal(pm.get("a").cursor, 10);
+      assert.equal(pm.get("a").writing, true);
+      writes[0].done();
+      assert.equal(pm.get("a").writing, false);
     });
 
     it("handles empty data (caught up)", () => {

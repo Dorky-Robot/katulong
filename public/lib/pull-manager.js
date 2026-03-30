@@ -15,8 +15,8 @@
  *   - pending: data-available arrived while busy — will re-pull after current op
  */
 
-const PULL_TIMEOUT_MS = 5000;
-const WRITE_TIMEOUT_MS = 3000;
+const PULL_TIMEOUT_MS = 2000;
+const WRITE_TIMEOUT_MS = 1500;
 
 export function createPullManager({ onSendPull, onWrite, onReset }) {
   const sessions = new Map(); // sessionName -> { cursor, pulling, writing, pending }
@@ -69,10 +69,12 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
   function dataAvailable(name) {
     const ps = sessions.get(name);
     if (!ps) return;
-    if (ps.pulling || ps.writing) {
+    if (ps.pulling) {
       ps.pending = true;
       return;
     }
+    // Allow pull even while writing — cursor is updated immediately on
+    // pull-response so overlapping writes + pulls are safe.
     pull(name);
   }
 
@@ -81,6 +83,7 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
     const ps = sessions.get(name);
     if (!ps) return;
     ps.pulling = false;
+    ps.cursor = cursor; // Advance cursor immediately so next pull can start
     clearTimeout(pullTimers.get(name));
 
     if (data && data.length > 0) {
@@ -89,7 +92,6 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
       const safety = setTimeout(() => {
         if (ps.writing) {
           ps.writing = false;
-          ps.cursor = cursor;
           if (ps.pending) { ps.pending = false; pull(name); }
         }
       }, WRITE_TIMEOUT_MS);
@@ -97,13 +99,14 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
       onWrite(name, data, () => {
         clearTimeout(safety);
         ps.writing = false;
-        ps.cursor = cursor;
         if (ps.pending) { ps.pending = false; pull(name); }
       });
     } else {
-      ps.cursor = cursor;
       if (ps.pending) { ps.pending = false; pull(name); }
     }
+
+    // If data-available came in while we were pulling, re-pull now
+    if (ps.pending && !ps.pulling) { ps.pending = false; pull(name); }
   }
 
   function pullResponse(name, data, cursor) {
