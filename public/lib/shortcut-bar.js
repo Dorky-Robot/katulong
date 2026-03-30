@@ -286,7 +286,7 @@ export function createShortcutBar(options = {}) {
       },
       {
         icon: "eject",
-        label: "Detach from server",
+        label: "Detach",
         action: () => detachTab(sessionName)
       },
       {
@@ -746,31 +746,8 @@ export function createShortcutBar(options = {}) {
     const nameSpan = document.createElement("span");
     nameSpan.className = "tab-label";
     nameSpan.textContent = s.name;
+    nameSpan.dataset.fullName = s.name;
     tab.appendChild(nameSpan);
-
-    // Notes indicator dot
-    if (options.notepad && options.notepad.hasNotes(s.name)) {
-      const dot = document.createElement("span");
-      dot.className = "tab-notes-dot";
-      dot.title = "Has notes";
-      tab.appendChild(dot);
-    }
-
-    // Close button (×)
-    const closeBtn = document.createElement("span");
-    closeBtn.className = "tab-close";
-    closeBtn.setAttribute("aria-label", `Close ${s.name}`);
-    closeBtn.innerHTML = '<i class="ph ph-x"></i>';
-    closeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      // In carousel mode, dismiss the card (which handles windowTabSet removal)
-      if (carousel?.isActive()) {
-        carousel.removeCard(s.name);
-      } else {
-        closeTab(s.name);
-      }
-    });
-    tab.appendChild(closeBtn);
 
     // Double-click to rename
     tab.addEventListener("dblclick", (e) => {
@@ -827,6 +804,111 @@ export function createShortcutBar(options = {}) {
     renderIPadBar({ container, sessionName, sessions, createTabEl, showAddMenu });
   }
 
+  /**
+   * Adaptive tab label truncation with middle-ellipsis.
+   *
+   * Progression as tabs get narrower:
+   *   [icon] name-of-session  →  name-of-session  →  name...sion  →  na...on  →  n…
+   *
+   * Measures available space per tab and truncates labels to fit,
+   * keeping both the start and end of the name visible.
+   */
+  function fitTabLabels() {
+    const tabArea = container.querySelector(".tab-scroll-area");
+    if (!tabArea) return;
+    const tabs = [...tabArea.querySelectorAll(".tab-bar-tab")];
+    if (tabs.length === 0) return;
+
+    const areaWidth = tabArea.clientWidth;
+    const gap = parseFloat(getComputedStyle(tabArea).gap) || 0;
+    const totalGap = gap * (tabs.length - 1);
+    const availPerTab = Math.floor((areaWidth - totalGap) / tabs.length);
+
+    for (const tab of tabs) {
+      const label = tab.querySelector(".tab-label");
+      const icon = tab.querySelector("i.ph");
+      if (!label) continue;
+
+      const fullName = label.dataset.fullName || label.textContent;
+      const padLeft = parseFloat(getComputedStyle(tab).paddingLeft) || 0;
+      const padRight = parseFloat(getComputedStyle(tab).paddingRight) || 0;
+      const iconWidth = icon ? (icon.offsetWidth + 6) : 0; // 6px = gap
+      const chrome = padLeft + padRight;
+
+      // Measure text width using canvas (no reflow)
+      const font = getComputedStyle(label).font;
+      const measure = (text) => {
+        const c = document.createElement("canvas").getContext("2d");
+        c.font = font;
+        return c.measureText(text).width;
+      };
+
+      const fullWidth = measure(fullName);
+      const spaceWithIcon = availPerTab - chrome - iconWidth;
+      const spaceNoIcon = availPerTab - chrome;
+
+      // Phase 1: full name with icon
+      if (fullWidth <= spaceWithIcon) {
+        if (icon) icon.style.display = "";
+        label.textContent = fullName;
+        continue;
+      }
+
+      // Phase 2: full name, no icon
+      if (icon) icon.style.display = "none";
+      if (fullWidth <= spaceNoIcon) {
+        label.textContent = fullName;
+        continue;
+      }
+
+      // Phase 3: middle-ellipsis — keep start and end visible
+      const ellipsis = "…";
+      const ellipsisW = measure(ellipsis);
+      const budget = spaceNoIcon - ellipsisW;
+
+      if (budget <= measure(fullName[0])) {
+        // Phase 5: just first letter
+        label.textContent = fullName[0];
+        continue;
+      }
+
+      // Split budget 60/40 between start and end
+      const startBudget = budget * 0.6;
+      const endBudget = budget * 0.4;
+
+      let startLen = 0;
+      let startW = 0;
+      for (let i = 0; i < fullName.length; i++) {
+        const w = measure(fullName[i]);
+        if (startW + w > startBudget) break;
+        startW += w;
+        startLen = i + 1;
+      }
+
+      let endLen = 0;
+      let endW = 0;
+      for (let i = fullName.length - 1; i >= startLen; i--) {
+        const w = measure(fullName[i]);
+        if (endW + w > endBudget) break;
+        endW += w;
+        endLen++;
+      }
+
+      if (startLen > 0 && endLen > 0) {
+        label.textContent = fullName.slice(0, startLen) + ellipsis + fullName.slice(-endLen);
+      } else if (startLen > 0) {
+        label.textContent = fullName.slice(0, startLen) + ellipsis;
+      } else {
+        label.textContent = fullName[0];
+      }
+    }
+  }
+
+  // Re-fit tabs when the window resizes
+  window.addEventListener("resize", () => {
+    if (container.querySelector(".tab-scroll-area")) fitTabLabels();
+  });
+
   // ── Render gate ────────────────────────────────────────────────────
   // All renders flow through this gate. During drag, renders are
   // deferred (not lost) and replayed when drag ends.
@@ -866,6 +948,9 @@ export function createShortcutBar(options = {}) {
     // with the card carousel layout.
     const sessions = getSessionList();
     _renderIPadBar(sessionName, sessions);
+
+    // Adaptive tab truncation — fit tabs to available width
+    requestAnimationFrame(() => fitTabLabels());
 
     // Floating island (Esc/Tab/keyboard on touch, plus utility buttons on tablet/desktop)
     renderKeyIsland({

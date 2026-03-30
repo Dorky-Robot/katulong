@@ -532,7 +532,7 @@
       -webkit-touch-callout: none;
     }
     .tab-bar-tab i.ph { font-size: 1rem; flex-shrink: 0; }
-    .tab-bar-tab .tab-label { pointer-events: none; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .tab-bar-tab .tab-label { pointer-events: none; overflow: hidden; min-width: 0; }
     .tab-rename-input { all: unset; font: inherit; color: inherit; width: 100%; min-width: 3rem; background: transparent; border-bottom: 1px solid currentColor; cursor: text; }
     .tab-bar-tab.active {
       background: var(--accent); color: var(--text);
@@ -541,30 +541,8 @@
     .tab-bar-tab:hover:not(.active) { background: var(--accent); color: var(--text); }
     .tab-bar-tab:active { background: var(--accent-active); }
 
-    /* Tab close button (×) */
-    .tab-close {
-      display: flex; align-items: center; justify-content: center;
-      width: 1.125rem; height: 1.125rem; border-radius: var(--radius-sm);
-      font-size: 0.75rem; color: var(--text-dim);
-      opacity: 0; transition: opacity 0.1s;
-      margin-left: 0.25rem; flex-shrink: 0;
-      /* Enlarge touch target without changing visual size */
-      padding: 0.5rem; box-sizing: content-box;
-      margin: -0.5rem -0.5rem -0.5rem auto;
-    }
-    .tab-bar-tab:hover .tab-close { opacity: 1; }
-    .tab-close:hover { color: var(--text); background: rgba(255,255,255,0.1); }
-    .tab-bar-tab.active .tab-close:hover { color: var(--danger); }
-
     .tab-bar-tab.tab-long-press { transform: scale(1.05); transition: transform 0.15s; }
     .tab-bar-tab.tab-dragging { transition: none !important; }
-
-    /* Progressive tab shrinking — hide elements when tabs are too narrow */
-    .tabs-compact .tab-close { display: none; }
-    .tabs-icon-only .tab-close,
-    .tabs-icon-only .tab-label,
-    .tabs-icon-only .tab-notes-dot { display: none; }
-    .tabs-icon-only .tab-bar-tab { justify-content: center; padding: 0; min-width: 2rem; }
 
     /* Drag ghost (follows cursor while dragging) */
     .tab-drag-ghost {
@@ -690,8 +668,7 @@
       padding-bottom: env(safe-area-inset-bottom, 0px);
       gap: var(--space-sm);
     }
-    #shortcut-bar.bar-ipad .tab-close { opacity: 0.6; }
-    /* iPad tabs: taller for touch, shrink to fit */
+    /* Tabs: taller for touch, shrink to fit */
     #shortcut-bar.bar-ipad .tab-bar-tab {
       flex: 1 1 0; min-width: 3rem; max-width: 12rem;
       height: 2.5rem; padding: 0 var(--space-md);

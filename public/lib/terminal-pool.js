@@ -11,11 +11,10 @@ import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
 import { SearchAddon } from "/vendor/xterm/addon-search.esm.js";
 import { ClipboardAddon } from "/vendor/xterm/addon-clipboard.esm.js";
 import { WebglAddon } from "/vendor/xterm/addon-webgl.esm.js";
+import { TERMINAL_COLS } from "/lib/terminal-config.js";
 
 const MAX_POOL_SIZE = 5;
-// Fixed column width — all terminals share this regardless of screen size.
-// Font size scales to fit the container width. Rows vary with height.
-const FIXED_COLS = 100;
+const FIXED_COLS = TERMINAL_COLS;
 
 /** Load WebGL renderer with automatic fallback to DOM on failure. */
 function loadWebGL(term) {
