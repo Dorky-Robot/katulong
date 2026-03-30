@@ -437,7 +437,7 @@
       overflow: hidden;
     }
     .tab-scroll-area {
-      display: flex; align-items: center; gap: var(--space-xs);
+      display: flex; align-items: stretch; gap: var(--space-xs);
       flex: 1 1 0; min-width: 0;
       overflow: hidden;
     }
@@ -557,6 +557,7 @@
     .tab-bar-tab.active .tab-close:hover { color: var(--danger); }
 
     .tab-bar-tab.tab-long-press { transform: scale(1.05); transition: transform 0.15s; }
+    .tab-bar-tab.tab-dragging { transition: none !important; }
 
     /* Progressive tab shrinking — hide elements when tabs are too narrow */
     .tabs-compact .tab-close { display: none; }
@@ -681,8 +682,9 @@
       order: 1; /* after terminal = bottom */
       border-bottom: none;
       border-top: 1px solid var(--border);
-      height: 4rem;
-      padding-top: var(--space-xs);
+      height: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+      align-items: flex-start;
+      padding-top: var(--space-sm);
       padding-left: calc(3.5rem + var(--space-sm)); /* space for fixed + button */
       padding-right: var(--space-sm);
       padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -697,8 +699,8 @@
     /* iPad + button: absolutely positioned within the shortcut bar's padding area */
     #shortcut-bar.bar-ipad { position: relative; }
     .ipad-add-btn {
-      position: absolute; top: 0; left: 0; bottom: 0;
-      width: 3.5rem;
+      position: absolute; top: 0; left: 0;
+      width: 3.5rem; height: 3rem;
       border: none; background: transparent;
       color: var(--text-muted); font-size: 1.25rem; cursor: pointer;
       display: flex; align-items: center; justify-content: center;

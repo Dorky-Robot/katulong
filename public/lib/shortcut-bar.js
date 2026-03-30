@@ -461,18 +461,21 @@ export function createShortcutBar(options = {}) {
 
   let drag = null;
 
+  // Track active touch to block synthesized mouse events entirely
+  let touchActive = false;
+
   function onTabMouseDown(e, tab, name) {
     if (e.button !== 0 || e.target.closest(".tab-close")) return;
-    // If a touch drag is already in progress, don't start a mouse drag too.
-    // iPad Safari synthesizes mouse events from touch, which would create
-    // a second competing drag that makes the ghost jump around.
-    if (drag) return;
+    // Block synthesized mouse events from touch — they have different
+    // coordinates and cause ghost jitter during drag.
+    if (touchActive || drag) return;
 
     const startX = e.clientX;
     const startY = e.clientY;
     let started = false;
 
     const onMove = (me) => {
+      if (drag?.isTouch) return; // touch owns the gesture
       me.preventDefault(); // prevent native selection during drag
       const dx = me.clientX - startX;
       const dy = me.clientY - startY;
@@ -489,6 +492,8 @@ export function createShortcutBar(options = {}) {
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
+
+      if (drag?.isTouch) return; // touch owns the gesture
 
       if (!started) {
         if (name !== currentSessionName) {
@@ -517,8 +522,11 @@ export function createShortcutBar(options = {}) {
     const startY = initialTouch.clientY;
 
     {
-      // Unified touch: drag on horizontal movement, long press for context menu.
+      // Touch: drag on horizontal movement, long press for context menu.
+      // preventDefault on touchstart blocks synthesized mouse events and
+      // native scroll — both of which cause jitter during drag.
       e.preventDefault();
+      touchActive = true;
       let started = false;
       let longPressed = false;
 
@@ -543,8 +551,10 @@ export function createShortcutBar(options = {}) {
         te.preventDefault();
         updateDrag(t.clientX, t.clientY);
       };
+
       const onEnd = () => {
         clearTimeout(longPressTimer);
+        setTimeout(() => { touchActive = false; }, 50);
         tab.classList.remove("tab-long-press");
         document.removeEventListener("touchmove", onMove);
         document.removeEventListener("touchend", onEnd);
@@ -567,6 +577,7 @@ export function createShortcutBar(options = {}) {
           }
         }
       };
+
       document.addEventListener("touchmove", onMove, { passive: false });
       document.addEventListener("touchend", onEnd);
       document.addEventListener("touchcancel", onEnd);
@@ -574,6 +585,7 @@ export function createShortcutBar(options = {}) {
   }
 
   function beginDrag(tab, name, startX, fromTouch) {
+    if (drag) return; // already dragging (e.g. synthesized mouse from touch)
     const tabs = [...container.querySelectorAll(".tab-bar-tab")];
     const dragIndex = tabs.indexOf(tab);
     if (dragIndex === -1) return; // tab removed from DOM between touchstart and drag
@@ -590,6 +602,11 @@ export function createShortcutBar(options = {}) {
     // Safari clips cloned nodes that inherit overflow:hidden from the source tab,
     // even after appending to document.body with position:fixed. Force visible.
     ghost.style.overflow = "visible";
+    // Position ghost at the tab's current location BEFORE appending to prevent
+    // a flash at (0,0) on the first frame.
+    const tabRect = rects[dragIndex];
+    const tabTop = tab.getBoundingClientRect().top;
+    ghost.style.transform = `translate3d(${tabRect.left}px, ${tabTop}px, 0)`;
     document.body.appendChild(ghost);
 
     tab.classList.add("tab-dragging");
@@ -652,23 +669,27 @@ export function createShortcutBar(options = {}) {
     }
     if (newIndex > rects.length - 1) newIndex = rects.length - 1;
 
-    drag.currentIndex = newIndex;
+    // Only update sibling transforms when the index actually changes —
+    // re-setting the same transform on every frame causes needless work.
+    if (newIndex !== drag.currentIndex) {
+      drag.currentIndex = newIndex;
 
-    for (let i = 0; i < tabs.length; i++) {
-      if (i === dragIndex) continue;
+      for (let i = 0; i < tabs.length; i++) {
+        if (i === dragIndex) continue;
 
-      let shift = 0;
-      if (dragIndex < newIndex) {
-        if (i > dragIndex && i <= newIndex) {
-          shift = -(dragWidth + getGap());
+        let shift = 0;
+        if (dragIndex < newIndex) {
+          if (i > dragIndex && i <= newIndex) {
+            shift = -(dragWidth + getGap());
+          }
+        } else if (dragIndex > newIndex) {
+          if (i >= newIndex && i < dragIndex) {
+            shift = dragWidth + getGap();
+          }
         }
-      } else if (dragIndex > newIndex) {
-        if (i >= newIndex && i < dragIndex) {
-          shift = dragWidth + getGap();
-        }
+
+        tabs[i].style.transform = shift ? `translateX(${shift}px)` : "";
       }
-
-      tabs[i].style.transform = shift ? `translateX(${shift}px)` : "";
     }
   }
 
