@@ -947,14 +947,15 @@ export function createShortcutBar(options = {}) {
     // Adaptive tab truncation — fit tabs to available width
     requestAnimationFrame(() => fitTabLabels());
 
-    // Floating island (Esc/Tab/keyboard on touch, plus utility buttons on tablet/desktop)
+    // Tool row — pinned keys + utility buttons, docked inside the bar
     renderKeyIsland({
+      parentEl: container,
       platform,
       pinnedKeys,
       sendFn,
       getTerm: () => options.term,
+      terminalPool: options.terminalPool,
       onShortcutsClick,
-      onDictationClick,
       onNotepadClick,
       onFilesClick,
       onPortForwardClick,

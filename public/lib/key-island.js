@@ -1,62 +1,48 @@
 /**
- * Key Island — Floating pill with Esc/Tab/keyboard for touch devices,
- * plus utility buttons (files, port-forward, settings) on tablet/desktop.
+ * Tool Row — Second row of the bottom bar with Esc/Tab/keyboard
+ * for touch devices, plus utility buttons (files, settings) on all platforms.
  *
- * Extracted from shortcut-bar.js for modularity.
+ * Docked inside #shortcut-bar as a second row, not a floating island.
  */
 
 import { keysToSequence, sendSequence } from "/lib/key-mapping.js";
 
-let _islandResizeHandler = null;
-
 /**
- * Render the floating key island.
+ * Render the tool row inside the shortcut bar.
  *
  * @param {Object} opts
+ * @param {HTMLElement} opts.parentEl - Container to append into (the shortcut bar)
  * @param {string} opts.platform - "desktop" | "ipad" | "phone"
  * @param {Array}  opts.pinnedKeys - Array of { label, keys } objects
  * @param {Function} opts.sendFn - Function to send terminal input
  * @param {Function} opts.getTerm - Returns the xterm Terminal instance
+ * @param {Object}  [opts.terminalPool] - Terminal pool (for openKeyboard)
  * @param {Function} [opts.onShortcutsClick]
- * @param {Function} [opts.onDictationClick]
- * @param {Function} [opts.onNotepadClick]
  * @param {Function} [opts.onFilesClick]
- * @param {Function} [opts.onPortForwardClick]
  * @param {Function} [opts.onSettingsClick]
  * @param {boolean}  opts.portProxyEnabled
  * @param {Array}    [opts.pluginButtons] - Array of { icon, label, click }
  */
 export function renderKeyIsland(opts) {
   const {
+    parentEl,
     platform,
     pinnedKeys,
     sendFn,
     getTerm,
     onShortcutsClick,
-    onDictationClick,
-    onNotepadClick,
     onFilesClick,
-    onPortForwardClick,
     onSettingsClick,
-    portProxyEnabled,
     pluginButtons,
   } = opts;
 
-  // Remove previous island and its resize listeners
+  // Remove previous tool row
   document.getElementById("key-island")?.remove();
-  if (_islandResizeHandler) {
-    window.removeEventListener("resize", _islandResizeHandler);
-    if (window.visualViewport) {
-      window.visualViewport.removeEventListener("resize", _islandResizeHandler);
-    }
-    _islandResizeHandler = null;
-  }
 
-  const island = document.createElement("div");
-  island.id = "key-island";
+  const row = document.createElement("div");
+  row.id = "key-island";
 
-  // Pinned keys and keyboard shortcut button — touch only (desktop has real keyboard)
-
+  // Pinned keys — touch only (desktop has real keyboard)
   if (platform !== "desktop") {
     for (const s of pinnedKeys) {
       const btn = document.createElement("button");
@@ -68,197 +54,182 @@ export function renderKeyIsland(opts) {
         const term = getTerm();
         if (term) term.focus();
       });
-      island.appendChild(btn);
+      row.appendChild(btn);
     }
 
-    // Copy button — copies xterm selection to clipboard (iOS can't copy
-    // canvas-based selection via the native context menu)
+    // Keyboard — opens inline text input
     {
-      const copyBtn = document.createElement("button");
-      copyBtn.className = "key-island-btn key-island-icon";
-      copyBtn.setAttribute("aria-label", "Copy selection");
-      copyBtn.innerHTML = '<i class="ph ph-copy"></i>';
-      copyBtn.addEventListener("click", () => {
-        const term = getTerm();
-        if (term && term.hasSelection()) {
-          navigator.clipboard.writeText(term.getSelection()).then(() => {
-            copyBtn.innerHTML = '<i class="ph ph-check"></i>';
-            setTimeout(() => { copyBtn.innerHTML = '<i class="ph ph-copy"></i>'; }, 1000);
-          }).catch(() => {});
-        }
-        if (term) term.focus();
+      const btn = document.createElement("button");
+      btn.className = "key-island-btn key-island-icon";
+      btn.setAttribute("aria-label", "Type text");
+      btn.innerHTML = '<i class="ph ph-keyboard"></i>';
+      btn.addEventListener("click", () => showInlineInput());
+      row.appendChild(btn);
+    }
+
+    // Attach image
+    {
+      const btn = document.createElement("button");
+      btn.className = "key-island-btn key-island-icon";
+      btn.setAttribute("aria-label", "Attach image");
+      btn.innerHTML = '<i class="ph ph-image"></i>';
+      btn.addEventListener("click", () => {
+        const fileInput = document.getElementById("dictation-file-input");
+        if (fileInput) fileInput.click();
       });
-      island.appendChild(copyBtn);
+      row.appendChild(btn);
     }
 
     if (onShortcutsClick) {
-      const kbBtn = document.createElement("button");
-      kbBtn.className = "key-island-btn key-island-icon";
-      kbBtn.setAttribute("aria-label", "Open shortcuts");
-      kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
-      kbBtn.addEventListener("click", onShortcutsClick);
-      island.appendChild(kbBtn);
-    }
-
-    if (onDictationClick) {
       const btn = document.createElement("button");
       btn.className = "key-island-btn key-island-icon";
-      btn.setAttribute("aria-label", "Text input");
-      btn.innerHTML = '<i class="ph ph-chat-text"></i>';
-      btn.addEventListener("click", onDictationClick);
-      island.appendChild(btn);
+      btn.setAttribute("aria-label", "Shortcuts");
+      btn.innerHTML = '<i class="ph ph-command"></i>';
+      btn.addEventListener("click", onShortcutsClick);
+      row.appendChild(btn);
     }
   }
 
-  // Utility buttons — skip on phone (they're in the toolbar)
-  if (platform !== "phone") {
-    if (onFilesClick) {
-      const btn = document.createElement("button");
-      btn.className = "key-island-btn key-island-icon";
-      btn.setAttribute("aria-label", "Files");
-      btn.innerHTML = '<i class="ph ph-folder-open"></i>';
-      btn.addEventListener("click", onFilesClick);
-      island.appendChild(btn);
+  // --- Inline text input (appears between tab row and tool row) ---
+  let inputRow = null;
+  let vpHandler = null;
+
+  function showInlineInput() {
+    if (inputRow) return;
+
+    inputRow = document.createElement("div");
+    inputRow.className = "bar-input-row";
+
+    const input = document.createElement("div");
+    input.className = "bar-inline-input";
+    input.contentEditable = "plaintext-only";
+    input.setAttribute("role", "textbox");
+    input.setAttribute("enterkeyhint", "send");
+    input.setAttribute("spellcheck", "false");
+    input.setAttribute("autocapitalize", "none");
+    input.setAttribute("autocorrect", "off");
+    input.dataset.placeholder = "type...";
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const text = input.textContent;
+        if (text && sendFn) {
+          sendFn(text + "\r");
+        }
+        input.textContent = "";
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        hideInlineInput();
+      }
+      e.stopPropagation();
+    });
+
+    inputRow.appendChild(input);
+
+    // Insert before the tool row (#key-island itself = this row's parent sibling)
+    // The inputRow goes between .bar-tab-row and #key-island
+    if (parentEl) {
+      const toolRow = parentEl.querySelector("#key-island");
+      if (toolRow) {
+        parentEl.insertBefore(inputRow, toolRow);
+      } else {
+        parentEl.appendChild(inputRow);
+      }
     }
 
-    // Plugin buttons
-    for (const p of (pluginButtons || [])) {
-      if (!p.click) continue;
-      const btn = document.createElement("button");
-      btn.className = "key-island-btn key-island-icon";
-      btn.setAttribute("aria-label", p.label);
-      btn.innerHTML = `<i class="ph ph-${p.icon}"></i>`;
-      btn.addEventListener("click", p.click);
-      island.appendChild(btn);
+    // Focus after DOM insertion
+    requestAnimationFrame(() => input.focus());
+
+    // Resize the app to fit the visual viewport when keyboard opens.
+    // This keeps the terminal visible above the bar + keyboard without
+    // flying off screen. The bar is at the bottom of the flex layout,
+    // so shrinking the container height naturally pushes it up.
+    const appEl = document.querySelector("body");
+    if (window.visualViewport && appEl) {
+      vpHandler = () => {
+        const vpH = window.visualViewport.height;
+        appEl.style.height = vpH + "px";
+        appEl.style.overflow = "hidden";
+      };
+      vpHandler(); // apply immediately
+      window.visualViewport.addEventListener("resize", vpHandler);
     }
 
-    if (onSettingsClick) {
-      const btn = document.createElement("button");
-      btn.className = "key-island-btn key-island-icon";
-      btn.setAttribute("aria-label", "Settings");
-      btn.innerHTML = '<i class="ph ph-gear"></i>';
-      btn.addEventListener("click", onSettingsClick);
-      island.appendChild(btn);
-    }
-
+    // Hide on blur (keyboard dismiss)
+    input.addEventListener("blur", () => {
+      // Small delay so "Send" tap can fire before we remove the input
+      setTimeout(() => hideInlineInput(), 150);
+    });
   }
 
-  // Connection dot — shown on all devices
+  function hideInlineInput() {
+    if (!inputRow) return;
+    inputRow.remove();
+    inputRow = null;
+    // Reset body height
+    const appEl = document.querySelector("body");
+    if (appEl) {
+      appEl.style.height = "";
+      appEl.style.overflow = "";
+    }
+    if (vpHandler && window.visualViewport) {
+      window.visualViewport.removeEventListener("resize", vpHandler);
+      vpHandler = null;
+    }
+  }
+
+  // Expose for the joystick action button
+  if (typeof window !== "undefined") {
+    window._showInlineInput = showInlineInput;
+  }
+
+  // Spacer pushes utility buttons to the right
+  const spacer = document.createElement("div");
+  spacer.style.flex = "1";
+  row.appendChild(spacer);
+
+  // Utility buttons — all platforms
+  if (onFilesClick) {
+    const btn = document.createElement("button");
+    btn.className = "key-island-btn key-island-icon";
+    btn.setAttribute("aria-label", "Files");
+    btn.innerHTML = '<i class="ph ph-folder-open"></i>';
+    btn.addEventListener("click", onFilesClick);
+    row.appendChild(btn);
+  }
+
+  // Plugin buttons
+  for (const p of (pluginButtons || [])) {
+    if (!p.click) continue;
+    const btn = document.createElement("button");
+    btn.className = "key-island-btn key-island-icon";
+    btn.setAttribute("aria-label", p.label);
+    btn.innerHTML = `<i class="ph ph-${p.icon}"></i>`;
+    btn.addEventListener("click", p.click);
+    row.appendChild(btn);
+  }
+
+  if (onSettingsClick) {
+    const btn = document.createElement("button");
+    btn.className = "key-island-btn key-island-icon";
+    btn.setAttribute("aria-label", "Settings");
+    btn.innerHTML = '<i class="ph ph-gear"></i>';
+    btn.addEventListener("click", onSettingsClick);
+    row.appendChild(btn);
+  }
+
+  // Connection dot
   const dot = document.createElement("span");
   dot.id = "island-connection-dot";
   dot.className = "island-connection-dot";
-  island.appendChild(dot);
+  row.appendChild(dot);
 
-  // Clamp island position to stay within viewport (with 8px margin)
-  function clampIsland() {
-    const rect = island.getBoundingClientRect();
-    if (rect.width === 0) return; // not visible yet
-    const margin = 8;
-    const vw = window.visualViewport?.width ?? window.innerWidth;
-    const vh = window.visualViewport?.height ?? window.innerHeight;
-    // If fully visible with margin, nothing to do
-    if (rect.left >= margin && rect.top >= margin &&
-        rect.right <= vw - margin && rect.bottom <= vh - margin) return;
-    // Nudge into view
-    const nx = Math.max(margin, Math.min(rect.left, vw - rect.width - margin));
-    const ny = Math.max(margin, Math.min(rect.top, vh - rect.height - margin));
-    island.style.left = nx + "px";
-    island.style.top = ny + "px";
-    island.style.bottom = "auto";
-    island.style.right = "auto";
-    localStorage.setItem("katulong-key-island-pos", JSON.stringify({ x: nx, y: ny }));
+  // Append into parent (shortcut bar) instead of floating
+  if (parentEl) {
+    parentEl.appendChild(row);
+  } else {
+    document.body.appendChild(row);
   }
-
-  // Restore saved position (clamped to current viewport)
-  const saved = localStorage.getItem("katulong-key-island-pos");
-  if (saved) {
-    try {
-      const { x, y } = JSON.parse(saved);
-      if (Number.isFinite(x) && Number.isFinite(y)) {
-        island.style.left = x + "px";
-        island.style.top = y + "px";
-        island.style.bottom = "auto";
-      }
-    } catch {}
-  }
-
-  // Clamp after layout (when dimensions are known) and on every resize
-  _islandResizeHandler = clampIsland;
-  requestAnimationFrame(() => clampIsland());
-  window.addEventListener("resize", clampIsland);
-  // Also observe the visual viewport (fires more reliably on iOS/iPad)
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener("resize", clampIsland);
-  }
-
-  // Drag to reposition (touch + mouse, with dead zone so clicks/taps still work)
-  let dragState = null;
-
-  function islandDragMove(cx, cy) {
-    if (!dragState) return;
-    if (!dragState.dragging) {
-      const dx = cx - dragState.startX;
-      const dy = cy - dragState.startY;
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      dragState.dragging = true;
-    }
-    const x = cx - dragState.offsetX;
-    const y = cy - dragState.offsetY;
-    const margin = 8;
-    const maxX = (window.visualViewport?.width ?? window.innerWidth) - island.offsetWidth - margin;
-    const maxY = (window.visualViewport?.height ?? window.innerHeight) - island.offsetHeight - margin;
-    island.style.left = Math.max(margin, Math.min(x, maxX)) + "px";
-    island.style.top = Math.max(margin, Math.min(y, maxY)) + "px";
-    island.style.bottom = "auto";
-    island.style.right = "auto";
-  }
-
-  function islandDragEnd() {
-    if (dragState?.dragging) {
-      localStorage.setItem("katulong-key-island-pos", JSON.stringify({
-        x: parseInt(island.style.left),
-        y: parseInt(island.style.top),
-      }));
-    }
-    dragState = null;
-  }
-
-  // Touch drag (skip if tapping the connection dot or a button)
-  island.addEventListener("touchstart", (e) => {
-    if (e.touches.length !== 1) return;
-    if (e.target.closest("button")) return;
-    const t = e.touches[0];
-    const rect = island.getBoundingClientRect();
-    dragState = { startX: t.clientX, startY: t.clientY, offsetX: t.clientX - rect.left, offsetY: t.clientY - rect.top, dragging: false };
-  }, { passive: false });
-  island.addEventListener("touchmove", (e) => {
-    if (!dragState) return;
-    const t = e.touches[0];
-    islandDragMove(t.clientX, t.clientY);
-    if (dragState?.dragging) { e.preventDefault(); e.stopPropagation(); }
-  }, { passive: false });
-  island.addEventListener("touchend", (e) => {
-    if (dragState?.dragging) e.preventDefault();
-    islandDragEnd();
-  });
-
-  // Mouse drag
-  island.addEventListener("mousedown", (e) => {
-    if (e.target.closest("button")) return; // let button clicks through
-    const rect = island.getBoundingClientRect();
-    dragState = { startX: e.clientX, startY: e.clientY, offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top, dragging: false };
-    const onMouseMove = (me) => {
-      islandDragMove(me.clientX, me.clientY);
-      if (dragState?.dragging) { me.preventDefault(); }
-    };
-    const onMouseUp = () => {
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      islandDragEnd();
-    };
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-  });
-
-  document.body.appendChild(island);
 }

@@ -19,18 +19,24 @@
 export function renderIPadBar(opts) {
   const { container, sessionName, sessions, createTabEl, showAddMenu } = opts;
 
+  // Tab row: [+] button + scrollable tabs
+  const tabRow = document.createElement("div");
+  tabRow.className = "bar-tab-row";
+
   const addBtn = document.createElement("button");
   addBtn.className = "ipad-add-btn";
   addBtn.tabIndex = -1;
   addBtn.setAttribute("aria-label", "New session");
   addBtn.innerHTML = '<i class="ph ph-plus-circle"></i>';
   addBtn.addEventListener("click", () => showAddMenu(addBtn));
-  container.appendChild(addBtn);
+  tabRow.appendChild(addBtn);
 
   const tabArea = document.createElement("div");
   tabArea.className = "tab-scroll-area";
   for (const s of sessions) {
     tabArea.appendChild(createTabEl(s, s.name === sessionName));
   }
-  container.appendChild(tabArea);
+  tabRow.appendChild(tabArea);
+
+  container.appendChild(tabRow);
 }

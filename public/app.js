@@ -497,6 +497,15 @@
     });
     joystickManager.init();
 
+    // Wire action buttons into the joystick (text input + image attach)
+    joystickManager.setActions({
+      onTextClick: () => openDictationModal(),
+      onAttachClick: () => {
+        const fileInput = document.getElementById("dictation-file-input");
+        if (fileInput) fileInput.click();
+      },
+    });
+
     // Hardware keyboard detection: hide joystick when a physical keyboard
     // is connected.  On iPad, keydown fires only with a hardware keyboard
     // (the on-screen keyboard uses a different input path).  Reset on
@@ -1132,6 +1141,7 @@
       },
       sendFn: rawSend,
       get term() { return getTerm(); },
+      terminalPool,
       updateConnectionIndicator,
       getInstanceIcon,
       getSessionIcon,

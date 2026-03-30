@@ -47,8 +47,7 @@ const joystickReducer = (state, action) => {
   switch (action.type) {
     case 'TOUCH_START':
       return {
-        mode: action.zone === 'center' ? 'long-press'
-          : (action.zone === 'left' || action.zone === 'right') ? 'hold'
+        mode: (action.zone === 'left' || action.zone === 'right') ? 'hold'
           : 'flick-wait',
         zone: action.zone,
         startX: action.x,
@@ -99,8 +98,6 @@ const joystickReducer = (state, action) => {
 export function createJoystickManager(options = {}) {
   const { onSend } = options;
   const joystick = document.getElementById("joystick");
-  const enterRing = document.getElementById("enter-progress-ring");
-  const enterCircle = enterRing?.querySelector("circle");
 
   let joyState = {
     mode: 'idle',
@@ -116,24 +113,6 @@ export function createJoystickManager(options = {}) {
 
   // Joystick effects
   const effects = {
-    showRing: () => {
-      if (!enterRing || !enterCircle) return;
-      enterRing.classList.add("active");
-      enterCircle.style.strokeDasharray = JOYSTICK_CONFIG.RING_CIRCUMFERENCE;
-      enterCircle.style.strokeDashoffset = JOYSTICK_CONFIG.RING_CIRCUMFERENCE;
-      enterCircle.style.transition = `stroke-dashoffset ${JOYSTICK_CONFIG.LONG_PRESS_DURATION}ms linear`;
-      requestAnimationFrame(() => {
-        enterCircle.style.strokeDashoffset = 0;
-      });
-    },
-
-    hideRing: () => {
-      if (!enterRing || !enterCircle) return;
-      enterRing.classList.remove("active");
-      enterCircle.style.transition = "none";
-      enterCircle.style.strokeDashoffset = JOYSTICK_CONFIG.RING_CIRCUMFERENCE;
-    },
-
     sendSequence: (sequence) => {
       if (onSend) onSend(sequence);
       effects.showFeedback();
@@ -159,16 +138,7 @@ export function createJoystickManager(options = {}) {
 
     // Handle side effects based on state transitions
     if (prevState.mode !== joyState.mode) {
-      if (joyState.mode === 'long-press') {
-        effects.showRing();
-        longPressTimer = setTimeout(() => {
-          if (!joyState.hasMoved) {
-            effects.sendSequence("\r");
-            dispatch({ type: 'LONG_PRESS_COMPLETE' });
-            effects.hideRing();
-          }
-        }, JOYSTICK_CONFIG.LONG_PRESS_DURATION);
-      } else if (joyState.mode === 'hold' && (joyState.zone === 'left' || joyState.zone === 'right')) {
+      if (joyState.mode === 'hold' && (joyState.zone === 'left' || joyState.zone === 'right')) {
         const seq = ARROWS[joyState.zone];
         effects.sendSequence(seq);
         repeatTimer = setInterval(() => {
@@ -183,7 +153,6 @@ export function createJoystickManager(options = {}) {
           clearTimeout(longPressTimer);
           longPressTimer = null;
         }
-        effects.hideRing();
       }
     }
 
@@ -199,15 +168,57 @@ export function createJoystickManager(options = {}) {
       }, JOYSTICK_CONFIG.REPEAT_INTERVAL);
     }
 
-    // Handle movement canceling long-press
-    if (joyState.mode === 'long-press' && joyState.hasMoved && !prevState.hasMoved) {
-      if (longPressTimer) {
-        clearTimeout(longPressTimer);
-        longPressTimer = null;
-      }
-      effects.hideRing();
-    }
   };
+
+  // --- Expand / Collapse ---
+  let expanded = false;
+  let actionsEl = null;
+
+  function expand() {
+    if (expanded || !joystick) return;
+    expanded = true;
+    joystick.classList.add("expanded");
+    // Create action buttons to the left
+    actionsEl = document.createElement("div");
+    actionsEl.className = "joystick-actions";
+
+    function actionBtn(icon, label, handler) {
+      const btn = document.createElement("button");
+      btn.className = "joystick-action-btn";
+      btn.innerHTML = `<i class="ph ph-${icon}"></i>`;
+      btn.setAttribute("aria-label", label);
+      // Stop propagation on BOTH touchstart and touchend so the joystick
+      // gesture handler doesn't intercept taps on action buttons.
+      btn.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
+      btn.addEventListener("touchend", (e) => { e.stopPropagation(); handler(); });
+      btn.addEventListener("click", (e) => { e.stopPropagation(); handler(); });
+      return btn;
+    }
+
+    const enterBtn = actionBtn("arrow-elbow-down-left", "Enter", () => {
+      if (onSend) onSend("\r");
+      effects.showFeedback();
+    });
+
+    actionsEl.appendChild(enterBtn);
+    joystick.appendChild(actionsEl);
+  }
+
+  function collapse() {
+    if (!expanded || !joystick) return;
+    expanded = false;
+    joystick.classList.remove("expanded");
+    if (actionsEl) { actionsEl.remove(); actionsEl = null; }
+  }
+
+  // Callbacks set by the caller
+  let _onTextClick = null;
+  let _onAttachClick = null;
+
+  // Collapse on any tap outside
+  document.addEventListener("touchstart", (e) => {
+    if (expanded && !joystick.contains(e.target)) collapse();
+  }, { passive: true });
 
   return {
     init() {
@@ -215,6 +226,12 @@ export function createJoystickManager(options = {}) {
 
       joystick.addEventListener("touchstart", (e) => {
         e.preventDefault();
+        if (!expanded) {
+          // Collapsed: tap to expand
+          expand();
+          return;
+        }
+        // Expanded: joystick gestures
         const t = e.touches[0];
         const rect = joystick.getBoundingClientRect();
         const zone = getZone(t, rect);
@@ -222,6 +239,7 @@ export function createJoystickManager(options = {}) {
       }, { passive: false });
 
       joystick.addEventListener("touchmove", (e) => {
+        if (!expanded) return;
         e.preventDefault();
         const t = e.touches[0];
         const dx = t.clientX - joyState.startX;
@@ -232,6 +250,7 @@ export function createJoystickManager(options = {}) {
       }, { passive: false });
 
       joystick.addEventListener("touchend", (e) => {
+        if (!expanded) return;
         e.preventDefault();
 
         if (!joyState.enterSent && joyState.mode === 'flick-wait') {
@@ -250,11 +269,21 @@ export function createJoystickManager(options = {}) {
       }, { passive: false });
 
       joystick.addEventListener("touchcancel", (e) => {
+        if (!expanded) return;
         e.preventDefault();
         dispatch({ type: 'TOUCH_CANCEL' });
       }, { passive: false });
     },
 
+    /** Set callbacks for action buttons */
+    setActions({ onTextClick, onAttachClick }) {
+      _onTextClick = onTextClick;
+      _onAttachClick = onAttachClick;
+    },
+
+    collapse,
+    expand,
+    get isExpanded() { return expanded; },
     getState: () => joyState
   };
 }
