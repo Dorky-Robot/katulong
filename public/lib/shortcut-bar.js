@@ -236,11 +236,13 @@ export function createShortcutBar(options = {}) {
 
   /** Close tab: remove from this window's tab set only (session stays managed on server) */
   function closeTab(sessionName) {
-    // Remove from carousel first (handles tile unmount + focus shift)
+    // carousel.removeCard triggers onCardDismissed which handles
+    // windowTabSet.removeTab + wsConnection.sendUnsubscribe.
     if (carousel?.isActive()) {
       carousel.removeCard(sessionName);
+    } else {
+      if (windowTabSet) windowTabSet.removeTab(sessionName);
     }
-    if (windowTabSet) windowTabSet.removeTab(sessionName);
   }
 
   async function detachTab(sessionName) {
@@ -250,8 +252,7 @@ export function createShortcutBar(options = {}) {
       console.error("[Tab] Detach failed:", err);
       return;
     }
-    if (carousel?.isActive()) carousel.removeCard(sessionName);
-    if (windowTabSet) windowTabSet.removeTab(sessionName);
+    closeTab(sessionName);
   }
 
   async function killTab(sessionName) {
@@ -262,7 +263,7 @@ export function createShortcutBar(options = {}) {
       console.error("[Tab] Kill failed:", err);
       return;
     }
-    if (carousel?.isActive()) carousel.removeCard(sessionName);
+    closeTab(sessionName);
     if (windowTabSet) windowTabSet.onSessionKilled(sessionName);
   }
 
