@@ -63,19 +63,15 @@ export function renderKeyIsland(opts) {
       btn.className = "key-island-btn key-island-icon";
       btn.setAttribute("aria-label", "Type text");
       btn.innerHTML = '<i class="ph ph-keyboard"></i>';
-      btn.addEventListener("click", () => inputRow ? hideInlineInput() : showInlineInput());
-      row.appendChild(btn);
-    }
-
-    // Attach image
-    {
-      const btn = document.createElement("button");
-      btn.className = "key-island-btn key-island-icon";
-      btn.setAttribute("aria-label", "Attach image");
-      btn.innerHTML = '<i class="ph ph-image"></i>';
       btn.addEventListener("click", () => {
-        const fileInput = document.getElementById("dictation-file-input");
-        if (fileInput) fileInput.click();
+        if (inputRow) {
+          hideInlineInput();
+          // Keep keyboard open by focusing the terminal
+          const term = getTerm();
+          if (term) term.focus();
+        } else {
+          showInlineInput();
+        }
       });
       row.appendChild(btn);
     }
@@ -128,7 +124,6 @@ export function renderKeyIsland(opts) {
 
     inputRow.appendChild(input);
 
-    // Insert before the tool row (#key-island itself = this row's parent sibling)
     if (parentEl) {
       const toolRow = parentEl.querySelector("#key-island");
       if (toolRow) {
@@ -138,48 +133,13 @@ export function renderKeyIsland(opts) {
       }
     }
 
-    // Focus after DOM insertion
     requestAnimationFrame(() => input.focus());
-
-    // Track visual viewport to resize body when keyboard is open.
-    // Input row stays visible regardless of keyboard state — only
-    // dismissed via keyboard button toggle or Escape.
-    const appEl = document.querySelector("body");
-    if (window.visualViewport && appEl) {
-      const fullVpHeight = window.visualViewport.height;
-      vpHandler = () => {
-        const vpH = window.visualViewport.height;
-        if (vpH < fullVpHeight - 50) {
-          appEl.style.height = vpH + "px";
-          appEl.style.overflow = "hidden";
-        } else {
-          appEl.style.height = "";
-          appEl.style.overflow = "";
-        }
-      };
-      window.visualViewport.addEventListener("resize", vpHandler);
-    }
   }
 
   function hideInlineInput() {
     if (!inputRow) return;
     inputRow.remove();
     inputRow = null;
-    // Reset body height
-    const appEl = document.querySelector("body");
-    if (appEl) {
-      appEl.style.height = "";
-      appEl.style.overflow = "";
-    }
-    if (vpHandler && window.visualViewport) {
-      window.visualViewport.removeEventListener("resize", vpHandler);
-      vpHandler = null;
-    }
-  }
-
-  // Expose for the joystick action button
-  if (typeof window !== "undefined") {
-    window._showInlineInput = showInlineInput;
   }
 
   // Spacer pushes utility buttons to the right

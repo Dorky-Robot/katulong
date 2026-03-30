@@ -923,7 +923,6 @@ export function createShortcutBar(options = {}) {
 
     cleanupDrag();
 
-    // Preserve inline input row across re-renders
     const savedInputRow = container.querySelector(".bar-input-row");
     if (savedInputRow) savedInputRow.remove();
 
@@ -968,7 +967,7 @@ export function createShortcutBar(options = {}) {
       pluginButtons: options.pluginButtons,
     });
 
-    // Re-insert preserved inline input row (between tab row and tool row)
+    // Re-insert preserved inline input row
     if (savedInputRow) {
       const toolRow = container.querySelector("#key-island");
       if (toolRow) {
