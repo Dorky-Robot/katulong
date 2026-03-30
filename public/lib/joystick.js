@@ -224,9 +224,18 @@ export function createJoystickManager(options = {}) {
     init() {
       if (!joystick) return;
 
+      // Intercept pointerdown on capture phase to prevent xterm from
+      // focusing its textarea (which opens the virtual keyboard).
+      // xterm listens for pointerdown — by the time touchstart fires,
+      // the focus has already happened.
+      joystick.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+      }, { capture: true });
+
       joystick.addEventListener("touchstart", (e) => {
         e.preventDefault();
-        e.stopPropagation(); // prevent xterm from focusing/showing keyboard
+        e.stopPropagation();
         if (!expanded) {
           // Collapsed: tap to expand
           expand();
