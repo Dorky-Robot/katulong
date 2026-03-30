@@ -148,6 +148,12 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
       clip.className = "xterm-input-clip";
       textarea.parentNode.insertBefore(clip, textarea);
       clip.appendChild(textarea);
+
+      // On touch devices, suppress the virtual keyboard on terminal tap.
+      // Keyboard is opened explicitly via the quick-type button on the island.
+      if (window.matchMedia("(pointer: coarse)").matches) {
+        textarea.setAttribute("inputmode", "none");
+      }
     }
 
     const entry = { term, searchAddon, container, sessionName, lastUsed: Date.now() };
@@ -321,5 +327,21 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     setActive(name) { activeSession = name; },
     FIXED_COLS,
     get size() { return pool.size; },
+
+    /** Open the virtual keyboard for the active terminal. */
+    openKeyboard() {
+      const entry = activeSession && pool.get(activeSession);
+      if (!entry) return;
+      const textarea = entry.container.querySelector(".xterm-helper-textarea");
+      if (!textarea) return;
+      textarea.setAttribute("inputmode", "text");
+      textarea.focus();
+      // Revert after blur so next tap doesn't re-open keyboard
+      const revert = () => {
+        textarea.setAttribute("inputmode", "none");
+        textarea.removeEventListener("blur", revert);
+      };
+      textarea.addEventListener("blur", revert);
+    },
   };
 }

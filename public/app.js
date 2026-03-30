@@ -1132,6 +1132,7 @@
       },
       sendFn: rawSend,
       get term() { return getTerm(); },
+      terminalPool,
       updateConnectionIndicator,
       getInstanceIcon,
       getSessionIcon,

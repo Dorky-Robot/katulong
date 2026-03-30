@@ -91,22 +91,26 @@ export function renderKeyIsland(opts) {
       island.appendChild(copyBtn);
     }
 
+    // Quick-type: open virtual keyboard for the active terminal
+    {
+      const btn = document.createElement("button");
+      btn.className = "key-island-btn key-island-icon";
+      btn.setAttribute("aria-label", "Open keyboard");
+      btn.innerHTML = '<i class="ph ph-keyboard"></i>';
+      btn.addEventListener("click", () => {
+        const pool = opts.terminalPool;
+        if (pool?.openKeyboard) pool.openKeyboard();
+      });
+      island.appendChild(btn);
+    }
+
     if (onShortcutsClick) {
       const kbBtn = document.createElement("button");
       kbBtn.className = "key-island-btn key-island-icon";
-      kbBtn.setAttribute("aria-label", "Open shortcuts");
-      kbBtn.innerHTML = '<i class="ph ph-keyboard"></i>';
+      kbBtn.setAttribute("aria-label", "Shortcuts");
+      kbBtn.innerHTML = '<i class="ph ph-command"></i>';
       kbBtn.addEventListener("click", onShortcutsClick);
       island.appendChild(kbBtn);
-    }
-
-    if (onDictationClick) {
-      const btn = document.createElement("button");
-      btn.className = "key-island-btn key-island-icon";
-      btn.setAttribute("aria-label", "Text input");
-      btn.innerHTML = '<i class="ph ph-chat-text"></i>';
-      btn.addEventListener("click", onDictationClick);
-      island.appendChild(btn);
     }
   }
 
