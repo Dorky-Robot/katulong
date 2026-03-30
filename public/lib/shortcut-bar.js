@@ -461,12 +461,14 @@ export function createShortcutBar(options = {}) {
 
   let drag = null;
 
+  // Track active touch to block synthesized mouse events entirely
+  let touchActive = false;
+
   function onTabMouseDown(e, tab, name) {
     if (e.button !== 0 || e.target.closest(".tab-close")) return;
-    // If a touch drag is already in progress, don't start a mouse drag too.
-    // iPad Safari synthesizes mouse events from touch, which would create
-    // a second competing drag that makes the ghost jump around.
-    if (drag) return;
+    // Block synthesized mouse events from touch — they have different
+    // coordinates and cause ghost jitter during drag.
+    if (touchActive || drag) return;
 
     const startX = e.clientX;
     const startY = e.clientY;
@@ -514,6 +516,7 @@ export function createShortcutBar(options = {}) {
 
   function onTabTouchStart(e, tab, name) {
     if (e.target.closest(".tab-close")) return;
+    touchActive = true;
 
     const initialTouch = e.touches[0];
     const startX = initialTouch.clientX;
@@ -560,6 +563,8 @@ export function createShortcutBar(options = {}) {
 
       const onEnd = () => {
         clearTimeout(longPressTimer);
+        // Delay clearing touchActive so synthesized mousedown (fires after touchend) is still blocked
+        setTimeout(() => { touchActive = false; }, 50);
         tab.classList.remove("tab-long-press");
         cleanup();
         if (cancelled) return;
