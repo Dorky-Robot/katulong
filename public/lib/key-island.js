@@ -63,7 +63,7 @@ export function renderKeyIsland(opts) {
       btn.className = "key-island-btn key-island-icon";
       btn.setAttribute("aria-label", "Type text");
       btn.innerHTML = '<i class="ph ph-keyboard"></i>';
-      btn.addEventListener("click", () => showInlineInput());
+      btn.addEventListener("click", () => inputRow ? hideInlineInput() : showInlineInput());
       row.appendChild(btn);
     }
 
@@ -126,7 +126,14 @@ export function renderKeyIsland(opts) {
       e.stopPropagation();
     });
 
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "key-island-btn key-island-icon";
+    closeBtn.setAttribute("aria-label", "Close input");
+    closeBtn.innerHTML = '<i class="ph ph-x"></i>';
+    closeBtn.addEventListener("click", () => hideInlineInput());
+
     inputRow.appendChild(input);
+    inputRow.appendChild(closeBtn);
 
     // Insert before the tool row (#key-island itself = this row's parent sibling)
     // The inputRow goes between .bar-tab-row and #key-island
@@ -157,11 +164,8 @@ export function renderKeyIsland(opts) {
       window.visualViewport.addEventListener("resize", vpHandler);
     }
 
-    // Hide on blur (keyboard dismiss)
-    input.addEventListener("blur", () => {
-      // Small delay so "Send" tap can fire before we remove the input
-      setTimeout(() => hideInlineInput(), 150);
-    });
+    // Input stays visible until explicitly dismissed via close button or Escape.
+    // This lets users switch tabs and use the joystick while keeping the input open.
   }
 
   function hideInlineInput() {
