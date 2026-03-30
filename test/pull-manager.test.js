@@ -84,12 +84,15 @@ describe("PullManager", () => {
       assert.equal(pm.get("a").pending, true);
     });
 
-    it("allows pull while writing (pipelining)", () => {
+    it("blocks pull while writing (backpressure)", () => {
       pm.init("a", 0);
       pm.pullResponse("a", "data", 10); // sets writing=true
-      writes[0].done(); // complete write — cursor advances to 10
       sends.length = 0;
-      pm.dataAvailable("a"); // should pull from cursor 10
+      pm.dataAvailable("a"); // should set pending, not pull
+      assert.equal(sends.length, 0);
+      assert.equal(pm.get("a").pending, true);
+      // After write completes, pending pull fires
+      writes[0].done();
       assert.equal(sends.length, 1);
       assert.equal(sends[0].fromSeq, 10);
     });
@@ -207,9 +210,8 @@ describe("PullManager", () => {
       // Don't call done() — wait for safety timeout
       await new Promise(r => setTimeout(r, 3100));
       assert.equal(pm.get("a").writing, false);
-      // Cursor stays at 0 — safety timeout doesn't advance cursor
-      // (same as rejected write — avoids data loss)
-      assert.equal(pm.get("a").cursor, 0);
+      // Safety timeout advances cursor to avoid infinite re-pull loop
+      assert.equal(pm.get("a").cursor, 10);
     });
   });
 });

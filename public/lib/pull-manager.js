@@ -69,16 +69,16 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
   function dataAvailable(name) {
     const ps = sessions.get(name);
     if (!ps) return;
-    if (ps.pulling) {
+    if (ps.pulling || ps.writing) {
+      // Wait for current operation to complete — pulling with a stale
+      // cursor would re-fetch data already being written, causing garble.
       ps.pending = true;
       return;
     }
-    // Allow pull even while writing — cursor is updated immediately on
-    // pull-response so overlapping writes + pulls are safe.
     pull(name);
   }
 
-  /** Advance cursor after writing data. Shared by pullResponse/pullSnapshot. */
+  /** Process pull response: write data to terminal, advance cursor. */
   function _writeAndAdvance(name, data, cursor) {
     const ps = sessions.get(name);
     if (!ps) return;
@@ -90,6 +90,8 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
       const safety = setTimeout(() => {
         if (ps.writing) {
           ps.writing = false;
+          // Safety timeout: advance cursor to avoid infinite re-pull
+          ps.cursor = cursor;
           if (ps.pending) { ps.pending = false; pull(name); }
         }
       }, WRITE_TIMEOUT_MS);
@@ -98,25 +100,24 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
         clearTimeout(safety);
         ps.writing = false;
         if (accepted === false) {
-          // Write rejected (no terminal) — DON'T advance cursor.
-          // Data will be re-pulled when the terminal is ready.
+          // Write rejected (no terminal) — don't advance cursor.
+          // Retry after a short delay.
           ps.pending = true;
-          // Retry after a short delay to give the terminal time to create
           setTimeout(() => {
             if (ps.pending) { ps.pending = false; pull(name); }
           }, 200);
           return;
         }
-        ps.cursor = cursor; // Only advance cursor on successful write
+        // Advance cursor AFTER successful write — this is the natural
+        // backpressure mechanism: the next pull waits until xterm finishes
+        // rendering, preventing data overlap and garble.
+        ps.cursor = cursor;
         if (ps.pending) { ps.pending = false; pull(name); }
       });
     } else {
       ps.cursor = cursor;
       if (ps.pending) { ps.pending = false; pull(name); }
     }
-
-    // If data-available came in while we were pulling, re-pull now
-    if (ps.pending && !ps.pulling) { ps.pending = false; pull(name); }
   }
 
   function pullResponse(name, data, cursor) {
