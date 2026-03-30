@@ -275,11 +275,6 @@ export function createShortcutBar(options = {}) {
     const tab = e.currentTarget;
     const items = [
       {
-        icon: "note-pencil",
-        label: "Notes",
-        action: () => { if (onNotepadClick) onNotepadClick(); }
-      },
-      {
         icon: "pencil-simple",
         label: "Rename",
         action: () => startTabRename(tab, sessionName)
