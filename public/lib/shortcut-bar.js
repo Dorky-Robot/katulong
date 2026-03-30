@@ -516,8 +516,8 @@ export function createShortcutBar(options = {}) {
     const startX = initialTouch.clientX;
     const startY = initialTouch.clientY;
 
-    if (platform === "ipad") {
-      // iPad: drag on horizontal movement, long press for context menu.
+    {
+      // Unified touch: drag on horizontal movement, long press for context menu.
       e.preventDefault();
       let started = false;
       let longPressed = false;
@@ -570,81 +570,7 @@ export function createShortcutBar(options = {}) {
       document.addEventListener("touchmove", onMove, { passive: false });
       document.addEventListener("touchend", onEnd);
       document.addEventListener("touchcancel", onEnd);
-      return;
     }
-
-    // Desktop/phone: long-press to drag (preserves horizontal scroll of tab area)
-    let longPressed = false;
-    let started = false;
-    let cancelled = false;
-
-    const longPressTimer = setTimeout(() => {
-      longPressed = true;
-      tab.classList.add("tab-long-press");
-    }, LONG_PRESS_MS);
-
-    const onMove = (te) => {
-      const touch = te.touches[0];
-      const dx = touch.clientX - startX;
-      const dy = touch.clientY - startY;
-
-      if (!longPressed) {
-        if (Math.abs(dx) > DRAG_DEAD_ZONE || Math.abs(dy) > DRAG_DEAD_ZONE) {
-          clearTimeout(longPressTimer);
-          cancelled = true;
-          cleanup();
-        }
-        return;
-      }
-
-      if (!started) {
-        if (Math.abs(dx) < DRAG_DEAD_ZONE && Math.abs(dy) < DRAG_DEAD_ZONE) return;
-        started = true;
-        beginDrag(tab, name, startX, true);
-      }
-
-      te.preventDefault();
-      updateDrag(touch.clientX, touch.clientY);
-    };
-
-    const onEnd = () => {
-      clearTimeout(longPressTimer);
-      tab.classList.remove("tab-long-press");
-      cleanup();
-
-      if (cancelled) return;
-
-      if (!started) {
-        if (longPressed) {
-          showTabContextMenu({ preventDefault() {}, currentTarget: tab }, name);
-        } else {
-          // Short tap — check for double-tap to rename
-          const now = Date.now();
-          if (lastTapTab === tab && now - lastTapTime < DOUBLE_TAP_MS) {
-            lastTapTab = null;
-            lastTapTime = 0;
-            startTabRename(tab, name);
-          } else {
-            lastTapTab = tab;
-            lastTapTime = now;
-            if (name !== currentSessionName && onTabClick) onTabClick(name);
-          }
-        }
-        return;
-      }
-
-      endDrag();
-    };
-
-    function cleanup() {
-      document.removeEventListener("touchmove", onMove);
-      document.removeEventListener("touchend", onEnd);
-      document.removeEventListener("touchcancel", onEnd);
-    }
-
-    document.addEventListener("touchmove", onMove, { passive: false });
-    document.addEventListener("touchend", onEnd);
-    document.addEventListener("touchcancel", onEnd);
   }
 
   function beginDrag(tab, name, startX, fromTouch) {
@@ -912,20 +838,13 @@ export function createShortcutBar(options = {}) {
 
     // Platform class — set once, never changes (platform is const)
     container.classList.remove("bar-desktop", "bar-ipad", "bar-phone");
-    container.classList.add(`bar-${platform}`);
+    container.classList.add("bar-ipad");
     document.body.dataset.platform = platform;
 
-    // Dispatch to platform-specific renderer
-    if (platform === "phone" || !sessionStore) {
-      _renderPhoneBar(sessionName);
-    } else {
-      const sessions = getSessionList();
-      if (platform === "ipad") {
-        _renderIPadBar(sessionName, sessions);
-      } else {
-        _renderDesktopTabs(sessionName, sessions);
-      }
-    }
+    // Unified tab bar — all platforms use the same renderer
+    // with the card carousel layout.
+    const sessions = getSessionList();
+    _renderIPadBar(sessionName, sessions);
 
     // Floating island (Esc/Tab/keyboard on touch, plus utility buttons on tablet/desktop)
     renderKeyIsland({
@@ -950,7 +869,7 @@ export function createShortcutBar(options = {}) {
   // requestRender() handles the drag-deferral check.
   let _rafId = null;
   function onStoreChange() {
-    if (!currentSessionName || platform === "phone") return;
+    if (!currentSessionName) return;
     if (_rafId) return;
     _rafId = requestAnimationFrame(() => {
       _rafId = null;

@@ -674,9 +674,9 @@
     }
     .island-connection-dot.connected { background: var(--success); }
 
-    /* iPad: hide sidebar, tab bar at bottom, close always visible */
-    [data-platform="ipad"] #sidebar { display: none !important; }
-    [data-platform="ipad"] #sidebar-backdrop { display: none !important; }
+    /* Carousel mode: hide sidebar, tab bar at bottom */
+    #sidebar { display: none !important; }
+    #sidebar-backdrop { display: none !important; }
     #shortcut-bar.bar-ipad {
       order: 1; /* after terminal = bottom */
       border-bottom: none;

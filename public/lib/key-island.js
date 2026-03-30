@@ -112,32 +112,12 @@ export function renderKeyIsland(opts) {
 
   // Utility buttons — skip on phone (they're in the toolbar)
   if (platform !== "phone") {
-    if (onNotepadClick) {
-      const btn = document.createElement("button");
-      btn.className = "key-island-btn key-island-icon";
-      btn.setAttribute("aria-label", "Notes");
-      btn.innerHTML = '<i class="ph ph-note-pencil"></i>';
-      btn.addEventListener("click", onNotepadClick);
-      island.appendChild(btn);
-    }
-
     if (onFilesClick) {
       const btn = document.createElement("button");
       btn.className = "key-island-btn key-island-icon";
       btn.setAttribute("aria-label", "Files");
       btn.innerHTML = '<i class="ph ph-folder-open"></i>';
       btn.addEventListener("click", onFilesClick);
-      island.appendChild(btn);
-    }
-
-    if (onPortForwardClick) {
-      const btn = document.createElement("button");
-      btn.className = "key-island-btn key-island-icon";
-      btn.id = "bar-portfwd-btn";
-      btn.setAttribute("aria-label", "Port Forward");
-      btn.innerHTML = '<i class="ph ph-plug"></i>';
-      btn.addEventListener("click", onPortForwardClick);
-      if (!portProxyEnabled) btn.style.display = "none";
       island.appendChild(btn);
     }
 

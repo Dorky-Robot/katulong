@@ -16,10 +16,11 @@ import { createTileChrome } from "./tile-chrome.js";
 const STORAGE_KEY = "katulong-carousel";
 
 /**
- * Detect iPad / tablet devices that should use the card carousel.
+ * All platforms use the card carousel layout.
+ * Previously iPad-only; now the single unified UI.
  */
 export function isCarouselDevice() {
-  return isIPad();
+  return true;
 }
 
 export function createCardCarousel({
