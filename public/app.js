@@ -1065,8 +1065,6 @@
       onNewSessionClick: createNewSession,
       tileTypes: [
         { type: "terminal", name: "Terminal", icon: "terminal-window" },
-        { type: "html", name: "HTML View", icon: "code" },
-        { type: "dashboard", name: "Dashboard", icon: "squares-four" },
       ],
       onCreateTile: (type, _meta) => {
         if (type === "terminal") {
