@@ -226,6 +226,7 @@ export function createJoystickManager(options = {}) {
 
       joystick.addEventListener("touchstart", (e) => {
         e.preventDefault();
+        e.stopPropagation(); // prevent xterm from focusing/showing keyboard
         if (!expanded) {
           // Collapsed: tap to expand
           expand();
