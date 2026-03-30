@@ -197,7 +197,7 @@
     #terminal-container { flex: 1; min-width: 0; position: relative; z-index: 1; background: var(--bg); }
     /* terminal-pane: stacking + containment — contain:paint clips all child
        rendering (including system carets) to the pane boundary. */
-    .terminal-pane { position: absolute; inset: 0; display: none; contain: paint; overflow: hidden; }
+    .terminal-pane { position: absolute; inset: 0; display: none; contain: paint; overflow: hidden; padding: 4px 0; }
     .terminal-pane.active { display: block; }
 
     /* In carousel mode, all terminal panes stay visible — each one lives
@@ -368,6 +368,10 @@
       padding: 0;
     }
     .terminal-pane .xterm, #terminal-container .xterm { height: 100%; touch-action: none; }
+    /* Center the xterm canvas so the font-rounding remainder splits evenly
+       between left and right instead of accumulating on the right only.
+       .xterm-screen has a definite width (set by xterm to cols*cellWidth). */
+    .terminal-pane .xterm-screen { margin-left: auto; margin-right: auto; }
     #terminal-container .xterm-viewport,
     #terminal-container .xterm-scrollable-element {
       -webkit-overflow-scrolling: touch;

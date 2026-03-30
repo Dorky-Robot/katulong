@@ -45,10 +45,8 @@ function getCharRatio(term) {
 /** Calculate font size that fits FIXED_COLS in the given width. */
 function fontSizeForWidth(term, width) {
   const charRatio = getCharRatio(term);
-  // Round to 0.5px steps — balances symmetry (no large right gap from
-  // Math.floor) with stability (exact fractional values jitter on every
-  // scaleToFit call due to subpixel measurement variance).
   const exactSize = width / (FIXED_COLS * charRatio);
+  // Round DOWN to 0.5px steps so the terminal never overflows the container.
   return Math.max(6, Math.floor(exactSize * 2) / 2);
 }
 
@@ -73,7 +71,9 @@ function scaleToFit(term, container) {
   let fontSize = term.options.fontSize || 14;
   if (Math.abs(contentWidth - prevWidth) > 1) {
     container._lastScaleWidth = contentWidth;
-    fontSize = fontSizeForWidth(term, contentWidth);
+    // Reserve 8px for symmetric left/right gap (CSS margin:auto centers
+    // the .xterm-screen, so the remainder splits evenly on both sides).
+    fontSize = fontSizeForWidth(term, contentWidth - 8);
     term.options.fontSize = fontSize;
   }
 
@@ -93,6 +93,7 @@ function scaleToFit(term, container) {
     term.resize(FIXED_COLS, rows);
     changed = true;
   }
+
   return { cols: FIXED_COLS, rows, changed };
 }
 
