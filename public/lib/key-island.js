@@ -114,8 +114,8 @@ export function renderKeyIsland(opts) {
       if (e.key === "Enter") {
         e.preventDefault();
         const text = input.textContent;
-        if (text && sendFn) {
-          sendFn(text + "\r");
+        if (sendFn) {
+          sendFn(text ? text + "\r" : "\r");
         }
         input.textContent = "";
       }
