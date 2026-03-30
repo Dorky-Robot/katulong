@@ -105,6 +105,11 @@ export function renderKeyIsland(opts) {
     input.setAttribute("autocorrect", "off");
     input.dataset.placeholder = "type...";
 
+    // Prevent browser from scrolling the viewport when the input gets focus
+    input.addEventListener("focus", () => {
+      window.scrollTo(0, 0);
+    });
+
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -132,7 +137,13 @@ export function renderKeyIsland(opts) {
       }
     }
 
-    requestAnimationFrame(() => input.focus());
+    // Focus without scrolling — prevents iPadOS from pushing the page up
+    // to keep the input visible (our layout is fixed, not scrollable).
+    requestAnimationFrame(() => {
+      input.focus({ preventScroll: true });
+      // Reset any scroll the browser may have applied
+      window.scrollTo(0, 0);
+    });
   }
 
   function hideInlineInput() {
