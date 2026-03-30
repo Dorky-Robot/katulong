@@ -517,43 +517,54 @@ export function createShortcutBar(options = {}) {
     const startY = initialTouch.clientY;
 
     {
-      // Unified touch: drag on horizontal movement, long press for context menu.
-      // Don't preventDefault here — only on touchmove once drag is confirmed.
-      // Preventing on touchstart breaks Android Chrome gesture handling and
-      // tab scroll areas.
-      let started = false;
-      let longPressed = false;
+      // Touch: long-press to enter drag mode, then move to reorder.
+      // Without long-press, horizontal movement scrolls the tab area.
+      let dragReady = false;  // long-press confirmed — drag on next move
+      let started = false;    // drag actually started (moved after long-press)
+      let cancelled = false;  // movement before long-press — cancel, let scroll happen
 
       const longPressTimer = setTimeout(() => {
-        longPressed = true;
-        tab.classList.add("tab-long-press");
+        if (!cancelled) {
+          dragReady = true;
+          tab.classList.add("tab-long-press");
+        }
       }, LONG_PRESS_MS);
 
       const onMove = (te) => {
         const t = te.touches[0];
         const dx = t.clientX - startX;
         const dy = t.clientY - startY;
-        if (!longPressed && (Math.abs(dx) > DRAG_DEAD_ZONE || Math.abs(dy) > DRAG_DEAD_ZONE)) {
-          clearTimeout(longPressTimer);
+
+        // Movement before long-press — cancel drag, let native scroll happen
+        if (!dragReady) {
+          if (Math.abs(dx) > DRAG_DEAD_ZONE || Math.abs(dy) > DRAG_DEAD_ZONE) {
+            clearTimeout(longPressTimer);
+            cancelled = true;
+            cleanup();
+          }
+          return;
         }
+
+        // Long-press confirmed — start drag on horizontal movement
         if (!started) {
-          if (Math.abs(dx) < DRAG_DEAD_ZONE) return;
+          if (Math.abs(dx) < DRAG_DEAD_ZONE && Math.abs(dy) < DRAG_DEAD_ZONE) return;
           started = true;
-          clearTimeout(longPressTimer);
           beginDrag(tab, name, startX, true);
         }
         te.preventDefault();
         updateDrag(t.clientX, t.clientY);
       };
+
       const onEnd = () => {
         clearTimeout(longPressTimer);
         tab.classList.remove("tab-long-press");
-        document.removeEventListener("touchmove", onMove);
-        document.removeEventListener("touchend", onEnd);
-        document.removeEventListener("touchcancel", onEnd);
+        cleanup();
+        if (cancelled) return;
+
         if (started) {
           endDrag();
-        } else if (longPressed) {
+        } else if (dragReady) {
+          // Long-pressed but didn't move — show context menu
           showTabContextMenu({ preventDefault() {}, currentTarget: tab }, name);
         } else {
           // Tap without drag — check for double-tap to rename
@@ -569,6 +580,13 @@ export function createShortcutBar(options = {}) {
           }
         }
       };
+
+      function cleanup() {
+        document.removeEventListener("touchmove", onMove);
+        document.removeEventListener("touchend", onEnd);
+        document.removeEventListener("touchcancel", onEnd);
+      }
+
       document.addEventListener("touchmove", onMove, { passive: false });
       document.addEventListener("touchend", onEnd);
       document.addEventListener("touchcancel", onEnd);
