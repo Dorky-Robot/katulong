@@ -196,7 +196,7 @@
     #terminal-container { flex: 1; min-width: 0; position: relative; z-index: 1; background: var(--bg); }
     /* terminal-pane: stacking + containment — contain:paint clips all child
        rendering (including system carets) to the pane boundary. */
-    .terminal-pane { position: absolute; inset: 0 0 0 4px; display: none; contain: paint; overflow: hidden; }
+    .terminal-pane { position: absolute; inset: 0; display: none; contain: paint; overflow: hidden; }
     .terminal-pane.active { display: block; }
 
     /* In carousel mode, all terminal panes stay visible — each one lives
@@ -345,7 +345,7 @@
       flex: 1; display: block;
       min-width: 0; min-height: 0; overflow: hidden;
       border-radius: 16px;
-      padding: 8px 0 8px 20px;
+      padding: 8px;
     }
     /* Dashboard tile: CSS Grid of sub-tiles */
     .dashboard-grid {

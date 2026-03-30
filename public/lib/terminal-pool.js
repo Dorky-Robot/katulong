@@ -52,7 +52,7 @@ function getCharRatio(term) {
 /** Calculate font size that fits FIXED_COLS in the given width. */
 function fontSizeForWidth(term, width) {
   const charRatio = getCharRatio(term);
-  const availableWidth = width - 18; // scrollbar + margin
+  const availableWidth = width - 4; // scrollbar gutter
   return Math.max(6, Math.floor(availableWidth / (FIXED_COLS * charRatio)));
 }
 
@@ -64,11 +64,14 @@ function scaleToFit(term, container) {
   const rect = container.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return null;
 
-  const fontSize = fontSizeForWidth(term, rect.width);
+  const style = getComputedStyle(container);
+  const padLeft = parseFloat(style.paddingLeft) || 0;
+  const padRight = parseFloat(style.paddingRight) || 0;
+  const contentWidth = rect.width - padLeft - padRight;
+  const fontSize = fontSizeForWidth(term, contentWidth);
   term.options.fontSize = fontSize;
 
   // Calculate rows from height, accounting for container padding
-  const style = getComputedStyle(container);
   const padTop = parseFloat(style.paddingTop) || 0;
   const padBottom = parseFloat(style.paddingBottom) || 0;
   const availableHeight = rect.height - padTop - padBottom;
