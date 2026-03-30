@@ -555,24 +555,11 @@ export function createShortcutBar(options = {}) {
           beginDrag(tab, name, startX, true);
         }
         te.preventDefault();
-        // Throttle drag updates to animation frames to prevent jitter
-        if (!dragRaf) {
-          dragRaf = requestAnimationFrame(() => {
-            dragRaf = 0;
-            updateDrag(lastTouchX, lastTouchY);
-          });
-        }
-        lastTouchX = t.clientX;
-        lastTouchY = t.clientY;
+        updateDrag(t.clientX, t.clientY);
       };
-
-      let dragRaf = 0;
-      let lastTouchX = startX;
-      let lastTouchY = startY;
 
       const onEnd = () => {
         clearTimeout(longPressTimer);
-        if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = 0; }
         tab.classList.remove("tab-long-press");
         cleanup();
         if (cancelled) return;
