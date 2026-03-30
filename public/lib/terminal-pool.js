@@ -70,13 +70,14 @@ function scaleToFit(term, container) {
   const padLeft = parseFloat(style.paddingLeft) || 0;
   const padRight = parseFloat(style.paddingRight) || 0;
   const contentWidth = rect.width - padLeft - padRight;
-  const fontSize = fontSizeForWidth(term, contentWidth);
-  // Skip if font size hasn't changed — prevents jitter from repeated
-  // scaleToFit calls (e.g. carousel fitAll on every tap/focus).
-  if (term.options.fontSize === fontSize && term.cols === FIXED_COLS) {
-    return { cols: FIXED_COLS, rows: term.rows };
+  // Only recalculate font when width meaningfully changes (>1px).
+  // Height-only changes (keyboard accessory bar) should not affect font.
+  const prevWidth = container._lastScaleWidth || 0;
+  if (Math.abs(contentWidth - prevWidth) > 1) {
+    container._lastScaleWidth = contentWidth;
+    const fontSize = fontSizeForWidth(term, contentWidth);
+    term.options.fontSize = fontSize;
   }
-  term.options.fontSize = fontSize;
 
   // Calculate rows from height, accounting for container padding
   const padTop = parseFloat(style.paddingTop) || 0;

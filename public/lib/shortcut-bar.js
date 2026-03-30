@@ -229,17 +229,18 @@ export function createShortcutBar(options = {}) {
       if (onTabClick) onTabClick(remaining[Math.min(idx, remaining.length - 1)]);
       return;
     }
-    // No tabs left in this window — mark empty state and reload
-    sessionStorage.setItem("katulong-empty-state", "1");
-    window.location.href = "/";
+    // No tabs left — show empty state with + button
+    if (onAllTabsClosed) onAllTabsClosed();
+    render(null);
   }
 
   /** Close tab: remove from this window's tab set only (session stays managed on server) */
   function closeTab(sessionName) {
-    if (!windowTabSet) return;
-    const idx = windowTabSet.getTabs().indexOf(sessionName);
-    windowTabSet.removeTab(sessionName);
-    navigateAfterRemoval(sessionName, idx);
+    // Remove from carousel first (handles tile unmount + focus shift)
+    if (carousel?.isActive()) {
+      carousel.removeCard(sessionName);
+    }
+    if (windowTabSet) windowTabSet.removeTab(sessionName);
   }
 
   async function detachTab(sessionName) {
@@ -249,9 +250,8 @@ export function createShortcutBar(options = {}) {
       console.error("[Tab] Detach failed:", err);
       return;
     }
-    const idx = windowTabSet ? windowTabSet.getTabs().indexOf(sessionName) : 0;
+    if (carousel?.isActive()) carousel.removeCard(sessionName);
     if (windowTabSet) windowTabSet.removeTab(sessionName);
-    navigateAfterRemoval(sessionName, idx);
   }
 
   async function killTab(sessionName) {
@@ -262,9 +262,8 @@ export function createShortcutBar(options = {}) {
       console.error("[Tab] Kill failed:", err);
       return;
     }
-    const idx = windowTabSet ? windowTabSet.getTabs().indexOf(sessionName) : 0;
+    if (carousel?.isActive()) carousel.removeCard(sessionName);
     if (windowTabSet) windowTabSet.onSessionKilled(sessionName);
-    navigateAfterRemoval(sessionName, idx);
   }
 
   /**
