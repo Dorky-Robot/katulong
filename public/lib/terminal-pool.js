@@ -51,10 +51,11 @@ function getCharRatio(term) {
 /** Calculate font size that fits FIXED_COLS in the given width. */
 function fontSizeForWidth(term, width) {
   const charRatio = getCharRatio(term);
-  // No rounding — use exact size so terminal fills the width symmetrically.
-  // Math.floor leaves a gap on the right (82 cols × fraction = many pixels).
+  // Round to 0.5px steps — balances symmetry (no large right gap from
+  // Math.floor) with stability (exact fractional values jitter on every
+  // scaleToFit call due to subpixel measurement variance).
   const exactSize = width / (FIXED_COLS * charRatio);
-  return Math.max(6, exactSize);
+  return Math.max(6, Math.floor(exactSize * 2) / 2);
 }
 
 /**
@@ -70,6 +71,11 @@ function scaleToFit(term, container) {
   const padRight = parseFloat(style.paddingRight) || 0;
   const contentWidth = rect.width - padLeft - padRight;
   const fontSize = fontSizeForWidth(term, contentWidth);
+  // Skip if font size hasn't changed — prevents jitter from repeated
+  // scaleToFit calls (e.g. carousel fitAll on every tap/focus).
+  if (term.options.fontSize === fontSize && term.cols === FIXED_COLS) {
+    return { cols: FIXED_COLS, rows: term.rows };
+  }
   term.options.fontSize = fontSize;
 
   // Calculate rows from height, accounting for container padding
