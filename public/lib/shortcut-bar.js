@@ -516,7 +516,6 @@ export function createShortcutBar(options = {}) {
 
   function onTabTouchStart(e, tab, name) {
     if (e.target.closest(".tab-close")) return;
-    touchActive = true;
 
     const initialTouch = e.touches[0];
     const startX = initialTouch.clientX;
