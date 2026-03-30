@@ -90,8 +90,8 @@ HALF_CPUS=$(( NCPUS / 2 ))
 # Exclude test files that use mock.module when it's not supported to prevent
 # false failures on systems with older Node versions.
 MOCK_MODULE_OK=0
-if node --experimental-test-module-mocks -e \
-  "const t = require('node:test'); if (typeof t.mock?.module !== 'function') process.exit(1)" \
+if node --experimental-test-module-mocks --test -e \
+  "const { describe, it, mock } = require('node:test'); const assert = require('node:assert'); describe('check', () => { it('mock.module works', async () => { mock.module('node:os', { namedExports: { hostname: () => 'test' } }); const os = await import('node:os'); assert.strictEqual(os.hostname(), 'test'); mock.restoreAll(); }); });" \
   >/dev/null 2>&1; then
   MOCK_MODULE_OK=1
 fi
@@ -150,7 +150,8 @@ fi
 
 if [ "$UNIT_RC" -ne 0 ]; then
   echo "      FAIL  Unit/integration tests failed (exit $UNIT_RC):"
-  cat "$UNIT_LOG"
+  # Show only failing tests and summary (full log is too large for pipe buffer)
+  grep -E "^not ok|^# (tests|pass|fail)" "$UNIT_LOG" 2>/dev/null || tail -20 "$UNIT_LOG"
 else
   echo "      OK  Unit/integration tests passed"
 fi

@@ -49,10 +49,9 @@ export function renderKeyIsland(opts) {
       btn.className = "key-island-btn";
       btn.textContent = s.label;
       btn.setAttribute("aria-label", `Send ${s.label}`);
+      btn.addEventListener("pointerdown", (e) => e.preventDefault()); // keep keyboard open
       btn.addEventListener("click", () => {
         if (sendFn) sendSequence(keysToSequence(s.keys), sendFn);
-        const term = getTerm();
-        if (term) term.focus();
       });
       row.appendChild(btn);
     }
@@ -142,46 +141,52 @@ export function renderKeyIsland(opts) {
     inputRow = null;
   }
 
-  // Spacer pushes utility buttons to the right
+  // Spacer between touch keys and arrow keys
   const spacer = document.createElement("div");
   spacer.style.flex = "1";
   row.appendChild(spacer);
 
-  // Utility buttons — all platforms
-  if (onFilesClick) {
-    const btn = document.createElement("button");
-    btn.className = "key-island-btn key-island-icon";
-    btn.setAttribute("aria-label", "Files");
-    btn.innerHTML = '<i class="ph ph-folder-open"></i>';
-    btn.addEventListener("click", onFilesClick);
-    row.appendChild(btn);
-  }
+  // Arrow keys — hold to repeat, like holding a keyboard key
+  if (platform !== "desktop") {
+    const REPEAT_DELAY = 400; // ms before repeat starts
+    const REPEAT_INTERVAL = 50; // ms between repeats
 
-  // Plugin buttons
-  for (const p of (pluginButtons || [])) {
-    if (!p.click) continue;
-    const btn = document.createElement("button");
-    btn.className = "key-island-btn key-island-icon";
-    btn.setAttribute("aria-label", p.label);
-    btn.innerHTML = `<i class="ph ph-${p.icon}"></i>`;
-    btn.addEventListener("click", p.click);
-    row.appendChild(btn);
-  }
+    for (const [icon, seq] of [
+      ["caret-up", "\x1b[A"],
+      ["caret-down", "\x1b[B"],
+      ["caret-left", "\x1b[D"],
+      ["caret-right", "\x1b[C"],
+    ]) {
+      const btn = document.createElement("button");
+      btn.className = "key-island-btn key-island-icon";
+      btn.innerHTML = `<i class="ph ph-${icon}"></i>`;
 
-  if (onSettingsClick) {
-    const btn = document.createElement("button");
-    btn.className = "key-island-btn key-island-icon";
-    btn.setAttribute("aria-label", "Settings");
-    btn.innerHTML = '<i class="ph ph-gear"></i>';
-    btn.addEventListener("click", onSettingsClick);
-    row.appendChild(btn);
-  }
+      let delayTimer = null;
+      let repeatTimer = null;
 
-  // Connection dot
-  const dot = document.createElement("span");
-  dot.id = "island-connection-dot";
-  dot.className = "island-connection-dot";
-  row.appendChild(dot);
+      function startRepeat() {
+        if (sendFn) sendFn(seq); // send immediately
+        delayTimer = setTimeout(() => {
+          repeatTimer = setInterval(() => { if (sendFn) sendFn(seq); }, REPEAT_INTERVAL);
+        }, REPEAT_DELAY);
+      }
+
+      function stopRepeat() {
+        if (delayTimer) { clearTimeout(delayTimer); delayTimer = null; }
+        if (repeatTimer) { clearInterval(repeatTimer); repeatTimer = null; }
+      }
+
+      btn.addEventListener("pointerdown", (e) => {
+        e.preventDefault(); // keep keyboard open
+        startRepeat();
+      });
+      btn.addEventListener("pointerup", stopRepeat);
+      btn.addEventListener("pointercancel", stopRepeat);
+      btn.addEventListener("pointerleave", stopRepeat);
+
+      row.appendChild(btn);
+    }
+  }
 
   // Append into parent (shortcut bar) instead of floating
   if (parentEl) {

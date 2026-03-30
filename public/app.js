@@ -126,6 +126,7 @@
         dot.classList.toggle("connected", attached);
         dot.title = title;
       }
+      joystickManager.setConnected(attached);
     };
 
     if (state.session.name) document.title = state.session.name;
@@ -497,13 +498,10 @@
     });
     joystickManager.init();
 
-    // Wire action buttons into the joystick (text input + image attach)
+    // Wire Files + Settings into the joystick floating buttons
     joystickManager.setActions({
-      onTextClick: () => openDictationModal(),
-      onAttachClick: () => {
-        const fileInput = document.getElementById("dictation-file-input");
-        if (fileInput) fileInput.click();
-      },
+      onFilesClick: () => toggleFileBrowser(),
+      onSettingsClick: () => modals.open('settings'),
     });
 
     // Hardware keyboard detection: hide joystick when a physical keyboard
@@ -1258,7 +1256,7 @@
       termContainer.classList.remove("fb-hidden");
     }
 
-    function toggleFileBrowser() {
+    async function toggleFileBrowser() {
       const isActive = fileBrowserEl.classList.contains("active");
       if (isActive) {
         closeFileBrowser();
@@ -1266,14 +1264,25 @@
       } else {
         // Close other panels if open (mutual exclusion)
         if (portForwardEl.classList.contains("active")) closePortForward();
+
+        // Get the active terminal's working directory
+        let cwd = "";
+        const sessionName = state.session.name;
+        if (sessionName) {
+          try {
+            const data = await api.get(`/sessions/cwd/${encodeURIComponent(sessionName)}`);
+            if (data.cwd) cwd = data.cwd;
+          } catch {}
+        }
+
         if (!fileBrowserMounted) {
           fileBrowserComponent = createFileBrowserComponent(fileBrowserStore, {
             onClose: () => toggleFileBrowser(),
           });
           fileBrowserComponent.mount(fileBrowserEl);
           fileBrowserMounted = true;
-          loadRoot(fileBrowserStore, "");
         }
+        loadRoot(fileBrowserStore, cwd);
         termContainer.classList.add("fb-hidden");
         fileBrowserEl.classList.add("active");
         fileBrowserComponent.focus();
