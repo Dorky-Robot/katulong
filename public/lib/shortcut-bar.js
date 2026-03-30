@@ -473,9 +473,6 @@ export function createShortcutBar(options = {}) {
     let started = false;
 
     const onMove = (me) => {
-      // Bail if a touch drag owns the gesture — synthesized mouse events
-      // from touch have slightly different coordinates and cause jitter.
-      if (drag?.isTouch) return;
       me.preventDefault(); // prevent native selection during drag
       const dx = me.clientX - startX;
       const dy = me.clientY - startY;
@@ -492,9 +489,6 @@ export function createShortcutBar(options = {}) {
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
-
-      // If touch owns the drag, don't interfere
-      if (drag?.isTouch) return;
 
       if (!started) {
         if (name !== currentSessionName) {
