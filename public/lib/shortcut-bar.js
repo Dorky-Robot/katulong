@@ -518,7 +518,9 @@ export function createShortcutBar(options = {}) {
 
     {
       // Unified touch: drag on horizontal movement, long press for context menu.
-      e.preventDefault();
+      // Don't preventDefault here — only on touchmove once drag is confirmed.
+      // Preventing on touchstart breaks Android Chrome gesture handling and
+      // tab scroll areas.
       let started = false;
       let longPressed = false;
 
