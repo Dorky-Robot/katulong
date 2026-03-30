@@ -603,6 +603,11 @@ export function createShortcutBar(options = {}) {
     // Safari clips cloned nodes that inherit overflow:hidden from the source tab,
     // even after appending to document.body with position:fixed. Force visible.
     ghost.style.overflow = "visible";
+    // Position ghost at the tab's current location BEFORE appending to prevent
+    // a flash at (0,0) on the first frame.
+    const tabRect = rects[dragIndex];
+    const tabTop = tab.getBoundingClientRect().top;
+    ghost.style.transform = `translate3d(${tabRect.left}px, ${tabTop}px, 0)`;
     document.body.appendChild(ghost);
 
     tab.classList.add("tab-dragging");
