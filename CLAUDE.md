@@ -24,6 +24,10 @@ Image paste across machines (e.g., iPad → tunnel → Mac mini) requires a thre
 
 Use `git worktree add` (or the EnterWorktree tool in Claude Code) to create an isolated working copy for your branch. Do all development, commits, and pushes from the worktree. This allows multiple agents to work on different tasks simultaneously without conflicts in the main checkout.
 
+## Codebase history search
+
+Use `diwa search katulong "<query>"` to search the project's architectural history — past bugs, design decisions, patterns, and learnings indexed from commit history. Always search before tackling recurring issues (drag jitter, garbled text, scroll problems, etc.) to avoid repeating past mistakes.
+
 ## Development principles
 
 ### Boy Scout Rule
@@ -36,6 +40,19 @@ When encountering issues unrelated to your current task:
 - Refactor confusing code when you touch it
 
 Technical debt should be addressed opportunistically, not deferred indefinitely. If a fix takes less than 30 minutes and improves code quality or reliability, do it as part of your current work.
+
+### Commit Messages as Mini Blog Posts
+
+Commit messages are the project's institutional memory. Write them like mini blog posts — not just what changed, but **why**, what was tried and failed, and what non-obvious lessons were learned. Future developers (and future AI agents) will use `diwa search` to find these learnings when facing similar problems.
+
+A good commit message includes:
+- **What changed** — bullet points of the actual code changes
+- **Why** — the root cause of the bug or the motivation for the feature
+- **What was tried and failed** — dead ends that future readers shouldn't repeat
+- **Caveats and gotchas** — non-obvious interactions, platform quirks, timing issues
+- **The key insight** — the one thing that made the fix work, stated clearly
+
+Example: instead of "fix: touch drag jitter", write a message that explains that `e.preventDefault()` on touchstart is required because without it the browser initiates native scroll that fights with translate3d positioning, and that synthesized mouse events from touch arrive with different coordinates than the original touch events, and that the long-press-before-drag approach was tried but created worse jitter because the 300ms delay let native scroll establish itself.
 
 ### Testing and Git Workflow
 

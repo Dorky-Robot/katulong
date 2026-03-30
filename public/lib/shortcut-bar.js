@@ -523,38 +523,30 @@ export function createShortcutBar(options = {}) {
     const startY = initialTouch.clientY;
 
     {
-      // Touch: long-press to enter drag mode, then move to reorder.
-      // Without long-press, horizontal movement scrolls the tab area.
-      let dragReady = false;  // long-press confirmed — drag on next move
-      let started = false;    // drag actually started (moved after long-press)
-      let cancelled = false;  // movement before long-press — cancel, let scroll happen
+      // Touch: drag on horizontal movement, long press for context menu.
+      // preventDefault on touchstart blocks synthesized mouse events and
+      // native scroll — both of which cause jitter during drag.
+      e.preventDefault();
+      touchActive = true;
+      let started = false;
+      let longPressed = false;
 
       const longPressTimer = setTimeout(() => {
-        if (!cancelled) {
-          dragReady = true;
-          tab.classList.add("tab-long-press");
-        }
+        longPressed = true;
+        tab.classList.add("tab-long-press");
       }, LONG_PRESS_MS);
 
       const onMove = (te) => {
         const t = te.touches[0];
         const dx = t.clientX - startX;
         const dy = t.clientY - startY;
-
-        // Movement before long-press — cancel drag, let native scroll happen
-        if (!dragReady) {
-          if (Math.abs(dx) > DRAG_DEAD_ZONE || Math.abs(dy) > DRAG_DEAD_ZONE) {
-            clearTimeout(longPressTimer);
-            cancelled = true;
-            cleanup();
-          }
-          return;
+        if (!longPressed && (Math.abs(dx) > DRAG_DEAD_ZONE || Math.abs(dy) > DRAG_DEAD_ZONE)) {
+          clearTimeout(longPressTimer);
         }
-
-        // Long-press confirmed — start drag on horizontal movement
         if (!started) {
-          if (Math.abs(dx) < DRAG_DEAD_ZONE && Math.abs(dy) < DRAG_DEAD_ZONE) return;
+          if (Math.abs(dx) < DRAG_DEAD_ZONE) return;
           started = true;
+          clearTimeout(longPressTimer);
           beginDrag(tab, name, startX, true);
         }
         te.preventDefault();
@@ -563,16 +555,14 @@ export function createShortcutBar(options = {}) {
 
       const onEnd = () => {
         clearTimeout(longPressTimer);
-        // Delay clearing touchActive so synthesized mousedown (fires after touchend) is still blocked
         setTimeout(() => { touchActive = false; }, 50);
         tab.classList.remove("tab-long-press");
-        cleanup();
-        if (cancelled) return;
-
+        document.removeEventListener("touchmove", onMove);
+        document.removeEventListener("touchend", onEnd);
+        document.removeEventListener("touchcancel", onEnd);
         if (started) {
           endDrag();
-        } else if (dragReady) {
-          // Long-pressed but didn't move — show context menu
+        } else if (longPressed) {
           showTabContextMenu({ preventDefault() {}, currentTarget: tab }, name);
         } else {
           // Tap without drag — check for double-tap to rename
@@ -588,12 +578,6 @@ export function createShortcutBar(options = {}) {
           }
         }
       };
-
-      function cleanup() {
-        document.removeEventListener("touchmove", onMove);
-        document.removeEventListener("touchend", onEnd);
-        document.removeEventListener("touchcancel", onEnd);
-      }
 
       document.addEventListener("touchmove", onMove, { passive: false });
       document.addEventListener("touchend", onEnd);
@@ -681,23 +665,27 @@ export function createShortcutBar(options = {}) {
     }
     if (newIndex > rects.length - 1) newIndex = rects.length - 1;
 
-    drag.currentIndex = newIndex;
+    // Only update sibling transforms when the index actually changes —
+    // re-setting the same transform on every frame causes needless work.
+    if (newIndex !== drag.currentIndex) {
+      drag.currentIndex = newIndex;
 
-    for (let i = 0; i < tabs.length; i++) {
-      if (i === dragIndex) continue;
+      for (let i = 0; i < tabs.length; i++) {
+        if (i === dragIndex) continue;
 
-      let shift = 0;
-      if (dragIndex < newIndex) {
-        if (i > dragIndex && i <= newIndex) {
-          shift = -(dragWidth + getGap());
+        let shift = 0;
+        if (dragIndex < newIndex) {
+          if (i > dragIndex && i <= newIndex) {
+            shift = -(dragWidth + getGap());
+          }
+        } else if (dragIndex > newIndex) {
+          if (i >= newIndex && i < dragIndex) {
+            shift = dragWidth + getGap();
+          }
         }
-      } else if (dragIndex > newIndex) {
-        if (i >= newIndex && i < dragIndex) {
-          shift = dragWidth + getGap();
-        }
+
+        tabs[i].style.transform = shift ? `translateX(${shift}px)` : "";
       }
-
-      tabs[i].style.transform = shift ? `translateX(${shift}px)` : "";
     }
   }
 
