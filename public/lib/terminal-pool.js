@@ -73,9 +73,10 @@ function scaleToFit(term, container) {
   // Only recalculate font when width meaningfully changes (>1px).
   // Height-only changes (keyboard accessory bar) should not affect font.
   const prevWidth = container._lastScaleWidth || 0;
+  let fontSize = term.options.fontSize || 14;
   if (Math.abs(contentWidth - prevWidth) > 1) {
     container._lastScaleWidth = contentWidth;
-    const fontSize = fontSizeForWidth(term, contentWidth);
+    fontSize = fontSizeForWidth(term, contentWidth);
     term.options.fontSize = fontSize;
   }
 
@@ -86,7 +87,7 @@ function scaleToFit(term, container) {
 
   const dims = term._core?._renderService?.dimensions;
   const cellHeight = dims?.css?.cell?.height
-    ? dims.css.cell.height / (term.options.fontSize || 14) * fontSize
+    ? dims.css.cell.height / (fontSize || 14) * fontSize
     : fontSize * 1.2;
   const rows = Math.max(2, Math.floor(availableHeight / cellHeight));
 

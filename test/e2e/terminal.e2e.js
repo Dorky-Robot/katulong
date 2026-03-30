@@ -123,6 +123,28 @@ test.describe("Terminal I/O", () => {
     expect(ratio).toBeGreaterThan(0.8);
   });
 
+  test("No JS errors during terminal scale/resize", async ({ page }) => {
+    // Regression: scaleToFit had a block-scoped `const fontSize` inside an
+    // if-block but referenced it outside — ReferenceError on every call.
+    // This test catches any uncaught JS error during load + viewport resize.
+    const errors = [];
+    page.on("pageerror", (err) => errors.push(err.message));
+
+    await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
+    await waitForAppReady(page);
+
+    // Trigger a height-only resize (the exact path that hit the bug —
+    // width unchanged means the if-block is skipped, fontSize undefined).
+    const currentSize = page.viewportSize();
+    await page.setViewportSize({ width: currentSize.width, height: currentSize.height - 50 });
+    // Give ResizeObserver + rAF time to fire
+    await page.waitForTimeout(500);
+    await page.setViewportSize(currentSize);
+    await page.waitForTimeout(500);
+
+    expect(errors).toEqual([]);
+  });
+
   test("Buffer replays on page reload", async ({ page }) => {
     const marker = `reload_${Date.now()}`;
     await page.keyboard.type(`echo ${marker}`);
