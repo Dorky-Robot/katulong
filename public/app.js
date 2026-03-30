@@ -290,7 +290,7 @@
         const url = new URL(window.location);
         url.searchParams.set("s", sessionName);
         history.replaceState(null, "", url);
-        if (shortcutBarInstance) shortcutBarInstance.render(sessionName);
+        if (shortcutBarInstance) shortcutBarInstance.setActiveTab(sessionName);
         // For terminals with content (tab switch): just resize, no switch needed.
         // For empty terminals (new session): send switch to get seq-init + start pulling.
         const ws = state.connection.ws;

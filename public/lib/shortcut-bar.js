@@ -923,6 +923,10 @@ export function createShortcutBar(options = {}) {
 
     cleanupDrag();
 
+    // Preserve inline input row across re-renders
+    const savedInputRow = container.querySelector(".bar-input-row");
+    if (savedInputRow) savedInputRow.remove();
+
     container.innerHTML = "";
     document.getElementById("key-island")?.remove();
 
@@ -964,6 +968,16 @@ export function createShortcutBar(options = {}) {
       pluginButtons: options.pluginButtons,
     });
 
+    // Re-insert preserved inline input row (between tab row and tool row)
+    if (savedInputRow) {
+      const toolRow = container.querySelector("#key-island");
+      if (toolRow) {
+        container.insertBefore(savedInputRow, toolRow);
+      } else {
+        container.appendChild(savedInputRow);
+      }
+    }
+
     if (updateConnectionIndicator) updateConnectionIndicator();
   }
 
@@ -982,8 +996,21 @@ export function createShortcutBar(options = {}) {
   if (sessionStore) sessionStore.subscribe(onStoreChange);
   if (windowTabSet) windowTabSet.subscribe(onStoreChange);
 
+  /**
+   * Lightweight active-tab update — just toggles the .active class
+   * without rebuilding the entire bar. Use this for carousel card switches.
+   */
+  function setActiveTab(sessionName) {
+    currentSessionName = sessionName;
+    const tabs = container.querySelectorAll(".tab-bar-tab");
+    for (const tab of tabs) {
+      tab.classList.toggle("active", tab.dataset.session === sessionName);
+    }
+  }
+
   return {
     render: requestRender,
+    setActiveTab,
     showAddMenu,
     setPortProxyEnabled(enabled) {
       portProxyEnabled = enabled;

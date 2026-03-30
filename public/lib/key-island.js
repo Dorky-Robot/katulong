@@ -126,17 +126,9 @@ export function renderKeyIsland(opts) {
       e.stopPropagation();
     });
 
-    const closeBtn = document.createElement("button");
-    closeBtn.className = "key-island-btn key-island-icon";
-    closeBtn.setAttribute("aria-label", "Close input");
-    closeBtn.innerHTML = '<i class="ph ph-x"></i>';
-    closeBtn.addEventListener("click", () => hideInlineInput());
-
     inputRow.appendChild(input);
-    inputRow.appendChild(closeBtn);
 
     // Insert before the tool row (#key-island itself = this row's parent sibling)
-    // The inputRow goes between .bar-tab-row and #key-island
     if (parentEl) {
       const toolRow = parentEl.querySelector("#key-island");
       if (toolRow) {
@@ -149,23 +141,24 @@ export function renderKeyIsland(opts) {
     // Focus after DOM insertion
     requestAnimationFrame(() => input.focus());
 
-    // Resize the app to fit the visual viewport when keyboard opens.
-    // This keeps the terminal visible above the bar + keyboard without
-    // flying off screen. The bar is at the bottom of the flex layout,
-    // so shrinking the container height naturally pushes it up.
+    // Track visual viewport to resize body when keyboard is open.
+    // Input row stays visible regardless of keyboard state — only
+    // dismissed via keyboard button toggle or Escape.
     const appEl = document.querySelector("body");
     if (window.visualViewport && appEl) {
+      const fullVpHeight = window.visualViewport.height;
       vpHandler = () => {
         const vpH = window.visualViewport.height;
-        appEl.style.height = vpH + "px";
-        appEl.style.overflow = "hidden";
+        if (vpH < fullVpHeight - 50) {
+          appEl.style.height = vpH + "px";
+          appEl.style.overflow = "hidden";
+        } else {
+          appEl.style.height = "";
+          appEl.style.overflow = "";
+        }
       };
-      vpHandler(); // apply immediately
       window.visualViewport.addEventListener("resize", vpHandler);
     }
-
-    // Input stays visible until explicitly dismissed via close button or Escape.
-    // This lets users switch tabs and use the joystick while keeping the input open.
   }
 
   function hideInlineInput() {
