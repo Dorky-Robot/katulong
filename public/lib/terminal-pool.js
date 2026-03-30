@@ -51,8 +51,10 @@ function getCharRatio(term) {
 /** Calculate font size that fits FIXED_COLS in the given width. */
 function fontSizeForWidth(term, width) {
   const charRatio = getCharRatio(term);
-  const availableWidth = width - 4; // scrollbar gutter
-  return Math.max(6, Math.floor(availableWidth / (FIXED_COLS * charRatio)));
+  // No rounding — use exact size so terminal fills the width symmetrically.
+  // Math.floor leaves a gap on the right (82 cols × fraction = many pixels).
+  const exactSize = width / (FIXED_COLS * charRatio);
+  return Math.max(6, exactSize);
 }
 
 /**

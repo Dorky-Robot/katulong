@@ -214,11 +214,11 @@
     /* Cards positioned absolutely, centered, with max-width so neighbors peek on wider screens. */
     .carousel-card {
       position: absolute;
-      top: 8px; bottom: 16px;
+      top: 8px; bottom: 12px;
       left: 50%;
-      width: calc(100% - 48px);
+      width: calc(100% - 16px);
       max-width: 720px;
-      margin-left: calc(min(100% - 48px, 720px) / -2); /* center: offset by half width */
+      margin-left: calc(min(100% - 16px, 720px) / -2); /* center: offset by half width */
       /* No background, shadow, or border-radius here — those live on the faces */
       transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
       will-change: transform;
@@ -332,9 +332,9 @@
     }
     .html-tile-content h1, .html-tile-content h2, .html-tile-content h3 { margin: 0 0 8px; }
     .html-tile-content p { margin: 0 0 12px; }
-    /* In standalone PWA, leave room for iPad traffic lights + floating island */
+    /* In standalone PWA, leave room for status bar / traffic lights */
     @media (display-mode: standalone) {
-      .carousel-card { top: 72px; }
+      .carousel-card { top: calc(env(safe-area-inset-top, 0px) + 40px); }
     }
     .carousel-card.focused {
       z-index: 2;
@@ -374,7 +374,11 @@
     }
     /* Override xterm.css default #000 background so the gap below terminal rows
        matches the theme instead of showing a black strip. */
-    #terminal-container .xterm-viewport { background-color: var(--bg) !important; }
+    #terminal-container .xterm-viewport {
+      background-color: var(--bg) !important;
+      scrollbar-width: none; /* Firefox */
+    }
+    #terminal-container .xterm-viewport::-webkit-scrollbar { display: none; } /* Chrome/Safari */
     /* xterm's input textarea is moved into this off-screen wrapper at the DOM
        level (see terminal-pool.js) so the system caret can never appear in the
        visible terminal area.  No opacity/clip-path hacks needed. */
