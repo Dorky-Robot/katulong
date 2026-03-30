@@ -61,7 +61,10 @@ export function createWebSocketConnection(deps = {}) {
       if (term) {
         terminalWriteWithScroll(term, data, done);
       } else {
-        done(); // no terminal — advance cursor anyway
+        // No terminal yet — reject the write so pull manager doesn't
+        // advance the cursor. Data will be re-pulled when the terminal
+        // is created and a data-available fires.
+        done(false); // false = write rejected, don't advance cursor
       }
     },
     onReset(session) {

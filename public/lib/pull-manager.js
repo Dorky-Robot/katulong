@@ -83,12 +83,10 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
     const ps = sessions.get(name);
     if (!ps) return;
     ps.pulling = false;
-    ps.cursor = cursor; // Advance cursor immediately so next pull can start
     clearTimeout(pullTimers.get(name));
 
     if (data && data.length > 0) {
       ps.writing = true;
-      // Safety: unstick if write callback never fires
       const safety = setTimeout(() => {
         if (ps.writing) {
           ps.writing = false;
@@ -96,12 +94,24 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
         }
       }, WRITE_TIMEOUT_MS);
 
-      onWrite(name, data, () => {
+      onWrite(name, data, (accepted) => {
         clearTimeout(safety);
         ps.writing = false;
+        if (accepted === false) {
+          // Write rejected (no terminal) — DON'T advance cursor.
+          // Data will be re-pulled when the terminal is ready.
+          ps.pending = true;
+          // Retry after a short delay to give the terminal time to create
+          setTimeout(() => {
+            if (ps.pending) { ps.pending = false; pull(name); }
+          }, 200);
+          return;
+        }
+        ps.cursor = cursor; // Only advance cursor on successful write
         if (ps.pending) { ps.pending = false; pull(name); }
       });
     } else {
+      ps.cursor = cursor;
       if (ps.pending) { ps.pending = false; pull(name); }
     }
 

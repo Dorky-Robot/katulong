@@ -86,9 +86,10 @@ describe("PullManager", () => {
 
     it("allows pull while writing (pipelining)", () => {
       pm.init("a", 0);
-      pm.pullResponse("a", "data", 10); // sets writing=true, cursor=10
+      pm.pullResponse("a", "data", 10); // sets writing=true
+      writes[0].done(); // complete write — cursor advances to 10
       sends.length = 0;
-      pm.dataAvailable("a"); // should pull immediately — not blocked by writing
+      pm.dataAvailable("a"); // should pull from cursor 10
       assert.equal(sends.length, 1);
       assert.equal(sends[0].fromSeq, 10);
     });
@@ -113,13 +114,22 @@ describe("PullManager", () => {
       assert.equal(pm.get("a").cursor, 5);
     });
 
-    it("cursor advances immediately on pullResponse", () => {
+    it("cursor advances on write completion, not before", () => {
       pm.init("a", 0);
       pm.pullResponse("a", "data", 10);
-      // Cursor should advance before write completes
-      assert.equal(pm.get("a").cursor, 10);
+      // Cursor stays at 0 until write completes
+      assert.equal(pm.get("a").cursor, 0);
       assert.equal(pm.get("a").writing, true);
       writes[0].done();
+      assert.equal(pm.get("a").writing, false);
+      assert.equal(pm.get("a").cursor, 10);
+    });
+
+    it("rejected write does not advance cursor", () => {
+      pm.init("a", 0);
+      pm.pullResponse("a", "data", 10);
+      writes[0].done(false); // rejected — no terminal
+      assert.equal(pm.get("a").cursor, 0); // cursor unchanged
       assert.equal(pm.get("a").writing, false);
     });
 
@@ -197,7 +207,9 @@ describe("PullManager", () => {
       // Don't call done() — wait for safety timeout
       await new Promise(r => setTimeout(r, 3100));
       assert.equal(pm.get("a").writing, false);
-      assert.equal(pm.get("a").cursor, 10);
+      // Cursor stays at 0 — safety timeout doesn't advance cursor
+      // (same as rejected write — avoids data loss)
+      assert.equal(pm.get("a").cursor, 0);
     });
   });
 });
