@@ -473,6 +473,7 @@ export function createShortcutBar(options = {}) {
     let started = false;
 
     const onMove = (me) => {
+      if (drag?.isTouch) return; // touch owns the gesture
       me.preventDefault(); // prevent native selection during drag
       const dx = me.clientX - startX;
       const dy = me.clientY - startY;
@@ -489,6 +490,8 @@ export function createShortcutBar(options = {}) {
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
+
+      if (drag?.isTouch) return; // touch owns the gesture
 
       if (!started) {
         if (name !== currentSessionName) {
@@ -607,6 +610,7 @@ export function createShortcutBar(options = {}) {
   }
 
   function beginDrag(tab, name, startX, fromTouch) {
+    if (drag) return; // already dragging (e.g. synthesized mouse from touch)
     const tabs = [...container.querySelectorAll(".tab-bar-tab")];
     const dragIndex = tabs.indexOf(tab);
     if (dragIndex === -1) return; // tab removed from DOM between touchstart and drag
