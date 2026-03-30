@@ -15,8 +15,8 @@
  *   - pending: data-available arrived while busy — will re-pull after current op
  */
 
-const PULL_TIMEOUT_MS = 2000;
-const WRITE_TIMEOUT_MS = 1500;
+const PULL_TIMEOUT_MS = 1000;
+const WRITE_TIMEOUT_MS = 500;
 
 export function createPullManager({ onSendPull, onWrite, onReset }) {
   const sessions = new Map(); // sessionName -> { cursor, pulling, writing, pending }
@@ -105,7 +105,7 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
           ps.pending = true;
           setTimeout(() => {
             if (ps.pending) { ps.pending = false; pull(name); }
-          }, 200);
+          }, 100);
           return;
         }
         // Advance cursor AFTER successful write — this is the natural

@@ -53,7 +53,7 @@ export function sendSequence(parts, sender) {
   if (typeof parts === "string") { sender(parts); return; }
   parts.forEach((p, i) => {
     if (i === 0) sender(p);
-    else setTimeout(() => sender(p), i * 100);
+    else setTimeout(() => sender(p), i * 50);
   });
 }
 

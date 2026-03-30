@@ -29,12 +29,6 @@ function loadWebGL(term) {
   }
 }
 
-/**
- * Scale terminal to fit container width at FIXED_COLS.
- * Adjusts fontSize so the fixed column count fills the container width.
- * Rows are calculated from the remaining height at that font size.
- * Returns { cols, rows } or null if container is not visible.
- */
 /** Measure char width ratio for the terminal's font family. */
 function getCharRatio(term) {
   const dims = term._core?._renderService?.dimensions;
@@ -61,6 +55,9 @@ function fontSizeForWidth(term, width) {
 /**
  * Full init: set font size, cols, and rows for a terminal in its container.
  * Called once on activation/session switch — NOT on browser resize.
+ *
+ * Returns { cols, rows, changed } where `changed` is true if the terminal
+ * was actually resized, or null if the container is not visible.
  */
 function scaleToFit(term, container) {
   const rect = container.getBoundingClientRect();
@@ -91,10 +88,12 @@ function scaleToFit(term, container) {
     : fontSize * 1.2;
   const rows = Math.max(2, Math.floor(availableHeight / cellHeight));
 
+  let changed = false;
   if (term.cols !== FIXED_COLS || term.rows !== rows) {
     term.resize(FIXED_COLS, rows);
+    changed = true;
   }
-  return { cols: FIXED_COLS, rows };
+  return { cols: FIXED_COLS, rows, changed };
 }
 
 /**
@@ -209,13 +208,11 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     // Guard against the entry being disposed before the rAF fires.
     requestAnimationFrame(() => {
       if (!pool.has(sessionName)) return;
-      const oldCols = entry.term.cols;
-      const oldRows = entry.term.rows;
-      scaleToFit(entry.term, entry.container);
+      const result = scaleToFit(entry.term, entry.container);
       entry.term.focus();
       // Only notify server if dimensions actually changed — otherwise
       // the resize triggers tmux redraws that duplicate content.
-      if (onResize && (entry.term.cols !== oldCols || entry.term.rows !== oldRows)) {
+      if (onResize && result?.changed) {
         onResize(sessionName, entry.term.cols, entry.term.rows);
       }
     });
@@ -271,25 +268,23 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
   function unprotect(sessionName) { protectedSessions.delete(sessionName); }
 
   /** Full init: set font size + cols + rows for a terminal.
-   *  Notifies the server if dimensions changed. */
+   *  Notifies the server if dimensions changed.
+   *  Returns true if the terminal was resized, false otherwise. */
   function scale(sessionName) {
     const entry = pool.get(sessionName);
-    if (!entry) return;
-    const oldCols = entry.term.cols;
-    const oldRows = entry.term.rows;
-    scaleToFit(entry.term, entry.container);
-    if (onResize && (entry.term.cols !== oldCols || entry.term.rows !== oldRows)) {
+    if (!entry) return false;
+    const result = scaleToFit(entry.term, entry.container);
+    if (onResize && result?.changed) {
       onResize(sessionName, entry.term.cols, entry.term.rows);
     }
+    return result?.changed ?? false;
   }
 
   /** Full init for all terminals. Notifies server for each that changed. */
   function scaleAll() {
     for (const [name, entry] of pool) {
-      const oldCols = entry.term.cols;
-      const oldRows = entry.term.rows;
-      scaleToFit(entry.term, entry.container);
-      if (onResize && (entry.term.cols !== oldCols || entry.term.rows !== oldRows)) {
+      const result = scaleToFit(entry.term, entry.container);
+      if (onResize && result?.changed) {
         onResize(name, entry.term.cols, entry.term.rows);
       }
     }
@@ -297,18 +292,28 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
 
   // Auto-rescale active terminal when container size changes (browser resize,
   // orientation change, split view, etc.).
+  // Use rounded comparison (1px threshold) to ignore subpixel layout shifts
+  // that occur on tap/focus on mobile browsers (e.g., iOS focus ring adjustments,
+  // safe-area recalculations). Without this, every tap on the terminal fires a
+  // resize that causes unnecessary tmux redraws.
   let lastW = 0, lastH = 0;
   const ro = new ResizeObserver(([entry]) => {
     const { width, height } = entry.contentRect;
-    if (width === lastW && height === lastH) return;
+    if (Math.abs(width - lastW) < 1 && Math.abs(height - lastH) < 1) return;
     lastW = width; lastH = height;
     if (!activeSession) return;
     const active = pool.get(activeSession);
     if (active) {
-      scaleToFit(active.term, active.container);
-      // Force xterm to repaint after resize — the canvas renderer can
-      // go blank after orientation change or split view resize.
-      active.term.refresh(0, active.term.rows - 1);
+      const result = scaleToFit(active.term, active.container);
+      // Only force repaint when dimensions actually changed — otherwise
+      // we cause unnecessary redraws on every subpixel layout shift
+      // (e.g., tapping the terminal on iPad to focus it).
+      if (result?.changed) {
+        active.term.refresh(0, active.term.rows - 1);
+        if (onResize) {
+          onResize(activeSession, active.term.cols, active.term.rows);
+        }
+      }
     }
   });
   ro.observe(parentEl);
