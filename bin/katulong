@@ -29,6 +29,7 @@ const COMMANDS = {
   session: "Manage terminal sessions (list, create, kill, rename)",
   crew: "Manage worker sessions organized by project",
   notes: "Read per-session notepad content (read, list)",
+  setup: "One-time setup helpers (api key, etc.)",
   service: "Manage macOS LaunchAgent (install, uninstall, restart, status)",
 };
 
@@ -67,6 +68,7 @@ EXAMPLES:
   katulong crew spawn myapp worker1 --cmd "npm test"  Spawn a worker
   katulong crew status myapp  Show workers in a project
   katulong crew kill myapp    Kill all workers in a project
+  katulong setup api          Create orchestrator API key for kubos
   katulong notify "done"      Send notification to connected browsers
   katulong notes read         Read notes for current session
   katulong notes todos        List unchecked todos
