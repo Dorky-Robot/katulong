@@ -160,22 +160,31 @@ export function createCardCarousel({
    * Focused = translateX(0), neighbors offset by calc(100% + 16px).
    * Far cards are hidden via visibility:hidden.
    */
+  // Cache card width to avoid reading offsetWidth mid-transition (which
+  // returns the animated intermediate value and causes position jumps).
+  let cachedCardW = 0;
+
   function positionCards(animate = true) {
     if (!focusedId) return;
     const focusedIdx = cards.indexOf(focusedId);
     if (focusedIdx === -1) return;
+
+    // Measure card width from the focused card (most reliable)
+    const focusedEntry = cardEls.get(focusedId);
+    if (focusedEntry) {
+      const w = focusedEntry.wrapper.offsetWidth || focusedEntry.wrapper.getBoundingClientRect().width;
+      if (w > 0) cachedCardW = w;
+    }
+    const cardW = cachedCardW || container.offsetWidth;
+    const gap = 16;
 
     for (const [id, { wrapper }] of cardEls) {
       const idx = cards.indexOf(id);
       const offset = idx - focusedIdx;
 
       if (!animate) wrapper.style.transition = "none";
-      // Use the card's actual width + gap for offset so neighbors peek on wide screens
-      const cardW = wrapper.offsetWidth || wrapper.getBoundingClientRect().width;
-      const gap = 16;
       wrapper.style.transform = `translateX(${offset * (cardW + gap)}px)`;
       wrapper.classList.toggle("focused", offset === 0);
-      // Show neighbors within 2 positions (visible on wide screens)
       wrapper.classList.toggle("carousel-hidden", Math.abs(offset) > 2);
 
       if (!animate) {
@@ -465,7 +474,12 @@ export function createCardCarousel({
   window.addEventListener("resize", () => {
     if (!active) return;
     if (resizeTimer) clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => { resizeTimer = null; fitAll(); }, 150);
+    resizeTimer = setTimeout(() => {
+      resizeTimer = null;
+      cachedCardW = 0; // invalidate — card width changes on resize
+      positionCards(false);
+      fitAll();
+    }, 150);
   });
 
   // ── Tile access ────────────────────────────────────────────────────
