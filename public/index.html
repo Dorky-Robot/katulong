@@ -703,6 +703,23 @@
     }
     .island-connection-dot.connected { background: var(--success); }
 
+    /* Phone: compact key island to save vertical space */
+    @media (max-width: 600px) {
+      #key-island {
+        gap: 0.25rem;
+        padding: var(--space-xs) 0.25rem;
+      }
+      .key-island-btn {
+        height: 1.75rem;
+        padding: 0 0.625rem;
+        font-size: 0.75rem;
+      }
+      .key-island-icon {
+        width: 1.75rem;
+        font-size: 1rem;
+      }
+    }
+
     /* Carousel mode: hide sidebar, tab bar at bottom */
     #sidebar { display: none !important; }
     #sidebar-backdrop { display: none !important; }

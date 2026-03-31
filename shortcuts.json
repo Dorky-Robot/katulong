@@ -10,5 +10,25 @@
   {
     "label": "Cmd+K",
     "keys": "cmd+k"
+  },
+  {
+    "label": "Ctrl+L",
+    "keys": "ctrl+l"
+  },
+  {
+    "label": "Ctrl+D",
+    "keys": "ctrl+d"
+  },
+  {
+    "label": "Ctrl+Z",
+    "keys": "ctrl+z"
+  },
+  {
+    "label": "Ctrl+A",
+    "keys": "ctrl+a"
+  },
+  {
+    "label": "Up",
+    "keys": "up"
   }
 ]
