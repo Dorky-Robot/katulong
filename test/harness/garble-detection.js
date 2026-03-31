@@ -188,9 +188,10 @@ class TestClient {
         if (msg.data) this.pullData += msg.data;
         this.seq = msg.cursor;
         break;
-      case "resync":
-        // Resync resets and replays — store separately for inspection
-        if (msg.seq != null) this.seq = msg.seq;
+      case "output":
+        // Server-pushed inline data — accept directly
+        if (msg.data) this.pullData += msg.data;
+        if (msg.cursor != null) this.seq = msg.cursor;
         break;
     }
     if (this._extraHandler) this._extraHandler(msg);

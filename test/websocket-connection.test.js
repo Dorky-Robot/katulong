@@ -169,31 +169,17 @@ describe("wsMessageHandlers", () => {
     });
   });
 
-  describe("resync", () => {
-    it("resets terminal session, writes snapshot, and reinits pull cursor", () => {
-      const result = handlers.resync({ session: "my-session", data: "snapshot-data", seq: 42 });
+  describe("output (server-push)", () => {
+    it("emits outputReceived effect with data, cursor, and fromSeq", () => {
+      const result = handlers.output({ session: "my-session", data: "hello", cursor: 5, fromSeq: 0 });
       assert.deepStrictEqual(result.stateUpdates, {});
-      const effectTypes = result.effects.map(e => e.type);
-      assert.ok(effectTypes.includes("terminalResetSession"));
-      assert.ok(effectTypes.includes("terminalWrite"));
-      assert.ok(effectTypes.includes("pullInit"));
-      const reset = result.effects.find(e => e.type === "terminalResetSession");
-      assert.strictEqual(reset.session, "my-session");
-      const write = result.effects.find(e => e.type === "terminalWrite");
-      assert.strictEqual(write.data, "snapshot-data");
-      assert.strictEqual(write.session, "my-session");
-      assert.strictEqual(write.useOutputTerm, true);
-      const pull = result.effects.find(e => e.type === "pullInit");
-      assert.strictEqual(pull.session, "my-session");
-      assert.strictEqual(pull.seq, 42);
-    });
-
-    it("skips terminalWrite when data is empty", () => {
-      const result = handlers.resync({ session: "s", data: "", seq: 10 });
-      const effectTypes = result.effects.map(e => e.type);
-      assert.ok(!effectTypes.includes("terminalWrite"));
-      assert.ok(effectTypes.includes("terminalResetSession"));
-      assert.ok(effectTypes.includes("pullInit"));
+      assert.strictEqual(result.effects.length, 1);
+      const eff = result.effects[0];
+      assert.strictEqual(eff.type, "outputReceived");
+      assert.strictEqual(eff.session, "my-session");
+      assert.strictEqual(eff.data, "hello");
+      assert.strictEqual(eff.cursor, 5);
+      assert.strictEqual(eff.fromSeq, 0);
     });
   });
 

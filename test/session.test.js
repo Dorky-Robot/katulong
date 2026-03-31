@@ -458,17 +458,17 @@ describe("Session", () => {
     it("calls onData callback", () => {
       const dataEvents = [];
       const { session } = createSimpleTestSession("test", {
-        onData: (name, data) => dataEvents.push({ name, data }),
+        onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
       });
 
       // Simulate what the control mode parser does
-      const data = "test output";
-      session.outputBuffer.push(data);
-      session._onData("test", data);
+      const fromSeq = session.outputBuffer.totalBytes;
+      session.outputBuffer.push("test output");
+      session._onData("test", fromSeq);
 
       assert.strictEqual(dataEvents.length, 1);
       assert.strictEqual(dataEvents[0].name, "test");
-      assert.strictEqual(dataEvents[0].data, "test output");
+      assert.strictEqual(dataEvents[0].fromSeq, 0);
     });
   });
 
@@ -601,18 +601,18 @@ describe("output dispatch", () => {
   it("dispatches onData synchronously for each %output line", () => {
     const dataEvents = [];
     const { mockProc } = createWiredTestSession("test", {
-      onData: (name, data) => dataEvents.push({ name, data }),
+      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
     });
 
     mockProc.simulateOutput("%0", "hello");
     assert.strictEqual(dataEvents.length, 1);
-    assert.strictEqual(dataEvents[0].data, "hello");
+    assert.strictEqual(dataEvents[0].fromSeq, 0);
   });
 
   it("dispatches each output chunk individually", () => {
     const dataEvents = [];
     const { mockProc } = createWiredTestSession("test", {
-      onData: (name, data) => dataEvents.push({ name, data }),
+      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
     });
 
     mockProc.simulateOutput("%0", "aaa");
@@ -620,9 +620,9 @@ describe("output dispatch", () => {
     mockProc.simulateOutput("%0", "ccc");
 
     assert.strictEqual(dataEvents.length, 3);
-    assert.strictEqual(dataEvents[0].data, "aaa");
-    assert.strictEqual(dataEvents[1].data, "bbb");
-    assert.strictEqual(dataEvents[2].data, "ccc");
+    assert.strictEqual(dataEvents[0].fromSeq, 0);
+    assert.strictEqual(dataEvents[1].fromSeq, 3);
+    assert.strictEqual(dataEvents[2].fromSeq, 6);
   });
 
   it("preserves individual chunks in the RingBuffer", () => {
@@ -640,7 +640,7 @@ describe("output dispatch", () => {
   it("does not dispatch after detach", () => {
     const dataEvents = [];
     const { session, mockProc } = createWiredTestSession("test", {
-      onData: (name, data) => dataEvents.push({ name, data }),
+      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
     });
 
     mockProc.simulateOutput("%0", "before");
@@ -654,7 +654,7 @@ describe("output dispatch", () => {
   it("does not dispatch after kill", () => {
     const dataEvents = [];
     const { session, mockProc } = createWiredTestSession("test", {
-      onData: (name, data) => dataEvents.push({ name, data }),
+      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
     });
 
     mockProc.simulateOutput("%0", "before");
@@ -666,13 +666,13 @@ describe("output dispatch", () => {
   it("dispatches on process close for decoder tail", () => {
     const dataEvents = [];
     const { mockProc } = createWiredTestSession("test", {
-      onData: (name, data) => dataEvents.push({ name, data }),
+      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
     });
 
     mockProc.simulateOutput("%0", "data");
     mockProc.simulateClose(0);
     assert.strictEqual(dataEvents.length, 1);
-    assert.strictEqual(dataEvents[0].data, "data");
+    assert.strictEqual(dataEvents[0].fromSeq, 0);
   });
 });
 

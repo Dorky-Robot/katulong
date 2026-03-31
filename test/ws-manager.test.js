@@ -191,27 +191,16 @@ describe("createWebSocketManager", () => {
   });
 
   describe("bridge subscriber", () => {
-    it("routes data-available notification to correct session via bridge", () => {
+    it("pushes output inline to subscribed clients", () => {
       const ws = createMockWs();
       wsMgr.wsClients.set("client-1", { ws });
       sessionManager._setSession("client-1", "alpha");
 
-      bridge.relay({ type: "data-available", session: "alpha" });
-
-      assert.equal(ws.sent.length, 1);
-      assert.deepEqual(JSON.parse(ws.sent[0]), { type: "data-available", session: "alpha" });
-    });
-
-    it("routes resync snapshot to correct session", () => {
-      const ws = createMockWs();
-      wsMgr.wsClients.set("client-1", { ws });
-      sessionManager._setSession("client-1", "alpha");
-
-      bridge.relay({ type: "resync", session: "alpha", data: "snapshot-data", seq: 42 });
+      bridge.relay({ type: "output", session: "alpha", data: "hello", fromSeq: 0, cursor: 5 });
 
       assert.equal(ws.sent.length, 1);
       assert.deepEqual(JSON.parse(ws.sent[0]), {
-        type: "resync", session: "alpha", data: "snapshot-data", seq: 42,
+        type: "output", session: "alpha", data: "hello", fromSeq: 0, cursor: 5,
       });
     });
 

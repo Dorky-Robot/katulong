@@ -194,6 +194,52 @@ describe("PullManager", () => {
     });
   });
 
+  describe("outputReceived (server-push)", () => {
+    it("accepts data when cursor matches (hot path)", () => {
+      pm.init("a", 0);
+      pm.pullResponse("a", "", 0); // idle state
+      writes.length = 0;
+      pm.outputReceived("a", "hello", 5, 0); // fromSeq matches cursor
+      assert.equal(writes.length, 1);
+      assert.equal(writes[0].data, "hello");
+      writes[0].done();
+      assert.equal(pm.get("a").cursor, 5);
+    });
+
+    it("falls back to pull when cursor mismatches (gap)", () => {
+      pm.init("a", 0);
+      pm.pullResponse("a", "", 0); // idle state
+      sends.length = 0;
+      pm.outputReceived("a", "data", 20, 10); // fromSeq=10 ≠ cursor=0 → gap
+      assert.equal(sends.length, 1, "should trigger a pull");
+      assert.equal(sends[0].fromSeq, 0);
+      assert.equal(writes.length, 0, "should not write data directly");
+    });
+
+    it("sets pending when busy writing", () => {
+      pm.init("a", 0);
+      pm.pullResponse("a", "first", 5); // writing=true
+      sends.length = 0;
+      pm.outputReceived("a", "second", 10, 5); // busy writing
+      assert.equal(pm.get("a").pending, true);
+      // After write completes, pending triggers a pull
+      writes[0].done();
+      assert.equal(sends.length, 1);
+    });
+
+    it("sets pending when busy pulling", () => {
+      pm.init("a", 0); // pulling=true after init
+      pm.outputReceived("a", "data", 5, 0); // busy pulling
+      assert.equal(pm.get("a").pending, true);
+    });
+
+    it("no-op for unknown session", () => {
+      pm.outputReceived("ghost", "data", 5, 0);
+      assert.equal(writes.length, 0);
+      assert.equal(sends.length, 0);
+    });
+  });
+
   describe("safety timeouts", () => {
     it("pull timeout retries after PULL_TIMEOUT_MS", async () => {
       pm.init("a", 0);
