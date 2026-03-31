@@ -21,9 +21,9 @@ describe("reduced timeout constants", () => {
     assert.match(src, /const PULL_TIMEOUT_MS = 1000;/);
   });
 
-  it("pull-manager: WRITE_TIMEOUT_MS = 500", () => {
+  it("pull-manager: WRITE_TIMEOUT_MS = 2000", () => {
     const src = readSource("public/lib/pull-manager.js");
-    assert.match(src, /const WRITE_TIMEOUT_MS = 500;/);
+    assert.match(src, /const WRITE_TIMEOUT_MS = 2000;/);
   });
 
   it("pull-manager: write-rejection retry delay = 100ms", () => {

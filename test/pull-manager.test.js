@@ -259,5 +259,54 @@ describe("PullManager", () => {
       // Safety timeout advances cursor to avoid infinite re-pull loop
       assert.equal(pm.get("a").cursor, 10);
     });
+
+    it("stale write callback does not reset cursor (garble/double-entry fix)", async () => {
+      pm.init("a", 0);
+      // Pull response starts first write: data bytes 0→10
+      pm.pullResponse("a", "batch1", 10);
+      const firstDone = writes[0].done;
+
+      // Simulate new data arriving while writing — sets pending
+      pm.dataAvailable("a");
+      assert.equal(pm.get("a").pending, true);
+
+      // Wait for safety timeout to fire (advances cursor to 10,
+      // drains pending → triggers pull from 10)
+      await new Promise(r => setTimeout(r, 3100));
+      assert.equal(pm.get("a").cursor, 10, "safety timeout should advance cursor");
+      assert.equal(pm.get("a").writing, false);
+
+      const pullFrom10 = sends.find(s => s.fromSeq === 10);
+      assert.ok(pullFrom10, "pending should trigger pull from new cursor");
+
+      // Simulate pull response for the new pull: data bytes 10→20
+      pm.pullResponse("a", "batch2", 20);
+      assert.equal(pm.get("a").writing, true);
+
+      // NOW the stale callback from the first write fires
+      firstDone();
+      // With the generation counter, the stale callback is ignored
+      assert.equal(pm.get("a").cursor, 10, "stale callback must NOT reset cursor");
+      assert.equal(pm.get("a").writing, true, "stale callback must NOT clear writing flag");
+
+      // Complete the second write normally
+      writes[1].done();
+      assert.equal(pm.get("a").cursor, 20, "cursor advances from second write");
+      assert.equal(pm.get("a").writing, false);
+    });
+
+    it("init invalidates outstanding write callbacks", () => {
+      pm.init("a", 0);
+      pm.pullResponse("a", "data", 10);
+      const staleDone = writes[0].done;
+
+      // Re-init resets state and invalidates the stale callback
+      pm.init("a", 50);
+      pm.pullResponse("a", "", 50); // idle
+
+      // Stale callback fires — should be ignored
+      staleDone();
+      assert.equal(pm.get("a").cursor, 50, "stale callback must not reset cursor after re-init");
+    });
   });
 });
