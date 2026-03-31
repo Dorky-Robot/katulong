@@ -1508,17 +1508,23 @@
         switchSession(session);
       },
       onNotification: (title, message) => {
-        if ("Notification" in window && Notification.permission === "granted") {
-          // Use ServiceWorker.showNotification for Android compatibility
-          // (new Notification() doesn't work on Android Chrome).
-          if (navigator.serviceWorker?.controller) {
-            navigator.serviceWorker.ready.then(reg => {
-              reg.showNotification(title || "Katulong", { body: message, icon: "/icon-192.png" });
-            });
-          } else {
-            new Notification(title || "Katulong", { body: message, icon: "/icon-192.png" });
-          }
+        const t = title || "Katulong";
+        const canNotify = "Notification" in window && Notification.permission === "granted";
+
+        if (canNotify && navigator.serviceWorker?.controller) {
+          navigator.serviceWorker.ready.then(reg => {
+            reg.showNotification(t, { body: message, icon: "/icon-192.png" });
+          }).catch(() => {
+            showToast(`${t}: ${message}`);
+          });
+        } else if (canNotify) {
+          try { new Notification(t, { body: message, icon: "/icon-192.png" }); } catch { /* */ }
         }
+
+        // Always show in-app toast so notifications are visible even
+        // when native notifications aren't available (e.g., Android
+        // Chrome without PWA install, or permission not granted).
+        showToast(`${t}: ${message}`);
       },
     });
     wsConnection.initVisibilityReconnect();
