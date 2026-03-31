@@ -496,9 +496,10 @@
     });
     joystickManager.init();
 
-    // Wire Files + Settings into the joystick floating buttons
+    // Wire Files + Upload + Settings into the joystick floating buttons
     joystickManager.setActions({
       onFilesClick: () => toggleFileBrowser(),
+      onUploadClick: () => triggerImageUpload(),
       onSettingsClick: () => modals.open('settings'),
     });
 
@@ -1191,6 +1192,31 @@
       sessionName: sessionName || state.session.name,
       getWebSocket: () => state.connection.ws
     });
+
+    // --- Upload button (file picker) ---
+
+    const _uploadInput = document.createElement("input");
+    _uploadInput.type = "file";
+    _uploadInput.accept = "image/*";
+    _uploadInput.multiple = true;
+    _uploadInput.style.display = "none";
+    document.body.appendChild(_uploadInput);
+    _uploadInput.addEventListener("change", () => {
+      const files = [..._uploadInput.files].filter(isImageFile);
+      if (files.length > 0) {
+        uploadImagesToTerminalFn(files, {
+          onSend: rawSend,
+          toast: showToast,
+          sessionName: state.session.name,
+          getWebSocket: () => state.connection.ws,
+        });
+      }
+      _uploadInput.value = ""; // reset so same file can be re-selected
+    });
+
+    function triggerImageUpload() {
+      _uploadInput.click();
+    }
 
     // --- Drag-and-drop (reactive manager) ---
 
