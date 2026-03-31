@@ -71,9 +71,12 @@ function scaleToFit(term, container) {
   let fontSize = term.options.fontSize || 14;
   if (Math.abs(contentWidth - prevWidth) > 1) {
     container._lastScaleWidth = contentWidth;
-    // Reserve 8px for symmetric left/right gap (CSS margin:auto centers
+    // Reserve a symmetric left/right gap (CSS margin:auto centers
     // the .xterm-screen, so the remainder splits evenly on both sides).
-    fontSize = fontSizeForWidth(term, contentWidth - 8);
+    // On narrow viewports (<600px, i.e. phones) use a minimal 2px gap
+    // to maximize horizontal space; wider screens keep the 8px gap.
+    const centeringGap = window.innerWidth < 600 ? 2 : 8;
+    fontSize = fontSizeForWidth(term, contentWidth - centeringGap);
     term.options.fontSize = fontSize;
   }
 

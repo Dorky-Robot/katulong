@@ -1,28 +1,27 @@
 # Orchestrator
 
-Use katulong as a multi-agent orchestrator — spawn workers per project, dispatch tasks, monitor output.
+Use katulong as a multi-agent orchestrator.
 
 ## Blocked
-- [ ] **Discovery file** — `katulong setup api` should create `~/.katulong/remote.json` containing `{ "url": "https://...", "apiKey": "..." }`. One file, everything needed to reach the host katulong from any context (kubo, host shell, CI). The `setup api` command should prompt for the URL or detect it from the running instance's external URL config. Kubos mount `~/.katulong/` so the file is automatically available everywhere.
+- [ ] **Can't dispatch workers from kubo** — host katulong sessions are Mac tmux sessions. Worktrees exist inside the Colima VM. `kubo katulong` attaches to the same container (not isolated). Need either: (a) `kubo exec katulong "command"` to run commands inside the kubo without attaching, or (b) host katulong sessions that auto-enter the kubo, or (c) run workers from the host side using the Mac-side project path.
 
 ## Open
-- [ ] Fix `katulong setup api` to write the API key into the running instance's actual data dir (currently broken when data dir differs from default)
-- [ ] `crew output --follow` uses 1s polling — switch to SSE via pub/sub for real-time streaming
-- [ ] No way to detect when a command finishes (wait-for-idle / wait-for-prompt)
+- [ ] `crew output --follow` uses 1s polling — switch to SSE via pub/sub
+- [ ] No way to detect when a command finishes
 
-## Key architecture decisions
-- **Single discovery file**: `~/.katulong/remote.json` — contains URL + API key. One file to find the right katulong from anywhere.
-- **Existing API key auth is sufficient** — no need for a new auth mechanism. The problem was plumbing (wrong data dir, missing mounts), not the auth model.
-- **Colima VM isolation**: localhost inside a kubo is the VM, not the Mac host. The host katulong binds to `127.0.0.1` on the Mac, unreachable from the VM. The only path from kubo to host katulong is the public URL (Cloudflare tunnel), which requires API key auth.
-- **Orchestrator prefers kubo**: spin up sessions via the host katulong API, workers run inside kubos via `yolo`.
+## Key learning (2026-03-31)
+The orchestrator (this Claude inside kubo) can CREATE sessions on the host katulong via API. But dispatching `yolo` into those sessions fails because:
+1. Host sessions run in Mac tmux, not inside the kubo
+2. `kubo katulong` attaches to the existing container (not isolated) — it drops into the same shell as the orchestrator
+3. VM paths (`/work/katulong/`) don't exist on the Mac
+
+Possible solutions:
+- `kubo exec katulong "cd /work/katulong/.worktrees/foo && yolo -p '...'"` — runs inside the kubo without attaching
+- Run the orchestrator ON the host, not inside the kubo — then workers are just `yolo` in Mac-side worktrees
+- Katulong sessions that know they should run inside a kubo (session config: `kubo: "katulong"`)
 
 ## Done
-- [x] `POST /sessions/:name/exec` — write input to PTY via HTTP
-- [x] `GET /sessions/:name/output` — read output via HTTP (lines, fromSeq, screen modes)
-- [x] `katulong crew` CLI — list, status, spawn, exec, output, kill with project namespacing
-- [x] Session naming convention: `{project}--{worker}`
-- [x] `/orchestrate` updated to use stable URL + API key pattern
-- [x] `katulong setup api` — creates API key (needs fix for data dir detection)
-- [x] Kubo mounts `~/.katulong` rw into containers
-- [x] All containers refreshed via `kubo refresh`
-- [x] Confirmed: host networking doesn't work in Colima VMs — need public URL + API key
+- [x] API access working (remote.json + self-access)
+- [x] Session creation + exec + output endpoints
+- [x] `katulong crew` CLI
+- [x] Notification toast fallback

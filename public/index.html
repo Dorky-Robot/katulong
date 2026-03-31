@@ -199,6 +199,7 @@
        rendering (including system carets) to the pane boundary. */
     .terminal-pane { position: absolute; inset: 0; display: none; contain: paint; overflow: hidden; padding: 4px 0; }
     .terminal-pane.active { display: block; }
+    @media (max-width: 600px) { .terminal-pane { padding: 2px 0; } }
 
     /* In carousel mode, all terminal panes stay visible — each one lives
        inside its own card wrapper so they don't overlap. Without this,

@@ -54,6 +54,9 @@ function computeRowsFixed({ contentWidth, prevWidth, availableHeight, currentFon
 // --- Stubbed scaleToFit matching the production logic (post-fix) ---
 // Used by the tap-resize tests below.
 
+// Simulates window.innerWidth for viewport-aware centering gap tests.
+let stubViewportWidth = 1024;
+
 /**
  * Reproduces the scaleToFit logic from terminal-pool.js with stubs.
  * Returns { cols, rows, changed } like the real function.
@@ -67,8 +70,10 @@ function scaleToFitStub(term, container) {
   let fontSize = term.options.fontSize || 14;
   if (Math.abs(contentWidth - prevWidth) > 1) {
     container._lastScaleWidth = contentWidth;
+    // Viewport-aware centering gap: 2px on phones (<600px), 8px on wider
+    const centeringGap = stubViewportWidth < 600 ? 2 : 8;
     // simplified fontSizeForWidth
-    fontSize = Math.max(6, Math.floor((contentWidth / (FIXED_COLS * 0.6)) * 2) / 2);
+    fontSize = Math.max(6, Math.floor(((contentWidth - centeringGap) / (FIXED_COLS * 0.6)) * 2) / 2);
     term.options.fontSize = fontSize;
   }
 
@@ -338,5 +343,89 @@ describe("tap-resize bug", () => {
       assert.equal(state.term._resizeCount, 0,
         "No term.resize calls from subpixel jitter");
     });
+  });
+});
+
+/**
+ * Tests for viewport-aware centering gap in scaleToFit.
+ *
+ * On phones (<600px viewport), the centering gap is reduced from 8px to 2px
+ * to maximize horizontal terminal space. This gives 6 extra pixels to the
+ * font-size calculation, yielding a larger font and more usable columns.
+ */
+describe("viewport-aware centering gap", () => {
+  it("uses 2px gap on narrow viewport (<600px), yielding larger font", () => {
+    stubViewportWidth = 375; // iPhone SE width
+    const term = { cols: 0, rows: 0, options: { fontSize: 14 }, _resizeCount: 0 };
+    const container = {
+      _lastScaleWidth: 0,
+      _rect: { width: 375, height: 667, padLeft: 0, padRight: 0, padTop: 0, padBottom: 0 },
+    };
+    const result = scaleToFitStub(term, container);
+    const narrowFontSize = term.options.fontSize;
+
+    // Reset and test with wide viewport
+    stubViewportWidth = 1024;
+    const term2 = { cols: 0, rows: 0, options: { fontSize: 14 }, _resizeCount: 0 };
+    const container2 = {
+      _lastScaleWidth: 0,
+      _rect: { width: 375, height: 667, padLeft: 0, padRight: 0, padTop: 0, padBottom: 0 },
+    };
+    scaleToFitStub(term2, container2);
+    const wideFontSize = term2.options.fontSize;
+
+    // Narrow viewport should get a larger (or equal) font because gap is smaller
+    assert.ok(narrowFontSize >= wideFontSize,
+      `Narrow viewport font (${narrowFontSize}) should be >= wide viewport font (${wideFontSize})`);
+    assert.ok(result !== null, "Should return a valid result");
+  });
+
+  it("uses 8px gap on wide viewport (>=600px)", () => {
+    stubViewportWidth = 1024;
+    const term = { cols: 0, rows: 0, options: { fontSize: 14 }, _resizeCount: 0 };
+    const container = {
+      _lastScaleWidth: 0,
+      _rect: { width: 800, height: 600, padLeft: 0, padRight: 0, padTop: 0, padBottom: 0 },
+    };
+    scaleToFitStub(term, container);
+
+    // With 8px gap: effective width = 792, fontSize = floor((792 / 72) * 2) / 2 = 11
+    const expectedFontSize = Math.max(6, Math.floor(((800 - 8) / (FIXED_COLS * 0.6)) * 2) / 2);
+    assert.equal(term.options.fontSize, expectedFontSize,
+      `Font size should match 8px gap calculation (${expectedFontSize})`);
+  });
+
+  it("uses 2px gap at exactly 599px viewport", () => {
+    stubViewportWidth = 599;
+    const term = { cols: 0, rows: 0, options: { fontSize: 14 }, _resizeCount: 0 };
+    const container = {
+      _lastScaleWidth: 0,
+      _rect: { width: 599, height: 800, padLeft: 0, padRight: 0, padTop: 0, padBottom: 0 },
+    };
+    scaleToFitStub(term, container);
+
+    const expectedFontSize = Math.max(6, Math.floor(((599 - 2) / (FIXED_COLS * 0.6)) * 2) / 2);
+    assert.equal(term.options.fontSize, expectedFontSize,
+      `Font size at 599px viewport should use 2px gap (${expectedFontSize})`);
+  });
+
+  it("uses 8px gap at exactly 600px viewport", () => {
+    stubViewportWidth = 600;
+    const term = { cols: 0, rows: 0, options: { fontSize: 14 }, _resizeCount: 0 };
+    const container = {
+      _lastScaleWidth: 0,
+      _rect: { width: 600, height: 800, padLeft: 0, padRight: 0, padTop: 0, padBottom: 0 },
+    };
+    scaleToFitStub(term, container);
+
+    const expectedFontSize = Math.max(6, Math.floor(((600 - 8) / (FIXED_COLS * 0.6)) * 2) / 2);
+    assert.equal(term.options.fontSize, expectedFontSize,
+      `Font size at 600px viewport should use 8px gap (${expectedFontSize})`);
+  });
+
+  // Reset stubViewportWidth after tests
+  it("cleanup: reset stubViewportWidth", () => {
+    stubViewportWidth = 1024;
+    assert.ok(true);
   });
 });
