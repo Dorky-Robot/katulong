@@ -89,6 +89,7 @@ mock.module(tmuxModuleUrl, {
     captureScrollback: async () => "",
     captureVisiblePane: async () => "$ prompt\n",
     getCursorPosition: async () => ({ row: 0, col: 0 }),
+    getPaneCwd: async () => "/tmp",
     checkTmux: async () => {},
     cleanTmuxServerEnv: async () => {},
     setTmuxKatulongEnv: async () => {},
