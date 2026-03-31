@@ -167,18 +167,20 @@
         });
         kb.init();
 
-        // On touch devices (iPad/phone), xterm.js selection is canvas-based
-        // so the native iOS "Copy" menu reads an empty DOM selection.  Fix by
-        // writing selected text to the system clipboard automatically.
-        // Also attach long-press-to-select so finger touch can select text
-        // (xterm.js only handles mouse/trackpad selection natively).
+        // Auto-copy: when the user finishes selecting text (mouse-up or
+        // touch-end), copy it to the system clipboard.  On desktop this saves
+        // a Ctrl+C; on mobile it works around canvas-based selection that the
+        // native "Copy" menu can't read.
+        entry.term.onSelectionChange(() => {
+          const text = entry.term.getSelection();
+          if (text) {
+            navigator.clipboard.writeText(text).catch(() => {});
+          }
+        });
+
+        // On touch devices, also attach long-press-to-select so finger touch
+        // can select text (xterm.js only handles mouse/trackpad natively).
         if (window.matchMedia("(pointer: coarse)").matches) {
-          entry.term.onSelectionChange(() => {
-            const text = entry.term.getSelection();
-            if (text) {
-              navigator.clipboard.writeText(text).catch(() => {});
-            }
-          });
           attachTouchSelect(entry.term);
         }
 
