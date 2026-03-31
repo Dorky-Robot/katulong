@@ -144,7 +144,7 @@
       },
       terminalOptions: {
         fontSize: 14,
-        fontFamily: "'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace",
+        fontFamily: "'JetBrainsMono NF', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace",
         theme: themeManager.getEffective() === "light" ? LIGHT_THEME : DARK_THEME,
         cursorBlink: true,
         scrollback: 10000,
@@ -1509,7 +1509,15 @@
       },
       onNotification: (title, message) => {
         if ("Notification" in window && Notification.permission === "granted") {
-          new Notification(title, { body: message, icon: "/vendor/icon-192.png" });
+          // Use ServiceWorker.showNotification for Android compatibility
+          // (new Notification() doesn't work on Android Chrome).
+          if (navigator.serviceWorker?.controller) {
+            navigator.serviceWorker.ready.then(reg => {
+              reg.showNotification(title || "Katulong", { body: message, icon: "/icon-192.png" });
+            });
+          } else {
+            new Notification(title || "Katulong", { body: message, icon: "/icon-192.png" });
+          }
         }
       },
     });

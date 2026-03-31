@@ -22,6 +22,22 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((windowClients) => {
+      // Focus existing tab if open
+      for (const client of windowClients) {
+        if (client.url.includes(self.location.origin) && "focus" in client) {
+          return client.focus();
+        }
+      }
+      // Otherwise open a new tab
+      return clients.openWindow("/");
+    })
+  );
+});
+
 self.addEventListener("fetch", (e) => {
   // Network-first for HTML and API calls, cache-first for static assets
   const url = new URL(e.request.url);
