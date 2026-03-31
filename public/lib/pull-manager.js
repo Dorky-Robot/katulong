@@ -17,7 +17,7 @@
  */
 
 const PULL_TIMEOUT_MS = 1000;
-const WRITE_TIMEOUT_MS = 500;
+const WRITE_TIMEOUT_MS = 2000;
 
 export function createPullManager({ onSendPull, onWrite, onReset }) {
   const sessions = new Map(); // sessionName -> { cursor, pulling, writing, pending }
@@ -32,8 +32,9 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
       existing.pulling = false;
       existing.writing = false;
       existing.pending = false;
+      existing._writeId = (existing._writeId || 0) + 1; // invalidate stale callbacks
     } else {
-      sessions.set(name, { cursor, pulling: false, writing: false, pending: false });
+      sessions.set(name, { cursor, pulling: false, writing: false, pending: false, _writeId: 0 });
     }
     pull(name);
   }
@@ -88,10 +89,18 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
 
     if (data && data.length > 0) {
       ps.writing = true;
+      // Generation counter: prevents stale write callbacks from resetting
+      // cursor state.  When the safety timeout fires (slow xterm render on
+      // mobile), it advances the cursor and triggers a new pull.  Without
+      // this guard, the LATE original callback would reset the cursor to
+      // the old position, causing a re-pull of already-rendered data —
+      // producing garbled text and duplicate entries.
+      const writeId = ++ps._writeId;
+
       const safety = setTimeout(() => {
+        if (ps._writeId !== writeId) return; // superseded by newer write
         if (ps.writing) {
           ps.writing = false;
-          // Safety timeout: advance cursor to avoid infinite re-pull
           ps.cursor = cursor;
           if (ps.pending) { ps.pending = false; pull(name); }
         }
@@ -99,6 +108,9 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
 
       onWrite(name, data, (accepted) => {
         clearTimeout(safety);
+        // If a newer write has started (safety timeout triggered a pull
+        // whose response already arrived), this callback is stale.
+        if (ps._writeId !== writeId) return;
         ps.writing = false;
         if (accepted === false) {
           // Write rejected (no terminal) — don't advance cursor.
