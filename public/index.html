@@ -2074,6 +2074,20 @@
 
 
 
+  <!-- Device-to-device auth approval modal -->
+  <div id="device-auth-overlay" class="modal-overlay" role="dialog" aria-label="Login request">
+    <div class="modal-panel" style="max-width: var(--modal-width-sm);">
+      <h3>Login Request</h3>
+      <p id="device-auth-modal-agent" style="color: var(--text-muted); font-size: 0.8125rem; word-break: break-word;">Someone is trying to log in.</p>
+      <p style="font-size: 2rem; font-weight: bold; text-align: center; margin: 1rem 0;" id="device-auth-modal-code"></p>
+      <p style="color: var(--text-muted); font-size: 0.8125rem; text-align: center;">Verify this code matches the one shown on the new device.</p>
+      <div style="display: flex; gap: 0.5rem; margin-top: 1rem; padding-bottom: 1rem;">
+        <button class="btn" id="device-auth-approve-btn" style="flex: 1; background: var(--success); color: #1e1e2e;">Approve</button>
+        <button class="btn btn--secondary" id="device-auth-deny-btn" style="flex: 1;">Deny</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Settings -->
   <div id="settings-overlay" class="modal-overlay" role="dialog" aria-label="Settings">
     <div id="settings-panel" class="modal-panel">

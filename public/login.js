@@ -344,4 +344,80 @@
       }
     });
 
+    // --- Device-to-device authorization ---
+
+    const deviceAuthBtn = document.getElementById("device-auth-btn");
+    const deviceAuthView = document.getElementById("device-auth-view");
+    const deviceAuthCode = document.getElementById("device-auth-code");
+    const deviceAuthStatus = document.getElementById("device-auth-status");
+    const deviceAuthCancel = document.getElementById("device-auth-cancel");
+    let deviceAuthPollTimer = null;
+
+    if (deviceAuthBtn) {
+      deviceAuthBtn.addEventListener("click", async () => {
+        loginError.textContent = "";
+        loginError.style.color = "";
+        deviceAuthBtn.disabled = true;
+
+        try {
+          const res = await fetch("/auth/device-auth/request", { method: "POST" });
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || "Failed to start device authorization");
+          }
+          const { requestId, code } = await res.json();
+
+          // Show the code view
+          deviceAuthCode.textContent = String(code);
+          deviceAuthView.classList.remove("hidden");
+          deviceAuthBtn.classList.add("hidden");
+
+          // Start polling
+          deviceAuthPollTimer = setInterval(async () => {
+            try {
+              const statusRes = await fetch(`/auth/device-auth/status?id=${encodeURIComponent(requestId)}`);
+              if (!statusRes.ok) {
+                clearInterval(deviceAuthPollTimer);
+                deviceAuthPollTimer = null;
+                deviceAuthStatus.textContent = "Error checking status.";
+                return;
+              }
+              const statusData = await statusRes.json();
+
+              if (statusData.status === "approved") {
+                clearInterval(deviceAuthPollTimer);
+                deviceAuthPollTimer = null;
+                deviceAuthStatus.textContent = "Approved! Redirecting...";
+                window.location.href = "/";
+              } else if (statusData.status === "expired") {
+                clearInterval(deviceAuthPollTimer);
+                deviceAuthPollTimer = null;
+                deviceAuthStatus.textContent = "Request expired. Please try again.";
+                deviceAuthStatus.style.color = "var(--danger)";
+              }
+            } catch {
+              // Network error — keep polling
+            }
+          }, 2000);
+        } catch (err) {
+          loginError.textContent = err.message;
+        } finally {
+          deviceAuthBtn.disabled = false;
+        }
+      });
+    }
+
+    if (deviceAuthCancel) {
+      deviceAuthCancel.addEventListener("click", () => {
+        if (deviceAuthPollTimer) {
+          clearInterval(deviceAuthPollTimer);
+          deviceAuthPollTimer = null;
+        }
+        deviceAuthView.classList.add("hidden");
+        deviceAuthBtn.classList.remove("hidden");
+        deviceAuthStatus.textContent = "Waiting for approval...";
+        deviceAuthStatus.style.color = "";
+      });
+    }
+
     checkStatus();

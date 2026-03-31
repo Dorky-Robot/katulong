@@ -1561,6 +1561,46 @@
         // Chrome without PWA install, or permission not granted).
         showToast(`${t}: ${message}`);
       },
+      onDeviceAuthRequest: (requestId, code, userAgent) => {
+        const overlay = document.getElementById("device-auth-overlay");
+        const agentEl = document.getElementById("device-auth-modal-agent");
+        const codeEl = document.getElementById("device-auth-modal-code");
+        const approveBtn = document.getElementById("device-auth-approve-btn");
+        const denyBtn = document.getElementById("device-auth-deny-btn");
+        if (!overlay || !agentEl || !codeEl || !approveBtn || !denyBtn) return;
+
+        // Use textContent to prevent XSS from user-agent strings
+        agentEl.textContent = `Login request from: ${userAgent}`;
+        codeEl.textContent = String(code);
+        overlay.classList.add("visible");
+
+        function cleanup() {
+          overlay.classList.remove("visible");
+          approveBtn.removeEventListener("click", onApprove);
+          denyBtn.removeEventListener("click", onDeny);
+        }
+
+        async function onApprove() {
+          try {
+            await api.post("/auth/device-auth/approve", { requestId });
+          } catch (err) {
+            showToast(`Approve failed: ${err.message}`);
+          }
+          cleanup();
+        }
+
+        async function onDeny() {
+          try {
+            await api.post("/auth/device-auth/deny", { requestId });
+          } catch (err) {
+            showToast(`Deny failed: ${err.message}`);
+          }
+          cleanup();
+        }
+
+        approveBtn.addEventListener("click", onApprove);
+        denyBtn.addEventListener("click", onDeny);
+      },
     });
     wsConnection.initVisibilityReconnect();
 

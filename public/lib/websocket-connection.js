@@ -191,6 +191,11 @@ export function createWebSocketConnection(deps = {}) {
       effects: [{ type: 'showNotification', title: msg.title, message: msg.message }]
     }),
 
+    'device-auth-request': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'showDeviceAuthRequest', requestId: msg.requestId, code: msg.code, userAgent: msg.userAgent }]
+    }),
+
     'paste-complete': (msg) => ({
       stateUpdates: {},
       effects: [
@@ -324,6 +329,7 @@ export function createWebSocketConnection(deps = {}) {
     tabIconChanged: (e) => deps.onTabIconChanged?.(e.session, e.icon),
     openTab: (e) => deps.onOpenTab?.(e.session),
     showNotification: (e) => deps.onNotification?.(e.title, e.message),
+    showDeviceAuthRequest: (e) => deps.onDeviceAuthRequest?.(e.requestId, e.code, e.userAgent),
   };
 
   function executeEffect(effect) {
