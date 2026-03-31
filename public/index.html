@@ -82,7 +82,7 @@
     /* --- Reset & base --- */
     * { margin: 0; padding: 0; box-sizing: border-box; }
     button, input { font-family: inherit; }
-    html { height: 100%; overflow: hidden; position: fixed; inset: 0; }
+    html { height: 100dvh; overflow: hidden; position: fixed; inset: 0; }
     body { height: 100%; background: var(--bg); overflow: hidden; overscroll-behavior: none; color: var(--text); font-family: var(--font-mono); margin: 0; }
 
     /* --- Focus & motion --- */
@@ -710,9 +710,10 @@
       border-bottom: none;
       border-top: 1px solid var(--border);
       height: auto;
+      flex-grow: 0;
       flex-direction: column;
       align-items: stretch;
-      padding: var(--space-sm) var(--space-sm) var(--space-xs) var(--space-sm);
+      padding: var(--space-sm) var(--space-sm) calc(var(--space-xs) + env(safe-area-inset-bottom, 0px)) var(--space-sm);
       gap: 0;
     }
     /* Tabs: taller for touch, shrink to fit */
