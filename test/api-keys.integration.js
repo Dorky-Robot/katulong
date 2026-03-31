@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes, scryptSync, randomUUID } from "node:crypto";
+import http from "node:http";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_PATH = join(__dirname, "..", "server.js");
@@ -19,6 +20,33 @@ async function req(method, path, body, headers = {}) {
   const text = await res.text();
   try { return { status: res.status, body: JSON.parse(text) }; }
   catch { return { status: res.status, body: text }; }
+}
+
+/** Raw http.request — unlike fetch, this honours custom Host headers. */
+function rawReq(method, path, body, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : null;
+    const opts = {
+      hostname: "localhost", port: TEST_PORT, path, method,
+      headers: { ...headers },
+    };
+    if (payload) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.headers["Content-Length"] = Buffer.byteLength(payload);
+    }
+    const r = http.request(opts, (res) => {
+      let data = "";
+      res.on("data", (chunk) => { data += chunk; });
+      res.on("end", () => {
+        let parsed;
+        try { parsed = JSON.parse(data); } catch { parsed = data; }
+        resolve({ status: res.statusCode, body: parsed });
+      });
+    });
+    r.on("error", reject);
+    if (payload) r.write(payload);
+    r.end();
+  });
 }
 
 describe("API Keys Integration", () => {
@@ -98,6 +126,45 @@ describe("API Keys Integration", () => {
     // Verify it's gone from the list
     const { body: keys } = await req("GET", "/api/api-keys");
     assert.ok(!keys.find(k => k.id === created.id));
+  });
+
+  it("API-key-created session gets robot icon", async () => {
+    // Create an API key (localhost — auto-auth)
+    const { body: created } = await req("POST", "/api/api-keys", { name: "badge-test" });
+
+    // Create a session via Bearer token with a spoofed Host header so
+    // isLocalRequest() returns false and the Bearer-token auth path runs,
+    // setting req._apiKeyAuth = true.  Node's fetch ignores custom Host
+    // headers, so we use a raw http.request to control it exactly.
+    const { status, body } = await rawReq("POST", "/sessions", { name: "agent-badge" }, {
+      Authorization: `Bearer ${created.key}`,
+      Host: "remote.example.com",
+    });
+    assert.equal(status, 201);
+    assert.equal(body.name, "agent-badge");
+
+    // Verify the session has the robot icon via the list endpoint
+    const list = await req("GET", "/sessions");
+    const session = list.body.find(s => s.name === "agent-badge");
+    assert.ok(session, "session should exist in list");
+    assert.equal(session.icon, "robot", "API-key-created session should have robot icon");
+
+    // Cleanup
+    await req("DELETE", "/sessions/agent-badge");
+  });
+
+  it("locally-created session does not get robot icon", async () => {
+    // Create a session without API key auth (localhost auto-auth)
+    const { status } = await req("POST", "/sessions", { name: "local-badge" });
+    assert.equal(status, 201);
+
+    const list = await req("GET", "/sessions");
+    const session = list.body.find(s => s.name === "local-badge");
+    assert.ok(session, "session should exist in list");
+    assert.equal(session.icon, null, "locally-created session should not have an icon");
+
+    // Cleanup
+    await req("DELETE", "/sessions/local-badge");
   });
 
   it("API key bypasses CSRF", async () => {
