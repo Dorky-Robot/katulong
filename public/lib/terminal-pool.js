@@ -7,7 +7,7 @@
  */
 
 import { Terminal } from "/vendor/xterm/xterm.esm.js";
-import { WebLinksAddon } from "/vendor/xterm/addon-web-links.esm.js";
+import { registerWrappedLinkProvider } from "/lib/wrapped-link-provider.js";
 import { SearchAddon } from "/vendor/xterm/addon-search.esm.js";
 import { ClipboardAddon } from "/vendor/xterm/addon-clipboard.esm.js";
 import { WebglAddon } from "/vendor/xterm/addon-webgl.esm.js";
@@ -134,7 +134,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     const term = new Terminal(terminalOptions);
     const searchAddon = new SearchAddon();
 
-    term.loadAddon(new WebLinksAddon());
+    registerWrappedLinkProvider(term);
     term.loadAddon(searchAddon);
     term.loadAddon(new ClipboardAddon());
 
