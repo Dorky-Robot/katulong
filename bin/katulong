@@ -29,7 +29,7 @@ const COMMANDS = {
   session: "Manage terminal sessions (list, create, kill, rename)",
   crew: "Manage worker sessions organized by project",
   notes: "Read per-session notepad content (read, list)",
-  setup: "One-time setup helpers (api key, etc.)",
+  setup: "One-time setup (self-access for kubos and agents)",
   service: "Manage macOS LaunchAgent (install, uninstall, restart, status)",
 };
 

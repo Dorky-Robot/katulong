@@ -27,20 +27,29 @@ Each file has: a one-line description, open items (checkboxes), and done items. 
 
 **IMPORTANT: There are two katulong instances.** The one you're developing (`/work/katulong`) is NOT the one serving the user's browser. The user's browser is connected to the **host katulong**, which runs on the host machine outside any kubo container.
 
-### Which instance to talk to
+### Discovery: `~/.katulong/remote.json`
 
-- **Host katulong** — serves the user's browser, manages the sessions they see as tabs. This is where crew workers should be created. Accessible via host networking (kubo shares the host network).
-- **Dev katulong** — the one running from `/work/katulong` for testing. Do NOT create crew sessions here — the user won't see them.
+Every context (kubo, host shell, CI) finds the host katulong through one file:
 
-### Always use the HTTP API with the stable URL
+```json
+{
+  "url": "https://katulong-mini.felixflor.es",
+  "apiKey": "..."
+}
+```
 
-The host katulong has a stable URL: **`https://katulong-mini.felixflor.es`**
+Created by `katulong setup self-access` on the host. Kubos mount `~/.katulong/` so the file is automatically available at `/home/dev/.katulong/remote.json`.
 
-Since this is a remote URL (not localhost), all requests require an API key via Bearer token. The API key is stored at `~/.katulong/orchestrator-api-key`. Read it at the start of each session:
+**Why not localhost?** Kubos run inside a Colima VM — `localhost` is the VM, not the Mac host. The host katulong binds to `127.0.0.1` on the Mac, unreachable from the VM. The public URL (via Cloudflare tunnel) is the only path, and it requires API key auth.
+
+### Using the API
+
+Read the discovery file at the start of each session:
 
 ```bash
-KATULONG_URL="https://katulong-mini.felixflor.es"
-KATULONG_API_KEY=$(cat ~/.katulong/orchestrator-api-key 2>/dev/null)
+KATULONG_REMOTE=$(cat ~/.katulong/remote.json 2>/dev/null)
+KATULONG_URL=$(echo "$KATULONG_REMOTE" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).url))")
+KATULONG_API_KEY=$(echo "$KATULONG_REMOTE" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).apiKey))")
 
 # Helper: all requests go through this
 katulong_api() {
@@ -68,13 +77,7 @@ katulong_api -X DELETE "$KATULONG_URL/sessions/theme--worker"
 katulong_api -X POST "$KATULONG_URL/notify" -d '{"message":"latency: PR ready"}'
 ```
 
-**Setup:** The user creates an API key from the katulong browser UI (Settings > API Keys) and saves it:
-```bash
-echo "<api-key>" > ~/.katulong/orchestrator-api-key
-chmod 600 ~/.katulong/orchestrator-api-key
-```
-
-This file persists across kubo updates (home dir is mounted). Every kubo that needs orchestration access reads the same key.
+If `~/.katulong/remote.json` doesn't exist, tell the user to run `katulong setup self-access` on the host.
 
 ### Naming convention
 
@@ -174,6 +177,24 @@ curl -s -X POST "$HOST_KATULONG/notify" \
 - Routine progress (worker started, test passed, file changed)
 - Things you can handle yourself (test fix, merge conflict, retry)
 
+## Where to run: kubo-first
+
+**Prefer running inside `kubo katulong` for all code work.** The kubo has the full dev stack (Claude Code, Node, Rust, Go, gh, tmux) and is sandboxed — `yolo` is safe there.
+
+**When to work on the host instead:**
+- Kubo lifecycle (`kubo rm`, `kubo refresh`, `kubo new`)
+- `brew` commands (install, upgrade)
+- Host katulong management (`katulong setup self-access`, `katulong restart`)
+- Anything that needs Docker access
+
+**The orchestrator decides.** When spawning a worker:
+1. Create the session on the host katulong (via API or CLI on host)
+2. The session's shell is inside the kubo (katulong sessions run in tmux inside the container)
+3. The worker uses `yolo` inside the kubo to do the actual work
+4. If the task requires host access, exec the worker with host commands instead
+
+This means the orchestrator itself can run from anywhere — inside a kubo or on the host. It talks to the host katulong via the stable URL regardless.
+
 ## Conversation style
 
 The user talks naturally. You:
@@ -182,6 +203,7 @@ The user talks naturally. You:
 3. Either do the work directly (if small) or spawn workers in worktrees (if parallel/large)
 4. Keep todos updated silently — don't ask permission to reorganize them
 5. Report back concisely
+6. When something doesn't work (API auth, mounts, tooling gaps), note it in the relevant todo and fix katulong — this is our product, we own it
 
 Don't ask "should I update the todo?" — just do it. Don't ask "which theme does this belong to?" — decide. If you're wrong, the user will correct you.
 
