@@ -208,4 +208,51 @@ describe("wsMessageHandlers", () => {
       assert.ok(effectTypes.includes("fastReconnect"));
     });
   });
+
+  describe("notification", () => {
+    it("emits showNotification effect with title and message", () => {
+      const result = handlers.notification({ title: "Build done", message: "Tests passed" });
+      assert.deepStrictEqual(result.stateUpdates, {});
+      assert.strictEqual(result.effects.length, 1);
+      const eff = result.effects[0];
+      assert.strictEqual(eff.type, "showNotification");
+      assert.strictEqual(eff.title, "Build done");
+      assert.strictEqual(eff.message, "Tests passed");
+    });
+
+    it("passes undefined title/message when not provided", () => {
+      const result = handlers.notification({});
+      const eff = result.effects[0];
+      assert.strictEqual(eff.type, "showNotification");
+      assert.strictEqual(eff.title, undefined);
+      assert.strictEqual(eff.message, undefined);
+    });
+  });
+});
+
+describe("showNotification effect handler", () => {
+  it("calls onNotification with title and message", () => {
+    let called = null;
+    const state = makeState();
+    const conn = createWebSocketConnection({
+      state,
+      term: () => null,
+      isAtBottom: () => true,
+      onNotification: (title, message) => { called = { title, message }; },
+    });
+    // Execute the showNotification effect directly (same path as WS onmessage)
+    conn.executeEffect({ type: "showNotification", title: "Alert", message: "Hello" });
+    assert.deepStrictEqual(called, { title: "Alert", message: "Hello" });
+  });
+
+  it("does not throw when onNotification is not provided", () => {
+    const state = makeState();
+    const conn = createWebSocketConnection({
+      state,
+      term: () => null,
+      isAtBottom: () => true,
+    });
+    // Should not throw — optional chaining in the handler
+    conn.executeEffect({ type: "showNotification", title: "X", message: "Y" });
+  });
 });

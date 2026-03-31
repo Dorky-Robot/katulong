@@ -39,6 +39,7 @@
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
     import { createDashboardTileFactory } from "/lib/tiles/dashboard-tile.js";
     import { createHtmlTileFactory } from "/lib/tiles/html-tile.js";
+    import { dispatchNotification } from "/lib/notify.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -1544,18 +1545,7 @@
       },
       onNotification: (title, message) => {
         const t = title || "Katulong";
-        const canNotify = "Notification" in window && Notification.permission === "granted";
-
-        if (canNotify && navigator.serviceWorker?.controller) {
-          navigator.serviceWorker.ready.then(reg => {
-            reg.showNotification(t, { body: message, icon: "/icon-192.png" });
-          }).catch(() => {
-            showToast(`${t}: ${message}`);
-          });
-        } else if (canNotify) {
-          try { new Notification(t, { body: message, icon: "/icon-192.png" }); } catch { /* */ }
-        }
-
+        dispatchNotification(t, message);
         // Always show in-app toast so notifications are visible even
         // when native notifications aren't available (e.g., Android
         // Chrome without PWA install, or permission not granted).
