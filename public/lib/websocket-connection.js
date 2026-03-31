@@ -8,6 +8,7 @@
 import { scrollToBottom, terminalWriteWithScroll, isAtBottom } from "/lib/scroll-utils.js";
 import { basePath } from "/lib/base-path.js";
 import { createPullManager } from "/lib/pull-manager.js";
+import { screenFingerprint } from "/lib/screen-fingerprint.js";
 
 /**
  * Connection state machine: DISCONNECTED → CONNECTING → CONNECTED → ATTACHED
@@ -204,6 +205,13 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
+    // Drift detection: server sends screen fingerprint after output settles.
+    // Client compares against its own xterm — on mismatch, request resync.
+    'state-check': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'stateCheck', session: msg.session, fingerprint: msg.fingerprint }]
+    }),
+
     // seq-init: server tells us where the log head is — initialize pull cursor
     'seq-init': (msg) => ({
       stateUpdates: {},
@@ -264,6 +272,21 @@ export function createWebSocketConnection(deps = {}) {
     outputReceived: (e) => pulls.outputReceived(e.session, e.data, e.cursor, e.fromSeq),
     pullResponse: (e) => pulls.pullResponse(e.session, e.data, e.cursor),
     pullSnapshot: (e) => pulls.pullSnapshot(e.session, e.data || "", e.cursor),
+    stateCheck: (e) => {
+      // Only check when pull manager is idle — if busy, the next idle check will catch it
+      const ps = pulls.get(e.session);
+      if (ps?.writing || ps?.pulling) return;
+      const term = getOutputTerm(e.session);
+      if (!term) return;
+      const clientFp = screenFingerprint(term);
+      if (clientFp !== e.fingerprint) {
+        console.log(`[drift] session=${e.session} server=${e.fingerprint} client=${clientFp} — requesting resync`);
+        const ws = state.connection.ws;
+        if (ws?.readyState === 1) {
+          ws.send(JSON.stringify({ type: "resync", session: e.session }));
+        }
+      }
+    },
     terminalReset: () => { const t = getTerm(); if (t) { t.clear(); t.reset(); } },
     terminalWrite: (e) => { const t = e.useOutputTerm ? getOutputTerm(e.session) : getTerm(); if (t) terminalWriteWithScroll(t, e.data); },
     subscribeSnapshot: (e) => {
