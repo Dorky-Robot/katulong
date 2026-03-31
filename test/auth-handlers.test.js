@@ -252,8 +252,8 @@ describe("processAuthentication", () => {
 describe("processRegistration — success path", () => {
   let processRegistrationMocked;
 
-  // What the mocked verifyRegistration returns
-  const MOCK_CRED = { id: "mock-cred-id", publicKey: "bW9ja3B1YmtleQ", counter: 0 };
+  // What the mocked verifyRegistration returns (includes transports for CDA support)
+  const MOCK_CRED = { id: "mock-cred-id", publicKey: "bW9ja3B1YmtleQ", counter: 0, transports: ["internal", "hybrid"] };
 
   before(async () => {
     const authModuleUrl = new URL("../lib/auth.js", import.meta.url).href;
@@ -400,6 +400,26 @@ describe("processRegistration — success path", () => {
     assert.ok(result instanceof Success);
     const cred = result.data.updatedState.credentials[0];
     assert.equal(cred.setupTokenId, "tok-id-xyz-987", "setupTokenId should link credential to the setup token used");
+  });
+
+  it("passes transports from verifyRegistration through to stored credential", async () => {
+    const result = await processRegistrationMocked({
+      credential: {},
+      challenge: "test-challenge",
+      challengeValid: true,
+      userID: "user123",
+      origin: "https://example.com",
+      rpID: "example.com",
+      currentState: null,
+    });
+
+    assert.ok(result instanceof Success);
+    const cred = result.data.updatedState.credentials[0];
+    assert.deepEqual(
+      cred.transports,
+      ["internal", "hybrid"],
+      "transports from verifyRegistration must be stored on the credential for CDA"
+    );
   });
 
   it("sets setupTokenId to null when no setup token was used", async () => {

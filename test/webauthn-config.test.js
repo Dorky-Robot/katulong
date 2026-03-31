@@ -1,7 +1,7 @@
 /**
  * Tests for WebAuthn configuration
- * Verifies that all registration flows use platform authenticators
- * to ensure Touch ID / Windows Hello / fingerprint readers are used.
+ * Verifies registration and authentication option generation,
+ * including cross-device authentication (CDA) support via hybrid transport.
  */
 
 import { describe, it } from 'node:test';
@@ -9,15 +9,15 @@ import assert from 'node:assert';
 import { generateRegistrationOpts } from '../lib/auth.js';
 
 describe('WebAuthn configuration', () => {
-  describe('generateRegistrationOpts', () => {
-    it('generates options with platform authenticator attachment', async () => {
+  describe('generateRegistrationOpts — first device', () => {
+    it('forces platform authenticator for first device', async () => {
       const { opts } = await generateRegistrationOpts('Katulong', 'localhost');
 
       assert.ok(opts.authenticatorSelection);
       assert.strictEqual(
         opts.authenticatorSelection.authenticatorAttachment,
         'platform',
-        'Must force platform authenticator (Touch ID, Windows Hello, etc.)'
+        'First device must use platform authenticator (Touch ID, Windows Hello)'
       );
     });
 
@@ -55,16 +55,17 @@ describe('WebAuthn configuration', () => {
     });
   });
 
-  describe('generateRegistrationOpts with existingUserID', () => {
+  describe('generateRegistrationOpts — additional device (CDA)', () => {
     const existingUserID = 'test-user-id';
 
-    it('generates options with platform authenticator attachment', async () => {
+    it('omits authenticatorAttachment to allow hybrid/roaming authenticators', async () => {
       const { opts } = await generateRegistrationOpts('Katulong', 'localhost', existingUserID);
 
+      assert.ok(opts.authenticatorSelection, 'authenticatorSelection should be present');
       assert.strictEqual(
         opts.authenticatorSelection.authenticatorAttachment,
-        'platform',
-        'Must force platform authenticator for additional passkeys'
+        undefined,
+        'Additional devices must NOT restrict authenticator type — allows hybrid (QR → phone) and roaming (security key)'
       );
     });
 
@@ -73,41 +74,66 @@ describe('WebAuthn configuration', () => {
       assert.strictEqual(userID, existingUserID);
     });
 
-    it('sets same authenticator preferences as initial registration', async () => {
-      const { opts: initialOpts } = await generateRegistrationOpts('Katulong', 'localhost');
-      const { opts: additionalOpts } = await generateRegistrationOpts('Katulong', 'localhost', existingUserID);
+    it('keeps residentKey and userVerification same as first device', async () => {
+      const { opts: firstDevice } = await generateRegistrationOpts('Katulong', 'localhost');
+      const { opts: additionalDevice } = await generateRegistrationOpts('Katulong', 'localhost', existingUserID);
 
-      assert.deepStrictEqual(
-        initialOpts.authenticatorSelection,
-        additionalOpts.authenticatorSelection,
-        'Initial and additional registrations should have same authenticator settings'
+      assert.strictEqual(
+        additionalDevice.authenticatorSelection.residentKey,
+        firstDevice.authenticatorSelection.residentKey,
+        'residentKey should match between first and additional device'
       );
+      assert.strictEqual(
+        additionalDevice.authenticatorSelection.userVerification,
+        firstDevice.authenticatorSelection.userVerification,
+        'userVerification should match between first and additional device'
+      );
+    });
+
+    it('differs from first device only in authenticatorAttachment', async () => {
+      const { opts: firstDevice } = await generateRegistrationOpts('Katulong', 'localhost');
+      const { opts: additionalDevice } = await generateRegistrationOpts('Katulong', 'localhost', existingUserID);
+
+      assert.strictEqual(firstDevice.authenticatorSelection.authenticatorAttachment, 'platform');
+      assert.strictEqual(additionalDevice.authenticatorSelection.authenticatorAttachment, undefined);
     });
   });
 
   describe('generateAuthOpts', () => {
-    it('restricts to platform authenticators via transports', async () => {
+    it('uses stored transports from credential with fallback to internal', async () => {
       const { generateAuthOpts } = await import('../lib/auth.js');
 
-      // Credentials are stored with base64url-encoded IDs
       const credentials = [
-        { id: 'cred1-base64url', publicKey: 'key1', counter: 0 },
-        { id: 'cred2-base64url', publicKey: 'key2', counter: 0 },
+        { id: 'cred-platform', publicKey: 'key1', counter: 0, transports: ['internal'] },
+        { id: 'cred-hybrid', publicKey: 'key2', counter: 0, transports: ['internal', 'hybrid'] },
+        { id: 'cred-no-transports', publicKey: 'key3', counter: 0 },
       ];
 
       const opts = await generateAuthOpts(credentials, 'localhost');
 
       assert.ok(opts.allowCredentials);
-      assert.strictEqual(opts.allowCredentials.length, 2);
+      assert.strictEqual(opts.allowCredentials.length, 3);
 
-      // Each credential should have transports: ["internal"] to force platform authenticators
-      for (const cred of opts.allowCredentials) {
-        assert.deepStrictEqual(
-          cred.transports,
-          ['internal'],
-          'Authentication should restrict to platform authenticators via transports'
-        );
-      }
+      // Platform credential: uses its stored transports
+      assert.deepStrictEqual(
+        opts.allowCredentials[0].transports,
+        ['internal'],
+        'Platform credential should use stored transports'
+      );
+
+      // Hybrid credential: includes hybrid so browser offers QR code
+      assert.deepStrictEqual(
+        opts.allowCredentials[1].transports,
+        ['internal', 'hybrid'],
+        'Hybrid credential should include hybrid transport for QR code flow'
+      );
+
+      // Legacy credential without transports: falls back to internal
+      assert.deepStrictEqual(
+        opts.allowCredentials[2].transports,
+        ['internal'],
+        'Credentials without stored transports should fall back to internal'
+      );
     });
 
     it('sets userVerification to preferred', async () => {
@@ -117,29 +143,35 @@ describe('WebAuthn configuration', () => {
     });
   });
 
-  describe('platform authenticator rationale', () => {
-    it('documents why platform-only authentication is used', () => {
+  describe('cross-device authentication rationale', () => {
+    it('documents the CDA design decisions', () => {
       /**
-       * Design Decision: Force authenticatorAttachment: "platform"
+       * Design Decision: Cross-Device Authentication (CDA) via WebAuthn hybrid transport
        *
-       * Reasons:
-       * - Katulong is self-hosted terminal access (personal use)
-       * - Users on their own devices always have platform authenticator
-       * - Touch ID / Windows Hello / fingerprint is most intuitive UX
-       * - Faster and more convenient than security keys or phones
+       * Flow:
+       * 1. First device registers with authenticatorAttachment: "platform" (localhost only)
+       * 2. Additional devices register WITHOUT authenticatorAttachment constraint,
+       *    allowing hybrid (phone QR → passkey) and roaming (security key) authenticators
+       * 3. Registration captures credential.transports from the WebAuthn response
+       * 4. Authentication sends stored transports back so the browser knows which
+       *    transport methods to offer (e.g., QR code for hybrid, USB for roaming)
        *
-       * Tradeoff:
-       * - Users who prefer security keys cannot use them directly
-       * - Acceptable because: users can pair via QR on LAN if needed
+       * Why this matters:
+       * - Without hybrid transport, users can't authenticate from a new laptop
+       *   by scanning a QR code with their phone (the standard WebAuthn CDA flow)
+       * - Without capturing transports, the browser defaults to "internal" and
+       *   never shows the cross-device QR code option
+       * - The fallback to ["internal"] preserves backward compatibility with
+       *   credentials registered before this change
        *
-       * Alternatives considered:
-       * - Allow both: Causes confusing QR code prompts
-       * - Auto-detect: Complex and fragile across browsers
-       * - Make configurable: Adds complexity for minimal benefit
+       * Security:
+       * - First device still requires platform authenticator (biometric on localhost)
+       * - Additional devices still require a valid setup token + WebAuthn registration
+       * - The transport type doesn't weaken authentication — it only affects how
+       *   the authenticator communicates with the browser
        */
 
-      // Test passes if this documentation exists
-      assert.ok(true, 'Platform authenticator design is documented');
+      assert.ok(true, 'Cross-device authentication design is documented');
     });
   });
 });

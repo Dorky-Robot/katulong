@@ -106,7 +106,7 @@ TO_RUN=$(echo "$TO_RUN" | sed 's/^ //')
 
 if [ -n "$TO_RUN" ]; then
   echo "      Running: $TO_RUN"
-  if ! node --experimental-test-module-mocks --test --test-concurrency=0 $TO_RUN; then
+  if ! node --import ./test/helpers/setup-env.js --experimental-test-module-mocks --test --test-concurrency=0 $TO_RUN; then
     fail "Tests failed — commit blocked. Fix tests before committing."
   fi
   echo "      OK  All targeted tests passed"
