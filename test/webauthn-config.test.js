@@ -114,25 +114,26 @@ describe('WebAuthn configuration', () => {
       assert.ok(opts.allowCredentials);
       assert.strictEqual(opts.allowCredentials.length, 3);
 
-      // Platform credential: uses its stored transports
+      // All credentials get "hybrid" appended for cross-device QR code auth.
+      // Platform credential: stored transports + hybrid
       assert.deepStrictEqual(
         opts.allowCredentials[0].transports,
-        ['internal'],
-        'Platform credential should use stored transports'
+        ['internal', 'hybrid'],
+        'Platform credential should include hybrid for cross-device QR code'
       );
 
-      // Hybrid credential: includes hybrid so browser offers QR code
+      // Hybrid credential: already had hybrid, no duplicate
       assert.deepStrictEqual(
         opts.allowCredentials[1].transports,
         ['internal', 'hybrid'],
-        'Hybrid credential should include hybrid transport for QR code flow'
+        'Hybrid credential should keep existing transports'
       );
 
-      // Legacy credential without transports: falls back to internal
+      // Legacy credential without transports: internal + hybrid
       assert.deepStrictEqual(
         opts.allowCredentials[2].transports,
-        ['internal'],
-        'Credentials without stored transports should fall back to internal'
+        ['internal', 'hybrid'],
+        'Credentials without stored transports should get internal + hybrid'
       );
     });
 

@@ -262,13 +262,9 @@
         }
         const opts = await optsRes.json();
 
-        // Check if there are any passkeys available for this domain
-        if (!opts.allowCredentials || opts.allowCredentials.length === 0) {
-          loginError.innerHTML = 'No passkeys registered for this device. Please click <strong>"Register New Passkey"</strong> below to set one up.';
-          return;
-        }
-
-        // Start WebAuthn authentication
+        // Start WebAuthn authentication — even with empty allowCredentials,
+        // the browser can offer QR code / cross-device auth for discoverable
+        // passkeys stored on another device (phone → laptop).
         const credential = await startAuthentication({ optionsJSON: opts });
 
         // Verify with server
