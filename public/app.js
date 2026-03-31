@@ -673,7 +673,10 @@
         }
         // Re-enable reconnect if we were in empty state
         wsConnection.enableReconnect();
-        windowTabSet.addTab(data.name);
+        // Insert right of the active tab (like Chrome) instead of at the end
+        const tabs = windowTabSet.getTabs();
+        const activeIdx = tabs.indexOf(state.session.name);
+        windowTabSet.addTab(data.name, activeIdx >= 0 ? activeIdx + 1 : undefined);
         // routeToSession handles both iPad (carousel) and desktop (switchSession)
         routeToSession(data.name);
         // If carousel was just activated from empty state, reconnect WS
@@ -1077,7 +1080,10 @@
           const tile = createTile(type, options);
           carousel.addCard(id, tile);
           carousel.focusCard(id);
-          windowTabSet.addTab(id);
+          // Insert right of the active tab (like Chrome)
+          const ctTabs = windowTabSet.getTabs();
+          const ctIdx = ctTabs.indexOf(state.session.name);
+          windowTabSet.addTab(id, ctIdx >= 0 ? ctIdx + 1 : undefined);
           if (shortcutBarInstance) shortcutBarInstance.render(id);
         }
       },
@@ -1096,6 +1102,9 @@
         if (carousel.isActive()) carousel.renameCard(oldName, newName);
         terminalPool.rename(oldName, newName);
         notepad.rename(oldName, newName);
+        // Update the tab element in-place BEFORE triggering store updates
+        // to prevent a full re-render that causes the tab to visually jump.
+        if (shortcutBarInstance) shortcutBarInstance.renameTabEl(oldName, newName);
         windowTabSet.renameTab(oldName, newName);
         invalidateSessions(sessionStore, newName);
         if (state.session.name === oldName) {

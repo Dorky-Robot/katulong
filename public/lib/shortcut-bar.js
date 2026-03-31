@@ -983,8 +983,10 @@ export function createShortcutBar(options = {}) {
   // Store subscribers — coalesce rapid updates into a single render via rAF.
   // requestRender() handles the drag-deferral check.
   let _rafId = null;
+  let _renameInProgress = false;
   function onStoreChange() {
     if (!currentSessionName) return;
+    if (_renameInProgress) return;
     if (_rafId) return;
     _rafId = requestAnimationFrame(() => {
       _rafId = null;
@@ -1007,9 +1009,37 @@ export function createShortcutBar(options = {}) {
     }
   }
 
+  /**
+   * Lightweight tab rename — replaces a single tab element in-place
+   * without rebuilding the entire bar. Prevents the visual "jump" that
+   * occurs when a full render tears down and rebuilds the DOM.
+   */
+  function renameTabEl(oldName, newName) {
+    const tabArea = container.querySelector(".tab-scroll-area");
+    if (!tabArea) return;
+    const oldTab = tabArea.querySelector(`.tab-bar-tab[data-session="${CSS.escape(oldName)}"]`);
+    if (!oldTab) return;
+
+    const isActive = oldTab.classList.contains("active");
+    const newTab = createTabEl({ name: newName }, isActive);
+    oldTab.replaceWith(newTab);
+
+    if (currentSessionName === oldName) currentSessionName = newName;
+
+    // Suppress the store-triggered full render from windowTabSet.renameTab()
+    // and invalidateSessions(). The rAF clears the flag so later server
+    // responses still trigger a reconciliation render.
+    _renameInProgress = true;
+    requestAnimationFrame(() => {
+      fitTabLabels();
+      _renameInProgress = false;
+    });
+  }
+
   return {
     render: requestRender,
     setActiveTab,
+    renameTabEl,
     showAddMenu,
     setPortProxyEnabled(enabled) {
       portProxyEnabled = enabled;
