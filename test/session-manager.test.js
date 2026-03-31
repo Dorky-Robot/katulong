@@ -340,60 +340,6 @@ describe("session manager", () => {
     });
   });
 
-  describe("resync idle timer", () => {
-    it("sends resync message after idle period when session has subscribers", { skip: "Requires real tmux output; covered by garble harness Scenario J" }, async () => {
-      const { mgr, bridge } = makeManager();
-      await mgr.createSession("resync-test");
-      await mgr.attachClient("c1", "resync-test", 80, 24);
-
-      // Write to PTY to trigger output → onData → notifyDataAvailable
-      mgr.writeInput("resync-test", "echo resync\n");
-      // Wait for tmux output + idle timeout (10s + buffer)
-      await new Promise(r => setTimeout(r, 13000));
-
-      const resyncMsg = bridge.messages.find(m => m.type === "resync" && m.session === "resync-test");
-      assert.ok(resyncMsg, "Should relay a resync message after idle");
-      assert.strictEqual(typeof resyncMsg.data, "string");
-      assert.strictEqual(typeof resyncMsg.seq, "number");
-
-      mgr.shutdown();
-    });
-
-    it("does not send resync when no subscribers", async () => {
-      const { mgr, bridge } = makeManager();
-      await mgr.createSession("no-sub");
-
-      // Trigger notifyDataAvailable without any subscribers
-      const session = mgr.getSession("no-sub");
-      session._options?.onData?.("no-sub", "x");
-
-      await new Promise(r => setTimeout(r, 11000));
-
-      const resyncMsg = bridge.messages.find(m => m.type === "resync" && m.session === "no-sub");
-      assert.ok(!resyncMsg, "Should not send resync without subscribers");
-
-      mgr.shutdown();
-    });
-
-    it("cleans up resync timer on session delete", async () => {
-      const { mgr, bridge } = makeManager();
-      await mgr.createSession("del-resync");
-      await mgr.attachClient("c1", "del-resync", 80, 24);
-
-      // Trigger data to start timer
-      const session = mgr.getSession("del-resync");
-      session._options?.onData?.("del-resync", "x");
-
-      // Delete session before timer fires
-      mgr.deleteSession("del-resync");
-
-      await new Promise(r => setTimeout(r, 11000));
-
-      const resyncMsg = bridge.messages.find(m => m.type === "resync" && m.session === "del-resync");
-      assert.ok(!resyncMsg, "Should not send resync after session deleted");
-    });
-  });
-
   describe("spawn serialization", () => {
     it("concurrent creates for same name both resolve without crash", async () => {
       const { mgr } = makeManager();

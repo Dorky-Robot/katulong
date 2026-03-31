@@ -1,8 +1,9 @@
 /**
  * Pull Manager
  *
- * Pure state machine for pull-based terminal output streaming.
- * Manages per-session cursors, pull/write coordination, and safety timeouts.
+ * Pure state machine for terminal output streaming.  The server pushes data
+ * inline (outputReceived) for zero-round-trip delivery; pull is the fallback
+ * for cursor mismatches, reconnection, and cursor eviction recovery.
  *
  * No knowledge of WebSockets, xterm, or DOM. Communicates via callbacks:
  *   - onSendPull(session, fromSeq)  — request data from server
@@ -12,7 +13,7 @@
  * State per session: { cursor, pulling, writing, pending }
  *   - pulling: waiting for server response
  *   - writing: xterm is processing a write
- *   - pending: data-available arrived while busy — will re-pull after current op
+ *   - pending: data arrived while busy — will re-pull after current op
  */
 
 const PULL_TIMEOUT_MS = 1000;
@@ -129,5 +130,20 @@ export function createPullManager({ onSendPull, onWrite, onReset }) {
     _writeAndAdvance(name, data || "", cursor);
   }
 
-  return { init, clear, pull, dataAvailable, pullResponse, pullSnapshot, get };
+  /** Accept server-pushed output directly (zero round trips). */
+  function outputReceived(name, data, cursor, fromSeq) {
+    const ps = sessions.get(name);
+    if (!ps) return;
+    if (ps.pulling || ps.writing) {
+      ps.pending = true; // will re-pull when current op finishes
+      return;
+    }
+    if (fromSeq !== ps.cursor) {
+      pull(name); // gap detected — fall back to pull
+      return;
+    }
+    _writeAndAdvance(name, data, cursor);
+  }
+
+  return { init, clear, pull, dataAvailable, pullResponse, pullSnapshot, outputReceived, get };
 }

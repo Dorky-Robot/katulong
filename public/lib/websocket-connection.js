@@ -109,16 +109,6 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
-    // Periodic idle resync: server sends a fresh snapshot to correct drift
-    resync: (msg) => ({
-      stateUpdates: {},
-      effects: [
-        { type: 'terminalResetSession', session: msg.session },
-        ...(msg.data ? [{ type: 'terminalWrite', data: msg.data, session: msg.session, useOutputTerm: true }] : []),
-        { type: 'pullInit', session: msg.session, seq: msg.seq },
-      ]
-    }),
-
     'subscribed': (msg) => ({
       stateUpdates: {},
       effects: [
@@ -140,6 +130,12 @@ export function createWebSocketConnection(deps = {}) {
     'data-available': (msg) => ({
       stateUpdates: {},
       effects: [{ type: 'dataAvailable', session: msg.session }]
+    }),
+
+    // Server-pushed output — data sent inline, zero round trips
+    'output': (msg) => ({
+      stateUpdates: {},
+      effects: [{ type: 'outputReceived', session: msg.session, data: msg.data, cursor: msg.cursor, fromSeq: msg.fromSeq }]
     }),
 
     // Response to a pull request — contains data from cursor to head
@@ -265,10 +261,10 @@ export function createWebSocketConnection(deps = {}) {
     seqClear: (e) => pulls.clear(e.session || null),
     pullInit: (e) => { if (e.session) pulls.init(e.session, e.seq); },
     dataAvailable: (e) => pulls.dataAvailable(e.session),
+    outputReceived: (e) => pulls.outputReceived(e.session, e.data, e.cursor, e.fromSeq),
     pullResponse: (e) => pulls.pullResponse(e.session, e.data, e.cursor),
     pullSnapshot: (e) => pulls.pullSnapshot(e.session, e.data || "", e.cursor),
     terminalReset: () => { const t = getTerm(); if (t) { t.clear(); t.reset(); } },
-    terminalResetSession: (e) => { const t = getOutputTerm(e.session); if (t) { t.clear(); t.reset(); } },
     terminalWrite: (e) => { const t = e.useOutputTerm ? getOutputTerm(e.session) : getTerm(); if (t) terminalWriteWithScroll(t, e.data); },
     subscribeSnapshot: (e) => {
       // Only write snapshot if the terminal is empty (fresh after page refresh).
