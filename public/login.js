@@ -295,4 +295,53 @@
       }
     });
 
+    // --- Cross-device QR code login ---
+    // Passes empty allowCredentials so the browser shows the full passkey
+    // picker including the "Use a phone or tablet" QR code option, rather
+    // than trying local credentials first.
+    document.getElementById("qr-login-btn")?.addEventListener("click", async () => {
+      const btn = document.getElementById("qr-login-btn");
+      loginError.textContent = "";
+
+      const supportCheck = checkWebAuthnSupport();
+      if (!supportCheck.supported) {
+        loginError.textContent = supportCheck.error;
+        return;
+      }
+
+      btn.disabled = true;
+
+      try {
+        const optsRes = await fetch("/auth/login/options", { method: "POST" });
+        if (!optsRes.ok) {
+          const err = await optsRes.json();
+          throw new Error(err.error || "Failed to get login options");
+        }
+        const opts = await optsRes.json();
+
+        // Clear allowCredentials to force the browser to show the
+        // cross-device picker (QR code) instead of local-only lookup.
+        opts.allowCredentials = [];
+
+        const credential = await startAuthentication({ optionsJSON: opts });
+
+        const verifyRes = await fetch("/auth/login/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ credential }),
+        });
+        if (!verifyRes.ok) {
+          const err = await verifyRes.json();
+          throw new Error(err.error || "Login failed");
+        }
+
+        localStorage.setItem('katulong_current_credential', credential.id);
+        window.location.href = "/";
+      } catch (err) {
+        loginError.textContent = getWebAuthnErrorMessage(err);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
     checkStatus();
