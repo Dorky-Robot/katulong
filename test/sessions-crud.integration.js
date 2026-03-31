@@ -350,6 +350,41 @@ describe("Sessions CRUD Integration", () => {
     }
   });
 
+  // --- Session status ---
+
+  it("GET /sessions/:name/status returns status for a live session", async () => {
+    await request("POST", "/sessions", { name: "status-test" });
+
+    const { status, body } = await request("GET", "/sessions/status-test/status");
+    assert.equal(status, 200);
+    assert.equal(body.name, "status-test");
+    assert.equal(typeof body.alive, "boolean");
+    assert.equal(typeof body.hasChildProcesses, "boolean");
+    assert.equal(typeof body.childCount, "number");
+
+    await request("DELETE", "/sessions/status-test");
+  });
+
+  it("GET /sessions/:name/status returns 404 for nonexistent session", async () => {
+    const { status } = await request("GET", "/sessions/nonexistent-xyz/status");
+    assert.equal(status, 404);
+  });
+
+  it("GET /sessions/:name/status returns 400 for invalid session name", async () => {
+    const { status } = await request("GET", `/sessions/${encodeURIComponent("\x01\x02")}/status`);
+    assert.equal(status, 400);
+  });
+
+  it("GET /sessions/:name/status works with URL-encoded names", async () => {
+    await request("POST", "/sessions", { name: "status with spaces" });
+
+    const { status, body } = await request("GET", `/sessions/${encodeURIComponent("status with spaces")}/status`);
+    assert.equal(status, 200);
+    assert.equal(body.name, "status with spaces");
+
+    await request("DELETE", `/sessions/${encodeURIComponent("status with spaces")}`);
+  });
+
   // --- Full lifecycle (mirrors what the UI "+ New" button does) ---
 
   it("full lifecycle: create → list → rename → delete", async () => {
