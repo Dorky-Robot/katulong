@@ -128,6 +128,9 @@
         dot.title = title;
       }
       joystickManager.setConnected(attached);
+      // Show/hide disconnect overlay to give visual feedback that input is disabled
+      const overlay = document.getElementById("disconnect-overlay");
+      if (overlay) overlay.classList.toggle("visible", !attached);
     };
 
     if (state.session.name) document.title = state.session.name;
@@ -479,7 +482,12 @@
       onInput: () => {},
     });
 
-    const rawSend = (data) => inputSender.send(data);
+    const rawSend = (data) => {
+      // Drop all input when not attached — prevents blind typing during
+      // disconnection from queuing keystrokes that execute on reconnect.
+      if (!state.connection.attached) return;
+      inputSender.send(data);
+    };
 
     // Create the initial terminal now that rawSend is available.
     // When no explicit ?s= param, activation is deferred until we

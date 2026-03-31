@@ -521,6 +521,22 @@
     }
     #connection-indicator.connected { background: var(--success); }
 
+    /* Disconnect overlay — dims terminal and shows status when not attached */
+    #disconnect-overlay {
+      position: absolute; inset: 0; z-index: 10;
+      display: none; place-items: center;
+      background: rgba(0,0,0,0.35);
+      pointer-events: none;
+      transition: opacity var(--transition-normal) ease;
+    }
+    #disconnect-overlay.visible { display: grid; }
+    #disconnect-overlay .disconnect-label {
+      font-size: var(--text-sm); color: var(--text-muted);
+      background: var(--bg-surface); padding: 0.375rem 0.75rem;
+      border-radius: var(--radius-sm); border: 1px solid var(--border);
+      user-select: none;
+    }
+
     .bar-icon-btn {
       flex-shrink: 0; height: var(--height-btn-sm); width: 2rem; padding: 0;
       border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-input);
@@ -1938,7 +1954,9 @@
     </aside>
     <div id="sidebar-backdrop"></div>
     <div id="main-stage">
-      <div id="terminal-container"></div>
+      <div id="terminal-container">
+        <div id="disconnect-overlay"><span class="disconnect-label">Disconnected</span></div>
+      </div>
       <nav id="shortcut-bar" role="toolbar" aria-label="Shortcut bar"></nav>
       <div id="helm-view"></div>
       <div id="file-browser"></div>

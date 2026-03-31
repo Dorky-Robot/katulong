@@ -256,3 +256,46 @@ describe("showNotification effect handler", () => {
     conn.executeEffect({ type: "showNotification", title: "X", message: "Y" });
   });
 });
+
+describe("getConnectionState", () => {
+  it("starts in disconnected state", () => {
+    const state = makeState();
+    const conn = createWebSocketConnection({ state, term: () => null, isAtBottom: () => true });
+    assert.strictEqual(conn.getConnectionState(), "disconnected");
+  });
+});
+
+describe("disconnect safety: input guard contract", () => {
+  // These tests document the contract that rawSend (in app.js) relies on:
+  // state.connection.attached is false when disconnected and true only after
+  // the server confirms attachment. This is the flag rawSend checks to drop
+  // keystrokes during disconnection.
+
+  it("state.connection.attached is false initially", () => {
+    const state = makeState();
+    assert.strictEqual(state.connection.attached, false);
+  });
+
+  it("attached message sets connection.attached to true", () => {
+    const state = makeState();
+    const conn = createWebSocketConnection({ state, term: () => null, isAtBottom: () => true });
+    const result = conn.wsMessageHandlers.attached({ session: "s" }, state);
+    assert.strictEqual(result.stateUpdates["connection.attached"], true);
+  });
+
+  it("switched message sets connection.attached to true", () => {
+    const state = makeState();
+    const conn = createWebSocketConnection({ state, term: () => null, isAtBottom: () => true });
+    const result = conn.wsMessageHandlers.switched({ session: "s" }, state);
+    assert.strictEqual(result.stateUpdates["connection.attached"], true);
+  });
+
+  it("updateConnectionIndicator is emitted on attach (drives overlay toggle)", () => {
+    const state = makeState();
+    const conn = createWebSocketConnection({ state, term: () => null, isAtBottom: () => true });
+    const result = conn.wsMessageHandlers.attached({ session: "s" }, state);
+    const effectTypes = result.effects.map(e => e.type);
+    assert.ok(effectTypes.includes("updateConnectionIndicator"),
+      "attached must emit updateConnectionIndicator so the overlay gets hidden");
+  });
+});
