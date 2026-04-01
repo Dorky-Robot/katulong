@@ -82,8 +82,8 @@
     /* --- Reset & base --- */
     * { margin: 0; padding: 0; box-sizing: border-box; }
     button, input { font-family: inherit; }
-    html { height: 100dvh; overflow: hidden; position: fixed; inset: 0; }
-    body { height: 100%; background: var(--bg); overflow: hidden; overscroll-behavior: none; color: var(--text); font-family: var(--font-mono); margin: 0; }
+    html { height: 100dvh; overflow: clip; position: fixed; inset: 0; }
+    body { height: 100%; background: var(--bg); overflow: clip; overscroll-behavior: none; color: var(--text); font-family: var(--font-mono); margin: 0; }
 
     /* --- Focus & motion --- */
     :focus-visible {
