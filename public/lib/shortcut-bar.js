@@ -420,15 +420,23 @@ export function createShortcutBar(options = {}) {
         return;
       }
 
-      // Call rename API
+      // Optimistically rename the tab in-place BEFORE the API call
+      // to prevent the WS broadcast from triggering a duplicate render.
+      if (onTabRenamed) onTabRenamed(sessionName, newName);
+
+      // Call rename API — server may canonicalize the name
       api.put(`/sessions/${encodeURIComponent(sessionName)}`, { name: newName })
         .then((result) => {
           const canonicalName = result?.name || newName;
-          if (onTabRenamed) onTabRenamed(sessionName, canonicalName);
+          // If server canonicalized the name, update again
+          if (canonicalName !== newName && onTabRenamed) {
+            onTabRenamed(newName, canonicalName);
+          }
         })
         .catch((err) => {
           console.error("[Tab] Rename failed:", err);
-          // Input may be detached if render() fired during the API call
+          // Revert optimistic rename
+          if (onTabRenamed) onTabRenamed(newName, sessionName);
           render(currentSessionName);
         });
     }
