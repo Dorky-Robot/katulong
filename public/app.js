@@ -833,7 +833,8 @@
     // --- Keyboard shortcuts (Cmd+Shift+[/], Cmd+?) ---
 
     function navigateTab(direction) {
-      const tabs = windowTabSet.getTabs();
+      // Use carousel order (source of truth) when active, fall back to tab set
+      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
       if (tabs.length <= 1) return;
       const idx = tabs.indexOf(state.session.name);
       if (idx === -1) return;
@@ -1714,6 +1715,8 @@
           return { id: t.id, tile };
         });
         carousel.activate(tiles, carouselState.focused);
+        // Sync tab set to carousel order (carousel is source of truth)
+        if (windowTabSet) windowTabSet.reorderTabs(carousel.getCards());
       }
     }, 500);
 

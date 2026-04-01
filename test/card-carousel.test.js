@@ -397,6 +397,37 @@ describe('card-carousel', () => {
     });
   });
 
+  describe('reorderCards()', () => {
+    beforeEach(() => {
+      carousel.activate(makeTiles("a", "b", "c"), "b");
+    });
+
+    it('reorders cards to match the given order', () => {
+      carousel.reorderCards(["c", "a", "b"]);
+      assert.deepStrictEqual(carousel.getCards(), ["c", "a", "b"]);
+    });
+
+    it('preserves focused card after reorder', () => {
+      carousel.reorderCards(["c", "a", "b"]);
+      assert.strictEqual(carousel.getFocusedCard(), "b");
+    });
+
+    it('ignores unknown IDs in the ordered list', () => {
+      carousel.reorderCards(["c", "unknown", "a", "b"]);
+      assert.deepStrictEqual(carousel.getCards(), ["c", "a", "b"]);
+    });
+
+    it('appends cards not in the ordered list to the end', () => {
+      carousel.reorderCards(["c", "a"]);
+      assert.deepStrictEqual(carousel.getCards(), ["c", "a", "b"]);
+    });
+
+    it('is a no-op when order has not changed', () => {
+      carousel.reorderCards(["a", "b", "c"]);
+      assert.deepStrictEqual(carousel.getCards(), ["a", "b", "c"]);
+    });
+  });
+
   describe('persistence', () => {
     it('saves state on activate', () => {
       carousel.activate(makeTiles("a", "b"), "a");

@@ -790,7 +790,8 @@ export function createShortcutBar(options = {}) {
     if (!sessionStore) return [];
     const allSessions = sessionStore.getState().sessions || [];
     if (!windowTabSet) return allSessions;
-    const tabNames = windowTabSet.getTabs();
+    // Carousel is the source of truth for visual order when active
+    const tabNames = carousel?.isActive() ? carousel.getCards() : windowTabSet.getTabs();
     const sessionMap = new Map(allSessions.map(s => [s.name, s]));
     return tabNames.map(n => sessionMap.get(n) || { name: n }).filter(Boolean);
   }
