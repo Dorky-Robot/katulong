@@ -48,10 +48,10 @@ describe('WebAuthn configuration', () => {
       assert.strictEqual(opts.rp.id, 'katulong.local');
     });
 
-    it('sets user as "owner"', async () => {
+    it('sets user as "owner" with Katulong display name', async () => {
       const { opts } = await generateRegistrationOpts('Katulong', 'localhost');
       assert.strictEqual(opts.user.name, 'owner');
-      assert.strictEqual(opts.user.displayName, 'Owner');
+      assert.strictEqual(opts.user.displayName, 'Katulong Owner');
     });
   });
 
