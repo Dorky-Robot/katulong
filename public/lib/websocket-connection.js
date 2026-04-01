@@ -70,7 +70,15 @@ export function createWebSocketConnection(deps = {}) {
     },
     onReset(session) {
       const term = getOutputTerm(session);
-      if (term) { term.clear(); term.reset(); }
+      if (!term) return;
+      // Clear screen + cursor home WITHOUT resetting terminal modes.
+      // term.reset() nukes bracketed paste, application cursor, and
+      // other DEC private modes that the shell/TUI enabled.  The
+      // serialize snapshot doesn't restore all modes, so using
+      // escape sequences to clear is less destructive.
+      term.write("\x1b[2J\x1b[H");
+      // Clear scrollback separately (escape sequence only clears screen)
+      term.clear();
     },
   });
 
@@ -278,19 +286,24 @@ export function createWebSocketConnection(deps = {}) {
     pullResponse: (e) => pulls.pullResponse(e.session, e.data, e.cursor),
     pullSnapshot: (e) => pulls.pullSnapshot(e.session, e.data || "", e.cursor),
     stateCheck: (e) => {
-      // Only check when pull manager is idle — if busy, the next idle check will catch it
-      const ps = pulls.get(e.session);
-      if (ps?.writing || ps?.pulling) return;
-      const term = getOutputTerm(e.session);
-      if (!term) return;
-      const clientFp = screenFingerprint(term);
-      if (clientFp !== e.fingerprint) {
-        console.log(`[drift] session=${e.session} server=${e.fingerprint} client=${clientFp} — requesting resync`);
-        const ws = state.connection.ws;
-        if (ws?.readyState === 1) {
-          ws.send(JSON.stringify({ type: "resync", session: e.session }));
+      function check() {
+        const ps = pulls.get(e.session);
+        if (ps?.writing || ps?.pulling) return false; // can't check yet
+        const term = getOutputTerm(e.session);
+        if (!term) return true;
+        const clientFp = screenFingerprint(term);
+        if (clientFp !== e.fingerprint) {
+          console.log(`[drift] session=${e.session} server=${e.fingerprint} client=${clientFp} — requesting resync`);
+          const ws = state.connection.ws;
+          if (ws?.readyState === 1) {
+            ws.send(JSON.stringify({ type: "resync", session: e.session }));
+          }
         }
+        return true;
       }
+      // Retry if pull manager is busy — the idle timer fires once per
+      // output burst, so skipping means garble persists forever.
+      if (!check()) setTimeout(check, 300);
     },
     terminalReset: () => { const t = getTerm(); if (t) { t.clear(); t.reset(); } },
     terminalWrite: (e) => { const t = e.useOutputTerm ? getOutputTerm(e.session) : getTerm(); if (t) terminalWriteWithScroll(t, e.data); },
