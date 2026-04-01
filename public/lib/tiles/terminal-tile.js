@@ -7,6 +7,8 @@
  * thin adapter that speaks the tile interface.
  */
 
+import { createDashboardBackTile } from "./dashboard-back-tile.js";
+
 /**
  * Create the terminal tile factory. Call once at startup with shared deps,
  * then register the returned factory with the tile registry.
@@ -22,6 +24,10 @@ export function createTerminalTileFactory(deps) {
   return function createTerminalTile({ sessionName }) {
     let mounted = false;
     let container = null;
+    let backTile = null;
+    let statusPollTimer = null;
+    let prevHasChildProcesses = false;
+    let autoFlipTimer = null;
 
     return {
       type: "terminal",
@@ -37,11 +43,35 @@ export function createTerminalTileFactory(deps) {
         el.appendChild(entry.container);
         mounted = true;
 
-        // No toolbar for plain terminals — session name is shown in the tab bar.
+        // ── Flip toolbar button ────────────────────────────────────
+        if (ctx?.chrome?.toolbar) {
+          ctx.chrome.toolbar.addButton({
+            icon: "chart-bar",
+            label: "Session dashboard",
+            position: "right",
+            onClick: () => ctx.flip(),
+          });
+        }
+
+        // ── Register dashboard back-face ───────────────────────────
+        const carousel = deps.carousel;
+        if (carousel) {
+          backTile = createDashboardBackTile({
+            sessionName,
+            mode: "terminal",
+          });
+          carousel.setBackTile(sessionName, backTile);
+        }
+
+        // ── Auto-flip on child process exit ────────────────────────
+        // Poll session status; when child processes transition from
+        // true -> false, auto-flip to the dashboard after a short delay.
+        startStatusPoll(ctx, carousel);
       },
 
       unmount() {
         if (!mounted) return;
+        stopStatusPoll();
         terminalPool.unprotect(sessionName);
         const entry = terminalPool.get(sessionName);
         if (entry) {
@@ -54,6 +84,7 @@ export function createTerminalTileFactory(deps) {
         }
         mounted = false;
         container = null;
+        backTile = null;
       },
 
       focus() {
@@ -85,5 +116,46 @@ export function createTerminalTileFactory(deps) {
         return { type: "terminal", sessionName };
       },
     };
+
+    // ── Status polling for auto-flip ──────────────────────────────
+
+    function startStatusPoll(ctx, carousel) {
+      if (statusPollTimer) return;
+      statusPollTimer = setInterval(async () => {
+        try {
+          const res = await fetch(`/sessions/${encodeURIComponent(sessionName)}/status`);
+          if (!res.ok) return;
+          const status = await res.json();
+          const hasChild = status.hasChildProcesses || false;
+
+          // Detect transition: had child processes -> no child processes
+          if (prevHasChildProcesses && !hasChild && carousel && !carousel.isFlipped(sessionName)) {
+            // Small delay (1.5s) to avoid flipping during brief pauses
+            if (autoFlipTimer) clearTimeout(autoFlipTimer);
+            autoFlipTimer = setTimeout(() => {
+              // Re-check: still no child processes?
+              fetch(`/sessions/${encodeURIComponent(sessionName)}/status`)
+                .then(r => r.ok ? r.json() : null)
+                .then(s => {
+                  if (s && !s.hasChildProcesses && !carousel.isFlipped(sessionName)) {
+                    if (backTile?.addEvent) backTile.addEvent("Agent work completed");
+                    carousel.flipCard(sessionName, true);
+                  }
+                })
+                .catch(() => {});
+            }, 1500);
+          }
+
+          prevHasChildProcesses = hasChild;
+        } catch {
+          // Network error or session doesn't exist — ignore
+        }
+      }, 5000);
+    }
+
+    function stopStatusPoll() {
+      if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
+      if (autoFlipTimer) { clearTimeout(autoFlipTimer); autoFlipTimer = null; }
+    }
   };
 }

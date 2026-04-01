@@ -301,8 +301,6 @@
     registerTileType("dashboard", createDashboardTileFactory({ createTileFn: createTile }));
     registerTileType("html", createHtmlTileFactory());
     registerTileType("crew", createCrewTileFactory({
-      terminalPool,
-      createTileFn: createTile,
       get carousel() { return carousel; },
     }));
 
@@ -1202,6 +1200,7 @@
       onNewSessionClick: createNewSession,
       tileTypes: [
         { type: "terminal", name: "Terminal", icon: "terminal-window" },
+        { type: "crew", name: "Crew", icon: "users-three" },
       ],
       onCreateTile: (type, _meta) => {
         if (type === "terminal") {
@@ -1212,6 +1211,8 @@
           const id = `${type}-${Date.now().toString(36)}`;
           const options = type === "dashboard"
             ? { cols: 2, rows: 1, title: "Dashboard", slots: [] }
+            : type === "crew"
+            ? { name: "Crew", sessions: [] }
             : { title: `New ${_meta?.name || type}`, html: `<div style="padding:40px;text-align:center;opacity:0.5"><h2>${_meta?.name || type}</h2><p>Empty tile — content will appear here.</p></div>` };
           const tile = createTile(type, options);
           carousel.addCard(id, tile);
