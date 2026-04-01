@@ -39,6 +39,7 @@
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
     import { createDashboardTileFactory } from "/lib/tiles/dashboard-tile.js";
     import { createHtmlTileFactory } from "/lib/tiles/html-tile.js";
+    import { createCrewTileFactory } from "/lib/tiles/crew-tile.js";
     import { dispatchNotification } from "/lib/notify.js";
 
     // --- Modal Manager ---
@@ -299,6 +300,11 @@
     registerTileType("terminal", createTerminalTileFactory(terminalDeps));
     registerTileType("dashboard", createDashboardTileFactory({ createTileFn: createTile }));
     registerTileType("html", createHtmlTileFactory());
+    registerTileType("crew", createCrewTileFactory({
+      terminalPool,
+      createTileFn: createTile,
+      get carousel() { return carousel; },
+    }));
 
     /** Create a terminal tile for a session, using the session name as tile ID. */
     function makeTerminalTile(sessionName) {

@@ -334,6 +334,67 @@
     }
     .html-tile-content h1, .html-tile-content h2, .html-tile-content h3 { margin: 0 0 8px; }
     .html-tile-content p { margin: 0 0 12px; }
+    /* ── Crew tile (mini-terminal grid) ──────────────── */
+    .crew-grid {
+      display: grid;
+      gap: var(--space-sm, 8px);
+      padding: var(--space-sm, 8px);
+      flex: 1;
+      min-height: 0;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      grid-auto-rows: 1fr;
+    }
+    .crew-cell {
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--border, #333);
+      border-radius: var(--radius-md, 8px);
+      overflow: hidden;
+      cursor: pointer;
+      min-height: 0;
+      transition: border-color var(--transition-fast, 100ms);
+    }
+    .crew-cell:hover {
+      border-color: var(--accent, #7c3aed);
+    }
+    .crew-cell-label {
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--surface, #1a1a1a);
+      border-bottom: 1px solid var(--border, #333);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .crew-cell-terminal {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .crew-cell .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #4ade80;
+      flex-shrink: 0;
+    }
+    .crew-cell .status-dot.idle {
+      background: #facc15;
+    }
+    .crew-cell .status-dot.done {
+      background: #666;
+    }
+    .crew-status-bar {
+      padding: 6px 12px;
+      font-size: 11px;
+      color: var(--text-muted, #888);
+      border-top: 1px solid var(--border, #333);
+      display: flex;
+      gap: 12px;
+      flex-shrink: 0;
+    }
     /* In standalone PWA, leave room for status bar / traffic lights */
     @media (display-mode: standalone) {
       .carousel-card { top: calc(env(safe-area-inset-top, 0px) + 40px); }
