@@ -859,14 +859,51 @@
       const name = state.session.name;
       if (!name) return;
       const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-      if (tabs.length <= 1) return; // don't close the last tab
-      // Detach (remove from this window, keep tmux alive)
-      windowTabSet.removeTab(name);
-      wsConnection.sendUnsubscribe(name);
-      // Switch to adjacent tab
       const idx = tabs.indexOf(name);
-      const next = tabs[idx === tabs.length - 1 ? idx - 1 : idx + 1];
+      const next = tabs.length > 1
+        ? tabs[idx === tabs.length - 1 ? idx - 1 : idx + 1]
+        : null;
       if (next) switchSession(next);
+      if (carousel.isActive()) {
+        carousel.removeCard(name);
+      } else {
+        windowTabSet.removeTab(name);
+        wsConnection.sendUnsubscribe(name);
+      }
+      terminalPool.dispose(name);
+      // Last tab closed — show the add session menu
+      if (!next && shortcutBarInstance) {
+        const addBtn = document.querySelector(".ipad-add-btn, .tab-add-btn");
+        shortcutBarInstance.showAddMenu(addBtn);
+      }
+    }
+
+    async function killCurrentSession() {
+      const name = state.session.name;
+      if (!name) return;
+      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
+      const idx = tabs.indexOf(name);
+      const next = tabs.length > 1
+        ? tabs[idx === tabs.length - 1 ? idx - 1 : idx + 1]
+        : null;
+      if (next) switchSession(next);
+      // Remove from UI immediately
+      if (carousel.isActive()) {
+        carousel.removeCard(name);
+      } else {
+        windowTabSet.removeTab(name);
+        wsConnection.sendUnsubscribe(name);
+      }
+      terminalPool.dispose(name);
+      // Kill on server (best-effort — may fail if disconnected)
+      try {
+        await api.delete(`/sessions/${encodeURIComponent(name)}`);
+      } catch { /* disconnected or already dead — that's fine */ }
+      // Last tab — show add menu
+      if (!next && shortcutBarInstance) {
+        const addBtn = document.querySelector(".ipad-add-btn, .tab-add-btn");
+        shortcutBarInstance.showAddMenu(addBtn);
+      }
     }
 
     function toggleKeyboardHelp() {
@@ -890,6 +927,11 @@
       if (closeBtn) closeBtn.addEventListener("click", toggleKeyboardHelp);
     }
 
+    // Option (Alt) based shortcuts work in both browser and PWA mode
+    // because browsers don't reserve Option+key combinations.
+    // Note: macOptionIsMeta is true for xterm.js, so we intercept at
+    // the document level BEFORE xterm processes them.
+
     document.addEventListener("keydown", (ev) => {
       // Escape closes keyboard help
       if (ev.key === "Escape" && kbHelpOverlay?.classList.contains("visible")) {
@@ -898,55 +940,32 @@
         return;
       }
 
-      if (!ev.metaKey) return;
-
-      // Cmd+/ — keyboard shortcuts help
-      if (ev.key === "/" && !ev.shiftKey) {
-        ev.preventDefault();
-        toggleKeyboardHelp();
-        return;
+      // --- Cmd shortcuts (non-conflicting) ---
+      if (ev.metaKey) {
+        // Cmd+/ — keyboard shortcuts help
+        if (ev.key === "/" && !ev.shiftKey) {
+          ev.preventDefault();
+          toggleKeyboardHelp();
+          return;
+        }
       }
 
-      // Cmd+[ — previous tab (left)
-      if (ev.key === "[" && !ev.shiftKey) {
-        ev.preventDefault();
-        navigateTab(-1);
-        return;
-      }
-
-      // Cmd+] — next tab (right)
-      if (ev.key === "]" && !ev.shiftKey) {
-        ev.preventDefault();
-        navigateTab(+1);
-        return;
-      }
-
-      // Cmd+Shift+[ (Cmd+{) — move tab left
-      if (ev.key === "{" || (ev.key === "[" && ev.shiftKey)) {
-        ev.preventDefault();
-        moveTab(-1);
-        return;
-      }
-
-      // Cmd+Shift+] (Cmd+}) — move tab right
-      if (ev.key === "}" || (ev.key === "]" && ev.shiftKey)) {
-        ev.preventDefault();
-        moveTab(+1);
-        return;
-      }
-
-      // Cmd+T — new terminal
-      if (ev.key === "t" && !ev.shiftKey) {
-        ev.preventDefault();
-        createNewSession();
-        return;
-      }
-
-      // Cmd+W — close terminal (detach from this window)
-      if (ev.key === "w" && !ev.shiftKey) {
-        ev.preventDefault();
-        closeCurrentSession();
-        return;
+      // --- Option (Alt) shortcuts — work in browser + PWA ---
+      if (ev.altKey && !ev.metaKey && !ev.ctrlKey) {
+        // Shift variants first — must check before non-shift
+        if (ev.shiftKey && ev.code === "BracketLeft") { ev.preventDefault(); moveTab(-1); return; }
+        if (ev.shiftKey && ev.code === "BracketRight") { ev.preventDefault(); moveTab(+1); return; }
+        if (ev.shiftKey && ev.code === "KeyW") { ev.preventDefault(); killCurrentSession(); return; }
+        // Non-shift
+        if (!ev.shiftKey) {
+          switch (ev.code) {
+            case "KeyT": ev.preventDefault(); createNewSession(); return;
+            case "KeyW": ev.preventDefault(); closeCurrentSession(); return;
+            case "KeyQ": ev.preventDefault(); killCurrentSession(); return;
+            case "BracketLeft": ev.preventDefault(); navigateTab(-1); return;
+            case "BracketRight": ev.preventDefault(); navigateTab(+1); return;
+          }
+        }
       }
     }, true); // Capture phase to intercept before browser defaults
 
