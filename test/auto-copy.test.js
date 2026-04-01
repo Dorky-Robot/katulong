@@ -17,7 +17,8 @@ function wireAutoCopy(term) {
   term.onSelectionChange(() => {
     const text = term.getSelection();
     if (text) {
-      navigator.clipboard.writeText(text).catch(() => {});
+      const stripped = text.split("\n").map(l => l.trimEnd()).join("\n");
+      navigator.clipboard.writeText(stripped).catch(() => {});
     }
   });
 }
@@ -72,6 +73,18 @@ describe("auto-copy on selection", () => {
     assert.equal(writeTextMock.mock.calls.length, 1);
     // Allow the microtask to settle without throwing
     await new Promise((r) => setTimeout(r, 10));
+  });
+
+  it("strips trailing spaces from each line (wrapped text)", () => {
+    wireAutoCopy(term);
+    // Simulate xterm padding each wrapped line to full column width (80 cols)
+    term.getSelection = () => "https://example.com/a112     \nd9d16e   ";
+    selectionCb();
+    assert.equal(writeTextMock.mock.calls.length, 1);
+    assert.deepStrictEqual(
+      writeTextMock.mock.calls[0].arguments,
+      ["https://example.com/a112\nd9d16e"],
+    );
   });
 
   it("does not copy when selection is null/undefined", () => {

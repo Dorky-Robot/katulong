@@ -177,7 +177,8 @@
         entry.term.onSelectionChange(() => {
           const text = entry.term.getSelection();
           if (text) {
-            navigator.clipboard.writeText(text).catch(() => {});
+            const stripped = text.split("\n").map(l => l.trimEnd()).join("\n");
+            navigator.clipboard.writeText(stripped).catch(() => {});
           }
         });
 
