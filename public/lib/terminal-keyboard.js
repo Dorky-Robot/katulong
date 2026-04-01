@@ -86,10 +86,14 @@ export function createTerminalKeyboard(options = {}) {
 
       // Cmd/Meta key shortcuts
       if (ev.metaKey && ev.type === "keydown") {
-        // App-level shortcuts — handled by app-level listener, don't send to PTY
-        if (ev.key === "[" || ev.key === "]" || ev.key === "/" ||
-            ev.key === "{" || ev.key === "}" ||
-            ev.key === "t" || ev.key === "w") return false;
+        // App-level Cmd shortcuts — handled by app-level listener, don't send to PTY
+        if (ev.key === "/") return false;
+      }
+
+      // Option (Alt) shortcuts — handled at app level for tab management
+      if (ev.altKey && !ev.metaKey && !ev.ctrlKey && ev.type === "keydown") {
+        if (ev.code === "KeyT" || ev.code === "KeyW" || ev.code === "KeyQ" ||
+            ev.code === "BracketLeft" || ev.code === "BracketRight") return false;
 
         if (ev.key === "f" && onToggleSearch) {
           ev.preventDefault();
