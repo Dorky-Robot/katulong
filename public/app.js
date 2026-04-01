@@ -841,6 +841,34 @@
       switchSession(tabs[(idx + direction + tabs.length) % tabs.length]);
     }
 
+    function moveTab(direction) {
+      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
+      if (tabs.length <= 1) return;
+      const idx = tabs.indexOf(state.session.name);
+      if (idx === -1) return;
+      const newIdx = idx + direction;
+      if (newIdx < 0 || newIdx >= tabs.length) return; // don't wrap
+      // Swap in the tab array
+      const reordered = [...tabs];
+      [reordered[idx], reordered[newIdx]] = [reordered[newIdx], reordered[idx]];
+      windowTabSet.reorderTabs(reordered);
+      if (carousel.isActive()) carousel.reorderCards(reordered);
+    }
+
+    function closeCurrentSession() {
+      const name = state.session.name;
+      if (!name) return;
+      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
+      if (tabs.length <= 1) return; // don't close the last tab
+      // Detach (remove from this window, keep tmux alive)
+      windowTabSet.removeTab(name);
+      wsConnection.sendUnsubscribe(name);
+      // Switch to adjacent tab
+      const idx = tabs.indexOf(name);
+      const next = tabs[idx === tabs.length - 1 ? idx - 1 : idx + 1];
+      if (next) switchSession(next);
+    }
+
     function toggleKeyboardHelp() {
       const overlay = document.getElementById("kb-help-overlay");
       if (!overlay) return;
@@ -879,17 +907,45 @@
         return;
       }
 
-      // Cmd+[ — next tab
+      // Cmd+[ — previous tab (left)
       if (ev.key === "[" && !ev.shiftKey) {
+        ev.preventDefault();
+        navigateTab(-1);
+        return;
+      }
+
+      // Cmd+] — next tab (right)
+      if (ev.key === "]" && !ev.shiftKey) {
         ev.preventDefault();
         navigateTab(+1);
         return;
       }
 
-      // Cmd+] — previous tab
-      if (ev.key === "]" && !ev.shiftKey) {
+      // Cmd+Shift+[ (Cmd+{) — move tab left
+      if (ev.key === "{" || (ev.key === "[" && ev.shiftKey)) {
         ev.preventDefault();
-        navigateTab(-1);
+        moveTab(-1);
+        return;
+      }
+
+      // Cmd+Shift+] (Cmd+}) — move tab right
+      if (ev.key === "}" || (ev.key === "]" && ev.shiftKey)) {
+        ev.preventDefault();
+        moveTab(+1);
+        return;
+      }
+
+      // Cmd+T — new terminal
+      if (ev.key === "t" && !ev.shiftKey) {
+        ev.preventDefault();
+        createNewSession();
+        return;
+      }
+
+      // Cmd+W — close terminal (detach from this window)
+      if (ev.key === "w" && !ev.shiftKey) {
+        ev.preventDefault();
+        closeCurrentSession();
         return;
       }
     }, true); // Capture phase to intercept before browser defaults
