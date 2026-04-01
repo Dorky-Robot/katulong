@@ -175,11 +175,52 @@
         // a Ctrl+C; on mobile it works around canvas-based selection that the
         // native "Copy" menu can't read.
         entry.term.onSelectionChange(() => {
+          const sel = entry.term.getSelectionPosition();
           const text = entry.term.getSelection();
-          if (text) {
-            const stripped = text.split("\n").map(l => l.trimEnd()).join("\n");
-            navigator.clipboard.writeText(stripped).catch(() => {});
+          if (!text || !sel) return;
+
+          // Unwrap application-level line breaks that were inserted to fit
+          // the terminal width. The terminal buffer's isWrapped flag only
+          // catches terminal-level soft wraps, but apps like Claude Code
+          // insert their own \n for word-wrapping. Heuristic: if a trimmed
+          // line reaches close to the terminal column width (within 2 chars),
+          // it was probably wrapped and should be joined with a space. Lines
+          // significantly shorter are real paragraph breaks.
+          const cols = entry.term.cols;
+          const buf = entry.term.buffer.active;
+          const lines = text.split("\n");
+          let result = "";
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trimEnd();
+            if (i === 0) {
+              result = line;
+              continue;
+            }
+            const bufRow = sel.start.y + i;
+            const bufLine = buf.getLine(bufRow);
+            // Terminal-level soft wrap — join directly (no space)
+            if (bufLine?.isWrapped) {
+              result += line;
+              continue;
+            }
+            // App-level wrap heuristic: if the previous line is "long enough"
+            // and the current line starts with a non-empty continuation,
+            // it's probably word-wrapped. Apps like Claude Code wrap well
+            // before the terminal column limit (they add margins), so we
+            // can't use cols as the threshold. Instead: if the previous
+            // line has 40+ chars and the next line is non-empty and doesn't
+            // look like a list item or new section, join with space.
+            const prevLine = lines[i - 1].trimEnd();
+            const looksLikeContinuation = line.length > 0
+              && !/^\s*[-*>•▸▹❯›\d]/.test(line)  // not a list/prompt
+              && !/^\s{4,}/.test(line);             // not deeply indented (code block)
+            if (prevLine.length >= 40 && looksLikeContinuation) {
+              result += " " + line;
+            } else {
+              result += "\n" + line;
+            }
           }
+          navigator.clipboard.writeText(result).catch(() => {});
         });
 
         // On touch devices, also attach long-press-to-select so finger touch
