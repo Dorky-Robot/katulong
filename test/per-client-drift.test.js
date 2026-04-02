@@ -37,6 +37,16 @@ function createMockWs(readyState = 1) {
   };
 }
 
+function mockTransport(ws) {
+  return {
+    send: (data) => ws.send(data),
+    get readyState() { return ws.readyState; },
+    get bufferedAmount() { return ws.bufferedAmount || 0; },
+    close: (code, reason) => ws.close(code, reason),
+    ws,
+  };
+}
+
 function createMockBridge() {
   const subscribers = [];
   return {
@@ -167,8 +177,8 @@ describe("Per-client drift detection", () => {
       const ws1 = createMockWs();
       const ws2 = createMockWs();
 
-      wsMgr.wsClients.set("client-A", { ws: ws1 });
-      wsMgr.wsClients.set("client-B", { ws: ws2 });
+      wsMgr.wsClients.set("client-A", { transport: mockTransport(ws1) });
+      wsMgr.wsClients.set("client-B", { transport: mockTransport(ws2) });
       sessionManager._setSession("client-A", "alpha");
       sessionManager._setSession("client-B", "alpha");
 
@@ -193,7 +203,7 @@ describe("Per-client drift detection", () => {
 
     it("state-check with clientId does not send to unknown client", () => {
       const ws1 = createMockWs();
-      wsMgr.wsClients.set("client-A", { ws: ws1 });
+      wsMgr.wsClients.set("client-A", { transport: mockTransport(ws1) });
       sessionManager._setSession("client-A", "alpha");
 
       bridge.relay({
@@ -215,9 +225,9 @@ describe("Per-client drift detection", () => {
       const ws2 = createMockWs();
       const ws3 = createMockWs();
 
-      wsMgr.wsClients.set("client-A", { ws: ws1 });
-      wsMgr.wsClients.set("client-B", { ws: ws2 });
-      wsMgr.wsClients.set("client-C", { ws: ws3 });
+      wsMgr.wsClients.set("client-A", { transport: mockTransport(ws1) });
+      wsMgr.wsClients.set("client-B", { transport: mockTransport(ws2) });
+      wsMgr.wsClients.set("client-C", { transport: mockTransport(ws3) });
       sessionManager._setSession("client-A", "alpha");
       sessionManager._setSession("client-B", "alpha");
       sessionManager._setSession("client-C", "beta"); // different session
@@ -242,7 +252,7 @@ describe("Per-client drift detection", () => {
 
     it("targeted state-check to closed WebSocket is silently dropped", () => {
       const ws = createMockWs(3); // readyState = CLOSED
-      wsMgr.wsClients.set("client-A", { ws });
+      wsMgr.wsClients.set("client-A", { transport: mockTransport(ws) });
       sessionManager._setSession("client-A", "alpha");
 
       // Should not throw
