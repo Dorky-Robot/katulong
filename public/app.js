@@ -1797,7 +1797,7 @@
       if (carouselState && carouselState.tiles?.length > 0 && !carousel.isActive()) {
         const tiles = carouselState.tiles.map(t => {
           const tile = createTile(t.type, t);
-          return { id: t.id, tile };
+          return { id: t.id, tile, cardWidth: t.cardWidth };
         });
         carousel.activate(tiles, carouselState.focused);
         // Sync tab set to carousel order (carousel is source of truth)
