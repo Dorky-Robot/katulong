@@ -216,7 +216,7 @@
     /* Cards positioned absolutely, centered, with max-width so neighbors peek on wider screens. */
     .carousel-card {
       position: absolute;
-      top: 8px; bottom: 12px;
+      top: 8px; bottom: 8px;
       left: 50%;
       width: calc(100% - 16px);
       max-width: 720px;
@@ -542,7 +542,7 @@
 
     /* In standalone PWA, leave room for status bar / traffic lights */
     @media (display-mode: standalone) {
-      .carousel-card { top: calc(env(safe-area-inset-top, 0px) + 40px); }
+      .carousel-card { top: calc(env(safe-area-inset-top, 0px) + 8px); }
     }
     .carousel-card.focused {
       z-index: 2;

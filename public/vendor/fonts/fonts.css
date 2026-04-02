@@ -46,5 +46,5 @@
 }
 
 :root {
-  --font-mono-stack: 'JetBrainsMono NF', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', monospace;
+  --font-mono-stack: 'JetBrainsMono NF', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
 }

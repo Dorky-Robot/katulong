@@ -152,7 +152,7 @@
         cols: TERMINAL_COLS,
         rows: TERMINAL_ROWS_DEFAULT,
         fontSize: 14,
-        fontFamily: "'JetBrainsMono NF', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', monospace",
+        fontFamily: "'JetBrainsMono NF', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace",
         theme: themeManager.getEffective() === "light" ? LIGHT_THEME : DARK_THEME,
         cursorBlink: true,
         scrollback: 10000,
