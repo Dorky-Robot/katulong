@@ -17,6 +17,7 @@
     import { attachTouchSelect } from "/lib/touch-select.js";
 
     import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
+    import { TERMINAL_COLS, TERMINAL_ROWS_DEFAULT } from "/lib/terminal-config.js";
     import { createTabManager } from "/lib/tab-manager.js";
     import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll, initScrollTracking, initTouchScroll } from "/lib/scroll-utils.js";
     import { keysToSequence, sendSequence, displayKey, keysLabel, keysString, VALID_KEYS, normalizeKey } from "/lib/key-mapping.js";
@@ -148,8 +149,10 @@
         }
       },
       terminalOptions: {
+        cols: TERMINAL_COLS,
+        rows: TERMINAL_ROWS_DEFAULT,
         fontSize: 14,
-        fontFamily: "'JetBrainsMono NF', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace",
+        fontFamily: "'JetBrainsMono NF', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', monospace",
         theme: themeManager.getEffective() === "light" ? LIGHT_THEME : DARK_THEME,
         cursorBlink: true,
         scrollback: 10000,

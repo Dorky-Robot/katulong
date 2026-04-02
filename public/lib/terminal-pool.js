@@ -116,6 +116,19 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
   // Sessions protected from LRU eviction (e.g. split secondary pane)
   const protectedSessions = new Set();
 
+  // Debounce resize notifications to coalesce rapid events (activate rAF +
+  // ResizeObserver firing within the same frame) into a single SIGWINCH.
+  // Multiple SIGWINCHs in quick succession interrupt TUI apps mid-render,
+  // causing garbled partial frames (scattered right-aligned text).
+  const _resizeTimers = new Map();
+  function debouncedResize(sessionName, cols, rows) {
+    clearTimeout(_resizeTimers.get(sessionName));
+    _resizeTimers.set(sessionName, setTimeout(() => {
+      _resizeTimers.delete(sessionName);
+      if (onResize) onResize(sessionName, cols, rows);
+    }, 80));
+  }
+
   function createEntry(sessionName) {
     // Evict LRU if at capacity
     if (pool.size >= MAX_POOL_SIZE) {
@@ -216,8 +229,8 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
       entry.term.focus();
       // Only notify server if dimensions actually changed — otherwise
       // the resize triggers tmux redraws that duplicate content.
-      if (onResize && result?.changed) {
-        onResize(sessionName, entry.term.cols, entry.term.rows);
+      if (result?.changed) {
+        debouncedResize(sessionName, entry.term.cols, entry.term.rows);
       }
     });
 
@@ -278,8 +291,8 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     const entry = pool.get(sessionName);
     if (!entry) return false;
     const result = scaleToFit(entry.term, entry.container);
-    if (onResize && result?.changed) {
-      onResize(sessionName, entry.term.cols, entry.term.rows);
+    if (result?.changed) {
+      debouncedResize(sessionName, entry.term.cols, entry.term.rows);
     }
     return result?.changed ?? false;
   }
@@ -288,8 +301,8 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
   function scaleAll() {
     for (const [name, entry] of pool) {
       const result = scaleToFit(entry.term, entry.container);
-      if (onResize && result?.changed) {
-        onResize(name, entry.term.cols, entry.term.rows);
+      if (result?.changed) {
+        debouncedResize(name, entry.term.cols, entry.term.rows);
       }
     }
   }
@@ -314,9 +327,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
       // (e.g., tapping the terminal on iPad to focus it).
       if (result?.changed) {
         active.term.refresh(0, active.term.rows - 1);
-        if (onResize) {
-          onResize(activeSession, active.term.cols, active.term.rows);
-        }
+        debouncedResize(activeSession, active.term.cols, active.term.rows);
       }
     }
   });

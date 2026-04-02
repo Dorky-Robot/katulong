@@ -1,15 +1,19 @@
 # Crew Dashboard
 
-Mini-tile view for orchestrated worker sessions.
+Live mini-tile view for orchestrated worker sessions. See `docs/dorkyrobot-stack.md` for the full design.
 
 ## Open
-- [ ] **Mini tiles** — when the orchestrator spawns workers, show them as small preview tiles (like the mockup) instead of full tabs. Each mini tile shows a live terminal preview at reduced scale. Tapping a mini tile promotes it to the main view.
-- [ ] **Tile clusters** — group related mini tiles together (by crew project name). The cluster acts as a single card in the carousel. Swiping cycles through clusters, tapping a tile within a cluster zooms in.
-- [ ] **Background indicator** — worker sessions opened by the API (not by the user) should have a subtle visual distinction in the session list (icon, badge, or color) so you know "I didn't open this, something else did"
-- [ ] **Auto-dismiss** — when a worker finishes (shell exits or `yolo` completes), the mini tile could fade or show a "done" state instead of staying active
+- [ ] **Crew tile type** — a new tile type (`crew-tile`) that renders a CSS grid of mini-terminals. Each cell is a real xterm.js instance subscribed to a `{project}--{role}` session's output, rendered at reduced font size. Tapping promotes to full terminal view.
+- [ ] **Tile clusters by project** — group mini tiles by project name. The cluster acts as a single card in the carousel.
+- [ ] **Background indicator** — sessions opened by API (not by user) get a subtle visual badge (robot icon already set via `req._apiKeyAuth`).
+- [ ] **Auto-dismiss on done** — when a worker finishes (no child processes), mini tile fades or shows "done" state. Pub/sub exit event triggers this.
+- [ ] **Flip-to-dashboard** — back face of terminal tiles shows: agent status, run duration, task assignment (from sipag), quick actions (kill, restart, logs), process tree.
+- [ ] **Auto-flip on idle** — when worker finishes, auto-flip to dashboard showing result summary.
+- [ ] **Orchestrator tile** — persistent tile showing all active projects, worker count per role, recent events from pub/sub. Mission control view.
 
 ## Context
-- Katulong already has a dashboard tile system (`public/lib/tiles/dashboard-tile.js`) that renders a CSS grid of sub-tiles
-- The carousel (`public/lib/card-carousel.js`) supports multiple tile types
-- The `set-tab-icon` WebSocket message can set per-session icons
-- Worker sessions use `{theme}--{worker}` naming convention
+- Card carousel already has front/back faces with `.flipped` CSS class
+- Tile registry supports custom tile types — dashboard tiles exist (`public/lib/tiles/dashboard-tile.js`)
+- Session status endpoint provides alive/childCount data
+- Durable pub/sub (planned) will carry agent lifecycle events
+- sipag (planned) will provide task assignment data

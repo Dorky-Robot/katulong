@@ -43,16 +43,6 @@ export function createTerminalTileFactory(deps) {
         el.appendChild(entry.container);
         mounted = true;
 
-        // ── Flip toolbar button ────────────────────────────────────
-        if (ctx?.chrome?.toolbar) {
-          ctx.chrome.toolbar.addButton({
-            icon: "chart-bar",
-            label: "Session dashboard",
-            position: "right",
-            onClick: () => ctx.flip(),
-          });
-        }
-
         // ── Register dashboard back-face ───────────────────────────
         const carousel = deps.carousel;
         if (carousel) {

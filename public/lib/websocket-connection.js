@@ -9,6 +9,7 @@ import { scrollToBottom, terminalWriteWithScroll, isAtBottom } from "/lib/scroll
 import { basePath } from "/lib/base-path.js";
 import { createPullManager } from "/lib/pull-manager.js";
 import { screenFingerprint } from "/lib/screen-fingerprint.js";
+import { TERMINAL_COLS, TERMINAL_ROWS_DEFAULT } from "/lib/terminal-config.js";
 
 /**
  * Connection state machine: DISCONNECTED → CONNECTING → CONNECTED → ATTACHED
@@ -327,9 +328,14 @@ export function createWebSocketConnection(deps = {}) {
     sessionRemoved: (e) => deps.onSessionRemoved?.(e.name),
     poolRename: (e) => deps.poolRename?.(e.oldName, e.newName),
     tabRename: (e) => deps.tabRename?.(e.oldName, e.newName),
-    resizeSync: (e) => {
-      const t = getTerm();
-      if (t && e.cols > 0 && e.rows > 0 && e.cols <= 1000 && e.rows <= 1000) t.resize(e.cols, e.rows);
+    resizeSync: () => {
+      // Another client resized the shared PTY.  Don't blindly apply their
+      // cols/rows — that breaks font scaling and forces a row count that
+      // doesn't match this client's viewport height.  Instead, recalculate
+      // our own dimensions via scaleToFit (font + rows from THIS viewport).
+      // The server's client-tracker ignores resize from inactive clients,
+      // so this won't override the active client's PTY dimensions.
+      if (deps.fit) deps.fit();
     },
     fastReconnect: () => {
       state.connection.reconnectDelay = 500;
@@ -375,8 +381,8 @@ export function createWebSocketConnection(deps = {}) {
       connectionState = CONNECTION_STATES.CONNECTED;
       state.connection.reconnectDelay = 1000;
       const term = getTerm();
-      const cols = term?.cols || 80;
-      const rows = term?.rows || 24;
+      const cols = term?.cols || TERMINAL_COLS;
+      const rows = term?.rows || TERMINAL_ROWS_DEFAULT;
       state.connection.ws.send(JSON.stringify({ type: "attach", session: state.session.name, cols, rows }));
     };
 
@@ -459,8 +465,8 @@ export function createWebSocketConnection(deps = {}) {
           // Brief background — ping with resize to verify connection
           try {
             const term = getTerm();
-            const cols = term?.cols || 80;
-            const rows = term?.rows || 24;
+            const cols = term?.cols || TERMINAL_COLS;
+            const rows = term?.rows || TERMINAL_ROWS_DEFAULT;
             state.connection.ws.send(JSON.stringify({ type: "resize", session: state.session.name, cols, rows }));
           } catch {
             state.connection.ws.close();

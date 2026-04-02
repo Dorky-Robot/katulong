@@ -1,4 +1,5 @@
-# Terminal Links
+# Terminal Links & Copy
 
 ## Open
-- [ ] **Wrapped links get truncated** — when a URL in the terminal wraps across lines, clicking it only captures the portion on one line (adds a space or truncates at the wrap point). The WebLinksAddon in xterm.js handles link detection, but it doesn't rejoin URLs that span multiple lines. Need to investigate: is this an xterm.js WebLinksAddon limitation, or is it a regex/detection issue we can fix? The addon is loaded in `public/lib/terminal-pool.js` via `new WebLinksAddon()`.
+- [ ] **Wrapped text copy includes padding spaces** — when selecting text that wraps across terminal lines, `term.getSelection()` includes trailing spaces that pad each line to the full column width. Pasting gives `a112     d9d1651e43f...` instead of `a112d9d1651e43f...`. Fix: in the auto-copy handler (and anywhere getSelection is used), strip trailing whitespace from each line and rejoin: `term.getSelection().split('\n').map(l => l.trimEnd()).join('\n')`. This fixes both copy-paste and the link click issue.
+- [ ] **Wrapped links get truncated on click** — the WebLinksAddon only matches URLs within a single line. A URL that wraps is detected as two partial strings. May need a custom link provider (`term.registerLinkProvider()`) that reads across buffer lines to reconstruct wrapped URLs.

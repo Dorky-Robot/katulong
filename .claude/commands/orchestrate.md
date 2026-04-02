@@ -121,40 +121,28 @@ curl -s -X POST "$HOST_KATULONG/sessions/theme--worker/exec" \
 
 ## Dorky Robot stack
 
-This project is part of the dorkyrobot.com ecosystem. The stack is designed so each tool layers on the others:
+See `docs/dorkyrobot-stack.md` for the full architecture. Summary:
 
-### Kubo — isolated dev containers
-- **What:** Docker containers with a full dev stack (Claude Code, Node, Rust, Go, gh, tmux, etc.)
-- **CLI runs on the host**, not inside containers. `$KUBO_NAME` env var tells you which kubo you're in.
-- **Key commands:**
-  ```
-  kubo <dir>                    # open a project dir in a container
-  kubo <name>                   # attach to a named kubo
-  kubo new <name> <dirs...>     # multi-project workspace
-  kubo add <name> <dirs...>     # add projects to existing kubo
-  kubo ls                       # list containers
-  kubo update <name>            # rebuild image, keep data
-  kubo stop/rm <name>           # lifecycle
-  ```
-- **Inside a kubo:** projects live at `/work/<project>/`. Home dir and work dir persist across updates.
-- **Host networking:** containers share the host network, so ports are directly accessible.
-- **`yolo`** is an alias for `claude --dangerously-skip-permissions` — safe inside the container sandbox.
+| Tool | Role |
+|------|------|
+| **katulong** | Data plane — web terminals, durable pub/sub, live tiles, cross-machine orchestration |
+| **sipag** | Control plane — multi-project task board (TUI+CLI), role templates, dispatch |
+| **kubo** | Sandbox — dev containers (Colima/Docker), full stack, host network |
+| **diwa** | Knowledge plane — git history search across all projects |
+| **yolo** | Agent launcher — Claude Code entry point inside kubos (NOT `--dangerously-skip-permissions` directly) |
 
-### Katulong — web terminal + orchestration
-- The **host instance** runs on the host machine and serves the user's browser/iPad.
-- Each kubo may also run its own katulong for dev/testing — but workers should be created on the host instance.
-- `katulong crew` CLI works from the host. From inside a kubo, use the HTTP API with explicit port.
+### Key principles
+- **Sessions are scoped by project + role** — `{project}--{role}` naming. Multiple agents share a role-session's context.
+- **Roles**: dev (code), test (QA), perf (profiling), product (backlog/specs). Defined in sipag role templates.
+- **Hooks bridge everything** — Claude Code lifecycle events → katulong pub/sub → sipag board updates.
+- **Don't reinvent Claude Code** — use native subagents, skills, hooks, memory. Build the cross-machine/cross-project layer.
+- **yolo, not --dangerously-skip-permissions** — yolo is the standard agent entry point.
+- **diwa for cross-project context** — don't mix project contexts in sessions. Use `diwa search <project> "<query>"`.
 
-### Diwa — git history knowledge base
-- `diwa search <repo> "<query>"` — finds past bugs, decisions, patterns from commit history.
-- Indexes are shared across kubos via the `~/.diwa` host mount.
-- Always search before tackling recurring issues (garble, scroll, drag jitter, etc.).
-
-### Cross-project orchestration
-When work spans multiple projects:
-1. Each project has its own kubo (or they share a multi-project kubo via `kubo new <name> <dirs...>`)
-2. The host katulong manages all visible sessions
-3. From inside any kubo, use the host katulong API (same host network) to create/monitor workers
+### Kubo quick reference
+- CLI runs on the host: `kubo <dir>`, `kubo new <name> <dirs...>`, `kubo ls`, `kubo update <name>`
+- Inside a kubo: projects at `/work/<project>/`, home dir persists, host network shared
+- `~/.katulong/`, `~/.diwa/`, `~/.sipag/` mounted from host
 
 ## Notifications
 

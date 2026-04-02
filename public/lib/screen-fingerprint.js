@@ -11,6 +11,10 @@
 export function screenFingerprint(terminal) {
   const buf = terminal.buffer.active;
   let h = 5381;
+  // Include dimensions so a cols/rows mismatch between client and server
+  // is detected as drift (not just content differences from reflow).
+  h = ((h << 5) + h + terminal.cols) | 0;
+  h = ((h << 5) + h + terminal.rows) | 0;
   h = ((h << 5) + h + buf.cursorY) | 0;
   h = ((h << 5) + h + buf.cursorX) | 0;
   for (let y = 0; y < terminal.rows; y++) {
