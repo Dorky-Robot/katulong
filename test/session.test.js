@@ -692,3 +692,107 @@ describe("SessionNotAliveError", () => {
     assert.strictEqual(err.name, "SessionNotAliveError");
   });
 });
+
+// --- seedScreen tests ---
+
+describe("seedScreen", () => {
+  it("writes captured pane content to headless terminal", async () => {
+    const { session } = createWiredTestSession("seed-test", {
+      onData: () => {},
+    });
+
+    await session.seedScreen("$ hello world\r\n$ ");
+
+    const serialized = await session.serializeScreen();
+    assert.ok(serialized.length > 0, "serialized screen should not be empty after seed");
+    assert.ok(serialized.includes("hello world"), "serialized screen should contain seeded content");
+  });
+
+  it("positions cursor after seed content", async () => {
+    const { session } = createWiredTestSession("seed-cursor", {
+      onData: () => {},
+    });
+
+    await session.seedScreen("$ prompt here");
+
+    // The headless terminal cursor should be positioned after the seed text
+    const buf = session._headless.buffer.active;
+    assert.ok(buf.cursorX > 0 || buf.cursorY > 0, "cursor should not be at origin after seed");
+  });
+
+  it("does not affect the RingBuffer", async () => {
+    const { session } = createWiredTestSession("seed-no-ring", {
+      onData: () => {},
+    });
+
+    await session.seedScreen("some pane content\r\n");
+
+    assert.strictEqual(session.outputBuffer.totalBytes, 0, "RingBuffer should remain empty after seed");
+    assert.strictEqual(session.getBuffer(), "", "getBuffer should return empty after seed");
+  });
+
+  it("no-ops when content is null", async () => {
+    const { session } = createWiredTestSession("seed-null", {
+      onData: () => {},
+    });
+
+    await session.seedScreen(null);
+
+    const serialized = await session.serializeScreen();
+    // Should be empty or minimal (no crash)
+    assert.strictEqual(typeof serialized, "string");
+  });
+
+  it("no-ops when content is empty string", async () => {
+    const { session } = createWiredTestSession("seed-empty", {
+      onData: () => {},
+    });
+
+    await session.seedScreen("");
+
+    // Should not crash
+    const serialized = await session.serializeScreen();
+    assert.strictEqual(typeof serialized, "string");
+  });
+
+  it("no-ops when headless terminal is disposed", async () => {
+    const { session } = createWiredTestSession("seed-disposed", {
+      onData: () => {},
+    });
+
+    session._headless.dispose();
+    session._headless = null;
+
+    // Should not throw
+    await session.seedScreen("some content");
+  });
+
+  it("is overwritten by subsequent %output data", async () => {
+    const { session, mockProc } = createWiredTestSession("seed-overwrite", {
+      onData: () => {},
+    });
+
+    // Seed with initial content
+    await session.seedScreen("$ old prompt");
+
+    // Now simulate real output arriving
+    mockProc.simulateOutput("%0", "\x1b[H\x1b[2J$ new prompt");
+
+    const serialized = await session.serializeScreen();
+    assert.ok(serialized.includes("new prompt"), "real output should overwrite seed");
+  });
+
+  it("positions cursor correctly when cursorPos is provided", async () => {
+    const { session } = createWiredTestSession("seed-cursor-pos", {
+      onData: () => {},
+    });
+
+    // Seed with content and explicit cursor position (row 2, col 5 — 1-based)
+    await session.seedScreen("line1\r\nline2\r\nline3", { row: 2, col: 5 });
+
+    const buf = session._headless.buffer.active;
+    // cursorY is 0-based; row is 1-based
+    assert.strictEqual(buf.cursorY, 1, "cursor row should be 1 (0-based) for row:2");
+    assert.strictEqual(buf.cursorX, 4, "cursor col should be 4 (0-based) for col:5");
+  });
+});

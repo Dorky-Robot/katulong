@@ -28,19 +28,23 @@ class MockSession {
     this.tmuxName = tmuxName;
     this.state = MockSession.STATE_ATTACHED;
     this._childCount = 0;
+    this._cols = 0;
+    this._rows = 0;
     this.external = options.external || false;
     this._written = [];
     this._resizes = [];
+    this._seedCalls = [];
     this._options = options;
     this.outputBuffer = { totalBytes: 0 };
   }
 
   get alive() { return this.state === MockSession.STATE_ATTACHED; }
   attachControlMode() {}
+  async seedScreen(content, cursorPos) { this._seedCalls.push({ content, cursorPos }); }
   serializeScreen() { return "mock-screen-snapshot"; }
   updateChildCount(count) { this._childCount = count; }
   write(data) { this._written.push(data); }
-  resize(cols, rows) { this._resizes.push({ cols, rows }); }
+  resize(cols, rows) { this._resizes.push({ cols, rows }); this._cols = cols; this._rows = rows; }
   detach() {
     if (this.state !== MockSession.STATE_ATTACHED) return;
     this.state = MockSession.STATE_DETACHED;
@@ -88,7 +92,7 @@ mock.module(tmuxModuleUrl, {
     applyTmuxSessionOptions: async () => {},
     captureScrollback: async () => "",
     captureVisiblePane: async () => "$ prompt\n",
-    getCursorPosition: async () => ({ row: 0, col: 0 }),
+    getCursorPosition: async () => ({ row: 1, col: 10 }),
     getPaneCwd: async () => "/tmp",
     checkTmux: async () => {},
     cleanTmuxServerEnv: async () => {},
@@ -96,7 +100,6 @@ mock.module(tmuxModuleUrl, {
     tmuxListSessions: async () => [...tmuxSessions.keys()],
     tmuxKillSession: async (tmuxName) => { tmuxSessions.delete(tmuxName); },
     tmuxListSessionsDetailed: async () => new Map(),
-    getCursorPosition: async () => ({ row: 0, col: 0 }),
   },
 });
 
@@ -371,6 +374,34 @@ describe("session manager", () => {
       assert.strictEqual(r2.alive, true);
       // Only one session should exist
       assert.strictEqual(mgr.listSessions().sessions.length, 1);
+    });
+  });
+
+  describe("seedScreen on adopt", () => {
+    it("seeds the headless terminal with captured pane content on session create", async () => {
+      const { mgr } = makeManager();
+      await mgr.createSession("seeded");
+      const session = mgr.getSession("seeded");
+      assert.ok(session._seedCalls.length > 0, "seedScreen should be called on session creation");
+      assert.strictEqual(session._seedCalls[0].content, "$ prompt\n");
+    });
+
+    it("seeds with cursor position from tmux", async () => {
+      const { mgr } = makeManager();
+      await mgr.createSession("seeded-cursor");
+      const session = mgr.getSession("seeded-cursor");
+      assert.ok(session._seedCalls.length > 0);
+      const call = session._seedCalls[0];
+      assert.deepStrictEqual(call.cursorPos, { row: 1, col: 10 });
+    });
+
+    it("seeds adopted tmux sessions", async () => {
+      const { mgr } = makeManager();
+      tmuxSessions.set("ext-seed", true);
+      await mgr.adoptTmuxSession("ext-seed");
+      const session = mgr.getSession("ext-seed");
+      assert.ok(session._seedCalls.length > 0, "seedScreen should be called on adopt");
+      assert.strictEqual(session._seedCalls[0].content, "$ prompt\n");
     });
   });
 });
