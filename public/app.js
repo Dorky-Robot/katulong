@@ -1790,6 +1790,14 @@
     }, 500);
 
     if ("serviceWorker" in navigator) {
+      // Track whether a controller already exists when the page loads.
+      // If controllerchange fires later, a new SW version took over — reload
+      // to pick up the updated assets. The guard prevents a reload loop on
+      // first-ever SW install (where controller goes from null → active).
+      const hadController = !!navigator.serviceWorker.controller;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (hadController) window.location.reload();
+      });
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
 
