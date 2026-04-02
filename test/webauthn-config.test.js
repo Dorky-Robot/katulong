@@ -104,9 +104,9 @@ describe('WebAuthn configuration', () => {
       const { generateAuthOpts } = await import('../lib/auth.js');
 
       const credentials = [
-        { id: 'cred-platform', publicKey: 'key1', counter: 0, transports: ['internal'] },
-        { id: 'cred-hybrid', publicKey: 'key2', counter: 0, transports: ['internal', 'hybrid'] },
-        { id: 'cred-no-transports', publicKey: 'key3', counter: 0 },
+        { id: 'AAAAAAAAAAAAAAAAAAAAAA', publicKey: 'key1', counter: 0, transports: ['internal'] },
+        { id: 'BBBBBBBBBBBBBBBBBBBBBB', publicKey: 'key2', counter: 0, transports: ['internal', 'hybrid'] },
+        { id: 'CCCCCCCCCCCCCCCCCCCCCC', publicKey: 'key3', counter: 0 },
       ];
 
       const opts = await generateAuthOpts(credentials, 'localhost');
