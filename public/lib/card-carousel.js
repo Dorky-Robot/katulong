@@ -199,17 +199,25 @@ export function createCardCarousel({
   // returns the animated intermediate value and causes position jumps).
   let cachedCardW = 0;
 
+  // Default card width from CSS: min(100% - 16px, 720px).
+  // Used as the basis for card stride so spacing doesn't change
+  // when individual cards are resized. Recomputed on window resize.
+  let defaultCardW = 0;
+  function computeDefaultCardWidth() {
+    const cw = container.offsetWidth || 800;
+    defaultCardW = Math.min(cw - 16, 720);
+  }
+
   function positionCards(animate = true) {
     if (!focusedId) return;
     const focusedIdx = cards.indexOf(focusedId);
     if (focusedIdx === -1) return;
 
-    // Use container width as stride so card spacing stays constant
-    // regardless of individual card resize. Each card is centered
-    // within its slot via CSS left:50% + margin-left:-width/2.
-    const stride = container.offsetWidth || 800;
+    if (!defaultCardW) computeDefaultCardWidth();
+    const gap = 16;
+    const stride = defaultCardW + gap;
 
-    // Still cache card width for swipe threshold calculations
+    // Cache focused card's actual width for swipe threshold calculations
     const focusedEntry = cardEls.get(focusedId);
     if (focusedEntry) {
       const w = focusedEntry.wrapper.offsetWidth || focusedEntry.wrapper.getBoundingClientRect().width;
@@ -522,6 +530,7 @@ export function createCardCarousel({
     resizeTimer = setTimeout(() => {
       resizeTimer = null;
       cachedCardW = 0; // invalidate — card width changes on resize
+      computeDefaultCardWidth(); // recompute stride basis for new viewport
       positionCards(false);
       fitAll();
     }, 150);
