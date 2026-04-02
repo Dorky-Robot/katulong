@@ -12,6 +12,7 @@
 
 import { isIPad } from "./platform.js";
 import { createTileChrome } from "./tile-chrome.js";
+import { createResizeHandles } from "./tile-resize.js";
 
 const STORAGE_KEY = "katulong-carousel";
 
@@ -33,7 +34,7 @@ export function createCardCarousel({
   let active = false;
   let cards = [];             // ordered tile IDs
   let focusedId = null;
-  const cardEls = new Map();  // tileId -> { wrapper, frontFace, backFace, tile, backTile, context, flipped }
+  const cardEls = new Map();  // tileId -> { wrapper, frontFace, backFace, tile, backTile, context, flipped, resizeHandles }
 
   // ── Persistence ──────────────────────────────────────────────────────
 
@@ -46,6 +47,11 @@ export function createCardCarousel({
           const base = { id, type: entry.tile.type };
           if (typeof entry.tile.serialize === "function") {
             Object.assign(base, entry.tile.serialize());
+          }
+          // Persist custom card width if set
+          if (entry.resizeHandles) {
+            const w = entry.resizeHandles.serialize();
+            if (w !== null) base.cardWidth = w;
           }
           return base;
         }).filter(Boolean);
@@ -81,6 +87,34 @@ export function createCardCarousel({
       return { tiles: state.cards, focused: state.focused };
     } catch { /* ignore */ }
     return null;
+  }
+
+  // ── Resize handles ──────────────────────────────────────────────────
+
+  /** Attach resize handles to a card entry. */
+  function attachResizeHandles(tileId, entry) {
+    const handles = createResizeHandles({
+      card: entry.wrapper,
+      onResize: (width) => {
+        // Refit terminal after width change
+        requestAnimationFrame(() => {
+          entry.tile.resize();
+          if (entry.backTile) entry.backTile.resize();
+        });
+        // Reposition cards since focused card width changed
+        if (tileId === focusedId) {
+          cachedCardW = width;
+          positionCards(false);
+        }
+      },
+      onResizeEnd: () => {
+        save();
+      },
+      minWidth: 280,
+    });
+    handles.attach();
+    entry.resizeHandles = handles;
+    return handles;
   }
 
   // ── DOM helpers ──────────────────────────────────────────────────────
@@ -264,15 +298,19 @@ export function createCardCarousel({
     focusedId = focused || cards[0] || null;
 
     // Store tile references and create contexts
-    for (const { id, tile } of tiles) {
+    for (const { id, tile, cardWidth } of tiles) {
       const { wrapper, inner, frontFace, backFace } = createCardWrapper(id);
       const frontChrome = createTileChrome(frontFace);
-      const entry = { wrapper, inner, frontFace, backFace, frontChrome, backChrome: null, tile, backTile: null, context: null, flipped: false };
+      const entry = { wrapper, inner, frontFace, backFace, frontChrome, backChrome: null, tile, backTile: null, context: null, flipped: false, resizeHandles: null };
       const ctx = buildTileContext(id, tile, entry);
       entry.context = ctx;
       tile.mount(frontChrome.contentEl, ctx);
       cardEls.set(id, entry);
       container.appendChild(wrapper);
+      // Attach resize handles
+      const handles = attachResizeHandles(id, entry);
+      // Restore persisted width if provided
+      if (cardWidth) handles.restore(cardWidth);
     }
 
     container.dataset.carousel = "true";
@@ -295,12 +333,13 @@ export function createCardCarousel({
   function deactivate() {
     if (!active) return;
 
-    // Unmount all tiles and destroy chrome
+    // Unmount all tiles, destroy chrome, detach resize handles
     for (const [, entry] of cardEls) {
       entry.tile.unmount();
       if (entry.backTile) entry.backTile.unmount();
       if (entry.frontChrome) entry.frontChrome.destroy();
       if (entry.backChrome) entry.backChrome.destroy();
+      if (entry.resizeHandles) entry.resizeHandles.detach();
     }
 
     // Remove card wrappers
@@ -332,13 +371,14 @@ export function createCardCarousel({
     cards.push(tileId);
     const { wrapper, inner, frontFace, backFace } = createCardWrapper(tileId);
     const frontChrome = createTileChrome(frontFace);
-    const entry = { wrapper, inner, frontFace, backFace, frontChrome, backChrome: null, tile, backTile: null, context: null, flipped: false };
+    const entry = { wrapper, inner, frontFace, backFace, frontChrome, backChrome: null, tile, backTile: null, context: null, flipped: false, resizeHandles: null };
     const ctx = buildTileContext(tileId, tile, entry);
     entry.context = ctx;
     tile.mount(frontChrome.contentEl, ctx);
     cardEls.set(tileId, entry);
 
     container.appendChild(wrapper);
+    attachResizeHandles(tileId, entry);
 
     positionCards(false);
     fitAll();
@@ -356,12 +396,13 @@ export function createCardCarousel({
       const currentIdx = cards.indexOf(tileId);
       if (currentIdx === -1) return;
 
-      // Unmount tiles, destroy chrome, remove the wrapper
+      // Unmount tiles, destroy chrome, detach resize handles, remove the wrapper
       if (entry) {
         entry.tile.unmount();
         if (entry.backTile) entry.backTile.unmount();
         if (entry.frontChrome) entry.frontChrome.destroy();
         if (entry.backChrome) entry.backChrome.destroy();
+        if (entry.resizeHandles) entry.resizeHandles.detach();
         if (entry.wrapper?.parentElement) {
           entry.wrapper.remove();
         }
