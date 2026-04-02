@@ -192,20 +192,21 @@ export function createCardCarousel({
 
   /**
    * Position all cards via translateX relative to the focused card.
-   * Focused = translateX(0), neighbors offset by calc(100% + 16px).
+   * Focused = translateX(0), neighbors offset by (defaultCardW + 16px).
    * Far cards are hidden via visibility:hidden.
    */
   // Cache card width to avoid reading offsetWidth mid-transition (which
   // returns the animated intermediate value and causes position jumps).
   let cachedCardW = 0;
 
-  // Default card width from CSS: min(100% - 16px, 720px).
+  // Default card width from CSS: clamp(280px, 100% - 160px, 720px).
+  // Leaves ~80px per side for neighbor card peek on narrower screens.
   // Used as the basis for card stride so spacing doesn't change
   // when individual cards are resized. Recomputed on window resize.
   let defaultCardW = 0;
   function computeDefaultCardWidth() {
     const cw = container.offsetWidth || 800;
-    defaultCardW = Math.min(cw - 16, 720);
+    defaultCardW = Math.max(280, Math.min(cw - 160, 720));
   }
 
   function positionCards(animate = true) {

@@ -219,8 +219,8 @@
       top: 8px; bottom: 8px;
       left: 50%;
       width: calc(100% - 16px);
-      max-width: 720px;
-      margin-left: calc(min(100% - 16px, 720px) / -2); /* center: offset by half width */
+      max-width: clamp(280px, calc(100% - 160px), 720px);
+      margin-left: calc(clamp(280px, calc(100% - 160px), 720px) / -2); /* center: offset by half width */
       /* No background, shadow, or border-radius here — those live on the faces */
       transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
       will-change: transform;
