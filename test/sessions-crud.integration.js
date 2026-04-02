@@ -24,6 +24,23 @@ const SERVER_PATH = join(__dirname, "..", "server.js");
 const TEST_PORT = 3010;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 
+// Session names used by tests — orphaned tmux sessions from previous runs cause
+// 500s (tmux new-session fails when the session already exists). Kill them in
+// before() so each run starts clean, and in after() so we don't leak.
+const TEST_SESSION_NAMES = [
+  "test-create", "dup-test", "helloworld", "list-test", "fields-test",
+  "rename-src", "rename-dst", "rename-invalid", "delete-test",
+  "managed-excl", "already-managed", "managed-nodelete",
+  "status-test", "status_with_spaces", "status with spaces",
+  "lifecycle-sess", "lifecycle-renamed",
+];
+
+function killOrphanedTestSessions() {
+  for (const name of TEST_SESSION_NAMES) {
+    try { execSync(`tmux kill-session -t ${JSON.stringify(name)} 2>/dev/null`); } catch {}
+  }
+}
+
 async function request(method, path, body) {
   const opts = { method };
   if (body !== undefined) {
@@ -44,6 +61,9 @@ describe("Sessions CRUD Integration", () => {
   let testDataDir;
 
   before(async () => {
+    // Kill tmux sessions left behind by previous test runs.
+    killOrphanedTestSessions();
+
     testDataDir = mkdtempSync(join(tmpdir(), "katulong-sessions-test-"));
 
     const minimalEnv = {
@@ -88,6 +108,9 @@ describe("Sessions CRUD Integration", () => {
       serverProcess.kill("SIGTERM");
       await new Promise((resolve) => serverProcess.on("exit", resolve));
     }
+    // Server shutdown leaves tmux sessions alive by design. Kill the ones
+    // created by this test suite so they don't pollute the next run.
+    killOrphanedTestSessions();
     if (testDataDir) rmSync(testDataDir, { recursive: true, force: true });
   });
 
