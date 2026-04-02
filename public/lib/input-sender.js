@@ -11,6 +11,7 @@
 export function createInputSender(options = {}) {
   const {
     getWebSocket,
+    getTransport,
     getSession,
     onInput
   } = options;
@@ -33,9 +34,14 @@ export function createInputSender(options = {}) {
 
         const payload = JSON.stringify({ type: "input", data: sendBuf, session: getSession ? getSession() : undefined });
 
-        const ws = getWebSocket ? getWebSocket() : null;
-        if (ws && ws.readyState === 1) {
-          ws.send(payload);
+        // Prefer transport layer (WS or DataChannel) for lowest latency
+        const t = getTransport ? getTransport() : null;
+        if (t && t.readyState === 1) {
+          t.send(payload);
+        } else {
+          // Fallback to raw WebSocket if transport not available
+          const ws = getWebSocket ? getWebSocket() : null;
+          if (ws && ws.readyState === 1) ws.send(payload);
         }
 
         sendBuf = "";

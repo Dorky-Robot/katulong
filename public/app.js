@@ -122,11 +122,26 @@
 
     const updateConnectionIndicator = () => {
       const attached = state.connection.attached;
-      const title = attached ? "Connected" : "Disconnected";
+      const transportType = state.connection.transportType || "websocket";
+
+      // Three-state indicator: grey (disconnected) → yellow (relay/WS) → green (direct/P2P)
+      let cssClass, title;
+      if (!attached) {
+        cssClass = "";
+        title = "Disconnected";
+      } else if (transportType === "datachannel") {
+        cssClass = "direct";
+        title = "Direct (P2P)";
+      } else {
+        cssClass = "relay";
+        title = "Relay (WebSocket)";
+      }
+
       for (const id of ["sidebar-connection-dot", "connection-indicator", "island-connection-dot"]) {
         const dot = document.getElementById(id);
         if (!dot) continue;
-        dot.classList.toggle("connected", attached);
+        dot.classList.remove("connected", "relay", "direct");
+        if (cssClass) dot.classList.add(cssClass);
         dot.title = title;
       }
       joystickManager.setConnected(attached);
@@ -527,6 +542,7 @@
     // Create buffered input sender
     const inputSender = createInputSender({
       getWebSocket: () => state.connection.ws,
+      getTransport: () => state.connection.transport,
       getSession: () => state.session.name,
       onInput: () => {},
     });

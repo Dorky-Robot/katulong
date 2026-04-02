@@ -14,26 +14,46 @@ const { createWebSocketManager } = await import("../lib/ws-manager.js");
 
 function createMockWs(readyState = 1) {
   const sent = [];
+  // Support multiple handlers per event (transport + handleConnection both attach)
+  const handlers = {};
   return {
     readyState,
+    bufferedAmount: 0,
     send(data) { sent.push(data); },
     close(code, reason) {
       this._closed = { code, reason }; this.readyState = 3;
-      if (this._handlers?.close) this._handlers.close();
+      for (const fn of (handlers.close || [])) fn();
     },
     terminate() {
       this._terminated = true; this.readyState = 3;
-      if (this._handlers?.close) this._handlers.close();
+      for (const fn of (handlers.close || [])) fn();
     },
     ping() {},
     on(event, handler) {
-      if (!this._handlers) this._handlers = {};
-      this._handlers[event] = handler;
+      if (!handlers[event]) handlers[event] = [];
+      handlers[event].push(handler);
     },
+    off(event, handler) {
+      if (handlers[event]) handlers[event] = handlers[event].filter(h => h !== handler);
+    },
+    // Simulate incoming message (fires all registered message handlers)
+    _fireMessage(data) { for (const fn of (handlers.message || [])) fn(data); },
     isAlive: true,
     sent,
     _closed: null,
     _terminated: false,
+    _handlers: handlers,
+  };
+}
+
+/** Minimal transport mock for tests that directly set wsClients entries. */
+function mockTransport(ws) {
+  return {
+    send: (data) => ws.send(data),
+    get readyState() { return ws.readyState; },
+    get bufferedAmount() { return ws.bufferedAmount; },
+    close: (code, reason) => ws.close(code, reason),
+    ws,
   };
 }
 
@@ -122,8 +142,8 @@ describe("createWebSocketManager", () => {
       const ws1 = createMockWs();
       const ws2 = createMockWs();
 
-      wsMgr.wsClients.set("client-1", { ws: ws1 });
-      wsMgr.wsClients.set("client-2", { ws: ws2 });
+      wsMgr.wsClients.set("client-1", { transport: mockTransport(ws1) });
+      wsMgr.wsClients.set("client-2", { transport: mockTransport(ws2) });
       sessionManager._setSession("client-1", "alpha");
       sessionManager._setSession("client-2", "beta");
 
@@ -136,7 +156,7 @@ describe("createWebSocketManager", () => {
 
     it("skips clients with closed WebSocket", () => {
       const ws = createMockWs(3); // CLOSED
-      wsMgr.wsClients.set("client-1", { ws });
+      wsMgr.wsClients.set("client-1", { transport: mockTransport(ws) });
       sessionManager._setSession("client-1", "alpha");
 
       wsMgr.sendToSession("alpha", { type: "output", data: "hello" });
@@ -147,8 +167,8 @@ describe("createWebSocketManager", () => {
       const ws1 = createMockWs();
       const ws2 = createMockWs();
 
-      wsMgr.wsClients.set("client-1", { ws: ws1 });
-      wsMgr.wsClients.set("client-2", { ws: ws2 });
+      wsMgr.wsClients.set("client-1", { transport: mockTransport(ws1) });
+      wsMgr.wsClients.set("client-2", { transport: mockTransport(ws2) });
       sessionManager._setSession("client-1", "alpha");
       sessionManager._setSession("client-2", "alpha");
 
@@ -164,8 +184,8 @@ describe("createWebSocketManager", () => {
       const ws1 = createMockWs();
       const ws2 = createMockWs();
 
-      wsMgr.wsClients.set("client-1", { ws: ws1 });
-      wsMgr.wsClients.set("client-2", { ws: ws2 });
+      wsMgr.wsClients.set("client-1", { transport: mockTransport(ws1) });
+      wsMgr.wsClients.set("client-2", { transport: mockTransport(ws2) });
 
       wsMgr.broadcastToAll({ type: "credential-registered", tokenId: "tok" });
 
@@ -179,8 +199,8 @@ describe("createWebSocketManager", () => {
       const ws1 = createMockWs();
       const ws2 = createMockWs();
 
-      wsMgr.wsClients.set("client-1", { ws: ws1 });
-      wsMgr.wsClients.set("client-2", { ws: ws2 });
+      wsMgr.wsClients.set("client-1", { transport: mockTransport(ws1) });
+      wsMgr.wsClients.set("client-2", { transport: mockTransport(ws2) });
 
       wsMgr.closeAllWebSockets(1001, "Server shutdown");
 
@@ -193,7 +213,7 @@ describe("createWebSocketManager", () => {
   describe("bridge subscriber", () => {
     it("pushes output inline to subscribed clients", () => {
       const ws = createMockWs();
-      wsMgr.wsClients.set("client-1", { ws });
+      wsMgr.wsClients.set("client-1", { transport: mockTransport(ws) });
       sessionManager._setSession("client-1", "alpha");
 
       bridge.relay({ type: "output", session: "alpha", data: "hello", fromSeq: 0, cursor: 5 });
@@ -206,7 +226,7 @@ describe("createWebSocketManager", () => {
 
     it("routes exit events to correct session", () => {
       const ws = createMockWs();
-      wsMgr.wsClients.set("client-1", { ws });
+      wsMgr.wsClients.set("client-1", { transport: mockTransport(ws) });
       sessionManager._setSession("client-1", "alpha");
 
       bridge.relay({ type: "exit", session: "alpha", code: 0 });
@@ -217,7 +237,7 @@ describe("createWebSocketManager", () => {
 
     it("routes session-renamed to clients under the new name", () => {
       const ws = createMockWs();
-      wsMgr.wsClients.set("client-1", { ws });
+      wsMgr.wsClients.set("client-1", { transport: mockTransport(ws) });
       // Simulate tracker having already renamed (as session-manager does before relay)
       sessionManager._setSession("client-1", "new-name");
 
@@ -229,7 +249,7 @@ describe("createWebSocketManager", () => {
 
     it("closes all websockets on close-all-websockets bridge event", () => {
       const ws = createMockWs();
-      wsMgr.wsClients.set("client-1", { ws });
+      wsMgr.wsClients.set("client-1", { transport: mockTransport(ws) });
 
       bridge.relay({ type: "close-all-websockets", code: 1008, reason: "Auth reset" });
 
@@ -241,8 +261,8 @@ describe("createWebSocketManager", () => {
       const ws1 = createMockWs();
       const ws2 = createMockWs();
 
-      wsMgr.wsClients.set("client-1", { ws: ws1, credentialId: "cred-1" });
-      wsMgr.wsClients.set("client-2", { ws: ws2, credentialId: "cred-2" });
+      wsMgr.wsClients.set("client-1", { transport: mockTransport(ws1), credentialId: "cred-1" });
+      wsMgr.wsClients.set("client-2", { transport: mockTransport(ws2), credentialId: "cred-2" });
 
       bridge.relay({ type: "close-credential-websockets", credentialId: "cred-1" });
 
@@ -266,12 +286,12 @@ describe("createWebSocketManager", () => {
       };
 
       // Simulate attach first (required for auth check to pass with null state)
-      await ws._handlers.message(Buffer.from(JSON.stringify({
+      await ws._fireMessage(Buffer.from(JSON.stringify({
         type: "attach", session: "test-session", cols: 80, rows: 24
       })));
 
       // Send input with explicit session
-      await ws._handlers.message(Buffer.from(JSON.stringify({
+      await ws._fireMessage(Buffer.from(JSON.stringify({
         type: "input", data: "hello", session: "explicit-session"
       })));
 
@@ -292,11 +312,11 @@ describe("createWebSocketManager", () => {
         writeInputCalls.push({ clientId: cid, data, session });
       };
 
-      await ws._handlers.message(Buffer.from(JSON.stringify({
+      await ws._fireMessage(Buffer.from(JSON.stringify({
         type: "attach", session: "test-session", cols: 80, rows: 24
       })));
 
-      await ws._handlers.message(Buffer.from(JSON.stringify({
+      await ws._fireMessage(Buffer.from(JSON.stringify({
         type: "input", data: "hello"
       })));
 
@@ -311,8 +331,8 @@ describe("createWebSocketManager", () => {
       const ws1 = createMockWs();
       const ws2 = createMockWs();
 
-      wsMgr.wsClients.set("active-client", { ws: ws1 });
-      wsMgr.wsClients.set("passive-client", { ws: ws2 });
+      wsMgr.wsClients.set("active-client", { transport: mockTransport(ws1) });
+      wsMgr.wsClients.set("passive-client", { transport: mockTransport(ws2) });
       sessionManager._setSession("active-client", "alpha");
       sessionManager._setSession("passive-client", "alpha");
 
@@ -335,14 +355,14 @@ describe("createWebSocketManager", () => {
         },
       });
 
-      await ws._handlers.message(Buffer.from(JSON.stringify({
+      await ws._fireMessage(Buffer.from(JSON.stringify({
         type: "attach", session: "test-session", cols: 80, rows: 24,
       })));
       await new Promise(r => setTimeout(r, 10));
 
       ws.sent.length = 0;
 
-      await ws._handlers.message(Buffer.from(JSON.stringify({
+      await ws._fireMessage(Buffer.from(JSON.stringify({
         type: "pull", session: "test-session", fromSeq: 50,
       })));
       await new Promise(r => setTimeout(r, 10));
@@ -361,7 +381,7 @@ describe("createWebSocketManager", () => {
         outputBuffer: { totalBytes: 250 },
       });
 
-      await ws._handlers.message(Buffer.from(JSON.stringify({
+      await ws._fireMessage(Buffer.from(JSON.stringify({
         type: "attach", session: "test-session", cols: 80, rows: 24,
       })));
       await new Promise(r => setTimeout(r, 10));
@@ -382,13 +402,13 @@ describe("createWebSocketManager", () => {
         alive: true,
       });
 
-      await ws._handlers.message(Buffer.from(JSON.stringify({
+      await ws._fireMessage(Buffer.from(JSON.stringify({
         type: "attach", session: "bg-session", cols: 80, rows: 24,
       })));
       await new Promise(r => setTimeout(r, 10));
       ws.sent.length = 0;
 
-      await ws._handlers.message(Buffer.from(JSON.stringify({
+      await ws._fireMessage(Buffer.from(JSON.stringify({
         type: "subscribe", session: "bg-session",
       })));
       await new Promise(r => setTimeout(r, 10));
@@ -415,13 +435,13 @@ describe("createWebSocketManager", () => {
         alive: true,
       });
 
-      await ws._handlers.message(Buffer.from(JSON.stringify({
+      await ws._fireMessage(Buffer.from(JSON.stringify({
         type: "attach", session: "empty-session", cols: 80, rows: 24,
       })));
       await new Promise(r => setTimeout(r, 10));
       ws.sent.length = 0;
 
-      await ws._handlers.message(Buffer.from(JSON.stringify({
+      await ws._fireMessage(Buffer.from(JSON.stringify({
         type: "subscribe", session: "empty-session",
       })));
       await new Promise(r => setTimeout(r, 10));
@@ -441,13 +461,13 @@ describe("createWebSocketManager", () => {
         alive: false,
       });
 
-      await ws._handlers.message(Buffer.from(JSON.stringify({
+      await ws._fireMessage(Buffer.from(JSON.stringify({
         type: "attach", session: "dead-session", cols: 80, rows: 24,
       })));
       await new Promise(r => setTimeout(r, 10));
       ws.sent.length = 0;
 
-      await ws._handlers.message(Buffer.from(JSON.stringify({
+      await ws._fireMessage(Buffer.from(JSON.stringify({
         type: "subscribe", session: "dead-session",
       })));
       await new Promise(r => setTimeout(r, 10));
