@@ -370,8 +370,8 @@ describe("createChallengeStore", () => {
   it("expired challenges are rejected", () => {
     const cs = createChallengeStore(1000);
     cs.store("exp");
-    // Manually set expiry to the past
-    cs._challenges.set("exp", Date.now() - 1);
+    // Force-expire via test helper
+    cs._expireChallenge("exp");
     assert.ok(!cs.consume("exp"));
     cs.destroy();
   });
@@ -381,10 +381,10 @@ describe("createChallengeStore", () => {
     cs.store("old");
     cs.store("current");
     // Expire "old"
-    cs._challenges.set("old", Date.now() - 1);
+    cs._expireChallenge("old");
     // Consuming "current" should prune "old"
     cs.consume("current");
-    assert.ok(!cs._challenges.has("old"));
+    assert.ok(!cs.has("old"));
     cs.destroy();
   });
 
@@ -397,44 +397,66 @@ describe("createChallengeStore", () => {
     cs.store("challenge-3");
 
     // All challenges should exist initially
-    assert.equal(cs._challenges.size, 3);
+    assert.equal(cs.size(), 3);
 
     // Manually expire all challenges
-    for (const [key] of cs._challenges) {
-      cs._challenges.set(key, Date.now() - 1);
-    }
+    cs._expireChallenge("challenge-1");
+    cs._expireChallenge("challenge-2");
+    cs._expireChallenge("challenge-3");
 
     // Trigger sweep manually
     cs._sweep();
 
     // After sweep, expired challenges should be removed
-    assert.equal(cs._challenges.size, 0, "Expired challenges should be removed by sweep");
+    assert.equal(cs.size(), 0, "Expired challenges should be removed by sweep");
     cs.destroy();
   });
 
   it("destroy() stops the sweep interval and clears challenges", () => {
     const cs = createChallengeStore(100);
     cs.store("keep");
-    assert.equal(cs._challenges.size, 1);
+    assert.equal(cs.size(), 1);
     cs.destroy();
     // After destroy the Map is empty
-    assert.equal(cs._challenges.size, 0, "destroy() should clear challenges");
+    assert.equal(cs.size(), 0, "destroy() should clear challenges");
     // Calling destroy twice should not throw
     assert.doesNotThrow(() => cs.destroy());
   });
 
-  it("sweep removes non-numeric entries (e.g. userID metadata)", () => {
+  it("sweep removes metadata entries when parent challenge expires", () => {
     const cs = createChallengeStore(1000);
     cs.store("challenge-1");
-    // Simulate the server.js pattern: store a userID alongside the challenge
-    cs._challenges.set("userID:challenge-1", "some-user-id-string");
-    assert.equal(cs._challenges.size, 2);
+    // Use setMeta API (not raw Map access) to associate userID with the challenge
+    cs.setMeta("challenge-1", "userID", "some-user-id-string");
+    assert.equal(cs.size(), 2);
     // Expire the challenge
-    cs._challenges.set("challenge-1", Date.now() - 1);
+    cs._expireChallenge("challenge-1");
     // Trigger sweep directly
     cs._sweep();
-    // The expired challenge and its orphaned userID entry should both be swept
-    assert.equal(cs._challenges.size, 0, "sweep should clean up non-numeric (userID) entries too");
+    // The expired challenge and its associated metadata should both be swept
+    assert.equal(cs.size(), 0, "sweep should clean up metadata entries when challenge expires");
+    cs.destroy();
+  });
+
+  it("has() returns true for valid challenge, false for expired/unknown", () => {
+    const cs = createChallengeStore(60000);
+    cs.store("valid");
+    assert.ok(cs.has("valid"));
+    assert.ok(!cs.has("nonexistent"));
+    cs._expireChallenge("valid");
+    assert.ok(!cs.has("valid"));
+    cs.destroy();
+  });
+
+  it("size() counts challenges and metadata entries", () => {
+    const cs = createChallengeStore(60000);
+    assert.equal(cs.size(), 0);
+    cs.store("c1");
+    assert.equal(cs.size(), 1);
+    cs.setMeta("c1", "userID", "u1");
+    assert.equal(cs.size(), 2);
+    cs.consume("c1");
+    assert.equal(cs.size(), 0);
     cs.destroy();
   });
 });
@@ -468,8 +490,8 @@ describe("challengeStore metadata", () => {
     const cs = createChallengeStore(1000);
     cs.store("challenge-1");
     cs.setMeta("challenge-1", "userID", "user-abc");
-    // Expire the challenge
-    cs._challenges.set("challenge-1", Date.now() - 1);
+    // Expire the challenge via test helper
+    cs._expireChallenge("challenge-1");
     cs._sweep();
     assert.equal(cs.getMeta("challenge-1", "userID"), undefined);
     cs.destroy();
