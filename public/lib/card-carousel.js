@@ -96,18 +96,19 @@ export function createCardCarousel({
     const handles = createResizeHandles({
       card: entry.wrapper,
       onResize: (width) => {
-        // Refit terminal after width change
+        // Don't refit terminal during drag — causes garble from rapid
+        // SIGWINCH during TUI render. Just reposition cards visually.
+        // Terminal refit happens in onResizeEnd.
+        if (tileId === focusedId) {
+          positionCards(false);
+        }
+      },
+      onResizeEnd: (width) => {
+        // Refit terminal once at final width — single SIGWINCH
         requestAnimationFrame(() => {
           entry.tile.resize();
           if (entry.backTile) entry.backTile.resize();
         });
-        // Reposition cards since focused card width changed
-        if (tileId === focusedId) {
-          cachedCardW = width;
-          positionCards(false);
-        }
-      },
-      onResizeEnd: () => {
         save();
       },
       minWidth: 280,
@@ -203,21 +204,24 @@ export function createCardCarousel({
     const focusedIdx = cards.indexOf(focusedId);
     if (focusedIdx === -1) return;
 
-    // Measure card width from the focused card (most reliable)
+    // Use container width as stride so card spacing stays constant
+    // regardless of individual card resize. Each card is centered
+    // within its slot via CSS left:50% + margin-left:-width/2.
+    const stride = container.offsetWidth || 800;
+
+    // Still cache card width for swipe threshold calculations
     const focusedEntry = cardEls.get(focusedId);
     if (focusedEntry) {
       const w = focusedEntry.wrapper.offsetWidth || focusedEntry.wrapper.getBoundingClientRect().width;
       if (w > 0) cachedCardW = w;
     }
-    const cardW = cachedCardW || container.offsetWidth;
-    const gap = 16;
 
     for (const [id, { wrapper }] of cardEls) {
       const idx = cards.indexOf(id);
       const offset = idx - focusedIdx;
 
       if (!animate) wrapper.style.transition = "none";
-      wrapper.style.transform = `translateX(${offset * (cardW + gap)}px)`;
+      wrapper.style.transform = `translateX(${offset * stride}px)`;
       wrapper.classList.toggle("focused", offset === 0);
       wrapper.classList.toggle("carousel-hidden", Math.abs(offset) > 2);
 
