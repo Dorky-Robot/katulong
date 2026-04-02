@@ -11,10 +11,9 @@ import { registerWrappedLinkProvider } from "/lib/wrapped-link-provider.js";
 import { SearchAddon } from "/vendor/xterm/addon-search.esm.js";
 import { ClipboardAddon } from "/vendor/xterm/addon-clipboard.esm.js";
 import { WebglAddon } from "/vendor/xterm/addon-webgl.esm.js";
-import { TERMINAL_COLS } from "/lib/terminal-config.js";
+import { DEFAULT_COLS } from "/lib/terminal-config.js";
 
 const MAX_POOL_SIZE = 5;
-const FIXED_COLS = TERMINAL_COLS;
 
 /** Load WebGL renderer with automatic fallback to DOM on failure. */
 function loadWebGL(term) {
@@ -42,10 +41,10 @@ function getCharRatio(term) {
   return ctx.measureText("W").width / 14;
 }
 
-/** Calculate font size that fits FIXED_COLS in the given width. */
-function fontSizeForWidth(term, width) {
+/** Calculate font size that fits the given number of cols in the given width. */
+function fontSizeForWidth(term, width, cols) {
   const charRatio = getCharRatio(term);
-  const exactSize = width / (FIXED_COLS * charRatio);
+  const exactSize = width / (cols * charRatio);
   // Round DOWN to 0.5px steps so the terminal never overflows the container.
   return Math.max(6, Math.floor(exactSize * 2) / 2);
 }
@@ -53,6 +52,10 @@ function fontSizeForWidth(term, width) {
 /**
  * Full init: set font size, cols, and rows for a terminal in its container.
  * Called once on activation/session switch — NOT on browser resize.
+ *
+ * Cols are calculated from the available content width divided by character
+ * width, so each client gets a column count that fits its viewport.
+ * DEFAULT_COLS is only used as a fallback when dimensions can't be measured.
  *
  * Returns { cols, rows, changed } where `changed` is true if the terminal
  * was actually resized, or null if the container is not visible.
@@ -65,10 +68,11 @@ function scaleToFit(term, container) {
   const padLeft = parseFloat(style.paddingLeft) || 0;
   const padRight = parseFloat(style.paddingRight) || 0;
   const contentWidth = rect.width - padLeft - padRight;
-  // Only recalculate font when width meaningfully changes (>1px).
-  // Height-only changes (keyboard accessory bar) should not affect font.
+  // Only recalculate when width meaningfully changes (>1px).
+  // Height-only changes (keyboard accessory bar) should not affect cols/font.
   const prevWidth = container._lastScaleWidth || 0;
   let fontSize = term.options.fontSize || 14;
+  let cols = term.cols || DEFAULT_COLS;
   if (Math.abs(contentWidth - prevWidth) > 1) {
     container._lastScaleWidth = contentWidth;
     // Reserve a symmetric left/right gap (CSS margin:auto centers
@@ -76,7 +80,16 @@ function scaleToFit(term, container) {
     // On narrow viewports (<600px, i.e. phones) use a minimal 2px gap
     // to maximize horizontal space; wider screens keep the 8px gap.
     const centeringGap = window.innerWidth < 600 ? 2 : 8;
-    fontSize = fontSizeForWidth(term, contentWidth - centeringGap);
+    const availableWidth = contentWidth - centeringGap;
+
+    // Calculate how many columns fit at the current font size.
+    const charRatio = getCharRatio(term);
+    const charWidth = fontSize * charRatio;
+    cols = Math.max(2, Math.floor(availableWidth / charWidth));
+
+    // Recalculate font size to exactly fit the calculated cols
+    // (rounding may leave a small gap; this tightens it).
+    fontSize = fontSizeForWidth(term, availableWidth, cols);
     term.options.fontSize = fontSize;
   }
 
@@ -92,12 +105,12 @@ function scaleToFit(term, container) {
   const rows = Math.max(2, Math.floor(availableHeight / cellHeight));
 
   let changed = false;
-  if (term.cols !== FIXED_COLS || term.rows !== rows) {
-    term.resize(FIXED_COLS, rows);
+  if (term.cols !== cols || term.rows !== rows) {
+    term.resize(cols, rows);
     changed = true;
   }
 
-  return { cols: FIXED_COLS, rows, changed };
+  return { cols, rows, changed };
 }
 
 /**
@@ -349,7 +362,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     scale,
     scaleAll,
     setActive(name) { activeSession = name; },
-    FIXED_COLS,
+    DEFAULT_COLS,
     get size() { return pool.size; },
 
   };

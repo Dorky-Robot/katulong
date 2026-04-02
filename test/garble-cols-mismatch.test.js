@@ -51,7 +51,7 @@ await mock.module(basePathUrl, {
   },
 });
 
-const { TERMINAL_COLS, TERMINAL_ROWS_DEFAULT } = await import(
+const { DEFAULT_COLS, TERMINAL_COLS, TERMINAL_ROWS_DEFAULT } = await import(
   "../public/lib/terminal-config.js"
 );
 const { createWebSocketConnection } = await import(
@@ -88,8 +88,12 @@ function makeState(overrides = {}) {
 }
 
 describe("terminal-config constants", () => {
-  it("TERMINAL_COLS is 82", () => {
-    assert.strictEqual(TERMINAL_COLS, 82);
+  it("DEFAULT_COLS is 82", () => {
+    assert.strictEqual(DEFAULT_COLS, 82);
+  });
+
+  it("TERMINAL_COLS backward compat alias equals DEFAULT_COLS", () => {
+    assert.strictEqual(TERMINAL_COLS, DEFAULT_COLS);
   });
 
   it("TERMINAL_ROWS_DEFAULT is 24", () => {
@@ -98,7 +102,7 @@ describe("terminal-config constants", () => {
 });
 
 describe("cols/rows fallback in connect()", () => {
-  it("uses TERMINAL_COLS (82) as fallback when terminal is null", () => {
+  it("uses DEFAULT_COLS (82) as fallback when terminal is null", () => {
     // Capture the message sent via WebSocket during connect().
     // We inject a fake WebSocket via state.connection.ws that records
     // what gets sent, then trigger onopen to exercise the fallback path.
@@ -139,7 +143,7 @@ describe("cols/rows fallback in connect()", () => {
       assert.strictEqual(
         sent[0].cols,
         82,
-        "fallback cols should be TERMINAL_COLS (82), not 80"
+        "fallback cols should be DEFAULT_COLS (82), not 80"
       );
     } finally {
       globalThis.location = origLocation;
@@ -228,9 +232,9 @@ describe("cols/rows fallback in connect()", () => {
   });
 });
 
-describe("websocket-connection imports TERMINAL_COLS and TERMINAL_ROWS_DEFAULT", () => {
+describe("websocket-connection imports DEFAULT_COLS and TERMINAL_ROWS_DEFAULT", () => {
   it("module loads successfully with terminal-config constants", () => {
-    // If websocket-connection.js failed to import TERMINAL_COLS or
+    // If websocket-connection.js failed to import DEFAULT_COLS or
     // TERMINAL_ROWS_DEFAULT, the dynamic import at the top of this
     // file would have thrown. The fact that createWebSocketConnection
     // is a function proves the import succeeded.
@@ -270,8 +274,8 @@ describe("websocket-connection imports TERMINAL_COLS and TERMINAL_ROWS_DEFAULT",
 
       assert.strictEqual(
         sent[0].cols,
-        TERMINAL_COLS,
-        "connect() fallback cols must equal TERMINAL_COLS"
+        DEFAULT_COLS,
+        "connect() fallback cols must equal DEFAULT_COLS"
       );
       assert.strictEqual(
         sent[0].rows,
