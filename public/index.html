@@ -724,8 +724,11 @@
     /* Connection status indicator */
     #connection-indicator {
       flex-shrink: 0; width: 0.5rem; height: 0.5rem; border-radius: 50%;
-      margin-right: 0.25rem;
+      margin-right: 0.25rem; position: relative; cursor: help;
       background: var(--text-dim); transition: background 0.2s;
+    }
+    #connection-indicator::before {
+      content: ''; position: absolute; inset: -0.375rem; border-radius: 50%;
     }
     #connection-indicator.connected { background: var(--success); }
     #connection-indicator.relay { background: var(--warning, #f9e2af); }
@@ -925,7 +928,10 @@
     .island-connection-dot {
       width: 0.625rem; height: 0.625rem; border-radius: 50%;
       background: var(--text-muted); align-self: center;
-      margin: 0 0.375rem; flex-shrink: 0;
+      margin: 0 0.375rem; flex-shrink: 0; position: relative; cursor: help;
+    }
+    .island-connection-dot::before {
+      content: ''; position: absolute; inset: -0.375rem; border-radius: 50%;
     }
     .island-connection-dot.connected { background: var(--success); }
     .island-connection-dot.relay { background: var(--warning, #f9e2af); }
@@ -1262,6 +1268,10 @@
       width: 8px; height: 8px; border-radius: 50%;
       background: var(--text-dim); flex-shrink: 0;
       margin-left: auto; transition: background 0.2s;
+      position: relative; cursor: help;
+    }
+    .sidebar-connection-dot::before {
+      content: ''; position: absolute; inset: -6px; border-radius: 50%;
     }
     #sidebar.collapsed .sidebar-connection-dot { margin-left: 0; }
     .sidebar-connection-dot.connected { background: var(--success); }
