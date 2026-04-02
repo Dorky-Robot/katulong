@@ -32,7 +32,7 @@ class MockSession {
     this._written = [];
     this._resizes = [];
     this._options = options;
-    this.outputBuffer = { totalBytes: 0 };
+    this.outputBuffer = { totalBytes: 0, sliceFrom: () => "", getStartOffset: () => 0, getEndOffset: () => 0 };
   }
 
   get alive() { return this.state === MockSession.STATE_ATTACHED; }
