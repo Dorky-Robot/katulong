@@ -10,6 +10,8 @@ import { basePath } from "/lib/base-path.js";
 import { createPullManager } from "/lib/pull-manager.js";
 import { screenFingerprint } from "/lib/screen-fingerprint.js";
 import { DEFAULT_COLS, TERMINAL_ROWS_DEFAULT } from "/lib/terminal-config.js";
+import { createTransportLayer } from "/lib/transport-layer.js";
+import { createWebRTCPeer } from "/lib/webrtc-peer.js";
 
 /**
  * Connection state machine: DISCONNECTED → CONNECTING → CONNECTED → ATTACHED
@@ -48,6 +50,8 @@ export function createWebSocketConnection(deps = {}) {
   let connectionState = CONNECTION_STATES.DISCONNECTED;
   let reconnectTimeout = null;
   let suppressReconnect = false;
+  let transport = null;  // TransportLayer wrapping WS + optional DataChannel
+  let rtcPeer = null;    // WebRTC peer for DataChannel negotiation
 
   // --- Pull-based output ---
   // Extracted to pull-manager.js: pure state machine with callbacks.
@@ -375,19 +379,40 @@ export function createWebSocketConnection(deps = {}) {
     connectionState = CONNECTION_STATES.CONNECTING;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const wsPath = basePath ? `${basePath}/stream` : "";
-    state.connection.ws = new WebSocket(`${proto}//${location.host}${wsPath}`);
+    const ws = new WebSocket(`${proto}//${location.host}${wsPath}`);
+    state.connection.ws = ws;
 
-    state.connection.ws.onopen = () => {
+    // Wrap the WebSocket in a transport layer — all data send/receive goes
+    // through transport.send() which routes to WS or DataChannel atomically.
+    transport = createTransportLayer(ws);
+    state.connection.transport = transport;
+
+    ws.onopen = () => {
       connectionState = CONNECTION_STATES.CONNECTED;
       state.connection.reconnectDelay = 1000;
+      state.connection.transportType = "websocket";
       const term = getTerm();
       const cols = term?.cols || DEFAULT_COLS;
       const rows = term?.rows || TERMINAL_ROWS_DEFAULT;
-      state.connection.ws.send(JSON.stringify({ type: "attach", session: state.session.name, cols, rows }));
+      // Attach via WebSocket (always — DC doesn't exist yet)
+      ws.send(JSON.stringify({ type: "attach", session: state.session.name, cols, rows }));
     };
 
-    state.connection.ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
+    // Messages arrive via the transport layer (active channel — WS or DC).
+    transport.onmessage = (e) => {
+      const data = typeof e === "string" ? e : e.data;
+      const msg = JSON.parse(data);
+
+      // Handle WebRTC signaling messages (always over WS, before handler lookup)
+      if (msg.type === "rtc-answer" && rtcPeer) {
+        rtcPeer.handleAnswer(msg.sdp);
+        return;
+      }
+      if (msg.type === "rtc-ice-candidate" && rtcPeer) {
+        rtcPeer.handleCandidate(msg.candidate);
+        return;
+      }
+
       const handler = wsMessageHandlers[msg.type];
 
       if (handler) {
@@ -396,6 +421,8 @@ export function createWebSocketConnection(deps = {}) {
         // Transition to ATTACHED when server confirms attachment
         if (msg.type === 'attached' || msg.type === 'switched') {
           connectionState = CONNECTION_STATES.ATTACHED;
+          // Attempt WebRTC upgrade after attach for lower latency
+          initiateWebRTC();
         }
 
         // Apply state updates
@@ -408,8 +435,14 @@ export function createWebSocketConnection(deps = {}) {
       }
     };
 
-    state.connection.ws.onclose = (event) => {
+    ws.onclose = (event) => {
       connectionState = CONNECTION_STATES.DISCONNECTED;
+
+      // Clean up WebRTC peer on disconnect
+      if (rtcPeer) { rtcPeer.close(); rtcPeer = null; }
+      transport = null;
+      state.connection.transport = null;
+      state.connection.transportType = null;
 
       // Check if connection was closed due to revoked credentials
       if (event.code === 1008) { // 1008 = Policy Violation
@@ -418,7 +451,6 @@ export function createWebSocketConnection(deps = {}) {
       }
 
       // Normal disconnect - attempt reconnection with exponential backoff
-      // (no stale state to clear — output routes by session name)
       const term = getTerm();
       state.scroll.userScrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
       state.connection.attached = false;
@@ -435,12 +467,49 @@ export function createWebSocketConnection(deps = {}) {
       state.connection.reconnectDelay = Math.min(state.connection.reconnectDelay * 2, 10000);
     };
 
-    state.connection.ws.onerror = () => {
-      // Set DISCONNECTED unconditionally — if the socket is already CLOSED,
-      // calling close() is a no-op and onclose won't fire again.
+    ws.onerror = () => {
       connectionState = CONNECTION_STATES.DISCONNECTED;
-      state.connection.ws.close();
+      ws.close();
     };
+  }
+
+  /**
+   * Attempt WebRTC DataChannel upgrade after successful WS attach.
+   * If RTCPeerConnection is not available (e.g., older browser), this is a no-op.
+   * On success, transport layer switches to DataChannel atomically.
+   * On failure, stays on WebSocket — no user-visible impact.
+   */
+  function initiateWebRTC() {
+    if (typeof RTCPeerConnection === "undefined") return;
+    if (rtcPeer) { rtcPeer.close(); rtcPeer = null; }
+
+    rtcPeer = createWebRTCPeer({
+      sendSignaling: (msg) => {
+        // Signaling always goes over WebSocket (DC doesn't exist yet)
+        const ws = state.connection.ws;
+        if (ws?.readyState === 1) ws.send(JSON.stringify(msg));
+      },
+      onDataChannel: (dc) => {
+        if (transport) {
+          transport.upgradeToDataChannel(dc);
+          state.connection.transportType = "datachannel";
+          if (deps.updateConnectionIndicator) deps.updateConnectionIndicator();
+          console.log("[WebRTC] Upgraded to DataChannel (P2P)");
+        }
+      },
+      onStateChange: (s) => {
+        if (s === "failed" || s === "closed") {
+          // DataChannel failed or closed — transport auto-downgrades to WS
+          if (state.connection.transportType === "datachannel") {
+            state.connection.transportType = "websocket";
+            if (deps.updateConnectionIndicator) deps.updateConnectionIndicator();
+            console.log("[WebRTC] Fell back to WebSocket");
+          }
+        }
+      },
+    });
+
+    rtcPeer.connect();
   }
 
   // Visibility change handler for reconnection after backgrounding
@@ -505,19 +574,19 @@ export function createWebSocketConnection(deps = {}) {
     executeEffect,
     getConnectionState: () => connectionState,
     sendSubscribe(sessionName, cols, rows) {
-      const ws = state.connection.ws;
-      if (ws?.readyState === 1) {
+      if (transport?.readyState === 1) {
         const msg = { type: "subscribe", session: sessionName };
         if (cols) msg.cols = cols;
         if (rows) msg.rows = rows;
-        ws.send(JSON.stringify(msg));
+        transport.send(JSON.stringify(msg));
       }
     },
     sendUnsubscribe(sessionName) {
-      const ws = state.connection.ws;
-      if (ws?.readyState === 1) {
-        ws.send(JSON.stringify({ type: "unsubscribe", session: sessionName }));
+      if (transport?.readyState === 1) {
+        transport.send(JSON.stringify({ type: "unsubscribe", session: sessionName }));
       }
     },
+    /** Current transport type for connection indicator */
+    getTransportType: () => state.connection.transportType || null,
   };
 }

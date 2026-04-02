@@ -123,6 +123,8 @@ describe("cols/rows fallback in connect()", () => {
         sent.push(JSON.parse(data));
       }
       close() {}
+      addEventListener() {}
+      removeEventListener() {}
     };
 
     try {
@@ -168,6 +170,8 @@ describe("cols/rows fallback in connect()", () => {
         sent.push(JSON.parse(data));
       }
       close() {}
+      addEventListener() {}
+      removeEventListener() {}
     };
 
     try {
@@ -211,6 +215,8 @@ describe("cols/rows fallback in connect()", () => {
         sent.push(JSON.parse(data));
       }
       close() {}
+      addEventListener() {}
+      removeEventListener() {}
     };
 
     try {
@@ -260,6 +266,8 @@ describe("websocket-connection imports DEFAULT_COLS and TERMINAL_ROWS_DEFAULT", 
         sent.push(JSON.parse(data));
       }
       close() {}
+      addEventListener() {}
+      removeEventListener() {}
     };
 
     try {
