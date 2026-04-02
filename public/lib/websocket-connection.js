@@ -9,7 +9,7 @@ import { scrollToBottom, terminalWriteWithScroll, isAtBottom } from "/lib/scroll
 import { basePath } from "/lib/base-path.js";
 import { createPullManager } from "/lib/pull-manager.js";
 import { screenFingerprint } from "/lib/screen-fingerprint.js";
-import { TERMINAL_COLS, TERMINAL_ROWS_DEFAULT } from "/lib/terminal-config.js";
+import { DEFAULT_COLS, TERMINAL_ROWS_DEFAULT } from "/lib/terminal-config.js";
 
 /**
  * Connection state machine: DISCONNECTED → CONNECTING → CONNECTED → ATTACHED
@@ -381,7 +381,7 @@ export function createWebSocketConnection(deps = {}) {
       connectionState = CONNECTION_STATES.CONNECTED;
       state.connection.reconnectDelay = 1000;
       const term = getTerm();
-      const cols = term?.cols || TERMINAL_COLS;
+      const cols = term?.cols || DEFAULT_COLS;
       const rows = term?.rows || TERMINAL_ROWS_DEFAULT;
       state.connection.ws.send(JSON.stringify({ type: "attach", session: state.session.name, cols, rows }));
     };
@@ -465,7 +465,7 @@ export function createWebSocketConnection(deps = {}) {
           // Brief background — ping with resize to verify connection
           try {
             const term = getTerm();
-            const cols = term?.cols || TERMINAL_COLS;
+            const cols = term?.cols || DEFAULT_COLS;
             const rows = term?.rows || TERMINAL_ROWS_DEFAULT;
             state.connection.ws.send(JSON.stringify({ type: "resize", session: state.session.name, cols, rows }));
           } catch {
