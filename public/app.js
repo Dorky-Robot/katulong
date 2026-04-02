@@ -1806,5 +1806,20 @@
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
 
+    // Safari PWA install hint — show once for non-standalone Safari users
+    if (!window.matchMedia("(display-mode: standalone)").matches
+        && !window.navigator.standalone
+        && /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent)
+        && !localStorage.getItem("katulong_pwa_hint_dismissed")) {
+      const isMac = /Macintosh/.test(navigator.userAgent);
+      const hint = isMac
+        ? "Tip: File → Add to Dock for full app experience"
+        : "Tip: Share → Add to Home Screen for full app experience";
+      setTimeout(() => {
+        showToast(hint);
+        localStorage.setItem("katulong_pwa_hint_dismissed", "1");
+      }, 3000);
+    }
+
     // Expose tile system for console testing / plugin development
     window.__tiles = { carousel, createTile, registerTileType };
