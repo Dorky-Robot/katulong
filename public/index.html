@@ -1136,13 +1136,10 @@
        Position absolute within the pane — no viewport math needed. */
     /* Floating action buttons (touch devices only) */
     #joystick {
-      display: none; position: absolute; z-index: var(--z-bar);
+      display: flex; position: absolute; z-index: var(--z-bar);
       right: 1rem; bottom: 1rem;
       flex-direction: column; gap: 0.5rem;
       align-items: center;
-    }
-    @media (pointer: coarse) {
-      #joystick { display: flex; }
     }
     .joystick-action-btn {
       background: none; border: none;
@@ -1158,7 +1155,7 @@
       background: var(--text-dim);
     }
     .joystick-dot.connected { background: var(--success); }
-    #joystick.hw-keyboard { display: none !important; }
+    /* joystick visible on all devices — same experience iPad + desktop */
 
     /* --- Enter key progress ring --- */
     #enter-progress-ring {
