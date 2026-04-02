@@ -560,24 +560,8 @@
       onSettingsClick: () => modals.open('settings'),
     });
 
-    // Hardware keyboard detection: hide joystick when a physical keyboard
-    // is connected.  On iPad, keydown fires only with a hardware keyboard
-    // (the on-screen keyboard uses a different input path).  Reset on
-    // touchstart without a recent keydown — the user switched to touch-only.
-    const joystickEl = document.getElementById("joystick");
-    let lastKeydownTime = 0;
-    if (joystickEl) {
-      document.addEventListener("keydown", () => {
-        lastKeydownTime = Date.now();
-        joystickEl.classList.add("hw-keyboard");
-      }, { passive: true });
-      document.addEventListener("touchstart", () => {
-        // If no keydown in the last 2 seconds, assume no hardware keyboard
-        if (Date.now() - lastKeydownTime > 2000) {
-          joystickEl.classList.remove("hw-keyboard");
-        }
-      }, { passive: true });
-    }
+    // Joystick (floating action buttons) is always visible — same
+    // experience on iPad and desktop.
 
 
     // --- Shortcuts popup (reactive component) ---
