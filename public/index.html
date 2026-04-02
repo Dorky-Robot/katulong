@@ -2128,15 +2128,7 @@
   </style>
 </head>
 <body>
-  <script>
-    // Prevent any document-level scrolling — the app is a fixed viewport.
-    // Must run early before any content renders.
-    document.addEventListener('touchmove', function(e) {
-      if (e.target.closest('.xterm-viewport, .tab-scroll-area, .modal-body, .sidebar-content, .html-tile-content')) return;
-      e.preventDefault();
-    }, { passive: false });
-    document.addEventListener('scroll', function() { window.scrollTo(0, 0); });
-  </script>
+  <script src="/early-scroll-lock.js"></script>
   <div id="app-layout">
     <aside id="sidebar" class="collapsed" role="complementary" aria-label="Sessions">
       <div id="sidebar-toolbar">
