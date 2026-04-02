@@ -540,9 +540,11 @@
     }
     .db-crew-children i { font-size: 12px; }
 
-    /* In standalone PWA, leave room for status bar / traffic lights */
+    /* In standalone PWA the native title bar already provides top spacing,
+       so the card sits flush with the content area. safe-area-inset still
+       handles devices with notches/status bars (iPad, etc.). */
     @media (display-mode: standalone) {
-      .carousel-card { top: calc(env(safe-area-inset-top, 0px) + 8px); }
+      .carousel-card { top: env(safe-area-inset-top, 0px); }
     }
     .carousel-card.focused {
       z-index: 2;
