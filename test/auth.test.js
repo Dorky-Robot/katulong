@@ -14,7 +14,7 @@ const USER_PATH = join(DATA_DIR, "user.json");
 // Remove all per-entity auth files from the data dir
 function clearAuthFiles() {
   try { unlinkSync(USER_PATH); } catch {}
-  for (const sub of ["credentials", "sessions", "setup-tokens"]) {
+  for (const sub of ["credentials", "sessions", "setup-tokens", "api-keys"]) {
     try { rmSync(join(DATA_DIR, sub), { recursive: true, force: true }); } catch {}
   }
 }
