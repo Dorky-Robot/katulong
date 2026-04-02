@@ -29,11 +29,13 @@
       window.history.replaceState({}, document.title, window.location.pathname);
     }
 
-    // Auto-fill setup token from URL (for QR code links)
+    // Auto-fill setup token from URL into both setup and login register fields
     const setupTokenParam = urlParams.get("setup_token");
     if (setupTokenParam) {
-      const tokenInput = document.getElementById("setup-token");
-      if (tokenInput) tokenInput.value = setupTokenParam;
+      const setupInput = document.getElementById("setup-token");
+      const registerInput = document.getElementById("register-token");
+      if (setupInput) setupInput.value = setupTokenParam;
+      if (registerInput) registerInput.value = setupTokenParam;
       window.history.replaceState({}, document.title, window.location.pathname);
     }
 
@@ -55,12 +57,29 @@
 
           // Check if user has passkeys for this domain
           await checkForExistingPasskeys();
+
+          // If a setup token was provided via URL, expand the register section
+          // and auto-trigger registration so the user just approves the passkey.
+          if (setupTokenParam) {
+            const showRegisterBtn = document.getElementById("show-register-btn");
+            const registerFields = document.getElementById("register-fields");
+            if (showRegisterBtn && registerFields) {
+              showRegisterBtn.style.display = "none";
+              registerFields.classList.remove("hidden");
+            }
+            // Auto-trigger registration after a brief delay for the UI to settle
+            setTimeout(() => document.getElementById("register-new-btn")?.click(), 100);
+          }
         } else {
           // HTTP without WebAuthn → show QR pairing instructions
           pairView.classList.remove("hidden");
         }
       } else {
         setupView.classList.remove("hidden");
+        // If a setup token was provided via URL, auto-trigger first-time registration
+        if (setupTokenParam) {
+          setTimeout(() => document.getElementById("register-btn")?.click(), 100);
+        }
       }
     }
 
