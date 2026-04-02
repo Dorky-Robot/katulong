@@ -544,7 +544,7 @@
        so the card sits flush with the content area. safe-area-inset still
        handles devices with notches/status bars (iPad, etc.). */
     @media (display-mode: standalone) {
-      .carousel-card { top: env(safe-area-inset-top, 0px); }
+      .carousel-card { top: calc(8px + env(safe-area-inset-top, 0px)); }
     }
     .carousel-card.focused {
       z-index: 2;
