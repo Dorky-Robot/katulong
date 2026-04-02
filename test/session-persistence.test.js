@@ -32,6 +32,7 @@ class MockSession {
   }
   get alive() { return this._alive; }
   attachControlMode(/* cols, rows */) { /* Real Session does NOT set _cols here */ }
+  async seedScreen() {}
   updateChildCount() {}
   write() {}
   resize(cols, rows) { this._resizeCalls.push({ cols, rows }); this._cols = cols; this._rows = rows; }
