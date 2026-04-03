@@ -216,7 +216,6 @@ export function createCardCarousel({
 
     if (!defaultCardW) computeDefaultCardWidth();
     const gap = 16;
-    const stride = defaultCardW + gap;
 
     // Cache focused card's actual width for swipe threshold calculations
     const focusedEntry = cardEls.get(focusedId);
@@ -224,6 +223,11 @@ export function createCardCarousel({
       const w = focusedEntry.wrapper.offsetWidth || focusedEntry.wrapper.getBoundingClientRect().width;
       if (w > 0) cachedCardW = w;
     }
+
+    // Use the focused card's actual width for stride so that resized cards
+    // push neighbors out of the way instead of overlapping them.
+    const focusedW = cachedCardW || defaultCardW;
+    const stride = Math.max(focusedW, defaultCardW) + gap;
 
     for (const [id, { wrapper }] of cardEls) {
       const idx = cards.indexOf(id);
