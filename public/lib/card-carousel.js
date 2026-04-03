@@ -192,7 +192,8 @@ export function createCardCarousel({
 
   /**
    * Position all cards via translateX relative to the focused card.
-   * Focused = translateX(0), neighbors offset by (defaultCardW + 16px).
+   * Focused = translateX(0), neighbors spaced outward with a consistent
+   * gap between each pair of adjacent cards.
    * Far cards are hidden via visibility:hidden.
    */
   // Cache card width to avoid reading offsetWidth mid-transition (which
@@ -201,12 +202,22 @@ export function createCardCarousel({
 
   // Default card width from CSS: clamp(280px, 100% - 160px, 720px).
   // Leaves ~80px per side for neighbor card peek on narrower screens.
-  // Used as the basis for card stride so spacing doesn't change
-  // when individual cards are resized. Recomputed on window resize.
+  // Cards without a custom resize use this width for gap calculations.
+  // Recomputed on window resize.
   let defaultCardW = 0;
   function computeDefaultCardWidth() {
     const cw = container.offsetWidth || 800;
     defaultCardW = Math.max(280, Math.min(cw - 160, 720));
+  }
+
+  /** Get the effective width of a card (custom resize or CSS default). */
+  function cardWidthOf(id) {
+    const entry = cardEls.get(id);
+    if (entry?.resizeHandles) {
+      const cw = entry.resizeHandles.getWidth();
+      if (cw) return cw;
+    }
+    return defaultCardW;
   }
 
   function positionCards(animate = true, focusedWidth) {
@@ -230,20 +241,39 @@ export function createCardCarousel({
       }
     }
 
-    // Stride = distance between card centers. Each card is centered via
-    // left:50% + marginLeft:-width/2, so the distance from the focused
-    // card's center to a neighbor's center is half of each width + gap.
     const focusedW = cachedCardW || defaultCardW;
-    const stride = (focusedW + defaultCardW) / 2 + gap;
+
+    // Compute per-card translateX by walking outward from the focused card.
+    // Each card is centered via left:50% + marginLeft:-width/2, so we
+    // accumulate: half of prev card + gap + half of next card per step.
+    const positions = new Map();
+    positions.set(focusedId, 0);
+
+    // Cards to the right of focus
+    let reach = focusedW / 2;
+    for (let i = focusedIdx + 1; i < cards.length; i++) {
+      const w = cardWidthOf(cards[i]);
+      positions.set(cards[i], reach + gap + w / 2);
+      reach += gap + w;
+    }
+
+    // Cards to the left of focus
+    reach = focusedW / 2;
+    for (let i = focusedIdx - 1; i >= 0; i--) {
+      const w = cardWidthOf(cards[i]);
+      positions.set(cards[i], -(reach + gap + w / 2));
+      reach += gap + w;
+    }
 
     for (const [id, { wrapper }] of cardEls) {
-      const idx = cards.indexOf(id);
-      const offset = idx - focusedIdx;
+      const cardX = positions.get(id);
+      if (cardX === undefined) continue;
+      const dist = Math.abs(cards.indexOf(id) - focusedIdx);
 
       if (!animate) wrapper.style.transition = "none";
-      wrapper.style.transform = `translateX(${offset * stride}px)`;
-      wrapper.classList.toggle("focused", offset === 0);
-      wrapper.classList.toggle("carousel-hidden", Math.abs(offset) > 2);
+      wrapper.style.transform = `translateX(${cardX}px)`;
+      wrapper.classList.toggle("focused", id === focusedId);
+      wrapper.classList.toggle("carousel-hidden", dist > 2);
 
       if (!animate) {
         wrapper.offsetHeight; // force reflow
