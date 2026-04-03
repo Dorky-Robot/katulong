@@ -105,7 +105,7 @@ function createSection(title, initiallyOpen = true) {
 /**
  * @typedef {Object} Feature
  * @property {string} id
- * @property {string} rawText
+ * @property {string} raw
  * @property {string} status - raw|refining|refined|active|done|failed
  * @property {string} [title]
  * @property {string} [project]
@@ -154,7 +154,7 @@ export function createDispatchPanel(container) {
     input.disabled = true;
     submitBtn.disabled = true;
     try {
-      await api.post('/api/dispatch/features', { text });
+      await api.post('/api/dispatch/features', { raw: text });
     } catch (err) {
       console.error('[Dispatch] Submit failed:', err);
       input.value = text; // restore on failure
@@ -220,7 +220,7 @@ export function createDispatchPanel(container) {
     const card = el('div', { className: 'dp-card' });
     const top = el('div', { className: 'dp-card-top' }, [
       badge(f.status),
-      el('span', { className: 'dp-card-text', textContent: truncate(f.rawText) }),
+      el('span', { className: 'dp-card-text', textContent: truncate(f.raw) }),
     ]);
     card.appendChild(top);
 
@@ -264,7 +264,7 @@ export function createDispatchPanel(container) {
     }
     top.appendChild(el('span', {
       className: 'dp-card-title',
-      textContent: f.title || truncate(f.rawText),
+      textContent: f.title || truncate(f.raw),
     }));
     card.appendChild(top);
 
@@ -301,14 +301,14 @@ export function createDispatchPanel(container) {
     const textarea = el('textarea', {
       className: 'dp-edit-area',
     });
-    textarea.value = f.rawText || f.title || '';
+    textarea.value = f.raw || f.title || '';
     textarea.rows = 3;
 
     const saveBtn = textBtn('Save', async () => {
       const newText = textarea.value.trim();
       if (!newText) return;
       try {
-        await api.patch(`/api/dispatch/features/${encodeURIComponent(f.id)}`, { text: newText });
+        await api.put(`/api/dispatch/features/${encodeURIComponent(f.id)}`, { raw: newText });
       } catch (err) {
         console.error('[Dispatch] Edit save failed:', err);
       }
@@ -359,7 +359,7 @@ export function createDispatchPanel(container) {
       badge(f.status),
       el('span', {
         className: 'dp-card-title',
-        textContent: f.title || truncate(f.rawText),
+        textContent: f.title || truncate(f.raw),
       }),
     ]);
     card.appendChild(top);
@@ -395,9 +395,9 @@ export function createDispatchPanel(container) {
 
     eventSource.addEventListener('feature-added', (e) => {
       try {
-        const f = JSON.parse(e.data);
-        features.set(f.id, f);
-        renderAll();
+        const data = JSON.parse(e.data);
+        const f = data.feature;
+        if (f) { features.set(f.id, f); renderAll(); }
       } catch (err) {
         console.error('[Dispatch] feature-added parse error:', err);
       }
@@ -405,7 +405,9 @@ export function createDispatchPanel(container) {
 
     eventSource.addEventListener('feature-updated', (e) => {
       try {
-        const f = JSON.parse(e.data);
+        const data = JSON.parse(e.data);
+        const f = data.feature;
+        if (!f) return;
         if (features.has(f.id)) {
           features.set(f.id, { ...features.get(f.id), ...f });
         } else {
@@ -433,7 +435,7 @@ export function createDispatchPanel(container) {
         const f = features.get(data.featureId);
         if (f) {
           if (data.phase) f.currentPhase = data.phase;
-          if (data.log) f.latestLog = data.log;
+          if (data.detail) f.latestLog = data.detail;
           renderAll();
         }
       } catch (err) {

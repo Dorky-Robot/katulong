@@ -21,8 +21,8 @@ describe("Dispatch Store", () => {
   });
 
   describe("addFeature", () => {
-    it("creates a feature with status raw and returns it with an ID", () => {
-      const feature = store.addFeature("build a spaceship");
+    it("creates a feature with status raw and returns it with an ID", async () => {
+      const feature = await store.addFeature("build a spaceship");
 
       assert.ok(feature.id, "Should have an ID");
       assert.ok(feature.id.startsWith("f-"), "ID should start with f-");
@@ -35,16 +35,16 @@ describe("Dispatch Store", () => {
       assert.ok(feature.updatedAt, "Should have updatedAt");
     });
 
-    it("assigns unique IDs to different features", () => {
-      const f1 = store.addFeature("idea one");
-      const f2 = store.addFeature("idea two");
+    it("assigns unique IDs to different features", async () => {
+      const f1 = await store.addFeature("idea one");
+      const f2 = await store.addFeature("idea two");
       assert.notEqual(f1.id, f2.id, "IDs should be unique");
     });
   });
 
   describe("getFeature", () => {
-    it("returns the feature by ID", () => {
-      const created = store.addFeature("find me");
+    it("returns the feature by ID", async () => {
+      const created = await store.addFeature("find me");
       const found = store.getFeature(created.id);
 
       assert.ok(found, "Should find the feature");
@@ -60,13 +60,13 @@ describe("Dispatch Store", () => {
 
   describe("updateFeature", () => {
     it("merges fields and updates updatedAt", async () => {
-      const feature = store.addFeature("update me");
+      const feature = await store.addFeature("update me");
       const originalUpdatedAt = feature.updatedAt;
 
       // Small delay to ensure timestamp changes
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const updated = store.updateFeature(feature.id, {
+      const updated = await store.updateFeature(feature.id, {
         status: "refined",
         project: "katulong",
       });
@@ -77,32 +77,32 @@ describe("Dispatch Store", () => {
       assert.notEqual(updated.updatedAt, originalUpdatedAt, "updatedAt should change");
     });
 
-    it("returns null for unknown IDs", () => {
-      const result = store.updateFeature("f-nonexistent-0000", { status: "done" });
+    it("returns null for unknown IDs", async () => {
+      const result = await store.updateFeature("f-nonexistent-0000", { status: "done" });
       assert.equal(result, null);
     });
   });
 
   describe("deleteFeature", () => {
-    it("removes the feature and returns true", () => {
-      const feature = store.addFeature("delete me");
-      const result = store.deleteFeature(feature.id);
+    it("removes the feature and returns true", async () => {
+      const feature = await store.addFeature("delete me");
+      const result = await store.deleteFeature(feature.id);
 
       assert.equal(result, true);
       assert.equal(store.getFeature(feature.id), null, "Feature should be gone");
     });
 
-    it("returns false for unknown IDs", () => {
-      const result = store.deleteFeature("f-nonexistent-0000");
+    it("returns false for unknown IDs", async () => {
+      const result = await store.deleteFeature("f-nonexistent-0000");
       assert.equal(result, false);
     });
   });
 
   describe("listFeatures", () => {
-    it("returns all features", () => {
-      store.addFeature("one");
-      store.addFeature("two");
-      store.addFeature("three");
+    it("returns all features", async () => {
+      await store.addFeature("one");
+      await store.addFeature("two");
+      await store.addFeature("three");
 
       const all = store.listFeatures();
       assert.equal(all.length, 3);
@@ -113,10 +113,10 @@ describe("Dispatch Store", () => {
       assert.deepEqual(all, []);
     });
 
-    it("with status filter returns only matching features", () => {
-      const f1 = store.addFeature("raw one");
-      store.addFeature("raw two");
-      store.updateFeature(f1.id, { status: "active" });
+    it("with status filter returns only matching features", async () => {
+      const f1 = await store.addFeature("raw one");
+      await store.addFeature("raw two");
+      await store.updateFeature(f1.id, { status: "active" });
 
       const rawFeatures = store.listFeatures("raw");
       assert.equal(rawFeatures.length, 1);
@@ -129,24 +129,24 @@ describe("Dispatch Store", () => {
   });
 
   describe("getActiveByProject", () => {
-    it("returns only active features for the given project", () => {
-      const f1 = store.addFeature("feature A");
-      const f2 = store.addFeature("feature B");
-      const f3 = store.addFeature("feature C");
-      store.addFeature("feature D");
+    it("returns only active features for the given project", async () => {
+      const f1 = await store.addFeature("feature A");
+      const f2 = await store.addFeature("feature B");
+      const f3 = await store.addFeature("feature C");
+      await store.addFeature("feature D");
 
-      store.updateFeature(f1.id, { status: "active", project: "katulong" });
-      store.updateFeature(f2.id, { status: "active", project: "diwa" });
-      store.updateFeature(f3.id, { status: "done", project: "katulong" });
+      await store.updateFeature(f1.id, { status: "active", project: "katulong" });
+      await store.updateFeature(f2.id, { status: "active", project: "diwa" });
+      await store.updateFeature(f3.id, { status: "done", project: "katulong" });
 
       const active = store.getActiveByProject("katulong");
       assert.equal(active.length, 1);
       assert.equal(active[0].id, f1.id);
     });
 
-    it("returns empty array when no active features exist for the project", () => {
-      const f1 = store.addFeature("feature A");
-      store.updateFeature(f1.id, { status: "done", project: "katulong" });
+    it("returns empty array when no active features exist for the project", async () => {
+      const f1 = await store.addFeature("feature A");
+      await store.updateFeature(f1.id, { status: "done", project: "katulong" });
 
       const active = store.getActiveByProject("katulong");
       assert.deepEqual(active, []);
@@ -154,12 +154,12 @@ describe("Dispatch Store", () => {
   });
 
   describe("addLog", () => {
-    it("appends to execution.logs, creates execution object if missing", () => {
-      const feature = store.addFeature("log test");
+    it("appends to execution.logs, creates execution object if missing", async () => {
+      const feature = await store.addFeature("log test");
       assert.equal(feature.execution, null, "execution starts null");
 
-      store.addLog(feature.id, "Step 1");
-      store.addLog(feature.id, "Step 2");
+      await store.addLog(feature.id, "Step 1");
+      await store.addLog(feature.id, "Step 2");
 
       const updated = store.getFeature(feature.id);
       assert.ok(updated.execution, "execution should be created");
@@ -167,11 +167,11 @@ describe("Dispatch Store", () => {
       assert.deepEqual(updated.execution.logs, ["Step 1", "Step 2"]);
     });
 
-    it("caps logs at 200 entries", () => {
-      const feature = store.addFeature("many logs");
+    it("caps logs at 200 entries", async () => {
+      const feature = await store.addFeature("many logs");
 
       for (let i = 0; i < 210; i++) {
-        store.addLog(feature.id, `log entry ${i}`);
+        await store.addLog(feature.id, `log entry ${i}`);
       }
 
       const updated = store.getFeature(feature.id);
@@ -180,16 +180,16 @@ describe("Dispatch Store", () => {
       assert.equal(updated.execution.logs[199], "log entry 209");
     });
 
-    it("is a no-op for unknown feature IDs", () => {
+    it("is a no-op for unknown feature IDs", async () => {
       // Should not throw
-      store.addLog("f-nonexistent-0000", "ghost log");
+      await store.addLog("f-nonexistent-0000", "ghost log");
     });
   });
 
   describe("atomic writes", () => {
-    it("file is valid JSON after updates", () => {
-      store.addFeature("one");
-      store.addFeature("two");
+    it("file is valid JSON after updates", async () => {
+      await store.addFeature("one");
+      await store.addFeature("two");
 
       const filePath = join(testDir, "dispatch-features.json");
       assert.ok(existsSync(filePath), "File should exist");
@@ -199,8 +199,8 @@ describe("Dispatch Store", () => {
       assert.equal(parsed.length, 2, "Should contain both features");
     });
 
-    it("temp file is cleaned up after write", () => {
-      store.addFeature("temp check");
+    it("temp file is cleaned up after write", async () => {
+      await store.addFeature("temp check");
 
       const tmpPath = join(testDir, "dispatch-features.json.tmp");
       assert.ok(!existsSync(tmpPath), "Temp file should not exist after write");
@@ -208,8 +208,8 @@ describe("Dispatch Store", () => {
   });
 
   describe("persistence across store instances", () => {
-    it("features persist across store instances backed by the same directory", () => {
-      const feature = store.addFeature("persist me");
+    it("features persist across store instances backed by the same directory", async () => {
+      const feature = await store.addFeature("persist me");
 
       const store2 = createDispatchStore(testDir);
       const found = store2.getFeature(feature.id);
@@ -219,9 +219,9 @@ describe("Dispatch Store", () => {
       assert.equal(found.status, "raw");
     });
 
-    it("updates from one instance are visible in another", () => {
-      const feature = store.addFeature("shared state");
-      store.updateFeature(feature.id, { status: "active" });
+    it("updates from one instance are visible in another", async () => {
+      const feature = await store.addFeature("shared state");
+      await store.updateFeature(feature.id, { status: "active" });
 
       const store2 = createDispatchStore(testDir);
       const found = store2.getFeature(feature.id);
@@ -269,6 +269,7 @@ describe("Dispatch Routes", () => {
       on(event, cb) {
         if (event === "data") chunks.forEach((c) => cb(c));
         if (event === "end") cb();
+        if (event === "close") { /* noop for mock */ }
       },
     };
   }
@@ -293,12 +294,16 @@ describe("Dispatch Routes", () => {
   function auth(handler) { return handler; }
   function csrf(handler) { return handler; }
 
+  // Stub refiner and executor for route tests
+  const refiner = { refine: async () => ({}) };
+  const executor = { dispatch: async () => ({}), cancel: async () => true };
+
   beforeEach(async () => {
     testDir = mkdtempSync(join(tmpdir(), "katulong-dispatch-route-test-"));
     store = createDispatchStore(testDir);
 
     const { createDispatchRoutes } = await import("../lib/dispatch-routes.js");
-    routes = createDispatchRoutes({ store, json, parseJSON, auth, csrf });
+    routes = createDispatchRoutes({ store, refiner, executor, json, parseJSON, auth, csrf });
 
     // Index routes by method+path for easy lookup
     routeMap = {};
@@ -351,8 +356,8 @@ describe("Dispatch Routes", () => {
 
   describe("GET /api/dispatch/features", () => {
     it("returns array of features", async () => {
-      store.addFeature("alpha");
-      store.addFeature("beta");
+      await store.addFeature("alpha");
+      await store.addFeature("beta");
 
       const route = routeMap["GET /api/dispatch/features"];
       const req = createMockReq("GET", "/api/dispatch/features");
@@ -379,7 +384,7 @@ describe("Dispatch Routes", () => {
 
   describe("GET /api/dispatch/features/<id>", () => {
     it("returns single feature", async () => {
-      const feature = store.addFeature("find via route");
+      const feature = await store.addFeature("find via route");
 
       const route = routeMap["GET PREFIX:/api/dispatch/features/"];
       const req = createMockReq("GET", `/api/dispatch/features/${feature.id}`);
@@ -404,7 +409,7 @@ describe("Dispatch Routes", () => {
 
   describe("PUT /api/dispatch/features/<id>", () => {
     it("updates fields", async () => {
-      const feature = store.addFeature("update via route");
+      const feature = await store.addFeature("update via route");
 
       const route = routeMap["PUT PREFIX:/api/dispatch/features/"];
       const req = createMockReq("PUT", `/api/dispatch/features/${feature.id}`, {
@@ -435,7 +440,7 @@ describe("Dispatch Routes", () => {
 
   describe("DELETE /api/dispatch/features/<id>", () => {
     it("removes the feature", async () => {
-      const feature = store.addFeature("delete via route");
+      const feature = await store.addFeature("delete via route");
 
       const route = routeMap["DELETE PREFIX:/api/dispatch/features/"];
       const req = createMockReq("DELETE", `/api/dispatch/features/${feature.id}`);
@@ -458,7 +463,7 @@ describe("Dispatch Routes", () => {
 
   describe("POST /api/dispatch/hook", () => {
     it("processes tool events and adds logs", async () => {
-      const feature = store.addFeature("hook test");
+      const feature = await store.addFeature("hook test");
 
       const route = routeMap["POST /api/dispatch/hook"];
       const req = createMockReq("POST", "/api/dispatch/hook", {
@@ -471,8 +476,6 @@ describe("Dispatch Routes", () => {
 
       assert.equal(res.statusCode, 200);
 
-      // The hook responds immediately, then processes async — but since
-      // our parseJSON mock is synchronous in effect, the log is added inline.
       const updated = store.getFeature(feature.id);
       assert.ok(updated.execution, "execution should be created");
       assert.ok(updated.execution.logs.length > 0, "Should have log entries");
@@ -483,7 +486,7 @@ describe("Dispatch Routes", () => {
     });
 
     it("maps Edit tool events to file editing logs", async () => {
-      const feature = store.addFeature("edit hook test");
+      const feature = await store.addFeature("edit hook test");
 
       const route = routeMap["POST /api/dispatch/hook"];
       const req = createMockReq("POST", "/api/dispatch/hook", {
@@ -502,7 +505,7 @@ describe("Dispatch Routes", () => {
     });
 
     it("maps Read/Grep/Glob tool events to reading logs", async () => {
-      const feature = store.addFeature("read hook test");
+      const feature = await store.addFeature("read hook test");
       const route = routeMap["POST /api/dispatch/hook"];
 
       for (const tool of ["Read", "Grep", "Glob"]) {
@@ -530,6 +533,19 @@ describe("Dispatch Routes", () => {
       await route.handler(req, res);
 
       assert.equal(res.statusCode, 200, "Should still respond 200");
+    });
+
+    it("returns 404 for unknown feature_id", async () => {
+      const route = routeMap["POST /api/dispatch/hook"];
+      const req = createMockReq("POST", "/api/dispatch/hook", {
+        feature_id: "f-nonexistent-0000",
+        tool_name: "Bash",
+        tool_input: { command: "ls" },
+      });
+      const res = createMockRes();
+      await route.handler(req, res);
+
+      assert.equal(res.statusCode, 404, "Should respond 404 for unknown feature");
     });
   });
 });
