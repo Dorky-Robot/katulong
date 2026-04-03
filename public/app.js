@@ -439,6 +439,8 @@
           carousel.addCard(id, tile);
         }
         carousel.focusCard(existing || name);
+        // Ensure WS subscribes to the new session for live output
+        syncCarouselSubscriptions();
       } else {
         const allNames = windowTabSet ? [...windowTabSet.getTabs()] : [];
         if (!allNames.includes(name)) allNames.push(name);
