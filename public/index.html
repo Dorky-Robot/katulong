@@ -1293,6 +1293,7 @@
     }
     .sidebar-icon-btn:hover { color: var(--text); }
     .sidebar-icon-btn:active { background: rgba(255,255,255,0.08); }
+    .sidebar-icon-btn.active { color: var(--accent-active); }
     .sidebar-spacer { margin-left: auto; }
     #sidebar-footer {
       display: flex; align-items: center; gap: var(--space-xs);
@@ -2190,8 +2191,12 @@
       </div>
       <div id="sidebar-content">
         <div id="session-list" role="list"></div>
+        <div id="dispatch-container" style="display:none;"></div>
       </div>
       <div id="sidebar-footer">
+        <button class="sidebar-icon-btn" id="sidebar-dispatch-btn" aria-label="Dispatch queue" title="Dispatch">
+          <i class="ph ph-lightning"></i>
+        </button>
         <button class="sidebar-icon-btn" id="sidebar-files-btn" aria-label="Open file browser" title="Files">
           <i class="ph ph-folder-open"></i>
         </button>

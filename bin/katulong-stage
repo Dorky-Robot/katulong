@@ -43,7 +43,7 @@ if [[ "${1:-}" == "--stop" ]]; then
     found=0
     for dir in ${STAGE_BASE}-*/; do
       [[ -d "$dir" ]] || continue
-      port=$(basename "$dir" | grep -oP '\d+$' || true)
+      port=$(basename "$dir" | grep -oE '[0-9]+$' || true)
       [[ -n "$port" ]] && stop_port "$port" && found=1
     done
     [[ "$found" -eq 0 ]] && echo "No staging instances found."
@@ -57,13 +57,13 @@ if [[ "${1:-}" == "--status" ]]; then
   found=0
   for dir in ${STAGE_BASE}-*/; do
     [[ -d "$dir" ]] || continue
-    port=$(basename "$dir" | grep -oP '\d+$' || true)
+    port=$(basename "$dir" | grep -oE '[0-9]+$' || true)
     [[ -z "$port" ]] && continue
     pidfile="${dir}server.pid"
     [[ -f "$pidfile" ]] || continue
     pid=$(cat "$pidfile")
     if is_alive "$pid"; then
-      tunnel_url=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' "${dir}tunnel.log" 2>/dev/null | head -1 || echo "no tunnel")
+      tunnel_url=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "${dir}tunnel.log" 2>/dev/null | head -1 || echo "no tunnel")
       echo "  port=$port  pid=$pid  url=$tunnel_url"
       found=1
     fi
@@ -199,7 +199,7 @@ echo "$TUNNEL_PID" > "${DATA_DIR}/tunnel.pid"
 echo "Starting Cloudflare tunnel (pid $TUNNEL_PID)..."
 TUNNEL_URL=""
 for i in $(seq 1 20); do
-  TUNNEL_URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' "${DATA_DIR}/tunnel.log" 2>/dev/null | head -1 || true)
+  TUNNEL_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "${DATA_DIR}/tunnel.log" 2>/dev/null | head -1 || true)
   if [[ -n "$TUNNEL_URL" ]]; then
     break
   fi
