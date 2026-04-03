@@ -176,13 +176,81 @@ Same pattern as Westley: configure `.claude/settings.local.json` inside the kubo
 - Broadcasts to sidebar via SSE
 - Persists logs to feature store
 
-## Dogfooding Plan
+## Visible Sessions (v2 — next iteration)
 
-We build Dispatch using the same pattern it describes:
-1. Write this design doc (this file)
-2. Break into implementation tasks
-3. Use sub-agents in worktrees from this session to build it
-4. Learn from the experience and feed learnings back into the design
+Every dispatch action that runs Claude should create a **visible katulong terminal session**, not a hidden subprocess. The user controls their level of engagement:
+
+### Two-layer feedback
+
+1. **Sidebar bullets** — compact live status in the dispatch card (like Westley):
+   - "Identifying project..."
+   - "Searching diwa for context..."
+   - "Generating spec..."
+   - "Writing subtask breakdown..."
+   - Quick glance without leaving what you're doing.
+
+2. **"Open" button** — click to add the Claude session to the carousel as a terminal tile. Watch Claude think, scroll through its reasoning, type to redirect it. Same session, just surfaced into the UI.
+
+### How it works
+
+```
+User clicks "Refine"
+    ↓
+Dispatch creates a katulong terminal session (e.g., "refine-f-abc123")
+    ↓
+Runs `claude -p "refine this idea..."` inside the session
+    ↓
+Sidebar card shows:
+  ┌──────────────────────────────────┐
+  │ @katulong make bg purple         │
+  │ REFINING  just now        [Open] │
+  │  · Identifying project...        │
+  │  · Searching diwa for context... │
+  └──────────────────────────────────┘
+    ↓
+User clicks [Open] → session appears in carousel as terminal tile
+    ↓
+User can watch, scroll back, or type into the Claude session
+    ↓
+When Claude finishes → parse output → update feature → status "refined"
+```
+
+### Same pattern for execution
+
+When "Start" is clicked, dispatch creates a kubo container and a katulong session attached to it. The sidebar shows bullet updates from hooks. The "Open" button surfaces the kubo terminal in the carousel.
+
+### Design principles
+
+- **Sessions are the primitive.** Katulong already manages terminal sessions brilliantly. Dispatch should use them, not reinvent execution with hidden subprocesses.
+- **Bullets for awareness, terminals for control.** Most of the time you glance at the sidebar. When something looks wrong or interesting, you open the session.
+- **Sessions persist.** Even after refinement completes, the session stays so you can scroll back through Claude's reasoning. Delete it when you're done.
+
+## Implementation Status
+
+### Shipped (v1)
+- Design doc (this file)
+- Feature store with JSON persistence, async mutex locking
+- API routes: CRUD, SSE, hooks, project listing
+- Refinement engine (Claude + diwa) — currently uses hidden subprocess
+- Dispatch executor (kubo + yolo) — currently uses hidden subprocess
+- Left-side slide-out panel with FAB toggle
+- @project mention autocomplete (Tab cycling, starts-with ranking)
+- 55 tests covering store, routes, parsing, and autocomplete
+
+### Next (v2 — visible sessions)
+- Refine/execute via visible terminal sessions instead of hidden subprocesses
+- Sidebar bullet updates (hook-driven, like Westley)
+- "Open" button to surface session in carousel
+- Session lifecycle management (create on action, persist for review, cleanup)
+
+## Dogfooding Learnings
+
+Building v1 with sub-agents taught us:
+1. **Define interfaces first, then parallelize.** The store API and route contracts were locked before sub-agents ran — no coordination needed.
+2. **Worktree isolation works.** 4 agents ran in parallel without conflicts.
+3. **The linter can fight you.** File watchers on the main checkout caused branch switching when agents wrote files. Always use worktrees.
+4. **SSE through tunnels is fragile.** Auth redirects kill EventSource silently. Fetch-after-action is more reliable for core state; SSE is for bonus real-time updates.
+5. **Test the actual deployment.** Several bugs only showed up through the Cloudflare tunnel (CSRF, SSE, project loading). Staging early and often caught them.
 
 ## Prior Art
 
