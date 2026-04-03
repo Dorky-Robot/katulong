@@ -230,10 +230,11 @@ export function createCardCarousel({
       }
     }
 
-    // Use the focused card's actual width for stride so that resized cards
-    // push neighbors out of the way instead of overlapping them.
+    // Stride = distance between card centers. Each card is centered via
+    // left:50% + marginLeft:-width/2, so the distance from the focused
+    // card's center to a neighbor's center is half of each width + gap.
     const focusedW = cachedCardW || defaultCardW;
-    const stride = Math.max(focusedW, defaultCardW) + gap;
+    const stride = (focusedW + defaultCardW) / 2 + gap;
 
     for (const [id, { wrapper }] of cardEls) {
       const idx = cards.indexOf(id);
