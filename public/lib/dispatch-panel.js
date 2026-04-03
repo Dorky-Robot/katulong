@@ -131,6 +131,11 @@ export function createDispatchPanel(container) {
   // ── Build DOM structure ──────────────────────────────────────────
   const panel = el('div', { className: 'dp-panel' });
 
+  // Prevent terminal from stealing keystrokes when interacting with the panel
+  panel.addEventListener('keydown', (e) => e.stopPropagation());
+  panel.addEventListener('keypress', (e) => e.stopPropagation());
+  panel.addEventListener('keyup', (e) => e.stopPropagation());
+
   // Input bar
   const input = el('input', {
     className: 'dp-input',
@@ -147,6 +152,17 @@ export function createDispatchPanel(container) {
   const inputBar = el('div', { className: 'dp-input-bar' }, [input, submitBtn]);
   panel.appendChild(inputBar);
 
+  async function refreshFeatures() {
+    try {
+      const list = await api.get('/api/dispatch/features');
+      features.clear();
+      for (const f of list) features.set(f.id, f);
+      renderAll();
+    } catch (err) {
+      console.error('[Dispatch] Refresh failed:', err);
+    }
+  }
+
   async function submitIdea() {
     const text = input.value.trim();
     if (!text) return;
@@ -155,6 +171,7 @@ export function createDispatchPanel(container) {
     submitBtn.disabled = true;
     try {
       await api.post('/api/dispatch/features', { raw: text });
+      await refreshFeatures();
     } catch (err) {
       console.error('[Dispatch] Submit failed:', err);
       input.value = text; // restore on failure
@@ -227,12 +244,12 @@ export function createDispatchPanel(container) {
     const actions = el('div', { className: 'dp-card-actions' });
     if (f.status === 'raw') {
       actions.appendChild(textBtn('Refine', async () => {
-        try { await api.post(`/api/dispatch/refine/${encodeURIComponent(f.id)}`); }
+        try { await api.post(`/api/dispatch/refine/${encodeURIComponent(f.id)}`); await refreshFeatures(); }
         catch (err) { console.error('[Dispatch] Refine failed:', err); }
       }));
     }
     actions.appendChild(iconBtn('ph ph-x', 'Dismiss', async () => {
-      try { await api.delete(`/api/dispatch/features/${encodeURIComponent(f.id)}`); }
+      try { await api.delete(`/api/dispatch/features/${encodeURIComponent(f.id)}`); await refreshFeatures(); }
       catch (err) { console.error('[Dispatch] Dismiss failed:', err); }
     }, 'dp-btn-dismiss'));
     card.appendChild(actions);
@@ -279,14 +296,14 @@ export function createDispatchPanel(container) {
 
     const actions = el('div', { className: 'dp-card-actions' });
     actions.appendChild(textBtn('Start', async () => {
-      try { await api.post(`/api/dispatch/start/${encodeURIComponent(f.id)}`); }
+      try { await api.post(`/api/dispatch/start/${encodeURIComponent(f.id)}`); await refreshFeatures(); }
       catch (err) { console.error('[Dispatch] Start failed:', err); }
     }, 'dp-btn-start'));
     actions.appendChild(iconBtn('ph ph-pencil-simple', 'Edit', () => {
       toggleEditMode(card, f);
     }));
     actions.appendChild(iconBtn('ph ph-x', 'Dismiss', async () => {
-      try { await api.delete(`/api/dispatch/features/${encodeURIComponent(f.id)}`); }
+      try { await api.delete(`/api/dispatch/features/${encodeURIComponent(f.id)}`); await refreshFeatures(); }
       catch (err) { console.error('[Dispatch] Dismiss failed:', err); }
     }, 'dp-btn-dismiss'));
     card.appendChild(actions);
@@ -450,6 +467,7 @@ export function createDispatchPanel(container) {
   }
 
   connectSSE();
+  refreshFeatures(); // Load existing features immediately
 
   // ── Cleanup ──────────────────────────────────────────────────────
 
