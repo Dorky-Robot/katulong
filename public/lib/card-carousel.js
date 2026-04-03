@@ -55,19 +55,19 @@ export function createCardCarousel({
           }
           return base;
         }).filter(Boolean);
-        sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
           cards: serialized,
           focused: focusedId,
         }));
       } else {
-        sessionStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(STORAGE_KEY);
       }
     } catch { /* sessionStorage unavailable */ }
   }
 
   function restore() {
     try {
-      const raw = sessionStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       const state = JSON.parse(raw);
       if (!state.cards?.length) return null;
