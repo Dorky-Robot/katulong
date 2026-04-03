@@ -100,7 +100,7 @@ export function createCardCarousel({
         // SIGWINCH during TUI render. Just reposition cards visually.
         // Terminal refit happens in onResizeEnd.
         if (tileId === focusedId) {
-          positionCards(false);
+          positionCards(false, width);
         }
       },
       onResizeEnd: (width) => {
@@ -209,7 +209,7 @@ export function createCardCarousel({
     defaultCardW = Math.max(280, Math.min(cw - 160, 720));
   }
 
-  function positionCards(animate = true) {
+  function positionCards(animate = true, focusedWidth) {
     if (!focusedId) return;
     const focusedIdx = cards.indexOf(focusedId);
     if (focusedIdx === -1) return;
@@ -217,11 +217,17 @@ export function createCardCarousel({
     if (!defaultCardW) computeDefaultCardWidth();
     const gap = 16;
 
-    // Cache focused card's actual width for swipe threshold calculations
-    const focusedEntry = cardEls.get(focusedId);
-    if (focusedEntry) {
-      const w = focusedEntry.wrapper.offsetWidth || focusedEntry.wrapper.getBoundingClientRect().width;
-      if (w > 0) cachedCardW = w;
+    // Cache focused card's actual width for swipe threshold calculations.
+    // During resize drag, the caller passes the exact width so we don't
+    // need to read the DOM (which may not have reflowed yet).
+    if (focusedWidth > 0) {
+      cachedCardW = focusedWidth;
+    } else {
+      const focusedEntry = cardEls.get(focusedId);
+      if (focusedEntry) {
+        const w = focusedEntry.wrapper.offsetWidth || focusedEntry.wrapper.getBoundingClientRect().width;
+        if (w > 0) cachedCardW = w;
+      }
     }
 
     // Use the focused card's actual width for stride so that resized cards
