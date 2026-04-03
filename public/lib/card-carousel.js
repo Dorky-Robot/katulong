@@ -62,7 +62,7 @@ export function createCardCarousel({
       } else {
         localStorage.removeItem(STORAGE_KEY);
       }
-    } catch { /* sessionStorage unavailable */ }
+    } catch { /* localStorage unavailable */ }
   }
 
   function restore() {

@@ -108,7 +108,7 @@ function setupGlobals() {
   globalThis.document.querySelector = () => null;
   globalThis.requestAnimationFrame = (fn) => fn();
   const storage = {};
-  globalThis.sessionStorage = {
+  globalThis.localStorage = {
     getItem: (k) => storage[k] ?? null,
     setItem: (k, v) => { storage[k] = v; },
     removeItem: (k) => { delete storage[k]; },
@@ -431,7 +431,7 @@ describe('card-carousel', () => {
   describe('persistence', () => {
     it('saves state on activate', () => {
       carousel.activate(makeTiles("a", "b"), "a");
-      const saved = JSON.parse(sessionStorage.getItem("katulong-carousel"));
+      const saved = JSON.parse(localStorage.getItem("katulong-carousel"));
       assert.strictEqual(saved.cards.length, 2);
       assert.strictEqual(saved.cards[0].id, "a");
       assert.strictEqual(saved.cards[1].id, "b");
@@ -441,14 +441,14 @@ describe('card-carousel', () => {
     it('saves state on addCard', () => {
       carousel.activate(makeTiles("a"), "a");
       carousel.addCard("b", createMockTile("b"));
-      const saved = JSON.parse(sessionStorage.getItem("katulong-carousel"));
+      const saved = JSON.parse(localStorage.getItem("katulong-carousel"));
       assert.strictEqual(saved.cards.length, 2);
     });
 
     it('clears state on deactivate', () => {
       carousel.activate(makeTiles("a"), "a");
       carousel.deactivate();
-      assert.strictEqual(sessionStorage.getItem("katulong-carousel"), null);
+      assert.strictEqual(localStorage.getItem("katulong-carousel"), null);
     });
 
     it('restore() returns saved state', () => {
@@ -463,7 +463,7 @@ describe('card-carousel', () => {
     });
 
     it('restore() handles legacy string array format', () => {
-      sessionStorage.setItem("katulong-carousel", JSON.stringify({
+      localStorage.setItem("katulong-carousel", JSON.stringify({
         cards: ["x", "y"],
         focused: "y",
       }));
