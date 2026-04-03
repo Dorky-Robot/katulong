@@ -366,19 +366,30 @@
         // For terminals with content (tab switch): just resize, no switch needed.
         // For empty terminals (new session): send switch to get seq-init + start pulling.
         const ws = state.connection.ws;
-        if (ws?.readyState === WebSocket.OPEN) {
-          const entry = terminalPool.get(sessionName);
-          if (entry) {
-            const buf = entry.term.buffer?.active;
-            const isEmpty = buf && buf.baseY === 0 && buf.cursorY === 0 && buf.cursorX === 0;
-            if (isEmpty) {
-              // New session — need switch to get attached + seq-init
-              ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
-            } else {
-              // Existing session — just resize, content is already there
-              ws.send(JSON.stringify({ type: "resize", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
-            }
+        const wsOpen = ws?.readyState === WebSocket.OPEN;
+        const entry = terminalPool.get(sessionName);
+        const buf = entry?.term?.buffer?.active;
+        // Treat undefined buffer as empty — safer to send switch than to skip it.
+        // A skipped switch leaves the terminal with no seq-init and no output,
+        // making it appear permanently unresponsive to keyboard input.
+        const isEmpty = !buf || (buf.baseY === 0 && buf.cursorY === 0 && buf.cursorX === 0);
+        if (wsOpen && entry) {
+          if (isEmpty) {
+            // New session — need switch to get attached + seq-init
+            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
+          } else {
+            // Existing session — just resize, content is already there
+            ws.send(JSON.stringify({ type: "resize", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
           }
+        } else if (isEmpty) {
+          // WS not open but we're switching to a new empty terminal.
+          // Trigger reconnection — onopen will send "attach" for the
+          // current state.session.name (just updated above), which
+          // attaches the client to the new session and initializes
+          // the pull mechanism. Without this, the terminal stays
+          // permanently stuck with no output and no input routing.
+          wsConnection.enableReconnect();
+          wsConnection.connect();
         }
         syncCarouselSubscriptions();
         // Reattach scroll-to-bottom button to the newly focused terminal
