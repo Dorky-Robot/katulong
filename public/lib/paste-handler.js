@@ -47,11 +47,15 @@ export function createPasteHandler(options = {}) {
       }
       _blocked = true;
       _capturedSession = getSession ? getSession() : null;
+      // Stop xterm.js from seeing Cmd+V (prevents raw \x16), but do NOT
+      // preventDefault — that suppresses the native paste event on WebKit,
+      // forcing a Clipboard API fallback that triggers the iOS "Paste"
+      // confirmation popup. Without preventDefault, the browser fires the
+      // paste event normally and our capture-phase handlePaste intercepts it.
       e.stopImmediatePropagation();
-      e.preventDefault();
-      // If no paste event fires within 200ms (WebKit suppresses it after
-      // preventDefault on keydown), read the clipboard directly.
-      _fallbackTimer = setTimeout(() => handleClipboardFallback(), 200);
+      // Safety net: if no paste event fires within 300ms, fall back to
+      // the Clipboard API. Should not trigger in practice.
+      _fallbackTimer = setTimeout(() => handleClipboardFallback(), 300);
     }
   }
 
