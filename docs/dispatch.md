@@ -231,17 +231,22 @@ When "Start" is clicked, dispatch creates a kubo container and a katulong sessio
 - Design doc (this file)
 - Feature store with JSON persistence, async mutex locking
 - API routes: CRUD, SSE, hooks, project listing
-- Refinement engine (Claude + diwa) — currently uses hidden subprocess
-- Dispatch executor (kubo + yolo) — currently uses hidden subprocess
 - Left-side slide-out panel with FAB toggle
 - @project mention autocomplete (Tab cycling, starts-with ranking)
 - 55 tests covering store, routes, parsing, and autocomplete
 
-### Next (v2 — visible sessions)
-- Refine/execute via visible terminal sessions instead of hidden subprocesses
-- Sidebar bullet updates (hook-driven, like Westley)
-- "Open" button to surface session in carousel
-- Session lifecycle management (create on action, persist for review, cleanup)
+### Shipped (v2 — visible sessions)
+- Refinement runs Claude spec generation in a visible katulong terminal session
+- Execution runs kubo/yolo in a visible session instead of hidden subprocess
+- Persistent sessions — dispatch sessions survive shell exit for scrollback review
+- "Open" button on cards surfaces the session in the carousel
+- Sidebar bullet updates from hook SSE events (last 3 per card)
+- Graceful fallback to hidden subprocess when sessionManager unavailable (tests)
+- Cancel sends Ctrl-C to session, then kills after timeout
+
+### Next (v3)
+- Session cleanup UI (batch-delete completed dispatch sessions)
+- Batch dispatch (start multiple refined features at once)
 
 ## Dogfooding Learnings
 

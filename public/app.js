@@ -439,6 +439,8 @@
           carousel.addCard(id, tile);
         }
         carousel.focusCard(existing || name);
+        // Ensure WS subscribes to the new session for live output
+        syncCarouselSubscriptions();
       } else {
         const allNames = windowTabSet ? [...windowTabSet.getTabs()] : [];
         if (!allNames.includes(name)) allNames.push(name);
@@ -1516,6 +1518,12 @@
 
     if (dispatchFab) dispatchFab.addEventListener("click", openDispatch);
     if (dispatchCloseBtn) dispatchCloseBtn.addEventListener("click", closeDispatch);
+
+    // Dispatch "Open" button → surface the session in the carousel/terminal
+    document.addEventListener("dispatch:open-session", (e) => {
+      const name = e.detail?.name;
+      if (name) routeToSession(name);
+    });
 
     const sidebarFilesBtn = document.getElementById("sidebar-files-btn");
     if (sidebarFilesBtn) {

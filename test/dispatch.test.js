@@ -289,7 +289,7 @@ describe("Dispatch Routes", () => {
   }
   function auth(handler) { return handler; }
   function csrf(handler) { return handler; }
-  const refiner = { refine: async () => ({}) };
+  const refiner = { refine: async () => ({}), refineBatch: async () => [] };
   const executor = { dispatch: async () => ({}), cancel: async () => true };
 
   beforeEach(async () => {
@@ -353,6 +353,79 @@ describe("Dispatch Routes", () => {
     await route.handler(createMockReq("DELETE", `/api/dispatch/features/${f.id}`), res, f.id);
     assert.equal(res.statusCode, 200);
     assert.equal(store.getFeature(f.id), null);
+  });
+
+  it("POST /api/dispatch/refine accepts featureIds array", async () => {
+    const f1 = store.addFeature("idea one");
+    const f2 = store.addFeature("idea two");
+    const route = routeMap["POST /api/dispatch/refine"];
+    const req = createMockReq("POST", "/api/dispatch/refine", { featureIds: [f1.id, f2.id] });
+    const res = createMockRes();
+    await route.handler(req, res);
+    assert.equal(res.statusCode, 202);
+    const body = JSON.parse(res.body);
+    assert.ok(body.ok);
+    assert.ok(body.sessionTag);
+    assert.deepEqual(body.featureIds, [f1.id, f2.id]);
+    // Features should be marked as grouped
+    assert.equal(store.getFeature(f1.id).status, "grouped");
+    assert.equal(store.getFeature(f2.id).status, "grouped");
+  });
+
+  it("POST /api/dispatch/refine with all: true groups all raw features", async () => {
+    const f1 = store.addFeature("idea A");
+    const f2 = store.addFeature("idea B");
+    store.addFeature("idea C");
+    store.updateFeature(f1.id, { status: "refined" }); // not raw — should be excluded
+    const route = routeMap["POST /api/dispatch/refine"];
+    const req = createMockReq("POST", "/api/dispatch/refine", { all: true });
+    const res = createMockRes();
+    await route.handler(req, res);
+    assert.equal(res.statusCode, 202);
+    const body = JSON.parse(res.body);
+    // f1 is refined, so only f2 and f3 should be included
+    assert.equal(body.featureIds.length, 2);
+    assert.ok(!body.featureIds.includes(f1.id));
+  });
+
+  it("POST /api/dispatch/refine rejects non-raw features", async () => {
+    const f1 = store.addFeature("idea");
+    store.updateFeature(f1.id, { status: "refined" });
+    const route = routeMap["POST /api/dispatch/refine"];
+    const req = createMockReq("POST", "/api/dispatch/refine", { featureIds: [f1.id] });
+    const res = createMockRes();
+    await route.handler(req, res);
+    assert.equal(res.statusCode, 400);
+  });
+
+  it("POST /api/dispatch/refine rejects empty featureIds", async () => {
+    const route = routeMap["POST /api/dispatch/refine"];
+    const req = createMockReq("POST", "/api/dispatch/refine", { featureIds: [] });
+    const res = createMockRes();
+    await route.handler(req, res);
+    assert.equal(res.statusCode, 400);
+  });
+
+  it("POST /api/dispatch/refine rejects missing body", async () => {
+    const route = routeMap["POST /api/dispatch/refine"];
+    const req = createMockReq("POST", "/api/dispatch/refine", {});
+    const res = createMockRes();
+    await route.handler(req, res);
+    assert.equal(res.statusCode, 400);
+  });
+
+  it("grouped features get sessionName and groupedInto set", async () => {
+    const f1 = store.addFeature("idea one");
+    const f2 = store.addFeature("idea two");
+    const route = routeMap["POST /api/dispatch/refine"];
+    const req = createMockReq("POST", "/api/dispatch/refine", { featureIds: [f1.id, f2.id] });
+    const res = createMockRes();
+    await route.handler(req, res);
+    const body = JSON.parse(res.body);
+    const updated1 = store.getFeature(f1.id);
+    const updated2 = store.getFeature(f2.id);
+    assert.equal(updated1.groupedInto, body.sessionTag);
+    assert.equal(updated2.groupedInto, body.sessionTag);
   });
 
   it("hook processes tool events", async () => {

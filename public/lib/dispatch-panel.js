@@ -1,9 +1,11 @@
 /**
  * Dispatch Panel
  *
- * Minimal feature queue with inline #project mentions.
- * Type naturally — "#ka" autocompletes to "#katulong".
- * Projects are parsed from the text, not picked separately.
+ * Feature queue with batch refinement, inline @project mentions,
+ * and visible session integration.
+ *
+ * Raw ideas can be selected (checkboxes) and batch-refined — Claude
+ * triages them into consolidated/split/flagged tickets.
  */
 
 import { api } from '/lib/api-client.js';
@@ -26,7 +28,9 @@ function el(tag, attrs = {}, children = []) {
 }
 
 function timeAgo(iso) {
+  if (!iso) return '';
   const ms = Date.now() - new Date(iso).getTime();
+  if (isNaN(ms)) return '';
   const s = Math.floor(ms / 1000);
   if (s < 60) return 'just now';
   const m = Math.floor(s / 60);
@@ -36,10 +40,6 @@ function timeAgo(iso) {
   return `${Math.floor(h / 24)}d`;
 }
 
-/**
- * Extract #project tags from text.
- * Returns { text: cleaned text, projects: ['katulong', 'yelo'] }
- */
 function parseHashtags(text) {
   const tags = [];
   const cleaned = text.replace(/@([a-zA-Z0-9._-]+)/g, (_, tag) => {
@@ -56,8 +56,8 @@ export function createDispatchPanel(container) {
   let eventSource = null;
   const features = new Map();
   let projectCache = null;
+  const selected = new Set(); // selected raw feature IDs for batch refine
 
-  // Inject styles
   const styleEl = document.createElement('style');
   styleEl.textContent = PANEL_CSS;
   document.head.appendChild(styleEl);
@@ -85,20 +85,62 @@ export function createDispatchPanel(container) {
   composer.appendChild(textarea);
   composer.appendChild(sendRow);
 
-  // Autocomplete dropdown
   const dropdown = el('div', { className: 'dp-autocomplete dp-hidden' });
   composer.appendChild(dropdown);
 
   panel.appendChild(composer);
 
+  // ── Floating refine bar ─────────────────────────────────────────
+
+  const refineBar = el('div', { className: 'dp-refine-bar dp-hidden' });
+  const refineSelectedBtn = el('button', { className: 'dp-refine-btn' });
+  const refineAllBtn = el('button', { className: 'dp-refine-btn dp-refine-all' });
+  refineBar.appendChild(refineSelectedBtn);
+  refineBar.appendChild(refineAllBtn);
+  panel.appendChild(refineBar);
+
+  function updateRefineBar() {
+    const rawCount = [...features.values()].filter((f) => f.status === 'raw').length;
+    const selCount = selected.size;
+
+    if (rawCount === 0) {
+      refineBar.classList.add('dp-hidden');
+      return;
+    }
+
+    refineBar.classList.remove('dp-hidden');
+    refineSelectedBtn.textContent = `Refine ${selCount} selected`;
+    refineSelectedBtn.disabled = selCount === 0;
+    refineAllBtn.textContent = `Refine all (${rawCount})`;
+  }
+
+  refineSelectedBtn.addEventListener('click', async () => {
+    if (selected.size === 0) return;
+    try {
+      await api.post('/api/dispatch/refine', { featureIds: [...selected] });
+      selected.clear();
+      await refreshFeatures();
+    } catch (err) {
+      console.error('[Dispatch] Batch refine failed:', err);
+    }
+  });
+
+  refineAllBtn.addEventListener('click', async () => {
+    try {
+      await api.post('/api/dispatch/refine', { all: true });
+      selected.clear();
+      await refreshFeatures();
+    } catch (err) {
+      console.error('[Dispatch] Refine all failed:', err);
+    }
+  });
+
   // ── Project autocomplete ─────────────────────────────────────────
 
-  // Projects are loaded alongside features (same endpoint, same auth)
   function setProjects(list) {
     if (Array.isArray(list) && list.length > 0) projectCache = list;
   }
 
-  // Also try loading from the standalone endpoint as fallback
   async function ensureProjects() {
     if (projectCache && projectCache.length > 0) return;
     try {
@@ -123,7 +165,7 @@ export function createDispatchPanel(container) {
         const aStarts = as.startsWith(q);
         const bStarts = bs.startsWith(q);
         if (aStarts !== bStarts) return aStarts ? -1 : 1;
-        return as.length - bs.length; // shorter = more relevant
+        return as.length - bs.length;
       })
       .slice(0, 6);
 
@@ -155,7 +197,6 @@ export function createDispatchPanel(container) {
   function completeTag(slug) {
     const val = textarea.value;
     const cursor = textarea.selectionStart;
-    // Find the # that started this tag
     let hashPos = val.lastIndexOf('@', cursor - 1);
     if (hashPos < 0) hashPos = cursor;
     const before = val.slice(0, hashPos);
@@ -170,7 +211,6 @@ export function createDispatchPanel(container) {
   function getTagQuery() {
     const val = textarea.value;
     const cursor = textarea.selectionStart;
-    // Walk back from cursor to find a # not preceded by a word char
     let i = cursor - 1;
     while (i >= 0 && /[a-zA-Z0-9._-]/.test(val[i])) i--;
     if (i >= 0 && val[i] === '@' && (i === 0 || /\s/.test(val[i - 1]))) {
@@ -197,7 +237,6 @@ export function createDispatchPanel(container) {
     if (dropdownVisible) {
       if (e.key === 'ArrowDown' || e.key === 'Tab') {
         e.preventDefault();
-        // Tab/Down: cycle forward through matches
         acIndex = (acIndex + 1) % items.length;
         items.forEach((it, i) => it.classList.toggle('dp-ac-active', i === acIndex));
         return;
@@ -220,7 +259,6 @@ export function createDispatchPanel(container) {
       }
     }
 
-    // Prevent Tab from leaving the textarea when in a @ context
     if (e.key === 'Tab' && getTagQuery() !== null) {
       e.preventDefault();
       return;
@@ -238,11 +276,7 @@ export function createDispatchPanel(container) {
 
   function updateHint() {
     const { projects } = parseHashtags(textarea.value);
-    if (projects.length > 0) {
-      hint.textContent = projects.map((p) => `@${p}`).join(' ');
-    } else {
-      hint.textContent = '';
-    }
+    hint.textContent = projects.length > 0 ? projects.map((p) => `@${p}`).join(' ') : '';
   }
 
   // ── Submit ───────────────────────────────────────────────────────
@@ -268,7 +302,6 @@ export function createDispatchPanel(container) {
 
   sendBtn.addEventListener('click', submit);
 
-  // Auto-resize textarea
   textarea.addEventListener('input', () => {
     textarea.style.height = '';
     textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
@@ -282,11 +315,15 @@ export function createDispatchPanel(container) {
   async function refreshFeatures() {
     try {
       const data = await api.get('/api/dispatch/features');
-      // Response is { features: [...], projects: [...] }
       const items = data.features || data;
       features.clear();
       for (const f of (Array.isArray(items) ? items : [])) features.set(f.id, f);
       if (data.projects) setProjects(data.projects);
+      // Prune selection — remove IDs that are no longer raw
+      for (const id of selected) {
+        const f = features.get(id);
+        if (!f || f.status !== 'raw') selected.delete(id);
+      }
       render();
     } catch (err) {
       console.error('[Dispatch] Refresh failed:', err);
@@ -298,21 +335,48 @@ export function createDispatchPanel(container) {
     list.textContent = '';
 
     const items = [...features.values()].sort((a, b) =>
-      new Date(b.createdAt) - new Date(a.createdAt)
+      new Date(b.created) - new Date(a.created)
     );
 
     if (items.length === 0) {
       list.appendChild(el('div', { className: 'dp-empty', textContent: 'No ideas yet' }));
+      updateRefineBar();
       return;
     }
 
     for (const f of items) {
       list.appendChild(createCard(f));
     }
+    updateRefineBar();
   }
 
   function createCard(f) {
     const card = el('div', { className: `dp-card dp-status-${f.status}` });
+
+    // Checkbox for raw features (batch selection)
+    if (f.status === 'raw') {
+      const cb = el('input', { type: 'checkbox', className: 'dp-checkbox' });
+      cb.checked = selected.has(f.id);
+      cb.addEventListener('change', () => {
+        if (cb.checked) selected.add(f.id);
+        else selected.delete(f.id);
+        updateRefineBar();
+      });
+      card.appendChild(cb);
+    }
+
+    // Refined title + project tag
+    if (f.refined?.title) {
+      card.appendChild(el('div', { className: 'dp-refined-title', textContent: f.refined.title }));
+    }
+    if (f.project) {
+      const projects = Array.isArray(f.project) ? f.project : [f.project];
+      const projRow = el('div', { className: 'dp-project-tags' });
+      for (const p of projects) {
+        projRow.appendChild(el('span', { className: 'dp-tag', textContent: `@${p}` }));
+      }
+      card.appendChild(projRow);
+    }
 
     // Main text — render @tags as styled spans
     const textEl = el('div', { className: 'dp-text' });
@@ -326,33 +390,53 @@ export function createDispatchPanel(container) {
     }
     card.appendChild(textEl);
 
+    // Lineage — show source ideas for refined features
+    if (f.sourceIds && Array.isArray(f.sourceIds) && f.sourceIds.length > 0) {
+      const sources = f.sourceIds
+        .map((id) => features.get(id))
+        .filter(Boolean)
+        .map((src) => (src.body || '').slice(0, 40));
+      if (sources.length > 0) {
+        card.appendChild(el('div', { className: 'dp-lineage', textContent: `from: ${sources.join(', ')}` }));
+      }
+    }
+
+    // Live progress from Claude Code hooks (appended to body as log lines)
+    if (f.body && (f.status === 'grouped' || f.status === 'active')) {
+      const logLines = f.body.split('\n').filter((l) => l.startsWith('- ')).slice(-3);
+      if (logLines.length > 0) {
+        const bullets = el('div', { className: 'dp-bullets' });
+        for (const line of logLines) {
+          // Strip "- HH:MM:SS " prefix from log lines
+          const text = line.replace(/^- \d{2}:\d{2}:\d{2} /, '');
+          bullets.appendChild(el('div', { className: 'dp-bullet', textContent: text }));
+        }
+        card.appendChild(bullets);
+      }
+    }
+
     // Meta line — status + time + actions
     const meta = el('div', { className: 'dp-meta' });
     meta.appendChild(el('span', { className: `dp-status dp-s-${f.status}`, textContent: f.status }));
-    meta.appendChild(el('span', { className: 'dp-time', textContent: timeAgo(f.createdAt) }));
-
-    // Refined title
-    if (f.refined?.title) {
-      const titleEl = el('div', { className: 'dp-refined-title', textContent: f.refined.title });
-      card.insertBefore(titleEl, card.firstChild);
-    }
-
-    // Spacer pushes actions right
+    meta.appendChild(el('span', { className: 'dp-time', textContent: timeAgo(f.created) }));
     meta.appendChild(el('span', { className: 'dp-spacer' }));
 
-    // Actions based on status
-    if (f.status === 'raw') {
-      meta.appendChild(actionBtn('Refine', async () => {
-        try { await api.post(`/api/dispatch/refine/${encodeURIComponent(f.id)}`); await refreshFeatures(); }
-        catch (err) { console.error('[Dispatch] Refine failed:', err); }
-      }));
+    // "Open" button — surface the dispatch session in the carousel
+    if (f.sessionName && ['grouped', 'refining', 'active', 'done', 'failed'].includes(f.status)) {
+      meta.appendChild(actionBtn('Open', () => {
+        document.dispatchEvent(new CustomEvent('dispatch:open-session', { detail: { name: f.sessionName } }));
+      }, 'dp-act-open'));
     }
+
+    // Start button for refined features
     if (f.status === 'refined') {
       meta.appendChild(actionBtn('Start', async () => {
         try { await api.post(`/api/dispatch/start/${encodeURIComponent(f.id)}`); await refreshFeatures(); }
         catch (err) { console.error('[Dispatch] Start failed:', err); }
       }, 'dp-act-start'));
     }
+
+    // Dismiss
     meta.appendChild(actionBtn('\u00d7', async () => {
       try { await api.delete(`/api/dispatch/features/${encodeURIComponent(f.id)}`); await refreshFeatures(); }
       catch (err) { console.error('[Dispatch] Dismiss failed:', err); }
@@ -363,12 +447,11 @@ export function createDispatchPanel(container) {
   }
 
   function actionBtn(label, onclick, cls = '') {
-    const btn = el('button', {
+    return el('button', {
       className: `dp-action ${cls}`.trim(),
       textContent: label,
       onClick: onclick,
     });
-    return btn;
   }
 
   // ── SSE ──────────────────────────────────────────────────────────
@@ -541,6 +624,13 @@ const PANEL_CSS = `
   transition: background 0.1s;
 }
 .dp-card:hover { background: color-mix(in srgb, var(--bg-surface) 50%, transparent); }
+.dp-status-grouped { opacity: 0.6; }
+.dp-checkbox {
+  float: left;
+  margin: 3px 8px 0 0;
+  accent-color: var(--accent-active);
+  cursor: pointer;
+}
 .dp-text {
   line-height: 1.5;
   word-break: break-word;
@@ -553,6 +643,18 @@ const PANEL_CSS = `
   font-weight: 500;
   margin-bottom: 2px;
   color: var(--text);
+}
+.dp-project-tags {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+  margin-bottom: 2px;
+}
+.dp-lineage {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  font-style: italic;
 }
 
 /* Meta row */
@@ -570,6 +672,7 @@ const PANEL_CSS = `
   font-size: 10px;
 }
 .dp-s-raw { color: var(--text-dim); }
+.dp-s-grouped { color: var(--warning); }
 .dp-s-refining { color: var(--warning); }
 .dp-s-refined { color: var(--accent-active); }
 .dp-s-active { color: var(--success); }
@@ -597,4 +700,48 @@ const PANEL_CSS = `
 .dp-act-start:hover { background: var(--success); color: var(--bg); }
 .dp-act-dismiss { border: none; color: var(--text-dim); font-size: 14px; padding: 0 2px; }
 .dp-act-dismiss:hover { color: var(--danger); }
+.dp-act-open { border-color: var(--accent-active); color: var(--accent-active); }
+.dp-act-open:hover { background: var(--accent-active); color: var(--bg); }
+
+/* Refine bar (sticky bottom of list) */
+.dp-refine-bar {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.dp-refine-btn {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--accent-active);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent-active);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.dp-refine-btn:hover:not(:disabled) { background: var(--accent-active); color: var(--bg); }
+.dp-refine-btn:disabled { opacity: 0.4; cursor: default; }
+.dp-refine-all { border-color: var(--border); color: var(--text-muted); }
+.dp-refine-all:hover { border-color: var(--accent-active); color: var(--accent-active); }
+
+/* Progress bullets */
+.dp-bullets {
+  margin-top: 4px;
+  padding-left: 2px;
+}
+.dp-bullet {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+.dp-bullet::before {
+  content: '\\00b7 ';
+  color: var(--accent-active);
+}
 `;

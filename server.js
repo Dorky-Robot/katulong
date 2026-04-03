@@ -245,8 +245,8 @@ const { wsClients, broadcastToAll, closeAllWebSockets } = wsManager;
 
 // --- Dispatch store (feature queue) ---
 const dispatchStore = createDispatchStore(DATA_DIR);
-const dispatchRefiner = createRefiner();
-const dispatchExecutor = createExecutor();
+const dispatchRefiner = createRefiner({ sessionManager });
+const dispatchExecutor = createExecutor({ sessionManager });
 
 const routes = [
   ...createAuthRoutes({
