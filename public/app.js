@@ -42,6 +42,7 @@
     import { createHtmlTileFactory } from "/lib/tiles/html-tile.js";
     import { createCrewTileFactory } from "/lib/tiles/crew-tile.js";
     import { dispatchNotification } from "/lib/notify.js";
+    import { createDispatchPanel } from "/lib/dispatch-panel.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -1488,6 +1489,34 @@
         portForwardComponent.focus();
       }
       if (isOverlayViewport()) setOverlaySidebar(false);
+    }
+
+    // --- Dispatch panel ---
+    const dispatchContainer = document.getElementById("dispatch-container");
+    let dispatchPanel = null;
+    let dispatchActive = false;
+
+    function toggleDispatch() {
+      dispatchActive = !dispatchActive;
+      const btn = document.getElementById("sidebar-dispatch-btn");
+      if (dispatchActive) {
+        if (!dispatchPanel) {
+          dispatchPanel = createDispatchPanel(dispatchContainer);
+        }
+        dispatchContainer.style.display = "";
+        sessionListEl.style.display = "none";
+        if (btn) btn.classList.add("active");
+        if (sidebar?.classList.contains("collapsed")) setSidebarCollapsed(false);
+      } else {
+        dispatchContainer.style.display = "none";
+        sessionListEl.style.display = "";
+        if (btn) btn.classList.remove("active");
+      }
+    }
+
+    const sidebarDispatchBtn = document.getElementById("sidebar-dispatch-btn");
+    if (sidebarDispatchBtn) {
+      sidebarDispatchBtn.addEventListener("click", toggleDispatch);
     }
 
     const sidebarFilesBtn = document.getElementById("sidebar-files-btn");
