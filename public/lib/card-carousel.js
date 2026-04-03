@@ -202,8 +202,8 @@ export function createCardCarousel({
 
   // Default card width from CSS: clamp(280px, 100% - 160px, 720px).
   // Leaves ~80px per side for neighbor card peek on narrower screens.
-  // Used as the basis for card stride so spacing doesn't change
-  // when individual cards are resized. Recomputed on window resize.
+  // Cards without a custom resize use this width for gap calculations.
+  // Recomputed on window resize.
   let defaultCardW = 0;
   function computeDefaultCardWidth() {
     const cw = container.offsetWidth || 800;
@@ -250,30 +250,30 @@ export function createCardCarousel({
     positions.set(focusedId, 0);
 
     // Cards to the right of focus
-    let edge = focusedW / 2;
+    let reach = focusedW / 2;
     for (let i = focusedIdx + 1; i < cards.length; i++) {
       const w = cardWidthOf(cards[i]);
-      positions.set(cards[i], edge + gap + w / 2);
-      edge += gap + w;
+      positions.set(cards[i], reach + gap + w / 2);
+      reach += gap + w;
     }
 
     // Cards to the left of focus
-    edge = focusedW / 2;
+    reach = focusedW / 2;
     for (let i = focusedIdx - 1; i >= 0; i--) {
       const w = cardWidthOf(cards[i]);
-      positions.set(cards[i], -(edge + gap + w / 2));
-      edge += gap + w;
+      positions.set(cards[i], -(reach + gap + w / 2));
+      reach += gap + w;
     }
 
     for (const [id, { wrapper }] of cardEls) {
-      const pos = positions.get(id);
-      if (pos === undefined) continue;
-      const offset = cards.indexOf(id) - focusedIdx;
+      const cardX = positions.get(id);
+      if (cardX === undefined) continue;
+      const dist = Math.abs(cards.indexOf(id) - focusedIdx);
 
       if (!animate) wrapper.style.transition = "none";
-      wrapper.style.transform = `translateX(${pos}px)`;
-      wrapper.classList.toggle("focused", offset === 0);
-      wrapper.classList.toggle("carousel-hidden", Math.abs(offset) > 2);
+      wrapper.style.transform = `translateX(${cardX}px)`;
+      wrapper.classList.toggle("focused", id === focusedId);
+      wrapper.classList.toggle("carousel-hidden", dist > 2);
 
       if (!animate) {
         wrapper.offsetHeight; // force reflow
