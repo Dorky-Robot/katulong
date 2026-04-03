@@ -1504,11 +1504,14 @@
       }
       dispatchSidebar?.classList.remove("dispatch-closed");
       dispatchFab?.classList.add("dispatch-open");
+      // Blur terminal so keystrokes go to the dispatch input
+      getTerm()?.blur();
     }
 
     function closeDispatch() {
       dispatchSidebar?.classList.add("dispatch-closed");
       dispatchFab?.classList.remove("dispatch-open");
+      getTerm()?.focus();
     }
 
     if (dispatchFab) dispatchFab.addEventListener("click", openDispatch);
