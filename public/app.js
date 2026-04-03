@@ -1491,33 +1491,28 @@
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
-    // --- Dispatch panel ---
+    // --- Dispatch panel (right-side, independent of session sidebar) ---
+    const dispatchSidebar = document.getElementById("dispatch-sidebar");
     const dispatchContainer = document.getElementById("dispatch-container");
+    const dispatchFab = document.getElementById("dispatch-fab");
+    const dispatchCloseBtn = document.getElementById("dispatch-close-btn");
     let dispatchPanel = null;
-    let dispatchActive = false;
 
-    function toggleDispatch() {
-      dispatchActive = !dispatchActive;
-      const btn = document.getElementById("sidebar-dispatch-btn");
-      if (dispatchActive) {
-        if (!dispatchPanel) {
-          dispatchPanel = createDispatchPanel(dispatchContainer);
-        }
-        dispatchContainer.style.display = "";
-        sessionListEl.style.display = "none";
-        if (btn) btn.classList.add("active");
-        if (sidebar?.classList.contains("collapsed")) setSidebarCollapsed(false);
-      } else {
-        dispatchContainer.style.display = "none";
-        sessionListEl.style.display = "";
-        if (btn) btn.classList.remove("active");
+    function openDispatch() {
+      if (!dispatchPanel && dispatchContainer) {
+        dispatchPanel = createDispatchPanel(dispatchContainer);
       }
+      dispatchSidebar?.classList.remove("dispatch-closed");
+      dispatchFab?.classList.add("dispatch-open");
     }
 
-    const sidebarDispatchBtn = document.getElementById("sidebar-dispatch-btn");
-    if (sidebarDispatchBtn) {
-      sidebarDispatchBtn.addEventListener("click", toggleDispatch);
+    function closeDispatch() {
+      dispatchSidebar?.classList.add("dispatch-closed");
+      dispatchFab?.classList.remove("dispatch-open");
     }
+
+    if (dispatchFab) dispatchFab.addEventListener("click", openDispatch);
+    if (dispatchCloseBtn) dispatchCloseBtn.addEventListener("click", closeDispatch);
 
     const sidebarFilesBtn = document.getElementById("sidebar-files-btn");
     if (sidebarFilesBtn) {
