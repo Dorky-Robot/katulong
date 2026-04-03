@@ -314,9 +314,9 @@ export function createDispatchPanel(container) {
   function createCard(f) {
     const card = el('div', { className: `dp-card dp-status-${f.status}` });
 
-    // Main text — render #tags as styled spans
+    // Main text — render @tags as styled spans
     const textEl = el('div', { className: 'dp-text' });
-    const parts = f.raw.split(/(#[a-zA-Z0-9._-]+)/g);
+    const parts = (f.body || '').split(/(@[a-zA-Z0-9._-]+)/g);
     for (const part of parts) {
       if (part.startsWith('@')) {
         textEl.appendChild(el('span', { className: 'dp-tag', textContent: part }));
