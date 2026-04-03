@@ -392,6 +392,96 @@ describe("Session", () => {
 
       assert.strictEqual(mockProc.stdin.written.length, 0);
     });
+
+    it("defers resize when output was recently received", async () => {
+      const { session, mockProc } = createSimpleTestSession("test");
+
+      // Simulate recent output
+      session._lastOutputAt = Date.now();
+
+      session.resize(100, 40);
+
+      // Should NOT have sent the command yet (gated)
+      assert.ok(!mockProc.stdin.written.some(cmd =>
+        cmd.includes("refresh-client -C 100x40")
+      ), "resize should be deferred during active output");
+
+      // Wait for the gate to expire
+      await new Promise((r) => setTimeout(r, 60));
+
+      assert.ok(mockProc.stdin.written.some(cmd =>
+        cmd.includes("refresh-client -C 100x40")
+      ), "deferred resize should fire after output settles");
+    });
+
+    it("coalesces multiple deferred resizes to the latest dimensions", async () => {
+      const { session, mockProc } = createSimpleTestSession("test");
+
+      session._lastOutputAt = Date.now();
+
+      session.resize(100, 30);
+      session.resize(100, 35);
+      session.resize(100, 40);
+
+      await new Promise((r) => setTimeout(r, 60));
+
+      // Only the last dimensions should have been applied
+      const resizeCmds = mockProc.stdin.written.filter(cmd =>
+        cmd.includes("refresh-client")
+      );
+      assert.strictEqual(resizeCmds.length, 1);
+      assert.ok(resizeCmds[0].includes("100x40"));
+    });
+
+    it("resizes immediately when output is idle", () => {
+      const { session, mockProc } = createSimpleTestSession("test");
+
+      // _lastOutputAt defaults to 0 (no recent output)
+      session.resize(100, 40);
+
+      assert.ok(mockProc.stdin.written.some(cmd =>
+        cmd.includes("refresh-client -C 100x40")
+      ), "should resize immediately when no recent output");
+    });
+
+    it("re-defers when output keeps arriving during gate", async () => {
+      const { session, mockProc } = createSimpleTestSession("test");
+
+      session._lastOutputAt = Date.now();
+      session.resize(100, 40);
+
+      // Simulate output arriving 30ms later (still within gate)
+      await new Promise((r) => setTimeout(r, 30));
+      session._lastOutputAt = Date.now();
+
+      // At 60ms the first timer would have fired, but it re-enters
+      // resize() which re-defers because _lastOutputAt is fresh
+      await new Promise((r) => setTimeout(r, 35));
+      assert.ok(!mockProc.stdin.written.some(cmd =>
+        cmd.includes("refresh-client -C 100x40")
+      ), "should still be deferred while output is active");
+
+      // Wait for the re-deferred timer to fire (output now idle)
+      await new Promise((r) => setTimeout(r, 60));
+      assert.ok(mockProc.stdin.written.some(cmd =>
+        cmd.includes("refresh-client -C 100x40")
+      ), "should fire after output stops");
+    });
+
+    it("cancels resize timer on session kill", async () => {
+      const { session, mockProc } = createSimpleTestSession("test");
+
+      session._lastOutputAt = Date.now();
+      session.resize(100, 40);
+
+      // Kill before the timer fires
+      session.kill();
+
+      await new Promise((r) => setTimeout(r, 60));
+      assert.ok(!mockProc.stdin.written.some(cmd =>
+        cmd.includes("refresh-client -C 100x40")
+      ), "killed session should not send deferred resize");
+    });
   });
 
   describe("kill", () => {
