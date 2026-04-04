@@ -993,11 +993,13 @@
       }
       /* Tab row floats over the terminal tile on phone so the terminal
          gets the full viewport height instead of sharing it with tabs. */
+      #shortcut-bar.bar-ipad { overflow: visible; }
       #shortcut-bar.bar-ipad .bar-tab-row {
         position: absolute;
         bottom: 100%;
         left: 0; right: 0;
         padding: var(--space-xs) var(--space-sm);
+        background: var(--bg);
         background: color-mix(in srgb, var(--bg) 85%, transparent);
         backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
         z-index: 5;
