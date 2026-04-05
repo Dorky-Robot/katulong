@@ -991,20 +991,20 @@
         width: 1.75rem;
         font-size: 1rem;
       }
-      /* Carousel card fills the screen edge-to-edge on phone — the iPad
-         "neighbor peek" margins waste too much space on a narrow screen. */
+      /* Phone cards use 4px insets + a subtle shadow to hint that more
+         tiles exist beyond the screen edge — matching the iPad's floating
+         card language while preserving nearly all terminal real estate. */
       .carousel-card {
-        top: env(safe-area-inset-top, 0px);
-        /* Leave room for the floating tab row above the shortcut bar */
-        bottom: calc(2.5rem + var(--space-xs) * 2);
-        width: 100%;
-        max-width: 100%;
-        margin-left: -50%;
+        top: calc(env(safe-area-inset-top, 0px) + var(--space-xs));
+        /* Leave room for the floating tab row + shadow inset */
+        bottom: calc(2.5rem + var(--space-xs) * 3);
+        width: calc(100% - var(--space-sm));
+        max-width: calc(100% - var(--space-sm));
+        margin-left: calc((100% - var(--space-sm)) / -2);
       }
       .card-face {
         border-radius: var(--radius-md);
-        box-shadow: none;
-        border: 1px solid var(--border);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.4);
       }
       .tile-content > .terminal-pane { border-radius: var(--radius-md); padding: var(--space-xs); }
       /* Tab row floats over the terminal tile on phone so the terminal
