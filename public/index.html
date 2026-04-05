@@ -1393,7 +1393,7 @@
     /* --- Mobile/Tablet: sidebar as floating overlay (device-based: coarse pointer) --- */
     @media (pointer: coarse), (pointer: none) {
       #sidebar {
-        position: fixed; top: calc(var(--height-btn-md) + var(--bar-top-pad, 0px)); left: 0; bottom: 0; z-index: 100;
+        position: fixed; top: 0; left: 0; bottom: 0; z-index: 100;
         width: 280px; min-width: 280px;
         transform: translateX(-100%);
         transition: transform 0.2s ease;
