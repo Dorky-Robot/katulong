@@ -991,8 +991,9 @@
         width: 1.75rem;
         font-size: 1rem;
       }
-      /* Carousel card fills the screen edge-to-edge on phone — the iPad
-         "neighbor peek" margins waste too much space on a narrow screen. */
+      /* Phone cards use 4px insets + a subtle shadow to hint that more
+         tiles exist beyond the screen edge — matching the iPad's floating
+         card language while preserving nearly all terminal real estate. */
       .carousel-card {
         top: calc(env(safe-area-inset-top, 0px) + 4px);
         /* Leave room for the floating tab row above the shortcut bar */
