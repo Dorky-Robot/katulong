@@ -1,6 +1,6 @@
 {
   "name": "katulong",
-  "version": "0.46.0",
+  "version": "0.46.1",
   "description": "Self-hosted web terminal for remote machines. Browser-based shell access with tmux sessions, file browser, and WebAuthn security.",
   "keywords": [
     "web-terminal",
