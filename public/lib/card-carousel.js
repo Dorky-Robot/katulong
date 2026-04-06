@@ -199,32 +199,41 @@ export function createCardCarousel({
   // Cache card width to avoid reading offsetWidth mid-transition (which
   // returns the animated intermediate value and causes position jumps).
   let cachedCardW = 0;
+  let defaultCardGap = 16;
 
   // Default card width mirrors the CSS clamp on .carousel-card:
   //   clamp(--card-min-width, 100% - 2 * --card-peek, --card-max-width)
   //
-  // CRITICAL: the three places that encode the card width formula —
-  // CSS `width`, CSS `margin-left` centering, and this JS function —
-  // MUST stay in sync. See diwa commit ca1aed5: "The three values to
-  // keep aligned are: CSS max-width, CSS margin-left (centering), and
-  // JS computeDefaultCardWidth — any mismatch causes layout drift."
+  // Previously this clamp was encoded in four hardcoded copies — CSS
+  // `width`, CSS `margin-left`, a phone media query duplicate, and this
+  // JS function — which drifted and caused v0.46.6/7/8 visual bugs
+  // (diwa: ca1aed5, 918cc5b, cb4c3a1). Today CSS owns one formula via
+  // `--card-peek`/`--card-min-width`/`--card-max-width` on
+  // `#terminal-container[data-carousel]`; both `.carousel-card { width }`
+  // and `.carousel-card { margin-left }` derive from the same `--w`
+  // intra-rule variable. This function reads those same CSS vars via
+  // `getComputedStyle`, so it stays in sync automatically — do NOT
+  // reintroduce a hardcoded fallback like `cw - 160`.
   //
-  // Reading the CSS custom properties via getComputedStyle keeps CSS
-  // as the single source of truth: phone vs desktop just changes the
-  // variables; this function reads whatever the cascade decided.
+  // `readVar` is hoisted out of this function so `positionCards()` can
+  // share the same resolution pattern (same guard, same fallback check).
+  function readCssVar(cs, name, fallback) {
+    if (!cs) return fallback;
+    const v = parseFloat(cs.getPropertyValue(name));
+    return Number.isFinite(v) && v > 0 ? v : fallback;
+  }
+
   let defaultCardW = 0;
   function computeDefaultCardWidth() {
     const cw = container.offsetWidth || 800;
     const cs = typeof getComputedStyle === "function" ? getComputedStyle(container) : null;
-    const readVar = (name, fallback) => {
-      if (!cs) return fallback;
-      const v = parseFloat(cs.getPropertyValue(name));
-      return Number.isFinite(v) && v > 0 ? v : fallback;
-    };
-    const peek = readVar("--card-peek", 80);
-    const minW = readVar("--card-min-width", 280);
-    const maxW = readVar("--card-max-width", 720);
+    const peek = readCssVar(cs, "--card-peek", 80);
+    const minW = readCssVar(cs, "--card-min-width", 280);
+    const maxW = readCssVar(cs, "--card-max-width", 720);
     defaultCardW = Math.max(minW, Math.min(cw - 2 * peek, maxW));
+    // Keep --card-gap resolution in the same cached style snapshot
+    // instead of re-running getComputedStyle from positionCards().
+    defaultCardGap = readCssVar(cs, "--card-gap", 16);
   }
 
   /** Get the effective width of a card (custom resize or CSS default). */
@@ -243,14 +252,11 @@ export function createCardCarousel({
     if (focusedIdx === -1) return;
 
     if (!defaultCardW) computeDefaultCardWidth();
-    // Read --card-gap from CSS so design tokens stay in one place. The
-    // variable is defined on #terminal-container[data-carousel] and may
-    // differ per device (phone vs desktop). Falls back to 16 if the
-    // computed style is unavailable (e.g., test environment).
-    const gapVar = typeof getComputedStyle === 'function'
-      ? parseFloat(getComputedStyle(container).getPropertyValue('--card-gap'))
-      : NaN;
-    const gap = Number.isFinite(gapVar) && gapVar > 0 ? gapVar : 16;
+    // --card-gap is resolved inside computeDefaultCardWidth() using
+    // the same cached style snapshot, so we don't force a second
+    // forced-style-recalc here. Phone vs desktop cascade already
+    // decided the correct value.
+    const gap = defaultCardGap;
 
     // Cache focused card's actual width for swipe threshold calculations.
     // During resize drag, the caller passes the exact width so we don't

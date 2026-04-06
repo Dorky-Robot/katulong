@@ -204,6 +204,16 @@ describe('tile-resize', () => {
       assert.strictEqual(handles.getWidth(), 500);
       assert.strictEqual(resizes.length, 1);
       assert.strictEqual(resizes[0], 500);
+      // Regression guard: applyWidth must write to the --w CSS custom
+      // property, not to inline `width`/`max-width`/`margin-left`.
+      // The CSS rule `.carousel-card { width: var(--w); margin-left: calc(var(--w) / -2) }`
+      // depends on this exact property name — anything else silently
+      // falls back to the cascade's clamp value while the JS state says
+      // the card is at a custom width, causing layout drift.
+      assert.strictEqual(card._styles['--w'], '500px');
+      assert.strictEqual(card._styles.width, undefined, 'must not set inline width');
+      assert.strictEqual(card._styles.maxWidth, undefined, 'must not set inline max-width');
+      assert.strictEqual(card._styles.marginLeft, undefined, 'must not set inline margin-left');
     });
 
     it('setWidth() clamps to constraints', () => {
@@ -230,8 +240,12 @@ describe('tile-resize', () => {
       });
       handles.attach();
       handles.setWidth(500);
+      assert.strictEqual(card._styles['--w'], '500px');
       handles.resetWidth();
       assert.strictEqual(handles.getWidth(), null);
+      // Regression guard: resetWidth must remove the --w custom
+      // property so the cascade's clamp formula takes over again.
+      assert.ok(!('--w' in card._styles), 'must remove inline --w on reset');
     });
   });
 
