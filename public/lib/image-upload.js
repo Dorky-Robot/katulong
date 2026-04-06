@@ -289,9 +289,16 @@ export function uploadImageToTerminal(file, options = {}) {
 }
 
 async function _doUpload(file, id, tracker, toast, sessionName) {
+  // NOTE: do NOT set an X-Filename header here. XMLHttpRequest.setRequestHeader
+  // rejects values with non-Latin1 code points, and macOS "Screenshot" filenames
+  // contain U+2026 (HORIZONTAL ELLIPSIS) which is outside ISO-8859-1 — passing
+  // file.name would throw synchronously and abort the upload. The /upload route
+  // in lib/routes.js does not read this header anyway: it generates its own
+  // filename from randomUUID() plus an extension detected from the image magic
+  // bytes (detectImage(buf)). So the header was dead code, and removing it is
+  // both the minimal and correct fix.
   const headers = {
     "Content-Type": "application/octet-stream",
-    "X-Filename": file.name,
   };
   if (sessionName) headers["X-Session"] = sessionName;
   const csrf = getCsrfToken();
