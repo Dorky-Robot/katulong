@@ -23,6 +23,7 @@ import { isLocalRequest, isLoopbackAddress } from "./lib/access-method.js";
 import { serveStaticFile, clearFileCache, buildVendorHashes } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createSessionManager, checkTmux, cleanTmuxServerEnv, setTmuxKatulongEnv } from "./lib/session-manager.js";
+import { tmuxSocketArgs } from "./lib/tmux.js";
 import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/routes.js";
 import { createFileBrowserRoutes } from "./lib/file-browser.js";
 import { createPortProxyRoutes, proxyWebSocket } from "./lib/port-proxy.js";
@@ -70,7 +71,7 @@ if (process.platform === "linux" && !process.env.DISPLAY) {
         const display = `:${match[1]}`;
         process.env.DISPLAY = display;
         log.info("Auto-detected Xvfb display", { display });
-        execFile("tmux", ["setenv", "-g", "DISPLAY", display], { timeout: 2000 }, () => {});
+        execFile("tmux", [...tmuxSocketArgs(), "setenv", "-g", "DISPLAY", display], { timeout: 2000 }, () => {});
       }
     });
   } catch { /* no Xvfb — clipboard will use file-based fallback */ }

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Cleanup test server processes for all shards (0-3)
-# Does NOT touch dev server (port 3001)
+# Does NOT touch dev server (port 3001) or the developer's default tmux socket.
 
 echo "Cleaning up test server processes..."
 
@@ -22,15 +22,15 @@ for SHARD in 0 1 2 3; do
     echo "  Cleaning test data directory $DATA_DIR..."
     rm -rf "$DATA_DIR"
   fi
+
+  # Kill the entire per-shard test tmux server (isolated socket).
+  # We never touch the developer's default socket — that was the cause of
+  # the pollution this refactor fixes.
+  TMUX_SOCKET="katulong-e2e-${SHARD}"
+  if tmux -L "$TMUX_SOCKET" list-sessions >/dev/null 2>&1; then
+    echo "  Killing test tmux server on socket $TMUX_SOCKET..."
+    tmux -L "$TMUX_SOCKET" kill-server 2>/dev/null
+  fi
 done
 
-# Kill leftover smoke test tmux sessions
-SMOKE_SESSIONS=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^smoke-' || true)
-if [ -n "$SMOKE_SESSIONS" ]; then
-  echo "  Killing leftover smoke test tmux sessions..."
-  echo "$SMOKE_SESSIONS" | while read -r sess; do
-    tmux kill-session -t "$sess" 2>/dev/null && echo "    killed: $sess"
-  done
-fi
-
-echo "✓ Test cleanup complete (dev server untouched)"
+echo "✓ Test cleanup complete (dev server and default tmux socket untouched)"

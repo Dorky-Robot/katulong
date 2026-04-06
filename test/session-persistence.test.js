@@ -74,6 +74,7 @@ mock.module(tmuxModuleUrl, {
     tmuxKillSession: async (tmuxName) => { tmuxSessions.delete(tmuxName); },
     tmuxListSessionsDetailed: async () => new Map(),
     getCursorPosition: async () => ({ row: 0, col: 0 }),
+    tmuxSocketArgs: () => [],
   },
 });
 

@@ -15,6 +15,12 @@ else
   DATA_DIR="/tmp/katulong-e2e-data-${SHARD}"
 fi
 
+# Per-shard tmux socket. Isolates test sessions onto a dedicated tmux
+# server so they never pollute the developer's default socket (which
+# tmux-continuum would otherwise snapshot and restore forever).
+# Must match the pattern enforced by tmuxSocketArgs(): /^[A-Za-z0-9_-]+$/.
+TMUX_SOCKET="katulong-e2e-${SHARD}"
+
 # Run pre-server setup to create fixture auth state
 TEST_SHARD_INDEX=$SHARD node test/e2e/pre-server-setup.js
 
@@ -22,4 +28,5 @@ TEST_SHARD_INDEX=$SHARD node test/e2e/pre-server-setup.js
 # Auth is bypassed automatically for localhost requests (isLocalRequest check)
 PORT=$HTTP_PORT \
 KATULONG_DATA_DIR="$DATA_DIR" \
+KATULONG_TMUX_SOCKET="$TMUX_SOCKET" \
 node server.js
