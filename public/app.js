@@ -474,8 +474,26 @@
       carousel.fitAll();
     }
 
-    /** Route a session to the appropriate view (carousel on iPad, switchSession on desktop) */
-    function routeToSession(name) {
+    /** Compute the insertion index that places a new card immediately right
+     *  of the currently focused one (Chrome-style "new tab right of active").
+     *
+     *  Reads from `carousel.getCards()` when the carousel is active — that is
+     *  the visible order the user sees, and it can drift from `windowTabSet`
+     *  after drag-reorders or isolated removals. Falls back to the tab set
+     *  during empty-state boot, before the carousel has been activated.
+     *
+     *  Returns `undefined` (→ append to end) when there is no active anchor. */
+    function insertAtRightOfActive() {
+      const order = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
+      const idx = order.indexOf(state.session.name);
+      return idx >= 0 ? idx + 1 : undefined;
+    }
+
+    /** Route a session to the appropriate view (carousel on iPad, switchSession on desktop).
+     *  @param {string} name
+     *  @param {number} [insertAt] — insertion index for new cards (Chrome-style
+     *    "right of active"). Ignored when the card already exists. */
+    function routeToSession(name, insertAt) {
       if (!isCarouselDevice()) {
         switchSession(name);
         return;
@@ -485,7 +503,7 @@
         const existing = carousel.findCard((tile) => tile.sessionName === name);
         if (!existing) {
           const { id, tile } = makeTerminalTile(name);
-          carousel.addCard(id, tile);
+          carousel.addCard(id, tile, insertAt);
         }
         carousel.focusCard(existing || name);
       } else {
@@ -784,12 +802,11 @@
         }
         // Re-enable reconnect if we were in empty state
         wsConnection.enableReconnect();
-        // Insert right of the active tab (like Chrome) instead of at the end
-        const tabs = windowTabSet.getTabs();
-        const activeIdx = tabs.indexOf(state.session.name);
-        windowTabSet.addTab(data.name, activeIdx >= 0 ? activeIdx + 1 : undefined);
+        // Insert right of the active card (Chrome-style) instead of at the end.
+        const insertAt = insertAtRightOfActive();
+        windowTabSet.addTab(data.name, insertAt);
         // routeToSession handles both iPad (carousel) and desktop (switchSession)
-        routeToSession(data.name);
+        routeToSession(data.name, insertAt);
         // If carousel was just activated from empty state, reconnect WS
         if (isCarouselDevice() && carousel.isActive()) {
           wsConnection.connect();
@@ -1259,8 +1276,11 @@
         if (type === "terminal") {
           // Terminal tiles create a server-side session
           createNewSession();
-        } else if (isCarouselDevice()) {
-          // Non-terminal tiles: create directly in the carousel
+        } else if (carousel.isActive()) {
+          // Non-terminal tiles: create directly in the carousel. We require
+          // `carousel.isActive()` (not just `isCarouselDevice()`) — otherwise
+          // `carousel.addCard` silently no-ops while `windowTabSet.addTab`
+          // would still run, leaving a tab-set entry with no matching card.
           const id = `${type}-${Date.now().toString(36)}`;
           const options = type === "dashboard"
             ? { cols: 2, rows: 1, title: "Dashboard", slots: [] }
@@ -1268,12 +1288,12 @@
             ? { name: "Crew", sessions: [] }
             : { title: `New ${_meta?.name || type}`, html: `<div style="padding:40px;text-align:center;opacity:0.5"><h2>${_meta?.name || type}</h2><p>Empty tile — content will appear here.</p></div>` };
           const tile = createTile(type, options);
-          carousel.addCard(id, tile);
+          // Insert right of the active card (Chrome-style). Same insertAt
+          // goes to both stores so their order cannot drift apart.
+          const insertAt = insertAtRightOfActive();
+          carousel.addCard(id, tile, insertAt);
           carousel.focusCard(id);
-          // Insert right of the active tab (like Chrome)
-          const ctTabs = windowTabSet.getTabs();
-          const ctIdx = ctTabs.indexOf(state.session.name);
-          windowTabSet.addTab(id, ctIdx >= 0 ? ctIdx + 1 : undefined);
+          windowTabSet.addTab(id, insertAt);
           if (shortcutBarInstance) shortcutBarInstance.render(id);
         }
       },

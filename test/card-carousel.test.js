@@ -278,6 +278,25 @@ describe('card-carousel', () => {
       carousel.addCard("a", createMockTile("a"));
       assert.deepStrictEqual(carousel.getCards(), ["a"]);
     });
+
+    it('inserts at the given position (Chrome-style right-of-active)', () => {
+      carousel.addCard("b", createMockTile("b"));
+      carousel.addCard("c", createMockTile("c"));
+      // cards are now ["a", "b", "c"] — insert "d" after "a"
+      carousel.addCard("d", createMockTile("d"), 1);
+      assert.deepStrictEqual(carousel.getCards(), ["a", "d", "b", "c"]);
+    });
+
+    it('appends when position is past the end', () => {
+      carousel.addCard("b", createMockTile("b"), 99);
+      assert.deepStrictEqual(carousel.getCards(), ["a", "b"]);
+    });
+
+    it('appends when position is undefined', () => {
+      carousel.addCard("b", createMockTile("b"));
+      carousel.addCard("c", createMockTile("c"), undefined);
+      assert.deepStrictEqual(carousel.getCards(), ["a", "b", "c"]);
+    });
   });
 
   describe('removeCard()', () => {

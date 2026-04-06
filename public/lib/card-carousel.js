@@ -494,12 +494,20 @@ export function createCardCarousel({
    * Add a tile to the carousel.
    * @param {string} tileId
    * @param {TilePrototype} tile
+   * @param {number} [position] — insertion index; appends to end when omitted.
+   *   Used by "new tab right of active" (Chrome-style) behavior. Positioning
+   *   is driven by the `cards` array order because positionCards() walks that
+   *   array to compute translateX — the DOM child order does not matter.
    */
-  function addCard(tileId, tile) {
+  function addCard(tileId, tile, position) {
     if (!active) return;
     if (cards.includes(tileId)) return;
 
-    cards.push(tileId);
+    if (typeof position === "number" && position >= 0 && position <= cards.length) {
+      cards.splice(position, 0, tileId);
+    } else {
+      cards.push(tileId);
+    }
     const { wrapper, inner, frontFace, backFace } = createCardWrapper(tileId);
     const frontChrome = createTileChrome(frontFace);
     const entry = { wrapper, inner, frontFace, backFace, frontChrome, backChrome: null, tile, backTile: null, context: null, flipped: false, resizeHandles: null };
