@@ -440,6 +440,21 @@
       carousel.fitAll();
     }
 
+    /** Compute the insertion index that places a new card immediately right
+     *  of the currently focused one (Chrome-style "new tab right of active").
+     *
+     *  Reads from `carousel.getCards()` when the carousel is active — that is
+     *  the visible order the user sees, and it can drift from `windowTabSet`
+     *  after drag-reorders or isolated removals. Falls back to the tab set
+     *  during empty-state boot, before the carousel has been activated.
+     *
+     *  Returns `undefined` (→ append to end) when there is no active anchor. */
+    function insertAtRightOfActive() {
+      const order = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
+      const idx = order.indexOf(state.session.name);
+      return idx >= 0 ? idx + 1 : undefined;
+    }
+
     /** Route a session to the appropriate view (carousel on iPad, switchSession on desktop).
      *  @param {string} name
      *  @param {number} [insertAt] — insertion index for new cards (Chrome-style
@@ -753,13 +768,8 @@
         }
         // Re-enable reconnect if we were in empty state
         wsConnection.enableReconnect();
-        // Insert right of the active tab (like Chrome) instead of at the end.
-        // Use the carousel's card order as the source of truth when active —
-        // carousel.getCards() drives the visible order, and windowTabSet can
-        // drift from it when cards are dragged or removed in isolation.
-        const visibleOrder = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-        const activeIdx = visibleOrder.indexOf(state.session.name);
-        const insertAt = activeIdx >= 0 ? activeIdx + 1 : undefined;
+        // Insert right of the active card (Chrome-style) instead of at the end.
+        const insertAt = insertAtRightOfActive();
         windowTabSet.addTab(data.name, insertAt);
         // routeToSession handles both iPad (carousel) and desktop (switchSession)
         routeToSession(data.name, insertAt);
@@ -1232,8 +1242,11 @@
         if (type === "terminal") {
           // Terminal tiles create a server-side session
           createNewSession();
-        } else if (isCarouselDevice()) {
-          // Non-terminal tiles: create directly in the carousel
+        } else if (carousel.isActive()) {
+          // Non-terminal tiles: create directly in the carousel. We require
+          // `carousel.isActive()` (not just `isCarouselDevice()`) — otherwise
+          // `carousel.addCard` silently no-ops while `windowTabSet.addTab`
+          // would still run, leaving a tab-set entry with no matching card.
           const id = `${type}-${Date.now().toString(36)}`;
           const options = type === "dashboard"
             ? { cols: 2, rows: 1, title: "Dashboard", slots: [] }
@@ -1241,12 +1254,9 @@
             ? { name: "Crew", sessions: [] }
             : { title: `New ${_meta?.name || type}`, html: `<div style="padding:40px;text-align:center;opacity:0.5"><h2>${_meta?.name || type}</h2><p>Empty tile — content will appear here.</p></div>` };
           const tile = createTile(type, options);
-          // Insert right of the active tile (Chrome-style). Must pass the
-          // same position to both the carousel (visible order) and the tab
-          // set so they don't drift apart.
-          const visibleOrder = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-          const ctIdx = visibleOrder.indexOf(state.session.name);
-          const insertAt = ctIdx >= 0 ? ctIdx + 1 : undefined;
+          // Insert right of the active card (Chrome-style). Same insertAt
+          // goes to both stores so their order cannot drift apart.
+          const insertAt = insertAtRightOfActive();
           carousel.addCard(id, tile, insertAt);
           carousel.focusCard(id);
           windowTabSet.addTab(id, insertAt);
