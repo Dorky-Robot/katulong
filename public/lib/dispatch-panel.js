@@ -195,9 +195,9 @@ export function createDispatchPanel(container) {
       activityList.appendChild(node);
     }
 
-    // Scroll newest into view. CSS limits the list to VISIBLE_BULLETS rows
-    // with overflow-y: auto, so this produces a smooth scroll feel as new
-    // bullets arrive and older ones slide up past the top edge.
+    // Scroll newest into view. CSS limits the list to 5 visible rows with
+    // overflow-y: auto, so this produces a smooth scroll feel as new bullets
+    // arrive and older ones slide up past the top edge.
     activityList.scrollTop = activityList.scrollHeight;
 
     activityPanel.classList.remove('dp-hidden');
@@ -525,10 +525,7 @@ export function createDispatchPanel(container) {
       card.insertBefore(titleEl, card.firstChild);
     }
 
-    // Progress bullets for grouped/refining cards now live in the global
-    // activity panel above the list — the same bullets used to appear on
-    // every card in the batch, which felt redundant and tied the activity
-    // to a single ticket.
+    // In-flight progress lives in the global activity panel (see renderActivity).
 
     // Meta line — status + time + actions
     const meta = el('div', { className: 'dp-meta' });
@@ -643,6 +640,12 @@ export function createDispatchPanel(container) {
 
   function destroy() {
     destroyed = true;
+    // Clear any pending auto-hide timers so a finished session can't resurrect
+    // itself after the panel is torn down.
+    for (const s of refineSessions.values()) {
+      if (s.hideTimer) clearTimeout(s.hideTimer);
+    }
+    refineSessions.clear();
     if (eventSource) { eventSource.close(); eventSource = null; }
     if (styleEl.parentNode) styleEl.remove();
     if (panel.parentNode) panel.remove();

@@ -830,6 +830,11 @@ describe("Refine activity SSE events", () => {
     assert.ok(types.includes("refine-started"));
     assert.ok(types.includes("refine-failed"), `Expected refine-failed in ${types.join(",")}`);
     const failed = events.find((e) => e.event === "refine-failed");
-    assert.equal(failed.data.detail, "subprocess died");
+    // The SSE event carries a sanitized detail string — raw subprocess errors
+    // are logged server-side but never leaked to the client, because the
+    // underlying "subprocess died" message can include up to 500 bytes of
+    // stderr with internal paths.
+    assert.equal(failed.data.detail, "Refinement failed — check server logs");
+    assert.ok(!String(failed.data.detail).includes("subprocess died"));
   });
 });
