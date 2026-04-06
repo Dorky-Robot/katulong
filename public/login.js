@@ -4,6 +4,32 @@
     } from "/vendor/simplewebauthn/browser.esm.js";
     import { getOrCreateDeviceId, generateDeviceName } from "/lib/device.js";
     import { checkWebAuthnSupport, getWebAuthnErrorMessage } from "/lib/webauthn-errors.js";
+    import { generatePalette } from "/lib/palette.js";
+
+    // Apply the user's saved tint color (if any) so the login page
+    // matches the app's palette. The head's inline script already set
+    // data-theme from the saved polarity to avoid a polarity flash —
+    // here we fill in the actual tint-derived colors.
+    try {
+      const raw = localStorage.getItem("katulong-palette");
+      if (raw) {
+        const { anchor, polarity, vibrancy } = JSON.parse(raw);
+        if (/^#[0-9a-fA-F]{6}$/.test(anchor)
+            && (polarity === "dark" || polarity === "light" || polarity === "auto")) {
+          const effective = polarity === "auto"
+            ? (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+            : polarity;
+          // vibrancy is optional for backward compat — entries written
+          // before vibrancy existed default to "subtle".
+          const v = (vibrancy === "subtle" || vibrancy === "colorful") ? vibrancy : "subtle";
+          const palette = generatePalette(anchor, effective, v);
+          const root = document.documentElement;
+          for (const [k, v2] of Object.entries(palette.cssVars)) {
+            root.style.setProperty(`--${k}`, v2);
+          }
+        }
+      }
+    } catch { /* fall through to fallback CSS */ }
 
     const setupView = document.getElementById("setup-view");
     const loginView = document.getElementById("login-view");
