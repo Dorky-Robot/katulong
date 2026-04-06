@@ -215,8 +215,9 @@ export function createCardCarousel({
   // `getComputedStyle`, so it stays in sync automatically — do NOT
   // reintroduce a hardcoded fallback like `cw - 160`.
   //
-  // `readVar` is hoisted out of this function so `positionCards()` can
-  // share the same resolution pattern (same guard, same fallback check).
+  // `readCssVar` is hoisted out of this function so the same resolution
+  // pattern (same guard, same fallback check) can also populate
+  // `defaultCardGap` from the same cached style snapshot.
   function readCssVar(cs, name, fallback) {
     if (!cs) return fallback;
     const v = parseFloat(cs.getPropertyValue(name));
