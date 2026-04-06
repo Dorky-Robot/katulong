@@ -26,7 +26,9 @@ function el(tag, attrs = {}, children = []) {
 }
 
 function timeAgo(iso) {
+  if (!iso) return '';
   const ms = Date.now() - new Date(iso).getTime();
+  if (isNaN(ms)) return '';
   const s = Math.floor(ms / 1000);
   if (s < 60) return 'just now';
   const m = Math.floor(s / 60);
@@ -329,7 +331,7 @@ export function createDispatchPanel(container) {
     // Meta line — status + time + actions
     const meta = el('div', { className: 'dp-meta' });
     meta.appendChild(el('span', { className: `dp-status dp-s-${f.status}`, textContent: f.status }));
-    meta.appendChild(el('span', { className: 'dp-time', textContent: timeAgo(f.createdAt) }));
+    meta.appendChild(el('span', { className: 'dp-time', textContent: timeAgo(f.created) }));
 
     // Refined title
     if (f.refined?.title) {
