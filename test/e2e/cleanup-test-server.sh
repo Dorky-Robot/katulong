@@ -26,6 +26,9 @@ for SHARD in 0 1 2 3; do
   # Kill the entire per-shard test tmux server (isolated socket).
   # We never touch the developer's default socket — that was the cause of
   # the pollution this refactor fixes.
+  #
+  # Socket name must match TEST_TMUX_SOCKET in test/e2e/test-config.js and
+  # TMUX_SOCKET in test/e2e/start-test-server.sh — keep all three in sync.
   TMUX_SOCKET="katulong-e2e-${SHARD}"
   if tmux -L "$TMUX_SOCKET" list-sessions >/dev/null 2>&1; then
     echo "  Killing test tmux server on socket $TMUX_SOCKET..."

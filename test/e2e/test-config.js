@@ -27,6 +27,9 @@ const TEST_DATA_DIR = SHARD_INDEX === 0
 // with dozens of `smoke-*` / `session-*` leftovers.
 //
 // Must match tmuxSocketArgs() validation: /^[A-Za-z0-9_-]+$/.
+//
+// Socket name must match TMUX_SOCKET in test/e2e/start-test-server.sh
+// and test/e2e/cleanup-test-server.sh — keep all three in sync.
 const TEST_TMUX_SOCKET = `katulong-e2e-${SHARD_INDEX}`;
 
 export {

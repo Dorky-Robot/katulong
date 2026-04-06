@@ -19,6 +19,9 @@ fi
 # server so they never pollute the developer's default socket (which
 # tmux-continuum would otherwise snapshot and restore forever).
 # Must match the pattern enforced by tmuxSocketArgs(): /^[A-Za-z0-9_-]+$/.
+#
+# Socket name must match TEST_TMUX_SOCKET in test/e2e/test-config.js and
+# TMUX_SOCKET in test/e2e/cleanup-test-server.sh — keep all three in sync.
 TMUX_SOCKET="katulong-e2e-${SHARD}"
 
 # Run pre-server setup to create fixture auth state
