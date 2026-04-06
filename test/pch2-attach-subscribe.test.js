@@ -94,6 +94,7 @@ mock.module(tmuxModuleUrl, {
     tmuxListSessions: async () => [...tmuxSessions.keys()],
     tmuxKillSession: async (tmuxName) => { tmuxSessions.delete(tmuxName); },
     tmuxListSessionsDetailed: async () => new Map(),
+    tmuxSocketArgs: () => [],
   },
 });
 

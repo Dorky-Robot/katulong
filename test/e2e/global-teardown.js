@@ -5,11 +5,7 @@
 
 import { rmSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { TEST_DATA_DIR } from './test-config.js';
-
-const TEST_SESSION_PREFIXES = [
-  'smoke-', 'kb-', 'term-io-', 'fb-', 'e2e-', 'test-', 'iso-', 'tab-switch-', 'responsive-switch-'
-];
+import { TEST_DATA_DIR, TEST_TMUX_SOCKET } from './test-config.js';
 
 export default async function globalTeardown() {
   // Clean test data directory after running tests
@@ -19,17 +15,19 @@ export default async function globalTeardown() {
     console.log('[Global Teardown] Warning: Could not clean test directory:', error.message);
   }
 
-  // Kill leftover test tmux sessions
+  // Kill the entire per-shard test tmux server in one shot.
+  //
+  // Previously we scanned the default socket and killed sessions by prefix,
+  // which was fragile (missed auto-named `session-*` sessions and the short
+  // `smoke-*`-prefix match never held up once new test fixtures were added)
+  // AND dangerous — it was running on the developer's production tmux
+  // socket, so any misfiring match could kill real sessions.
+  //
+  // Now that the test server runs under `tmux -L <TEST_TMUX_SOCKET>`, we
+  // just kill the whole server. No prefix matching, no risk of touching
+  // the developer's default socket.
   try {
-    const output = execFileSync('tmux', ['list-sessions', '-F', '#{session_name}'], { encoding: 'utf8' });
-    const sessions = output.trim().split('\n').filter(s =>
-      TEST_SESSION_PREFIXES.some(prefix => s.startsWith(prefix))
-    );
-    for (const sess of sessions) {
-      try { execFileSync('tmux', ['kill-session', '-t', sess]); } catch { /* already dead */ }
-    }
-    if (sessions.length > 0) {
-      console.log(`[Global Teardown] Killed ${sessions.length} test tmux sessions`);
-    }
-  } catch { /* no tmux or no sessions */ }
+    execFileSync('tmux', ['-L', TEST_TMUX_SOCKET, 'kill-server'], { stdio: 'ignore' });
+    console.log(`[Global Teardown] Killed test tmux server on socket ${TEST_TMUX_SOCKET}`);
+  } catch { /* no server running — already torn down */ }
 }
