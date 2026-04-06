@@ -199,15 +199,42 @@ export function createCardCarousel({
   // Cache card width to avoid reading offsetWidth mid-transition (which
   // returns the animated intermediate value and causes position jumps).
   let cachedCardW = 0;
+  let defaultCardGap = 16;
 
-  // Default card width from CSS: clamp(280px, 100% - 160px, 720px).
-  // Leaves ~80px per side for neighbor card peek on narrower screens.
-  // Cards without a custom resize use this width for gap calculations.
-  // Recomputed on window resize.
+  // Default card width mirrors the CSS clamp on .carousel-card:
+  //   clamp(--card-min-width, 100% - 2 * --card-peek, --card-max-width)
+  //
+  // Previously this clamp was encoded in four hardcoded copies — CSS
+  // `width`, CSS `margin-left`, a phone media query duplicate, and this
+  // JS function — which drifted and caused v0.46.6/7/8 visual bugs
+  // (diwa: ca1aed5, 918cc5b, cb4c3a1). Today CSS owns one formula via
+  // `--card-peek`/`--card-min-width`/`--card-max-width` on
+  // `#terminal-container[data-carousel]`; both `.carousel-card { width }`
+  // and `.carousel-card { margin-left }` derive from the same `--w`
+  // intra-rule variable. This function reads those same CSS vars via
+  // `getComputedStyle`, so it stays in sync automatically — do NOT
+  // reintroduce a hardcoded fallback like `cw - 160`.
+  //
+  // `readCssVar` is hoisted out of this function so the same resolution
+  // pattern (same guard, same fallback check) can also populate
+  // `defaultCardGap` from the same cached style snapshot.
+  function readCssVar(cs, name, fallback) {
+    if (!cs) return fallback;
+    const v = parseFloat(cs.getPropertyValue(name));
+    return Number.isFinite(v) && v > 0 ? v : fallback;
+  }
+
   let defaultCardW = 0;
   function computeDefaultCardWidth() {
     const cw = container.offsetWidth || 800;
-    defaultCardW = Math.max(280, Math.min(cw - 160, 720));
+    const cs = typeof getComputedStyle === "function" ? getComputedStyle(container) : null;
+    const peek = readCssVar(cs, "--card-peek", 80);
+    const minW = readCssVar(cs, "--card-min-width", 280);
+    const maxW = readCssVar(cs, "--card-max-width", 720);
+    defaultCardW = Math.max(minW, Math.min(cw - 2 * peek, maxW));
+    // Keep --card-gap resolution in the same cached style snapshot
+    // instead of re-running getComputedStyle from positionCards().
+    defaultCardGap = readCssVar(cs, "--card-gap", 16);
   }
 
   /** Get the effective width of a card (custom resize or CSS default). */
@@ -226,7 +253,11 @@ export function createCardCarousel({
     if (focusedIdx === -1) return;
 
     if (!defaultCardW) computeDefaultCardWidth();
-    const gap = 16;
+    // --card-gap is resolved inside computeDefaultCardWidth() using
+    // the same cached style snapshot, so we don't force a second
+    // forced-style-recalc here. Phone vs desktop cascade already
+    // decided the correct value.
+    const gap = defaultCardGap;
 
     // Cache focused card's actual width for swipe threshold calculations.
     // During resize drag, the caller passes the exact width so we don't
