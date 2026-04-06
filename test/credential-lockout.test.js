@@ -419,10 +419,17 @@ describe("CredentialLockout", () => {
     });
 
     it("handles very short lockout duration", () => {
+      // Use a lockout long enough to reliably observe the "locked" state
+      // before expiry. The previous lockoutMs:1 was a guaranteed race on any
+      // loaded machine — well over 1ms can pass between the recordFailure
+      // calls and the subsequent isLocked assertion (V8 GC, scheduler
+      // jitter), so the assertion intermittently saw the lockout as already
+      // expired and failed. 40ms survives normal jitter while still being
+      // short enough to verify auto-unlock within a 200ms wait window.
       const microLockout = new CredentialLockout({
         maxAttempts: 2,
         windowMs: 1000,
-        lockoutMs: 1, // 1ms lockout
+        lockoutMs: 40,
       });
 
       // Trigger lockout
@@ -432,14 +439,14 @@ describe("CredentialLockout", () => {
       // Should be locked briefly
       assert.equal(microLockout.isLocked("micro").locked, true);
 
-      // Wait 50ms
+      // Wait well past the 40ms lockout with margin for timer jitter
       return new Promise((resolve) => {
         setTimeout(() => {
           // Should be unlocked
           assert.equal(microLockout.isLocked("micro").locked, false);
           microLockout.destroy();
           resolve();
-        }, 50);
+        }, 200);
       });
     });
 
