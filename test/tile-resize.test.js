@@ -13,7 +13,11 @@ function createMockElement(tag) {
     tagName: (tag || "DIV").toUpperCase(),
     style: new Proxy(styles, {
       set: (t, k, v) => { t[k] = v; return true; },
-      get: (t, k) => t[k] || "",
+      get: (t, k) => {
+        if (k === 'setProperty') return (name, value) => { t[name] = value; };
+        if (k === 'removeProperty') return (name) => { delete t[name]; };
+        return t[k] || "";
+      },
     }),
     classList: {
       add: (...c) => c.forEach(x => classes.add(x)),

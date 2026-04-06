@@ -212,16 +212,41 @@
       position: relative;
       overflow: clip;
       background: var(--bg);
+
+      /* ── Carousel layout variables ─────────────────────────────
+         All device-dependent layout parameters live here. Phone
+         overrides only these variables; rules below derive from them.
+
+         INVARIANT 1: --card-peek >= --card-radius. Otherwise the
+         peeking neighbor's rounded corner is clipped and the neighbor
+         looks like raw content bleeding in, not a card (diwa: 918cc5b).
+
+         INVARIANT 2: JS mirrors these values — card-carousel.js
+         computeDefaultCardWidth() reads --card-peek/min/max, and
+         positionCards() reads --card-gap. Change the variables, the
+         JS follows. Do NOT add a fourth hardcoded copy (diwa: ca1aed5). */
+      --card-min-width: 280px;
+      --card-max-width: 720px;
+      --card-peek: 80px;         /* visible neighbor slice on each side */
+      --card-gap: 16px;          /* gap between focused card and neighbors */
+      --card-radius: 16px;
+      --card-inset-top: 8px;
+      --card-inset-bottom: 8px;
+      --card-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.4);
     }
-    /* Cards positioned absolutely, centered, with max-width so neighbors peek on wider screens. */
+    /* Positioning slot for a card. Painted by .card-face, NOT by this rule.
+       `--w` is a single intra-rule expression: changes to min/max/peek
+       cascade through both width and the centering margin-left. Custom
+       per-card widths set `--w` inline (see tile-resize.js); the formula
+       lives in CSS as a single source of truth. */
     .carousel-card {
+      --w: clamp(var(--card-min-width), calc(100% - 2 * var(--card-peek)), var(--card-max-width));
       position: absolute;
-      top: 8px; bottom: 8px;
+      top: var(--card-inset-top);
+      bottom: var(--card-inset-bottom);
       left: 50%;
-      width: calc(100% - 16px);
-      max-width: clamp(280px, calc(100% - 160px), 720px);
-      margin-left: calc(clamp(280px, calc(100% - 160px), 720px) / -2); /* center: offset by half width */
-      /* No background, shadow, or border-radius here — those live on the faces */
+      width: var(--w);
+      margin-left: calc(var(--w) / -2);
       transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
       will-change: transform;
     }
@@ -248,15 +273,16 @@
     .card-inner.flipped > .card-back {
       display: flex;
     }
-    /* Each face IS the visible card — shadow, radius, background all here */
+    /* The visible card — shadow, radius, background all here.
+       .carousel-card above is just a positioning slot with no paint. */
     .card-face {
       position: absolute;
       inset: 0;
       display: flex; flex-direction: column;
       overflow: hidden;
-      border-radius: 16px;
+      border-radius: var(--card-radius);
       background: var(--bg-surface, #313244);
-      box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.4);
+      box-shadow: var(--card-shadow);
     }
     /* Back face hidden unless flipped — avoids backface-visibility which
        breaks wheel events on iPadOS Safari */
@@ -544,7 +570,9 @@
        so the card sits flush with the content area. safe-area-inset still
        handles devices with notches/status bars (iPad, etc.). */
     @media (display-mode: standalone) {
-      .carousel-card { top: calc(8px + env(safe-area-inset-top, 0px)); }
+      #terminal-container[data-carousel] {
+        --card-inset-top: calc(8px + env(safe-area-inset-top, 0px));
+      }
     }
     .carousel-card.focused {
       z-index: 2;
@@ -593,8 +621,6 @@
       position: relative; inset: auto;
       flex: 1; display: block;
       min-width: 0; min-height: 0; overflow: hidden;
-      border-radius: 16px;
-      padding: 8px;
     }
     /* Dashboard tile: CSS Grid of sub-tiles */
     .dashboard-grid {
@@ -991,18 +1017,16 @@
         width: 1.75rem;
         font-size: 1rem;
       }
-      /* Phone uses the same carousel layout as iPad/desktop — wider cards
-         with enough neighbor peek (20px/side) to show the adjacent card's
-         rounded corner and shadow. Radius reduced to 12px so bottom
-         corners don't create dead space above the floating tab row. */
-      .carousel-card {
-        top: calc(env(safe-area-inset-top, 0px) + 8px);
-        bottom: calc(2.5rem + var(--space-xs) * 2);
-        max-width: clamp(280px, calc(100% - 40px), 720px);
-        margin-left: calc(clamp(280px, calc(100% - 40px), 720px) / -2);
+      /* Phone just overrides the carousel variables. Everything else
+         cascades from the rules above — no rule duplication. The bottom
+         inset clears the floating tab row; the radius is tuned so the
+         bottom corners don't create dead space above that tab row. */
+      #terminal-container[data-carousel] {
+        --card-peek: 20px;
+        --card-radius: 12px;
+        --card-inset-top: calc(env(safe-area-inset-top, 0px) + 8px);
+        --card-inset-bottom: calc(2.5rem + var(--space-xs) * 2);
       }
-      .card-face { border-radius: 12px; }
-      .tile-content > .terminal-pane { border-radius: 12px; }
       /* Tab row floats over the terminal tile on phone so the terminal
          gets the full viewport height instead of sharing it with tabs. */
       #shortcut-bar.bar-ipad { overflow: visible; }

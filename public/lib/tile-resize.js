@@ -8,7 +8,12 @@
  * Key design decisions informed by past experience (diwa):
  * - Per-card handles instead of between-card separators (works for single card)
  * - `.resizing` class during drag disables CSS transitions (prevents input lag)
- * - Explicit pixel widths — no CSS flex reflow during drag
+ * - Widths are applied via the `--w` CSS variable on the card. The CSS rule
+ *   for `.carousel-card` derives both `width` and `margin-left: calc(var(--w)
+ *   / -2)` from this single variable, so the centering formula lives in CSS
+ *   as a single source of truth. Setting `--w` instead of an inline `width`
+ *   pixel value also avoids CSS flex reflow during drag — the rule still
+ *   resolves to a definite pixel width.
  * - e.preventDefault() on touchstart prevents browser scroll fighting drag
  * - Symmetrical resize: dragging one edge changes width by 2x the delta
  *   because the card is centered (both sides move equally)
@@ -134,15 +139,9 @@ export function createResizeHandles({ card, onResize, onResizeEnd, minWidth, max
 
   function applyWidth(width) {
     if (width === null) {
-      // Reset to CSS-controlled
-      card.style.width = "";
-      card.style.maxWidth = "";
-      card.style.marginLeft = "";
+      card.style.removeProperty('--w');
     } else {
-      card.style.width = `${width}px`;
-      card.style.maxWidth = `${width}px`;
-      // Re-center: offset by half width (mirrors the CSS calc)
-      card.style.marginLeft = `${-width / 2}px`;
+      card.style.setProperty('--w', `${width}px`);
     }
   }
 

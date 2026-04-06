@@ -200,14 +200,31 @@ export function createCardCarousel({
   // returns the animated intermediate value and causes position jumps).
   let cachedCardW = 0;
 
-  // Default card width from CSS: clamp(280px, 100% - 160px, 720px).
-  // Leaves ~80px per side for neighbor card peek on narrower screens.
-  // Cards without a custom resize use this width for gap calculations.
-  // Recomputed on window resize.
+  // Default card width mirrors the CSS clamp on .carousel-card:
+  //   clamp(--card-min-width, 100% - 2 * --card-peek, --card-max-width)
+  //
+  // CRITICAL: the three places that encode the card width formula —
+  // CSS `width`, CSS `margin-left` centering, and this JS function —
+  // MUST stay in sync. See diwa commit ca1aed5: "The three values to
+  // keep aligned are: CSS max-width, CSS margin-left (centering), and
+  // JS computeDefaultCardWidth — any mismatch causes layout drift."
+  //
+  // Reading the CSS custom properties via getComputedStyle keeps CSS
+  // as the single source of truth: phone vs desktop just changes the
+  // variables; this function reads whatever the cascade decided.
   let defaultCardW = 0;
   function computeDefaultCardWidth() {
     const cw = container.offsetWidth || 800;
-    defaultCardW = Math.max(280, Math.min(cw - 160, 720));
+    const cs = typeof getComputedStyle === "function" ? getComputedStyle(container) : null;
+    const readVar = (name, fallback) => {
+      if (!cs) return fallback;
+      const v = parseFloat(cs.getPropertyValue(name));
+      return Number.isFinite(v) && v > 0 ? v : fallback;
+    };
+    const peek = readVar("--card-peek", 80);
+    const minW = readVar("--card-min-width", 280);
+    const maxW = readVar("--card-max-width", 720);
+    defaultCardW = Math.max(minW, Math.min(cw - 2 * peek, maxW));
   }
 
   /** Get the effective width of a card (custom resize or CSS default). */
@@ -226,7 +243,14 @@ export function createCardCarousel({
     if (focusedIdx === -1) return;
 
     if (!defaultCardW) computeDefaultCardWidth();
-    const gap = 16;
+    // Read --card-gap from CSS so design tokens stay in one place. The
+    // variable is defined on #terminal-container[data-carousel] and may
+    // differ per device (phone vs desktop). Falls back to 16 if the
+    // computed style is unavailable (e.g., test environment).
+    const gapVar = typeof getComputedStyle === 'function'
+      ? parseFloat(getComputedStyle(container).getPropertyValue('--card-gap'))
+      : NaN;
+    const gap = Number.isFinite(gapVar) && gapVar > 0 ? gapVar : 16;
 
     // Cache focused card's actual width for swipe threshold calculations.
     // During resize drag, the caller passes the exact width so we don't
