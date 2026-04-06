@@ -47,6 +47,33 @@ bin/katulong-stage list            # show running instances
 
 The default name is the current git branch slugified (e.g. `feature/palette-system` → `feature-palette-system`). Pass an explicit name when staging from a detached HEAD or when you want a shorter hostname.
 
+## Configuration
+
+The script reads `~/.katulong/config.json` (or `$KATULONG_DATA_DIR/config.json` if the user has overridden their personal data dir) for two optional keys under a `stage` namespace:
+
+| Key | Purpose | Default |
+|---|---|---|
+| `stage.tunnel` | Pin the named tunnel to use — skips auto-detect entirely | first dotted tunnel from `tunnels list --json` |
+| `stage.domain` | Override the hostname suffix — host becomes `<name>.<stage.domain>` instead of `<name>.<tunnel>` | tunnel name |
+
+Example `~/.katulong/config.json`:
+
+```json
+{
+  "instanceName": "my-mini",
+  "stage": {
+    "tunnel": "my-cf-tunnel",
+    "domain": "example.com"
+  }
+}
+```
+
+With this config, `bin/katulong-stage start palette-system` → `https://palette-system.example.com`, attached to the `my-cf-tunnel` named tunnel.
+
+**Why a config file rather than env vars or CLI flags:** the choice of tunnel/domain is per-machine (it's a property of the user's Cloudflare setup, not the branch they're staging), and it should persist across shells without having to remember to export anything. Adding it as a key in the existing `~/.katulong/config.json` keeps all per-user katulong knobs in one place.
+
+If neither key is set, the script auto-detects via `tunnels list --json`. If the `tunnels` CLI isn't installed at all, it falls back to ephemeral `trycloudflare` URLs.
+
 ## What `start` actually does
 
 1. Picks a free TCP port at or above 3050.

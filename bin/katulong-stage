@@ -20,6 +20,12 @@
 #       tunnel exists, falls back to a one-shot trycloudflare URL via
 #       `cloudflared tunnel --url`.
 #
+# Config (~/.katulong/config.json):
+#   stage.tunnel   Pin the named tunnel (skips auto-detect)
+#   stage.domain   Override hostname → <name>.<stage.domain> instead of
+#                  <name>.<tunnel>. Useful when the tunnel name and the
+#                  public domain differ.
+#
 # State layout:
 #   /tmp/katulong-stage/<name>/
 #     ├── data/         KATULONG_DATA_DIR for the staging server
@@ -49,7 +55,34 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 STAGE_BASE="/tmp/katulong-stage"
 
+# User-level config lives in the prod katulong's data dir, NOT in the per-staging
+# dir we're about to create. Honor KATULONG_DATA_DIR if the user has overridden
+# their personal data dir; otherwise default to ~/.katulong.
+USER_DATA_DIR="${KATULONG_DATA_DIR:-$HOME/.katulong}"
+USER_CONFIG="$USER_DATA_DIR/config.json"
+
 is_alive() { kill -0 "$1" 2>/dev/null; }
+
+# Read a dotted key (e.g. "stage.tunnel") from the user's config.json.
+# Echoes the value on success, returns 1 if missing or unparseable.
+read_config_key() {
+  local key="$1"
+  [[ -f "$USER_CONFIG" ]] || return 1
+  KATULONG_STAGE_CONFIG_PATH="$USER_CONFIG" KATULONG_STAGE_CONFIG_KEY="$key" node -e "
+    const fs = require('fs');
+    try {
+      const c = JSON.parse(fs.readFileSync(process.env.KATULONG_STAGE_CONFIG_PATH, 'utf8'));
+      const parts = process.env.KATULONG_STAGE_CONFIG_KEY.split('.');
+      let v = c;
+      for (const p of parts) {
+        if (v == null || typeof v !== 'object') process.exit(1);
+        v = v[p];
+      }
+      if (v == null) process.exit(1);
+      process.stdout.write(String(v));
+    } catch (e) { process.exit(1); }
+  " 2>/dev/null
+}
 
 # Slugify a freeform name into something safe for hostnames, dirs, and tmux sockets.
 slugify() {
@@ -83,10 +116,23 @@ find_free_port() {
   "
 }
 
-# Pick a named tunnel from `tunnels list --json`. Prefers a tunnel whose
-# name looks like a domain (contains a dot), otherwise just the first one.
-# Echoes the tunnel name on success, returns 1 if none usable.
+# Pick a named tunnel to attach staging routes to.
+#
+# Resolution order:
+#   1. `stage.tunnel` from $USER_CONFIG (if set, takes precedence — no auto-detect)
+#   2. `tunnels list --json` — picks the first tunnel whose name looks like a
+#      domain (contains a dot), otherwise just the first one.
+#
+# Echoes the tunnel name on success, returns 1 if nothing usable was found.
+# Auto-detect is intentionally a fallback rather than the primary path so that
+# users with multiple tunnels can pin staging to a specific one without ambiguity.
 resolve_named_tunnel() {
+  local configured
+  configured="$(read_config_key 'stage.tunnel' || true)"
+  if [[ -n "$configured" ]]; then
+    printf "%s" "$configured"
+    return 0
+  fi
   command -v tunnels >/dev/null 2>&1 || return 1
   local out
   out="$(tunnels list --json 2>/dev/null)" || return 1
@@ -105,6 +151,24 @@ resolve_named_tunnel() {
       } catch (e) { process.exit(1); }
     });
   "
+}
+
+# Resolve the public hostname for a staging instance.
+# Resolution order:
+#   1. `stage.domain` from $USER_CONFIG → "<name>.<stage.domain>"
+#   2. Default → "<name>.<tunnel>"
+# This lets users separate "which tunnel to attach to" from "which domain to
+# expose under" — e.g. tunnel `my-cf-tunnel` serving `*.example.com`.
+resolve_host() {
+  local name="$1"
+  local tunnel="$2"
+  local domain
+  domain="$(read_config_key 'stage.domain' || true)"
+  if [[ -n "$domain" ]]; then
+    printf "%s.%s" "$name" "$domain"
+  else
+    printf "%s.%s" "$name" "$tunnel"
+  fi
 }
 
 # Wait until the staging server is responding on $1, or fail.
@@ -305,7 +369,7 @@ cmd_start() {
   named="$(resolve_named_tunnel || true)"
   if [[ -n "$named" ]]; then
     tunnel="$named"
-    host="$name.$tunnel"
+    host="$(resolve_host "$name" "$tunnel")"
     if tunnels route add "$host" "$port" --tunnel "$tunnel" >/dev/null 2>&1; then
       mode="named"
       url="https://$host"
@@ -390,6 +454,20 @@ Modes (auto-detected at start time):
   named      Stable hostname <name>.<tunnel> on the existing named tunnel
              (requires the 'tunnels' CLI and at least one registered tunnel)
   ephemeral  One-shot https://*.trycloudflare.com URL via 'cloudflared'
+
+Config (~/.katulong/config.json or \$KATULONG_DATA_DIR/config.json):
+  stage.tunnel   Pin the named tunnel to use (skips auto-detect)
+  stage.domain   Override the hostname domain — host becomes <name>.<stage.domain>
+                 instead of <name>.<tunnel>. Useful when the tunnel name and the
+                 public domain differ (e.g. tunnel "my-cf-tunnel" → "example.com").
+
+  Example:
+    {
+      "stage": {
+        "tunnel": "my-tunnel-name",
+        "domain": "example.com"
+      }
+    }
 EOF
 }
 
