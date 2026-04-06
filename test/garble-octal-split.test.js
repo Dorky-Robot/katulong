@@ -91,9 +91,14 @@ class MockProc {
     this.stdin = { write() {}, end() {}, writable: true };
     this.stdout = new MockReadable();
     this._closeHandlers = [];
+    this._errorHandlers = [];
   }
   on(event, handler) {
     if (event === "close") this._closeHandlers.push(handler);
+    if (event === "error") this._errorHandlers.push(handler);
+  }
+  fireClose(code = 0) {
+    for (const h of this._closeHandlers) h(code);
   }
   kill() {}
 }
@@ -339,5 +344,61 @@ describe("Session._handleStdoutData — partial octal escape across %output line
       `post-reset %output contains FFFD: ${JSON.stringify(joined)}`,
     );
     assert.equal((joined.match(/█/g) || []).length, 5);
+  });
+
+  it("ignores a stale close event from a superseded process on reattach", () => {
+    // Regression: when a session reattaches, the old controlProc's close
+    // handler can fire *after* the new attach has already replaced
+    // this._decoder / this._outputDecoder / this.controlProc. Without a
+    // stale-proc guard, the stale handler would call this._decoder.end()
+    // on the NEW decoder (prematurely flushing buffered bytes) and fire
+    // onExit on a still-attached session (bogus "session exited" signal).
+    //
+    // The guard is `if (this.controlProc !== proc) return;` — we verify
+    // it by firing close on proc1 *after* attaching with proc2, and
+    // asserting onExit was NOT called and state is still ATTACHED.
+    const procs = [];
+    const spawnStub = () => {
+      const p = new MockProc();
+      procs.push(p);
+      return p;
+    };
+    let onExitCalls = 0;
+    const session = new Session(
+      "stale-close-test",
+      tmuxSessionName("stale-close-test"),
+      { _spawn: spawnStub, onExit: () => { onExitCalls++; } },
+    );
+
+    session.attachControlMode(80, 24);
+    const proc1 = procs[0];
+    assert.ok(session.controlProc === proc1);
+
+    // Reattach — replaces controlProc, resets parser state.
+    session.attachControlMode(80, 24);
+    const proc2 = procs[1];
+    assert.ok(session.controlProc === proc2, "second attach should replace controlProc");
+    assert.equal(session.state, Session.STATE_ATTACHED);
+
+    // Capture the new decoder instances so we can verify they aren't
+    // clobbered by the stale close handler.
+    const decoderAfterReattach = session._decoder;
+    const outputDecoderAfterReattach = session._outputDecoder;
+
+    // Fire close on the stale proc1. The guard must make this a no-op.
+    proc1.fireClose(0);
+
+    assert.equal(onExitCalls, 0, "stale close must not call onExit");
+    assert.equal(session.state, Session.STATE_ATTACHED, "stale close must not detach");
+    assert.ok(session._decoder === decoderAfterReattach, "stale close must not touch _decoder");
+    assert.ok(
+      session._outputDecoder === outputDecoderAfterReattach,
+      "stale close must not touch _outputDecoder",
+    );
+
+    // Live close on proc2 should still work.
+    proc2.fireClose(0);
+    assert.equal(onExitCalls, 1, "live close should fire onExit once");
+    assert.equal(session.state, Session.STATE_DETACHED);
   });
 });
