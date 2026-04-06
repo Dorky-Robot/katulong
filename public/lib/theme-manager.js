@@ -4,8 +4,14 @@
  * Composable theme switching with auto/light/dark modes.
  */
 
+// Background alpha is 0 so the parent (e.g. .card-face in carousel mode, or
+// #terminal-container in non-carousel mode) shows through. The RGB values are
+// kept at the original Catppuccin base (#1e1e2e / #eff1f5) because xterm's
+// minimumContrastRatio computes contrast against theme.background's RGB
+// regardless of alpha — keeping the RGB preserves text legibility math.
+// Parent must set allowTransparency:true for WebGL renderer to honor alpha.
 export const DARK_THEME = {
-  background: "#1e1e2e", foreground: "#cdd6f4", cursor: "#f5e0dc",
+  background: "rgba(30,30,46,0)", foreground: "#cdd6f4", cursor: "#f5e0dc",
   selectionBackground: "rgba(137,180,250,0.3)",
   black: "#45475a", brightBlack: "#585b70",
   red: "#f38ba8", brightRed: "#f38ba8",
@@ -18,7 +24,7 @@ export const DARK_THEME = {
 };
 
 export const LIGHT_THEME = {
-  background: "#eff1f5", foreground: "#4c4f69", cursor: "#dc8a78",
+  background: "rgba(239,241,245,0)", foreground: "#4c4f69", cursor: "#dc8a78",
   selectionBackground: "rgba(30,102,245,0.2)",
   black: "#5c5f77", brightBlack: "#6c6f85",
   red: "#d20f39", brightRed: "#d20f39",

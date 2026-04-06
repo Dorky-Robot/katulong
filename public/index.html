@@ -651,10 +651,13 @@
       -webkit-overflow-scrolling: touch;
       overscroll-behavior: contain;
     }
-    /* Override xterm.css default #000 background so the gap below terminal rows
-       matches the theme instead of showing a black strip. */
+    /* Override xterm.css default #000 background with transparent so whatever
+       paints behind the viewport (card-face surface in carousel mode,
+       #terminal-container var(--bg) in non-carousel mode) shows through the
+       gap below the last terminal row instead of a mismatched strip. Must be
+       !important because xterm.css hardcodes background:#000 on .xterm-viewport. */
     #terminal-container .xterm-viewport {
-      background-color: var(--bg) !important;
+      background-color: transparent !important;
       scrollbar-width: none; /* Firefox */
     }
     #terminal-container .xterm-viewport::-webkit-scrollbar { display: none; } /* Chrome/Safari */
