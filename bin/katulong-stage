@@ -64,7 +64,10 @@ USER_CONFIG="$USER_DATA_DIR/config.json"
 is_alive() { kill -0 "$1" 2>/dev/null; }
 
 # Read a dotted key (e.g. "stage.tunnel") from the user's config.json.
-# Echoes the value on success, returns 1 if missing or unparseable.
+# Echoes the value on success, returns 1 if missing, unparseable, or
+# present-but-not-a-string. We deliberately reject booleans/numbers so a typo
+# like `"stage": { "tunnel": false }` fails loudly instead of stringifying to
+# "false" and being passed to `tunnels route add`.
 read_config_key() {
   local key="$1"
   [[ -f "$USER_CONFIG" ]] || return 1
@@ -78,8 +81,8 @@ read_config_key() {
         if (v == null || typeof v !== 'object') process.exit(1);
         v = v[p];
       }
-      if (v == null) process.exit(1);
-      process.stdout.write(String(v));
+      if (typeof v !== 'string' || v.length === 0) process.exit(1);
+      process.stdout.write(v);
     } catch (e) { process.exit(1); }
   " 2>/dev/null
 }
@@ -196,22 +199,39 @@ wait_for_server() {
 # Mint a setup token by calling the staging server's own CLI. The CLI uses
 # KATULONG_DATA_DIR/server.json to find the live server, so pointing the env
 # var at the staging data dir routes the token-create API call to the right
-# instance. Echoes just the hex token to stdout.
+# instance. We pass `--json` and parse the structured output via Node rather
+# than scraping the human format — that way the script keeps working if the
+# `Token: <hex>` line ever changes wording, indentation, or color.
 mint_setup_token() {
   local data_dir="$1"
   local name="$2"
   KATULONG_DATA_DIR="$data_dir" \
-    node "$REPO_ROOT/bin/katulong" token create "$name" 2>/dev/null \
-    | awk '/^[[:space:]]*Token:[[:space:]]/ { print $2; exit }'
+    node "$REPO_ROOT/bin/katulong" token create "$name" --json 2>/dev/null \
+    | node -e "
+      let s='';
+      process.stdin.on('data', d => s += d);
+      process.stdin.on('end', () => {
+        try {
+          const d = JSON.parse(s);
+          if (typeof d.token === 'string' && d.token.length > 0) {
+            process.stdout.write(d.token);
+          } else {
+            process.exit(1);
+          }
+        } catch (e) { process.exit(1); }
+      });
+    "
 }
 
 # Persist meta to $1/meta.env using key=value pairs (shell-quoted).
+# Returns non-zero on any I/O failure so callers can clean up rather than
+# silently leak a running server with no record of how to stop it.
 write_meta() {
   local file="$1"
   shift
-  : > "$file"
+  : > "$file" || return 1
   while [[ $# -gt 0 ]]; do
-    printf '%s=%q\n' "$1" "$2" >> "$file"
+    printf '%s=%q\n' "$1" "$2" >> "$file" || return 1
     shift 2
   done
 }
@@ -238,7 +258,10 @@ cmd_list() {
       found=1
     fi
   done
-  [[ $found -eq 0 ]] && echo "(no staging instances)"
+  if [[ $found -eq 0 ]]; then
+    echo "(no staging instances)"
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -274,6 +297,8 @@ stop_one() {
 
   if [[ -n "${tunnel_pid:-}" ]] && is_alive "$tunnel_pid"; then
     kill "$tunnel_pid" 2>/dev/null || true
+    sleep 1
+    is_alive "$tunnel_pid" && kill -9 "$tunnel_pid" 2>/dev/null || true
   fi
 
   rm -rf "$dir"
@@ -299,6 +324,20 @@ cmd_stop() {
 # ---------------------------------------------------------------------------
 # start
 # ---------------------------------------------------------------------------
+
+# Cleanup helper for cmd_start failure paths. Reaps a partially-started
+# instance: kills the server pid if set, kills the tunnel pid if set, and
+# removes the staging dir. Used in every error branch so the cleanup logic
+# stays in one place rather than being duplicated four times.
+cleanup_start() {
+  local server_pid="$1"
+  local tunnel_pid="$2"
+  local dir="$3"
+  [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null || true
+  [[ -n "$tunnel_pid" ]] && kill "$tunnel_pid" 2>/dev/null || true
+  rm -rf "$dir"
+}
+
 cmd_start() {
   local raw_name="${1:-}"
   local name
@@ -308,13 +347,19 @@ cmd_start() {
   local dir="$STAGE_BASE/$name"
 
   # Idempotency: if a meta.env already exists and the pid is alive, just print it.
+  # Source in a subshell so the meta.env's variables don't leak into and
+  # accidentally shadow this function's local variables.
   if [[ -f "$dir/meta.env" ]]; then
-    local existing_pid="" existing_url="" existing_port=""
-    # shellcheck disable=SC1090
-    source "$dir/meta.env"
-    existing_pid="${pid:-}"
-    existing_url="${url:-}"
-    existing_port="${port:-}"
+    local existing
+    existing="$(
+      # shellcheck disable=SC1090
+      source "$dir/meta.env"
+      printf '%s\n%s\n%s\n' "${pid:-}" "${url:-}" "${port:-}"
+    )"
+    local existing_pid existing_url existing_port
+    existing_pid="$(printf '%s' "$existing" | sed -n '1p')"
+    existing_url="$(printf '%s' "$existing" | sed -n '2p')"
+    existing_port="$(printf '%s' "$existing" | sed -n '3p')"
     if [[ -n "$existing_pid" ]] && is_alive "$existing_pid"; then
       echo "Already running: $name"
       printf "  URL: %s\n" "${existing_url:-?}"
@@ -330,6 +375,11 @@ cmd_start() {
   fi
 
   mkdir -p "$dir/data"
+  # /tmp is world-traversable on macOS — lock the staging dir to the owner so
+  # nobody else on the box can read meta.env (which contains the running pid +
+  # port) or sniff data/auth-state.json. The data dir itself gets the same
+  # treatment because the server doesn't chmod its parent.
+  chmod 700 "$dir" "$dir/data"
   local data_dir="$dir/data"
   local log_file="$dir/server.log"
   local tmux_socket="stage-$name"
@@ -349,8 +399,7 @@ cmd_start() {
   local server_pid=$!
 
   if ! wait_for_server "$port" "$server_pid" "$log_file"; then
-    kill "$server_pid" 2>/dev/null || true
-    rm -rf "$dir"
+    cleanup_start "$server_pid" "" "$dir"
     return 1
   fi
 
@@ -358,8 +407,7 @@ cmd_start() {
   token="$(mint_setup_token "$data_dir" "$name" || true)"
   if [[ -z "$token" ]]; then
     echo "ERROR: failed to mint setup token (server up but token CLI returned nothing)" >&2
-    kill "$server_pid" 2>/dev/null || true
-    rm -rf "$dir"
+    cleanup_start "$server_pid" "" "$dir"
     return 1
   fi
 
@@ -382,8 +430,7 @@ cmd_start() {
   if [[ -z "$mode" ]]; then
     if ! command -v cloudflared >/dev/null 2>&1; then
       echo "ERROR: no named tunnel available and cloudflared is not installed" >&2
-      kill "$server_pid" 2>/dev/null || true
-      rm -rf "$dir"
+      cleanup_start "$server_pid" "" "$dir"
       return 1
     fi
     mode="ephemeral"
@@ -399,14 +446,15 @@ cmd_start() {
     done
     if [[ -z "$url" ]]; then
       echo "ERROR: ephemeral tunnel did not produce a URL within 20s" >&2
-      kill "$server_pid" 2>/dev/null || true
-      kill "$tunnel_pid" 2>/dev/null || true
-      rm -rf "$dir"
+      cleanup_start "$server_pid" "$tunnel_pid" "$dir"
       return 1
     fi
   fi
 
-  write_meta "$dir/meta.env" \
+  # If meta.env can't be persisted we MUST tear the instance down — otherwise
+  # `stop` has no record of pid/port/tunnel and the server runs forever as an
+  # orphan, holding a port + DNS route that nothing knows how to release.
+  if ! write_meta "$dir/meta.env" \
     name "$name" \
     port "$port" \
     pid "$server_pid" \
@@ -417,7 +465,14 @@ cmd_start() {
     url "$url" \
     tunnel_pid "$tunnel_pid" \
     data_dir "$data_dir" \
-    log_file "$log_file"
+    log_file "$log_file"; then
+    echo "ERROR: failed to write meta.env — refusing to leave a running server with no stop record" >&2
+    if [[ "$mode" == "named" && -n "$host" && -n "$tunnel" ]] && command -v tunnels >/dev/null 2>&1; then
+      tunnels route rm "$host" --tunnel "$tunnel" >/dev/null 2>&1 || true
+    fi
+    cleanup_start "$server_pid" "$tunnel_pid" "$dir"
+    return 1
+  fi
 
   cat <<EOF
 
