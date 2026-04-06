@@ -6,8 +6,11 @@
  * Projects are parsed from the text, not picked separately.
  *
  * Batch refine: select raw cards via checkbox, then "Refine N selected"
- * or "Refine all raw". Refining happens headlessly in the background;
- * grouped cards show progress bullets streamed via SSE.
+ * or "Refine all raw". Refining happens headlessly in the background.
+ * In-flight progress is shown in a single global activity panel at the
+ * top of the sidebar — not per-card — because a batch refine can span
+ * multiple tickets and projects, and the activity belongs to the user's
+ * workflow rather than to any one ticket.
  */
 
 import { api } from '/lib/api-client.js';
@@ -64,6 +67,14 @@ export function createDispatchPanel(container) {
   const selected = new Set(); // selected raw feature IDs for batch refine
   let projectCache = null;
 
+  // Active refine sessions keyed by sessionTag. Each entry:
+  //   { sessionTag, count, featureIds, startedAt, bullets: [{text, ts}], status, hideTimer? }
+  // The panel aggregates bullets from all in-flight sessions into one rolling
+  // list, because a single refine can span multiple tickets/projects and the
+  // user wants to feel it as one global activity, not per-card.
+  const refineSessions = new Map();
+  const SESSION_HIDE_DELAY_MS = 1800;
+
   // Inject styles
   const styleEl = document.createElement('style');
   styleEl.textContent = PANEL_CSS;
@@ -115,6 +126,116 @@ export function createDispatchPanel(container) {
   actionBar.appendChild(refineSelectedBtn);
   actionBar.appendChild(refineAllBtn);
   panel.appendChild(actionBar);
+
+  // ── Refine activity panel ────────────────────────────────────────
+  // Global, sidebar-level "refining" status. Shows while any refine session
+  // is in flight, aggregating bullets across all sessions. Hidden otherwise.
+  const activityPanel = el('div', { className: 'dp-activity dp-hidden' });
+  const activityHeader = el('div', { className: 'dp-activity-header' });
+  const activityDot = el('span', { className: 'dp-activity-dot' });
+  const activityLabel = el('span', { className: 'dp-activity-label', textContent: 'Refining\u2026' });
+  activityHeader.appendChild(activityDot);
+  activityHeader.appendChild(activityLabel);
+  const activityList = el('div', { className: 'dp-activity-list' });
+  activityPanel.appendChild(activityHeader);
+  activityPanel.appendChild(activityList);
+  panel.appendChild(activityPanel);
+
+  function renderActivity() {
+    if (destroyed) return;
+
+    const sessions = [...refineSessions.values()];
+    const running = sessions.filter((s) => s.status === 'running');
+    // If nothing active and nothing finishing, hide.
+    if (sessions.length === 0) {
+      activityPanel.classList.add('dp-hidden');
+      activityPanel.classList.remove('dp-activity-done');
+      return;
+    }
+
+    // Header text — total tickets being refined across all running sessions.
+    // When all sessions have finished (only cooldown remaining), show "Done".
+    if (running.length === 0) {
+      activityLabel.textContent = 'Refine complete';
+      activityPanel.classList.add('dp-activity-done');
+    } else {
+      const total = running.reduce((n, s) => n + (s.count || 0), 0);
+      activityLabel.textContent =
+        `Refining ${total} idea${total === 1 ? '' : 's'}\u2026`;
+      activityPanel.classList.remove('dp-activity-done');
+    }
+
+    // Aggregate bullets from every session in arrival order. Sessions cap
+    // their own bullets server-side at 200, so this list stays bounded.
+    const all = [];
+    for (const s of sessions) {
+      for (const b of s.bullets) all.push(b);
+    }
+    all.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+
+    // Incremental DOM update: reconcile by key so existing bullets don't get
+    // re-animated on every render (would trigger the fade-in every time a new
+    // bullet arrives). Only freshly-added bullets animate in.
+    const existingKeys = new Set();
+    for (const node of activityList.children) {
+      existingKeys.add(node.dataset.key || '');
+    }
+    const wantedKeys = new Set(all.map((b) => b.ts + '|' + b.text));
+
+    // Remove nodes whose keys are no longer wanted.
+    for (const node of [...activityList.children]) {
+      if (!wantedKeys.has(node.dataset.key)) node.remove();
+    }
+    // Append new bullets at the bottom in order.
+    for (const b of all) {
+      const key = b.ts + '|' + b.text;
+      if (existingKeys.has(key)) continue;
+      const node = el('div', { className: 'dp-activity-bullet', textContent: b.text });
+      node.dataset.key = key;
+      activityList.appendChild(node);
+    }
+
+    // Scroll newest into view. CSS limits the list to 5 visible rows with
+    // overflow-y: auto, so this produces a smooth scroll feel as new bullets
+    // arrive and older ones slide up past the top edge.
+    activityList.scrollTop = activityList.scrollHeight;
+
+    activityPanel.classList.remove('dp-hidden');
+  }
+
+  function upsertSession(session) {
+    const existing = refineSessions.get(session.sessionTag);
+    if (existing && existing.hideTimer) clearTimeout(existing.hideTimer);
+    refineSessions.set(session.sessionTag, {
+      sessionTag: session.sessionTag,
+      count: session.count || (session.featureIds || []).length || 1,
+      featureIds: session.featureIds || [],
+      startedAt: session.startedAt || new Date().toISOString(),
+      bullets: Array.isArray(session.bullets) ? [...session.bullets] : [],
+      status: session.status || 'running',
+    });
+    renderActivity();
+  }
+
+  function appendBulletToSession(sessionTag, bullet) {
+    const s = refineSessions.get(sessionTag);
+    if (!s) return;
+    s.bullets.push(bullet);
+    renderActivity();
+  }
+
+  function markSessionFinished(sessionTag, outcome) {
+    const s = refineSessions.get(sessionTag);
+    if (!s) return;
+    s.status = outcome; // "completed" | "failed"
+    renderActivity();
+    // Leave the panel up briefly so the user registers "done", then fade.
+    if (s.hideTimer) clearTimeout(s.hideTimer);
+    s.hideTimer = setTimeout(() => {
+      refineSessions.delete(sessionTag);
+      renderActivity();
+    }, SESSION_HIDE_DELAY_MS);
+  }
 
   function updateActionBar() {
     const rawCount = [...features.values()].filter((f) => f.status === 'raw').length;
@@ -366,17 +487,6 @@ export function createDispatchPanel(container) {
     updateActionBar();
   }
 
-  /**
-   * Extract log bullets from the feature body.
-   * Log lines are appended by store.addLog as "- HH:MM:SS text".
-   */
-  function extractLogBullets(body) {
-    if (!body) return [];
-    return body.split('\n')
-      .filter((line) => /^- \d{2}:\d{2}:\d{2} /.test(line))
-      .map((line) => line.replace(/^- \d{2}:\d{2}:\d{2} /, ''));
-  }
-
   function createCard(f) {
     const card = el('div', { className: `dp-card dp-status-${f.status}` });
 
@@ -415,18 +525,7 @@ export function createDispatchPanel(container) {
       card.insertBefore(titleEl, card.firstChild);
     }
 
-    // Grouped/refining: show progress bullets
-    if (f.status === 'grouped' || f.status === 'refining') {
-      const bullets = extractLogBullets(f.body);
-      if (bullets.length > 0) {
-        const logEl = el('div', { className: 'dp-log' });
-        // Show last 4 bullets
-        for (const b of bullets.slice(-4)) {
-          logEl.appendChild(el('div', { className: 'dp-log-line', textContent: b }));
-        }
-        card.appendChild(logEl);
-      }
-    }
+    // In-flight progress lives in the global activity panel (see renderActivity).
 
     // Meta line — status + time + actions
     const meta = el('div', { className: 'dp-meta' });
@@ -484,6 +583,12 @@ export function createDispatchPanel(container) {
           for (const f of data.features) features.set(f.id, f);
         }
         render();
+        // Rehydrate in-flight refine sessions so the activity panel shows
+        // up immediately on reconnect without waiting for the next event.
+        if (Array.isArray(data.refines)) {
+          refineSessions.clear();
+          for (const s of data.refines) upsertSession(s);
+        }
       } catch {}
     });
     for (const evt of ['feature-added', 'feature-updated']) {
@@ -498,6 +603,33 @@ export function createDispatchPanel(container) {
     eventSource.addEventListener('feature-deleted', (e) => {
       try { features.delete(JSON.parse(e.data).id); render(); } catch {}
     });
+
+    // --- Refine activity (global sidebar panel) ---
+    eventSource.addEventListener('refine-started', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data?.session) upsertSession(data.session);
+      } catch {}
+    });
+    eventSource.addEventListener('refine-progress', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data?.sessionTag && data.bullet) appendBulletToSession(data.sessionTag, data.bullet);
+      } catch {}
+    });
+    eventSource.addEventListener('refine-completed', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data?.sessionTag) markSessionFinished(data.sessionTag, 'completed');
+      } catch {}
+    });
+    eventSource.addEventListener('refine-failed', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data?.sessionTag) markSessionFinished(data.sessionTag, 'failed');
+      } catch {}
+    });
+
     eventSource.onerror = () => {};
   }
 
@@ -508,6 +640,12 @@ export function createDispatchPanel(container) {
 
   function destroy() {
     destroyed = true;
+    // Clear any pending auto-hide timers so a finished session can't resurrect
+    // itself after the panel is torn down.
+    for (const s of refineSessions.values()) {
+      if (s.hideTimer) clearTimeout(s.hideTimer);
+    }
+    refineSessions.clear();
     if (eventSource) { eventSource.close(); eventSource = null; }
     if (styleEl.parentNode) styleEl.remove();
     if (panel.parentNode) panel.remove();
@@ -686,14 +824,90 @@ const PANEL_CSS = `
   color: var(--text);
 }
 
-/* Progress log (for grouped/refining cards) */
-.dp-log {
+/* Refine activity panel (global sidebar status for in-flight refines) */
+.dp-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+}
+.dp-activity-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--warning);
+}
+.dp-activity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 50%, transparent);
+  animation: dp-pulse 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes dp-pulse {
+  0%   { opacity: 0.4; transform: scale(0.85); box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 50%, transparent); }
+  50%  { opacity: 1;   transform: scale(1.15); box-shadow: 0 0 0 6px color-mix(in srgb, var(--warning) 0%, transparent); }
+  100% { opacity: 0.4; transform: scale(0.85); box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 0%, transparent); }
+}
+/* "Done" state — dot stops pulsing, switches to success color, panel fades. */
+.dp-activity-done {
+  background: color-mix(in srgb, var(--success) 8%, transparent);
+  transition: opacity 0.4s ease;
+  opacity: 0.7;
+}
+.dp-activity-done .dp-activity-header { color: var(--success); }
+.dp-activity-done .dp-activity-dot {
+  background: var(--success);
+  animation: none;
+  box-shadow: none;
+}
+.dp-activity-list {
+  /* Fixed height = 5 lines so older bullets scroll off the top as new ones
+     arrive at the bottom. scrollbar-width:none + ::-webkit-scrollbar hides
+     the scrollbar chrome on both WebKit and Gecko — the scroll is visual
+     only, the user never drives it manually. */
+  max-height: calc(5 * 1.5em);
+  overflow-y: auto;
+  overflow-x: hidden;
   font-size: 11px;
   color: var(--text-dim);
-  padding: 4px 0 2px 8px;
-  border-left: 2px solid var(--warning);
+  line-height: 1.5;
+  padding-left: 4px;
+  border-left: 2px solid color-mix(in srgb, var(--warning) 60%, transparent);
+  scroll-behavior: smooth;
+  scrollbar-width: none;
 }
-.dp-log-line::before { content: '\\b7 '; }
+.dp-activity-list::-webkit-scrollbar { display: none; }
+.dp-activity-done .dp-activity-list {
+  border-left-color: color-mix(in srgb, var(--success) 60%, transparent);
+}
+.dp-activity-bullet {
+  padding-left: 8px;
+  position: relative;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: dp-bullet-in 0.25s ease-out;
+}
+.dp-activity-bullet::before {
+  content: '\\b7';
+  position: absolute;
+  left: 0;
+  color: var(--warning);
+}
+.dp-activity-done .dp-activity-bullet::before { color: var(--success); }
+@keyframes dp-bullet-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
 /* Meta row */
 .dp-meta {
