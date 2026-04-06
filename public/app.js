@@ -151,7 +151,41 @@
       if (overlay) overlay.classList.toggle("visible", !attached);
     };
 
-    if (state.session.name) document.title = state.session.name;
+    // --- Instance label ---
+    // Derive a short instance name from the page hostname so two katulong
+    // tunnels (e.g. katulong-mini.felixflor.es and katulong-prime.felixflor.es)
+    // can be distinguished at a glance — both in the sidebar footer and in
+    // the browser tab title.
+    //
+    // Heuristic: take the leftmost hostname segment and, if it contains a
+    // dash, return the suffix after the last dash. So "katulong-mini.foo.bar"
+    // → "mini", "katulong-prime.foo.bar" → "prime", and a plain "myhost.bar"
+    // falls back to "myhost". 127.0.0.1 / ::1 / localhost map to "local".
+    const deriveInstanceLabel = (hostname) => {
+      if (!hostname) return "";
+      if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") return "local";
+      const first = hostname.split(".")[0] || "";
+      if (first.includes("-")) return first.split("-").pop();
+      return first;
+    };
+    const INSTANCE_LABEL = deriveInstanceLabel(window.location.hostname);
+
+    const instanceLabelEl = document.getElementById("sidebar-instance-label");
+    if (instanceLabelEl && INSTANCE_LABEL) {
+      instanceLabelEl.textContent = INSTANCE_LABEL;
+      instanceLabelEl.title = window.location.hostname;
+    }
+
+    // Wrap document.title assignments so the instance prefix is always
+    // present in the browser tab. The page title is otherwise replaced
+    // (with the active session name or "katulong") on every session
+    // switch, which would otherwise wipe the instance hint.
+    const setDocTitle = (name) => {
+      const base = name || "katulong";
+      document.title = INSTANCE_LABEL ? `[${INSTANCE_LABEL}] ${base}` : base;
+    };
+
+    setDocTitle(state.session.name);
 
     // --- Terminal pool ---
     // One xterm.js Terminal per managed session, visibility-toggled on switch.
@@ -362,7 +396,7 @@
       onFocusChange: (tileId) => {
         const sessionName = tileSessionName(tileId);
         state.update('session.name', sessionName);
-        document.title = sessionName;
+        setDocTitle(sessionName);
         const url = new URL(window.location);
         url.searchParams.set("s", sessionName);
         history.replaceState(null, "", url);
@@ -409,7 +443,7 @@
         // All cards dismissed — clear state so refresh shows blank stage
         wsConnection.disconnect();
         state.update('session.name', null);
-        document.title = "katulong";
+        setDocTitle(null);
         const url = new URL(window.location);
         url.searchParams.delete("s");
         history.replaceState(null, "", url);
@@ -818,7 +852,7 @@
       // Visual updates only — state.session.name is set by the server's
       // "switched" or "attached" confirmation to avoid stale routing during
       // the switch window.
-      document.title = name;
+      setDocTitle(name);
 
       if (wsOpen) {
         // Switch session over the existing WebSocket — no disconnect/reconnect needed
@@ -1265,7 +1299,7 @@
         invalidateSessions(sessionStore, newName);
         if (state.session.name === oldName) {
           state.update('session.name', newName);
-          document.title = newName;
+          setDocTitle(newName);
           const url = new URL(window.location);
           url.searchParams.set("s", newName);
           history.replaceState(null, "", url);
@@ -1293,7 +1327,7 @@
         terminalPool.forEach((name) => terminalPool.dispose(name));
         wsConnection.disconnect();
         state.update('session.name', null);
-        document.title = "katulong";
+        setDocTitle(null);
         const url = new URL(window.location);
         url.searchParams.delete("s");
         history.replaceState(null, "", url);
@@ -1663,7 +1697,7 @@
       syncCarouselSubscriptions: () => syncCarouselSubscriptions(),
       updateSessionUI: (name) => {
         pendingSwitch = null;
-        document.title = name;
+        setDocTitle(name);
         const url = new URL(window.location);
         url.searchParams.set("s", name);
         history.replaceState(null, "", url);
@@ -1689,7 +1723,7 @@
             // No sessions left — disconnect WS, clear UI, stay on page
             wsConnection.disconnect();
             state.update('session.name', null);
-            document.title = "katulong";
+            setDocTitle(null);
             const url = new URL(window.location);
             url.searchParams.delete("s");
             history.replaceState(null, "", url);
@@ -1698,7 +1732,7 @@
         }).catch(() => {
           wsConnection.disconnect();
           state.update('session.name', null);
-          document.title = "katulong";
+          setDocTitle(null);
         });
       },
       onDisconnect: () => { pendingSwitch = null; },
@@ -1794,7 +1828,7 @@
         if (sessions.length > 0 && sessions[0].name) {
           const name = sessions[0].name;
           state.update('session.name', name);
-          document.title = name;
+          setDocTitle(name);
           const url = new URL(window.location);
           url.searchParams.set("s", name);
           history.replaceState(null, "", url);

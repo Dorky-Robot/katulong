@@ -1400,6 +1400,28 @@
     .sidebar-connection-dot.connected { background: var(--success); }
     .sidebar-connection-dot.relay { background: var(--warning, #f9e2af); }
     .sidebar-connection-dot.direct { background: var(--success); }
+    /* Instance label — derived from window.location.hostname so two katulong
+       instances on different tunnels (e.g. mini vs prime) are visually
+       distinct without any server-side config. Hidden when empty. */
+    .sidebar-instance-label {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem; font-weight: 600;
+      color: var(--text-muted); letter-spacing: 0.05em;
+      text-transform: uppercase; white-space: nowrap;
+      padding: 1px 6px;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      margin-left: auto;
+      max-width: 9ch; overflow: hidden; text-overflow: ellipsis;
+    }
+    .sidebar-instance-label:empty { display: none; }
+    /* When the label is present, it has already pushed itself to the right
+       via margin-left:auto — the dot should hug the label, not auto-push. */
+    .sidebar-instance-label + .sidebar-connection-dot { margin-left: 6px; }
+    #sidebar.collapsed .sidebar-instance-label {
+      margin-left: 0; padding: 1px 4px; font-size: 0.625rem;
+      max-width: calc(100% - 8px);
+    }
+    #sidebar.collapsed .sidebar-instance-label + .sidebar-connection-dot { margin-left: 0; }
     #sidebar-content {
       flex: 1; min-height: 0; overflow-y: auto; padding: 0.5rem 0.5rem 0.5rem;
     }
@@ -1465,6 +1487,18 @@
         flex-direction: row; padding: 0.5rem; align-items: center;
       }
       #sidebar.collapsed .sidebar-connection-dot { margin-left: auto; }
+      /* Restore the desktop "expanded" instance-label styles on mobile so the
+         label + dot pair right-aligns. Without this, the more-specific
+         sibling rule above (`.sidebar-instance-label + .sidebar-connection-dot`)
+         pins the dot at margin-left: 0 inside this media query and the pair
+         sits in the middle of the footer instead of the right edge. */
+      #sidebar.collapsed .sidebar-instance-label {
+        margin-left: auto; padding: 1px 6px; font-size: 0.6875rem;
+        max-width: 9ch;
+      }
+      #sidebar.collapsed .sidebar-instance-label + .sidebar-connection-dot {
+        margin-left: 6px;
+      }
       /* Backdrop */
       #sidebar-backdrop {
         position: fixed; inset: 0; z-index: 99;
@@ -2285,6 +2319,7 @@
         <button class="sidebar-icon-btn" id="sidebar-settings-btn" aria-label="Settings" title="Settings">
           <i class="ph ph-gear"></i>
         </button>
+        <span id="sidebar-instance-label" class="sidebar-instance-label" aria-label="Instance"></span>
         <span id="sidebar-connection-dot" class="sidebar-connection-dot" title="Connection status"></span>
       </div>
     </aside>
