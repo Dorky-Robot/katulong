@@ -347,6 +347,57 @@ describe("refineBatch", () => {
     assert.equal(matches.length, 1, "Should have exactly 1 'Searching codebase' bullet (deduped)");
   });
 
+  it("invokes onProgress for each translated bullet, deduped across the batch", async () => {
+    const f1 = store.addFeature("one");
+    const f2 = store.addFeature("two");
+
+    const tickets = [
+      { title: "T1", spec: "S1", project: "p", sourceIds: [f1.id], status: "refined", subtasks: [], estimatedAgents: 1 },
+      { title: "T2", spec: "S2", project: "p", sourceIds: [f2.id], status: "refined", subtasks: [], estimatedAgents: 1 },
+    ];
+
+    const events = [
+      assistantToolUse("Bash", { command: "diwa ls" }),
+      assistantToolUse("Bash", { command: "diwa ls" }),            // dupe — suppressed
+      assistantToolUse("Bash", { command: 'diwa search katulong "x"' }),
+      assistantToolUse("Read", { file_path: "/work/katulong/CLAUDE.md" }),
+      assistantToolUse("Grep", { pattern: "foo" }),
+      { type: "result", result: JSON.stringify(tickets) },
+    ];
+
+    const received = [];
+    spawnHandler = fakeClaudeProcess(events);
+    await refiner.refineBatch(store, [f1.id, f2.id], {
+      onProgress: (bullet) => received.push(bullet),
+    });
+
+    assert.deepEqual(received, [
+      "Listing projects",
+      "Searching diwa history",
+      "Reading katulong CLAUDE.md",
+      "Searching codebase",
+    ]);
+  });
+
+  it("swallows onProgress listener errors so they don't break the refine", async () => {
+    const f1 = store.addFeature("robust");
+    const tickets = [
+      { title: "T", spec: "S", project: "p", sourceIds: [f1.id], status: "refined", subtasks: [], estimatedAgents: 1 },
+    ];
+    spawnHandler = fakeClaudeProcess(buildStreamEvents(tickets));
+
+    // A listener that throws on the first call should not tear down the
+    // subprocess or abort the refine — the refiner must log and continue.
+    let calls = 0;
+    const created = await refiner.refineBatch(store, [f1.id], {
+      onProgress: () => { calls++; throw new Error("boom"); },
+    });
+
+    assert.ok(calls >= 1, "Listener should still be invoked");
+    assert.equal(created.length, 1);
+    assert.equal(created[0].status, "refined");
+  });
+
   it("reverts grouped features to raw on subprocess failure", async () => {
     const f1 = store.addFeature("will fail");
     const f2 = store.addFeature("also fails");
@@ -589,5 +640,196 @@ describe("Batch refine route", () => {
     assert.equal(res.statusCode, 202);
     const updated = store.getFeature(f1.id);
     assert.equal(updated.status, "grouped");
+  });
+});
+
+// ── Refine activity SSE lifecycle ──────────────────────────────────
+//
+// Verifies that the sidebar activity panel's data source (SSE events)
+// actually fires when a refine starts, streams progress, and finishes.
+// Uses a mock refiner that invokes onProgress synchronously before
+// resolving, so the route handler's streaming path is exercised end-
+// to-end without needing a real claude subprocess.
+
+describe("Refine activity SSE events", () => {
+  let testDir;
+  let store;
+  let routes;
+  let routeMap;
+
+  function createMockRes() {
+    const res = {
+      statusCode: null,
+      headers: {},
+      body: null,
+      writeHead(code, headers) { res.statusCode = code; Object.assign(res.headers, headers); },
+      write(data) { res.body = (res.body || "") + data; },
+      end(data) { if (data) res.body = (res.body || "") + data; },
+    };
+    return res;
+  }
+
+  function createSseReq() {
+    const closeCbs = [];
+    return {
+      method: "GET",
+      url: "/api/dispatch/stream",
+      headers: { host: "localhost:3000" },
+      on(event, cb) { if (event === "close") closeCbs.push(cb); },
+      _close: () => closeCbs.forEach((cb) => cb()),
+    };
+  }
+
+  function createMockReq(method, url, body) {
+    const chunks = body ? [Buffer.from(JSON.stringify(body))] : [];
+    return {
+      method, url,
+      headers: { host: "localhost:3000" },
+      on(event, cb) {
+        if (event === "data") chunks.forEach((c) => cb(c));
+        if (event === "end") cb();
+        if (event === "close") {}
+      },
+    };
+  }
+
+  function json(res, status, data) { res.statusCode = status; res.body = JSON.stringify(data); }
+  function parseJSON(req) {
+    return new Promise((resolve, reject) => {
+      let body = "";
+      req.on("data", (c) => { body += c; });
+      req.on("end", () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
+    });
+  }
+  function auth(handler) { return handler; }
+  function csrf(handler) { return handler; }
+
+  /** Parse an SSE body string into [{event, data}] records. */
+  function parseEvents(body) {
+    const out = [];
+    for (const block of (body || "").split("\n\n")) {
+      let event = null;
+      let data = null;
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event: ")) event = line.slice(7);
+        else if (line.startsWith("data: ")) data = line.slice(6);
+      }
+      if (event && data) {
+        try { out.push({ event, data: JSON.parse(data) }); }
+        catch { out.push({ event, data }); }
+      }
+    }
+    return out;
+  }
+
+  beforeEach(async () => {
+    testDir = mkdtempSync(join(tmpdir(), "katulong-activity-sse-test-"));
+    store = createDispatchStore(testDir);
+  });
+
+  afterEach(() => {
+    if (testDir) rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it("broadcasts refine-started/progress/completed and includes them in snapshot", async () => {
+    // Mock refiner: invokes onProgress twice, then resolves.
+    const mockRefiner = {
+      refineBatch: async (s, ids, opts = {}) => {
+        if (opts.onProgress) {
+          opts.onProgress("Listing projects");
+          opts.onProgress("Reading katulong CLAUDE.md");
+        }
+        return [];
+      },
+      refine: async () => ({}),
+    };
+    const executor = { dispatch: async () => ({}), cancel: async () => true };
+
+    const { createDispatchRoutes } = await import("../lib/dispatch-routes.js");
+    routes = createDispatchRoutes({
+      store, refiner: mockRefiner, executor, json, parseJSON, auth, csrf,
+    });
+    routeMap = {};
+    for (const r of routes) {
+      routeMap[r.prefix ? `${r.method} PREFIX:${r.prefix}` : `${r.method} ${r.path}`] = r;
+    }
+
+    // Open the SSE stream — the response accumulates all broadcast events.
+    const streamReq = createSseReq();
+    const streamRes = createMockRes();
+    await routeMap["GET /api/dispatch/stream"].handler(streamReq, streamRes);
+
+    // The initial snapshot should include an empty refines array.
+    const snapshotEvents = parseEvents(streamRes.body);
+    const snapshot = snapshotEvents.find((e) => e.event === "snapshot");
+    assert.ok(snapshot, "Should emit initial snapshot");
+    assert.deepEqual(snapshot.data.refines, [], "Snapshot should include empty refines array");
+
+    // Trigger a batch refine.
+    const f1 = store.addFeature("idea one");
+    const f2 = store.addFeature("idea two");
+    const refineReq = createMockReq("POST", "/api/dispatch/refine", { featureIds: [f1.id, f2.id] });
+    const refineRes = createMockRes();
+    await routeMap["POST /api/dispatch/refine"].handler(refineReq, refineRes);
+    // Yield so the background refineBatch promise resolves and schedules
+    // its completion broadcast.
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    const events = parseEvents(streamRes.body);
+    const types = events.map((e) => e.event);
+
+    assert.ok(types.includes("refine-started"), `Expected refine-started in ${types.join(",")}`);
+    assert.ok(types.includes("refine-progress"), `Expected refine-progress in ${types.join(",")}`);
+    assert.ok(types.includes("refine-completed"), `Expected refine-completed in ${types.join(",")}`);
+
+    // refine-started carries a session with count and bullets array.
+    const started = events.find((e) => e.event === "refine-started");
+    assert.equal(started.data.session.count, 2);
+    assert.equal(started.data.session.status, "running");
+    assert.deepEqual(started.data.session.featureIds, [f1.id, f2.id]);
+
+    // refine-progress carries the bullet text + timestamp.
+    const progress = events.filter((e) => e.event === "refine-progress");
+    assert.equal(progress.length, 2);
+    assert.equal(progress[0].data.bullet.text, "Listing projects");
+    assert.equal(progress[1].data.bullet.text, "Reading katulong CLAUDE.md");
+    // All progress events share the sessionTag with refine-started.
+    assert.equal(progress[0].data.sessionTag, started.data.session.sessionTag);
+  });
+
+  it("broadcasts refine-failed when the background refine rejects", async () => {
+    const mockRefiner = {
+      refineBatch: async () => { throw new Error("subprocess died"); },
+      refine: async () => ({}),
+    };
+    const executor = { dispatch: async () => ({}), cancel: async () => true };
+
+    const { createDispatchRoutes } = await import("../lib/dispatch-routes.js");
+    routes = createDispatchRoutes({
+      store, refiner: mockRefiner, executor, json, parseJSON, auth, csrf,
+    });
+    routeMap = {};
+    for (const r of routes) {
+      routeMap[r.prefix ? `${r.method} PREFIX:${r.prefix}` : `${r.method} ${r.path}`] = r;
+    }
+
+    const streamReq = createSseReq();
+    const streamRes = createMockRes();
+    await routeMap["GET /api/dispatch/stream"].handler(streamReq, streamRes);
+
+    const f1 = store.addFeature("will fail");
+    const refineReq = createMockReq("POST", "/api/dispatch/refine", { featureIds: [f1.id] });
+    const refineRes = createMockRes();
+    await routeMap["POST /api/dispatch/refine"].handler(refineReq, refineRes);
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    const events = parseEvents(streamRes.body);
+    const types = events.map((e) => e.event);
+    assert.ok(types.includes("refine-started"));
+    assert.ok(types.includes("refine-failed"), `Expected refine-failed in ${types.join(",")}`);
+    const failed = events.find((e) => e.event === "refine-failed");
+    assert.equal(failed.data.detail, "subprocess died");
   });
 });
