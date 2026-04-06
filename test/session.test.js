@@ -1,10 +1,26 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
+import { Buffer } from "node:buffer";
 import { Session, SessionNotAliveError } from "../lib/session.js";
 import { RingBuffer } from "../lib/ring-buffer.js";
 import {
-  tmuxSessionName, encodeHexKeys, unescapeTmuxOutput, stripDaResponses,
+  tmuxSessionName, encodeHexKeys, unescapeTmuxOutputBytes, stripDaResponses,
 } from "../lib/tmux.js";
+
+/**
+ * Test-local per-line wrapper around `unescapeTmuxOutputBytes`. Exercises
+ * the single-line behaviour (no carry plumbing) that the unit tests below
+ * assert on. Production callers must use `unescapeTmuxOutputBytes` directly
+ * and maintain a carry across %output boundaries — Session does this.
+ *
+ * A trailing partial octal escape (e.g. `…\34`) is returned as literal
+ * bytes here to match the pre-carry behaviour the unit tests document.
+ */
+function unescapeTmuxOutput(s) {
+  const { bytes, carry } = unescapeTmuxOutputBytes(s);
+  if (!carry) return bytes.toString("utf-8");
+  return Buffer.concat([bytes, Buffer.from(carry, "utf-8")]).toString("utf-8");
+}
 
 // --- tmux control mode helper tests ---
 
