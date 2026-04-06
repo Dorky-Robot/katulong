@@ -43,18 +43,21 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 
-import { unescapeTmuxOutputBytes } from "../lib/tmux.js";
+import { unescapeTmuxOutputBytes, tmuxSessionName } from "../lib/tmux.js";
 import { Session } from "../lib/session.js";
-import { tmuxSessionName } from "../lib/tmux.js";
 
 // --- Helpers ---
 
 /**
  * Octal-escape a Buffer the way tmux control mode does: every byte
  * < ASCII 32 (and `\` itself) becomes a three-digit octal escape.
- * High bytes (>= 0x80) are also escaped — tmux escapes anything that
- * isn't printable ASCII when it's not running in -u (UTF-8) mode, and
- * even in -u mode some character sets get escaped.
+ *
+ * `escapeHigh` defaults to `true` because we default-escape high bytes to
+ * reproduce the observed production behaviour that triggered the bug —
+ * tmux's live control-mode stream contained `\342\226\210` sequences for
+ * the block character `█`, which is what the carry logic must survive.
+ * Tests that want to simulate tmux's `-u` passthrough mode (high bytes
+ * emitted literally) can pass `false`.
  */
 function tmuxOctalEscape(buf, escapeHigh = true) {
   let out = "";
@@ -141,8 +144,7 @@ describe("unescapeTmuxOutputBytes — partial escape carry", () => {
   });
 
   it("decodes a single '█' (U+2588) split mid-escape across two chunks", () => {
-    // █ in UTF-8 = E2 88 88 → tmux escapes as \342\210\210
-    // ...wait, U+2588 is 0xE2 0x96 0x88 → \342\226\210
+    // U+2588 in UTF-8 = 0xE2 0x96 0x88 → tmux wire form \342\226\210
     const wire = "\\342\\226\\210"; // 12 chars
     // Split between chars 5 and 6 → "\\342\\" + "226\\210"
     const part1 = unescapeTmuxOutputBytes("\\342\\");
@@ -255,11 +257,12 @@ describe("Session._handleStdoutData — partial octal escape across %output line
   it("survives an exhaustive split-position sweep with no FFFD", () => {
     // Same as the unit test, but through the real Session parser. This
     // catches any state-management bug in _octalCarry between the parser
-    // and the carry field on Session.
+    // and the carry field on Session. Starts at split=0 (entire payload
+    // in the second chunk) so we cover the "all carry from empty" edge.
     const banner = "█".repeat(10);
     const wire = tmuxOctalEscape(Buffer.from(banner, "utf-8"));
 
-    for (let split = 1; split < wire.length; split++) {
+    for (let split = 0; split <= wire.length; split++) {
       const captured = [];
       const { session, proc } = createWiredSession(`split-${split}`);
       session._onData = (_name, fromSeq) => {
@@ -284,17 +287,57 @@ describe("Session._handleStdoutData — partial octal escape across %output line
     }
   });
 
-  it("resets _octalCarry on attachControlMode (no leakage between sessions)", () => {
-    // If _octalCarry isn't reset on reattach, a stuck partial escape from
-    // a previous detached session would corrupt the first %output of the
-    // next attach.
-    const session = new Session("reset-test", tmuxSessionName("reset-test"));
-    session._octalCarry = "\\34"; // simulate stuck carry
-    // Stub controlProc creation to avoid spawning real tmux
-    const origSpawn = Session.prototype.attachControlMode;
-    // Direct field reset path: just call the relevant lines
-    session._lineBuf = "";
-    session._octalCarry = ""; // attachControlMode does this
-    assert.equal(session._octalCarry, "");
+  it("attachControlMode clears stuck parser state from a prior attach", () => {
+    // Regression: if attachControlMode didn't reset _octalCarry (or any of
+    // the other parser fields), a partial escape left over from a previous
+    // detached attach would corrupt the first %output of the next attach.
+    //
+    // We use a stubbed spawn so the test runs without a real tmux binary.
+    // The stub returns a MockProc whose stdout we drive directly, which
+    // means this test exercises the ACTUAL attachControlMode code path —
+    // constructor reset, post-reset attachControlMode call, and the first
+    // %output through the real _handleStdoutData → _parseLineBuf pipeline.
+    let proc;
+    const spawnStub = () => {
+      proc = new MockProc();
+      return proc;
+    };
+    const session = new Session(
+      "reset-test",
+      tmuxSessionName("reset-test"),
+      { _spawn: spawnStub },
+    );
+
+    // Simulate residual state from a previous detach: a stuck partial
+    // escape and a half-consumed line buffer. Without the reset, the
+    // stuck `\34` would be consumed by the first escape of the next
+    // %output and produce desynced bytes.
+    session._octalCarry = "\\34";
+    session._lineBuf = "leftover garbage from prior attach";
+
+    session.attachControlMode(80, 24);
+
+    assert.equal(session._octalCarry, "", "_octalCarry should be reset");
+    assert.equal(session._lineBuf, "", "_lineBuf should be reset");
+    assert.ok(session.controlProc === proc, "controlProc should be the stub");
+
+    // Drive a clean block-character run through the real parser and
+    // verify no FFFD leaks from the old carry. If the reset were missing,
+    // the stuck `\34` would combine with the first `\342...` and desync
+    // every following escape, producing FFFD glyphs.
+    const captured = [];
+    session._onData = (_name, fromSeq) => {
+      const slice = session.outputBuffer.sliceFrom(fromSeq);
+      if (typeof slice === "string" && slice.length) captured.push(slice);
+    };
+    const wire = tmuxOctalEscape(Buffer.from("█".repeat(5), "utf-8"));
+    proc.stdout.emit(`%output %0 ${wire}\n`);
+
+    const joined = captured.join("");
+    assert.ok(
+      !joined.includes("\uFFFD"),
+      `post-reset %output contains FFFD: ${JSON.stringify(joined)}`,
+    );
+    assert.equal((joined.match(/█/g) || []).length, 5);
   });
 });
