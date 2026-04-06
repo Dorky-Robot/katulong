@@ -1487,6 +1487,18 @@
         flex-direction: row; padding: 0.5rem; align-items: center;
       }
       #sidebar.collapsed .sidebar-connection-dot { margin-left: auto; }
+      /* Restore the desktop "expanded" instance-label styles on mobile so the
+         label + dot pair right-aligns. Without this, the more-specific
+         sibling rule above (`.sidebar-instance-label + .sidebar-connection-dot`)
+         pins the dot at margin-left: 0 inside this media query and the pair
+         sits in the middle of the footer instead of the right edge. */
+      #sidebar.collapsed .sidebar-instance-label {
+        margin-left: auto; padding: 1px 6px; font-size: 0.6875rem;
+        max-width: 9ch;
+      }
+      #sidebar.collapsed .sidebar-instance-label + .sidebar-connection-dot {
+        margin-left: 6px;
+      }
       /* Backdrop */
       #sidebar-backdrop {
         position: fixed; inset: 0; z-index: 99;

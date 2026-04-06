@@ -185,8 +185,7 @@
       document.title = INSTANCE_LABEL ? `[${INSTANCE_LABEL}] ${base}` : base;
     };
 
-    if (state.session.name) setDocTitle(state.session.name);
-    else setDocTitle(null);
+    setDocTitle(state.session.name);
 
     // --- Terminal pool ---
     // One xterm.js Terminal per managed session, visibility-toggled on switch.
