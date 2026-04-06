@@ -1,90 +1,75 @@
 #!/usr/bin/env bash
 #
-# katulong-stage — spin up a staging instance with a Cloudflare tunnel
+# katulong-stage — stage an isolated Katulong instance behind a Cloudflare tunnel
 #
 # Usage:
-#   katulong-stage [source-dir]    Start staging from source-dir (default: repo root)
-#   katulong-stage --stop [port]   Tear down staging on port (default: all)
-#   katulong-stage --status        Show running staging instances
+#   katulong-stage start [name]    Start staging (default name = current branch)
+#   katulong-stage stop  [name]    Tear down a staging instance (default = all)
+#   katulong-stage list            Show running staging instances
+#
+# What "isolated" means:
+#   - Unique data dir at /tmp/katulong-stage/<name>/data
+#       (passkeys, sessions, tokens never collide with the prod katulong)
+#   - Unique tmux socket via KATULONG_TMUX_SOCKET=stage-<name>
+#       (tearing down staging never touches prod tmux)
+#   - Free port allocated dynamically (starting at 3050)
+#   - Setup token minted via the proper `katulong token create` CLI
+#       (no hand-crafted auth state)
+#   - Stable public hostname <name>.<tunnel> via the existing named
+#       cloudflared tunnel (managed by the `tunnels` CLI). If no named
+#       tunnel exists, falls back to a one-shot trycloudflare URL via
+#       `cloudflared tunnel --url`.
+#
+# State layout:
+#   /tmp/katulong-stage/<name>/
+#     ├── data/         KATULONG_DATA_DIR for the staging server
+#     ├── server.log    server stdout+stderr
+#     ├── tunnel.log    cloudflared output (ephemeral mode only)
+#     └── meta.env      key=value record consumed by stop/list
+#
+# Why a rewrite of the original katulong-stage script:
+#   - The original used `cloudflared tunnel --url` exclusively, producing
+#     ephemeral https://*.trycloudflare.com URLs that change on every run.
+#     That's painful for passkey enrollment from a phone, because the
+#     hostname (and therefore the WebAuthn RP ID) changes — every restart
+#     forces re-pairing. Stable named tunnels solve this.
+#   - The original hand-crafted auth state JSON files (user.json,
+#     setup-tokens/<id>.json) and re-implemented the scrypt hashing inline.
+#     This duplicated the auth logic and would silently break if the
+#     storage format changed. Using `katulong token create` against the
+#     staging server's own API delegates to the canonical implementation.
+#   - The original couldn't run multiple staging instances side-by-side
+#     because tmux state wasn't isolated — any `tmux kill-server` call
+#     would also kill the prod tmux. KATULONG_TMUX_SOCKET=stage-<name>
+#     gives each staging its own socket so cleanup is surgical.
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-STAGE_BASE="/tmp/katulong-staging"
+STAGE_BASE="/tmp/katulong-stage"
 
-# Check if a PID is alive
 is_alive() { kill -0 "$1" 2>/dev/null; }
 
-# Stop a single staging instance by port
-stop_port() {
-  local port="$1"
-  local pidfile="${STAGE_BASE}-${port}/server.pid"
-  local tpidfile="${STAGE_BASE}-${port}/tunnel.pid"
-  if [[ -f "$pidfile" ]]; then
-    local pid; pid=$(cat "$pidfile")
-    is_alive "$pid" && kill "$pid" 2>/dev/null
-    rm -f "$pidfile"
-  fi
-  if [[ -f "$tpidfile" ]]; then
-    local tpid; tpid=$(cat "$tpidfile")
-    is_alive "$tpid" && kill "$tpid" 2>/dev/null
-    rm -f "$tpidfile"
-  fi
-  echo "Stopped staging on port $port."
+# Slugify a freeform name into something safe for hostnames, dirs, and tmux sockets.
+slugify() {
+  printf "%s" "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | tr -cs 'a-z0-9' '-' \
+    | sed 's/^-//;s/-$//'
 }
 
-# --- Stop mode ---
-if [[ "${1:-}" == "--stop" ]]; then
-  PORT="${2:-}"
-  if [[ -n "$PORT" ]]; then
-    stop_port "$PORT"
-  else
-    found=0
-    for dir in ${STAGE_BASE}-*/; do
-      [[ -d "$dir" ]] || continue
-      port=$(basename "$dir" | grep -oE '[0-9]+$' || true)
-      [[ -n "$port" ]] && stop_port "$port" && found=1
-    done
-    [[ "$found" -eq 0 ]] && echo "No staging instances found."
-  fi
-  exit 0
-fi
+# Default staging name = the current git branch (slugified), or "stage" if detached.
+default_name() {
+  local b
+  b="$(git -C "$REPO_ROOT" symbolic-ref --short HEAD 2>/dev/null || true)"
+  [[ -z "$b" || "$b" == "HEAD" ]] && b="stage"
+  slugify "$b"
+}
 
-# --- Status mode ---
-if [[ "${1:-}" == "--status" ]]; then
-  echo "Staging instances:"
-  found=0
-  for dir in ${STAGE_BASE}-*/; do
-    [[ -d "$dir" ]] || continue
-    port=$(basename "$dir" | grep -oE '[0-9]+$' || true)
-    [[ -z "$port" ]] && continue
-    pidfile="${dir}server.pid"
-    [[ -f "$pidfile" ]] || continue
-    pid=$(cat "$pidfile")
-    if is_alive "$pid"; then
-      tunnel_url=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "${dir}tunnel.log" 2>/dev/null | head -1 || echo "no tunnel")
-      echo "  port=$port  pid=$pid  url=$tunnel_url"
-      found=1
-    fi
-  done
-  if [[ "$found" -eq 0 ]]; then
-    echo "  (none running)"
-  fi
-  exit 0
-fi
-
-# --- Start mode ---
-SOURCE_DIR="${1:-$REPO_ROOT}"
-SOURCE_DIR="$(cd "$SOURCE_DIR" && pwd)"
-
-if [[ ! -f "$SOURCE_DIR/server.js" ]]; then
-  echo "Error: server.js not found in $SOURCE_DIR" >&2
-  exit 1
-fi
-
-# Find a free port starting from 3003
+# Ask Node for a free TCP port at or above $1.
 find_free_port() {
+  local from="${1:-3050}"
   node -e "
     const net = require('net');
     function tryPort(p) {
@@ -94,145 +79,329 @@ find_free_port() {
         s.on('error', () => resolve(tryPort(p + 1)));
       });
     }
-    tryPort(3003).then(p => console.log(p));
+    tryPort($from).then(p => console.log(p));
   "
 }
 
-PORT=$(find_free_port)
+# Pick a named tunnel from `tunnels list --json`. Prefers a tunnel whose
+# name looks like a domain (contains a dot), otherwise just the first one.
+# Echoes the tunnel name on success, returns 1 if none usable.
+resolve_named_tunnel() {
+  command -v tunnels >/dev/null 2>&1 || return 1
+  local out
+  out="$(tunnels list --json 2>/dev/null)" || return 1
+  [[ -n "$out" ]] || return 1
+  printf "%s" "$out" | node -e "
+    let s='';
+    process.stdin.on('data', d => s += d);
+    process.stdin.on('end', () => {
+      try {
+        const list = JSON.parse(s);
+        if (!Array.isArray(list) || list.length === 0) process.exit(1);
+        const dotted = list.find(t => typeof t.name === 'string' && t.name.includes('.'));
+        const t = dotted || list[0];
+        if (!t || !t.name) process.exit(1);
+        process.stdout.write(t.name);
+      } catch (e) { process.exit(1); }
+    });
+  "
+}
 
-# Install deps if needed
-if [[ ! -d "$SOURCE_DIR/node_modules" ]]; then
-  echo "Installing dependencies..."
-  (cd "$SOURCE_DIR" && npm install --silent)
-fi
+# Wait until the staging server is responding on $1, or fail.
+wait_for_server() {
+  local port="$1"
+  local pid="$2"
+  local log="$3"
+  local i
+  for i in $(seq 1 20); do
+    if curl -fs -o /dev/null "http://127.0.0.1:${port}/login"; then
+      return 0
+    fi
+    if ! is_alive "$pid"; then
+      echo "ERROR: server died during startup. Tail of log:" >&2
+      tail -30 "$log" >&2 || true
+      return 1
+    fi
+    sleep 1
+  done
+  echo "ERROR: server not responding after 20s. Tail of log:" >&2
+  tail -30 "$log" >&2 || true
+  return 1
+}
 
-# Data dir (also holds PID files and logs)
-DATA_DIR="${STAGE_BASE}-${PORT}"
-mkdir -p "$DATA_DIR"
+# Mint a setup token by calling the staging server's own CLI. The CLI uses
+# KATULONG_DATA_DIR/server.json to find the live server, so pointing the env
+# var at the staging data dir routes the token-create API call to the right
+# instance. Echoes just the hex token to stdout.
+mint_setup_token() {
+  local data_dir="$1"
+  local name="$2"
+  KATULONG_DATA_DIR="$data_dir" \
+    node "$REPO_ROOT/bin/katulong" token create "$name" 2>/dev/null \
+    | awk '/^[[:space:]]*Token:[[:space:]]/ { print $2; exit }'
+}
 
-# Generate setup token and pre-seed it into the auth state.
-# Remote access (via tunnel) requires a setup token even for the first
-# passkey registration. Katulong uses per-entity file layout:
-#   user.json + setup-tokens/<id>.json
-SETUP_TOKEN=$(node -e "
-  const { randomBytes, scryptSync, randomUUID } = require('crypto');
-  const { writeFileSync, mkdirSync } = require('fs');
-  const { join } = require('path');
-  const dataDir = '${DATA_DIR}';
-  const token = randomBytes(16).toString('hex');
-  const salt = randomBytes(16);
-  const hash = scryptSync(token, salt, 64, { N: 16384, r: 8, p: 1 });
-  const id = randomUUID();
-  // user.json — minimal user for loadState to find
-  writeFileSync(join(dataDir, 'user.json'), JSON.stringify({
-    id: Buffer.from(randomBytes(16)).toString('base64url'),
-    name: 'owner'
-  }));
-  // setup-tokens/<id>.json
-  const tokDir = join(dataDir, 'setup-tokens');
-  mkdirSync(tokDir, { recursive: true });
-  writeFileSync(join(tokDir, id + '.json'), JSON.stringify({
-    id,
-    hash: hash.toString('hex'),
-    salt: salt.toString('hex'),
-    name: 'staging',
-    createdAt: Date.now(),
-    expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000
-  }));
-  console.log(token);
-")
+# Persist meta to $1/meta.env using key=value pairs (shell-quoted).
+write_meta() {
+  local file="$1"
+  shift
+  : > "$file"
+  while [[ $# -gt 0 ]]; do
+    printf '%s=%q\n' "$1" "$2" >> "$file"
+    shift 2
+  done
+}
 
-# Start server
-PORT="$PORT" KATULONG_DATA_DIR="$DATA_DIR" \
-  nohup node "$SOURCE_DIR/server.js" > "${DATA_DIR}/server.log" 2>&1 &
-SERVER_PID=$!
-echo "$SERVER_PID" > "${DATA_DIR}/server.pid"
-
-# Wait for server to be ready
-echo "Starting server on port $PORT (pid $SERVER_PID)..."
-for i in $(seq 1 10); do
-  if curl -s -o /dev/null -w "" "http://127.0.0.1:${PORT}/" 2>/dev/null; then
-    break
+# ---------------------------------------------------------------------------
+# list
+# ---------------------------------------------------------------------------
+cmd_list() {
+  if [[ ! -d "$STAGE_BASE" ]]; then
+    echo "(no staging instances)"
+    return 0
   fi
-  if ! is_alive "$SERVER_PID"; then
-    echo "Error: server failed to start. Log:" >&2
-    tail -20 "${DATA_DIR}/server.log" >&2
-    exit 1
+  local found=0
+  local dir
+  for dir in "$STAGE_BASE"/*/; do
+    [[ -d "$dir" ]] || continue
+    [[ -f "${dir}meta.env" ]] || continue
+    local name="" port="" pid="" mode="" url=""
+    # shellcheck disable=SC1090
+    source "${dir}meta.env"
+    if is_alive "${pid:-0}"; then
+      printf "  %-22s pid=%-6s port=%-5s mode=%-9s url=%s\n" \
+        "${name}" "${pid}" "${port}" "${mode}" "${url:-?}"
+      found=1
+    fi
+  done
+  [[ $found -eq 0 ]] && echo "(no staging instances)"
+}
+
+# ---------------------------------------------------------------------------
+# stop
+# ---------------------------------------------------------------------------
+stop_one() {
+  local target="$1"
+  local dir="$STAGE_BASE/$target"
+  if [[ ! -d "$dir" || ! -f "$dir/meta.env" ]]; then
+    echo "No staging instance: $target" >&2
+    return 1
   fi
-  sleep 1
-done
 
-# Verify server is actually responding
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}/" 2>/dev/null || echo "000")
-if [[ "$HTTP_CODE" != "200" ]]; then
-  echo "Error: server not responding (HTTP $HTTP_CODE). Log:" >&2
-  tail -20 "${DATA_DIR}/server.log" >&2
-  kill "$SERVER_PID" 2>/dev/null || true
-  exit 1
-fi
+  local name="" port="" pid="" tmux_socket="" mode="" tunnel="" host="" url="" tunnel_pid="" data_dir="" log_file=""
+  # shellcheck disable=SC1090
+  source "$dir/meta.env"
 
-# Find or download cloudflared
-CLOUDFLARED=""
-if command -v cloudflared &>/dev/null; then
-  CLOUDFLARED="cloudflared"
-elif [[ -x /tmp/cloudflared-bin ]]; then
-  CLOUDFLARED="/tmp/cloudflared-bin"
-else
-  echo "Downloading cloudflared..."
-  ARCH=$(uname -m)
-  case "$ARCH" in
-    aarch64|arm64) SUFFIX="arm64" ;;
-    *)             SUFFIX="amd64" ;;
-  esac
-  curl -sL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${SUFFIX}" \
-    -o /tmp/cloudflared-bin && chmod +x /tmp/cloudflared-bin
-  CLOUDFLARED="/tmp/cloudflared-bin"
-fi
-
-# Start tunnel
-nohup "$CLOUDFLARED" tunnel --url "http://127.0.0.1:${PORT}" \
-  > "${DATA_DIR}/tunnel.log" 2>&1 &
-TUNNEL_PID=$!
-echo "$TUNNEL_PID" > "${DATA_DIR}/tunnel.pid"
-
-# Wait for tunnel URL
-echo "Starting Cloudflare tunnel (pid $TUNNEL_PID)..."
-TUNNEL_URL=""
-for i in $(seq 1 20); do
-  TUNNEL_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "${DATA_DIR}/tunnel.log" 2>/dev/null | head -1 || true)
-  if [[ -n "$TUNNEL_URL" ]]; then
-    break
+  if [[ -n "${pid:-}" ]] && is_alive "$pid"; then
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    is_alive "$pid" && kill -9 "$pid" 2>/dev/null || true
   fi
-  if ! is_alive "$TUNNEL_PID"; then
-    echo "Error: tunnel failed to start. Log:" >&2
-    tail -20 "${DATA_DIR}/tunnel.log" >&2
-    kill "$SERVER_PID" 2>/dev/null || true
-    exit 1
+
+  if [[ -n "${tmux_socket:-}" ]]; then
+    tmux -L "$tmux_socket" kill-server 2>/dev/null || true
   fi
-  sleep 1
-done
 
-if [[ -z "$TUNNEL_URL" ]]; then
-  echo "Error: tunnel URL not found after 20s. Log:" >&2
-  tail -20 "${DATA_DIR}/tunnel.log" >&2
-  kill "$SERVER_PID" 2>/dev/null || true
-  kill "$TUNNEL_PID" 2>/dev/null || true
-  exit 1
-fi
+  if [[ "${mode:-}" == "named" && -n "${host:-}" && -n "${tunnel:-}" ]]; then
+    if command -v tunnels >/dev/null 2>&1; then
+      tunnels route rm "$host" --tunnel "$tunnel" >/dev/null 2>&1 || true
+    fi
+  fi
 
-# Report
-cat <<EOF
+  if [[ -n "${tunnel_pid:-}" ]] && is_alive "$tunnel_pid"; then
+    kill "$tunnel_pid" 2>/dev/null || true
+  fi
 
-Staging is live:
+  rm -rf "$dir"
+  echo "Stopped staging: $target"
+}
 
-  URL:         $TUNNEL_URL
-  Setup Token: $SETUP_TOKEN
-  Port:        $PORT
-  Source:      $SOURCE_DIR
-  Server PID:  $SERVER_PID
-  Tunnel PID:  $TUNNEL_PID
+cmd_stop() {
+  local target="${1:-}"
+  if [[ -z "$target" ]]; then
+    [[ -d "$STAGE_BASE" ]] || { echo "(no staging instances)"; return 0; }
+    local found=0
+    local dir
+    for dir in "$STAGE_BASE"/*/; do
+      [[ -d "$dir" ]] || continue
+      stop_one "$(basename "$dir")" && found=1
+    done
+    [[ $found -eq 0 ]] && echo "(no staging instances)"
+    return 0
+  fi
+  stop_one "$(slugify "$target")"
+}
 
-Tear down:
-  $(basename "$0") --stop $PORT
+# ---------------------------------------------------------------------------
+# start
+# ---------------------------------------------------------------------------
+cmd_start() {
+  local raw_name="${1:-}"
+  local name
+  name="$(slugify "${raw_name:-$(default_name)}")"
+  [[ -n "$name" ]] || { echo "ERROR: empty name" >&2; return 1; }
+
+  local dir="$STAGE_BASE/$name"
+
+  # Idempotency: if a meta.env already exists and the pid is alive, just print it.
+  if [[ -f "$dir/meta.env" ]]; then
+    local existing_pid="" existing_url="" existing_port=""
+    # shellcheck disable=SC1090
+    source "$dir/meta.env"
+    existing_pid="${pid:-}"
+    existing_url="${url:-}"
+    existing_port="${port:-}"
+    if [[ -n "$existing_pid" ]] && is_alive "$existing_pid"; then
+      echo "Already running: $name"
+      printf "  URL: %s\n" "${existing_url:-?}"
+      printf "  Port: %s (pid %s)\n" "${existing_port}" "${existing_pid}"
+      return 0
+    fi
+    rm -rf "$dir"
+  fi
+
+  if [[ ! -f "$REPO_ROOT/server.js" ]]; then
+    echo "ERROR: server.js not found in $REPO_ROOT" >&2
+    return 1
+  fi
+
+  mkdir -p "$dir/data"
+  local data_dir="$dir/data"
+  local log_file="$dir/server.log"
+  local tmux_socket="stage-$name"
+  local port; port="$(find_free_port 3050)"
+
+  echo "Starting staging '$name' on port $port..."
+
+  if [[ ! -d "$REPO_ROOT/node_modules" ]]; then
+    echo "  installing deps..."
+    (cd "$REPO_ROOT" && npm install --silent)
+  fi
+
+  PORT="$port" \
+  KATULONG_DATA_DIR="$data_dir" \
+  KATULONG_TMUX_SOCKET="$tmux_socket" \
+    nohup node "$REPO_ROOT/server.js" > "$log_file" 2>&1 &
+  local server_pid=$!
+
+  if ! wait_for_server "$port" "$server_pid" "$log_file"; then
+    kill "$server_pid" 2>/dev/null || true
+    rm -rf "$dir"
+    return 1
+  fi
+
+  local token
+  token="$(mint_setup_token "$data_dir" "$name" || true)"
+  if [[ -z "$token" ]]; then
+    echo "ERROR: failed to mint setup token (server up but token CLI returned nothing)" >&2
+    kill "$server_pid" 2>/dev/null || true
+    rm -rf "$dir"
+    return 1
+  fi
+
+  # ---- Tunnel wiring ----
+  local mode="" tunnel="" host="" url="" tunnel_pid=""
+  local named
+  named="$(resolve_named_tunnel || true)"
+  if [[ -n "$named" ]]; then
+    tunnel="$named"
+    host="$name.$tunnel"
+    if tunnels route add "$host" "$port" --tunnel "$tunnel" >/dev/null 2>&1; then
+      mode="named"
+      url="https://$host"
+    else
+      echo "WARN: 'tunnels route add' failed; falling back to ephemeral trycloudflare" >&2
+      tunnel="" ; host=""
+    fi
+  fi
+
+  if [[ -z "$mode" ]]; then
+    if ! command -v cloudflared >/dev/null 2>&1; then
+      echo "ERROR: no named tunnel available and cloudflared is not installed" >&2
+      kill "$server_pid" 2>/dev/null || true
+      rm -rf "$dir"
+      return 1
+    fi
+    mode="ephemeral"
+    nohup cloudflared tunnel --url "http://127.0.0.1:${port}" \
+      > "$dir/tunnel.log" 2>&1 &
+    tunnel_pid=$!
+    local i
+    for i in $(seq 1 20); do
+      url="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$dir/tunnel.log" 2>/dev/null | head -1 || true)"
+      [[ -n "$url" ]] && break
+      is_alive "$tunnel_pid" || break
+      sleep 1
+    done
+    if [[ -z "$url" ]]; then
+      echo "ERROR: ephemeral tunnel did not produce a URL within 20s" >&2
+      kill "$server_pid" 2>/dev/null || true
+      kill "$tunnel_pid" 2>/dev/null || true
+      rm -rf "$dir"
+      return 1
+    fi
+  fi
+
+  write_meta "$dir/meta.env" \
+    name "$name" \
+    port "$port" \
+    pid "$server_pid" \
+    tmux_socket "$tmux_socket" \
+    mode "$mode" \
+    tunnel "$tunnel" \
+    host "$host" \
+    url "$url" \
+    tunnel_pid "$tunnel_pid" \
+    data_dir "$data_dir" \
+    log_file "$log_file"
+
+  cat <<EOF
+
+Staging '$name' is live:
+
+  URL:         $url
+  Pair URL:    $url/login?setup_token=$token
+  Setup Token: $token
+  Port:        $port (pid $server_pid)
+  Tmux Socket: $tmux_socket
+  Mode:        $mode${tunnel:+ ($tunnel)}
+  Data Dir:    $data_dir
+  Log:         tail -f $log_file
+
+Stop:
+  $(basename "$0") stop $name
 
 EOF
+}
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+usage() {
+  cat <<EOF
+katulong-stage — stage isolated Katulong instances behind a Cloudflare tunnel
+
+Usage:
+  $(basename "$0") start [name]    Start staging (default name = current branch)
+  $(basename "$0") stop  [name]    Tear down staging (default = all instances)
+  $(basename "$0") list            Show running staging instances
+
+Modes (auto-detected at start time):
+  named      Stable hostname <name>.<tunnel> on the existing named tunnel
+             (requires the 'tunnels' CLI and at least one registered tunnel)
+  ephemeral  One-shot https://*.trycloudflare.com URL via 'cloudflared'
+EOF
+}
+
+main() {
+  local sub="${1:-}"
+  case "$sub" in
+    start) shift; cmd_start "${1:-}" ;;
+    stop)  shift; cmd_stop  "${1:-}" ;;
+    list|ls) cmd_list ;;
+    -h|--help|help|"") usage ;;
+    *) echo "Unknown command: $sub" >&2; usage >&2; exit 2 ;;
+  esac
+}
+
+main "$@"
