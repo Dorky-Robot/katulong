@@ -11,13 +11,21 @@
  *
  * IMPORTANT — test isolation: these tests create, write, and delete
  * `server.json` / `server.pid` files. They MUST NOT touch the developer's
- * real `~/.katulong/` directory. The global `test/helpers/setup-env.js`
- * helper is not sufficient here because it only overrides `KATULONG_DATA_DIR`
- * when it's unset — and developers running this test suite from inside a
- * katulong session already have `KATULONG_DATA_DIR=~/.katulong` exported by
- * the shell. So we force our own tmpdir BEFORE importing `process-manager.js`
- * (which reads `envConfig.dataDir` at module load into its cached
- * `SERVER_INFO_PATH` / `SERVER_PID_PATH`).
+ * real `~/.katulong/` directory. Two layers of protection:
+ *
+ *   1. `node --test` runs each test file in its own subprocess by default,
+ *      so the env mutation below is local to this file's process and does
+ *      not affect other tests.
+ *   2. The global `test/helpers/setup-env.js` helper only overrides
+ *      `KATULONG_DATA_DIR` when it's unset — but developers running from
+ *      inside a katulong shell already have `KATULONG_DATA_DIR=~/.katulong`
+ *      exported by the server. So we force our own tmpdir BEFORE importing
+ *      `process-manager.js` (which reads `envConfig.dataDir` at module load
+ *      into its cached `SERVER_INFO_PATH` / `SERVER_PID_PATH`).
+ *
+ * The dynamic `await import()` is critical: a static top-level import would
+ * be hoisted by the parser and run before the env mutation on line below,
+ * even inside this same file.
  */
 
 import { describe, it, beforeEach, afterEach, after } from "node:test";
