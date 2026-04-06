@@ -152,37 +152,32 @@
     };
 
     // --- Instance label ---
-    // Derive a short instance name from the page hostname so two katulong
-    // tunnels (e.g. katulong-mini.felixflor.es and katulong-prime.felixflor.es)
-    // can be distinguished at a glance — both in the sidebar footer and in
-    // the browser tab title.
-    //
-    // Heuristic: take the leftmost hostname segment and, if it contains a
-    // dash, return the suffix after the last dash. So "katulong-mini.foo.bar"
-    // → "mini", "katulong-prime.foo.bar" → "prime", and a plain "myhost.bar"
-    // falls back to "myhost". 127.0.0.1 / ::1 / localhost map to "local".
-    const deriveInstanceLabel = (hostname) => {
-      if (!hostname) return "";
-      if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") return "local";
-      const first = hostname.split(".")[0] || "";
-      if (first.includes("-")) return first.split("-").pop();
-      return first;
-    };
-    const INSTANCE_LABEL = deriveInstanceLabel(window.location.hostname);
+    // Show the page hostname verbatim in the sidebar footer + browser tab
+    // title so two katulong instances behind different tunnels (e.g.
+    // katulong-mini.felixflor.es and katulong-prime.felixflor.es) can be
+    // distinguished at a glance. We previously tried to derive a short
+    // pretty label by splitting on dashes, but that locked in one specific
+    // naming convention; the raw hostname is operator-controlled and
+    // unambiguous in every case.
+    const INSTANCE_HOST = window.location.hostname || "";
 
     const instanceLabelEl = document.getElementById("sidebar-instance-label");
-    if (instanceLabelEl && INSTANCE_LABEL) {
-      instanceLabelEl.textContent = INSTANCE_LABEL;
-      instanceLabelEl.title = window.location.hostname;
+    if (instanceLabelEl && INSTANCE_HOST) {
+      instanceLabelEl.textContent = INSTANCE_HOST;
+      instanceLabelEl.title = INSTANCE_HOST;
     }
 
-    // Wrap document.title assignments so the instance prefix is always
+    // Wrap document.title assignments so the hostname suffix is always
     // present in the browser tab. The page title is otherwise replaced
     // (with the active session name or "katulong") on every session
-    // switch, which would otherwise wipe the instance hint.
+    // switch, which would otherwise wipe the instance hint. Order is
+    // `session · hostname` rather than `hostname · session` so that the
+    // session name (the primary identifier) survives crowded-tab
+    // truncation; the hostname is a disambiguator and is acceptable to
+    // crop first.
     const setDocTitle = (name) => {
       const base = name || "katulong";
-      document.title = INSTANCE_LABEL ? `[${INSTANCE_LABEL}] ${base}` : base;
+      document.title = INSTANCE_HOST ? `${base} · ${INSTANCE_HOST}` : base;
     };
 
     setDocTitle(state.session.name);

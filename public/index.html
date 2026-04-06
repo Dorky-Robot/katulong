@@ -1380,6 +1380,7 @@
     .sidebar-spacer { margin-left: auto; }
     #sidebar-footer {
       display: flex; align-items: center; gap: var(--space-xs);
+      flex-wrap: wrap;
       padding: 0.5rem; flex-shrink: 0;
       border-top: 1px solid var(--border);
     }
@@ -1400,28 +1401,26 @@
     .sidebar-connection-dot.connected { background: var(--success); }
     .sidebar-connection-dot.relay { background: var(--warning, #f9e2af); }
     .sidebar-connection-dot.direct { background: var(--success); }
-    /* Instance label — derived from window.location.hostname so two katulong
-       instances on different tunnels (e.g. mini vs prime) are visually
-       distinct without any server-side config. Hidden when empty. */
+    /* Instance label — shows window.location.hostname verbatim so two
+       katulong instances on different tunnels are visually distinct
+       without any server-side config. Lives on its own row beneath the
+       footer icon buttons (via flex-wrap on the footer + flex-basis: 100%
+       here) so the full hostname has the entire sidebar width to render,
+       not just whatever's left after the icons. Hidden when empty. */
     .sidebar-instance-label {
+      flex-basis: 100%;
       font-family: var(--font-mono);
-      font-size: 0.6875rem; font-weight: 600;
-      color: var(--text-muted); letter-spacing: 0.05em;
-      text-transform: uppercase; white-space: nowrap;
-      padding: 1px 6px;
-      border: 1px solid var(--border); border-radius: var(--radius-sm);
-      margin-left: auto;
-      max-width: 9ch; overflow: hidden; text-overflow: ellipsis;
+      font-size: 0.625rem; font-weight: 500;
+      color: var(--text-dim);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      text-align: center;
+      padding: 2px 4px 0;
+      margin: 0;
     }
     .sidebar-instance-label:empty { display: none; }
-    /* When the label is present, it has already pushed itself to the right
-       via margin-left:auto — the dot should hug the label, not auto-push. */
-    .sidebar-instance-label + .sidebar-connection-dot { margin-left: 6px; }
-    #sidebar.collapsed .sidebar-instance-label {
-      margin-left: 0; padding: 1px 4px; font-size: 0.625rem;
-      max-width: calc(100% - 8px);
-    }
-    #sidebar.collapsed .sidebar-instance-label + .sidebar-connection-dot { margin-left: 0; }
+    /* Collapsed (vertical) sidebar — 56px wide, no room for a hostname.
+       Hide the label entirely; it's still in the tab title for reference. */
+    #sidebar.collapsed .sidebar-instance-label { display: none; }
     #sidebar-content {
       flex: 1; min-height: 0; overflow-y: auto; padding: 0.5rem 0.5rem 0.5rem;
     }
@@ -1487,18 +1486,11 @@
         flex-direction: row; padding: 0.5rem; align-items: center;
       }
       #sidebar.collapsed .sidebar-connection-dot { margin-left: auto; }
-      /* Restore the desktop "expanded" instance-label styles on mobile so the
-         label + dot pair right-aligns. Without this, the more-specific
-         sibling rule above (`.sidebar-instance-label + .sidebar-connection-dot`)
-         pins the dot at margin-left: 0 inside this media query and the pair
-         sits in the middle of the footer instead of the right edge. */
-      #sidebar.collapsed .sidebar-instance-label {
-        margin-left: auto; padding: 1px 6px; font-size: 0.6875rem;
-        max-width: 9ch;
-      }
-      #sidebar.collapsed .sidebar-instance-label + .sidebar-connection-dot {
-        margin-left: 6px;
-      }
+      /* On mobile the "collapsed" class still applies but the sidebar is
+         actually rendered in its expanded layout when open — so the
+         instance label should be visible here, undoing the desktop
+         collapsed-mode `display: none`. */
+      #sidebar.collapsed .sidebar-instance-label { display: inline; }
       /* Backdrop */
       #sidebar-backdrop {
         position: fixed; inset: 0; z-index: 99;
@@ -2319,8 +2311,8 @@
         <button class="sidebar-icon-btn" id="sidebar-settings-btn" aria-label="Settings" title="Settings">
           <i class="ph ph-gear"></i>
         </button>
-        <span id="sidebar-instance-label" class="sidebar-instance-label" aria-label="Instance"></span>
         <span id="sidebar-connection-dot" class="sidebar-connection-dot" title="Connection status"></span>
+        <span id="sidebar-instance-label" class="sidebar-instance-label" aria-label="Instance hostname"></span>
       </div>
     </aside>
     <div id="sidebar-backdrop"></div>
