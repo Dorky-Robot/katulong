@@ -97,8 +97,19 @@ class MockProc {
     if (event === "close") this._closeHandlers.push(handler);
     if (event === "error") this._errorHandlers.push(handler);
   }
+  once(event, handler) {
+    // Mirrors EventEmitter.once semantics — Session._closeControlProc
+    // now uses proc.once("close"/"error") for the clean-detach path.
+    const list = event === "close" ? this._closeHandlers : this._errorHandlers;
+    const wrapper = (...args) => {
+      const i = list.indexOf(wrapper);
+      if (i !== -1) list.splice(i, 1);
+      handler(...args);
+    };
+    list.push(wrapper);
+  }
   fireClose(code = 0) {
-    for (const h of this._closeHandlers) h(code);
+    for (const h of [...this._closeHandlers]) h(code);
   }
   kill() {}
 }
