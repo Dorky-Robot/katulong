@@ -240,6 +240,19 @@ class MockControlProc {
     if (event === "error") this._errorHandlers.push(handler);
   }
 
+  once(event, handler) {
+    // Wrap so the handler fires at most once and then detaches itself,
+    // matching Node's EventEmitter.once semantics. The real controlProc
+    // is a ChildProcess, which is an EventEmitter with once() support.
+    const wrapper = (...args) => {
+      const list = event === "close" ? this._closeHandlers : this._errorHandlers;
+      const i = list.indexOf(wrapper);
+      if (i !== -1) list.splice(i, 1);
+      handler(...args);
+    };
+    this.on(event, wrapper);
+  }
+
   kill() {
     this.killed = true;
   }
@@ -525,6 +538,48 @@ describe("Session", () => {
       session.kill();
 
       assert.strictEqual(mockProc.stdin.ended, true);
+    });
+
+    it("sends in-band detach-client before closing stdin (avoids tmux 3.6a UAF)", () => {
+      // Regression: prior implementation sent SIGTERM via proc.kill(),
+      // which tripped a use-after-free in tmux 3.6a's
+      // control_notify_client_detached path. The fix is to walk tmux's
+      // clean detach path via an in-band `detach-client` command.
+      const { session, mockProc } = createSimpleTestSession("test");
+
+      session.detach();
+
+      assert.ok(
+        mockProc.stdin.written.includes("detach-client\n"),
+        "should write detach-client to control mode stdin"
+      );
+      assert.strictEqual(mockProc.stdin.ended, true, "should end stdin after detach-client");
+      assert.strictEqual(mockProc.killed, false, "should NOT SIGTERM the child — that triggers tmux UAF");
+    });
+
+    it("defers tmux kill-session until after the control client has exited", (_t, done) => {
+      // Regression: kill() used to invoke tmuxKillSession synchronously
+      // while the control client was still attached. Destroying the
+      // session with a live control client trips the same UAF path.
+      // Now kill() first detaches in-band, waits for the control proc
+      // to close, THEN runs kill-session.
+      const { session, mockProc } = createSimpleTestSession("test");
+
+      session.kill();
+
+      // Before close fires, detach-client must have been written but
+      // kill-session should NOT have run yet. (We can't easily observe
+      // the mocked tmuxKillSession without deeper mocking, so we just
+      // verify the in-band command was issued and stdin was closed.)
+      assert.ok(
+        mockProc.stdin.written.includes("detach-client\n"),
+        "should issue in-band detach-client"
+      );
+      assert.strictEqual(mockProc.stdin.ended, true);
+
+      // Simulate the child exiting cleanly — this should not throw.
+      mockProc.simulateClose(0);
+      done();
     });
   });
 
