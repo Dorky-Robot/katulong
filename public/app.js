@@ -896,10 +896,10 @@
       }
     }
 
-    function renameCurrentTab() {
+    function renameCurrentSession() {
       const name = state.session.name;
       if (!name || !shortcutBarInstance) return;
-      shortcutBarInstance.startRename(name);
+      shortcutBarInstance.beginRename(name);
     }
 
     function closeCurrentSession() {
@@ -999,6 +999,18 @@
 
       // --- Option (Alt) shortcuts — work in browser + PWA ---
       if (ev.altKey && !ev.metaKey && !ev.ctrlKey) {
+        // Don't hijack Option+key when the user is typing into an input,
+        // textarea, or contenteditable. This fixes Option+R re-entering
+        // the rename flow while the rename <input> is already focused —
+        // the capture-phase listener here would otherwise fire even though
+        // the input's own keydown handler calls stopPropagation (which
+        // only blocks the bubble phase, not the earlier capture phase).
+        // Also prevents phantom Option+T/W/etc. while typing in settings
+        // panels, the inline textbox, or file-browser rename inputs.
+        const tgt = ev.target;
+        const tag = tgt?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tgt?.isContentEditable) return;
+
         // Shift variants first — must check before non-shift
         if (ev.shiftKey && ev.code === "BracketLeft") { ev.preventDefault(); moveTab(-1); return; }
         if (ev.shiftKey && ev.code === "BracketRight") { ev.preventDefault(); moveTab(+1); return; }
@@ -1018,7 +1030,12 @@
             case "KeyT": ev.preventDefault(); createNewSession(); return;
             case "KeyW": ev.preventDefault(); closeCurrentSession(); return;
             case "KeyQ": ev.preventDefault(); killCurrentSession(); return;
-            case "KeyR": ev.preventDefault(); renameCurrentTab(); return;
+            // Tradeoff: this takes over readline's `revert-line` (\er).
+            // The app owns the whole Option key space for tab management
+            // (see 2a13634), and tab rename is a far more common need for
+            // katulong users than revert-line. Users who rely on revert-line
+            // can still invoke it via `Ctrl+_` or the readline bind `Ctrl+X u`.
+            case "KeyR": ev.preventDefault(); renameCurrentSession(); return;
             case "BracketLeft": ev.preventDefault(); navigateTab(-1); return;
             case "BracketRight": ev.preventDefault(); navigateTab(+1); return;
           }

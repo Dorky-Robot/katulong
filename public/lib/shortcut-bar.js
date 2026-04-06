@@ -1046,11 +1046,15 @@ export function createShortcutBar(options = {}) {
   }
 
   /**
-   * Trigger the inline rename flow for a tab by session name.
-   * Used by the Option+R keyboard shortcut in app.js. No-ops if the
-   * tab element isn't in the DOM (e.g., carousel mode).
+   * Public entry point to begin the inline rename flow for a tab by
+   * session name. Used by the Option+R keyboard shortcut in app.js.
+   * Delegates to the private element-based `startTabRename`. No-ops if
+   * the tab element isn't in the DOM (e.g., carousel mode).
+   *
+   * Named `beginRename` rather than `startRename` to keep visual
+   * distance from the private `startTabRename` in the same module.
    */
-  function startRename(sessionName) {
+  function beginRename(sessionName) {
     const tabArea = container.querySelector(".tab-scroll-area");
     if (!tabArea) return;
     const tab = tabArea.querySelector(`.tab-bar-tab[data-session="${CSS.escape(sessionName)}"]`);
@@ -1061,7 +1065,7 @@ export function createShortcutBar(options = {}) {
     render: requestRender,
     setActiveTab,
     renameTabEl,
-    startRename,
+    beginRename,
     showAddMenu,
     setPortProxyEnabled(enabled) {
       portProxyEnabled = enabled;
