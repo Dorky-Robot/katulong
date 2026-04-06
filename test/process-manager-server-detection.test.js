@@ -8,18 +8,53 @@
  * tmux panes after a server restart on a different port. The fix makes
  * detection prefer the authoritative `~/.katulong/server.json` file written
  * by the live server.
+ *
+ * IMPORTANT — test isolation: these tests create, write, and delete
+ * `server.json` / `server.pid` files. They MUST NOT touch the developer's
+ * real `~/.katulong/` directory. The global `test/helpers/setup-env.js`
+ * helper is not sufficient here because it only overrides `KATULONG_DATA_DIR`
+ * when it's unset — and developers running this test suite from inside a
+ * katulong session already have `KATULONG_DATA_DIR=~/.katulong` exported by
+ * the shell. So we force our own tmpdir BEFORE importing `process-manager.js`
+ * (which reads `envConfig.dataDir` at module load into its cached
+ * `SERVER_INFO_PATH` / `SERVER_PID_PATH`).
  */
 
-import { describe, it, beforeEach, afterEach } from "node:test";
+import { describe, it, beforeEach, afterEach, after } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, unlinkSync, existsSync } from "node:fs";
-import {
+import { writeFileSync, unlinkSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+
+// Force KATULONG_DATA_DIR to a private tmpdir before the module under test
+// loads (it captures the value at import time). This overrides anything the
+// shell already exported — crucial when running from inside a katulong tmux
+// session, where `KATULONG_DATA_DIR=~/.katulong` is injected by the server.
+const TEST_DATA_DIR = mkdtempSync(join(tmpdir(), "katulong-pm-test-"));
+process.env.KATULONG_DATA_DIR = TEST_DATA_DIR;
+
+const {
   isServerRunning,
   readServerInfo,
   getServerBaseUrl,
   SERVER_INFO_PATH,
   SERVER_PID_PATH,
-} from "../lib/cli/process-manager.js";
+} = await import("../lib/cli/process-manager.js");
+
+// Belt-and-suspenders: if something imports process-manager.js via another
+// path and caches a different DATA_DIR, refuse to run rather than clobber
+// the real file. This should never fire given the override above.
+const REAL_KATULONG_DIR = join(homedir(), ".katulong");
+if (SERVER_INFO_PATH.startsWith(REAL_KATULONG_DIR)) {
+  throw new Error(
+    `Refusing to run: SERVER_INFO_PATH points at real data dir (${SERVER_INFO_PATH}).\n` +
+    `KATULONG_DATA_DIR override did not take effect — check module load order.`,
+  );
+}
+
+after(() => {
+  try { rmSync(TEST_DATA_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
+});
 
 function clearServerFiles() {
   for (const p of [SERVER_INFO_PATH, SERVER_PID_PATH]) {
@@ -158,16 +193,16 @@ describe("getServerBaseUrl", () => {
     assert.equal(getServerBaseUrl(), `http://localhost:${FAKE_PORT}`);
   });
 
-  it("server.json takes priority over a real listener on the default port", () => {
-    // Even if a katulong dev server happens to be running on the default
-    // port (common on developer machines), the explicit info file wins.
-    writeFileSync(
-      SERVER_INFO_PATH,
-      JSON.stringify({ pid: ALIVE_PID, port: FAKE_PORT, host: "127.0.0.1" }),
-      { encoding: "utf-8" },
-    );
+  it("falls back to KATULONG_PORT env when server.json is absent", () => {
+    process.env.KATULONG_PORT = "54777";
+    assert.equal(getServerBaseUrl(), "http://localhost:54777");
+  });
+
+  it("ignores malformed KATULONG_PORT and uses config default", () => {
+    process.env.KATULONG_PORT = "not-a-port";
     const url = getServerBaseUrl();
-    assert.equal(url, `http://localhost:${FAKE_PORT}`);
+    assert.match(url, /^http:\/\/localhost:\d+$/);
+    assert.notEqual(url, "http://localhost:NaN");
   });
 
   it("returns a parseable http://localhost:<port> URL when nothing is set", () => {
