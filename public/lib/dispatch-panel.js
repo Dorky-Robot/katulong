@@ -4,6 +4,10 @@
  * Minimal feature queue with inline #project mentions.
  * Type naturally — "#ka" autocompletes to "#katulong".
  * Projects are parsed from the text, not picked separately.
+ *
+ * Batch refine: select raw cards via checkbox, then "Refine N selected"
+ * or "Refine all raw". Refining happens headlessly in the background;
+ * grouped cards show progress bullets streamed via SSE.
  */
 
 import { api } from '/lib/api-client.js';
@@ -57,6 +61,7 @@ export function createDispatchPanel(container) {
   let destroyed = false;
   let eventSource = null;
   const features = new Map();
+  const selected = new Set(); // selected raw feature IDs for batch refine
   let projectCache = null;
 
   // Inject styles
@@ -92,6 +97,53 @@ export function createDispatchPanel(container) {
   composer.appendChild(dropdown);
 
   panel.appendChild(composer);
+
+  // ── Action bar (shown when raw cards are selected) ───────────────
+
+  const actionBar = el('div', { className: 'dp-action-bar dp-hidden' });
+  const refineSelectedBtn = el('button', { className: 'dp-batch-btn', textContent: 'Refine 0 selected' });
+  const refineAllBtn = el('button', { className: 'dp-batch-btn dp-batch-all', textContent: 'Refine all raw' });
+
+  refineSelectedBtn.addEventListener('click', () => {
+    if (selected.size === 0) return;
+    triggerBatchRefine([...selected]);
+  });
+  refineAllBtn.addEventListener('click', () => {
+    triggerBatchRefine(null); // null = all raw
+  });
+
+  actionBar.appendChild(refineSelectedBtn);
+  actionBar.appendChild(refineAllBtn);
+  panel.appendChild(actionBar);
+
+  function updateActionBar() {
+    const rawCount = [...features.values()].filter((f) => f.status === 'raw').length;
+    // Prune selected set — remove IDs that are no longer raw
+    for (const id of selected) {
+      const f = features.get(id);
+      if (!f || f.status !== 'raw') selected.delete(id);
+    }
+    if (selected.size > 0 || rawCount > 0) {
+      actionBar.classList.remove('dp-hidden');
+      refineSelectedBtn.textContent = `Refine ${selected.size} selected`;
+      refineSelectedBtn.disabled = selected.size === 0;
+      refineAllBtn.textContent = `Refine all raw (${rawCount})`;
+      refineAllBtn.disabled = rawCount === 0;
+    } else {
+      actionBar.classList.add('dp-hidden');
+    }
+  }
+
+  async function triggerBatchRefine(ids) {
+    try {
+      const body = ids ? { featureIds: ids } : { all: true };
+      await api.post('/api/dispatch/refine', body);
+      selected.clear();
+      await refreshFeatures();
+    } catch (err) {
+      console.error('[Dispatch] Batch refine failed:', err);
+    }
+  }
 
   // ── Project autocomplete ─────────────────────────────────────────
 
@@ -300,25 +352,54 @@ export function createDispatchPanel(container) {
     list.textContent = '';
 
     const items = [...features.values()].sort((a, b) =>
-      new Date(b.createdAt) - new Date(a.createdAt)
+      new Date(b.created) - new Date(a.created)
     );
 
     if (items.length === 0) {
       list.appendChild(el('div', { className: 'dp-empty', textContent: 'No ideas yet' }));
-      return;
+    } else {
+      for (const f of items) {
+        list.appendChild(createCard(f));
+      }
     }
 
-    for (const f of items) {
-      list.appendChild(createCard(f));
-    }
+    updateActionBar();
+  }
+
+  /**
+   * Extract log bullets from the feature body.
+   * Log lines are appended by store.addLog as "- HH:MM:SS text".
+   */
+  function extractLogBullets(body) {
+    if (!body) return [];
+    return body.split('\n')
+      .filter((line) => /^- \d{2}:\d{2}:\d{2} /.test(line))
+      .map((line) => line.replace(/^- \d{2}:\d{2}:\d{2} /, ''));
   }
 
   function createCard(f) {
     const card = el('div', { className: `dp-card dp-status-${f.status}` });
 
+    // Checkbox for raw features (batch selection)
+    if (f.status === 'raw') {
+      const checkbox = el('input', { type: 'checkbox', className: 'dp-checkbox' });
+      checkbox.checked = selected.has(f.id);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selected.add(f.id);
+        else selected.delete(f.id);
+        updateActionBar();
+      });
+      card.appendChild(checkbox);
+    }
+
     // Main text — render @tags as styled spans
     const textEl = el('div', { className: 'dp-text' });
-    const parts = (f.body || '').split(/(@[a-zA-Z0-9._-]+)/g);
+    const bodyText = f.body || '';
+    // For grouped/refining features, show only the first line (the raw idea)
+    const displayText = (f.status === 'grouped' || f.status === 'refining')
+      ? bodyText.split('\n')[0]
+      : bodyText;
+    const parts = displayText.split(/(@[a-zA-Z0-9._-]+)/g);
     for (const part of parts) {
       if (part.startsWith('@')) {
         textEl.appendChild(el('span', { className: 'dp-tag', textContent: part }));
@@ -328,16 +409,30 @@ export function createDispatchPanel(container) {
     }
     card.appendChild(textEl);
 
-    // Meta line — status + time + actions
-    const meta = el('div', { className: 'dp-meta' });
-    meta.appendChild(el('span', { className: `dp-status dp-s-${f.status}`, textContent: f.status }));
-    meta.appendChild(el('span', { className: 'dp-time', textContent: timeAgo(f.created) }));
-
     // Refined title
     if (f.refined?.title) {
       const titleEl = el('div', { className: 'dp-refined-title', textContent: f.refined.title });
       card.insertBefore(titleEl, card.firstChild);
     }
+
+    // Grouped/refining: show progress bullets
+    if (f.status === 'grouped' || f.status === 'refining') {
+      const bullets = extractLogBullets(f.body);
+      if (bullets.length > 0) {
+        const logEl = el('div', { className: 'dp-log' });
+        // Show last 4 bullets
+        for (const b of bullets.slice(-4)) {
+          logEl.appendChild(el('div', { className: 'dp-log-line', textContent: b }));
+        }
+        card.appendChild(logEl);
+      }
+    }
+
+    // Meta line — status + time + actions
+    const meta = el('div', { className: 'dp-meta' });
+    const statusLabel = f.status === 'grouped' ? 'refining' : f.status;
+    meta.appendChild(el('span', { className: `dp-status dp-s-${f.status}`, textContent: statusLabel }));
+    meta.appendChild(el('span', { className: 'dp-time', textContent: timeAgo(f.created) }));
 
     // Spacer pushes actions right
     meta.appendChild(el('span', { className: 'dp-spacer' }));
@@ -355,10 +450,13 @@ export function createDispatchPanel(container) {
         catch (err) { console.error('[Dispatch] Start failed:', err); }
       }, 'dp-act-start'));
     }
-    meta.appendChild(actionBtn('\u00d7', async () => {
-      try { await api.delete(`/api/dispatch/features/${encodeURIComponent(f.id)}`); await refreshFeatures(); }
-      catch (err) { console.error('[Dispatch] Dismiss failed:', err); }
-    }, 'dp-act-dismiss'));
+    // No "Open" button for grouped/refining cards — refine is headless
+    if (f.status !== 'grouped' && f.status !== 'refining') {
+      meta.appendChild(actionBtn('\u00d7', async () => {
+        try { await api.delete(`/api/dispatch/features/${encodeURIComponent(f.id)}`); await refreshFeatures(); }
+        catch (err) { console.error('[Dispatch] Dismiss failed:', err); }
+      }, 'dp-act-dismiss'));
+    }
 
     card.appendChild(meta);
     return card;
@@ -523,6 +621,29 @@ const PANEL_CSS = `
   white-space: nowrap;
 }
 
+/* Action bar */
+.dp-action-bar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-surface) 60%, transparent);
+}
+.dp-batch-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.dp-batch-btn:hover:not(:disabled) { border-color: var(--accent-active); color: var(--accent-active); }
+.dp-batch-btn:disabled { opacity: 0.4; cursor: default; }
+.dp-batch-all { margin-left: auto; }
+
 /* Feature list */
 .dp-list {
   flex: 1;
@@ -541,8 +662,16 @@ const PANEL_CSS = `
   padding: 10px 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
   transition: background 0.1s;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .dp-card:hover { background: color-mix(in srgb, var(--bg-surface) 50%, transparent); }
+.dp-checkbox {
+  align-self: flex-start;
+  margin: 2px 0;
+  accent-color: var(--accent-active);
+}
 .dp-text {
   line-height: 1.5;
   word-break: break-word;
@@ -557,12 +686,20 @@ const PANEL_CSS = `
   color: var(--text);
 }
 
+/* Progress log (for grouped/refining cards) */
+.dp-log {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 0 2px 8px;
+  border-left: 2px solid var(--warning);
+}
+.dp-log-line::before { content: '\\b7 '; }
+
 /* Meta row */
 .dp-meta {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
   font-size: 11px;
 }
 .dp-status {
@@ -572,8 +709,9 @@ const PANEL_CSS = `
   font-size: 10px;
 }
 .dp-s-raw { color: var(--text-dim); }
-.dp-s-refining { color: var(--warning); }
+.dp-s-refining, .dp-s-grouped { color: var(--warning); }
 .dp-s-refined { color: var(--accent-active); }
+.dp-s-needs-info { color: var(--warning); }
 .dp-s-active { color: var(--success); }
 .dp-s-done { color: var(--success); }
 .dp-s-failed { color: var(--danger); }
