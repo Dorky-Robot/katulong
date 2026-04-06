@@ -991,15 +991,18 @@
         width: 1.75rem;
         font-size: 1rem;
       }
-      /* Phone uses the same carousel layout as iPad/desktop — just wider
-         cards (less neighbor peek) and adjusted top/bottom for safe area
-         and floating tab row. Shadow, radius, centering all from base. */
+      /* Phone uses the same carousel layout as iPad/desktop — wider cards
+         with enough neighbor peek (20px/side) to show the adjacent card's
+         rounded corner and shadow. Radius reduced to 12px so bottom
+         corners don't create dead space above the floating tab row. */
       .carousel-card {
         top: calc(env(safe-area-inset-top, 0px) + 8px);
         bottom: calc(2.5rem + var(--space-xs) * 2);
-        max-width: clamp(280px, calc(100% - 24px), 720px);
-        margin-left: calc(clamp(280px, calc(100% - 24px), 720px) / -2);
+        max-width: clamp(280px, calc(100% - 40px), 720px);
+        margin-left: calc(clamp(280px, calc(100% - 40px), 720px) / -2);
       }
+      .card-face { border-radius: 12px; }
+      .tile-content > .terminal-pane { border-radius: 12px; }
       /* Tab row floats over the terminal tile on phone so the terminal
          gets the full viewport height instead of sharing it with tabs. */
       #shortcut-bar.bar-ipad { overflow: visible; }
