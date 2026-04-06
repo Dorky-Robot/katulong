@@ -78,7 +78,7 @@ export function createCardCarousel({
       const state = JSON.parse(raw);
       if (!state || !Array.isArray(state.cards) || state.cards.length === 0) return null;
       return state;
-    } catch { /* ignore */ }
+    } catch { /* localStorage unavailable or malformed JSON — treat as absent */ }
     return null;
   }
 

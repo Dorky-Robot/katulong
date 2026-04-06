@@ -531,9 +531,15 @@ describe('card-carousel', () => {
     });
 
     it('ignores tampered/corrupt cardWidth values in localStorage', () => {
-      // Seed localStorage with a mix of invalid cardWidth values.
-      // None of these should be restored into handles — they should
-      // all be silently dropped, leaving each card at its default.
+      // Seed localStorage with a mix of invalid cardWidth values that
+      // can actually survive JSON round-tripping. None should be
+      // restored into handles — they should all be silently dropped,
+      // leaving each card at its default.
+      //
+      // Note: NaN and Infinity cannot reach this path because
+      // JSON.stringify serializes them as null. They are covered
+      // by the defense-in-depth guard in tile-resize.restore() and
+      // tested directly in test/tile-resize.test.js.
       const invalidCases = [
         { id: "a", type: "mock", cardWidth: "not a number" },
         { id: "b", type: "mock", cardWidth: -10 },

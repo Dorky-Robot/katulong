@@ -371,5 +371,42 @@ describe('tile-resize', () => {
       assert.strictEqual(handles.getWidth(), null);
       assert.strictEqual(resizes.length, 0);
     });
+
+    it('restore() rejects non-finite / non-positive / non-number inputs', () => {
+      // Defense in depth: a tampered or corrupted persisted state could
+      // pass any of these to restore() via the delayed-restore path in
+      // app.js (where cardWidth flows directly from parsed JSON without
+      // going through the readSavedCardWidths filter). Each must be
+      // silently ignored so the card falls back to the CSS default.
+      const badInputs = [
+        NaN,
+        Infinity,
+        -Infinity,
+        0,
+        -1,
+        -100,
+        "500",          // numeric-looking string — not a number type
+        "foo",
+        {},
+        [],
+        true,
+        undefined,
+        null,
+      ];
+      for (const bad of badInputs) {
+        const card = createMockElement("div");
+        const resizes = [];
+        const handles = createResizeHandles({
+          card,
+          onResize: (w) => resizes.push(w),
+        });
+        handles.attach();
+        handles.restore(bad);
+        assert.strictEqual(handles.getWidth(), null,
+          `restore(${String(bad)}) must leave width at null`);
+        assert.strictEqual(resizes.length, 0,
+          `restore(${String(bad)}) must not fire onResize`);
+      }
+    });
   });
 });
