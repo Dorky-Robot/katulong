@@ -89,6 +89,31 @@ export function createCardCarousel({
     return null;
   }
 
+  /**
+   * Read the persisted per-card widths from localStorage, keyed by tile id.
+   *
+   * Callers of activate() typically don't know or care about cardWidth —
+   * the carousel owns that persistence. By reading it here we make refresh
+   * restoration transparent to every call site (explicit ?s= boot,
+   * resolved-session boot, routeToSession), which previously constructed
+   * tiles with no cardWidth and silently discarded the saved dimensions.
+   */
+  function readSavedCardWidths() {
+    const widths = new Map();
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return widths;
+      const state = JSON.parse(raw);
+      if (!Array.isArray(state.cards)) return widths;
+      for (const c of state.cards) {
+        if (c && typeof c === "object" && c.id && c.cardWidth) {
+          widths.set(c.id, c.cardWidth);
+        }
+      }
+    } catch { /* ignore */ }
+    return widths;
+  }
+
   // ── Resize handles ──────────────────────────────────────────────────
 
   /** Attach resize handles to a card entry. */
@@ -382,6 +407,11 @@ export function createCardCarousel({
     cards = tiles.map(t => t.id);
     focusedId = focused || cards[0] || null;
 
+    // Look up persisted widths so refresh boots (which construct tiles
+    // without cardWidth) still get their dimensions back. An explicit
+    // cardWidth on the incoming tile wins over the saved value.
+    const savedWidths = readSavedCardWidths();
+
     // Store tile references and create contexts
     for (const { id, tile, cardWidth } of tiles) {
       const { wrapper, inner, frontFace, backFace } = createCardWrapper(id);
@@ -394,8 +424,11 @@ export function createCardCarousel({
       container.appendChild(wrapper);
       // Attach resize handles
       const handles = attachResizeHandles(id, entry);
-      // Restore persisted width if provided
-      if (cardWidth) handles.restore(cardWidth);
+      // Restore persisted width: explicit cardWidth (from the saved
+      // tiles restore path) wins, else fall back to the per-id width
+      // we just read from localStorage.
+      const effectiveWidth = cardWidth ?? savedWidths.get(id);
+      if (effectiveWidth) handles.restore(effectiveWidth);
     }
 
     container.dataset.carousel = "true";
