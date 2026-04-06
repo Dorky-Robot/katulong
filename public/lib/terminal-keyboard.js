@@ -90,10 +90,15 @@ export function createTerminalKeyboard(options = {}) {
         if (ev.key === "/") return false;
       }
 
-      // Option (Alt) shortcuts — handled at app level for tab management
+      // Option (Alt) shortcuts — handled at app level for tab management.
+      // These keys must NOT leak to the PTY: xterm.js with macOptionIsMeta=true
+      // would otherwise send ESC-prefixed sequences (e.g. \e1 for Option+1,
+      // \er for Option+R) that trigger readline meta-commands in the shell.
       if (ev.altKey && !ev.metaKey && !ev.ctrlKey && ev.type === "keydown") {
         if (ev.code === "KeyT" || ev.code === "KeyW" || ev.code === "KeyQ" ||
-            ev.code === "BracketLeft" || ev.code === "BracketRight") return false;
+            ev.code === "KeyR" ||
+            ev.code === "BracketLeft" || ev.code === "BracketRight" ||
+            /^Digit[0-9]$/.test(ev.code)) return false;
 
         if (ev.key === "f" && onToggleSearch) {
           ev.preventDefault();

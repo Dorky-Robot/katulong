@@ -878,6 +878,30 @@
       if (carousel.isActive()) carousel.reorderCards(reordered);
     }
 
+    // Positional tab jump — Option+1..9 → tabs 1..9, Option+0 → tab 10.
+    // Silently no-ops if the target index doesn't exist (e.g., Option+7 with
+    // only 4 tabs open). Pure positional; deliberately does NOT implement the
+    // Chrome "Cmd+9 = last tab" trick, because we also expose Option+0 as
+    // "tab 10" — mixing "last" and "10th" would be inconsistent.
+    function jumpToTab(position) {
+      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
+      const idx = position - 1;
+      if (idx < 0 || idx >= tabs.length) return;
+      const name = tabs[idx];
+      if (name === state.session.name) return;
+      if (isCarouselDevice() && carousel.isActive()) {
+        routeToSession(name);
+      } else {
+        switchSession(name);
+      }
+    }
+
+    function renameCurrentTab() {
+      const name = state.session.name;
+      if (!name || !shortcutBarInstance) return;
+      shortcutBarInstance.startRename(name);
+    }
+
     function closeCurrentSession() {
       const name = state.session.name;
       if (!name) return;
@@ -981,10 +1005,20 @@
         if (ev.shiftKey && ev.code === "KeyW") { ev.preventDefault(); killCurrentSession(); return; }
         // Non-shift
         if (!ev.shiftKey) {
+          // Option+Digit → positional tab jump. 1..9 = tabs 1..9, 0 = tab 10.
+          // Use ev.code (layout-independent) so the shortcut works across
+          // non-US keyboard layouts where ev.key may be a Unicode char on macOS.
+          if (/^Digit[0-9]$/.test(ev.code)) {
+            const d = Number(ev.code.slice(5));
+            ev.preventDefault();
+            jumpToTab(d === 0 ? 10 : d);
+            return;
+          }
           switch (ev.code) {
             case "KeyT": ev.preventDefault(); createNewSession(); return;
             case "KeyW": ev.preventDefault(); closeCurrentSession(); return;
             case "KeyQ": ev.preventDefault(); killCurrentSession(); return;
+            case "KeyR": ev.preventDefault(); renameCurrentTab(); return;
             case "BracketLeft": ev.preventDefault(); navigateTab(-1); return;
             case "BracketRight": ev.preventDefault(); navigateTab(+1); return;
           }
