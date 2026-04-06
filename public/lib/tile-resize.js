@@ -189,7 +189,11 @@ export function createResizeHandles({ card, onResize, onResizeEnd, minWidth, max
   }
 
   function restore(width) {
-    if (width === null || width === undefined) return;
+    // Defend against tampered or corrupted persisted state: a non-finite
+    // or non-positive width would flow through clamp() and become NaN or
+    // the minimum, leaving the card in a broken layout. Silently drop it
+    // and fall back to the CSS-controlled default instead.
+    if (typeof width !== "number" || !Number.isFinite(width) || width <= 0) return;
     setWidth(width);
   }
 

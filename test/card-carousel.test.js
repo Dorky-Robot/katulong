@@ -529,5 +529,32 @@ describe('card-carousel', () => {
       assert.strictEqual(saved.cards[0].cardWidth, 700,
         "explicit cardWidth should override the saved localStorage width");
     });
+
+    it('ignores tampered/corrupt cardWidth values in localStorage', () => {
+      // Seed localStorage with a mix of invalid cardWidth values.
+      // None of these should be restored into handles — they should
+      // all be silently dropped, leaving each card at its default.
+      const invalidCases = [
+        { id: "a", type: "mock", cardWidth: "not a number" },
+        { id: "b", type: "mock", cardWidth: -10 },
+        { id: "c", type: "mock", cardWidth: 0 },
+        { id: "d", type: "mock", cardWidth: null },
+      ];
+      localStorage.setItem("katulong-carousel", JSON.stringify({
+        cards: invalidCases,
+        focused: "a",
+      }));
+
+      carousel.activate(makeTiles("a", "b", "c", "d"), "a");
+
+      // After activate() runs, save() serializes current state. None of
+      // the invalid widths should have been accepted, so no tile should
+      // have a cardWidth in the new saved state.
+      const saved = JSON.parse(localStorage.getItem("katulong-carousel"));
+      for (const c of saved.cards) {
+        assert.strictEqual(c.cardWidth, undefined,
+          `tampered cardWidth for ${c.id} should not be restored`);
+      }
+    });
   });
 });

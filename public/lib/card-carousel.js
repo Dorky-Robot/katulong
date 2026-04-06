@@ -65,28 +65,40 @@ export function createCardCarousel({
     } catch { /* localStorage unavailable */ }
   }
 
-  function restore() {
+  /**
+   * Parse the raw localStorage blob into a state object, or return null
+   * on absence / malformed JSON / invalid shape. Shared by restore() and
+   * readSavedCardWidths() so the "read + parse + shape-check" preamble
+   * lives in exactly one place.
+   */
+  function parseStoredState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       const state = JSON.parse(raw);
-      if (!state.cards?.length) return null;
-
-      // Detect legacy format (array of session name strings)
-      if (typeof state.cards[0] === "string") {
-        return {
-          tiles: state.cards.map(name => ({
-            id: name,
-            type: "terminal",
-            sessionName: name,
-          })),
-          focused: state.focused,
-        };
-      }
-
-      return { tiles: state.cards, focused: state.focused };
+      if (!state || !Array.isArray(state.cards) || state.cards.length === 0) return null;
+      return state;
     } catch { /* ignore */ }
     return null;
+  }
+
+  function restore() {
+    const state = parseStoredState();
+    if (!state) return null;
+
+    // Detect legacy format (array of session name strings)
+    if (typeof state.cards[0] === "string") {
+      return {
+        tiles: state.cards.map(name => ({
+          id: name,
+          type: "terminal",
+          sessionName: name,
+        })),
+        focused: state.focused,
+      };
+    }
+
+    return { tiles: state.cards, focused: state.focused };
   }
 
   /**
@@ -97,20 +109,21 @@ export function createCardCarousel({
    * restoration transparent to every call site (explicit ?s= boot,
    * resolved-session boot, routeToSession), which previously constructed
    * tiles with no cardWidth and silently discarded the saved dimensions.
+   *
+   * The filter requires `cardWidth` to be a finite positive number so
+   * a tampered or corrupted entry (NaN, "foo", {}, -1) cannot reach
+   * tile-resize and corrupt the layout with `--w: NaNpx`.
    */
   function readSavedCardWidths() {
     const widths = new Map();
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return widths;
-      const state = JSON.parse(raw);
-      if (!Array.isArray(state.cards)) return widths;
-      for (const c of state.cards) {
-        if (c && typeof c === "object" && c.id && c.cardWidth) {
-          widths.set(c.id, c.cardWidth);
-        }
+    const state = parseStoredState();
+    if (!state) return widths;
+    for (const c of state.cards) {
+      if (c && typeof c === "object" && c.id
+          && typeof c.cardWidth === "number" && Number.isFinite(c.cardWidth) && c.cardWidth > 0) {
+        widths.set(c.id, c.cardWidth);
       }
-    } catch { /* ignore */ }
+    }
     return widths;
   }
 
