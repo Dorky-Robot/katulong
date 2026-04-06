@@ -65,7 +65,6 @@ mock.module(tmuxModuleUrl, {
     tmuxNewSession: async (tmuxName) => { tmuxSessions.set(tmuxName, true); },
     tmuxHasSession: async (tmuxName) => tmuxSessions.has(tmuxName),
     applyTmuxSessionOptions: async () => {},
-    captureScrollback: async () => "",
     captureVisiblePane: async () => "$ prompt\n",
     checkTmux: async () => {},
     getPaneCwd: async () => "/tmp",
