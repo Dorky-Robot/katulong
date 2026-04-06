@@ -39,6 +39,14 @@ function createKeyHandler() {
       }[ev.key];
       if (metaSeq) { onSend(metaSeq); return false; }
     }
+    // Option (Alt) app-level shortcuts — must NOT leak to the PTY.
+    // Mirrors the block in terminal-keyboard.js.
+    if (ev.altKey && !ev.metaKey && !ev.ctrlKey && ev.type === "keydown") {
+      if (ev.code === "KeyT" || ev.code === "KeyW" || ev.code === "KeyQ" ||
+          ev.code === "KeyR" ||
+          ev.code === "BracketLeft" || ev.code === "BracketRight" ||
+          /^Digit[0-9]$/.test(ev.code || "")) return false;
+    }
     // Alt/Option key shortcuts
     if (ev.altKey && ev.type === "keydown") {
       const altSeq = {
@@ -277,5 +285,45 @@ describe("Terminal keyboard — Alt shortcuts", () => {
   it("Alt+Right sends word-forward", () => {
     handler(makeEvent({ key: "ArrowRight", altKey: true, type: "keydown" }));
     assert.equal(sent[0], "\x1bf");
+  });
+});
+
+describe("Terminal keyboard — Option app shortcuts don't leak to PTY", () => {
+  // Regression: every Option shortcut bound at the app level (tab management,
+  // jump-to-tab, rename) must be blocked here. Otherwise xterm.js with
+  // macOptionIsMeta=true sends ESC-prefixed sequences to the shell — e.g.
+  // Option+1 → \e1 (readline digit-argument), Option+R → \er (revert-line).
+  let handler, sent;
+
+  beforeEach(() => {
+    ({ handler, sent } = createKeyHandler());
+  });
+
+  const cases = [
+    ["Option+T", { code: "KeyT", key: "t" }],
+    ["Option+W", { code: "KeyW", key: "w" }],
+    ["Option+Q", { code: "KeyQ", key: "q" }],
+    ["Option+R", { code: "KeyR", key: "r" }],
+    ["Option+[", { code: "BracketLeft", key: "[" }],
+    ["Option+]", { code: "BracketRight", key: "]" }],
+    ["Option+1", { code: "Digit1", key: "1" }],
+    ["Option+2", { code: "Digit2", key: "2" }],
+    ["Option+5", { code: "Digit5", key: "5" }],
+    ["Option+9", { code: "Digit9", key: "9" }],
+    ["Option+0", { code: "Digit0", key: "0" }],
+  ];
+
+  for (const [label, overrides] of cases) {
+    it(`${label} is blocked and nothing is sent to the PTY`, () => {
+      const result = handler(makeEvent({ ...overrides, altKey: true, type: "keydown" }));
+      assert.equal(result, false, `${label} must be blocked`);
+      assert.equal(sent.length, 0, `${label} must not send anything`);
+    });
+  }
+
+  it("Option+ArrowLeft still sends word-back (not accidentally swallowed)", () => {
+    const result = handler(makeEvent({ key: "ArrowLeft", code: "ArrowLeft", altKey: true, type: "keydown" }));
+    assert.equal(result, false);
+    assert.equal(sent[0], "\x1bb");
   });
 });
