@@ -71,14 +71,24 @@ function fakeClaudeProcess(events, exitCode = 0) {
 }
 
 /**
- * Build stream-json events simulating Claude using tools then returning a result.
+ * Build stream-json events simulating Claude using tools then returning a
+ * result. Mirrors the real `claude -p --output-format stream-json --verbose`
+ * output: tool_use blocks live inside assistant message content, not at the
+ * top level. Verified by running the CLI against a fresh kubo.
  */
+function assistantToolUse(name, input) {
+  return {
+    type: "assistant",
+    message: { content: [{ type: "tool_use", name, input }] },
+  };
+}
+
 function buildStreamEvents(tickets) {
   return [
-    { type: "tool_use", tool: "Bash", tool_input: { command: "diwa ls" } },
-    { type: "tool_use", tool: "Bash", tool_input: { command: 'diwa search katulong "some query"' } },
-    { type: "tool_use", tool: "Read", tool_input: { file_path: "/work/katulong/CLAUDE.md" } },
-    { type: "tool_use", tool: "Grep", tool_input: { pattern: "something" } },
+    assistantToolUse("Bash", { command: "diwa ls" }),
+    assistantToolUse("Bash", { command: 'diwa search katulong "some query"' }),
+    assistantToolUse("Read", { file_path: "/work/katulong/CLAUDE.md" }),
+    assistantToolUse("Grep", { pattern: "something" }),
     { type: "result", result: JSON.stringify(tickets) },
   ];
 }
@@ -133,6 +143,20 @@ describe("toolUseBullet", () => {
     assert.equal(
       toolUseBullet({ type: "tool_use", tool: "Bash", tool_input: { command: "ls -la" } }),
       null
+    );
+  });
+
+  it("handles the real stream-json content-block shape (name/input)", () => {
+    // This is the shape that actually arrives in production — a tool_use
+    // content block nested inside assistant.message.content, which uses
+    // `name` and `input` rather than `tool` and `tool_input`.
+    assert.equal(
+      toolUseBullet({ type: "tool_use", name: "Bash", input: { command: "diwa ls" } }),
+      "Listing projects"
+    );
+    assert.equal(
+      toolUseBullet({ type: "tool_use", name: "Read", input: { file_path: "/work/yelo/CLAUDE.md" } }),
+      "Reading yelo CLAUDE.md"
     );
   });
 });
@@ -307,9 +331,9 @@ describe("refineBatch", () => {
     const f1 = store.addFeature("test dedupe");
 
     const events = [
-      { type: "tool_use", tool: "Grep", tool_input: {} },
-      { type: "tool_use", tool: "Grep", tool_input: {} },
-      { type: "tool_use", tool: "Grep", tool_input: {} },
+      assistantToolUse("Grep", {}),
+      assistantToolUse("Grep", {}),
+      assistantToolUse("Grep", {}),
       { type: "result", result: JSON.stringify([
         { title: "T", spec: "S", project: "p", sourceIds: [f1.id], status: "refined", subtasks: [], estimatedAgents: 1 },
       ]) },
