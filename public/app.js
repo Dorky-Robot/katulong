@@ -170,6 +170,10 @@
         fontSize: 14,
         fontFamily: "'JetBrainsMono NF', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace",
         theme: themeManager.getEffective() === "light" ? LIGHT_THEME : DARK_THEME,
+        // Required for theme.background alpha to take effect. Lets card-face
+        // (carousel) or #terminal-container (non-carousel) paint the backdrop
+        // so the terminal area stays one uniform color with its tile.
+        allowTransparency: true,
         cursorBlink: true,
         scrollback: 10000,
         convertEol: true,
