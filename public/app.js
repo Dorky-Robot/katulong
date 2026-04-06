@@ -167,13 +167,17 @@
       instanceLabelEl.title = INSTANCE_HOST;
     }
 
-    // Wrap document.title assignments so the hostname prefix is always
+    // Wrap document.title assignments so the hostname suffix is always
     // present in the browser tab. The page title is otherwise replaced
     // (with the active session name or "katulong") on every session
-    // switch, which would otherwise wipe the instance hint.
+    // switch, which would otherwise wipe the instance hint. Order is
+    // `session · hostname` rather than `hostname · session` so that the
+    // session name (the primary identifier) survives crowded-tab
+    // truncation; the hostname is a disambiguator and is acceptable to
+    // crop first.
     const setDocTitle = (name) => {
       const base = name || "katulong";
-      document.title = INSTANCE_HOST ? `${INSTANCE_HOST} · ${base}` : base;
+      document.title = INSTANCE_HOST ? `${base} · ${INSTANCE_HOST}` : base;
     };
 
     setDocTitle(state.session.name);
