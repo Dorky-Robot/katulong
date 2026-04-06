@@ -9,7 +9,20 @@
       "Bash(pkill -f cloudflared.*3003)",
       "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage --status 2>&1)",
       "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage --stop 3003)",
-      "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage)"
+      "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage)",
+      "Bash(log show:*)",
+      "Bash(tmux:*)",
+      "Bash(gh release:*)",
+      "Bash(shasum -a 256)",
+      "Bash(gh pr:*)",
+      "Bash(grep -E \"\\\\.js$|^d\")",
+      "Bash(grep:*)",
+      "Read(//tmp/**)",
+      "Bash(shasum -a 256 \"/tmp/katulong-v0.46.4.tar.gz\")",
+      "Read(//Users/felixflores/Projects/dorky_robot/homebrew-katulong/Formula/**)",
+      "Read(//Users/felixflores/Projects/**)",
+      "Bash(katulong:*)",
+      "Bash(shasum -a 256 \"/tmp/katulong-v0.46.5.tar.gz\")"
     ]
   }
 }
