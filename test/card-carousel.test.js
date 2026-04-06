@@ -8,11 +8,15 @@ function createMockElement(tag) {
   const classes = new Set();
   const children = [];
   const listeners = {};
+  const styleTarget = {
+    setProperty: (k, v) => { styles[k] = v; },
+    removeProperty: (k) => { delete styles[k]; },
+  };
   const el = {
     tagName: (tag || "DIV").toUpperCase(),
-    style: new Proxy(styles, {
-      set: (t, k, v) => { t[k] = v; return true; },
-      get: (t, k) => t[k] || "",
+    style: new Proxy(styleTarget, {
+      set: (_t, k, v) => { styles[k] = v; return true; },
+      get: (t, k) => (k in t ? t[k] : (styles[k] || "")),
     }),
     classList: {
       add: (...c) => c.forEach(x => classes.add(x)),
@@ -472,6 +476,91 @@ describe('card-carousel', () => {
       assert.strictEqual(restored.tiles[0].type, "terminal");
       assert.strictEqual(restored.tiles[0].sessionName, "x");
       assert.strictEqual(restored.focused, "y");
+    });
+
+    it('persists per-card width across a save → re-activate cycle', () => {
+      // Activate, resize a card via the exposed handles, save via
+      // the normal post-resize hook.
+      const first = makeTiles("a", "b");
+      carousel.activate(first, "a");
+      const saved = JSON.parse(localStorage.getItem("katulong-carousel"));
+      assert.ok(saved.cards.every(c => c.cardWidth === undefined),
+        "no cardWidth until one is set");
+
+      // Simulate a resize on card "a" by writing the saved JSON directly
+      // with a cardWidth, then re-activating as if after a refresh.
+      saved.cards[0].cardWidth = 512;
+      localStorage.setItem("katulong-carousel", JSON.stringify(saved));
+
+      // Re-create the carousel (fresh instance, same localStorage)
+      carousel = createCardCarousel({
+        container,
+        onFocusChange,
+        onCardDismissed,
+        onAllCardsDismissed,
+      });
+
+      // Activate with plain tiles that DO NOT carry cardWidth — this
+      // matches what app.js does on refresh via makeTerminalTile().
+      carousel.activate(makeTiles("a", "b"), "a");
+
+      // The carousel should have looked up the saved width and
+      // persisted it back so the next save() round-trip preserves it.
+      const afterReactivate = JSON.parse(localStorage.getItem("katulong-carousel"));
+      assert.strictEqual(afterReactivate.cards[0].cardWidth, 512,
+        "saved width should survive activate() even when tiles omit cardWidth");
+      assert.strictEqual(afterReactivate.cards[1].cardWidth, undefined,
+        "tiles without a saved width should remain default");
+    });
+
+    it('explicit cardWidth on an incoming tile wins over saved width', () => {
+      // Seed localStorage with a saved width for tile "a".
+      localStorage.setItem("katulong-carousel", JSON.stringify({
+        cards: [{ id: "a", type: "mock", cardWidth: 400 }],
+        focused: "a",
+      }));
+
+      // Activate with an explicit cardWidth — this matches the delayed
+      // restore path in app.js that reconstructs tiles from saved state.
+      const tiles = [{ id: "a", tile: createMockTile("a"), cardWidth: 700 }];
+      carousel.activate(tiles, "a");
+
+      const saved = JSON.parse(localStorage.getItem("katulong-carousel"));
+      assert.strictEqual(saved.cards[0].cardWidth, 700,
+        "explicit cardWidth should override the saved localStorage width");
+    });
+
+    it('ignores tampered/corrupt cardWidth values in localStorage', () => {
+      // Seed localStorage with a mix of invalid cardWidth values that
+      // can actually survive JSON round-tripping. None should be
+      // restored into handles — they should all be silently dropped,
+      // leaving each card at its default.
+      //
+      // Note: NaN and Infinity cannot reach this path because
+      // JSON.stringify serializes them as null. They are covered
+      // by the defense-in-depth guard in tile-resize.restore() and
+      // tested directly in test/tile-resize.test.js.
+      const invalidCases = [
+        { id: "a", type: "mock", cardWidth: "not a number" },
+        { id: "b", type: "mock", cardWidth: -10 },
+        { id: "c", type: "mock", cardWidth: 0 },
+        { id: "d", type: "mock", cardWidth: null },
+      ];
+      localStorage.setItem("katulong-carousel", JSON.stringify({
+        cards: invalidCases,
+        focused: "a",
+      }));
+
+      carousel.activate(makeTiles("a", "b", "c", "d"), "a");
+
+      // After activate() runs, save() serializes current state. None of
+      // the invalid widths should have been accepted, so no tile should
+      // have a cardWidth in the new saved state.
+      const saved = JSON.parse(localStorage.getItem("katulong-carousel"));
+      for (const c of saved.cards) {
+        assert.strictEqual(c.cardWidth, undefined,
+          `tampered cardWidth for ${c.id} should not be restored`);
+      }
     });
   });
 });

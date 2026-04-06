@@ -65,28 +65,66 @@ export function createCardCarousel({
     } catch { /* localStorage unavailable */ }
   }
 
-  function restore() {
+  /**
+   * Parse the raw localStorage blob into a state object, or return null
+   * on absence / malformed JSON / invalid shape. Shared by restore() and
+   * readSavedCardWidths() so the "read + parse + shape-check" preamble
+   * lives in exactly one place.
+   */
+  function parseStoredState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       const state = JSON.parse(raw);
-      if (!state.cards?.length) return null;
-
-      // Detect legacy format (array of session name strings)
-      if (typeof state.cards[0] === "string") {
-        return {
-          tiles: state.cards.map(name => ({
-            id: name,
-            type: "terminal",
-            sessionName: name,
-          })),
-          focused: state.focused,
-        };
-      }
-
-      return { tiles: state.cards, focused: state.focused };
-    } catch { /* ignore */ }
+      if (!state || !Array.isArray(state.cards) || state.cards.length === 0) return null;
+      return state;
+    } catch { /* localStorage unavailable or malformed JSON — treat as absent */ }
     return null;
+  }
+
+  function restore() {
+    const state = parseStoredState();
+    if (!state) return null;
+
+    // Detect legacy format (array of session name strings)
+    if (typeof state.cards[0] === "string") {
+      return {
+        tiles: state.cards.map(name => ({
+          id: name,
+          type: "terminal",
+          sessionName: name,
+        })),
+        focused: state.focused,
+      };
+    }
+
+    return { tiles: state.cards, focused: state.focused };
+  }
+
+  /**
+   * Read the persisted per-card widths from localStorage, keyed by tile id.
+   *
+   * Callers of activate() typically don't know or care about cardWidth —
+   * the carousel owns that persistence. By reading it here we make refresh
+   * restoration transparent to every call site (explicit ?s= boot,
+   * resolved-session boot, routeToSession), which previously constructed
+   * tiles with no cardWidth and silently discarded the saved dimensions.
+   *
+   * The filter requires `cardWidth` to be a finite positive number so
+   * a tampered or corrupted entry (NaN, "foo", {}, -1) cannot reach
+   * tile-resize and corrupt the layout with `--w: NaNpx`.
+   */
+  function readSavedCardWidths() {
+    const widths = new Map();
+    const state = parseStoredState();
+    if (!state) return widths;
+    for (const c of state.cards) {
+      if (c && typeof c === "object" && c.id
+          && typeof c.cardWidth === "number" && Number.isFinite(c.cardWidth) && c.cardWidth > 0) {
+        widths.set(c.id, c.cardWidth);
+      }
+    }
+    return widths;
   }
 
   // ── Resize handles ──────────────────────────────────────────────────
@@ -382,6 +420,11 @@ export function createCardCarousel({
     cards = tiles.map(t => t.id);
     focusedId = focused || cards[0] || null;
 
+    // Look up persisted widths so refresh boots (which construct tiles
+    // without cardWidth) still get their dimensions back. An explicit
+    // cardWidth on the incoming tile wins over the saved value.
+    const savedWidths = readSavedCardWidths();
+
     // Store tile references and create contexts
     for (const { id, tile, cardWidth } of tiles) {
       const { wrapper, inner, frontFace, backFace } = createCardWrapper(id);
@@ -394,8 +437,11 @@ export function createCardCarousel({
       container.appendChild(wrapper);
       // Attach resize handles
       const handles = attachResizeHandles(id, entry);
-      // Restore persisted width if provided
-      if (cardWidth) handles.restore(cardWidth);
+      // Restore persisted width: explicit cardWidth (from the saved
+      // tiles restore path) wins, else fall back to the per-id width
+      // we just read from localStorage.
+      const effectiveWidth = cardWidth ?? savedWidths.get(id);
+      if (effectiveWidth) handles.restore(effectiveWidth);
     }
 
     container.dataset.carousel = "true";
