@@ -14,6 +14,25 @@ Katulong is a self-hosted web terminal that gives remote shell access to the hos
 
 Remote access model: the server binds to localhost and an external tunnel tool (ngrok, Cloudflare Tunnel, etc.) forwards HTTPS traffic to it. TLS termination and external certificate management are handled by the tunnel, not by Katulong itself.
 
+### Multi-device terminal dimensions — inherent PTY limitation
+
+**A tmux pane has exactly one terminal size.** The shell and all programs in it query dimensions via `TIOCGWINSZ` and receive one answer. There is no way to have the same running process simultaneously render at 40 columns (phone) and 200 columns (desktop). This is not a tmux limitation — it applies to any single-PTY architecture.
+
+**Consequences for multi-device sessions:**
+- When a phone attaches and resizes tmux, the desktop sees output formatted for phone-width columns (text wraps early, wastes screen space).
+- Per-client headless terminals (`ClientHeadless`) exist for serialization and drift detection, but they **cannot** solve this. TUI apps use absolute cursor positioning (`\e[row;colH`) calculated for tmux's current size — replaying those escape sequences on a differently-sized headless terminal won't produce correct output.
+- `markActive()` in `client-tracker.js` intentionally does NOT resize tmux on keystroke-based device switching, to prevent SIGWINCH storms that garble TUI apps. Only explicit events (attach, detach, browser resize) trigger tmux resize.
+
+**Do not attempt to fix this by:**
+- Adding per-client xterm.js replay at different dimensions — cursor-positioned TUI output cannot be reflowed
+- Resizing tmux on active-client switch — this was tried and caused TUI garble (see PR #483)
+- Running multiple tmux control-mode clients at different sizes — tmux uses one size per pane regardless of client count
+
+**Future options (if pursued):**
+- Per-device tmux windows (independent shell sessions, not shared)
+- Primary device model (one device controls dimensions, others are view-only)
+- Don't resize on attach (each device keeps the dimensions it found)
+
 ### Remote clipboard bridge
 
 Image paste across machines (e.g., iPad → tunnel → Mac mini) requires a three-layer interception in `public/lib/paste-handler.js`: (1) block xterm's keydown `\x16`, (2) handle the paste event, (3) Clipboard API fallback for WebKit which suppresses paste after `preventDefault` on keydown. See `docs/clipboard-bridge.md` for the full architecture — **read it before modifying paste-handler.js, image-upload.js, or the upload route in routes.js**.
