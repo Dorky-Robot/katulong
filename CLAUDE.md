@@ -20,7 +20,7 @@ Remote access model: the server binds to localhost and an external tunnel tool (
 
 **Consequences for multi-device sessions:**
 - When a phone attaches and resizes tmux, the desktop sees output formatted for phone-width columns (text wraps early, wastes screen space).
-- Per-client headless terminals (`ClientHeadless`) exist for serialization and drift detection, but they **cannot** solve this. TUI apps use absolute cursor positioning (`\e[row;colH`) calculated for tmux's current size — replaying those escape sequences on a differently-sized headless terminal won't produce correct output.
+- Per-client headless terminals (`ClientHeadless`) were tried for serialization and drift detection, but they **cannot** solve this — and actively introduce drift. TUI apps use absolute cursor positioning (`\e[row;colH`) calculated for tmux's current size, so replaying the RingBuffer into a differently-sized headless lands those escapes on wrong cells. PCH-7 deleted `ClientHeadless`; attach/subscribe/resync/pull-snapshot now all serialize the shared `session._headless`, which is written live at the current PTY dims and resized in lockstep with tmux.
 - `markActive()` in `client-tracker.js` intentionally does NOT resize tmux on keystroke-based device switching, to prevent SIGWINCH storms that garble TUI apps. Only explicit events (attach, detach, browser resize) trigger tmux resize.
 
 **Do not attempt to fix this by:**
