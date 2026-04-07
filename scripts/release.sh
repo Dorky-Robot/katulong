@@ -99,6 +99,28 @@ log "Releasing: v${CURRENT} → v${NEW_VERSION}"
 log "Running tests..."
 npm test
 
+# ── Install gate ─────────────────────────────────────────────────────
+#
+# Unit tests catch logic bugs in isolated modules. They do NOT catch the
+# "inert pipeline" class of release bugs: files missing from the git
+# archive, production deps missing from package.json, the SPA shell not
+# being served by the route table, or a silent startup error that doesn't
+# show in unit tests. Those failures only surface when you actually
+# install the tarball and hit the server — which is exactly what users
+# do, and exactly when it's too late to roll back a release.
+#
+# `scripts/smoke-install.sh` mirrors the Homebrew Formula's install flow
+# (`git archive HEAD` → `npm install --omit=dev` → `node server.js` →
+# runSmokeTest battery) and aborts the release on any failure. There is
+# no `--skip` flag — if this gate is flaky, fix the gate, not the release.
+
+log "Running install gate (mirrors Homebrew install flow)..."
+if ! "$REPO_ROOT/scripts/smoke-install.sh"; then
+  err "Install gate failed — release aborted."
+  err "The code at HEAD would not produce a working install if tagged now."
+  exit 1
+fi
+
 # ── Bump version in package.json ─────────────────────────────────────
 
 log "Bumping package.json to v${NEW_VERSION}..."
