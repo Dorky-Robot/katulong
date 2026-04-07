@@ -18,66 +18,57 @@
   <link rel="stylesheet" href="/vendor/xterm/xterm.min.css">
   <link rel="stylesheet" href="/vendor/phosphor-icons/style.css">
   <style>
-    /* --- Catppuccin Mocha (dark) / Latte (light) --- */
+    /* ── Pre-paint fallback palette ────────────────────────────────────
+       These values are the SAME palette the palette manager generates for
+       the default anchor (#cba6f7) + polarity=dark. They exist only so the
+       browser has something reasonable to paint between first byte and the
+       moment theme-manager.js runs. Once the manager runs it rewrites
+       every --var on documentElement via style.setProperty — those take
+       precedence over this :root block, so this never fights the
+       generated palette. Do not hand-edit these — regenerate them via
+       generatePalette("#cba6f7", "dark") if the defaults move.
+
+       Light-mode fallback lives below in a :root[data-theme="auto"]
+       prefers-color-scheme rule so first paint is correct for users
+       booting into a light OS. */
     :root {
       --font-mono: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
-      --bg: #1e1e2e;
-      --bg-surface: #313244;
-      --bg-input: #1e1e2e;
-      --border: #45475a;
-      --text: #cdd6f4;
-      --text-muted: #a6adc8;
-      --text-dim: #6c7086;
-      --accent: #45475a;
-      --accent-active: #cba6f7;
-      --success: #a6e3a1;
-      --warning: #f9e2af;
-      --danger: #f38ba8;
+      --bg: #151318;
+      --bg-surface: #28252c;
+      --bg-input: #0e0c11;
+      --border: #423e47;
+      --text: #eae6f0;
+      --text-muted: #b4aebc;
+      --text-dim: #928c9c;
+      --accent: #3a363f;
+      --accent-active: #c9a4f5;
+      --success: #7acf7e;
+      --warning: #d3b63b;
+      --danger: #ff968a;
       --overlay-bg: rgba(0,0,0,0.6);
-      --focus-ring: rgba(137,180,250,0.5);
-      --tag-bg: #45475a;
-    }
-
-    [data-theme="light"] {
-      --bg: #eff1f5;
-      --bg-surface: #ffffff;
-      --bg-input: #e6e9ef;
-      --border: #ccd0da;
-      --text: #4c4f69;
-      --text-muted: #6c6f85;
-      --text-dim: #9ca0b0;
-      --accent: #ccd0da;
-      --accent-active: #8839ef;
-      --success: #40a02b;
-      --warning: #df8e1d;
-      --danger: #d20f39;
-      --overlay-bg: rgba(0,0,0,0.3);
-      --focus-ring: rgba(30,102,245,0.4);
-      --tag-bg: #dce0e8;
+      --focus-ring: rgba(201,164,245,0.5);
+      --tag-bg: #3a363f;
     }
 
     @media (prefers-color-scheme: light) {
-      [data-theme="auto"] {
-        --bg: #eff1f5;
+      :root[data-theme="auto"] {
+        --bg: #f5f2f9;
         --bg-surface: #ffffff;
-        --bg-input: #e6e9ef;
-        --border: #ccd0da;
-        --text: #4c4f69;
-        --text-muted: #6c6f85;
-        --text-dim: #9ca0b0;
-        --accent: #ccd0da;
-        --accent-active: #8839ef;
-        --success: #40a02b;
-        --warning: #df8e1d;
-        --danger: #d20f39;
-        --overlay-bg: rgba(0,0,0,0.3);
-        --focus-ring: rgba(30,102,245,0.4);
-        --tag-bg: #dce0e8;
+        --bg-input: #ebe8ef;
+        --border: #d6d2dd;
+        --text: #302b36;
+        --text-muted: #585261;
+        --text-dim: #847c8f;
+        --accent: #d9d5df;
+        --accent-active: #734f99;
+        --success: #107823;
+        --warning: #766200;
+        --danger: #a83630;
+        --overlay-bg: rgba(0,0,0,0.35);
+        --focus-ring: rgba(115,79,153,0.45);
+        --tag-bg: #e5e1e9;
       }
     }
-
-    /* NOTE: [data-theme="auto"] light values intentionally duplicate [data-theme="light"]
-       so the media query applies the light palette when the OS is in light mode. */
 
     /* --- Reset & base --- */
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1673,8 +1664,53 @@
       display: flex; align-items: center; gap: var(--space-xs);
     }
     .theme-toggle button:last-child { border-right: none; }
-    .theme-toggle button.active { background: var(--accent); color: var(--text); }
-    .theme-toggle button:active { background: var(--accent-active); }
+    /* Active button uses the bright tint color so the selected mode is
+       unmistakable — the previous --accent background was barely
+       distinguishable from --bg-input. */
+    .theme-toggle button.active {
+      background: var(--accent-active);
+      color: var(--bg);
+      font-weight: 600;
+    }
+    .theme-toggle button:active { opacity: 0.85; }
+
+    /* ── Palette anchor picker ─────────────────────────────────────── */
+    .palette-anchor-group {
+      display: flex; align-items: center; gap: var(--space-sm);
+    }
+    .palette-swatch {
+      display: inline-block; width: 2rem; height: 2rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      overflow: hidden; cursor: pointer;
+      position: relative;
+      background: var(--accent-active);
+      transition: transform 100ms ease;
+    }
+    .palette-swatch:hover { transform: scale(1.05); }
+    .palette-swatch input[type="color"] {
+      /* Hide native chrome — the parent .palette-swatch shows the color. */
+      position: absolute; inset: -4px;
+      width: calc(100% + 8px); height: calc(100% + 8px);
+      border: none; padding: 0; margin: 0;
+      background: transparent; cursor: pointer;
+      opacity: 0;
+    }
+    .palette-hex-input {
+      height: var(--height-btn-sm); width: 5.5rem;
+      padding: 0 var(--space-sm);
+      background: var(--bg-input); color: var(--text);
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      font-family: var(--font-mono); font-size: 0.75rem;
+      text-transform: lowercase;
+    }
+    .palette-hex-input:focus {
+      outline: none; border-color: var(--accent-active);
+    }
+    .palette-hex-input.invalid {
+      border-color: var(--danger);
+    }
+
     .settings-footer {
       padding: 0.875rem 0;
     }
@@ -2508,19 +2544,51 @@
           <!-- Theme tab content -->
           <div class="settings-tab-content active" id="settings-tab-theme">
             <div class="settings-row">
-              <span class="settings-label">Theme</span>
-              <div class="theme-toggle" role="radiogroup" aria-label="Theme selection">
-                <button data-theme-val="auto" role="radio" aria-checked="true">
+              <span class="settings-label">Tint</span>
+              <div class="palette-anchor-group">
+                <label class="palette-swatch" for="palette-anchor-input" aria-label="Pick tint color">
+                  <input type="color" id="palette-anchor-input" />
+                </label>
+                <input type="text" id="palette-anchor-hex" class="palette-hex-input"
+                       maxlength="7" spellcheck="false" autocomplete="off"
+                       aria-label="Tint hex value" />
+              </div>
+            </div>
+            <p class="tab-description" style="margin-top: 0;">
+              One color defines the whole palette — backgrounds, text, accents, and
+              terminal colors are derived from it using OKLCH color math.
+            </p>
+
+            <div class="settings-row">
+              <span class="settings-label">Polarity</span>
+              <div class="theme-toggle" role="radiogroup" aria-label="Polarity selection">
+                <button data-polarity-val="auto" role="radio" aria-checked="true">
                   <i class="ph ph-circle-half"></i> Auto
                 </button>
-                <button data-theme-val="light" role="radio" aria-checked="false">
+                <button data-polarity-val="light" role="radio" aria-checked="false">
                   <i class="ph ph-sun"></i> Light
                 </button>
-                <button data-theme-val="dark" role="radio" aria-checked="false">
+                <button data-polarity-val="dark" role="radio" aria-checked="false">
                   <i class="ph ph-moon"></i> Dark
                 </button>
               </div>
             </div>
+
+            <div class="settings-row">
+              <span class="settings-label">Style</span>
+              <div class="theme-toggle" role="radiogroup" aria-label="Vibrancy selection">
+                <button data-vibrancy-val="subtle" role="radio" aria-checked="true">
+                  <i class="ph ph-drop-half"></i> Subtle
+                </button>
+                <button data-vibrancy-val="colorful" role="radio" aria-checked="false">
+                  <i class="ph ph-drop"></i> Colorful
+                </button>
+              </div>
+            </div>
+            <p class="tab-description" style="margin-top: 0;">
+              Subtle keeps surfaces near-neutral with a faint tint wash. Colorful
+              pushes the tint into every surface for a more expressive look.
+            </p>
 
             <div class="settings-row" id="notification-permission-row">
               <span class="settings-label">Notifications</span>

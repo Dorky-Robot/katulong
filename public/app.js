@@ -16,7 +16,7 @@
     import { createJoystickManager } from "/lib/joystick.js";
     import { attachTouchSelect } from "/lib/touch-select.js";
 
-    import { createThemeManager, DARK_THEME, LIGHT_THEME } from "/lib/theme-manager.js";
+    import { createThemeManager } from "/lib/theme-manager.js";
     import { DEFAULT_COLS, TERMINAL_ROWS_DEFAULT } from "/lib/terminal-config.js";
     import { createTabManager } from "/lib/tab-manager.js";
     import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll, initScrollTracking, initTouchScroll } from "/lib/scroll-utils.js";
@@ -49,18 +49,29 @@
 
     // Modal registration imported from /lib/modal-init.js
 
-    // --- Theme (using composable theme manager) ---
+    // --- Palette (derives UI CSS vars + xterm theme from a single anchor) ---
+    // createThemeManager() reads {anchor, polarity} from localStorage,
+    // generates the palette synchronously, and applies all CSS vars to
+    // :root before the first paint — so there is no flash. The callback
+    // fires again on anchor/polarity changes and on OS light/dark flips
+    // when polarity is "auto".
+    //
+    // settingsHandlers is declared later (it depends on themeManager), so
+    // we hold the reference in a closure-captured `let` and the callback
+    // late-binds.
+    let settingsHandlers = null;
     const themeManager = createThemeManager({
-      onThemeChange: (themeData) => {
+      onThemeChange: (xtermTheme) => {
         terminalPool.forEach((name, entry) => {
           withPreservedScroll(entry.term, () => {
-            entry.term.options.theme = themeData;
+            entry.term.options.theme = xtermTheme;
           });
         });
+        // Re-sync palette controls (tint swatch, hex input, polarity, vibrancy)
+        // so the settings panel reflects the new effective palette.
+        if (settingsHandlers) settingsHandlers.syncPaletteControls();
       }
     });
-
-    const applyTheme = themeManager.apply;
 
     // --- State ---
 
@@ -198,7 +209,7 @@
         rows: TERMINAL_ROWS_DEFAULT,
         fontSize: 14,
         fontFamily: "'JetBrainsMono NF', 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace",
-        theme: themeManager.getEffective() === "light" ? LIGHT_THEME : DARK_THEME,
+        theme: themeManager.getPalette().xterm,
         // Required for theme.background alpha to take effect. Lets card-face
         // (carousel) or #terminal-container (non-carousel) paint the backdrop
         // so the terminal area stays one uniform color with its tile.
@@ -595,10 +606,9 @@
       fitActiveTerminal();
     });
 
-    applyTheme(localStorage.getItem("theme") || "auto");
-    window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
-      if ((localStorage.getItem("theme") || "auto") === "auto") applyTheme("auto");
-    });
+    // Palette was applied synchronously inside createThemeManager(); the
+    // manager also installs its own prefers-color-scheme listener. No
+    // further setup needed here.
 
     // --- WebSocket ---
 
@@ -1091,8 +1101,11 @@
 
     // --- Settings ---
 
-    const settingsHandlers = createSettingsHandlers({
-      onThemeChange: (theme) => applyTheme(theme),
+    settingsHandlers = createSettingsHandlers({
+      onAnchorChange: (hex) => themeManager.setAnchor(hex),
+      onPolarityChange: (polarity) => themeManager.setPolarity(polarity),
+      onVibrancyChange: (vibrancy) => themeManager.setVibrancy(vibrancy),
+      getPalette: () => themeManager.getPalette(),
       onPortProxyChange: (enabled) => {
         const btn = document.getElementById("sidebar-portfwd-btn");
         if (btn) btn.style.display = enabled ? "" : "none";

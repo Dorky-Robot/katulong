@@ -1,6 +1,24 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="auto">
 <head>
+  <script>
+    // Pre-paint polarity sync: read saved polarity from localStorage and
+    // set data-theme BEFORE first paint so a user who forced "dark" or
+    // "light" doesn't see the wrong scheme flash between first byte and
+    // login.js load. We can't easily regenerate the full palette here
+    // (palette.js is a module) so we just set the polarity and let the
+    // :root fallback palette take care of the colors. login.js then
+    // applies the user's custom anchor asynchronously.
+    try {
+      const raw = localStorage.getItem("katulong-palette");
+      if (raw) {
+        const p = JSON.parse(raw).polarity;
+        if (p === "dark" || p === "light" || p === "auto") {
+          document.documentElement.setAttribute("data-theme", p);
+        }
+      }
+    } catch { /* unavailable — stick with default "auto" */ }
+  </script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -15,51 +33,41 @@
   <link rel="stylesheet" href="/design-tokens.css">
   <link rel="stylesheet" href="/vendor/fonts/fonts.css">
   <style>
+    /* ── Pre-paint fallback palette ────────────────────────────────────
+       These values must stay in sync with the dark-polarity palette
+       generated from the default anchor #cba6f7. Once login-boot.js
+       below runs it may override them with the user's saved palette.
+       Light fallback lives in the prefers-color-scheme rule. */
     :root {
       --font-mono: 'JetBrains Mono', monospace;
-      --bg: #1e1e2e;
-      --bg-surface: #313244;
-      --bg-input: #1e1e2e;
-      --border: #45475a;
-      --text: #cdd6f4;
-      --text-muted: #a6adc8;
-      --text-dim: #6c7086;
-      --accent: #45475a;
-      --accent-active: #cba6f7;
-      --success: #a6e3a1;
-      --danger: #f38ba8;
-      --focus-ring: rgba(137,180,250,0.5);
-    }
-
-    [data-theme="light"] {
-      --bg: #eff1f5;
-      --bg-surface: #ffffff;
-      --bg-input: #e6e9ef;
-      --border: #ccd0da;
-      --text: #4c4f69;
-      --text-muted: #6c6f85;
-      --text-dim: #9ca0b0;
-      --accent: #ccd0da;
-      --accent-active: #8839ef;
-      --success: #40a02b;
-      --danger: #d20f39;
-      --focus-ring: rgba(30,102,245,0.4);
+      --bg: #151318;
+      --bg-surface: #28252c;
+      --bg-input: #0e0c11;
+      --border: #423e47;
+      --text: #eae6f0;
+      --text-muted: #b4aebc;
+      --text-dim: #928c9c;
+      --accent: #3a363f;
+      --accent-active: #c9a4f5;
+      --success: #7acf7e;
+      --danger: #ff968a;
+      --focus-ring: rgba(201,164,245,0.5);
     }
 
     @media (prefers-color-scheme: light) {
-      [data-theme="auto"] {
-        --bg: #eff1f5;
+      :root[data-theme="auto"] {
+        --bg: #f5f2f9;
         --bg-surface: #ffffff;
-        --bg-input: #e6e9ef;
-        --border: #ccd0da;
-        --text: #4c4f69;
-        --text-muted: #6c6f85;
-        --text-dim: #9ca0b0;
-        --accent: #ccd0da;
-        --accent-active: #8839ef;
-        --success: #40a02b;
-        --danger: #d20f39;
-        --focus-ring: rgba(30,102,245,0.4);
+        --bg-input: #ebe8ef;
+        --border: #d6d2dd;
+        --text: #302b36;
+        --text-muted: #585261;
+        --text-dim: #847c8f;
+        --accent: #d9d5df;
+        --accent-active: #734f99;
+        --success: #107823;
+        --danger: #a83630;
+        --focus-ring: rgba(115,79,153,0.45);
       }
     }
 

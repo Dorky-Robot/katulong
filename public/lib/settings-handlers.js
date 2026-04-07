@@ -1,26 +1,124 @@
 /**
  * Settings Handlers
  *
- * Composable settings event handlers for theme, port proxy, and logout.
+ * Composable settings event handlers for the palette controls, port proxy,
+ * and logout.
+ *
+ * The palette picker has four parts:
+ *   1. An `<input type="color">` hidden inside a .palette-swatch label —
+ *      native color chrome is suppressed so the swatch itself shows the
+ *      current tint; clicking opens the OS color picker.
+ *   2. A hex text input — hand-typing a color (e.g., paste a brand hex).
+ *   3. A polarity radio group (auto/light/dark).
+ *   4. A vibrancy radio group (subtle/colorful) — picks how much of the
+ *      tint hue saturates the surfaces and text.
+ *
+ * The running app is the live preview — no separate swatch grid.
  */
 
 import { api } from "/lib/api-client.js";
 
 export function createSettingsHandlers(options = {}) {
   const {
-    onThemeChange,
+    onAnchorChange,
+    onPolarityChange,
+    onVibrancyChange,
+    getPalette,          // () => { cssVars, xterm, anchor, polarity, vibrancy }
     onLogout,
     onPortProxyChange
   } = options;
 
-  /**
-   * Initialize theme toggle buttons
-   */
-  function initThemeToggle() {
-    document.querySelectorAll(".theme-toggle button").forEach(btn => {
+  const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+  /** Sync all palette controls to the current palette state. */
+  function syncPaletteControls() {
+    if (!getPalette) return;
+    const palette = getPalette();
+    if (!palette) return;
+
+    // Swatch + color input + hex input
+    const colorInput = document.getElementById("palette-anchor-input");
+    const hexInput = document.getElementById("palette-anchor-hex");
+    const swatch = document.querySelector(".palette-swatch");
+    if (colorInput) colorInput.value = palette.anchor;
+    if (hexInput) {
+      hexInput.value = palette.anchor;
+      hexInput.classList.remove("invalid");
+    }
+    if (swatch) swatch.style.background = palette.anchor;
+
+    // Polarity radio buttons — use data-polarity-val, not data-theme-val
+    document.querySelectorAll("[data-polarity-val]").forEach(btn => {
+      const active = btn.dataset.polarityVal === palette.polarity;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-checked", String(active));
+    });
+
+    // Vibrancy radio buttons (subtle / colorful)
+    document.querySelectorAll("[data-vibrancy-val]").forEach(btn => {
+      const active = btn.dataset.vibrancyVal === palette.vibrancy;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-checked", String(active));
+    });
+  }
+
+  /** Initialize anchor color picker (color input + hex text input). */
+  function initPalettePicker() {
+    const colorInput = document.getElementById("palette-anchor-input");
+    const hexInput = document.getElementById("palette-anchor-hex");
+
+    if (colorInput) {
+      // Live update as the user drags the native picker
+      colorInput.addEventListener("input", () => {
+        const hex = colorInput.value;
+        if (HEX_RE.test(hex) && onAnchorChange) {
+          onAnchorChange(hex);
+          syncPaletteControls();
+        }
+      });
+    }
+
+    if (hexInput) {
+      const commit = () => {
+        const hex = hexInput.value.trim().toLowerCase();
+        const normalized = hex.startsWith("#") ? hex : `#${hex}`;
+        if (HEX_RE.test(normalized)) {
+          hexInput.classList.remove("invalid");
+          if (onAnchorChange) onAnchorChange(normalized);
+          syncPaletteControls();
+        } else {
+          hexInput.classList.add("invalid");
+        }
+      };
+      hexInput.addEventListener("change", commit);
+      hexInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); commit(); }
+      });
+      // Clear invalid state as soon as the user starts typing a fresh value
+      hexInput.addEventListener("input", () => {
+        hexInput.classList.remove("invalid");
+      });
+    }
+  }
+
+  /** Initialize polarity toggle buttons. */
+  function initPolarityToggle() {
+    document.querySelectorAll("[data-polarity-val]").forEach(btn => {
       btn.addEventListener("click", () => {
-        const theme = btn.dataset.themeVal;
-        if (onThemeChange) onThemeChange(theme);
+        const polarity = btn.dataset.polarityVal;
+        if (onPolarityChange) onPolarityChange(polarity);
+        syncPaletteControls();
+      });
+    });
+  }
+
+  /** Initialize vibrancy toggle buttons (subtle / colorful). */
+  function initVibrancyToggle() {
+    document.querySelectorAll("[data-vibrancy-val]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const vibrancy = btn.dataset.vibrancyVal;
+        if (onVibrancyChange) onVibrancyChange(vibrancy);
+        syncPaletteControls();
       });
     });
   }
@@ -97,14 +195,20 @@ export function createSettingsHandlers(options = {}) {
       console.error("Failed to load config:", error);
     }
     initPortProxyToggle(config);
-    initThemeToggle();
+    initPalettePicker();
+    initPolarityToggle();
+    initVibrancyToggle();
+    syncPaletteControls();
     initLogout();
     initVersion();
   }
 
   return {
     init,
-    initThemeToggle,
-    initLogout
+    initPalettePicker,
+    initPolarityToggle,
+    initVibrancyToggle,
+    syncPaletteControls,
+    initLogout,
   };
 }
