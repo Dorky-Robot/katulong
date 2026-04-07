@@ -1021,14 +1021,20 @@
         font-size: 1rem;
       }
       /* Phone just overrides the carousel variables. Everything else
-         cascades from the rules above — no rule duplication. The bottom
-         inset clears the floating tab row; the radius is tuned so the
-         bottom corners don't create dead space above that tab row. */
+         cascades from the rules above — no rule duplication. All four
+         insets resolve to the same --gap so the tile floats with a
+         visually uniform breathing room on top, sides, and above the
+         floating tab row. We deliberately do NOT add env(safe-area-
+         inset-top) on top: Android Chrome with viewport-fit=cover
+         reports a non-zero value there, which made the top gap several
+         times larger than the side gap. Radius equals peek to satisfy
+         INVARIANT 1 (peek >= radius). */
       #terminal-container[data-carousel] {
-        --card-peek: 20px;
-        --card-radius: 12px;
-        --card-inset-top: calc(env(safe-area-inset-top, 0px) + 8px);
-        --card-inset-bottom: calc(2.5rem + var(--space-xs) * 2);
+        --gap: var(--space-sm);
+        --card-peek: var(--gap);
+        --card-radius: var(--gap);
+        --card-inset-top: var(--gap);
+        --card-inset-bottom: calc(2.5rem + var(--space-xs) * 2 + var(--gap));
       }
       /* Tab row floats over the terminal tile on phone so the terminal
          gets the full viewport height instead of sharing it with tabs. */
