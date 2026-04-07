@@ -125,7 +125,11 @@ find_free_port() {
   "
 }
 
-# Pick a named tunnel to attach staging routes to.
+# Pick a tunnel to attach staging routes to. Assumes the `tunnels` CLI is
+# already installed — callers must enforce that precondition before invoking
+# this function. (cmd_start does this with an upfront `command -v tunnels`
+# check, so that it can print a richer install-instructions error message
+# than this function is in a position to produce.)
 #
 # Resolution order:
 #   1. `stage.tunnel` from $USER_CONFIG (if set, takes precedence — no auto-detect)
@@ -135,14 +139,13 @@ find_free_port() {
 # Echoes the tunnel name on success, returns 1 if nothing usable was found.
 # Auto-detect is intentionally a fallback rather than the primary path so that
 # users with multiple tunnels can pin staging to a specific one without ambiguity.
-resolve_named_tunnel() {
+resolve_tunnel() {
   local configured
   configured="$(read_config_key 'stage.tunnel' || true)"
   if [[ -n "$configured" ]]; then
     printf "%s" "$configured"
     return 0
   fi
-  command -v tunnels >/dev/null 2>&1 || return 1
   local out
   out="$(tunnels list --json 2>/dev/null)" || return 1
   [[ -n "$out" ]] || return 1
@@ -370,11 +373,26 @@ cmd_start() {
     return 1
   fi
 
+  # /tmp is world-traversable on macOS — lock the staging dirs to the owner
+  # so nobody else on the box can (a) read meta.env (which contains the
+  # running pid + port) or sniff data/auth-state.json, or (b) plant a hostile
+  # meta.env under a directory name we'll later iterate over in `list`/`stop`
+  # and then `source`. Locking the per-run dir alone is not enough because
+  # STAGE_BASE itself is the directory we glob over — if STAGE_BASE is
+  # world-writable, another local user can create /tmp/katulong-stage/evil/
+  # meta.env containing arbitrary shell commands and get code execution the
+  # next time we run `list` or `stop`.
+  #
+  # If STAGE_BASE already exists and is owned by a different user (squatting
+  # attempt or leftover from a different account) the chmod will fail, and
+  # we fail loud rather than continue with an unsafe base dir.
+  mkdir -p "$STAGE_BASE"
+  if ! chmod 700 "$STAGE_BASE" 2>/dev/null; then
+    echo "ERROR: cannot lock $STAGE_BASE to owner-only (not owned by current user?)." >&2
+    echo "       Remove or re-own it, or move it out of the way, then retry." >&2
+    return 1
+  fi
   mkdir -p "$dir/data"
-  # /tmp is world-traversable on macOS — lock the staging dir to the owner so
-  # nobody else on the box can read meta.env (which contains the running pid +
-  # port) or sniff data/auth-state.json. The data dir itself gets the same
-  # treatment because the server doesn't chmod its parent.
   chmod 700 "$dir" "$dir/data"
   local data_dir="$dir/data"
   local log_file="$dir/server.log"
@@ -421,7 +439,7 @@ cmd_start() {
   fi
 
   local tunnel host url
-  tunnel="$(resolve_named_tunnel || true)"
+  tunnel="$(resolve_tunnel || true)"
   if [[ -z "$tunnel" ]]; then
     echo "ERROR: no named tunnel available." >&2
     echo "       Register one with 'tunnels add <name> --token <token>'," >&2
@@ -435,6 +453,10 @@ cmd_start() {
   if ! tunnels route add "$host" "$port" --tunnel "$tunnel" >/dev/null 2>&1; then
     echo "ERROR: 'tunnels route add $host $port --tunnel $tunnel' failed." >&2
     echo "       Check 'tunnels list' and 'tunnels logs $tunnel'." >&2
+    # Attempt a best-effort route rm in case `route add` registered state
+    # before failing partway. `tunnels route rm` is a no-op if nothing was
+    # registered, so this is safe to call unconditionally on the failure path.
+    tunnels route rm "$host" --tunnel "$tunnel" >/dev/null 2>&1 || true
     cleanup_start "$server_pid" "$dir"
     return 1
   fi

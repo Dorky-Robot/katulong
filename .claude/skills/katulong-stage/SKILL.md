@@ -145,7 +145,7 @@ bin/katulong-stage stop
 
 ## Caveats
 
-- **`tunnels` CLI is mandatory.** No fallback path exists. If the user doesn't have it, the script bails with installation instructions instead of silently degrading. See "Why no cloudflared fallback" above.
+- **`tunnels` CLI is mandatory.** See "Hard requirement" above.
 - **Setup token CLI talks to the staging server, not prod.** This is achieved by setting `KATULONG_DATA_DIR` so that `lib/cli/process-manager.js` reads the staging `server.json`. Don't bypass this and write tokens to disk by hand — the original `katulong-stage` did that and it broke silently when the auth storage format changed.
 - **`stop` with no argument stops everything.** This is intentional for end-of-session cleanup, but be careful if multiple staging instances are running for different branches.
 - **Each staging instance gets its own tmux server.** This is required for clean teardown. If the user runs `tmux ls` they will not see staging tmux sessions unless they pass `tmux -L stage-<name> ls`.
