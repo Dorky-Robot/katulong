@@ -1020,15 +1020,34 @@
         width: 1.75rem;
         font-size: 1rem;
       }
-      /* Phone just overrides the carousel variables. Everything else
-         cascades from the rules above — no rule duplication. The bottom
-         inset clears the floating tab row; the radius is tuned so the
-         bottom corners don't create dead space above that tab row. */
+      /* Phone overrides. Everything else cascades from the default
+         carousel rule and the standalone rule earlier in the file —
+         no rule duplication.
+
+         All four phone gaps land on the same 8px breathing room so
+         the tile floats with visually identical spacing on top,
+         sides, and above the floating tab row.
+
+         --card-peek and --card-radius MUST be concrete px literals,
+         not var() chains resolving to rem. card-carousel.js's
+         readCssVar() runs parseFloat() on the resolved custom
+         property string, and "0.5rem" parses as 0.5, not 8 — which
+         would break the JS layout math (diwa: this commit).
+
+         --card-inset-top is deliberately NOT set here. It picks up
+         8px from the default rule in phone browser mode (matching
+         the sides) and picks up calc(8px + env(safe-area-inset-top))
+         from the @media (display-mode: standalone) rule when the
+         page is installed as a PWA on a notched device. We tried
+         adding env(safe-area-inset-top) here directly and it broke
+         visual symmetry on Android Chrome with viewport-fit=cover,
+         which reports a non-zero value even in browser mode.
+
+         Radius equals peek to satisfy INVARIANT 1 (peek >= radius). */
       #terminal-container[data-carousel] {
-        --card-peek: 20px;
-        --card-radius: 12px;
-        --card-inset-top: calc(env(safe-area-inset-top, 0px) + 8px);
-        --card-inset-bottom: calc(2.5rem + var(--space-xs) * 2);
+        --card-peek: 8px;
+        --card-radius: 8px;
+        --card-inset-bottom: calc(2.5rem + var(--space-xs) * 2 + 8px);
       }
       /* Tab row floats over the terminal tile on phone so the terminal
          gets the full viewport height instead of sharing it with tabs. */
