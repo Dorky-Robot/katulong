@@ -572,10 +572,13 @@ describe("Session", () => {
       const { session, mockProc } = createSimpleTestSession("test", {
         _tmuxKillSession: async (name) => { callLog.push(`kill-session:${name}`); },
       });
-      const originalWrite = mockProc.stdin.write.bind(mockProc.stdin);
+      // Spy on the stdin write so we can record the detach-client event
+      // inline with kill-session in a single call log. MockWritable.write
+      // doesn't use `this`, so a plain reassignment is enough.
+      const originalWrite = mockProc.stdin.write;
       mockProc.stdin.write = (data) => {
         if (data === "detach-client\n") callLog.push("detach-client");
-        return originalWrite(data);
+        return originalWrite.call(mockProc.stdin, data);
       };
 
       session.kill();
