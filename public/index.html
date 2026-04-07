@@ -1666,20 +1666,6 @@
       border-color: var(--danger);
     }
 
-    /* ── Palette preview swatches ──────────────────────────────────── */
-    .palette-preview {
-      margin-top: var(--space-md); margin-bottom: var(--space-lg);
-      display: flex; flex-direction: column; gap: var(--space-xs);
-    }
-    .palette-preview-row {
-      display: flex; gap: var(--space-xs);
-    }
-    .palette-preview-swatch {
-      flex: 1; height: 1.75rem;
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
-    }
-
     .settings-footer {
       padding: 0.875rem 0;
     }
@@ -2554,25 +2540,6 @@
               Subtle keeps surfaces near-neutral with a faint tint wash. Colorful
               pushes the tint into every surface for a more expressive look.
             </p>
-
-            <div class="palette-preview" aria-label="Palette preview" id="palette-preview">
-              <div class="palette-preview-row">
-                <span class="palette-preview-swatch" data-preview="bg"></span>
-                <span class="palette-preview-swatch" data-preview="bg-surface"></span>
-                <span class="palette-preview-swatch" data-preview="border"></span>
-                <span class="palette-preview-swatch" data-preview="text"></span>
-                <span class="palette-preview-swatch" data-preview="text-muted"></span>
-                <span class="palette-preview-swatch" data-preview="accent-active"></span>
-              </div>
-              <div class="palette-preview-row">
-                <span class="palette-preview-swatch" data-preview-xterm="red"></span>
-                <span class="palette-preview-swatch" data-preview-xterm="yellow"></span>
-                <span class="palette-preview-swatch" data-preview-xterm="green"></span>
-                <span class="palette-preview-swatch" data-preview-xterm="cyan"></span>
-                <span class="palette-preview-swatch" data-preview-xterm="blue"></span>
-                <span class="palette-preview-swatch" data-preview-xterm="magenta"></span>
-              </div>
-            </div>
 
             <div class="settings-row" id="notification-permission-row">
               <span class="settings-label">Notifications</span>

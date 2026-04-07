@@ -60,17 +60,6 @@ export function createSettingsHandlers(options = {}) {
       btn.classList.toggle("active", active);
       btn.setAttribute("aria-checked", String(active));
     });
-
-    // Live preview swatches — mirror the generated vars so the user
-    // sees the concrete output, not just the anchor they picked.
-    for (const el of document.querySelectorAll("[data-preview]")) {
-      const key = el.dataset.preview;
-      if (palette.cssVars[key]) el.style.background = palette.cssVars[key];
-    }
-    for (const el of document.querySelectorAll("[data-preview-xterm]")) {
-      const key = el.dataset.previewXterm;
-      if (palette.xterm[key]) el.style.background = palette.xterm[key];
-    }
   }
 
   /** Initialize anchor color picker (color input + hex text input). */
