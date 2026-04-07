@@ -24,7 +24,7 @@
       "Bash(katulong:*)",
       "Bash(shasum -a 256 \"/tmp/katulong-v0.46.5.tar.gz\")",
       "Bash(diwa search:*)",
-      "Bash(ps:*)"
+      "Bash(ps -p:*)"
     ]
   }
 }
