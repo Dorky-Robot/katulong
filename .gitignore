@@ -22,4 +22,5 @@ tls/
 homebrew-katulong/
 site/
 .claude/worktrees/
+.worktrees/
 core
