@@ -1101,7 +1101,14 @@
       onAnchorChange: (hex) => themeManager.setAnchor(hex),
       onPolarityChange: (polarity) => themeManager.setPolarity(polarity),
       onVibrancyChange: (vibrancy) => themeManager.setVibrancy(vibrancy),
-      getPalette: () => themeManager.getPalette(),
+      // syncPaletteControls reads the *user preference* (auto/dark/light, etc.) so
+      // the right radio button highlights — themeManager.getPalette() would return
+      // the resolved polarity ("dark" or "light") and break Auto's highlight.
+      getPreferences: () => ({
+        anchor: themeManager.getAnchor(),
+        polarity: themeManager.getPolarity(),
+        vibrancy: themeManager.getVibrancy(),
+      }),
       onPortProxyChange: (enabled) => {
         const btn = document.getElementById("sidebar-portfwd-btn");
         if (btn) btn.style.display = enabled ? "" : "none";

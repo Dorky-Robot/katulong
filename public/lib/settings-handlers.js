@@ -23,7 +23,12 @@ export function createSettingsHandlers(options = {}) {
     onAnchorChange,
     onPolarityChange,
     onVibrancyChange,
-    getPalette,          // () => { cssVars, xterm, anchor, polarity, vibrancy }
+    getPreferences,      // () => { anchor, polarity, vibrancy }
+                         //   User-selected values straight from theme-manager.
+                         //   polarity may be "auto" here — that's how we know to
+                         //   highlight the Auto button. The resolved palette polarity
+                         //   ("dark"|"light") would never match "auto" and would leave
+                         //   the Auto button permanently unselectable.
     onLogout,
     onPortProxyChange
   } = options;
@@ -32,31 +37,34 @@ export function createSettingsHandlers(options = {}) {
 
   /** Sync all palette controls to the current palette state. */
   function syncPaletteControls() {
-    if (!getPalette) return;
-    const palette = getPalette();
-    if (!palette) return;
+    if (!getPreferences) return;
+    const prefs = getPreferences();
+    if (!prefs) return;
 
     // Swatch + color input + hex input
     const colorInput = document.getElementById("palette-anchor-input");
     const hexInput = document.getElementById("palette-anchor-hex");
     const swatch = document.querySelector(".palette-swatch");
-    if (colorInput) colorInput.value = palette.anchor;
+    if (colorInput) colorInput.value = prefs.anchor;
     if (hexInput) {
-      hexInput.value = palette.anchor;
+      hexInput.value = prefs.anchor;
       hexInput.classList.remove("invalid");
     }
-    if (swatch) swatch.style.background = palette.anchor;
+    if (swatch) swatch.style.background = prefs.anchor;
 
-    // Polarity radio buttons — use data-polarity-val, not data-theme-val
+    // Polarity radio buttons — match against the user *preference* (auto/dark/light),
+    // not the resolved palette polarity. Otherwise picking "Auto" would highlight
+    // whichever concrete polarity it resolved to (Dark on a dark-mode OS), making
+    // the Auto button appear permanently unselectable.
     document.querySelectorAll("[data-polarity-val]").forEach(btn => {
-      const active = btn.dataset.polarityVal === palette.polarity;
+      const active = btn.dataset.polarityVal === prefs.polarity;
       btn.classList.toggle("active", active);
       btn.setAttribute("aria-checked", String(active));
     });
 
     // Vibrancy radio buttons (subtle / colorful)
     document.querySelectorAll("[data-vibrancy-val]").forEach(btn => {
-      const active = btn.dataset.vibrancyVal === palette.vibrancy;
+      const active = btn.dataset.vibrancyVal === prefs.vibrancy;
       btn.classList.toggle("active", active);
       btn.setAttribute("aria-checked", String(active));
     });
