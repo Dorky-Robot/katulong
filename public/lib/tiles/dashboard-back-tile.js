@@ -1,16 +1,12 @@
 /**
  * Dashboard Back-Tile
  *
- * Back-face tile for terminal and crew cards. Shows agent status, run
- * duration, task assignment, process info, quick actions, and a compact
- * event timeline. Designed to be mounted via carousel.setBackTile().
+ * Back-face tile for terminal cards. Shows agent status, run duration,
+ * task assignment, process info, quick actions, and a compact event
+ * timeline. Designed to be mounted via carousel.setBackTile().
  *
  * Usage:
- *   const back = createDashboardBackTile({
- *     sessionName: "katulong--dev",
- *     mode: "terminal",           // "terminal" | "crew"
- *     sessions: ["a", "b"],       // crew mode: list of session names
- *   });
+ *   const back = createDashboardBackTile({ sessionName: "katulong--dev" });
  *   carousel.setBackTile(tileId, back);
  */
 
@@ -51,14 +47,8 @@ function statusLabel(status) {
 /**
  * @param {object} options
  * @param {string} options.sessionName — primary session name
- * @param {"terminal"|"crew"} [options.mode="terminal"]
- * @param {string[]} [options.sessions] — crew mode: all session names
  */
-export function createDashboardBackTile({
-  sessionName,
-  mode = "terminal",
-  sessions = [],
-} = {}) {
+export function createDashboardBackTile({ sessionName } = {}) {
   let container = null;
   let ctx = null;
   let rootEl = null;
@@ -73,8 +63,6 @@ export function createDashboardBackTile({
   let hasChildProcesses = false;
   let prevHasChildProcesses = false;
   const events = [];             // { time: Date, text: string }[]
-  // Crew mode state
-  const sessionStatuses = new Map(); // sessionName -> { status, childCount, hasChildProcesses }
 
   function addEvent(text) {
     events.push({ time: new Date(), text });
@@ -135,56 +123,11 @@ export function createDashboardBackTile({
     `;
   }
 
-  function buildCrewView() {
-    const sessionRows = (sessions.length > 0 ? sessions : [sessionName])
-      .map(name => {
-        const s = sessionStatuses.get(name) || { status: "idle", childCount: 0 };
-        return `
-          <div class="db-crew-row" data-session="${escapeHtml(name)}">
-            <span class="db-crew-name">${escapeHtml(name)}</span>
-            <span class="status-badge ${statusClass(s.status)}">${statusLabel(s.status)}</span>
-            <span class="db-crew-children">${s.childCount} <i class="ph ph-tree-structure"></i></span>
-          </div>
-        `;
-      }).join("");
-
-    return `
-      <div class="dashboard-back dashboard-back-crew">
-        <div class="db-header">
-          <div class="db-session-name">Crew: ${escapeHtml(sessionName)}</div>
-          <span class="duration" data-role="duration">${formatDuration(Date.now() - startTime)}</span>
-        </div>
-
-        <div class="db-section db-crew-list">
-          <div class="db-section-label">Sessions</div>
-          ${sessionRows}
-        </div>
-
-        <div class="db-section db-actions">
-          <button class="action-btn action-btn-danger" data-action="kill-all">
-            <i class="ph ph-x-circle"></i> Kill all
-          </button>
-          <button class="action-btn" data-action="restart-all">
-            <i class="ph ph-arrow-clockwise"></i> Restart all
-          </button>
-          <button class="action-btn" data-action="view-logs">
-            <i class="ph ph-terminal-window"></i> Back
-          </button>
-        </div>
-
-        <div class="db-section db-timeline-section">
-          <div class="db-section-label">Timeline</div>
-          <div class="db-timeline" data-role="timeline"></div>
-        </div>
-      </div>
-    `;
-  }
-
   // ── Render helpers ─────────────────────────────────────────────────
 
   function render() {
     if (!rootEl) return;
-    rootEl.innerHTML = mode === "crew" ? buildCrewView() : buildTerminalView();
+    rootEl.innerHTML = buildTerminalView();
     wireActions();
     renderTimeline();
   }
@@ -300,31 +243,6 @@ export function createDashboardBackTile({
           addEvent(`Copy failed: ${err.message}`);
         }
         break;
-
-      case "kill-all":
-        for (const name of (sessions.length > 0 ? sessions : [sessionName])) {
-          try {
-            await api.delete(`/sessions/${encodeURIComponent(name)}`);
-            addEvent(`Killed ${name}`);
-          } catch (err) {
-            addEvent(`Kill ${name} failed: ${err.message}`);
-          }
-        }
-        break;
-
-      case "restart-all":
-        for (const name of (sessions.length > 0 ? sessions : [sessionName])) {
-          try {
-            await api.delete(`/sessions/${encodeURIComponent(name)}`);
-            await new Promise(r => setTimeout(r, 300));
-            await api.post("/sessions", { name });
-            addEvent(`Restarted ${name}`);
-          } catch (err) {
-            addEvent(`Restart ${name} failed: ${err.message}`);
-          }
-        }
-        startTime = Date.now();
-        break;
     }
   }
 
@@ -333,43 +251,12 @@ export function createDashboardBackTile({
   async function pollStatus() {
     if (destroyed) return;
     try {
-      if (mode === "crew") {
-        const targets = sessions.length > 0 ? sessions : [sessionName];
-        for (const name of targets) {
-          try {
-            const status = await api.get(`/sessions/${encodeURIComponent(name)}/status`);
-            const prev = sessionStatuses.get(name);
-            sessionStatuses.set(name, {
-              status: !status.alive ? "exited" : status.hasChildProcesses ? "active" : "idle",
-              childCount: status.childCount || 0,
-              hasChildProcesses: status.hasChildProcesses || false,
-            });
-            // Update the crew row
-            const row = rootEl?.querySelector(`[data-session="${name}"]`);
-            if (row) {
-              const badge = row.querySelector(".status-badge");
-              const s = sessionStatuses.get(name);
-              if (badge) {
-                badge.className = `status-badge ${statusClass(s.status)}`;
-                badge.textContent = statusLabel(s.status);
-              }
-              const children = row.querySelector(".db-crew-children");
-              if (children) children.innerHTML = `${s.childCount} <i class="ph ph-tree-structure"></i>`;
-            }
-            // Detect child process exit for auto-flip
-            if (prev?.hasChildProcesses && !status.hasChildProcesses) {
-              addEvent(`${name}: child processes exited`);
-            }
-          } catch { /* session may not exist yet */ }
-        }
-      } else {
-        const status = await api.get(`/sessions/${encodeURIComponent(sessionName)}/status`);
-        updateProcessInfo(status);
+      const status = await api.get(`/sessions/${encodeURIComponent(sessionName)}/status`);
+      updateProcessInfo(status);
 
-        // Detect transition: had child processes -> no child processes
-        if (prevHasChildProcesses && !hasChildProcesses) {
-          addEvent("Child processes exited");
-        }
+      // Detect transition: had child processes -> no child processes
+      if (prevHasChildProcesses && !hasChildProcesses) {
+        addEvent("Child processes exited");
       }
     } catch {
       // Session may not exist yet or network error — ignore
@@ -408,10 +295,10 @@ export function createDashboardBackTile({
 
       // Wire up toolbar
       if (ctx?.chrome?.toolbar) {
-        ctx.chrome.toolbar.setTitle(mode === "crew" ? "Crew Dashboard" : sessionName);
+        ctx.chrome.toolbar.setTitle(sessionName);
         ctx.chrome.toolbar.addButton({
           icon: "arrow-u-up-left",
-          label: mode === "crew" ? "Back to crew" : "Back to terminal",
+          label: "Back to terminal",
           position: "right",
           onClick: () => ctx.flip(),
         });
@@ -442,7 +329,7 @@ export function createDashboardBackTile({
     },
 
     getTitle() {
-      return mode === "crew" ? "Crew Dashboard" : `${sessionName} Dashboard`;
+      return `${sessionName} Dashboard`;
     },
 
     getIcon() {
@@ -456,11 +343,5 @@ export function createDashboardBackTile({
 
     /** Expose for external event injection */
     addEvent,
-
-    /** Update session list (crew mode) */
-    setSessions(newSessions) {
-      sessions = newSessions;
-      render();
-    },
   };
 }
