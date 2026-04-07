@@ -72,19 +72,36 @@ With this config, `bin/katulong-stage start palette-system` → `https://palette
 
 **Why a config file rather than env vars or CLI flags:** the choice of tunnel/domain is per-machine (it's a property of the user's Cloudflare setup, not the branch they're staging), and it should persist across shells without having to remember to export anything. Adding it as a key in the existing `~/.katulong/config.json` keeps all per-user katulong knobs in one place.
 
-If neither key is set, the script auto-detects via `tunnels list --json`. If the `tunnels` CLI isn't installed at all, it falls back to ephemeral `trycloudflare` URLs.
+If neither key is set, the script auto-detects via `tunnels list --json` (preferring a tunnel whose name looks like a domain). If the `tunnels` CLI isn't installed or no named tunnel is registered, the script fails loud — there is no fallback path. See "Why no cloudflared fallback" below.
+
+## Hard requirement: the `tunnels` CLI
+
+`katulong-stage` will only spin up an instance if the `tunnels` CLI is on `$PATH` and at least one named tunnel is registered. There is no fallback to raw `cloudflared`, no ephemeral `trycloudflare` URL, no degraded mode. If the user is on a fresh box, point them at:
+
+```bash
+brew tap dorky-robot/tap && brew install tunnels
+tunnels add <name> --token <cloudflare-tunnel-token>
+```
+
+### Why no cloudflared fallback
+
+An earlier version of this script fell back to `cloudflared tunnel --url http://127.0.0.1:<port>` when `tunnels` was missing. That was removed because:
+
+1. **Trycloudflare hostnames change every run.** WebAuthn binds passkeys to the RP ID (effectively the hostname), so a phone paired against an ephemeral URL loses its passkey on the next staging restart. For a tool whose entire point is "pair a device, test from it, iterate," this is not a tolerable failure mode.
+2. **Two sources of tunnel truth.** Routes added by raw `cloudflared` aren't visible to `tunnels list`, so the staging script ended up reasoning about tunnel state via two unrelated mechanisms. The whole project standardizes on `tunnels` for any cloudflared interaction.
+3. **Failing loud is friendlier than degrading silently.** When the named-tunnel path doesn't work, we now print exactly what's wrong and exactly what to do — install `tunnels`, or pin a tunnel via `stage.tunnel`. That's a one-time setup cost, not a per-run footgun.
 
 ## What `start` actually does
 
 1. Picks a free TCP port at or above 3050.
-2. Creates `/tmp/katulong-stage/<name>/data` and starts `node server.js` with `PORT`, `KATULONG_DATA_DIR`, and `KATULONG_TMUX_SOCKET=stage-<name>` env vars.
+2. Creates `/tmp/katulong-stage/<name>/data` (chmod 700) and starts `node server.js` with `PORT`, `KATULONG_DATA_DIR`, and `KATULONG_TMUX_SOCKET=stage-<name>` env vars.
 3. Polls `http://127.0.0.1:<port>/login` until the server responds (up to 20s).
-4. Calls `KATULONG_DATA_DIR=<dir> node bin/katulong token create "<name>"` — the CLI uses `<dir>/server.json` to find the staging server's port and hits its `POST /api/tokens` endpoint, so the token is minted on the right instance.
-5. Resolves a named tunnel via `tunnels list --json` (prefers a tunnel whose name looks like a domain — i.e. contains a dot, e.g. `felixflor.es`).
-   - If found: `tunnels route add <name>.<tunnel> <port> --tunnel <tunnel>` for a stable URL.
-   - If not found: falls back to `cloudflared tunnel --url http://127.0.0.1:<port>` for an ephemeral `https://*.trycloudflare.com` URL.
-6. Writes `/tmp/katulong-stage/<name>/meta.env` with all the state needed by `stop` and `list`.
-7. Prints the URL, the pair URL (with `?setup_token=...`), and the stop command.
+4. Calls `KATULONG_DATA_DIR=<dir> node bin/katulong token create "<name>" --json` and parses the structured payload — the CLI uses `<dir>/server.json` to find the staging server's port and hits its `POST /api/tokens` endpoint, so the token is minted on the right instance.
+5. Verifies the `tunnels` CLI is installed; bails with a clear error if not.
+6. Resolves a named tunnel: first `stage.tunnel` from config, otherwise `tunnels list --json` auto-detect (prefers a tunnel whose name contains a dot, e.g. `felixflor.es`). Bails if nothing is found.
+7. `tunnels route add <name>.<tunnel-or-stage.domain> <port> --tunnel <tunnel>` to wire up the stable hostname.
+8. Writes `/tmp/katulong-stage/<name>/meta.env` with all the state needed by `stop` and `list`. If the write fails, the route is removed and the server is killed (no orphans).
+9. Prints the URL, the pair URL (with `?setup_token=...`), and the stop command.
 
 ## What `stop` actually does
 
@@ -92,9 +109,8 @@ Reads `meta.env`, then in order:
 
 1. Sends `SIGTERM` to the server PID; if it survives 1s, sends `SIGKILL`.
 2. `tmux -L stage-<name> kill-server` to clean up the isolated tmux server.
-3. `tunnels route rm <host> --tunnel <tunnel>` to remove the public route + DNS (named mode only).
-4. Kills the ephemeral cloudflared process if there was one.
-5. `rm -rf /tmp/katulong-stage/<name>` so nothing leaks across runs.
+3. `tunnels route rm <host> --tunnel <tunnel>` to remove the public route + DNS.
+4. `rm -rf /tmp/katulong-stage/<name>` so nothing leaks across runs.
 
 `stop` with no name stops ALL running instances. `stop <name>` stops just that one.
 
@@ -129,7 +145,7 @@ bin/katulong-stage stop
 
 ## Caveats
 
-- **Named-tunnel mode requires the `tunnels` CLI.** On a fresh box without it, the script silently falls back to ephemeral `trycloudflare` URLs. Ephemeral URLs change every run, so a phone paired against an ephemeral URL will lose its WebAuthn binding on the next stage cycle.
+- **`tunnels` CLI is mandatory.** See "Hard requirement" above.
 - **Setup token CLI talks to the staging server, not prod.** This is achieved by setting `KATULONG_DATA_DIR` so that `lib/cli/process-manager.js` reads the staging `server.json`. Don't bypass this and write tokens to disk by hand — the original `katulong-stage` did that and it broke silently when the auth storage format changed.
 - **`stop` with no argument stops everything.** This is intentional for end-of-session cleanup, but be careful if multiple staging instances are running for different branches.
 - **Each staging instance gets its own tmux server.** This is required for clean teardown. If the user runs `tmux ls` they will not see staging tmux sessions unless they pass `tmux -L stage-<name> ls`.

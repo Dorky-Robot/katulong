@@ -16,9 +16,16 @@
 #   - Setup token minted via the proper `katulong token create` CLI
 #       (no hand-crafted auth state)
 #   - Stable public hostname <name>.<tunnel> via the existing named
-#       cloudflared tunnel (managed by the `tunnels` CLI). If no named
-#       tunnel exists, falls back to a one-shot trycloudflare URL via
-#       `cloudflared tunnel --url`.
+#       cloudflared tunnel, managed exclusively by the `tunnels` CLI.
+#
+# Tunnels CLI is REQUIRED. There is no fallback path. The original version
+# of this script had an "ephemeral trycloudflare URL via raw cloudflared"
+# fallback for boxes without `tunnels` installed; that was removed because
+# (a) trycloudflare hostnames change every run, which breaks WebAuthn passkey
+# enrollment across restarts (the RP ID changes), and (b) routes added by
+# raw cloudflared aren't visible to `tunnels list`, so the staging script
+# ended up with two different sources of truth for tunnel state. The whole
+# project standardizes on `tunnels` for any cloudflared interaction.
 #
 # Config (~/.katulong/config.json):
 #   stage.tunnel   Pin the named tunnel (skips auto-detect)
@@ -30,7 +37,6 @@
 #   /tmp/katulong-stage/<name>/
 #     ├── data/         KATULONG_DATA_DIR for the staging server
 #     ├── server.log    server stdout+stderr
-#     ├── tunnel.log    cloudflared output (ephemeral mode only)
 #     └── meta.env      key=value record consumed by stop/list
 #
 # Why a rewrite of the original katulong-stage script:
@@ -38,7 +44,7 @@
 #     ephemeral https://*.trycloudflare.com URLs that change on every run.
 #     That's painful for passkey enrollment from a phone, because the
 #     hostname (and therefore the WebAuthn RP ID) changes — every restart
-#     forces re-pairing. Stable named tunnels solve this.
+#     forces re-pairing. Stable named tunnels via the `tunnels` CLI solve this.
 #   - The original hand-crafted auth state JSON files (user.json,
 #     setup-tokens/<id>.json) and re-implemented the scrypt hashing inline.
 #     This duplicated the auth logic and would silently break if the
@@ -119,7 +125,11 @@ find_free_port() {
   "
 }
 
-# Pick a named tunnel to attach staging routes to.
+# Pick a tunnel to attach staging routes to. Assumes the `tunnels` CLI is
+# already installed — callers must enforce that precondition before invoking
+# this function. (cmd_start does this with an upfront `command -v tunnels`
+# check, so that it can print a richer install-instructions error message
+# than this function is in a position to produce.)
 #
 # Resolution order:
 #   1. `stage.tunnel` from $USER_CONFIG (if set, takes precedence — no auto-detect)
@@ -129,14 +139,13 @@ find_free_port() {
 # Echoes the tunnel name on success, returns 1 if nothing usable was found.
 # Auto-detect is intentionally a fallback rather than the primary path so that
 # users with multiple tunnels can pin staging to a specific one without ambiguity.
-resolve_named_tunnel() {
+resolve_tunnel() {
   local configured
   configured="$(read_config_key 'stage.tunnel' || true)"
   if [[ -n "$configured" ]]; then
     printf "%s" "$configured"
     return 0
   fi
-  command -v tunnels >/dev/null 2>&1 || return 1
   local out
   out="$(tunnels list --json 2>/dev/null)" || return 1
   [[ -n "$out" ]] || return 1
@@ -249,12 +258,12 @@ cmd_list() {
   for dir in "$STAGE_BASE"/*/; do
     [[ -d "$dir" ]] || continue
     [[ -f "${dir}meta.env" ]] || continue
-    local name="" port="" pid="" mode="" url=""
+    local name="" port="" pid="" tunnel="" url=""
     # shellcheck disable=SC1090
     source "${dir}meta.env"
     if is_alive "${pid:-0}"; then
-      printf "  %-22s pid=%-6s port=%-5s mode=%-9s url=%s\n" \
-        "${name}" "${pid}" "${port}" "${mode}" "${url:-?}"
+      printf "  %-22s pid=%-6s port=%-5s tunnel=%-20s url=%s\n" \
+        "${name}" "${pid}" "${port}" "${tunnel:-?}" "${url:-?}"
       found=1
     fi
   done
@@ -275,7 +284,7 @@ stop_one() {
     return 1
   fi
 
-  local name="" port="" pid="" tmux_socket="" mode="" tunnel="" host="" url="" tunnel_pid="" data_dir="" log_file=""
+  local name="" port="" pid="" tmux_socket="" tunnel="" host="" url="" data_dir="" log_file=""
   # shellcheck disable=SC1090
   source "$dir/meta.env"
 
@@ -289,16 +298,8 @@ stop_one() {
     tmux -L "$tmux_socket" kill-server 2>/dev/null || true
   fi
 
-  if [[ "${mode:-}" == "named" && -n "${host:-}" && -n "${tunnel:-}" ]]; then
-    if command -v tunnels >/dev/null 2>&1; then
-      tunnels route rm "$host" --tunnel "$tunnel" >/dev/null 2>&1 || true
-    fi
-  fi
-
-  if [[ -n "${tunnel_pid:-}" ]] && is_alive "$tunnel_pid"; then
-    kill "$tunnel_pid" 2>/dev/null || true
-    sleep 1
-    is_alive "$tunnel_pid" && kill -9 "$tunnel_pid" 2>/dev/null || true
+  if [[ -n "${host:-}" && -n "${tunnel:-}" ]] && command -v tunnels >/dev/null 2>&1; then
+    tunnels route rm "$host" --tunnel "$tunnel" >/dev/null 2>&1 || true
   fi
 
   rm -rf "$dir"
@@ -326,15 +327,13 @@ cmd_stop() {
 # ---------------------------------------------------------------------------
 
 # Cleanup helper for cmd_start failure paths. Reaps a partially-started
-# instance: kills the server pid if set, kills the tunnel pid if set, and
-# removes the staging dir. Used in every error branch so the cleanup logic
-# stays in one place rather than being duplicated four times.
+# instance: kills the server pid if set and removes the staging dir. Used in
+# every error branch so the cleanup logic stays in one place rather than
+# being duplicated four times.
 cleanup_start() {
   local server_pid="$1"
-  local tunnel_pid="$2"
-  local dir="$3"
+  local dir="$2"
   [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null || true
-  [[ -n "$tunnel_pid" ]] && kill "$tunnel_pid" 2>/dev/null || true
   rm -rf "$dir"
 }
 
@@ -374,11 +373,26 @@ cmd_start() {
     return 1
   fi
 
+  # /tmp is world-traversable on macOS — lock the staging dirs to the owner
+  # so nobody else on the box can (a) read meta.env (which contains the
+  # running pid + port) or sniff data/auth-state.json, or (b) plant a hostile
+  # meta.env under a directory name we'll later iterate over in `list`/`stop`
+  # and then `source`. Locking the per-run dir alone is not enough because
+  # STAGE_BASE itself is the directory we glob over — if STAGE_BASE is
+  # world-writable, another local user can create /tmp/katulong-stage/evil/
+  # meta.env containing arbitrary shell commands and get code execution the
+  # next time we run `list` or `stop`.
+  #
+  # If STAGE_BASE already exists and is owned by a different user (squatting
+  # attempt or leftover from a different account) the chmod will fail, and
+  # we fail loud rather than continue with an unsafe base dir.
+  mkdir -p "$STAGE_BASE"
+  if ! chmod 700 "$STAGE_BASE" 2>/dev/null; then
+    echo "ERROR: cannot lock $STAGE_BASE to owner-only (not owned by current user?)." >&2
+    echo "       Remove or re-own it, or move it out of the way, then retry." >&2
+    return 1
+  fi
   mkdir -p "$dir/data"
-  # /tmp is world-traversable on macOS — lock the staging dir to the owner so
-  # nobody else on the box can read meta.env (which contains the running pid +
-  # port) or sniff data/auth-state.json. The data dir itself gets the same
-  # treatment because the server doesn't chmod its parent.
   chmod 700 "$dir" "$dir/data"
   local data_dir="$dir/data"
   local log_file="$dir/server.log"
@@ -399,7 +413,7 @@ cmd_start() {
   local server_pid=$!
 
   if ! wait_for_server "$port" "$server_pid" "$log_file"; then
-    cleanup_start "$server_pid" "" "$dir"
+    cleanup_start "$server_pid" "$dir"
     return 1
   fi
 
@@ -407,49 +421,46 @@ cmd_start() {
   token="$(mint_setup_token "$data_dir" "$name" || true)"
   if [[ -z "$token" ]]; then
     echo "ERROR: failed to mint setup token (server up but token CLI returned nothing)" >&2
-    cleanup_start "$server_pid" "" "$dir"
+    cleanup_start "$server_pid" "$dir"
     return 1
   fi
 
   # ---- Tunnel wiring ----
-  local mode="" tunnel="" host="" url="" tunnel_pid=""
-  local named
-  named="$(resolve_named_tunnel || true)"
-  if [[ -n "$named" ]]; then
-    tunnel="$named"
-    host="$(resolve_host "$name" "$tunnel")"
-    if tunnels route add "$host" "$port" --tunnel "$tunnel" >/dev/null 2>&1; then
-      mode="named"
-      url="https://$host"
-    else
-      echo "WARN: 'tunnels route add' failed; falling back to ephemeral trycloudflare" >&2
-      tunnel="" ; host=""
-    fi
+  # The `tunnels` CLI is the single supported path. If it isn't installed
+  # or no usable named tunnel can be resolved, fail loud rather than silently
+  # falling back to a different mechanism. See the header comment for the
+  # reasoning behind dropping the ephemeral cloudflared path.
+  if ! command -v tunnels >/dev/null 2>&1; then
+    echo "ERROR: 'tunnels' CLI is not installed." >&2
+    echo "       Install it (brew tap dorky-robot/tap && brew install tunnels)" >&2
+    echo "       and register at least one named tunnel via 'tunnels add'." >&2
+    cleanup_start "$server_pid" "$dir"
+    return 1
   fi
 
-  if [[ -z "$mode" ]]; then
-    if ! command -v cloudflared >/dev/null 2>&1; then
-      echo "ERROR: no named tunnel available and cloudflared is not installed" >&2
-      cleanup_start "$server_pid" "" "$dir"
-      return 1
-    fi
-    mode="ephemeral"
-    nohup cloudflared tunnel --url "http://127.0.0.1:${port}" \
-      > "$dir/tunnel.log" 2>&1 &
-    tunnel_pid=$!
-    local i
-    for i in $(seq 1 20); do
-      url="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$dir/tunnel.log" 2>/dev/null | head -1 || true)"
-      [[ -n "$url" ]] && break
-      is_alive "$tunnel_pid" || break
-      sleep 1
-    done
-    if [[ -z "$url" ]]; then
-      echo "ERROR: ephemeral tunnel did not produce a URL within 20s" >&2
-      cleanup_start "$server_pid" "$tunnel_pid" "$dir"
-      return 1
-    fi
+  local tunnel host url
+  tunnel="$(resolve_tunnel || true)"
+  if [[ -z "$tunnel" ]]; then
+    echo "ERROR: no named tunnel available." >&2
+    echo "       Register one with 'tunnels add <name> --token <token>'," >&2
+    echo "       or pin one in ~/.katulong/config.json via:" >&2
+    echo '         { "stage": { "tunnel": "<tunnel-name>" } }' >&2
+    cleanup_start "$server_pid" "$dir"
+    return 1
   fi
+  host="$(resolve_host "$name" "$tunnel")"
+
+  if ! tunnels route add "$host" "$port" --tunnel "$tunnel" >/dev/null 2>&1; then
+    echo "ERROR: 'tunnels route add $host $port --tunnel $tunnel' failed." >&2
+    echo "       Check 'tunnels list' and 'tunnels logs $tunnel'." >&2
+    # Attempt a best-effort route rm in case `route add` registered state
+    # before failing partway. `tunnels route rm` is a no-op if nothing was
+    # registered, so this is safe to call unconditionally on the failure path.
+    tunnels route rm "$host" --tunnel "$tunnel" >/dev/null 2>&1 || true
+    cleanup_start "$server_pid" "$dir"
+    return 1
+  fi
+  url="https://$host"
 
   # If meta.env can't be persisted we MUST tear the instance down — otherwise
   # `stop` has no record of pid/port/tunnel and the server runs forever as an
@@ -459,18 +470,14 @@ cmd_start() {
     port "$port" \
     pid "$server_pid" \
     tmux_socket "$tmux_socket" \
-    mode "$mode" \
     tunnel "$tunnel" \
     host "$host" \
     url "$url" \
-    tunnel_pid "$tunnel_pid" \
     data_dir "$data_dir" \
     log_file "$log_file"; then
     echo "ERROR: failed to write meta.env — refusing to leave a running server with no stop record" >&2
-    if [[ "$mode" == "named" && -n "$host" && -n "$tunnel" ]] && command -v tunnels >/dev/null 2>&1; then
-      tunnels route rm "$host" --tunnel "$tunnel" >/dev/null 2>&1 || true
-    fi
-    cleanup_start "$server_pid" "$tunnel_pid" "$dir"
+    tunnels route rm "$host" --tunnel "$tunnel" >/dev/null 2>&1 || true
+    cleanup_start "$server_pid" "$dir"
     return 1
   fi
 
@@ -483,7 +490,7 @@ Staging '$name' is live:
   Setup Token: $token
   Port:        $port (pid $server_pid)
   Tmux Socket: $tmux_socket
-  Mode:        $mode${tunnel:+ ($tunnel)}
+  Tunnel:      $tunnel
   Data Dir:    $data_dir
   Log:         tail -f $log_file
 
@@ -505,10 +512,11 @@ Usage:
   $(basename "$0") stop  [name]    Tear down staging (default = all instances)
   $(basename "$0") list            Show running staging instances
 
-Modes (auto-detected at start time):
-  named      Stable hostname <name>.<tunnel> on the existing named tunnel
-             (requires the 'tunnels' CLI and at least one registered tunnel)
-  ephemeral  One-shot https://*.trycloudflare.com URL via 'cloudflared'
+Requirements:
+  The 'tunnels' CLI must be installed and at least one named tunnel must be
+  registered. There is no fallback path. To install:
+    brew tap dorky-robot/tap && brew install tunnels
+    tunnels add <name> --token <cloudflare-tunnel-token>
 
 Config (~/.katulong/config.json or \$KATULONG_DATA_DIR/config.json):
   stage.tunnel   Pin the named tunnel to use (skips auto-detect)
