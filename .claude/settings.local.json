@@ -22,7 +22,9 @@
       "Read(//Users/felixflores/Projects/dorky_robot/homebrew-katulong/Formula/**)",
       "Read(//Users/felixflores/Projects/**)",
       "Bash(katulong:*)",
-      "Bash(shasum -a 256 \"/tmp/katulong-v0.46.5.tar.gz\")"
+      "Bash(shasum -a 256 \"/tmp/katulong-v0.46.5.tar.gz\")",
+      "Bash(diwa search:*)",
+      "Bash(ps:*)"
     ]
   }
 }
