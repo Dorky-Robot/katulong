@@ -485,7 +485,10 @@ describe("uploadImageToTerminal", () => {
     assert.equal(url, "/upload");
     assert.equal(opts.method, "POST");
     assert.equal(opts.headers["Content-Type"], "application/octet-stream");
-    assert.equal(opts.headers["X-Filename"], "test.png");
+    // X-Filename must NOT be sent: XMLHttpRequest.setRequestHeader rejects
+    // non-Latin1 values (e.g. U+2026 in macOS "Screenshot …" filenames) and
+    // the /upload route generates its own UUID filename anyway.
+    assert.ok(!("X-Filename" in opts.headers));
     assert.equal(opts.body, file);
   });
 });
