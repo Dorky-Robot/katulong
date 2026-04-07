@@ -46,10 +46,7 @@ export function createTerminalTileFactory(deps) {
         // ── Register dashboard back-face ───────────────────────────
         const carousel = deps.carousel;
         if (carousel) {
-          backTile = createDashboardBackTile({
-            sessionName,
-            mode: "terminal",
-          });
+          backTile = createDashboardBackTile({ sessionName });
           carousel.setBackTile(sessionName, backTile);
         }
 
