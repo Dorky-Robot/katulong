@@ -1101,9 +1101,7 @@
       onAnchorChange: (hex) => themeManager.setAnchor(hex),
       onPolarityChange: (polarity) => themeManager.setPolarity(polarity),
       onVibrancyChange: (vibrancy) => themeManager.setVibrancy(vibrancy),
-      // syncPaletteControls reads the *user preference* (auto/dark/light, etc.) so
-      // the right radio button highlights — themeManager.getPalette() would return
-      // the resolved polarity ("dark" or "light") and break Auto's highlight.
+      // User preference, not resolved palette — see syncPaletteControls.
       getPreferences: () => ({
         anchor: themeManager.getAnchor(),
         polarity: themeManager.getPolarity(),
