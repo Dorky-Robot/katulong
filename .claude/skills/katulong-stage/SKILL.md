@@ -23,6 +23,31 @@ Do NOT use it for:
 - The e2e test harness — that has its own server lifecycle under `test/e2e/`.
 - Non-Katulong projects.
 
+## Always surface the pair URL and setup token
+
+Every time you stage a new instance for the user, your response MUST include:
+
+- the public **URL** (`https://<name>.<tunnel>`),
+- the full **pair URL** with the setup token embedded (`https://<name>.<tunnel>/login?setup_token=<token>`), and
+- the **stop command** (`bin/katulong-stage stop <name>`).
+
+Do not abbreviate this. The whole point of staging is that the user is about to pair a phone, iPad, or another machine to the instance, and the setup token is single-use — if the user has to dig it back out of the terminal scrollback or re-run the command, you have failed at the job. `bin/katulong-stage start` already prints all three on stdout; just copy them into your reply verbatim.
+
+Even if you are staging on behalf of the user for a quick smoke check and don't plan to pair a device yourself, still surface the pair URL — the user may want to pair something after the fact, and the token is only useful while it is fresh.
+
+### Already-running instances (the idempotent path)
+
+`bin/katulong-stage start <name>` is idempotent: if an instance with that name is already alive, it prints `Already running: <name>` with the URL and port but does NOT mint a new setup token. This is intentional — the existing staging keeps its passkey state, and re-minting on every call would churn single-use tokens.
+
+If the user needs a fresh setup token against an already-running staging WITHOUT nuking the existing passkeys, mint one directly against that staging's data dir:
+
+```bash
+KATULONG_DATA_DIR=/tmp/katulong-stage/<name>/data \
+  node bin/katulong token create <name>
+```
+
+The CLI reads `<data_dir>/server.json` to find the live staging server's port and hits its `POST /api/tokens` endpoint — the same path `bin/katulong-stage` uses internally on first start, so the token is minted on the staging instance, not prod. Only fall back to stop+start if the user explicitly wants the instance reset; tearing down the data dir invalidates every passkey previously enrolled against it.
+
 ## What "isolated" buys you
 
 A staging instance is completely partitioned from prod. The script:
