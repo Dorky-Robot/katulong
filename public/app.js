@@ -1101,7 +1101,12 @@
       onAnchorChange: (hex) => themeManager.setAnchor(hex),
       onPolarityChange: (polarity) => themeManager.setPolarity(polarity),
       onVibrancyChange: (vibrancy) => themeManager.setVibrancy(vibrancy),
-      getPalette: () => themeManager.getPalette(),
+      // User preference, not resolved palette — see syncPaletteControls.
+      getPreferences: () => ({
+        anchor: themeManager.getAnchor(),
+        polarity: themeManager.getPolarity(),
+        vibrancy: themeManager.getVibrancy(),
+      }),
       onPortProxyChange: (enabled) => {
         const btn = document.getElementById("sidebar-portfwd-btn");
         if (btn) btn.style.display = enabled ? "" : "none";
