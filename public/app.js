@@ -67,7 +67,8 @@
             entry.term.options.theme = xtermTheme;
           });
         });
-        // Re-sync settings UI preview swatches if the panel has been initialized
+        // Re-sync palette controls (tint swatch, hex input, polarity, vibrancy)
+        // so the settings panel reflects the new effective palette.
         if (settingsHandlers) settingsHandlers.syncPaletteControls();
       }
     });

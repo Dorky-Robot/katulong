@@ -12,8 +12,8 @@
  *   3. A polarity radio group (auto/light/dark).
  *   4. A vibrancy radio group (subtle/colorful) — picks how much of the
  *      tint hue saturates the surfaces and text.
- *   5. Live preview swatches that mirror the generated palette so users
- *      see what their pick produces before leaving the settings panel.
+ *
+ * The running app is the live preview — no separate swatch grid.
  */
 
 import { api } from "/lib/api-client.js";
