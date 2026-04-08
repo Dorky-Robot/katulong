@@ -58,6 +58,7 @@ export const tmuxSessions = new Map();
  *   - returns the structured screenFingerprint() shape: { hash, seq }
  *   - returns the structured snapshot() shape: { buffer, seq, alive }
  *   - returns the structured pullFrom() shape: { data, cursor }
+ *   - returns the structured pullTail() shape: { data, cursor }
  *   - removes itself from tmuxSessions on kill so listSessions stays
  *     consistent with the manager's view
  */
@@ -90,6 +91,11 @@ export class BaseMockSession {
   }
   pullFrom(fromSeq) {
     return { data: this.outputBuffer.sliceFrom(fromSeq), cursor: this.cursor };
+  }
+  pullTail(maxBytes) {
+    const cursor = this.cursor;
+    const fromSeq = Math.max(cursor - maxBytes, 0);
+    return { data: this.outputBuffer.sliceFrom(fromSeq) || "", cursor };
   }
   updateChildCount(count) { this._childCount = count; }
   write() {}

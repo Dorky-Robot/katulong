@@ -1189,6 +1189,53 @@ describe("Session.cursor (Tier 3.2)", () => {
   });
 });
 
+describe("Session.pullTail (Tier 3.2)", () => {
+  // pullTail(maxBytes) encapsulates the "last N bytes" arithmetic that
+  // routes/app-routes.js previously open-coded via
+  // `Math.max(cursor - 4096, outputBuffer.getStartOffset())`. Exposing it
+  // on Session means callers don't reach into RingBuffer internals.
+
+  it("returns the last maxBytes when the buffer holds more", async () => {
+    const { session, mockProc } = createWiredTestSession("tail");
+    mockProc.simulateOutput("%0", "0123456789abcdef"); // 16 bytes
+    const { data, cursor } = session.pullTail(8);
+    assert.strictEqual(data, "89abcdef",
+      "pullTail must return the trailing maxBytes of the buffer");
+    assert.strictEqual(cursor, session.cursor,
+      "cursor must be the authoritative total byte position");
+  });
+
+  it("returns everything when maxBytes exceeds the buffer", async () => {
+    const { session, mockProc } = createWiredTestSession("tail-small");
+    mockProc.simulateOutput("%0", "tiny");
+    const { data } = session.pullTail(4096);
+    assert.strictEqual(data, "tiny",
+      "pullTail must clamp to what the RingBuffer holds — requesting more " +
+      "than the buffer has must not reach below byte 0");
+  });
+
+  it("clamps to the RingBuffer start offset after eviction", () => {
+    const { session, mockProc } = createWiredTestSession("tail-evict", {
+      maxBufferBytes: 8,
+    });
+    mockProc.simulateOutput("%0", "evicted-");     // 8 bytes — fills buffer
+    mockProc.simulateOutput("%0", "kept-more");    // evicts the first chunk
+    const { data, cursor } = session.pullTail(4096);
+    assert.strictEqual(cursor, session.cursor);
+    assert.ok(!data.includes("evicted-"),
+      "pullTail must not attempt to read bytes that have been evicted");
+    assert.ok(data.length > 0,
+      "pullTail must return whatever the RingBuffer still holds");
+  });
+
+  it("returns empty string for an empty buffer", () => {
+    const { session } = createWiredTestSession("tail-empty");
+    const { data, cursor } = session.pullTail(4096);
+    assert.strictEqual(data, "");
+    assert.strictEqual(cursor, 0);
+  });
+});
+
 describe("SessionNotAliveError", () => {
   it("includes session name in error message", () => {
     const err = new SessionNotAliveError("my-session");
