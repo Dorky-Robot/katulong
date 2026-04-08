@@ -325,8 +325,8 @@ function createSimpleTestSession(name, options = {}) {
 function createWiredTestSession(name, options = {}) {
   const { session, mockProc } = createSimpleTestSession(name, options);
 
-  // Wire up the real _handleStdoutData method (same path as attachControlMode)
-  mockProc.stdout.on("data", (chunk) => session._handleStdoutData(chunk));
+  // Wire up the real parser (same path as attachControlMode)
+  mockProc.stdout.on("data", (chunk) => session._parser.write(chunk));
 
   return { session, mockProc };
 }
