@@ -1170,10 +1170,9 @@
     }
     .dictation-send-btn:active { opacity: 0.8; }
 
-    /* --- Joystick zone (touch devices only) --- */
-    /* Joystick lives inside the active terminal pane (reparented by JS).
-       Position absolute within the pane — no viewport math needed. */
-    /* Floating action buttons (touch devices only) */
+    /* --- Floating action buttons (upload, files, settings, connection dot) ---
+       Reparented by JS into the active terminal pane; position absolute within
+       the pane so no viewport math is needed. Visible on all devices. */
     #joystick {
       display: flex; position: absolute; z-index: var(--z-bar);
       right: 1rem; top: 1rem;
@@ -1194,7 +1193,6 @@
       background: var(--text-dim);
     }
     .joystick-dot.connected { background: var(--success); }
-    /* joystick visible on all devices — same experience iPad + desktop */
 
     /* --- Enter key progress ring --- */
     #enter-progress-ring {
@@ -2322,8 +2320,8 @@
     </button>
   </div>
 
-  <!-- Joystick: fixed to viewport, outside all layout containers -->
-  <div id="joystick" aria-label="Swipe or hold joystick for arrows, long-press center for Enter"></div>
+  <!-- Floating action buttons: reparented by JS into the active terminal pane -->
+  <div id="joystick" role="toolbar" aria-label="Terminal actions"></div>
   <svg id="enter-progress-ring" viewBox="0 0 80 80">
     <circle cx="40" cy="40" r="36" />
   </svg>
