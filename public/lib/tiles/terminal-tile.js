@@ -32,6 +32,12 @@ export function createTerminalTileFactory(deps) {
     let statusPollTimer = null;
     let prevHasChildProcesses = false;
     let autoFlipTimer = null;
+    // `destroyed` guards against async callbacks landing after unmount.
+    // clearInterval/clearTimeout can't cancel an already-inflight fetch
+    // `.then()`, so the promise chain may resolve against a tile whose
+    // carousel/backTile references are stale. Mirrors the pattern in
+    // dashboard-back-tile.js (see its pollStatus/unmount).
+    let destroyed = false;
 
     // ── Status polling for auto-flip ──────────────────────────────
     // Declared above the tile object so the textual order matches the
@@ -41,10 +47,16 @@ export function createTerminalTileFactory(deps) {
     function startStatusPoll(ctx, carousel) {
       if (statusPollTimer) return;
       statusPollTimer = setInterval(async () => {
+        if (destroyed) return;
         try {
           const res = await fetch(`/sessions/${encodeURIComponent(currentSessionName)}/status`);
+          // The tile may have unmounted while the fetch was in flight.
+          // clearInterval can't cancel an already-awaited promise, so
+          // re-check `destroyed` before touching carousel/backTile state.
+          if (destroyed) return;
           if (!res.ok) return;
           const status = await res.json();
+          if (destroyed) return;
           const hasChild = status.hasChildProcesses || false;
 
           // Detect transition: had child processes -> no child processes
@@ -52,10 +64,16 @@ export function createTerminalTileFactory(deps) {
             // Small delay (1.5s) to avoid flipping during brief pauses
             if (autoFlipTimer) clearTimeout(autoFlipTimer);
             autoFlipTimer = setTimeout(() => {
+              if (destroyed) return;
               // Re-check: still no child processes?
               fetch(`/sessions/${encodeURIComponent(currentSessionName)}/status`)
                 .then(r => r.ok ? r.json() : null)
                 .then(s => {
+                  // Same race: the fetch may resolve after unmount.
+                  // Without this guard, a stale success response would
+                  // call carousel.flipCard() on a tile that no longer
+                  // exists (the carousel has since removed the card).
+                  if (destroyed) return;
                   if (s && !s.hasChildProcesses && !carousel.isFlipped(currentSessionName)) {
                     if (backTile?.addEvent) backTile.addEvent("Agent work completed");
                     carousel.flipCard(currentSessionName, true);
@@ -92,6 +110,7 @@ export function createTerminalTileFactory(deps) {
 
       mount(el, ctx) {
         container = el;
+        destroyed = false;
         const entry = terminalPool.getOrCreate(currentSessionName);
         terminalPool.protect(currentSessionName);
         entry.container.style.display = "";
@@ -113,6 +132,7 @@ export function createTerminalTileFactory(deps) {
 
       unmount() {
         if (!mounted) return;
+        destroyed = true;
         stopStatusPoll();
         terminalPool.unprotect(currentSessionName);
         const entry = terminalPool.get(currentSessionName);
