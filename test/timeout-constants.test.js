@@ -33,7 +33,7 @@ describe("reduced timeout constants", () => {
   });
 
   it("routes: PASTE_DELAY_MS = 50", () => {
-    const src = readSource("lib/routes.js");
+    const src = readSource("lib/routes/app-routes.js");
     assert.match(src, /const PASTE_DELAY_MS = 50;/);
   });
 

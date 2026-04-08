@@ -1,6 +1,7 @@
-import { describe, it, beforeEach } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { imageMimeType } from "../lib/routes/upload.js";
 
 /**
  * Clipboard bridge tests
@@ -123,18 +124,7 @@ describe("Clipboard bridge — xclip round-trip", { skip: !isLinux && "Linux-onl
 });
 
 describe("Clipboard bridge — imageMimeType", () => {
-  // Test the helper extracted during the container bridge work
-  let imageMimeType;
-
-  beforeEach(async () => {
-    // Import from routes.js is not directly possible (it's not exported),
-    // so we test the mapping logic inline
-    imageMimeType = (ext) => {
-      return ext === "png" ? "image/png" : ext === "gif" ? "image/gif"
-        : ext === "webp" ? "image/webp" : "image/jpeg";
-    };
-  });
-
+  // imageMimeType is now a real export from lib/routes/upload.js (Tier 3.4).
   it("maps png to image/png", () => {
     assert.equal(imageMimeType("png"), "image/png");
   });

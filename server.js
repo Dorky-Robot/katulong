@@ -24,7 +24,9 @@ import { serveStaticFile, clearFileCache, buildVendorHashes } from "./lib/static
 import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createSessionManager, checkTmux, cleanTmuxServerEnv, setTmuxKatulongEnv } from "./lib/session-manager.js";
 import { tmuxSocketArgs } from "./lib/tmux.js";
-import { createMiddleware, createAuthRoutes, createAppRoutes } from "./lib/routes.js";
+import { createMiddleware } from "./lib/routes/middleware.js";
+import { createAuthRoutes } from "./lib/routes/auth-routes.js";
+import { createAppRoutes } from "./lib/routes/app-routes.js";
 import { createFileBrowserRoutes } from "./lib/file-browser.js";
 import { createPortProxyRoutes, proxyWebSocket } from "./lib/port-proxy.js";
 import { createWebSocketManager } from "./lib/ws-manager.js";
