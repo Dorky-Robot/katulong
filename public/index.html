@@ -619,10 +619,6 @@
       backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
     }
     #scroll-bottom:active { opacity: 0.7; }
-    @media (pointer: coarse) {
-      /* Offset left to avoid overlap with the joystick */
-      #scroll-bottom { right: calc(1rem + 5.5rem); bottom: 1.5rem; }
-    }
 
     /* --- Swipe feedback --- */
     .swipe-feedback {
@@ -1174,13 +1170,12 @@
     }
     .dictation-send-btn:active { opacity: 0.8; }
 
-    /* --- Joystick zone (touch devices only) --- */
-    /* Joystick lives inside the active terminal pane (reparented by JS).
-       Position absolute within the pane — no viewport math needed. */
-    /* Floating action buttons (touch devices only) */
+    /* --- Floating action buttons (upload, files, settings, connection dot) ---
+       Reparented by JS into the active terminal pane; position absolute within
+       the pane so no viewport math is needed. Visible on all devices. */
     #joystick {
       display: flex; position: absolute; z-index: var(--z-bar);
-      right: 1rem; bottom: 1rem;
+      right: 1rem; top: 1rem;
       flex-direction: column; gap: 0.5rem;
       align-items: center;
     }
@@ -1198,7 +1193,6 @@
       background: var(--text-dim);
     }
     .joystick-dot.connected { background: var(--success); }
-    /* joystick visible on all devices — same experience iPad + desktop */
 
     /* --- Enter key progress ring --- */
     #enter-progress-ring {
@@ -2326,8 +2320,8 @@
     </button>
   </div>
 
-  <!-- Joystick: fixed to viewport, outside all layout containers -->
-  <div id="joystick" aria-label="Swipe or hold joystick for arrows, long-press center for Enter"></div>
+  <!-- Floating action buttons: reparented by JS into the active terminal pane -->
+  <div id="joystick" role="toolbar" aria-label="Terminal actions"></div>
   <svg id="enter-progress-ring" viewBox="0 0 80 80">
     <circle cx="40" cy="40" r="36" />
   </svg>
