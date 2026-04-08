@@ -1,5 +1,34 @@
 Consult the masters — review the entire katulong codebase through the lens of great software engineers.
 
+## Phase 0: Mine the History with diwa
+
+Before reading any code, mine the project's git history for context. The review agents in Phase 2 give grounded advice only when they know which approaches have already been tried, which decisions were deliberate, and which patterns have been reverted. Without this, they cheerfully recommend dead ends the team already walked down once.
+
+This phase invokes the `diwa` skill (see `~/.claude/skills/diwa/SKILL.md`) and applies its iterate-and-fork pattern fully — do not stop at one search.
+
+1. **Confirm indexed.** Run `diwa ls`. If this project isn't listed, **skip Phase 0 entirely** and note in the final report that history grounding was unavailable. Use the project's name as it appears in `diwa ls` for `<repo>` below.
+
+2. **Run several seed searches in parallel.** Different angles on the same codebase:
+   - `diwa search katulong "architecture decisions and rationale"`
+   - `diwa search katulong "bug fixes incidents postmortems"`
+   - `diwa search katulong "reverted approaches things tried that failed"`
+   - `diwa search katulong "tmux session lifecycle and ClientHeadless"`
+   - `diwa search katulong "auth WebAuthn security hardening"`
+   - `diwa search katulong "drag jitter touch handling iOS Safari"`
+   - `diwa search katulong "garbled text TUI resize SIGWINCH"`
+
+3. **Follow the strings.** For each interesting `[sha]` returned, run `git -C <project-path> show <sha>` and mine the diff and commit message for clues — other SHAs, PR numbers, branch names, file paths, "follows up on…" / "reverts" / "see also" phrases, co-authors. Each clue is a candidate follow-up `diwa search`. Iterate until the tree converges (~3 hops max).
+
+4. **Fork independent threads.** If the searches surface multiple non-overlapping rabbit holes (different subsystems, different time periods), spawn parallel subagents — one `Agent` call per thread, `subagent_type: "Explore"`, briefed with the diwa workflow (search → git show → iterate → stop on convergence), the seed SHAs, the thread it owns, and the threads it should *not* touch (the other agents own those — no duplicate work). Ask each for a tight (<300 word) synthesis. Launch them in a single message.
+
+5. **Produce a history brief.** Synthesize everything into a concise 200–400 word document capturing:
+   - **Major decisions & rationale** — key architectural choices and the *why*, with SHAs
+   - **Known traps** — patterns tried and reverted, with SHAs and a one-line "don't redo this" warning
+   - **Recent direction** — what is actively changing in the codebase right now
+   - **Open tensions** — unresolved questions, known debts, or deferred decisions visible in the history
+
+The history brief is the **primary input to Phase 2**. Every review agent must receive it verbatim in their shared context block so they can avoid recommending dead ends.
+
 ## Phase 1: Map the Codebase
 
 Thoroughly explore the full project structure. Use Glob and Grep to build a complete picture:
@@ -30,7 +59,10 @@ Frontend: Vanilla JS, xterm.js, web components, all vendor deps self-hosted in p
 Read ALL source files before forming your review.
 Report your top 5 findings ranked by impact. For each finding, cite the specific file and line.
 Do NOT suggest changes that would reduce capabilities or fight Node.js/JavaScript idioms.
+Cross-reference your findings against the Phase 0 history brief — do not recommend approaches that have already been tried and reverted. If a finding matches a known trap, drop it or explain what's different now. Cite SHAs from the brief.
 ```
+
+**Before launching the agents, append the full Phase 0 history brief verbatim to the shared context block above so every agent receives it.**
 
 ### Agent 1: Rich Hickey — Simplicity & Data Orientation
 
@@ -147,6 +179,8 @@ Review the entire katulong codebase for:
 ## Phase 3: Distill
 
 Wait for all eight agents to complete. Then:
+
+**Step 0 — Cross-reference against history.** Take each candidate finding from any agent and check it against the Phase 0 history brief. If the finding matches a known trap (something the team tried and reverted), either drop it or explain what's changed since the prior attempt. Cite the SHA from the brief. This filter runs first.
 
 1. **Cross-reference** — Look for findings that multiple agents agree on. Present a consensus table.
 2. **Filter** — Discard findings that would add abstraction without payoff, fight Node.js idioms, or reduce capabilities.
