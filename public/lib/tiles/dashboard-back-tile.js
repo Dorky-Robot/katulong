@@ -49,6 +49,10 @@ function statusLabel(status) {
  * @param {string} options.sessionName — primary session name
  */
 export function createDashboardBackTile({ sessionName } = {}) {
+  // Mutable: kept in sync with the carousel's tile ID via setSessionName().
+  // The carousel calls this from renameCard() so polling, action APIs,
+  // and rendering all use the current name after a tab rename.
+  let currentSessionName = sessionName;
   let container = null;
   let ctx = null;
   let rootEl = null;
@@ -76,7 +80,7 @@ export function createDashboardBackTile({ sessionName } = {}) {
     return `
       <div class="dashboard-back">
         <div class="db-header">
-          <div class="db-session-name">${escapeHtml(sessionName)}</div>
+          <div class="db-session-name">${escapeHtml(currentSessionName)}</div>
           <span class="status-badge ${statusClass(currentStatus)}">${statusLabel(currentStatus)}</span>
           <span class="duration" data-role="duration">${formatDuration(Date.now() - startTime)}</span>
         </div>
@@ -200,8 +204,8 @@ export function createDashboardBackTile({ sessionName } = {}) {
     switch (action) {
       case "kill":
         try {
-          await api.delete(`/sessions/${encodeURIComponent(sessionName)}`);
-          addEvent(`Killed session ${sessionName}`);
+          await api.delete(`/sessions/${encodeURIComponent(currentSessionName)}`);
+          addEvent(`Killed session ${currentSessionName}`);
           updateStatus("exited");
         } catch (err) {
           addEvent(`Kill failed: ${err.message}`);
@@ -210,13 +214,13 @@ export function createDashboardBackTile({ sessionName } = {}) {
 
       case "restart":
         try {
-          await api.delete(`/sessions/${encodeURIComponent(sessionName)}`);
-          addEvent(`Killed session ${sessionName}`);
+          await api.delete(`/sessions/${encodeURIComponent(currentSessionName)}`);
+          addEvent(`Killed session ${currentSessionName}`);
           // Brief delay then recreate
           setTimeout(async () => {
             try {
-              await api.post("/sessions", { name: sessionName });
-              addEvent(`Restarted session ${sessionName}`);
+              await api.post("/sessions", { name: currentSessionName });
+              addEvent(`Restarted session ${currentSessionName}`);
               startTime = Date.now();
               updateStatus("idle");
             } catch (err) {
@@ -235,7 +239,7 @@ export function createDashboardBackTile({ sessionName } = {}) {
 
       case "copy-output":
         try {
-          const data = await api.get(`/sessions/${encodeURIComponent(sessionName)}/buffer?lines=50`);
+          const data = await api.get(`/sessions/${encodeURIComponent(currentSessionName)}/buffer?lines=50`);
           const text = Array.isArray(data) ? data.join("\n") : (data.output || data.buffer || "");
           await navigator.clipboard.writeText(text);
           addEvent("Copied last 50 lines to clipboard");
@@ -251,7 +255,7 @@ export function createDashboardBackTile({ sessionName } = {}) {
   async function pollStatus() {
     if (destroyed) return;
     try {
-      const status = await api.get(`/sessions/${encodeURIComponent(sessionName)}/status`);
+      const status = await api.get(`/sessions/${encodeURIComponent(currentSessionName)}/status`);
       updateProcessInfo(status);
 
       // Detect transition: had child processes -> no child processes
@@ -280,6 +284,20 @@ export function createDashboardBackTile({ sessionName } = {}) {
   return {
     type: "dashboard-back",
 
+    /** Update the session name after a tab rename. Mirrors terminal-tile's
+     *  setSessionName so the dashboard's polling and actions stay aligned
+     *  with the carousel key. */
+    setSessionName(newName) {
+      currentSessionName = newName;
+      if (rootEl) {
+        const nameEl = rootEl.querySelector(".db-session-name");
+        if (nameEl) nameEl.textContent = newName;
+      }
+      if (ctx?.chrome?.toolbar) {
+        ctx.chrome.toolbar.setTitle(newName);
+      }
+    },
+
     mount(el, tileCtx) {
       container = el;
       ctx = tileCtx;
@@ -295,7 +313,7 @@ export function createDashboardBackTile({ sessionName } = {}) {
 
       // Wire up toolbar
       if (ctx?.chrome?.toolbar) {
-        ctx.chrome.toolbar.setTitle(sessionName);
+        ctx.chrome.toolbar.setTitle(currentSessionName);
         ctx.chrome.toolbar.addButton({
           icon: "arrow-u-up-left",
           label: "Back to terminal",
@@ -329,7 +347,7 @@ export function createDashboardBackTile({ sessionName } = {}) {
     },
 
     getTitle() {
-      return `${sessionName} Dashboard`;
+      return `${currentSessionName} Dashboard`;
     },
 
     getIcon() {

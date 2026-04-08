@@ -714,9 +714,12 @@
     const windowTabSet = createWindowTabSet({
       getCurrentSession: () => state.session.name
     });
-    // Ensure the initial session from the URL is in this window's tab set
+    // Ensure the initial session from the URL is in this window's tab set.
+    // restoreTab (not addTab) so the reconciler can prune it if the server
+    // has no matching session — a stale ?s= URL bookmark must not be granted
+    // permanent immunity via the recently-added grace period.
     if (explicitSession) {
-      windowTabSet.addTab(state.session.name);
+      windowTabSet.restoreTab(state.session.name);
     }
 
     // Create session list component
@@ -1800,18 +1803,10 @@
           if (sessions.length > 0) {
             switchSession(sessions[0].name);
           } else {
-            wsConnection.disconnect();
-            state.update('session.name', null);
-            setDocTitle(null);
-            const url = new URL(window.location);
-            url.searchParams.delete("s");
-            history.replaceState(null, "", url);
-            renderBar(null);
+            clearFocusedSessionUI();
           }
         }).catch(() => {
-          wsConnection.disconnect();
-          state.update('session.name', null);
-          setDocTitle(null);
+          clearFocusedSessionUI();
         });
       },
       onDisconnect: () => { pendingSwitch = null; },
@@ -1899,20 +1894,26 @@
     // Threshold pattern: the first server response after reconnect can be a
     // partial list (e.g., only the attached session — see adb859d). Pruning
     // on that wipes every other tab. We require RECONCILE_PRUNE_THRESHOLD
-    // consecutive non-loading responses where the same dead set persists
-    // before acting.
+    // consecutive non-loading responses where THE SAME dead set persists
+    // before acting. Tracking the dead-set identity (not just the count)
+    // matters: if pass 1 sees [A] dead and pass 2 sees [B] dead, the counter
+    // would otherwise reach 2 and prune B without B getting two confirmations.
     //
     // Non-terminal tiles (notepad, dashboard, web preview) are skipped — they
     // have no server-side session and own their own lifecycle.
     const RECONCILE_PRUNE_THRESHOLD = 2;
     let reconcilePruneConfirmations = 0;
+    let lastDeadKey = "";
 
     function removeDeadSession(name) {
-      // Carousel: find the terminal tile pointing at this session, if any
+      // Carousel: terminal tile IDs are the (current) session name, and
+      // renameCard re-keys cardEls atomically — so getTile(name) is the
+      // canonical lookup and works for both renamed and freshly-created
+      // sessions. findCard by tile.sessionName was historically fragile
+      // because the field could lag behind a rename.
       if (carousel.isActive()) {
-        const tileId = carousel.findCard(tile =>
-          tile.type === "terminal" && tile.sessionName === name);
-        if (tileId) carousel.removeCard(tileId);
+        const tile = carousel.getTile(name);
+        if (tile?.type === "terminal") carousel.removeCard(name);
       }
       // Tab set: remove + broadcast to other windows on this browser
       windowTabSet.onSessionKilled(name);
@@ -1920,9 +1921,25 @@
       terminalPool.dispose(name);
     }
 
+    /** Tear down all UI state for the focused session — used when the focused
+     *  session is gone and there's nothing to fall back to. Both the live
+     *  removal path (onSessionRemoved) and the reconciler call this. */
+    function clearFocusedSessionUI() {
+      wsConnection.disconnect();
+      state.update('session.name', null);
+      setDocTitle(null);
+      const url = new URL(window.location);
+      url.searchParams.delete("s");
+      history.replaceState(null, "", url);
+      renderBar(null);
+    }
+
     function reconcileTilesAgainstServer() {
       const { sessions: serverList, loading } = sessionStore.getState();
-      if (loading || !Array.isArray(serverList) || serverList.length === 0) return;
+      // An empty server list is valid data — when all sessions have been
+      // killed remotely, we still need to drive pruning of stale local tabs.
+      // Only bail on in-flight loads or non-array junk.
+      if (loading || !Array.isArray(serverList)) return;
 
       const serverSet = new Set(serverList.map(s => s.name));
 
@@ -1933,15 +1950,16 @@
       }
 
       // Find dead terminal sessions: present locally, missing from the server,
-      // and not in the just-added grace period.
+      // and not in the just-added grace period. Terminal tile IDs ARE the
+      // current session name (renameCard keeps them in sync), so iterate
+      // by tileId — tile.sessionName has historically been stale post-rename.
       const dead = new Set();
       if (carousel.isActive()) {
         for (const tileId of carousel.getCards()) {
           const tile = carousel.getTile(tileId);
           if (tile?.type !== "terminal") continue;
-          const name = tile.sessionName;
-          if (!serverSet.has(name) && !windowTabSet.isRecentlyAdded(name)) {
-            dead.add(name);
+          if (!serverSet.has(tileId) && !windowTabSet.isRecentlyAdded(tileId)) {
+            dead.add(tileId);
           }
         }
       }
@@ -1958,12 +1976,23 @@
 
       if (dead.size === 0) {
         reconcilePruneConfirmations = 0;
+        lastDeadKey = "";
         return;
+      }
+
+      // Stable key over the dead set. Reset counter if the dead set changed
+      // since the previous pass — different victims must each accumulate
+      // their own confirmations.
+      const deadKey = JSON.stringify([...dead].sort());
+      if (deadKey !== lastDeadKey) {
+        reconcilePruneConfirmations = 0;
+        lastDeadKey = deadKey;
       }
 
       reconcilePruneConfirmations++;
       if (reconcilePruneConfirmations < RECONCILE_PRUNE_THRESHOLD) return;
       reconcilePruneConfirmations = 0;
+      lastDeadKey = "";
 
       const wasFocusedDead = dead.has(state.session.name);
       for (const name of dead) {
@@ -1976,13 +2005,7 @@
           switchSession(next.name);
         } else {
           // No live sessions left — clear UI and stay on page
-          wsConnection.disconnect();
-          state.update('session.name', null);
-          setDocTitle(null);
-          const url = new URL(window.location);
-          url.searchParams.delete("s");
-          history.replaceState(null, "", url);
-          renderBar(null);
+          clearFocusedSessionUI();
         }
       }
     }
@@ -2023,7 +2046,8 @@
             terminalPool.activate(name);
             renderBar(name);
           }
-          windowTabSet.addTab(name);
+          // restoreTab: server already confirmed this exists — no grace needed.
+          windowTabSet.restoreTab(name);
           wsConnection.connect();
         }
         // If no sessions exist, stay empty — user can create one via session list

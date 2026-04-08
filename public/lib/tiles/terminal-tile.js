@@ -22,6 +22,10 @@ import { createDashboardBackTile } from "./dashboard-back-tile.js";
 export function createTerminalTileFactory(deps) {
   const { terminalPool, createTileFn } = deps;
   return function createTerminalTile({ sessionName }) {
+    // Mutable: rename updates this via setSessionName(). Every method below
+    // reads `currentSessionName` (not the destructured parameter) so that
+    // rename, lookup, persistence, and pool calls all stay in sync.
+    let currentSessionName = sessionName;
     let mounted = false;
     let container = null;
     let backTile = null;
@@ -29,16 +33,23 @@ export function createTerminalTileFactory(deps) {
     let prevHasChildProcesses = false;
     let autoFlipTimer = null;
 
-    return {
+    const tile = {
       type: "terminal",
 
-      /** The session name this tile wraps. */
-      sessionName,
+      /** The session name this tile wraps (current — kept in sync on rename). */
+      get sessionName() { return currentSessionName; },
+
+      /** Update the session name after a tab rename. The carousel calls
+       *  this from renameCard() so that subsequent lookups (findCard,
+       *  serialize, etc.) see the new name instead of the original. */
+      setSessionName(newName) {
+        currentSessionName = newName;
+      },
 
       mount(el, ctx) {
         container = el;
-        const entry = terminalPool.getOrCreate(sessionName);
-        terminalPool.protect(sessionName);
+        const entry = terminalPool.getOrCreate(currentSessionName);
+        terminalPool.protect(currentSessionName);
         entry.container.style.display = "";
         el.appendChild(entry.container);
         mounted = true;
@@ -46,8 +57,8 @@ export function createTerminalTileFactory(deps) {
         // ── Register dashboard back-face ───────────────────────────
         const carousel = deps.carousel;
         if (carousel) {
-          backTile = createDashboardBackTile({ sessionName });
-          carousel.setBackTile(sessionName, backTile);
+          backTile = createDashboardBackTile({ sessionName: currentSessionName });
+          carousel.setBackTile(currentSessionName, backTile);
         }
 
         // ── Auto-flip on child process exit ────────────────────────
@@ -59,8 +70,8 @@ export function createTerminalTileFactory(deps) {
       unmount() {
         if (!mounted) return;
         stopStatusPoll();
-        terminalPool.unprotect(sessionName);
-        const entry = terminalPool.get(sessionName);
+        terminalPool.unprotect(currentSessionName);
+        const entry = terminalPool.get(currentSessionName);
         if (entry) {
           entry.container.style.display = "none";
           // Move terminal pane back to pool parent so it isn't orphaned
@@ -75,10 +86,10 @@ export function createTerminalTileFactory(deps) {
       },
 
       focus() {
-        const entry = terminalPool.get(sessionName);
+        const entry = terminalPool.get(currentSessionName);
         if (!entry) return;
-        terminalPool.setActive(sessionName);
-        terminalPool.attachControls(sessionName);
+        terminalPool.setActive(currentSessionName);
+        terminalPool.attachControls(currentSessionName);
         entry.term.focus();
         this.resize();
       },
@@ -88,11 +99,11 @@ export function createTerminalTileFactory(deps) {
       },
 
       resize() {
-        terminalPool.scale(sessionName);
+        terminalPool.scale(currentSessionName);
       },
 
       getTitle() {
-        return sessionName;
+        return currentSessionName;
       },
 
       getIcon() {
@@ -100,9 +111,11 @@ export function createTerminalTileFactory(deps) {
       },
 
       serialize() {
-        return { type: "terminal", sessionName };
+        return { type: "terminal", sessionName: currentSessionName };
       },
     };
+
+    return tile;
 
     // ── Status polling for auto-flip ──────────────────────────────
 
@@ -110,23 +123,23 @@ export function createTerminalTileFactory(deps) {
       if (statusPollTimer) return;
       statusPollTimer = setInterval(async () => {
         try {
-          const res = await fetch(`/sessions/${encodeURIComponent(sessionName)}/status`);
+          const res = await fetch(`/sessions/${encodeURIComponent(currentSessionName)}/status`);
           if (!res.ok) return;
           const status = await res.json();
           const hasChild = status.hasChildProcesses || false;
 
           // Detect transition: had child processes -> no child processes
-          if (prevHasChildProcesses && !hasChild && carousel && !carousel.isFlipped(sessionName)) {
+          if (prevHasChildProcesses && !hasChild && carousel && !carousel.isFlipped(currentSessionName)) {
             // Small delay (1.5s) to avoid flipping during brief pauses
             if (autoFlipTimer) clearTimeout(autoFlipTimer);
             autoFlipTimer = setTimeout(() => {
               // Re-check: still no child processes?
-              fetch(`/sessions/${encodeURIComponent(sessionName)}/status`)
+              fetch(`/sessions/${encodeURIComponent(currentSessionName)}/status`)
                 .then(r => r.ok ? r.json() : null)
                 .then(s => {
-                  if (s && !s.hasChildProcesses && !carousel.isFlipped(sessionName)) {
+                  if (s && !s.hasChildProcesses && !carousel.isFlipped(currentSessionName)) {
                     if (backTile?.addEvent) backTile.addEvent("Agent work completed");
-                    carousel.flipCard(sessionName, true);
+                    carousel.flipCard(currentSessionName, true);
                   }
                 })
                 .catch(() => {});

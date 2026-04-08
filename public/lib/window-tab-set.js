@@ -102,6 +102,21 @@ export function createWindowTabSet({ getCurrentSession } = {}) {
       notify();
     },
 
+    /** Insert a tab without granting it the just-added grace period.
+     *  Use this when restoring a tab from a source that may be stale
+     *  (URL bookmark, post-fetch boot) — the reconciler must be free to
+     *  prune it if the server has no matching session. */
+    restoreTab(name, position) {
+      if (tabs.includes(name)) return;
+      if (position !== undefined && position >= 0) {
+        tabs.splice(position, 0, name);
+      } else {
+        tabs.push(name);
+      }
+      saveTabs();
+      notify();
+    },
+
     removeTab(name) {
       if (!tabs.includes(name)) return;
       tabs = tabs.filter(n => n !== name);
