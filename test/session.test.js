@@ -1057,6 +1057,138 @@ describe("screenFingerprint seq tagging (regression)", () => {
   });
 });
 
+describe("Session.snapshot (Tier 3.2)", () => {
+  // snapshot() consolidates the attach/subscribe/resync code paths in
+  // session-manager and ws-manager into a single method that returns a
+  // Lamport-correct { buffer, seq, alive } tuple. The contract:
+  //
+  //   - buffer is the escape-sequence serialization of the screen mirror
+  //   - seq is the byte position the buffer reflects (NOT some later cursor)
+  //   - alive is true iff the session is still attached
+  //
+  // Pre-Tier-3.2, every caller open-coded the flush → serialize → totalBytes
+  // sequence. snapshot() pins the order so future callers can't reintroduce
+  // a Lamport ordering bug.
+
+  it("returns { buffer, seq, alive } shape on a fresh session", async () => {
+    const { session } = createWiredTestSession("snap");
+    const snap = await session.snapshot();
+    assert.strictEqual(typeof snap, "object");
+    assert.ok("buffer" in snap, "must include buffer field");
+    assert.ok("seq" in snap, "must include seq field");
+    assert.ok("alive" in snap, "must include alive field");
+    assert.strictEqual(typeof snap.buffer, "string");
+    assert.strictEqual(typeof snap.seq, "number");
+    assert.strictEqual(typeof snap.alive, "boolean");
+  });
+
+  it("buffer reflects bytes pushed before the snapshot", async () => {
+    const { session, mockProc } = createWiredTestSession("snap");
+    mockProc.simulateOutput("%0", "hello world");
+    await new Promise(resolve => setImmediate(resolve));
+    const snap = await session.snapshot();
+    assert.ok(snap.buffer.length > 0,
+      "buffer should be non-empty after data has been written to the screen mirror");
+  });
+
+  it("seq matches the byte position the buffer reflects", async () => {
+    const { session, mockProc } = createWiredTestSession("snap");
+    mockProc.simulateOutput("%0", "test data");
+    await new Promise(resolve => setImmediate(resolve));
+    const snap = await session.snapshot();
+    assert.strictEqual(snap.seq, session.cursor,
+      "snapshot seq must equal session.cursor — clients pull from seq onward, " +
+      "anything else would tell them to skip bytes the buffer already includes");
+    assert.ok(snap.seq > 0);
+  });
+
+  it("returns empty buffer with current cursor when not alive", async () => {
+    const { session } = createWiredTestSession("snap");
+    session.kill();
+    const snap = await session.snapshot();
+    assert.strictEqual(snap.alive, false);
+    assert.strictEqual(snap.buffer, "");
+    assert.strictEqual(snap.seq, session.cursor);
+  });
+
+  it("does not throw when the screen is disposed mid-snapshot", async () => {
+    const { session } = createWiredTestSession("snap");
+    // Simulate the race: screen is disposed before snapshot() finishes flushing
+    session._screen.dispose();
+    const snap = await session.snapshot();
+    // Must return the structured shape, not throw
+    assert.strictEqual(typeof snap.buffer, "string");
+    assert.strictEqual(typeof snap.seq, "number");
+  });
+});
+
+describe("Session.pullFrom (Tier 3.2)", () => {
+  // pullFrom() replaces the open-coded `outputBuffer.sliceFrom + totalBytes`
+  // pattern in session-manager.flushOutput, ws-manager.pull, and
+  // routes.js GET /sessions/:name/buffer.
+  //
+  // The contract:
+  //   - { data, cursor } where data is the slice and cursor is the new head
+  //   - data === null on eviction (caller must fall back to snapshot())
+  //   - data === "" when the caller is already caught up
+
+  it("returns { data, cursor } shape", async () => {
+    const { session } = createWiredTestSession("pull");
+    const result = session.pullFrom(0);
+    assert.strictEqual(typeof result, "object");
+    assert.ok("data" in result);
+    assert.ok("cursor" in result);
+  });
+
+  it("returns the buffered bytes and the new cursor", async () => {
+    const { session, mockProc } = createWiredTestSession("pull");
+    mockProc.simulateOutput("%0", "hello");
+    const before = session.cursor;
+    mockProc.simulateOutput("%0", " world");
+    const { data, cursor } = session.pullFrom(before);
+    assert.strictEqual(data, " world",
+      "pullFrom must return bytes from fromSeq to current cursor — anything " +
+      "else would skip or duplicate output for the client");
+    assert.strictEqual(cursor, session.cursor,
+      "cursor must equal the byte position the data ends at");
+  });
+
+  it("returns empty data when caller is caught up", async () => {
+    const { session, mockProc } = createWiredTestSession("pull");
+    mockProc.simulateOutput("%0", "anything");
+    const here = session.cursor;
+    const { data, cursor } = session.pullFrom(here);
+    assert.strictEqual(data, "");
+    assert.strictEqual(cursor, here);
+  });
+
+  it("returns null data when fromSeq has been evicted from the RingBuffer", () => {
+    // Construct a tiny session so the RingBuffer evicts on every push
+    const { session, mockProc } = createWiredTestSession("pull-evict", {
+      maxBufferBytes: 16,
+    });
+    mockProc.simulateOutput("%0", "first chunk that will be evicted");
+    mockProc.simulateOutput("%0", "second chunk that pushes the first out");
+    // fromSeq=0 is older than the oldest retained byte
+    const { data } = session.pullFrom(0);
+    assert.strictEqual(data, null,
+      "pullFrom must return null when fromSeq is below the start of the " +
+      "RingBuffer — callers (ws-manager.pull) use this signal to fall back " +
+      "to a full snapshot rather than silently sending partial data");
+  });
+});
+
+describe("Session.cursor (Tier 3.2)", () => {
+  it("equals outputBuffer.totalBytes", async () => {
+    const { session, mockProc } = createWiredTestSession("cursor");
+    assert.strictEqual(session.cursor, 0);
+    mockProc.simulateOutput("%0", "abcdef");
+    assert.strictEqual(session.cursor, session.outputBuffer.totalBytes,
+      "cursor is sugar for outputBuffer.totalBytes — callers use it to " +
+      "avoid reaching into the RingBuffer's internals");
+  });
+});
+
 describe("SessionNotAliveError", () => {
   it("includes session name in error message", () => {
     const err = new SessionNotAliveError("my-session");

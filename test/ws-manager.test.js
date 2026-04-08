@@ -116,8 +116,32 @@ function createMockSessionManager() {
         if (s === oldName) clientSessions.set(cid, newName);
       }
     },
-    // Test helper: register a mock session
-    _addSession(name, session) { mockSessions.set(name, session); },
+    // Test helper: register a mock session.
+    // Wraps plain mocks with default pullFrom/snapshot/cursor so they
+    // satisfy the contract ws-manager expects (Tier 3.2).
+    _addSession(name, session) {
+      if (!session.pullFrom) {
+        session.pullFrom = (fromSeq) => ({
+          data: session.outputBuffer?.sliceFrom
+            ? session.outputBuffer.sliceFrom(fromSeq)
+            : "",
+          cursor: session.outputBuffer?.totalBytes ?? 0,
+        });
+      }
+      if (!session.snapshot) {
+        session.snapshot = async () => ({
+          buffer: session._subscribeBuffer || "",
+          seq: session.outputBuffer?.totalBytes ?? 0,
+          alive: session.alive ?? true,
+        });
+      }
+      if (!("cursor" in session)) {
+        Object.defineProperty(session, "cursor", {
+          get() { return session.outputBuffer?.totalBytes ?? 0; },
+        });
+      }
+      mockSessions.set(name, session);
+    },
   };
 }
 

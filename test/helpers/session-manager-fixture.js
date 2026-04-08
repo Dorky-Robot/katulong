@@ -55,7 +55,9 @@ export const tmuxSessions = new Map();
  * The base implementation:
  *   - tracks lifecycle state via STATE_* constants
  *   - exposes a stub outputBuffer with totalBytes/sliceFrom
- *   - returns the new screenFingerprint() shape: { hash, seq }
+ *   - returns the structured screenFingerprint() shape: { hash, seq }
+ *   - returns the structured snapshot() shape: { buffer, seq, alive }
+ *   - returns the structured pullFrom() shape: { data, cursor }
  *   - removes itself from tmuxSessions on kill so listSessions stays
  *     consistent with the manager's view
  */
@@ -75,10 +77,20 @@ export class BaseMockSession {
   }
 
   get alive() { return this.state === BaseMockSession.STATE_ATTACHED; }
+  get cursor() { return this.outputBuffer.totalBytes; }
   attachControlMode() {}
   async seedScreen() {}
   async serializeScreen() { return ""; }
-  async screenFingerprint() { return { hash: 0, seq: this.outputBuffer.totalBytes }; }
+  async screenFingerprint() { return { hash: 0, seq: this.cursor }; }
+  async snapshot() {
+    if (!this.alive) {
+      return { buffer: "", seq: this.cursor, alive: false };
+    }
+    return { buffer: await this.serializeScreen(), seq: this.cursor, alive: true };
+  }
+  pullFrom(fromSeq) {
+    return { data: this.outputBuffer.sliceFrom(fromSeq), cursor: this.cursor };
+  }
   updateChildCount(count) { this._childCount = count; }
   write() {}
   resize() {}
