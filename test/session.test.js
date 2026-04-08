@@ -1049,8 +1049,7 @@ describe("screenFingerprint seq tagging (regression)", () => {
 
   it("returns { hash: 0, seq: 0 } when headless is disposed", async () => {
     const { session } = createWiredTestSession("test");
-    session._headless.dispose();
-    session._headless = null;
+    session._screen.dispose();
     const fp = await session.screenFingerprint();
     assert.deepStrictEqual(fp, { hash: 0, seq: 0 },
       "disposed headless must still return the structured shape — " +
@@ -1097,9 +1096,9 @@ describe("seedScreen", () => {
 
     await session.seedScreen("$ prompt here");
 
-    // The headless terminal cursor should be positioned after the seed text
-    const buf = session._headless.buffer.active;
-    assert.ok(buf.cursorX > 0 || buf.cursorY > 0, "cursor should not be at origin after seed");
+    // The screen mirror's cursor should be positioned after the seed text
+    const { x, y } = session._screen.cursor;
+    assert.ok(x > 0 || y > 0, "cursor should not be at origin after seed");
   });
 
   it("does not affect the RingBuffer", async () => {
@@ -1142,8 +1141,7 @@ describe("seedScreen", () => {
       onData: () => {},
     });
 
-    session._headless.dispose();
-    session._headless = null;
+    session._screen.dispose();
 
     // Should not throw
     await session.seedScreen("some content");
@@ -1172,9 +1170,9 @@ describe("seedScreen", () => {
     // Seed with content and explicit cursor position (row 2, col 5 — 1-based)
     await session.seedScreen("line1\r\nline2\r\nline3", { row: 2, col: 5 });
 
-    const buf = session._headless.buffer.active;
-    // cursorY is 0-based; row is 1-based
-    assert.strictEqual(buf.cursorY, 1, "cursor row should be 1 (0-based) for row:2");
-    assert.strictEqual(buf.cursorX, 4, "cursor col should be 4 (0-based) for col:5");
+    const { x, y } = session._screen.cursor;
+    // cursor coords are 0-based; row/col are 1-based
+    assert.strictEqual(y, 1, "cursor row should be 1 (0-based) for row:2");
+    assert.strictEqual(x, 4, "cursor col should be 4 (0-based) for col:5");
   });
 });
