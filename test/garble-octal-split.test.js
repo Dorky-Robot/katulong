@@ -73,7 +73,7 @@ function tmuxOctalEscape(buf, escapeHigh = true) {
 
 /**
  * Mock readable for the control mode stdout: lets a test fire arbitrary
- * raw chunks at Session._handleStdoutData via the same code path used by
+ * raw chunks at session._parser.write() via the same code path used by
  * the real spawn().
  */
 class MockReadable {
@@ -119,7 +119,7 @@ function createWiredSession(name) {
   const proc = new MockProc();
   session.controlProc = proc;
   session.state = Session.STATE_ATTACHED;
-  proc.stdout.on("data", (chunk) => session._handleStdoutData(chunk));
+  proc.stdout.on("data", (chunk) => session._parser.write(chunk));
   return { session, proc };
 }
 
@@ -220,9 +220,9 @@ describe("unescapeTmuxOutputBytes — partial escape carry", () => {
   });
 });
 
-// --- Integration test against the real Session._handleStdoutData parser ---
+// --- Integration test against the real Session parser pipeline ---
 
-describe("Session._handleStdoutData — partial octal escape across %output lines", () => {
+describe("Session tmux output parser — partial octal escape across %output lines", () => {
   it("decodes a row of block chars when %output wraps mid-escape", () => {
     // Simulate the exact bug: Claude Code's banner row, octal-escaped by
     // tmux, where the per-message length limit happens to fall inside one
@@ -304,15 +304,15 @@ describe("Session._handleStdoutData — partial octal escape across %output line
   });
 
   it("attachControlMode clears stuck parser state from a prior attach", () => {
-    // Regression: if attachControlMode didn't reset _octalCarry (or any of
-    // the other parser fields), a partial escape left over from a previous
-    // detached attach would corrupt the first %output of the next attach.
+    // Regression: if attachControlMode didn't reset the parser, a partial
+    // escape or half-buffered line left over from a previous detached
+    // attach would corrupt the first %output of the next attach.
     //
     // We use a stubbed spawn so the test runs without a real tmux binary.
     // The stub returns a MockProc whose stdout we drive directly, which
     // means this test exercises the ACTUAL attachControlMode code path —
-    // constructor reset, post-reset attachControlMode call, and the first
-    // %output through the real _handleStdoutData → _parseLineBuf pipeline.
+    // constructor reset, pre-wire parser reset, and the first %output
+    // through the real parser.write() → parseLineBuf pipeline.
     let proc;
     const spawnStub = () => {
       proc = new MockProc();
@@ -324,17 +324,14 @@ describe("Session._handleStdoutData — partial octal escape across %output line
       { _spawn: spawnStub },
     );
 
-    // Simulate residual state from a previous detach: a stuck partial
-    // escape and a half-consumed line buffer. Without the reset, the
-    // stuck `\34` would be consumed by the first escape of the next
-    // %output and produce desynced bytes.
-    session._octalCarry = "\\34";
-    session._lineBuf = "leftover garbage from prior attach";
+    // Simulate residual state from a previous detach by feeding the parser
+    // a half line that also ends with a partial octal escape. Without the
+    // reset, the stuck carry + line buffer would desync the first byte of
+    // the next attach's %output.
+    session._parser.write(Buffer.from("%output %0 partial-no-newline\\34"));
 
     session.attachControlMode(80, 24);
 
-    assert.equal(session._octalCarry, "", "_octalCarry should be reset");
-    assert.equal(session._lineBuf, "", "_lineBuf should be reset");
     assert.ok(session.controlProc === proc, "controlProc should be the stub");
 
     // Drive a clean block-character run through the real parser and
@@ -359,11 +356,11 @@ describe("Session._handleStdoutData — partial octal escape across %output line
 
   it("ignores a stale close event from a superseded process on reattach", () => {
     // Regression: when a session reattaches, the old controlProc's close
-    // handler can fire *after* the new attach has already replaced
-    // this._decoder / this._outputDecoder / this.controlProc. Without a
-    // stale-proc guard, the stale handler would call this._decoder.end()
-    // on the NEW decoder (prematurely flushing buffered bytes) and fire
-    // onExit on a still-attached session (bogus "session exited" signal).
+    // handler can fire *after* the new attach has already reset the
+    // parser state and installed the new controlProc. Without a stale-proc
+    // guard, the stale handler would call parser.drain() mid-stream
+    // (prematurely flushing buffered bytes) and fire onExit on a
+    // still-attached session (bogus "session exited" signal).
     //
     // The guard is `if (this.controlProc !== proc) return;` — we verify
     // it by firing close on proc1 *after* attaching with proc2, and
@@ -391,21 +388,11 @@ describe("Session._handleStdoutData — partial octal escape across %output line
     assert.ok(session.controlProc === proc2, "second attach should replace controlProc");
     assert.equal(session.state, Session.STATE_ATTACHED);
 
-    // Capture the new decoder instances so we can verify they aren't
-    // clobbered by the stale close handler.
-    const decoderAfterReattach = session._decoder;
-    const outputDecoderAfterReattach = session._outputDecoder;
-
     // Fire close on the stale proc1. The guard must make this a no-op.
     proc1.fireClose(0);
 
     assert.equal(onExitCalls, 0, "stale close must not call onExit");
     assert.equal(session.state, Session.STATE_ATTACHED, "stale close must not detach");
-    assert.ok(session._decoder === decoderAfterReattach, "stale close must not touch _decoder");
-    assert.ok(
-      session._outputDecoder === outputDecoderAfterReattach,
-      "stale close must not touch _outputDecoder",
-    );
 
     // Live close on proc2 should still work.
     proc2.fireClose(0);
