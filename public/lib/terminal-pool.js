@@ -246,8 +246,13 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
       entry.term.focus();
       // Only notify server if dimensions actually changed — otherwise
       // the resize triggers tmux redraws that duplicate content.
+      // Raptor 3: use result.cols/rows (the newly-computed dims), NOT
+      // entry.term.cols/rows. scaleToFit no longer calls term.resize()
+      // locally, so entry.term.{cols,rows} still reflects the LAST
+      // server-confirmed snapshot — sending those dims as a resize
+      // request is a no-op and the server never updates tmux.
       if (result?.changed) {
-        debouncedResize(sessionName, entry.term.cols, entry.term.rows);
+        debouncedResize(sessionName, result.cols, result.rows);
       }
     });
 
@@ -309,7 +314,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     if (!entry) return false;
     const result = scaleToFit(entry.term, entry.container);
     if (result?.changed) {
-      debouncedResize(sessionName, entry.term.cols, entry.term.rows);
+      debouncedResize(sessionName, result.cols, result.rows);
     }
     return result?.changed ?? false;
   }
@@ -319,7 +324,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     for (const [name, entry] of pool) {
       const result = scaleToFit(entry.term, entry.container);
       if (result?.changed) {
-        debouncedResize(name, entry.term.cols, entry.term.rows);
+        debouncedResize(name, result.cols, result.rows);
       }
     }
   }
@@ -339,12 +344,20 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     const active = pool.get(activeSession);
     if (active) {
       const result = scaleToFit(active.term, active.container);
-      // Only force repaint when dimensions actually changed — otherwise
-      // we cause unnecessary redraws on every subpixel layout shift
-      // (e.g., tapping the terminal on iPad to focus it).
+      // Only notify server when the computed dims differ from the last
+      // server-confirmed grid — otherwise we flood tmux with SIGWINCHs
+      // on every subpixel layout shift (e.g., tapping the terminal on
+      // iPad to focus it).
+      //
+      // Raptor 3: use result.cols/rows, not active.term.cols/rows.
+      // scaleToFit no longer calls term.resize() locally, so
+      // active.term.{cols,rows} is the LAST server snapshot — sending
+      // that as a resize request is a no-op and the window never
+      // actually resizes. No local term.refresh() either: the server's
+      // snapshot reply will repaint the grid atomically via
+      // applySnapshot (resize → clear → reset → write).
       if (result?.changed) {
-        active.term.refresh(0, active.term.rows - 1);
-        debouncedResize(activeSession, active.term.cols, active.term.rows);
+        debouncedResize(activeSession, result.cols, result.rows);
       }
     }
   });
