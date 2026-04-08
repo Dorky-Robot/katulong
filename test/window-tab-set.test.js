@@ -130,6 +130,115 @@ describe("WindowTabSet.addTab", () => {
   });
 });
 
+describe("WindowTabSet persistence cap", () => {
+  beforeEach(() => {
+    stores.session = {};
+    stores.local = {};
+  });
+
+  it("caps saved tabs at 50, dropping oldest", () => {
+    // Regression: without a cap, a drift bug or phantom leak can push
+    // the persisted tab list into the dozens. On the next boot those
+    // phantoms drive a subscribe retry storm via syncCarouselSubscriptions,
+    // and the status poller (5s per tile) multiplies the damage. Cap
+    // must match MAX_PERSISTED_CARDS in card-carousel.js.
+    const seeded = Array.from({ length: 60 }, (_, i) => `tab${i}`);
+    stores.session["katulong-window-tabs"] = JSON.stringify(seeded);
+    const origWarn = console.warn;
+    console.warn = () => {};
+    let ts;
+    try {
+      ts = createWindowTabSet({ getCurrentSession: () => "tab0" });
+    } finally {
+      console.warn = origWarn;
+    }
+    const tabs = ts.getTabs();
+    assert.equal(tabs.length, 50);
+    // Tail preserved (most-recently-added at end of array).
+    assert.equal(tabs[tabs.length - 1], "tab59");
+    // Oldest dropped.
+    assert.ok(!tabs.includes("tab0"));
+    assert.ok(!tabs.includes("tab9"));
+  });
+
+  it("keeps newly-added tab in memory even when storage must trim", () => {
+    // Regression: an earlier draft reassigned the closure `tabs` inside
+    // saveTabs() when trimming to the cap. addTab("overflow") at a full
+    // set would then splice "overflow" onto the end, saveTabs() would
+    // tail-slice (dropping the oldest), and the in-memory `tabs` would
+    // silently shrink — which was fine for append but catastrophic for
+    // head-insert (see the next test). The fix: the live array stays
+    // canonical; only the persisted view is trimmed.
+    stores.session = {};
+    stores.local = {};
+    const seeded = Array.from({ length: 50 }, (_, i) => `tab${i}`);
+    stores.session["katulong-window-tabs"] = JSON.stringify(seeded);
+    const ts = createWindowTabSet({ getCurrentSession: () => "tab0" });
+    const origWarn = console.warn;
+    console.warn = () => {};
+    try {
+      ts.addTab("overflow");
+    } finally {
+      console.warn = origWarn;
+    }
+    // In-memory: 51 tabs — nothing has been dropped from the live array.
+    const tabs = ts.getTabs();
+    assert.equal(tabs.length, 51);
+    assert.equal(tabs[tabs.length - 1], "overflow");
+    assert.ok(tabs.includes("tab0"), "in-memory tabs must not be mutated by saveTabs");
+    // Storage: trimmed to cap — the oldest is dropped from the persisted view.
+    const persisted = JSON.parse(stores.session["katulong-window-tabs"]);
+    assert.equal(persisted.length, 50);
+    assert.ok(persisted.includes("overflow"));
+    assert.ok(!persisted.includes("tab0"), "oldest dropped from storage only");
+  });
+
+  it("head-insert of a new tab on a full set keeps the new tab", () => {
+    // Regression: before the saveTabs() side-effect fix, addTab("new", 0)
+    // on a full set spliced "new" at index 0, then in-place tail-slice
+    // dropped exactly that entry ("new") from both storage AND the live
+    // `tabs` array. The carousel kept its tile for the new session, the
+    // tab bar lost the button, and the two layers diverged. The fix is
+    // to leave `tabs` unmutated so the new head entry survives.
+    stores.session = {};
+    stores.local = {};
+    const seeded = Array.from({ length: 50 }, (_, i) => `tab${i}`);
+    stores.session["katulong-window-tabs"] = JSON.stringify(seeded);
+    const ts = createWindowTabSet({ getCurrentSession: () => "tab0" });
+    const origWarn = console.warn;
+    console.warn = () => {};
+    try {
+      ts.addTab("new", 0);
+    } finally {
+      console.warn = origWarn;
+    }
+    const tabs = ts.getTabs();
+    assert.equal(tabs[0], "new", "new tab survives at the head position");
+    assert.equal(tabs.length, 51, "live tabs retains the full set");
+  });
+
+  it("persists the capped list to storage (not the full bloated list)", () => {
+    const seeded = Array.from({ length: 80 }, (_, i) => `tab${i}`);
+    stores.session["katulong-window-tabs"] = JSON.stringify(seeded);
+    const origWarn = console.warn;
+    console.warn = () => {};
+    let ts;
+    try {
+      ts = createWindowTabSet({ getCurrentSession: () => "tab0" });
+      // Trigger a save path explicitly — addTab re-persists.
+      ts.addTab("new");
+    } finally {
+      console.warn = origWarn;
+    }
+    const persistedSession = JSON.parse(stores.session["katulong-window-tabs"]);
+    assert.equal(persistedSession.length, 50);
+    const persistedLocal = JSON.parse(stores.local["katulong-last-tabs"]);
+    assert.equal(persistedLocal.length, 50);
+    // Sanity: the freshly added tab made it through the cap.
+    assert.ok(persistedSession.includes("new"));
+  });
+});
+
 describe("WindowTabSet.renameTab", () => {
   beforeEach(() => {
     stores.session = {};

@@ -574,6 +574,63 @@ describe('card-carousel', () => {
         "explicit cardWidth should override the saved localStorage width");
     });
 
+    it('caps persisted cards at 50 on save (drops oldest)', () => {
+      // Regression: without this cap, a bug that leaks phantom tiles into
+      // the carousel (e.g. a reconciler gap or a cross-device drift) can
+      // grow katulong-carousel into the hundreds. On the next boot every
+      // phantom gets re-subscribed and status-polled, producing a retry
+      // storm that makes the UI unresponsive. The cap keeps a single bad
+      // boot from cascading.
+      const many = makeTiles(...Array.from({ length: 60 }, (_, i) => `t${i}`));
+      // Silence the warning the save path emits when it trims.
+      const origWarn = console.warn;
+      console.warn = () => {};
+      try {
+        carousel.activate(many, "t59");
+      } finally {
+        console.warn = origWarn;
+      }
+      const saved = JSON.parse(localStorage.getItem("katulong-carousel"));
+      assert.strictEqual(saved.cards.length, 50);
+      // Tail preserved (most-recently-added kept).
+      assert.strictEqual(saved.cards[saved.cards.length - 1].id, "t59");
+      // Oldest dropped.
+      const ids = saved.cards.map(c => c.id);
+      assert.ok(!ids.includes("t0"));
+      assert.ok(!ids.includes("t9"));
+      assert.ok(ids.includes("t59"));
+    });
+
+    it('restore() caps bloated stored state at 50 cards', () => {
+      // A user with a pre-cap bloated blob should not re-mount every
+      // phantom on load. The truncation on read keeps the boot path from
+      // hitting the subscribe-storm failure mode even before save() runs.
+      const bloated = Array.from({ length: 120 }, (_, i) => ({
+        id: `old${i}`,
+        type: "terminal",
+        sessionName: `old${i}`,
+      }));
+      localStorage.setItem("katulong-carousel", JSON.stringify({
+        cards: bloated,
+        focused: "old119",
+      }));
+      const origWarn = console.warn;
+      console.warn = () => {};
+      let restored;
+      try {
+        restored = carousel.restore();
+      } finally {
+        console.warn = origWarn;
+      }
+      assert.strictEqual(restored.tiles.length, 50);
+      assert.strictEqual(restored.focused, "old119");
+      assert.strictEqual(restored.tiles[restored.tiles.length - 1].id, "old119");
+      // Oldest dropped.
+      const ids = restored.tiles.map(t => t.id);
+      assert.ok(!ids.includes("old0"));
+      assert.ok(!ids.includes("old69"));
+    });
+
     it('ignores tampered/corrupt cardWidth values in localStorage', () => {
       // Seed localStorage with a mix of invalid cardWidth values that
       // can actually survive JSON round-tripping. None should be
