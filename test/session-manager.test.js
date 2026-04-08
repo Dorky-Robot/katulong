@@ -4,122 +4,48 @@
  * Tests session lifecycle, client tracking, spawn serialization,
  * session limits, and delete/detach behavior.
  *
- * Uses mock.module to replace tmux operations with in-memory stubs.
+ * Uses helpers/session-manager-fixture.js to set up the tmux/Session
+ * mocks via mock.module — see that file for the rationale.
  */
 
-import { describe, it, before, beforeEach, mock } from "node:test";
+import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert";
+import {
+  setupSessionManagerMocks,
+  BaseMockSession,
+  makeBridge,
+  tmuxSessions,
+} from "./helpers/session-manager-fixture.js";
 
-// Mock tmux operations before importing session-manager
-const tmuxSessions = new Map(); // tmuxName -> true
-
-const sessionModuleUrl = new URL("../lib/session.js", import.meta.url).href;
-const tmuxModuleUrl = new URL("../lib/tmux.js", import.meta.url).href;
-const envFilterUrl = new URL("../lib/env-filter.js", import.meta.url).href;
-
-// Minimal Session mock that tracks state
-class MockSession {
-  static STATE_ATTACHED = "attached";
-  static STATE_DETACHED = "detached";
-  static STATE_KILLED = "killed";
-
+/**
+ * MockSession with extra tracking fields used by tests in this file:
+ *   - _written: array of write() arguments (for input-routing assertions)
+ *   - _resizes: array of resize() calls (for resize-arbitration tests)
+ *   - _seedCalls: array of seedScreen() calls (for adopt/seed tests)
+ *   - _cols/_rows: latest resize dimensions
+ */
+class MockSession extends BaseMockSession {
   constructor(name, tmuxName, options = {}) {
-    this.name = name;
-    this.tmuxName = tmuxName;
-    this.state = MockSession.STATE_ATTACHED;
-    this._childCount = 0;
+    super(name, tmuxName, options);
     this._cols = 0;
     this._rows = 0;
-    this.external = options.external || false;
     this._written = [];
     this._resizes = [];
     this._seedCalls = [];
-    this._options = options;
-    this.outputBuffer = { totalBytes: 0, sliceFrom: () => "" };
   }
 
-  get alive() { return this.state === MockSession.STATE_ATTACHED; }
-  attachControlMode() {}
-  async seedScreen(content, cursorPos) { this._seedCalls.push({ content, cursorPos }); }
-  serializeScreen() { return "mock-screen-snapshot"; }
-  async screenFingerprint() { return { hash: 0, seq: 0 }; }
-  updateChildCount(count) { this._childCount = count; }
+  async seedScreen(content, cursorPos) {
+    this._seedCalls.push({ content, cursorPos });
+  }
   write(data) { this._written.push(data); }
-  resize(cols, rows) { this._resizes.push({ cols, rows }); this._cols = cols; this._rows = rows; }
-  detach() {
-    if (this.state !== MockSession.STATE_ATTACHED) return;
-    this.state = MockSession.STATE_DETACHED;
-  }
-  kill() {
-    if (this.state === MockSession.STATE_KILLED) return;
-    this.state = MockSession.STATE_KILLED;
-    tmuxSessions.delete(this.tmuxName);
-  }
-  serializeScreen() { return ""; }
-  toJSON() {
-    return { name: this.name, alive: this.alive, external: this.external };
+  resize(cols, rows) {
+    this._resizes.push({ cols, rows });
+    this._cols = cols;
+    this._rows = rows;
   }
 }
 
-// Mock session.js — only exports Session
-mock.module(sessionModuleUrl, {
-  namedExports: {
-    Session: MockSession,
-  },
-});
-
-// Mock tmux.js — all tmux operations as in-memory stubs
-mock.module(tmuxModuleUrl, {
-  namedExports: {
-    tmuxSessionName: (name) => name.replace(/[.: ]/g, "_"),
-    tmuxExec: async (args) => {
-      // Rename support
-      if (args[0] === "rename-session") {
-        const oldName = args[2];
-        const newName = args[3];
-        if (tmuxSessions.has(oldName)) {
-          tmuxSessions.delete(oldName);
-          tmuxSessions.set(newName, true);
-          return { code: 0 };
-        }
-        return { code: 1 };
-      }
-      return { code: 0 };
-    },
-    tmuxNewSession: async (tmuxName) => {
-      tmuxSessions.set(tmuxName, true);
-    },
-    tmuxHasSession: async (tmuxName) => tmuxSessions.has(tmuxName),
-    applyTmuxSessionOptions: async () => {},
-    captureVisiblePane: async () => "$ prompt\n",
-    getCursorPosition: async () => ({ row: 1, col: 10 }),
-    getPaneCwd: async () => "/tmp",
-    checkTmux: async () => {},
-    cleanTmuxServerEnv: async () => {},
-    setTmuxKatulongEnv: async () => {},
-    tmuxListSessions: async () => [...tmuxSessions.keys()],
-    tmuxKillSession: async (tmuxName) => { tmuxSessions.delete(tmuxName); },
-    tmuxListSessionsDetailed: async () => new Map(),
-    tmuxSocketArgs: () => [],
-  },
-});
-
-mock.module(envFilterUrl, {
-  namedExports: {
-    getSafeEnv: () => ({}),
-  },
-});
-
-const { createSessionManager } = await import("../lib/session-manager.js");
-
-function makeBridge() {
-  const messages = [];
-  return {
-    relay(msg) { messages.push(msg); },
-    register() {},
-    messages,
-  };
-}
+const { createSessionManager } = await setupSessionManagerMocks(MockSession);
 
 function makeManager(overrides = {}) {
   const bridge = makeBridge();
