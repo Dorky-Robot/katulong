@@ -712,7 +712,6 @@
 
     const sessionStore = createSessionStore(state.session.name);
     const windowTabSet = createWindowTabSet({
-      sessionStore,
       getCurrentSession: () => state.session.name
     });
     // Ensure the initial session from the URL is in this window's tab set
@@ -1788,16 +1787,19 @@
         if (btn) btn.style.display = "";
       },
       onSessionRemoved: (name) => {
-        windowTabSet.onSessionKilled(name);
-        terminalPool.dispose(name);
+        // Tear down the local view of this session — carousel tile, tab,
+        // pooled terminal. The reconciler in app.js handles the same job
+        // for sessions killed while we were offline; this path covers the
+        // live case where the server pushes us a session-removed event.
+        const wasFocused = state.session.name === name;
+        removeDeadSession(name);
+        if (!wasFocused) return;
+        // The focused session is gone — route to another or clear the page.
         fetch("/sessions").then(r => r.json()).then(allSessions => {
-          // Filter out the session that was just removed (may still be in the response)
           const sessions = allSessions.filter(s => s.name !== name);
           if (sessions.length > 0) {
-            const next = sessions[0].name;
-            switchSession(next);
+            switchSession(sessions[0].name);
           } else {
-            // No sessions left — disconnect WS, clear UI, stay on page
             wsConnection.disconnect();
             state.update('session.name', null);
             setDocTitle(null);
@@ -1884,6 +1886,108 @@
       },
     });
     wsConnection.initVisibilityReconnect();
+
+    // --- Reconcile local tiles against the authoritative server session list ---
+    //
+    // The server's /sessions response is the only source of truth for which
+    // terminal sessions actually exist. When a session is killed on another
+    // device while this client is offline, no live event reaches us — but the
+    // next sessions fetch (on reconnect, focus, sidebar open) reflects reality.
+    // This reconciler removes any terminal tile / tab whose backing session
+    // is missing from that list.
+    //
+    // Threshold pattern: the first server response after reconnect can be a
+    // partial list (e.g., only the attached session — see adb859d). Pruning
+    // on that wipes every other tab. We require RECONCILE_PRUNE_THRESHOLD
+    // consecutive non-loading responses where the same dead set persists
+    // before acting.
+    //
+    // Non-terminal tiles (notepad, dashboard, web preview) are skipped — they
+    // have no server-side session and own their own lifecycle.
+    const RECONCILE_PRUNE_THRESHOLD = 2;
+    let reconcilePruneConfirmations = 0;
+
+    function removeDeadSession(name) {
+      // Carousel: find the terminal tile pointing at this session, if any
+      if (carousel.isActive()) {
+        const tileId = carousel.findCard(tile =>
+          tile.type === "terminal" && tile.sessionName === name);
+        if (tileId) carousel.removeCard(tileId);
+      }
+      // Tab set: remove + broadcast to other windows on this browser
+      windowTabSet.onSessionKilled(name);
+      // Pooled terminal
+      terminalPool.dispose(name);
+    }
+
+    function reconcileTilesAgainstServer() {
+      const { sessions: serverList, loading } = sessionStore.getState();
+      if (loading || !Array.isArray(serverList) || serverList.length === 0) return;
+
+      const serverSet = new Set(serverList.map(s => s.name));
+
+      // Confirm any recently-added tabs that the server now knows about,
+      // ending their grace period.
+      for (const tab of windowTabSet.getTabs()) {
+        if (serverSet.has(tab)) windowTabSet.confirmTab(tab);
+      }
+
+      // Find dead terminal sessions: present locally, missing from the server,
+      // and not in the just-added grace period.
+      const dead = new Set();
+      if (carousel.isActive()) {
+        for (const tileId of carousel.getCards()) {
+          const tile = carousel.getTile(tileId);
+          if (tile?.type !== "terminal") continue;
+          const name = tile.sessionName;
+          if (!serverSet.has(name) && !windowTabSet.isRecentlyAdded(name)) {
+            dead.add(name);
+          }
+        }
+      }
+      // Catch tab-set entries that have no carousel card. Shouldn't happen
+      // in steady state but tabs and cards can drift via races, and the URL
+      // session is added to the tab set before the carousel activates.
+      for (const tab of windowTabSet.getTabs()) {
+        if (serverSet.has(tab) || windowTabSet.isRecentlyAdded(tab)) continue;
+        // Skip non-terminal carousel tiles (dashboards, notepads, etc.)
+        const tile = carousel.isActive() ? carousel.getTile(tab) : null;
+        if (tile && tile.type !== "terminal") continue;
+        dead.add(tab);
+      }
+
+      if (dead.size === 0) {
+        reconcilePruneConfirmations = 0;
+        return;
+      }
+
+      reconcilePruneConfirmations++;
+      if (reconcilePruneConfirmations < RECONCILE_PRUNE_THRESHOLD) return;
+      reconcilePruneConfirmations = 0;
+
+      const wasFocusedDead = dead.has(state.session.name);
+      for (const name of dead) {
+        removeDeadSession(name);
+      }
+
+      if (wasFocusedDead) {
+        const next = serverList.find(s => !dead.has(s.name));
+        if (next) {
+          switchSession(next.name);
+        } else {
+          // No live sessions left — clear UI and stay on page
+          wsConnection.disconnect();
+          state.update('session.name', null);
+          setDocTitle(null);
+          const url = new URL(window.location);
+          url.searchParams.delete("s");
+          history.replaceState(null, "", url);
+          renderBar(null);
+        }
+      }
+    }
+
+    sessionStore.subscribe(reconcileTilesAgainstServer);
 
     // --- Boot ---
 

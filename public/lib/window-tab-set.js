@@ -15,17 +15,23 @@ function generateId() {
   return "w_" + Math.random().toString(36).slice(2, 10);
 }
 
-export function createWindowTabSet({ sessionStore, getCurrentSession }) {
+export function createWindowTabSet({ getCurrentSession } = {}) {
   const windowId = sessionStorage.getItem(WINDOW_ID_KEY) || generateId();
   sessionStorage.setItem(WINDOW_ID_KEY, windowId);
 
   let tabs = loadTabs();
   saveTabs(); // Persist initial seed so navigations within this tab preserve it
   const subscribers = new Set();
-  // Protect from stale-data prune until the server confirms them.
-  // Only the current session needs protection (may be new, not yet in server response).
-  const currentSession = getCurrentSession ? getCurrentSession() : null;
-  const recentlyAdded = new Set(currentSession ? [currentSession] : []);
+  // Tabs added locally that the server hasn't yet confirmed in /sessions.
+  // The reconciler in app.js reads this via isRecentlyAdded() to skip
+  // just-created sessions during its prune pass — without it, a brand-new
+  // tab could be pruned in the gap between local creation and the next
+  // server response.
+  //
+  // We deliberately do NOT seed from getCurrentSession(). A stale ?s= URL
+  // pointing at a session that was killed elsewhere would otherwise become
+  // permanently immune to reconciliation, leaving an orphaned tile forever.
+  const recentlyAdded = new Set();
 
   // BroadcastChannel for cross-window coordination
   let channel = null;
@@ -48,42 +54,6 @@ export function createWindowTabSet({ sessionStore, getCurrentSession }) {
       }
     };
   } catch { /* BroadcastChannel not available — degrade gracefully */ }
-
-  // Prune tabs when sessions disappear from the server.
-  // Wait for multiple confirmations before pruning to avoid removing tabs
-  // during initial load when the server list may be incomplete (e.g., only
-  // the attached session is returned before the full list is fetched).
-  let pruneConfirmations = 0;
-  const PRUNE_THRESHOLD = 2; // require 2 consistent updates before pruning
-
-  if (sessionStore) {
-    sessionStore.subscribe(() => {
-      const { sessions: serverList, loading } = sessionStore.getState();
-      // Don't prune while loading or before first fetch completes
-      if (loading || !serverList || serverList.length === 0) return;
-      const serverSessions = new Set(serverList.map(s => s.name));
-      // Check if any tabs would be pruned
-      const wouldPrune = tabs.some(n => !serverSessions.has(n) && !recentlyAdded.has(n));
-      if (wouldPrune) {
-        pruneConfirmations++;
-        // Only prune after the server consistently reports the same list
-        if (pruneConfirmations < PRUNE_THRESHOLD) return;
-      } else {
-        pruneConfirmations = 0;
-      }
-      const before = tabs.length;
-      // Keep recently-added tabs that the server hasn't confirmed yet
-      tabs = tabs.filter(n => serverSessions.has(n) || recentlyAdded.has(n));
-      // Clear recently-added for names the server now knows about
-      for (const n of recentlyAdded) {
-        if (serverSessions.has(n)) recentlyAdded.delete(n);
-      }
-      if (tabs.length !== before) {
-        saveTabs();
-        notify();
-      }
-    });
-  }
 
   function loadTabs() {
     // 1. sessionStorage — same window/tab surviving a reload
@@ -135,6 +105,7 @@ export function createWindowTabSet({ sessionStore, getCurrentSession }) {
     removeTab(name) {
       if (!tabs.includes(name)) return;
       tabs = tabs.filter(n => n !== name);
+      recentlyAdded.delete(name);
       saveTabs();
       notify();
     },
@@ -161,6 +132,7 @@ export function createWindowTabSet({ sessionStore, getCurrentSession }) {
     /** Kill: remove from all windows via broadcast */
     onSessionKilled(name) {
       tabs = tabs.filter(n => n !== name);
+      recentlyAdded.delete(name);
       saveTabs();
       notify();
       if (channel) {
@@ -171,6 +143,18 @@ export function createWindowTabSet({ sessionStore, getCurrentSession }) {
     /** Sessions managed by the server but not in this window's tab set */
     getAvailableSessions(allSessions) {
       return allSessions.filter(s => !tabs.includes(s.name));
+    },
+
+    /** Whether a tab name is in the local "just added" grace period.
+     *  Used by the tile reconciler to skip pruning sessions the server
+     *  may not yet have caught up to. */
+    isRecentlyAdded(name) {
+      return recentlyAdded.has(name);
+    },
+
+    /** Mark a tab as confirmed by the server, ending its grace period. */
+    confirmTab(name) {
+      recentlyAdded.delete(name);
     },
 
     subscribe(fn) {
