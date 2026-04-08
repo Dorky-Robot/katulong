@@ -42,6 +42,7 @@ class MockSession {
   attachControlMode() {}
   async seedScreen(content, cursorPos) { this._seedCalls.push({ content, cursorPos }); }
   serializeScreen() { return "mock-screen-snapshot"; }
+  async screenFingerprint() { return { hash: 0, seq: 0 }; }
   updateChildCount(count) { this._childCount = count; }
   write(data) { this._written.push(data); }
   resize(cols, rows) { this._resizes.push({ cols, rows }); this._cols = cols; this._rows = rows; }
@@ -374,6 +375,87 @@ describe("session manager", () => {
       assert.strictEqual(r2.alive, true);
       // Only one session should exist
       assert.strictEqual(mgr.listSessions().sessions.length, 1);
+    });
+  });
+
+  describe("flushes queued output on lifecycle events (regression)", () => {
+    // Past bug: attach/subscribe/delete/rename called cancelNotification(),
+    // which cleared the 2ms/16ms coalescer timers WITHOUT emitting the
+    // queued bytes. Already-subscribed clients silently lost output between
+    // the last %output burst and the next one — for a quiescent TUI mid-
+    // redraw, this was a true liveness hole. The fix flushes instead of
+    // cancelling so currently-routed clients always receive what was queued.
+    function primeCoalescer(session) {
+      // Plant some bytes in the RingBuffer mock and notify the manager
+      // exactly the way Session does on incoming %output.
+      session.outputBuffer.totalBytes = 100;
+      session.outputBuffer.sliceFrom = (from) => (from === 0 ? "queued bytes" : "");
+      session._options.onData(session.name, 0);
+    }
+
+    it("attachClient flushes queued output before snapshotting", async () => {
+      const { mgr, bridge } = makeManager();
+      await mgr.attachClient("c1", "multi", 80, 24);
+      const session = mgr.getSession("multi");
+      bridge.messages.length = 0;
+
+      primeCoalescer(session);
+      await mgr.attachClient("c2", "multi", 80, 24);
+
+      const output = bridge.messages.find(m => m.type === "output" && m.session === "multi");
+      assert.ok(output, "queued output should be flushed before attach completes");
+      assert.strictEqual(output.data, "queued bytes");
+      assert.strictEqual(output.fromSeq, 0);
+      assert.strictEqual(output.cursor, 100);
+      mgr.shutdown();
+    });
+
+    it("subscribeClient flushes queued output before snapshotting", async () => {
+      const { mgr, bridge } = makeManager();
+      await mgr.createSession("sub-target");
+      const session = mgr.getSession("sub-target");
+      bridge.messages.length = 0;
+
+      primeCoalescer(session);
+      await mgr.subscribeClient("c1", "sub-target", 80, 24);
+
+      const output = bridge.messages.find(m => m.type === "output" && m.session === "sub-target");
+      assert.ok(output, "queued output should be flushed before subscribe completes");
+      assert.strictEqual(output.data, "queued bytes");
+      mgr.shutdown();
+    });
+
+    it("deleteSession flushes queued output before removing the session", async () => {
+      const { mgr, bridge } = makeManager();
+      await mgr.createSession("doomed");
+      const session = mgr.getSession("doomed");
+      bridge.messages.length = 0;
+
+      primeCoalescer(session);
+      mgr.deleteSession("doomed");
+
+      const output = bridge.messages.find(m => m.type === "output" && m.session === "doomed");
+      assert.ok(output, "queued output should be flushed before delete");
+      assert.strictEqual(output.data, "queued bytes");
+      // session-removed should also still be relayed after the flush
+      assert.ok(bridge.messages.find(m => m.type === "session-removed" && m.session === "doomed"));
+      mgr.shutdown();
+    });
+
+    it("renameSession flushes queued output under the old name", async () => {
+      const { mgr, bridge } = makeManager();
+      await mgr.createSession("old-name");
+      const session = mgr.getSession("old-name");
+      bridge.messages.length = 0;
+
+      primeCoalescer(session);
+      await mgr.renameSession("old-name", "new-name");
+
+      const output = bridge.messages.find(m => m.type === "output");
+      assert.ok(output, "queued output should be flushed under the old name before rename");
+      assert.strictEqual(output.session, "old-name");
+      assert.strictEqual(output.data, "queued bytes");
+      mgr.shutdown();
     });
   });
 

@@ -407,6 +407,11 @@ describe("Session", () => {
     it("sends refresh-client command via control mode", () => {
       const { session, mockProc } = createSimpleTestSession("test");
 
+      // Mark output idle so the resize gate doesn't defer the call.
+      // _lastOutputAt is initialized to Date.now() in the constructor
+      // (see Tier 1.4 fix) so the gate fires for the very first resize
+      // exactly as it would for any later one.
+      session._lastOutputAt = Date.now() - 1000;
       session.resize(80, 24);
 
       assert.ok(mockProc.stdin.written.some(cmd =>
@@ -466,7 +471,9 @@ describe("Session", () => {
     it("resizes immediately when output is idle", () => {
       const { session, mockProc } = createSimpleTestSession("test");
 
-      // _lastOutputAt defaults to 0 (no recent output)
+      // Simulate idle session: _lastOutputAt was 1s ago, well past the
+      // 50ms gate. Constructor seeds it to now() so we set it explicitly.
+      session._lastOutputAt = Date.now() - 1000;
       session.resize(100, 40);
 
       assert.ok(mockProc.stdin.written.some(cmd =>
@@ -511,6 +518,92 @@ describe("Session", () => {
       assert.ok(!mockProc.stdin.written.some(cmd =>
         cmd.includes("refresh-client -C 100x40")
       ), "killed session should not send deferred resize");
+    });
+
+    it("does not reset RESIZE_MAX_DEFER_MS deadline on recursive defer (regression)", () => {
+      // Past bug: the deadline was set inside `if (!_resizeTimer)`. The
+      // recursive timer callback nulls _resizeTimer before re-entering
+      // resize(), so every re-entry hit the guard and reset the deadline.
+      // The "absolute 500ms cap" became a sliding window that never
+      // expired — for `tail -f`-style continuous output, resize was
+      // deferred forever and TUI apps garbled on rotate/keyboard-open.
+      const { session } = createSimpleTestSession("test");
+
+      session._lastOutputAt = Date.now();
+      session.resize(100, 40);
+      const firstDeadline = session._resizeDeadline;
+      assert.ok(firstDeadline > 0, "first defer should set the deadline");
+
+      // Simulate the timer firing internally (the recursive callback
+      // clears _resizeTimer and re-enters resize) several times in
+      // succession, with output still arriving each time.
+      for (let i = 0; i < 5; i++) {
+        clearTimeout(session._resizeTimer);
+        session._resizeTimer = null;
+        session._lastOutputAt = Date.now();
+        session.resize(100, 40);
+      }
+
+      assert.strictEqual(session._resizeDeadline, firstDeadline,
+        "_resizeDeadline must not reset on recursive resize re-entry — " +
+        "the cap is supposed to be absolute, not sliding"
+      );
+
+      // Cleanup
+      clearTimeout(session._resizeTimer);
+      session._resizeTimer = null;
+    });
+
+    it("applies deferred resize after RESIZE_MAX_DEFER_MS even with continuous output", async () => {
+      // End-to-end safety net for the absolute cap. Without the fix this
+      // test hangs (or fails) because the bumper interval keeps pushing
+      // _lastOutputAt forward and the buggy "deadline reset" defers
+      // forever. With the fix the cap fires at ~500ms.
+      const { session, mockProc } = createSimpleTestSession("test");
+
+      session._lastOutputAt = Date.now();
+      session.resize(100, 40);
+
+      // Bump _lastOutputAt every 20ms for 600ms — simulating a session
+      // that never goes idle (e.g. `tail -f`).
+      const bumper = setInterval(() => {
+        session._lastOutputAt = Date.now();
+      }, 20);
+
+      try {
+        await new Promise((r) => setTimeout(r, 600));
+      } finally {
+        clearInterval(bumper);
+      }
+
+      const resizeCmds = mockProc.stdin.written.filter(cmd =>
+        cmd.includes("refresh-client -C 100x40")
+      );
+      assert.ok(resizeCmds.length >= 1,
+        "deferred resize must apply after RESIZE_MAX_DEFER_MS even when output never idles");
+    });
+
+    it("first resize after construction is gated by initial _lastOutputAt (regression)", () => {
+      // Past bug: _lastOutputAt = 0 in the constructor meant the very
+      // first resize saw sinceLast = Date.now() (a huge number) and fired
+      // refresh-client immediately. If tmux had startup output queued on
+      // stdout that hadn't been parsed yet, the resize raced it and
+      // garbled the first frame on session birth.
+      const { session, mockProc } = createSimpleTestSession("test");
+
+      // Do not touch _lastOutputAt — the constructor seeds it to now().
+      session.resize(100, 40);
+
+      // The resize should be deferred (the gate is active for the first call too)
+      assert.ok(!mockProc.stdin.written.some(cmd =>
+        cmd.includes("refresh-client -C 100x40")
+      ), "first resize should be gated, not fire immediately");
+
+      // Cleanup
+      if (session._resizeTimer) {
+        clearTimeout(session._resizeTimer);
+        session._resizeTimer = null;
+      }
     });
   });
 
@@ -866,6 +959,102 @@ describe("output dispatch", () => {
     mockProc.simulateClose(0);
     assert.strictEqual(dataEvents.length, 1);
     assert.strictEqual(dataEvents[0].fromSeq, 0);
+  });
+
+  it("drains _outputDecoder partial UTF-8 on detach (regression)", () => {
+    // Past bug: detach() went through _closeControlProc which nulled
+    // controlProc before the close handler could fire, so the
+    // `this.controlProc !== proc` guard skipped the decoder drain.
+    // Worse, _outputDecoder.end() was never called anywhere — partial
+    // multi-byte UTF-8 buffered inside it (e.g. the first 2 bytes of
+    // a 4-byte emoji) were silently dropped on every detach/kill.
+    // The fix drains both decoders synchronously inside _closeControlProc
+    // before the headless is disposed and _onData is cleared.
+    const dataEvents = [];
+    const { session, mockProc } = createWiredTestSession("test", {
+      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
+    });
+
+    // Feed first 2 bytes of a 4-byte UTF-8 emoji (👋 = F0 9F 91 8B).
+    // unescapeTmuxOutputBytes returns [0xF0, 0x9F] and the inner
+    // StringDecoder buffers them as an incomplete sequence — nothing
+    // is pushed to the RingBuffer yet.
+    mockProc.simulateRawStdout("%output %0 \\360\\237\n");
+    assert.strictEqual(session.outputBuffer.totalBytes, 0,
+      "incomplete UTF-8 should buffer in _outputDecoder, not the RingBuffer");
+    assert.strictEqual(dataEvents.length, 0);
+
+    session.detach();
+
+    assert.ok(session.outputBuffer.totalBytes > 0,
+      "detach must drain _outputDecoder tail into the RingBuffer");
+    assert.ok(dataEvents.length >= 1,
+      "drained bytes should fire onData notification before _onData is cleared");
+  });
+
+  it("drains parser state on kill (regression)", () => {
+    // Same bug as above, on the kill path. kill() also goes through
+    // _closeControlProc; the drain must run before the headless is
+    // disposed.
+    const dataEvents = [];
+    const { session, mockProc } = createWiredTestSession("test", {
+      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
+    });
+
+    mockProc.simulateRawStdout("%output %0 \\344\\275\n"); // first 2 bytes of 你 (E4 BD A0)
+    assert.strictEqual(session.outputBuffer.totalBytes, 0);
+
+    session.kill();
+
+    assert.ok(session.outputBuffer.totalBytes > 0,
+      "kill must drain _outputDecoder tail into the RingBuffer");
+  });
+});
+
+describe("screenFingerprint seq tagging (regression)", () => {
+  // Lamport's lesson: comparing two states requires they describe the
+  // SAME logical time. The server's fingerprint must be paired with the
+  // byte position it describes — otherwise the client compares a hash
+  // taken at byte N to its own state at some other byte M and reports
+  // false drift, triggering a spurious resync (the same garble symptom
+  // we are trying to fix).
+  //
+  // These tests pin the contract: { hash, seq } shape, and seq matches
+  // outputBuffer.totalBytes at the moment the hash was computed.
+
+  it("returns { hash, seq } shape on a freshly attached session", async () => {
+    const { session } = createWiredTestSession("test");
+    const fp = await session.screenFingerprint();
+    assert.strictEqual(typeof fp, "object",
+      "must return an object so callers can pair the hash with a sequence number");
+    assert.ok("hash" in fp, "must include hash field");
+    assert.ok("seq" in fp, "must include seq field");
+    assert.strictEqual(typeof fp.hash, "number");
+    assert.strictEqual(typeof fp.seq, "number");
+    assert.strictEqual(fp.seq, 0,
+      "fresh session has not received any output, seq should be 0");
+  });
+
+  it("seq matches outputBuffer.totalBytes after data has been written", async () => {
+    const { session, mockProc } = createWiredTestSession("test");
+    mockProc.simulateOutput("%0", "hello world");
+    // Wait one tick so the inner setImmediate flush completes.
+    await new Promise(resolve => setImmediate(resolve));
+    const fp = await session.screenFingerprint();
+    assert.strictEqual(fp.seq, session.outputBuffer.totalBytes,
+      "seq must equal the byte position the hash describes — anything else " +
+      "lets the client compare hashes from different points in the stream");
+    assert.ok(fp.seq > 0, "after writing data, seq should advance past 0");
+  });
+
+  it("returns { hash: 0, seq: 0 } when headless is disposed", async () => {
+    const { session } = createWiredTestSession("test");
+    session._headless.dispose();
+    session._headless = null;
+    const fp = await session.screenFingerprint();
+    assert.deepStrictEqual(fp, { hash: 0, seq: 0 },
+      "disposed headless must still return the structured shape — " +
+      "callers destructure { hash, seq }, not a bare number");
   });
 });
 

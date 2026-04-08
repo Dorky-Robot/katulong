@@ -225,9 +225,11 @@ export function createWebSocketConnection(deps = {}) {
 
     // Drift detection: server sends screen fingerprint after output settles.
     // Client compares against its own xterm — on mismatch, request resync.
+    // `seq` is the byte position the server's hash describes; the client
+    // must wait until its pull cursor reaches that position before comparing.
     'state-check': (msg) => ({
       stateUpdates: {},
-      effects: [{ type: 'stateCheck', session: msg.session, fingerprint: msg.fingerprint }]
+      effects: [{ type: 'stateCheck', session: msg.session, fingerprint: msg.fingerprint, seq: msg.seq }]
     }),
 
     // seq-init: server tells us where the log head is — initialize pull cursor
@@ -291,14 +293,39 @@ export function createWebSocketConnection(deps = {}) {
     pullResponse: (e) => pulls.pullResponse(e.session, e.data, e.cursor),
     pullSnapshot: (e) => pulls.pullSnapshot(e.session, e.data || "", e.cursor),
     stateCheck: (e) => {
-      function check() {
-        const ps = pulls.get(e.session);
-        if (ps?.writing || ps?.pulling) return false; // can't check yet
+      // Lamport's lesson: comparing two states requires they describe the
+      // SAME logical time. The server captures fingerprint at byte `e.seq`;
+      // the client must wait until its pull cursor has reached that same
+      // byte position before comparing — otherwise it compares an older
+      // client state to a newer server state and reports false drift.
+      //
+      // Skip the compare entirely once cursor has advanced past `e.seq`:
+      // newer output will trigger a fresh state-check on the server side
+      // when output settles again.
+      const POLL_MS = 50;
+      const MAX_WAIT_MS = 2000;
+      const deadline = Date.now() + MAX_WAIT_MS;
+
+      function tryCheck() {
         const term = getOutputTerm(e.session);
-        if (!term) return true;
+        if (!term) return true; // session gone — give up
+
+        const ps = pulls.get(e.session);
+        // Cursor undefined ⇒ session not initialized for pull yet, skip.
+        if (!ps) return true;
+
+        // If client cursor has overshot the snapshot point, a newer
+        // state-check will arrive — drop this stale one.
+        if (typeof e.seq === 'number' && ps.cursor > e.seq) return true;
+
+        // Wait for any in-flight write/pull to settle and for the cursor
+        // to reach the snapshot point.
+        const cursorReady = typeof e.seq !== 'number' || ps.cursor >= e.seq;
+        if (ps.writing || ps.pulling || !cursorReady) return false;
+
         const clientFp = screenFingerprint(term);
         if (clientFp !== e.fingerprint) {
-          console.log(`[drift] session=${e.session} server=${e.fingerprint} client=${clientFp} — requesting resync`);
+          console.log(`[drift] session=${e.session} server=${e.fingerprint} client=${clientFp} seq=${e.seq} — requesting resync`);
           const ws = state.connection.ws;
           if (ws?.readyState === 1) {
             ws.send(JSON.stringify({ type: "resync", session: e.session }));
@@ -306,9 +333,13 @@ export function createWebSocketConnection(deps = {}) {
         }
         return true;
       }
-      // Retry if pull manager is busy — the idle timer fires once per
-      // output burst, so skipping means garble persists forever.
-      if (!check()) setTimeout(check, 300);
+
+      if (tryCheck()) return;
+      // Poll until ready or timeout. The previous code used a single 300ms
+      // blind retry which still raced slow xterm renders on mobile.
+      const poll = setInterval(() => {
+        if (tryCheck() || Date.now() >= deadline) clearInterval(poll);
+      }, POLL_MS);
     },
     terminalReset: () => { const t = getTerm(); if (t) { t.clear(); t.reset(); } },
     terminalWrite: (e) => { const t = e.useOutputTerm ? getOutputTerm(e.session) : getTerm(); if (t) terminalWriteWithScroll(t, e.data); },

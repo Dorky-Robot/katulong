@@ -46,7 +46,7 @@ class MockSession {
   attachControlMode() {}
   async seedScreen() {}
   async serializeScreen() { return this._serializeResult; }
-  async screenFingerprint() { return 0; }
+  async screenFingerprint() { return { hash: 0, seq: 0 }; }
   updateChildCount(count) { this._childCount = count; }
   write() {}
   resize() {}
