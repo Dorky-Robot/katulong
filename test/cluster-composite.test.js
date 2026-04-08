@@ -259,7 +259,6 @@ describe('cluster-tile', () => {
       // Must be a real sub-session, not undefined and not the parent tile
       // id. app.js routes state.session.name → inputSender → server, so
       // it must be a name the server recognizes as a tmux session.
-      assert.ok(tile.sessionName, "cluster must expose a sessionName");
       assert.strictEqual(
         tile.sessionName,
         "cluster-base-0",

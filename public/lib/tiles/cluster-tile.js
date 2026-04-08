@@ -92,24 +92,9 @@ export function createClusterTileFactory({ createTerminalTile }) {
       type: "cluster",
 
       /**
-       * Resolve a real sub-terminal session name for the cluster.
-       *
-       * app.js's tileSessionName(tileId) falls back to the tileId itself
-       * when a tile has no `sessionName`. For a cluster that tileId looks
-       * like "cluster-abc" — it is NOT a tmux session the server knows
-       * about, so any downstream "switch" message or inputSender payload
-       * built from that fallback gets routed to a phantom session and
-       * silently dropped. Result: the cluster's sub-terminals appear
-       * mounted but keystrokes do nothing and refreshing doesn't help.
-       *
-       * Exposing the first sub-tile's sessionName here keeps the
-       * carousel's single-session "focused" model working for clusters
-       * without having to teach every consumer about sub-tile focus.
-       * The cluster's own focus() also points at subTiles[0], so the
-       * two stay in sync.
-       *
-       * Returns undefined before mount (no sub-tiles exist yet); callers
-       * must tolerate that, same as any other tile pre-mount.
+       * Aliases the first sub-tile's sessionName so the carousel's
+       * single-focused-session model works for clusters. Returns
+       * undefined before mount. See commit 7a285e6 for the root cause.
        */
       get sessionName() {
         return subTiles[0]?.tile?.sessionName;
@@ -198,6 +183,10 @@ export function createClusterTileFactory({ createTerminalTile }) {
        * the cluster's display title would drift from its card id.
        */
       setSessionName(newName) {
+        // Intentional asymmetry with terminal-tile: this updates the
+        // cluster's display title only. Sub-session names are owned by
+        // their individual sub-tiles and must not be renamed from here
+        // (they map to real tmux sessions on the server).
         title = newName;
       },
 
