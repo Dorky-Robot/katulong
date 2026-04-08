@@ -38,7 +38,7 @@
     import { createNotepad } from "/lib/notepad.js";
     import { createCardCarousel } from "/lib/card-carousel.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
-    import { createDashboardTileFactory } from "/lib/tiles/dashboard-tile.js";
+    import { createClusterTileFactory } from "/lib/tiles/cluster-tile.js";
     import { dispatchNotification } from "/lib/notify.js";
     import { createDispatchPanel } from "/lib/dispatch-panel.js";
 
@@ -353,26 +353,68 @@
 
     // --- Tile Factories ---
     // terminalDeps uses a getter for carousel since it's created after the factories.
-    // createTile is a local dispatcher for the two tile types katulong actually ships —
-    // terminals, and composite grids of terminals. No generic registry, no plugin surface.
+    // Two factories, no registry: terminals and clusters (grids of terminals).
+    // The generic tile plugin system was removed — these are the only tile
+    // kinds katulong ships, and both are owned by app.js directly.
     const terminalDeps = {
       terminalPool,
-      createTileFn: (...args) => createTile(...args),
       get carousel() { return carousel; },
     };
     const terminalTileFactory = createTerminalTileFactory(terminalDeps);
-    const dashboardTileFactory = createDashboardTileFactory({
-      createTileFn: (type, options) => createTile(type, options),
+    const clusterTileFactory = createClusterTileFactory({
+      createTerminalTile: (options) => terminalTileFactory(options),
     });
-    function createTile(type, options = {}) {
+
+    /**
+     * Dispatcher for reconstructing tiles from serialized state (carousel
+     * restore). Accepts the legacy `"dashboard"` type for forward-compat
+     * with state saved before the rename.
+     */
+    function restoreTile(type, options = {}) {
       if (type === "terminal") return terminalTileFactory(options);
-      if (type === "dashboard") return dashboardTileFactory(options);
+      if (type === "cluster" || type === "dashboard") return clusterTileFactory(options);
       throw new Error(`Unknown tile type: "${type}"`);
     }
 
     /** Create a terminal tile for a session, using the session name as tile ID. */
     function makeTerminalTile(sessionName) {
       return { id: sessionName, tile: terminalTileFactory({ sessionName }) };
+    }
+
+    /**
+     * Create a terminal cluster: a single card holding a grid of N new
+     * tmux sessions, each its own PTY. Prompts for the cell count, spins
+     * up sessions in parallel, then adds the cluster to the carousel.
+     */
+    async function createNewCluster() {
+      const input = prompt("How many terminals in this cluster? (2–9)", "4");
+      if (!input) return;
+      const count = Math.max(2, Math.min(9, parseInt(input, 10) || 4));
+      try {
+        // Spawn N sessions in parallel. Each has its own PTY — there is no
+        // shared shell. This is the whole reason clusters exist: PTYs have
+        // exactly one size, so only separate sessions can render at
+        // different dimensions across devices.
+        const base = Date.now().toString(36);
+        const created = await Promise.all(
+          Array.from({ length: count }, (_, i) =>
+            api.post("/sessions", { name: `cluster-${base}-${i}` })
+          )
+        );
+        const slots = created.map(s => ({ sessionName: s.name }));
+        const tile = clusterTileFactory({ slots, cells: count });
+        const tileId = `cluster-${base}`;
+        if (!carousel.isActive()) {
+          carousel.activate([{ id: tileId, tile }], tileId);
+          wsConnection.connect();
+        } else {
+          carousel.addCard(tileId, tile, insertAtRightOfActive());
+          carousel.focusCard(tileId);
+        }
+      } catch (err) {
+        console.error("Failed to create cluster:", err);
+        showToast(`Failed to create cluster: ${err.message}`);
+      }
     }
 
     /** Resolve the session name for a tile ID (works for terminal tiles). */
@@ -1307,15 +1349,14 @@
       onNewSessionClick: createNewSession,
       tileTypes: [
         { type: "terminal", name: "Terminal", icon: "terminal-window" },
+        { type: "cluster",  name: "Cluster",  icon: "squares-four" },
       ],
       onCreateTile: (type) => {
         if (type === "terminal") {
-          // Terminal tiles create a server-side session.
           createNewSession();
+        } else if (type === "cluster") {
+          createNewCluster();
         }
-        // Non-terminal tile types are added in Tier 3 (cluster); today
-        // the `+` menu only offers "terminal" so no other branch is
-        // reachable.
       },
       onTabClick: (name) => {
         if (carousel.isActive()) {
@@ -2059,7 +2100,7 @@
       const carouselState = carousel.restore();
       if (carouselState && carouselState.tiles?.length > 0 && !carousel.isActive()) {
         const tiles = carouselState.tiles.map(t => {
-          const tile = createTile(t.type, t);
+          const tile = restoreTile(t.type, t);
           return { id: t.id, tile, cardWidth: t.cardWidth };
         });
         carousel.activate(tiles, carouselState.focused);

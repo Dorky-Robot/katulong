@@ -1,13 +1,14 @@
 /**
- * Characterization test for the cluster composite tile.
+ * Characterization test for the terminal cluster composite tile.
  *
- * The file under test is today called dashboard-tile.js — a CSS-grid
- * composite that mounts N sub-tiles into a grid and cascades lifecycle
- * calls (mount, unmount, focus, blur, resize). This test pins its
- * behavior BEFORE the refocus renames the file to cluster-tile.js and
- * hard-codes slot construction to terminal tiles only.
+ * cluster-tile.js is a CSS-grid composite that mounts N terminal sub-tiles
+ * into a grid and cascades lifecycle calls (mount, unmount, focus, blur,
+ * resize). This test pins its public contract using DOM-level mocks and a
+ * fake createTerminalTile factory — no real tmux, no real terminal pool.
  *
- * The test uses DOM-level mocks and a fake createTileFn, not real tmux.
+ * History: this file was previously dashboard-tile.js. The refocus renamed
+ * it to cluster-tile, hard-coded every slot to be a terminal, and dropped
+ * the generic createTileFn indirection.
  */
 
 import { describe, it, beforeEach, mock } from 'node:test';
@@ -40,18 +41,18 @@ function createMockElement(tag) {
   return el;
 }
 
-function createMockSubTile(id) {
+function createMockTerminalTile(sessionName) {
   return {
-    type: "mock",
-    id,
+    type: "terminal",
+    sessionName,
     mount: mock.fn(),
     unmount: mock.fn(),
     focus: mock.fn(),
     blur: mock.fn(),
     resize: mock.fn(),
-    getTitle: () => id,
+    getTitle: () => sessionName,
     getIcon: () => "terminal-window",
-    serialize: () => ({ type: "mock", sessionName: id }),
+    serialize: () => ({ sessionName }),
   };
 }
 
@@ -60,25 +61,25 @@ function setupGlobals() {
   globalThis.document.createElement = (tag) => createMockElement(tag);
 }
 
-async function importDashboardTile() {
-  const url = new URL('../public/lib/tiles/dashboard-tile.js', import.meta.url);
+async function importClusterTile() {
+  const url = new URL('../public/lib/tiles/cluster-tile.js', import.meta.url);
   const mod = await import(url.href + '?t=' + Date.now() + Math.random());
-  return mod.createDashboardTileFactory;
+  return mod.createClusterTileFactory;
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
 
-describe('cluster composite (dashboard-tile)', () => {
-  let createDashboardTileFactory;
-  let createTileFn;
+describe('cluster-tile', () => {
+  let createClusterTileFactory;
+  let createTerminalTile;
   let tilesCreated;
 
   beforeEach(async () => {
     setupGlobals();
-    createDashboardTileFactory = await importDashboardTile();
+    createClusterTileFactory = await importClusterTile();
     tilesCreated = [];
-    createTileFn = mock.fn((type, slot) => {
-      const t = createMockSubTile(slot.sessionName || slot.title || `${type}-${tilesCreated.length}`);
+    createTerminalTile = mock.fn((slot) => {
+      const t = createMockTerminalTile(slot.sessionName || `slot-${tilesCreated.length}`);
       tilesCreated.push(t);
       return t;
     });
@@ -86,15 +87,15 @@ describe('cluster composite (dashboard-tile)', () => {
 
   describe('grid layout', () => {
     it('mounts a 2x2 grid with 4 terminal slots', () => {
-      const factory = createDashboardTileFactory({ createTileFn });
+      const factory = createClusterTileFactory({ createTerminalTile });
       const tile = factory({
         cols: 2,
         rows: 2,
         slots: [
-          { type: "terminal", sessionName: "a" },
-          { type: "terminal", sessionName: "b" },
-          { type: "terminal", sessionName: "c" },
-          { type: "terminal", sessionName: "d" },
+          { sessionName: "a" },
+          { sessionName: "b" },
+          { sessionName: "c" },
+          { sessionName: "d" },
         ],
       });
       const container = createMockElement("div");
@@ -107,12 +108,12 @@ describe('cluster composite (dashboard-tile)', () => {
     });
 
     it('auto-computes grid from slot count when cols/rows not given', () => {
-      const factory = createDashboardTileFactory({ createTileFn });
+      const factory = createClusterTileFactory({ createTerminalTile });
       const tile = factory({
         slots: [
-          { type: "terminal", sessionName: "a" },
-          { type: "terminal", sessionName: "b" },
-          { type: "terminal", sessionName: "c" },
+          { sessionName: "a" },
+          { sessionName: "b" },
+          { sessionName: "c" },
         ],
       });
       const container = createMockElement("div");
@@ -124,15 +125,15 @@ describe('cluster composite (dashboard-tile)', () => {
     });
 
     it('applies maxCellWidth when specified', () => {
-      const factory = createDashboardTileFactory({ createTileFn });
+      const factory = createClusterTileFactory({ createTerminalTile });
       const tile = factory({
         cols: 3,
         rows: 1,
         maxCellWidth: "400px",
         slots: [
-          { type: "terminal", sessionName: "a" },
-          { type: "terminal", sessionName: "b" },
-          { type: "terminal", sessionName: "c" },
+          { sessionName: "a" },
+          { sessionName: "b" },
+          { sessionName: "c" },
         ],
       });
       const container = createMockElement("div");
@@ -149,25 +150,24 @@ describe('cluster composite (dashboard-tile)', () => {
     let ctx;
 
     beforeEach(() => {
-      const factory = createDashboardTileFactory({ createTileFn });
+      const factory = createClusterTileFactory({ createTerminalTile });
       tile = factory({
         cols: 2,
         rows: 1,
         slots: [
-          { type: "terminal", sessionName: "dev" },
-          { type: "terminal", sessionName: "test" },
+          { sessionName: "dev" },
+          { sessionName: "test" },
         ],
       });
       container = createMockElement("div");
       ctx = { flip: () => {} };
     });
 
-    it('mounts every slot via createTileFn', () => {
+    it('mounts every slot via createTerminalTile', () => {
       tile.mount(container, ctx);
-      assert.strictEqual(createTileFn.mock.callCount(), 2);
-      assert.strictEqual(createTileFn.mock.calls[0].arguments[0], "terminal");
-      assert.strictEqual(createTileFn.mock.calls[0].arguments[1].sessionName, "dev");
-      assert.strictEqual(createTileFn.mock.calls[1].arguments[1].sessionName, "test");
+      assert.strictEqual(createTerminalTile.mock.callCount(), 2);
+      assert.strictEqual(createTerminalTile.mock.calls[0].arguments[0].sessionName, "dev");
+      assert.strictEqual(createTerminalTile.mock.calls[1].arguments[0].sessionName, "test");
     });
 
     it('cascades mount() to every sub-tile', () => {
@@ -207,23 +207,23 @@ describe('cluster composite (dashboard-tile)', () => {
 
   describe('serialization', () => {
     it('round-trips grid dimensions and slot session names', () => {
-      const factory = createDashboardTileFactory({ createTileFn });
+      const factory = createClusterTileFactory({ createTerminalTile });
       const tile = factory({
         cols: 2,
         rows: 2,
-        title: "Cluster",
+        title: "katulong dev",
         slots: [
-          { type: "terminal", sessionName: "dev" },
-          { type: "terminal", sessionName: "test" },
+          { sessionName: "dev" },
+          { sessionName: "test" },
         ],
       });
       const container = createMockElement("div");
       tile.mount(container, {});
       const serialized = tile.serialize();
-      assert.strictEqual(serialized.type, "dashboard");
+      assert.strictEqual(serialized.type, "cluster");
       assert.strictEqual(serialized.cols, 2);
       assert.strictEqual(serialized.rows, 2);
-      assert.strictEqual(serialized.title, "Cluster");
+      assert.strictEqual(serialized.title, "katulong dev");
       assert.strictEqual(serialized.slots.length, 2);
       assert.strictEqual(serialized.slots[0].sessionName, "dev");
       assert.strictEqual(serialized.slots[1].sessionName, "test");
@@ -232,13 +232,13 @@ describe('cluster composite (dashboard-tile)', () => {
 
   describe('getSubTiles', () => {
     it('exposes the sub-tile array for external inspection', () => {
-      const factory = createDashboardTileFactory({ createTileFn });
+      const factory = createClusterTileFactory({ createTerminalTile });
       const tile = factory({
         cols: 2,
         rows: 1,
         slots: [
-          { type: "terminal", sessionName: "a" },
-          { type: "terminal", sessionName: "b" },
+          { sessionName: "a" },
+          { sessionName: "b" },
         ],
       });
       tile.mount(createMockElement("div"), {});

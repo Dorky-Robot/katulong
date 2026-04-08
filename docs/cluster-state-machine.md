@@ -107,17 +107,15 @@ These must be unreachable. If the code allows them, it's a bug.
 
 ## Mapping to existing code
 
-Today's `dashboard-tile.js` (soon to be `cluster-tile.js`) implements
-CREATED and POPULATING implicitly via its mount/unmount methods. It has
-no explicit state field, no degraded-slot handling, and no rename flow.
+`public/lib/tiles/cluster-tile.js` implements CREATED and POPULATING
+implicitly via its mount/unmount methods. It has no explicit state
+field, no degraded-slot handling, and no rename flow.
 
 The path to this spec:
 
-1. **T3.2** (next step) — rename the file, hard-code slot type to
-   terminal, drop the createTileFn indirection.
-2. **Future PR** — add an explicit `state` field and assertions. Plumb
+1. **Future PR** — add an explicit `state` field and assertions. Plumb
    session-status-watcher events into per-slot degradation detection.
-3. **Future PR** — add rename UX. Until then, slots are created with a
+2. **Future PR** — add rename UX. Until then, slots are created with a
    fixed session name at construction time and never renamed.
 
 This doc is the contract. The code should catch up to it, not the other

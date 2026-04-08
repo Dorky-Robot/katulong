@@ -1,33 +1,36 @@
 /**
- * Dashboard Tile
+ * Terminal Cluster Tile
  *
- * A configurable grid tile that contains sub-tiles (cells). Specify the
- * number of columns and rows, and optionally a max cell width. Cells are
- * filled in order — each slot maps to a grid cell left-to-right,
- * top-to-bottom.
+ * A single card that hosts a grid of independent mini terminals. Each
+ * cell is its own tmux session with its own PTY — they are *not* views
+ * onto the same shell. Splitting into separate PTYs is the whole point:
+ * a PTY has exactly one size, so two devices can't render the same pane
+ * at different widths. Clusters let katulong give each rendering slot
+ * its own dimensions while keeping the grid layout on one card.
+ *
+ * See `docs/cluster-state-machine.md` for the formal lifecycle spec.
  *
  * Usage:
- *   createTile("dashboard", {
- *     cols: 3,                        // 3 columns
- *     rows: 2,                        // 2 rows (6 cells total)
- *     maxCellWidth: "400px",          // optional max width per column
- *     gap: 8,                         // gap in px (default 8)
- *     title: "My Dashboard",          // optional custom title
+ *   createClusterTile({
+ *     cols: 2,
+ *     rows: 2,
+ *     title: "katulong dev",
  *     slots: [
- *       { type: "terminal", sessionName: "dev" },
- *       { type: "terminal", sessionName: "logs" },
- *       { type: "html", content: "<h1>Status</h1>" },
- *     ]
+ *       { sessionName: "dev" },
+ *       { sessionName: "test" },
+ *       { sessionName: "logs" },
+ *       { sessionName: "repl" },
+ *     ],
  *   })
  *
- * Shorthand: pass just `cells` to auto-compute a grid:
- *   createTile("dashboard", { cells: 4, slots: [...] })
- *   // → 2x2 grid (auto-layout picks the squarest arrangement)
+ * Shorthand — pass `cells` to auto-compute a grid:
+ *   createClusterTile({ cells: 4, slots: [...] })
+ *   // → 2x2 (auto-layout picks the squarest arrangement)
  */
 
 /**
- * Auto-compute cols × rows for a given cell count.
- * Picks the squarest arrangement, favoring wider over taller.
+ * Auto-compute cols × rows for a given cell count. Picks the squarest
+ * arrangement, favoring wider over taller.
  */
 function autoGrid(cells) {
   const cols = Math.ceil(Math.sqrt(cells));
@@ -36,13 +39,18 @@ function autoGrid(cells) {
 }
 
 /**
- * Create the dashboard tile factory.
+ * Create the cluster tile factory.
+ *
+ * Unlike the old dashboard-tile factory, this one takes a single
+ * `createTerminalTile` dep — there is no type dispatch. Every slot
+ * in a cluster is a terminal tile. Heterogeneous grids were a plugin-SDK
+ * concern and were removed with the rest of the tile plugin surface.
  *
  * @param {object} deps
- * @param {(type: string, options: object) => TilePrototype} deps.createTileFn
+ * @param {(options: object) => TilePrototype} deps.createTerminalTile
  * @returns {(options: object) => TilePrototype}
  */
-export function createDashboardTileFactory({ createTileFn }) {
+export function createClusterTileFactory({ createTerminalTile }) {
   /**
    * @param {object} options
    * @param {number} [options.cols] — number of columns
@@ -50,10 +58,10 @@ export function createDashboardTileFactory({ createTileFn }) {
    * @param {number} [options.cells] — total cells (auto-computes cols/rows)
    * @param {string} [options.maxCellWidth] — CSS max-width per column (e.g. "400px")
    * @param {number} [options.gap=8] — gap between cells in px
-   * @param {string} [options.title] — custom dashboard title
-   * @param {Array<{type: string, [key: string]: any}>} options.slots
+   * @param {string} [options.title] — custom cluster title
+   * @param {Array<{sessionName: string, colSpan?: number, rowSpan?: number}>} options.slots
    */
-  return function createDashboardTile(options = {}) {
+  return function createClusterTile(options = {}) {
     let {
       cols,
       rows,
@@ -81,14 +89,14 @@ export function createDashboardTileFactory({ createTileFn }) {
     const subTiles = []; // Array<{ tile, wrapper, index }>
 
     return {
-      type: "dashboard",
+      type: "cluster",
 
       mount(el, ctx) {
         container = el;
         parentContext = ctx;
 
         gridEl = document.createElement("div");
-        gridEl.className = "dashboard-grid";
+        gridEl.className = "cluster-grid";
         gridEl.style.display = "grid";
 
         // Column template: use minmax if maxCellWidth is set
@@ -103,27 +111,26 @@ export function createDashboardTileFactory({ createTileFn }) {
         gridEl.style.padding = "4px";
         gridEl.style.boxSizing = "border-box";
 
-        // If using maxCellWidth, center the grid
         if (maxCellWidth) {
           gridEl.style.justifyContent = "center";
         }
 
-        // Mount each slot into a grid cell (left-to-right, top-to-bottom)
+        // Mount each slot into a grid cell (left-to-right, top-to-bottom).
+        // Every slot is a terminal — no type dispatch.
         for (let i = 0; i < slots.length; i++) {
           const slot = slots[i];
           const wrapper = document.createElement("div");
-          wrapper.className = "dashboard-slot";
+          wrapper.className = "cluster-slot";
           wrapper.style.overflow = "hidden";
           wrapper.style.borderRadius = "var(--radius-md, 8px)";
           wrapper.style.position = "relative";
           wrapper.style.minWidth = "0";
           wrapper.style.minHeight = "0";
 
-          // Allow slots to span multiple cells
           if (slot.colSpan) wrapper.style.gridColumn = `span ${slot.colSpan}`;
           if (slot.rowSpan) wrapper.style.gridRow = `span ${slot.rowSpan}`;
 
-          const tile = createTileFn(slot.type, slot);
+          const tile = createTerminalTile(slot);
           tile.mount(wrapper, parentContext);
           subTiles.push({ tile, wrapper, index: i });
           gridEl.appendChild(wrapper);
@@ -154,7 +161,7 @@ export function createDashboardTileFactory({ createTileFn }) {
       },
 
       getTitle() {
-        return title || "Dashboard";
+        return title || "Terminal Cluster";
       },
 
       getIcon() {
@@ -163,14 +170,14 @@ export function createDashboardTileFactory({ createTileFn }) {
 
       serialize() {
         return {
-          type: "dashboard",
+          type: "cluster",
           cols,
           rows,
           maxCellWidth: maxCellWidth || undefined,
           gap,
           title: title || undefined,
           slots: subTiles.map(({ tile }) => ({
-            type: tile.type,
+            sessionName: tile.sessionName,
             ...(typeof tile.serialize === "function" ? tile.serialize() : {}),
           })),
         };
