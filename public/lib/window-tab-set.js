@@ -99,21 +99,28 @@ export function createWindowTabSet({ getCurrentSession } = {}) {
   }
 
   function saveTabs() {
-    // Cap before write. The tail-slice mirrors restore(): most recently
-    // appended tabs win. addTab with an explicit position (Chrome-style
-    // "open next to active tab") can still push an inserted entry past
-    // the cap — acceptable tradeoff for keeping the oldest pruning rule
-    // simple and predictable.
+    // Cap before write. Compute the trimmed view in a local — never
+    // reassign `tabs` itself. An earlier draft mutated the closure
+    // variable inside this function, which silently corrupted the
+    // live state: addTab("new", 0) on a full set spliced "new" at
+    // index 0, then the in-place slice(-MAX) dropped it from both
+    // storage AND memory, leaving the carousel with a tile for a
+    // session that had no matching tab. The in-memory array stays
+    // canonical; the cap only affects what we persist. The on-load
+    // truncation (above) is the only place that legitimately trims
+    // the live array, because at load time nothing has referenced it
+    // yet.
+    let toWrite = tabs;
     if (tabs.length > MAX_PERSISTED_TABS) {
       const overflow = tabs.length - MAX_PERSISTED_TABS;
       console.warn(
         `[window-tabs] ${tabs.length} tabs exceeds persist cap ` +
         `${MAX_PERSISTED_TABS}; dropping ${overflow} oldest entries from storage`
       );
-      tabs = tabs.slice(-MAX_PERSISTED_TABS);
+      toWrite = tabs.slice(-MAX_PERSISTED_TABS);
     }
-    sessionStorage.setItem(WINDOW_TABS_KEY, JSON.stringify(tabs));
-    try { localStorage.setItem(LAST_TABS_KEY, JSON.stringify(tabs)); } catch { /* ignore */ }
+    sessionStorage.setItem(WINDOW_TABS_KEY, JSON.stringify(toWrite));
+    try { localStorage.setItem(LAST_TABS_KEY, JSON.stringify(toWrite)); } catch { /* ignore */ }
   }
 
   function notify() {

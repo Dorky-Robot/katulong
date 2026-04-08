@@ -1967,6 +1967,15 @@
       }
 
       if (dead.size === 0) {
+        // Consume the boot exemption here too. Without this, a user who
+        // loads the page with no phantoms leaves the flag armed; the
+        // NEXT reconcile (e.g. after a reconnect that returns a partial
+        // /sessions list — the adb859d race) would then bypass the
+        // 2-pass threshold and could prune a live session that is only
+        // temporarily absent. The exemption must fire exactly once on
+        // the first settled server response, regardless of whether
+        // anything needed pruning on that pass.
+        bootReconcileDone = true;
         reconcilePruneConfirmations = 0;
         lastDeadKey = "";
         return;
