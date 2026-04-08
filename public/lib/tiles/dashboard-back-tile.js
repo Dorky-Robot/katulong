@@ -218,19 +218,27 @@ export function createDashboardBackTile({ sessionName, watcher } = {}) {
       case "restart":
         try {
           await api.delete(`/sessions/${encodeURIComponent(currentSessionName)}`);
+          if (destroyed) return;
           addEvent(`Killed session ${currentSessionName}`);
-          // Brief delay then recreate
+          // Brief delay then recreate. The destroyed guard must fire on
+          // both the timer callback and after the await — the tile can
+          // be unmounted during the 500ms delay, and any mutation of
+          // startTime or state after that is a stale write.
           setTimeout(async () => {
+            if (destroyed) return;
             try {
               await api.post("/sessions", { name: currentSessionName });
+              if (destroyed) return;
               addEvent(`Restarted session ${currentSessionName}`);
               startTime = Date.now();
               updateStatus("idle");
             } catch (err) {
+              if (destroyed) return;
               addEvent(`Restart create failed: ${err.message}`);
             }
           }, 500);
         } catch (err) {
+          if (destroyed) return;
           addEvent(`Restart kill failed: ${err.message}`);
         }
         break;

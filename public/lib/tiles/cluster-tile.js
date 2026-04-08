@@ -86,7 +86,7 @@ export function createClusterTileFactory({ createTerminalTile }) {
     let container = null;
     let gridEl = null;
     let parentContext = null;
-    const subTiles = []; // Array<{ tile, wrapper, index }>
+    const subTiles = []; // Array<{ tile, wrapper, index, slot }>
 
     return {
       type: "cluster",
@@ -132,7 +132,7 @@ export function createClusterTileFactory({ createTerminalTile }) {
 
           const tile = createTerminalTile(slot);
           tile.mount(wrapper, parentContext);
-          subTiles.push({ tile, wrapper, index: i });
+          subTiles.push({ tile, wrapper, index: i, slot });
           gridEl.appendChild(wrapper);
         }
 
@@ -168,7 +168,20 @@ export function createClusterTileFactory({ createTerminalTile }) {
         return "squares-four";
       },
 
+      /**
+       * Propagate a card rename into the cluster's title. The carousel
+       * calls this on renameCard() via a duck-typed check; without it,
+       * the cluster's display title would drift from its card id.
+       */
+      setSessionName(newName) {
+        title = newName;
+      },
+
       serialize() {
+        // Slot schema is intentionally narrow: sessionName + optional
+        // colSpan/rowSpan. The sub-tile's own serialize() is not spread
+        // here because that leaks its internal type field into the slot
+        // entry, which would silently break any future slot-type dispatch.
         return {
           type: "cluster",
           cols,
@@ -176,10 +189,12 @@ export function createClusterTileFactory({ createTerminalTile }) {
           maxCellWidth: maxCellWidth || undefined,
           gap,
           title: title || undefined,
-          slots: subTiles.map(({ tile }) => ({
-            sessionName: tile.sessionName,
-            ...(typeof tile.serialize === "function" ? tile.serialize() : {}),
-          })),
+          slots: subTiles.map(({ tile, slot }) => {
+            const entry = { sessionName: tile.sessionName };
+            if (slot.colSpan) entry.colSpan = slot.colSpan;
+            if (slot.rowSpan) entry.rowSpan = slot.rowSpan;
+            return entry;
+          }),
         };
       },
 

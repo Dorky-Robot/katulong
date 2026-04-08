@@ -134,7 +134,7 @@ describe('terminal-tile auto-flip on idle', () => {
     timers.reset();
   });
 
-  it('flips to dashboard when child processes transition active → idle', async () => {
+  it('flips to back face when child processes transition active → idle', async () => {
     // Fetch script: first poll alive with child, second poll alive without child,
     // plus the re-check fetch inside the 1.5s debounce also returns no child.
     globalThis.fetch = makeFetchScript([

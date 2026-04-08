@@ -382,38 +382,56 @@
     }
 
     /**
-     * Create a terminal cluster: a single card holding a grid of N new
-     * tmux sessions, each its own PTY. Prompts for the cell count, spins
-     * up sessions in parallel, then adds the cluster to the carousel.
+     * Create a terminal cluster: a single card holding a 2x2 grid of new
+     * tmux sessions, each its own PTY. Spawns sessions in parallel; on
+     * partial failure, deletes the successfully created ones so the server
+     * never ends up with orphaned sessions that have no UI owner.
+     *
+     * Fixed at 4 cells for now — the `+` menu is touch-driven and a
+     * native `prompt()` dialog is blocked or jarring on iOS Safari.
+     * A proper picker lives in the future-work list (see
+     * docs/cluster-state-machine.md).
      */
+    const CLUSTER_DEFAULT_CELLS = 4;
+
     async function createNewCluster() {
-      const input = prompt("How many terminals in this cluster? (2–9)", "4");
-      if (!input) return;
-      const count = Math.max(2, Math.min(9, parseInt(input, 10) || 4));
-      try {
-        // Spawn N sessions in parallel. Each has its own PTY — there is no
-        // shared shell. This is the whole reason clusters exist: PTYs have
-        // exactly one size, so only separate sessions can render at
-        // different dimensions across devices.
-        const base = Date.now().toString(36);
-        const created = await Promise.all(
-          Array.from({ length: count }, (_, i) =>
-            api.post("/sessions", { name: `cluster-${base}-${i}` })
-          )
+      const count = CLUSTER_DEFAULT_CELLS;
+      const base = Date.now().toString(36);
+      // Spawn N sessions in parallel. Each has its own PTY — there is no
+      // shared shell. This is the whole reason clusters exist: PTYs have
+      // exactly one size, so only separate sessions can render at
+      // different dimensions across devices.
+      const results = await Promise.allSettled(
+        Array.from({ length: count }, (_, i) =>
+          api.post("/sessions", { name: `cluster-${base}-${i}` })
+        )
+      );
+      const created = [];
+      const failures = [];
+      for (const r of results) {
+        if (r.status === "fulfilled") created.push(r.value);
+        else failures.push(r.reason);
+      }
+      if (failures.length > 0) {
+        // Partial failure — roll back any sessions we did create so the
+        // server isn't left with orphaned tmux sessions that no UI owns.
+        await Promise.allSettled(
+          created.map(s => api.delete(`/sessions/${encodeURIComponent(s.name)}`))
         );
-        const slots = created.map(s => ({ sessionName: s.name }));
-        const tile = clusterTileFactory({ slots, cells: count });
-        const tileId = `cluster-${base}`;
-        if (!carousel.isActive()) {
-          carousel.activate([{ id: tileId, tile }], tileId);
-          wsConnection.connect();
-        } else {
-          carousel.addCard(tileId, tile, insertAtRightOfActive());
-          carousel.focusCard(tileId);
-        }
-      } catch (err) {
-        console.error("Failed to create cluster:", err);
-        showToast(`Failed to create cluster: ${err.message}`);
+        const first = failures[0];
+        console.error("Failed to create cluster:", first);
+        showToast(`Failed to create cluster: ${first?.message || "unknown error"}`);
+        return;
+      }
+      const slots = created.map(s => ({ sessionName: s.name }));
+      const tile = clusterTileFactory({ slots, cells: count });
+      const tileId = `cluster-${base}`;
+      if (!carousel.isActive()) {
+        carousel.activate([{ id: tileId, tile }], tileId);
+        wsConnection.connect();
+      } else {
+        carousel.addCard(tileId, tile, insertAtRightOfActive());
+        carousel.focusCard(tileId);
       }
     }
 
@@ -1914,8 +1932,9 @@
     // sessions (?s=liveN) from being mistaken for phantoms during this
     // first pass.
     //
-    // Non-terminal tiles (notepad, dashboard, web preview) are skipped — they
-    // have no server-side session and own their own lifecycle.
+    // Non-terminal tiles (clusters) are skipped here — a cluster is a
+    // container, not a session, so serverSet never knows about it. The
+    // cluster's own slots own their sub-session lifecycle.
     const RECONCILE_PRUNE_THRESHOLD = 2;
     let reconcilePruneConfirmations = 0;
     let lastDeadKey = "";
@@ -1984,7 +2003,9 @@
       // session is added to the tab set before the carousel activates.
       for (const tab of windowTabSet.getTabs()) {
         if (serverSet.has(tab) || windowTabSet.isRecentlyAdded(tab)) continue;
-        // Skip non-terminal carousel tiles (dashboards, notepads, etc.)
+        // Skip non-terminal carousel tiles (clusters) — they own their
+        // own slot lifecycle, and their tile IDs never appear in the
+        // server's session list.
         const tile = carousel.isActive() ? carousel.getTile(tab) : null;
         if (tile && tile.type !== "terminal") continue;
         dead.add(tab);
@@ -2099,13 +2120,24 @@
     setTimeout(() => {
       const carouselState = carousel.restore();
       if (carouselState && carouselState.tiles?.length > 0 && !carousel.isActive()) {
-        const tiles = carouselState.tiles.map(t => {
-          const tile = restoreTile(t.type, t);
-          return { id: t.id, tile, cardWidth: t.cardWidth };
-        });
-        carousel.activate(tiles, carouselState.focused);
-        // Sync tab set to carousel order (carousel is source of truth)
-        if (windowTabSet) windowTabSet.reorderTabs(carousel.getCards());
+        // Restore entries one at a time and drop any that fail to
+        // reconstruct — corrupt sessionStorage, a tile type written by a
+        // newer version, or any tile whose factory throws. A single bad
+        // entry must not take down the entire restore path.
+        const tiles = [];
+        for (const t of carouselState.tiles) {
+          try {
+            const tile = restoreTile(t.type, t);
+            tiles.push({ id: t.id, tile, cardWidth: t.cardWidth });
+          } catch (err) {
+            console.warn(`[carousel] skipping tile ${t.id} (${t.type}):`, err.message);
+          }
+        }
+        if (tiles.length > 0) {
+          carousel.activate(tiles, carouselState.focused);
+          // Sync tab set to carousel order (carousel is source of truth)
+          if (windowTabSet) windowTabSet.reorderTabs(carousel.getCards());
+        }
       }
     }, 500);
 
