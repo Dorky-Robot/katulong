@@ -1,10 +1,14 @@
 /**
  * Terminal Keyboard Handlers
  *
- * Composable keyboard event handlers for terminal input.
+ * Composable keyboard event handlers for terminal input. The pure
+ * decision logic lives in `terminal-key-decider.js` so it can be unit
+ * tested without xterm.js or DOM. This file is the imperative shell:
+ * it wires the decision function to the term instance and to onSend.
  */
 
 import { filterTerminalResponses, registerResponseSuppressors } from "/lib/terminal-input-filter.js";
+import { decideTerminalKey } from "/lib/terminal-key-decider.js";
 
 /**
  * Create terminal keyboard handlers
@@ -47,95 +51,29 @@ export function createTerminalKeyboard(options = {}) {
   }
 
   /**
-   * Initialize custom key event handler
-   * Handles special key combinations and shortcuts
+   * Initialize custom key event handler.
+   * Wires the pure decideTerminalKey function to the term instance.
    */
   function initCustomKeyHandler() {
     if (!term) return;
 
     term.attachCustomKeyEventHandler((ev) => {
-      // Allow browser copy when text is selected
-      if (ev.metaKey && ev.key === "c" && term.hasSelection()) return false;
+      const decision = decideTerminalKey(ev, { hasSelection: term.hasSelection() });
 
-      // Allow browser paste
-      if ((ev.metaKey || ev.ctrlKey) && ev.key === "v") return false;
-
-      // Allow terminal Ctrl+C when no selection
-      if (ev.ctrlKey && ev.key === "c" && !term.hasSelection()) return true;
-
-      // Tab handled by capture-phase listener
-      if (ev.key === "Tab") return false;
-
-      // Shift+Enter: send kitty keyboard protocol CSI u sequence.
-      // Encodes key=13 (Enter) with modifier=2 (Shift) → \x1b[13;2u.
-      // Claude Code (and other modern TUI apps) recognise this as
-      // Shift+Enter and insert a literal newline instead of submitting.
-      // xterm.js doesn't natively support kitty keyboard, so we send
-      // the sequence manually via the PTY.
-      //
-      // Must block ALL event types (keydown, keypress, keyup) — not just
-      // keydown. xterm.js calls this handler for each event type. When
-      // _keyDown returns early (custom handler → false), _keyDownHandled
-      // stays false. _keyPress then checks _keyDownHandled, finds it
-      // false, and processes the keypress — sending a raw \r that causes
-      // Claude Code to submit instead of inserting a newline.
-      if (ev.shiftKey && ev.key === "Enter") {
-        if (ev.type === "keydown" && onSend) onSend("\x1b[13;2u");
-        return false;
+      if (decision.sequence && onSend) {
+        onSend(decision.sequence);
       }
 
-      // Cmd/Meta key shortcuts
-      if (ev.metaKey && ev.type === "keydown") {
-        // App-level Cmd shortcuts — handled by app-level listener, don't send to PTY
-        if (ev.key === "/") return false;
+      if (decision.action === "toggleSearch" && onToggleSearch) {
+        ev.preventDefault?.();
+        onToggleSearch();
       }
 
-      // Option (Alt) shortcuts — handled at app level for tab management.
-      // These keys must NOT leak to the PTY: xterm.js with macOptionIsMeta=true
-      // would otherwise send ESC-prefixed sequences (e.g. \e1 for Option+1,
-      // \er for Option+R) that trigger readline meta-commands in the shell.
-      if (ev.altKey && !ev.metaKey && !ev.ctrlKey && ev.type === "keydown") {
-        if (ev.code === "KeyT" || ev.code === "KeyW" || ev.code === "KeyQ" ||
-            ev.code === "KeyR" ||
-            ev.code === "BracketLeft" || ev.code === "BracketRight" ||
-            /^Digit[0-9]$/.test(ev.code)) return false;
-
-        if (ev.key === "f" && onToggleSearch) {
-          ev.preventDefault();
-          onToggleSearch();
-          return false;
-        }
-        if (ev.key === "k") {
-          term.clear();
-          return false;
-        }
-
-        const metaSeq = {
-          Backspace: "\x15",     // Cmd+Backspace: delete line
-          ArrowLeft: "\x01",     // Cmd+Left: start of line
-          ArrowRight: "\x05"     // Cmd+Right: end of line
-        }[ev.key];
-
-        if (metaSeq && onSend) {
-          onSend(metaSeq);
-          return false;
-        }
+      if (decision.action === "clearTerminal") {
+        term.clear();
       }
 
-      // Alt/Option key shortcuts
-      if (ev.altKey && ev.type === "keydown") {
-        const altSeq = {
-          ArrowLeft: "\x1bb",    // Alt+Left: word back
-          ArrowRight: "\x1bf"    // Alt+Right: word forward
-        }[ev.key];
-
-        if (altSeq && onSend) {
-          onSend(altSeq);
-          return false;
-        }
-      }
-
-      return true;
+      return decision.allowDefault;
     });
   }
 
