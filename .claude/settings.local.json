@@ -24,7 +24,16 @@
       "Bash(ps -p:*)",
       "Bash(diwa show:*)",
       "Bash(DEBUG_TEST_SERVER=1 node --test --test-reporter=spec --import ./test/helpers/setup-env.js test/sessions-crud.integration.js)",
-      "Bash(diwa:*)"
+      "Bash(diwa:*)",
+      "Bash(gh repo:*)",
+      "Bash(bin/katulong-stage start:*)",
+      "Bash(bin/katulong-stage list:*)",
+      "Bash(tunnels routes:*)",
+      "Bash(dig +short fix-notification-permission-refresh.felixflor.es)",
+      "Bash(dig +short @1.1.1.1 fix-notification-permission-refresh.felixflor.es)",
+      "Bash(tunnels --help)",
+      "Bash(tunnels list:*)",
+      "Bash(bin/katulong-stage stop:*)"
     ]
   }
 }
