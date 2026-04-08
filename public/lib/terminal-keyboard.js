@@ -17,7 +17,8 @@ export function createTerminalKeyboard(options = {}) {
   const {
     term,
     onSend,
-    onToggleSearch
+    onToggleSearch,
+    onTogglePalette
   } = options;
 
   /**
@@ -67,6 +68,11 @@ export function createTerminalKeyboard(options = {}) {
       if (decision.action === "toggleSearch" && onToggleSearch) {
         ev.preventDefault?.();
         onToggleSearch();
+      }
+
+      if (decision.action === "togglePalette" && onTogglePalette) {
+        ev.preventDefault?.();
+        onTogglePalette();
       }
 
       if (decision.action === "clearTerminal") {

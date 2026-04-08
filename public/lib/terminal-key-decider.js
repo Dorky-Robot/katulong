@@ -95,6 +95,15 @@ export function decideTerminalKey(ev, ctx = {}) {
     if (ev.code === "KeyF") return { action: "toggleSearch", sequence: null, allowDefault: false };
     if (ev.code === "KeyK") return { action: "clearTerminal", sequence: null, allowDefault: false };
 
+    // Option+Space — open the command palette. Must key off ev.code, NOT
+    // ev.key: on macOS Option+Space produces a non-breaking space (U+00A0)
+    // in ev.key, so checking ev.key === " " never matches. Same physical-key
+    // rule as Option+F / Option+K above. The palette is also wired at the
+    // document capture-phase level (lib/command-palette.js → init) for the
+    // case where focus is NOT inside the terminal — both layers are
+    // required (see commits c6f1c31 and 2a13634 for the history).
+    if (ev.code === "Space") return { action: "togglePalette", sequence: null, allowDefault: false };
+
     // Line-editing sequences. macOS convention puts these on Cmd+arrow,
     // but Cmd+arrow is owned by the browser (history back/forward) inside
     // a PWA, so katulong moves them to Option+arrow. Word-back/word-forward

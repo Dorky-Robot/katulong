@@ -610,6 +610,146 @@
     }
     #search-input:focus { border-color: var(--accent-active); }
 
+    /* --- Command palette (Alfred/Spotlight-style overlay) ---
+       Hidden by default. JS toggles `.palette.visible` to show.
+       Lives above #search-bar (z:20), #disconnect-overlay (z:10), and the
+       modal stack (--z-modal-* = 10000–10002). Sits below toasts (11000)
+       since toasts are transient feedback that should always be visible. */
+    .palette {
+      display: none;
+      position: fixed; inset: 0;
+      z-index: var(--z-modal-nested, 10002);
+    }
+    .palette.visible {
+      display: block;
+      animation: palette-fade-in 0.12s ease-out;
+    }
+    @keyframes palette-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .palette-backdrop {
+      position: absolute; inset: 0;
+      background: var(--overlay-bg);
+      -webkit-backdrop-filter: blur(2px);
+      backdrop-filter: blur(2px);
+    }
+    .palette-panel {
+      position: absolute;
+      top: 20vh; left: 50%;
+      transform: translateX(-50%);
+      width: min(600px, 92vw);
+      max-height: min(70vh, 540px);
+      display: flex; flex-direction: column;
+      background: var(--bg-surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg, 0.75rem);
+      box-shadow: var(--shadow-xl, 0 20px 40px -8px rgba(0,0,0,0.4));
+      overflow: hidden;
+    }
+    .palette.visible .palette-panel {
+      animation: palette-panel-in 0.16s ease-out;
+    }
+    @keyframes palette-panel-in {
+      from { opacity: 0; transform: translateX(-50%) translateY(-8px) scale(0.98); }
+      to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+    }
+    .palette-input {
+      width: 100%;
+      padding: var(--space-lg, 1rem) var(--space-xl, 1.5rem);
+      background: transparent;
+      color: var(--text);
+      border: none;
+      border-bottom: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: var(--text-lg, 1.125rem);
+      outline: none;
+    }
+    .palette-input::placeholder { color: var(--text-dim); }
+    .palette-input:focus { border-bottom-color: var(--accent-active); }
+    .palette-results {
+      list-style: none;
+      margin: 0; padding: var(--space-xs, 0.25rem) 0;
+      max-height: min(60vh, 400px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .palette-results::-webkit-scrollbar { width: 8px; }
+    .palette-results::-webkit-scrollbar-thumb {
+      background: var(--border); border-radius: 4px;
+    }
+    .palette-item {
+      display: flex; align-items: center;
+      gap: var(--space-md, 0.75rem);
+      padding: var(--space-sm, 0.5rem) var(--space-xl, 1.5rem);
+      cursor: pointer;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      transition: background 0.08s ease;
+    }
+    .palette-item:hover { background: var(--accent); }
+    .palette-item.selected {
+      background: var(--accent-active);
+      color: var(--bg);
+    }
+    .palette-item.selected .palette-item-subtitle,
+    .palette-item.selected .palette-item-category {
+      color: var(--bg);
+      opacity: 0.8;
+    }
+    .palette-item-main {
+      flex: 1 1 auto; min-width: 0;
+      display: flex; flex-direction: column;
+      gap: 2px;
+    }
+    .palette-item-title {
+      font-size: var(--text-sm, 0.875rem);
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .palette-item-subtitle {
+      font-size: var(--text-xs, 0.75rem);
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .palette-item-category {
+      flex-shrink: 0;
+      font-size: var(--text-xs, 0.75rem);
+      color: var(--text-dim);
+      background: var(--tag-bg);
+      padding: 2px var(--space-sm, 0.5rem);
+      border-radius: var(--radius-sm, 0.375rem);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .palette-empty {
+      padding: var(--space-xl, 1.5rem) var(--space-lg, 1rem);
+      text-align: center;
+      color: var(--text-dim);
+      font-size: var(--text-sm, 0.875rem);
+      font-family: var(--font-mono);
+    }
+    @media (max-width: 600px) {
+      .palette-panel {
+        top: 8vh;
+        width: 94vw;
+        max-height: min(80vh, 600px);
+        border-radius: var(--radius-md, 0.5rem);
+      }
+      .palette-input {
+        padding: var(--space-md, 0.75rem) var(--space-lg, 1rem);
+        font-size: var(--text-base, 1rem);
+      }
+      .palette-item {
+        padding: var(--space-sm, 0.5rem) var(--space-lg, 1rem);
+      }
+    }
+
     /* --- Scroll to bottom (lives inside active terminal pane) --- */
     #scroll-bottom {
       position: absolute; bottom: 1rem; right: 1rem; z-index: var(--z-bar);
@@ -2289,6 +2429,17 @@
       <i class="ph ph-x"></i>
     </button>
   </div>
+
+  <!-- Command palette: Alfred/Spotlight-style launcher. Items injected by palette.js. -->
+  <div id="palette" class="palette" aria-hidden="true" role="dialog" aria-label="Command palette">
+    <div class="palette-backdrop"></div>
+    <div class="palette-panel">
+      <input class="palette-input" type="text" placeholder="Type a command…" aria-label="Command palette input" autocomplete="off" spellcheck="false">
+      <ul class="palette-results" role="listbox" aria-label="Palette results"></ul>
+      <div class="palette-empty" hidden>No matches</div>
+    </div>
+  </div>
+
   <div id="drop-overlay" class="drop-overlay">Drop image here</div>
   <button id="scroll-bottom" aria-label="Scroll to bottom">
     <i class="ph ph-caret-down"></i>
@@ -2360,6 +2511,7 @@
         <li><span class="kb-label">Move tab right</span><span><kbd>&#x2325;</kbd> <kbd>}</kbd></span></li>
         <li><span class="kb-label">Clear terminal</span><span><kbd>&#x2325;</kbd> <kbd>K</kbd></span></li>
         <li><span class="kb-label">Search</span><span><kbd>&#x2325;</kbd> <kbd>F</kbd></span></li>
+        <li><span class="kb-label">Command palette</span><span><kbd>&#x2325;</kbd> <kbd>Space</kbd></span></li>
         <li><span class="kb-label">Start of line</span><span><kbd>&#x2325;</kbd> <kbd>←</kbd></span></li>
         <li><span class="kb-label">End of line</span><span><kbd>&#x2325;</kbd> <kbd>→</kbd></span></li>
         <li><span class="kb-label">Delete line</span><span><kbd>&#x2325;</kbd> <kbd>⌫</kbd></span></li>

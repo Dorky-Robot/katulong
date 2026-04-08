@@ -38,6 +38,7 @@ const SPEC = [
   ["Move tab right",          ["⌥", "}"]],
   ["Clear terminal",          ["⌥", "K"]],
   ["Search",                  ["⌥", "F"]],
+  ["Command palette",         ["⌥", "Space"]],
   ["Start of line",           ["⌥", "←"]],
   ["End of line",             ["⌥", "→"]],
   ["Delete line",             ["⌥", "⌫"]],

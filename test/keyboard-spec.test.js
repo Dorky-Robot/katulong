@@ -69,6 +69,24 @@ describe("decideTerminalKey — Option (Alt) terminal shortcuts", () => {
     assert.equal(r.sequence, null);
   });
 
+  // REGRESSION: Option+Space on macOS produces a non-breaking space
+  // (U+00A0) in ev.key, so an `ev.key === " "` check would silently miss
+  // every press. The decider must key off ev.code === "Space". Same trap
+  // as Option+F / Option+K above (see c6f1c31 commit message).
+  it("Option+Space (macOS: ev.key='\\u00a0') → toggle command palette, blocks PTY", () => {
+    const r = decideTerminalKey(ev({ key: "\u00a0", code: "Space", altKey: true }));
+    assert.equal(r.action, "togglePalette");
+    assert.equal(r.allowDefault, false);
+    assert.equal(r.sequence, null);
+  });
+
+  it("plain Space (no Option) → reaches PTY untouched", () => {
+    const r = decideTerminalKey(ev({ key: " ", code: "Space" }));
+    assert.equal(r.action, null);
+    assert.equal(r.sequence, null);
+    assert.equal(r.allowDefault, true);
+  });
+
   it("Option+Backspace → delete line (\\x15)", () => {
     const r = decideTerminalKey(ev({ key: "Backspace", code: "Backspace", altKey: true }));
     assert.equal(r.sequence, "\x15");

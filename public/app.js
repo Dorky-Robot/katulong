@@ -24,6 +24,7 @@
     import { createShortcutBar } from "/lib/shortcut-bar.js";
     import { createWindowTabSet } from "/lib/window-tab-set.js";
     import { createPasteHandler } from "/lib/paste-handler.js";
+    import { createCommandPalette } from "/lib/command-palette.js";
     import { createNetworkMonitor } from "/lib/network-monitor.js";
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
@@ -192,6 +193,15 @@
 
     setDocTitle(state.session.name);
 
+    // --- Command palette ---
+    // Late-bound: the factory is called below pasteHandler.init() (deps
+    // need themeManager + toggleSearchBar, which are defined further
+    // down). The closure-captured `let` lets onTerminalCreated below
+    // call commandPalette.toggle() without TDZ — onTerminalCreated only
+    // runs after the pool's first activate(), which always happens
+    // after this module's top-level code finishes.
+    let commandPalette = null;
+
     // --- Terminal pool ---
     // One xterm.js Terminal per managed session, visibility-toggled on switch.
 
@@ -229,7 +239,11 @@
         const kb = createTerminalKeyboard({
           term: entry.term,
           onSend: (data) => rawSend(data),
-          onToggleSearch: toggleSearchBar
+          onToggleSearch: toggleSearchBar,
+          // Late-bound: commandPalette is constructed below pasteHandler,
+          // long after the pool is built but always before any terminal
+          // is activated (pool.activate is what calls onTerminalCreated).
+          onTogglePalette: () => commandPalette?.toggle()
         });
         kb.init();
 
@@ -1495,6 +1509,20 @@
       },
     });
     pasteHandler.init();
+
+    // --- Command palette (Alfred-style overlay) ---
+    // Wired after pasteHandler so the document-level capture-phase keydown
+    // listener registers in a known order; the palette doesn't need to win
+    // over paste, but keeping the order stable makes future debugging
+    // easier. The factory's init() looks up #palette in the DOM (markup
+    // owned by index.html); if the markup is missing the palette logs a
+    // warning and stays disabled instead of crashing app boot.
+    commandPalette = createCommandPalette({
+      themeManager,
+      toggleSearchBar,
+      getTerm,
+    });
+    commandPalette.init();
 
     // --- File Browser ---
 
