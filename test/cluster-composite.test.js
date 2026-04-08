@@ -230,6 +230,56 @@ describe('cluster-tile', () => {
     });
   });
 
+  describe('sessionName resolution (regression: unresponsive cluster tile)', () => {
+    // Regression for PR #533 / 333aee3: creating a cluster via the + menu
+    // left its sub-terminals unresponsive to keystrokes. Root cause: the
+    // cluster tile exposed no `sessionName`, so app.js `tileSessionName(id)`
+    // fell through to `tileId` (e.g. "cluster-abc") and assigned that as
+    // `state.session.name`. Every input message the inputSender produced
+    // was then routed to the string "cluster-abc" — a tile id, not a real
+    // tmux session — and the server silently dropped it.
+    //
+    // The fix is to have the cluster expose a `sessionName` that points at
+    // a real sub-session so downstream consumers (tileSessionName, the
+    // "switch" message in onFocusChange, inputSender routing) see a
+    // sessionName that actually exists on the server.
+    it('exposes a real sub-terminal sessionName so input routing works', () => {
+      const factory = createClusterTileFactory({ createTerminalTile });
+      const tile = factory({
+        cols: 2,
+        rows: 2,
+        slots: [
+          { sessionName: "cluster-base-0" },
+          { sessionName: "cluster-base-1" },
+          { sessionName: "cluster-base-2" },
+          { sessionName: "cluster-base-3" },
+        ],
+      });
+      tile.mount(createMockElement("div"), {});
+      // Must be a real sub-session, not undefined and not the parent tile
+      // id. app.js routes state.session.name → inputSender → server, so
+      // it must be a name the server recognizes as a tmux session.
+      assert.ok(tile.sessionName, "cluster must expose a sessionName");
+      assert.strictEqual(
+        tile.sessionName,
+        "cluster-base-0",
+        "cluster sessionName must point at the first (focused) sub-terminal"
+      );
+    });
+
+    it('sessionName is undefined before mount (no sub-tiles yet)', () => {
+      const factory = createClusterTileFactory({ createTerminalTile });
+      const tile = factory({
+        cols: 2,
+        rows: 2,
+        slots: [{ sessionName: "a" }],
+      });
+      // Before mount, sub-tiles array is empty — don't fabricate a name
+      // the consumer would route input to.
+      assert.strictEqual(tile.sessionName, undefined);
+    });
+  });
+
   describe('getSubTiles', () => {
     it('exposes the sub-tile array for external inspection', () => {
       const factory = createClusterTileFactory({ createTerminalTile });
