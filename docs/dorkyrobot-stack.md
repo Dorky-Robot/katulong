@@ -334,17 +334,30 @@ Directory-based topics enable glob matching:
 - `crew/katulong/+/agent-done` → glob `pubsub/crew/katulong/*/agent-done/log.jsonl`
 - Merge and sort by timestamp for unified stream
 
-## Live Mini-Tiles — Design
+## Terminal Clusters — Live Mini Terminals
 
-When the orchestrator spawns workers, show them as scaled-down live terminal previews in katulong's web UI.
+When the orchestrator spawns workers, show them as scaled-down live
+terminal previews in katulong's web UI. The primitive for this is the
+**terminal cluster** — a single carousel card that hosts a CSS grid of
+independent mini terminals, each backed by its own tmux session.
 
-### Crew tile type
+### Why separate sessions?
 
-A new tile type (`crew-tile`) that renders a CSS grid of mini-terminals:
+A PTY has exactly one size. The shell and any programs inside it query
+their dimensions once, via `TIOCGWINSZ`, and get one answer. There is no
+way to have a single running process simultaneously render at 40 columns
+(phone) and 200 columns (desktop). Splitting each mini terminal into its
+own tmux session with its own PTY is the only way around this — every
+slot gets its own resize events, its own shell, its own output stream.
+
+See `docs/cluster-state-machine.md` for the formal lifecycle spec and
+`public/lib/tiles/cluster-tile.js` for the implementation.
+
+### Layout
 
 ```
 ┌─────────────────────────────────────────────┐
-│ katulong crew                               │
+│ katulong dev                                │
 ├──────────────┬──────────────┬───────────────┤
 │ dev          │ test         │ perf          │
 │ ┌──────────┐ │ ┌──────────┐ │ ┌───────────┐ │
@@ -352,21 +365,29 @@ A new tile type (`crew-tile`) that renders a CSS grid of mini-terminals:
 │ │fixing #12│ │ │PASS 42/4│ │ │           │ │
 │ └──────────┘ │ └──────────┘ │ └───────────┘ │
 ├──────────────┴──────────────┴───────────────┤
-│ 3 active · 1 idle · #12 in-progress        │
+│ 3 active · 1 idle · #12 in-progress         │
 └─────────────────────────────────────────────┘
 ```
 
-Each mini-terminal is a real xterm.js instance subscribed to the session's output, rendered at reduced font size. Tapping promotes to full view.
+Each slot is a real xterm.js instance attached to its own session's
+output. Tap to promote to full view. The cluster's front face is the
+grid; the carousel's back face is reserved for cluster-level status
+(aggregated agent state, task assignments, quick actions) in a future PR.
 
-### Tile flip
+### Creating a cluster
 
-The card carousel already has front/back faces. Back face shows:
-- Agent status, run duration
-- Task assignment (from sipag)
-- Quick actions: kill, restart, view logs
-- Process tree (child processes)
+From the `+` menu → **Cluster**. You'll be prompted for the number of
+terminals (2–9). Katulong spins up N new tmux sessions in parallel and
+drops them into a grid layout that auto-sizes to the squarest arrangement.
 
-Auto-flip to dashboard when worker finishes (no child processes).
+### Future work
+
+- Explicit state machine enforcement (see cluster-state-machine.md)
+- Per-slot degradation events wired through session-status-watcher
+- Crew integration: sipag dispatches workers that materialize as
+  cluster slots with the worker's name pre-filled
+- Cluster back-face with aggregated worker status, task assignments,
+  and process tree
 
 ## Dispatch Flow
 
