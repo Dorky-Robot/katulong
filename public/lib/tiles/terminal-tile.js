@@ -22,6 +22,10 @@ import { createDashboardBackTile } from "./dashboard-back-tile.js";
 export function createTerminalTileFactory(deps) {
   const { terminalPool, createTileFn } = deps;
   return function createTerminalTile({ sessionName }) {
+    // Mutable: rename updates this via setSessionName(). Every method below
+    // reads `currentSessionName` (not the destructured parameter) so that
+    // rename, lookup, persistence, and pool calls all stay in sync.
+    let currentSessionName = sessionName;
     let mounted = false;
     let container = null;
     let backTile = null;
@@ -29,104 +33,32 @@ export function createTerminalTileFactory(deps) {
     let prevHasChildProcesses = false;
     let autoFlipTimer = null;
 
-    return {
-      type: "terminal",
-
-      /** The session name this tile wraps. */
-      sessionName,
-
-      mount(el, ctx) {
-        container = el;
-        const entry = terminalPool.getOrCreate(sessionName);
-        terminalPool.protect(sessionName);
-        entry.container.style.display = "";
-        el.appendChild(entry.container);
-        mounted = true;
-
-        // ── Register dashboard back-face ───────────────────────────
-        const carousel = deps.carousel;
-        if (carousel) {
-          backTile = createDashboardBackTile({ sessionName });
-          carousel.setBackTile(sessionName, backTile);
-        }
-
-        // ── Auto-flip on child process exit ────────────────────────
-        // Poll session status; when child processes transition from
-        // true -> false, auto-flip to the dashboard after a short delay.
-        startStatusPoll(ctx, carousel);
-      },
-
-      unmount() {
-        if (!mounted) return;
-        stopStatusPoll();
-        terminalPool.unprotect(sessionName);
-        const entry = terminalPool.get(sessionName);
-        if (entry) {
-          entry.container.style.display = "none";
-          // Move terminal pane back to pool parent so it isn't orphaned
-          // when the card wrapper is removed from the DOM.
-          if (entry.container.parentElement) {
-            entry.container.remove();
-          }
-        }
-        mounted = false;
-        container = null;
-        backTile = null;
-      },
-
-      focus() {
-        const entry = terminalPool.get(sessionName);
-        if (!entry) return;
-        terminalPool.setActive(sessionName);
-        terminalPool.attachControls(sessionName);
-        entry.term.focus();
-        this.resize();
-      },
-
-      blur() {
-        // Terminal keeps running in the background — nothing to do.
-      },
-
-      resize() {
-        terminalPool.scale(sessionName);
-      },
-
-      getTitle() {
-        return sessionName;
-      },
-
-      getIcon() {
-        return "terminal-window";
-      },
-
-      serialize() {
-        return { type: "terminal", sessionName };
-      },
-    };
-
     // ── Status polling for auto-flip ──────────────────────────────
+    // Declared above the tile object so the textual order matches the
+    // execution order — function declarations would hoist either way,
+    // but placing them after `return tile` reads as dead code.
 
     function startStatusPoll(ctx, carousel) {
       if (statusPollTimer) return;
       statusPollTimer = setInterval(async () => {
         try {
-          const res = await fetch(`/sessions/${encodeURIComponent(sessionName)}/status`);
+          const res = await fetch(`/sessions/${encodeURIComponent(currentSessionName)}/status`);
           if (!res.ok) return;
           const status = await res.json();
           const hasChild = status.hasChildProcesses || false;
 
           // Detect transition: had child processes -> no child processes
-          if (prevHasChildProcesses && !hasChild && carousel && !carousel.isFlipped(sessionName)) {
+          if (prevHasChildProcesses && !hasChild && carousel && !carousel.isFlipped(currentSessionName)) {
             // Small delay (1.5s) to avoid flipping during brief pauses
             if (autoFlipTimer) clearTimeout(autoFlipTimer);
             autoFlipTimer = setTimeout(() => {
               // Re-check: still no child processes?
-              fetch(`/sessions/${encodeURIComponent(sessionName)}/status`)
+              fetch(`/sessions/${encodeURIComponent(currentSessionName)}/status`)
                 .then(r => r.ok ? r.json() : null)
                 .then(s => {
-                  if (s && !s.hasChildProcesses && !carousel.isFlipped(sessionName)) {
+                  if (s && !s.hasChildProcesses && !carousel.isFlipped(currentSessionName)) {
                     if (backTile?.addEvent) backTile.addEvent("Agent work completed");
-                    carousel.flipCard(sessionName, true);
+                    carousel.flipCard(currentSessionName, true);
                   }
                 })
                 .catch(() => {});
@@ -144,5 +76,89 @@ export function createTerminalTileFactory(deps) {
       if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
       if (autoFlipTimer) { clearTimeout(autoFlipTimer); autoFlipTimer = null; }
     }
+
+    const tile = {
+      type: "terminal",
+
+      /** The session name this tile wraps (current — kept in sync on rename). */
+      get sessionName() { return currentSessionName; },
+
+      /** Update the session name after a tab rename. The carousel calls
+       *  this from renameCard() so that subsequent lookups (findCard,
+       *  serialize, etc.) see the new name instead of the original. */
+      setSessionName(newName) {
+        currentSessionName = newName;
+      },
+
+      mount(el, ctx) {
+        container = el;
+        const entry = terminalPool.getOrCreate(currentSessionName);
+        terminalPool.protect(currentSessionName);
+        entry.container.style.display = "";
+        el.appendChild(entry.container);
+        mounted = true;
+
+        // ── Register dashboard back-face ───────────────────────────
+        const carousel = deps.carousel;
+        if (carousel) {
+          backTile = createDashboardBackTile({ sessionName: currentSessionName });
+          carousel.setBackTile(currentSessionName, backTile);
+        }
+
+        // ── Auto-flip on child process exit ────────────────────────
+        // Poll session status; when child processes transition from
+        // true -> false, auto-flip to the dashboard after a short delay.
+        startStatusPoll(ctx, carousel);
+      },
+
+      unmount() {
+        if (!mounted) return;
+        stopStatusPoll();
+        terminalPool.unprotect(currentSessionName);
+        const entry = terminalPool.get(currentSessionName);
+        if (entry) {
+          entry.container.style.display = "none";
+          // Move terminal pane back to pool parent so it isn't orphaned
+          // when the card wrapper is removed from the DOM.
+          if (entry.container.parentElement) {
+            entry.container.remove();
+          }
+        }
+        mounted = false;
+        container = null;
+        backTile = null;
+      },
+
+      focus() {
+        const entry = terminalPool.get(currentSessionName);
+        if (!entry) return;
+        terminalPool.setActive(currentSessionName);
+        terminalPool.attachControls(currentSessionName);
+        entry.term.focus();
+        this.resize();
+      },
+
+      blur() {
+        // Terminal keeps running in the background — nothing to do.
+      },
+
+      resize() {
+        terminalPool.scale(currentSessionName);
+      },
+
+      getTitle() {
+        return currentSessionName;
+      },
+
+      getIcon() {
+        return "terminal-window";
+      },
+
+      serialize() {
+        return { type: "terminal", sessionName: currentSessionName };
+      },
+    };
+
+    return tile;
   };
 }

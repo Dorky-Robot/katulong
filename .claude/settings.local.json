@@ -21,7 +21,10 @@
       "Read(//Users/felixflores/Projects/**)",
       "Bash(katulong:*)",
       "Bash(diwa search:*)",
-      "Bash(ps -p:*)"
+      "Bash(ps -p:*)",
+      "Bash(diwa show:*)",
+      "Bash(DEBUG_TEST_SERVER=1 node --test --test-reporter=spec --import ./test/helpers/setup-env.js test/sessions-crud.integration.js)",
+      "Bash(diwa:*)"
     ]
   }
 }

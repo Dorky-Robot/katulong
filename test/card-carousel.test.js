@@ -77,17 +77,19 @@ function createMockElement(tag) {
 
 /** Create a mock tile that tracks lifecycle calls. */
 function createMockTile(id) {
+  let currentName = id;
   return {
     type: "mock",
-    sessionName: id,
+    get sessionName() { return currentName; },
+    setSessionName(newName) { currentName = newName; },
     mount: mock.fn(),
     unmount: mock.fn(),
     focus: mock.fn(),
     blur: mock.fn(),
     resize: mock.fn(),
-    getTitle: () => id,
+    getTitle: () => currentName,
     getIcon: () => "terminal-window",
-    serialize: () => ({ type: "mock", sessionName: id }),
+    serialize: () => ({ type: "mock", sessionName: currentName }),
   };
 }
 
@@ -389,6 +391,29 @@ describe('card-carousel', () => {
     it('preserves order', () => {
       carousel.renameCard("b", "b-renamed");
       assert.deepStrictEqual(carousel.getCards(), ["a", "b-renamed"]);
+    });
+
+    // Regression: a renamed tile must update its internal sessionName
+    // so subsequent findCard / serialize / removeDeadSession lookups by
+    // the new name continue to work. Without this, `exit` on a renamed
+    // session left an orphan tile because findCard(t.sessionName === new)
+    // returned null and removeCard was never called.
+    it('updates the tile.sessionName after rename', () => {
+      carousel.renameCard("a", "a-renamed");
+      const tile = carousel.getTile("a-renamed");
+      assert.strictEqual(tile.sessionName, "a-renamed");
+    });
+
+    it('findCard by sessionName works after rename', () => {
+      carousel.renameCard("a", "a-renamed");
+      const found = carousel.findCard(t => t.sessionName === "a-renamed");
+      assert.strictEqual(found, "a-renamed");
+    });
+
+    it('serialize() returns the new sessionName after rename', () => {
+      carousel.renameCard("a", "a-renamed");
+      const tile = carousel.getTile("a-renamed");
+      assert.deepStrictEqual(tile.serialize(), { type: "mock", sessionName: "a-renamed" });
     });
   });
 

@@ -616,6 +616,17 @@ export function createCardCarousel({
       entry.wrapper.dataset.tileId = newId;
       cardEls.delete(oldId);
       cardEls.set(newId, entry);
+      // Push the new name into the tile so its internal sessionName,
+      // serialize(), and pool lookups stay aligned with the carousel
+      // key. Without this, findCard(t => t.sessionName === newId) and
+      // serialize() return the stale pre-rename name — which leaves
+      // orphan tiles when the renamed session is later removed.
+      if (typeof entry.tile.setSessionName === "function") {
+        entry.tile.setSessionName(newId);
+      }
+      if (entry.backTile && typeof entry.backTile.setSessionName === "function") {
+        entry.backTile.setSessionName(newId);
+      }
     }
 
     save();
