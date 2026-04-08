@@ -1870,7 +1870,7 @@
     // This reconciler removes any terminal tile / tab whose backing session
     // is missing from that list.
     //
-    // Threshold pattern: the first server response after reconnect can be a
+    // Threshold pattern: the first server response after RECONNECT can be a
     // partial list (e.g., only the attached session — see adb859d). Pruning
     // on that wipes every other tab. We require RECONCILE_PRUNE_THRESHOLD
     // consecutive non-loading responses where THE SAME dead set persists
@@ -1878,11 +1878,24 @@
     // matters: if pass 1 sees [A] dead and pass 2 sees [B] dead, the counter
     // would otherwise reach 2 and prune B without B getting two confirmations.
     //
+    // Boot-pass exemption: the VERY FIRST reconcile after page load is
+    // exempt from the threshold. On fresh boot the server is fully
+    // initialized before we hit /sessions — the partial-response race only
+    // exists post-reconnect. Without this exemption, a user opening the
+    // page with N stale phantoms in localStorage gets exactly one reconcile
+    // (from the initial store load), it bumps the counter to 1, returns,
+    // and nothing ever prunes them unless the user takes another action.
+    // That was the failure mode behind the 90-phantom retry storm. The
+    // recentlyAdded grace period in windowTabSet already protects URL-boot
+    // sessions (?s=liveN) from being mistaken for phantoms during this
+    // first pass.
+    //
     // Non-terminal tiles (notepad, dashboard, web preview) are skipped — they
     // have no server-side session and own their own lifecycle.
     const RECONCILE_PRUNE_THRESHOLD = 2;
     let reconcilePruneConfirmations = 0;
     let lastDeadKey = "";
+    let bootReconcileDone = false;
 
     function removeDeadSession(name) {
       // Carousel: terminal tile IDs are the (current) session name, and
@@ -1969,7 +1982,12 @@
       }
 
       reconcilePruneConfirmations++;
-      if (reconcilePruneConfirmations < RECONCILE_PRUNE_THRESHOLD) return;
+      // Boot-pass exemption: bypass the 2-consecutive-pass threshold on
+      // the very first reconcile after page load. See the long comment
+      // above RECONCILE_PRUNE_THRESHOLD for why this is safe.
+      const bootBypass = !bootReconcileDone;
+      bootReconcileDone = true;
+      if (!bootBypass && reconcilePruneConfirmations < RECONCILE_PRUNE_THRESHOLD) return;
       reconcilePruneConfirmations = 0;
       lastDeadKey = "";
 

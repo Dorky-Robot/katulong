@@ -130,6 +130,78 @@ describe("WindowTabSet.addTab", () => {
   });
 });
 
+describe("WindowTabSet persistence cap", () => {
+  beforeEach(() => {
+    stores.session = {};
+    stores.local = {};
+  });
+
+  it("caps saved tabs at 50, dropping oldest", () => {
+    // Regression: without a cap, a drift bug or phantom leak can push
+    // the persisted tab list into the dozens. On the next boot those
+    // phantoms drive a subscribe retry storm via syncCarouselSubscriptions,
+    // and the status poller (5s per tile) multiplies the damage. Cap
+    // must match MAX_PERSISTED_CARDS in card-carousel.js.
+    const seeded = Array.from({ length: 60 }, (_, i) => `tab${i}`);
+    stores.session["katulong-window-tabs"] = JSON.stringify(seeded);
+    const origWarn = console.warn;
+    console.warn = () => {};
+    let ts;
+    try {
+      ts = createWindowTabSet({ getCurrentSession: () => "tab0" });
+    } finally {
+      console.warn = origWarn;
+    }
+    const tabs = ts.getTabs();
+    assert.equal(tabs.length, 50);
+    // Tail preserved (most-recently-added at end of array).
+    assert.equal(tabs[tabs.length - 1], "tab59");
+    // Oldest dropped.
+    assert.ok(!tabs.includes("tab0"));
+    assert.ok(!tabs.includes("tab9"));
+  });
+
+  it("caps tab count when addTab pushes past the limit", () => {
+    stores.session = {};
+    stores.local = {};
+    const seeded = Array.from({ length: 50 }, (_, i) => `tab${i}`);
+    stores.session["katulong-window-tabs"] = JSON.stringify(seeded);
+    const ts = createWindowTabSet({ getCurrentSession: () => "tab0" });
+    const origWarn = console.warn;
+    console.warn = () => {};
+    try {
+      ts.addTab("overflow");
+    } finally {
+      console.warn = origWarn;
+    }
+    const tabs = ts.getTabs();
+    assert.equal(tabs.length, 50);
+    assert.equal(tabs[tabs.length - 1], "overflow");
+    assert.ok(!tabs.includes("tab0"), "oldest should be dropped to make room");
+  });
+
+  it("persists the capped list to storage (not the full bloated list)", () => {
+    const seeded = Array.from({ length: 80 }, (_, i) => `tab${i}`);
+    stores.session["katulong-window-tabs"] = JSON.stringify(seeded);
+    const origWarn = console.warn;
+    console.warn = () => {};
+    let ts;
+    try {
+      ts = createWindowTabSet({ getCurrentSession: () => "tab0" });
+      // Trigger a save path explicitly — addTab re-persists.
+      ts.addTab("new");
+    } finally {
+      console.warn = origWarn;
+    }
+    const persistedSession = JSON.parse(stores.session["katulong-window-tabs"]);
+    assert.equal(persistedSession.length, 50);
+    const persistedLocal = JSON.parse(stores.local["katulong-last-tabs"]);
+    assert.equal(persistedLocal.length, 50);
+    // Sanity: the freshly added tab made it through the cap.
+    assert.ok(persistedSession.includes("new"));
+  });
+});
+
 describe("WindowTabSet.renameTab", () => {
   beforeEach(() => {
     stores.session = {};

@@ -17,6 +17,14 @@ const CHANNEL_NAME = "katulong-tabs";
 // prunable within the user's "is this stuck?" attention window.
 const RECENTLY_ADDED_TTL_MS = 30000;
 
+// Defensive cap on the persisted tab list. Must stay in lockstep with
+// MAX_PERSISTED_CARDS in card-carousel.js — the two persistence layers
+// describe the same user surface and diverging caps would leave dangling
+// carousel tiles or dangling tab buttons. Real users rarely keep more
+// than a dozen tabs open; the cap is a backstop against phantom leaks
+// (see the 90-tab retry-storm incident that motivated this file).
+const MAX_PERSISTED_TABS = 50;
+
 function generateId() {
   return "w_" + Math.random().toString(36).slice(2, 10);
 }
@@ -78,7 +86,32 @@ export function createWindowTabSet({ getCurrentSession } = {}) {
   // Filter out null/undefined that may have been saved by a previous version
   tabs = tabs.filter(Boolean);
 
+  // Truncate on load too — a blob from the pre-cap era might still have
+  // dozens of phantoms. Keep the tail (most recently added tabs sit at
+  // the end of the array).
+  if (tabs.length > MAX_PERSISTED_TABS) {
+    const overflow = tabs.length - MAX_PERSISTED_TABS;
+    console.warn(
+      `[window-tabs] loaded ${tabs.length} tabs exceeds cap ` +
+      `${MAX_PERSISTED_TABS}; dropping ${overflow} oldest on load`
+    );
+    tabs = tabs.slice(-MAX_PERSISTED_TABS);
+  }
+
   function saveTabs() {
+    // Cap before write. The tail-slice mirrors restore(): most recently
+    // appended tabs win. addTab with an explicit position (Chrome-style
+    // "open next to active tab") can still push an inserted entry past
+    // the cap — acceptable tradeoff for keeping the oldest pruning rule
+    // simple and predictable.
+    if (tabs.length > MAX_PERSISTED_TABS) {
+      const overflow = tabs.length - MAX_PERSISTED_TABS;
+      console.warn(
+        `[window-tabs] ${tabs.length} tabs exceeds persist cap ` +
+        `${MAX_PERSISTED_TABS}; dropping ${overflow} oldest entries from storage`
+      );
+      tabs = tabs.slice(-MAX_PERSISTED_TABS);
+    }
     sessionStorage.setItem(WINDOW_TABS_KEY, JSON.stringify(tabs));
     try { localStorage.setItem(LAST_TABS_KEY, JSON.stringify(tabs)); } catch { /* ignore */ }
   }

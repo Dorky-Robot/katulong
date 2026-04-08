@@ -16,6 +16,17 @@ import { createResizeHandles } from "./tile-resize.js";
 
 const STORAGE_KEY = "katulong-carousel";
 
+// Hard cap on persisted cards. Defensive backstop against unbounded
+// localStorage growth. In normal use a user keeps a handful of tabs open;
+// but bugs, multi-device drift, or races can leak phantom tile entries into
+// storage. Once the list crosses this size every subsequent boot has to pay
+// the cost of re-subscribing, polling status, and reconciling dozens of
+// dead sessions — the observed failure mode was 90+ phantoms producing a
+// subscribe/status retry storm and an unresponsive UI. Cap is generous
+// enough to never hit in legitimate use; entries beyond the cap are dropped
+// oldest-first on save, keeping the most recently focused cards.
+const MAX_PERSISTED_CARDS = 50;
+
 /**
  * All platforms use the card carousel layout.
  * Previously iPad-only; now the single unified UI.
@@ -41,7 +52,25 @@ export function createCardCarousel({
   function save() {
     try {
       if (active && cards.length > 0) {
-        const serialized = cards.map(id => {
+        // Cap: if we're somehow above MAX_PERSISTED_CARDS, drop the oldest
+        // entries (beginning of the array) and keep the most recent. The
+        // focused card is promoted to the kept tail so user focus is never
+        // the one thrown away. This is defensive — the UI shouldn't
+        // normally mount this many cards, but phantom-leak bugs can push
+        // past it, and the cap keeps one bad boot from cascading forever.
+        let toPersist = cards;
+        if (cards.length > MAX_PERSISTED_CARDS) {
+          const overflow = cards.length - MAX_PERSISTED_CARDS;
+          console.warn(
+            `[carousel] ${cards.length} cards exceeds persist cap ` +
+            `${MAX_PERSISTED_CARDS}; dropping ${overflow} oldest entries from storage`
+          );
+          toPersist = cards.slice(-MAX_PERSISTED_CARDS);
+          if (focusedId && !toPersist.includes(focusedId) && cards.includes(focusedId)) {
+            toPersist = [focusedId, ...toPersist.slice(0, -1)];
+          }
+        }
+        const serialized = toPersist.map(id => {
           const entry = cardEls.get(id);
           if (!entry) return null;
           const base = { id, type: entry.tile.type };
@@ -86,10 +115,35 @@ export function createCardCarousel({
     const state = parseStoredState();
     if (!state) return null;
 
+    // Truncate on read too. A user upgrading into this cap for the first
+    // time can have a bloated blob from the pre-cap era; without this
+    // trimming we'd re-mount every phantom exactly once before save()
+    // prunes them, triggering the same subscribe/status storm we're
+    // trying to prevent. Keep the tail (most-recent) plus the stored
+    // focused entry if it would otherwise be trimmed away.
+    let rawCards = state.cards;
+    if (rawCards.length > MAX_PERSISTED_CARDS) {
+      const overflow = rawCards.length - MAX_PERSISTED_CARDS;
+      console.warn(
+        `[carousel] restored ${rawCards.length} cards exceeds cap ` +
+        `${MAX_PERSISTED_CARDS}; dropping ${overflow} oldest on load`
+      );
+      const tail = rawCards.slice(-MAX_PERSISTED_CARDS);
+      const focusedEntry = state.focused
+        ? rawCards.find(c => (typeof c === "string" ? c : c?.id) === state.focused)
+        : null;
+      const focusedInTail = focusedEntry
+        ? tail.some(c => (typeof c === "string" ? c : c?.id) === state.focused)
+        : true;
+      rawCards = focusedInTail || !focusedEntry
+        ? tail
+        : [focusedEntry, ...tail.slice(0, -1)];
+    }
+
     // Detect legacy format (array of session name strings)
-    if (typeof state.cards[0] === "string") {
+    if (typeof rawCards[0] === "string") {
       return {
-        tiles: state.cards.map(name => ({
+        tiles: rawCards.map(name => ({
           id: name,
           type: "terminal",
           sessionName: name,
@@ -98,7 +152,7 @@ export function createCardCarousel({
       };
     }
 
-    return { tiles: state.cards, focused: state.focused };
+    return { tiles: rawCards, focused: state.focused };
   }
 
   /**
