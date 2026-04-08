@@ -715,11 +715,12 @@
       getCurrentSession: () => state.session.name
     });
     // Ensure the initial session from the URL is in this window's tab set.
-    // restoreTab (not addTab) so the reconciler can prune it if the server
-    // has no matching session — a stale ?s= URL bookmark must not be granted
-    // permanent immunity via the recently-added grace period.
+    // addTab grants a time-limited grace period (RECENTLY_ADDED_TTL_MS in
+    // window-tab-set.js) so the reconciler doesn't prune the freshly-booted
+    // session in the gap between page load and the first /sessions response.
+    // The TTL ensures a stale ?s= URL bookmark eventually becomes prunable.
     if (explicitSession) {
-      windowTabSet.restoreTab(state.session.name);
+      windowTabSet.addTab(state.session.name);
     }
 
     // Create session list component
@@ -2046,8 +2047,10 @@
             terminalPool.activate(name);
             renderBar(name);
           }
-          // restoreTab: server already confirmed this exists — no grace needed.
-          windowTabSet.restoreTab(name);
+          // Server already confirmed this session exists in the /sessions
+          // response above, so the grace period from addTab is harmless —
+          // confirmTab() will clear it on the next reconciler pass.
+          windowTabSet.addTab(name);
           wsConnection.connect();
         }
         // If no sessions exist, stay empty — user can create one via session list

@@ -28,10 +28,24 @@ export function createWindowTabSet({ getCurrentSession } = {}) {
   // tab could be pruned in the gap between local creation and the next
   // server response.
   //
-  // We deliberately do NOT seed from getCurrentSession(). A stale ?s= URL
-  // pointing at a session that was killed elsewhere would otherwise become
-  // permanently immune to reconciliation, leaving an orphaned tile forever.
-  const recentlyAdded = new Set();
+  // Grace is time-limited (RECENTLY_ADDED_TTL_MS) instead of permanent.
+  // A stale ?s= URL bookmark would otherwise become permanently immune
+  // to reconciliation, leaving an orphaned tile forever. With a TTL the
+  // legitimate fresh-boot case still gets enough headroom for the
+  // WebSocket to create the session and the next /sessions poll to
+  // confirm it, while genuinely stale bookmarks expire and become
+  // prunable.
+  const RECENTLY_ADDED_TTL_MS = 30000;
+  const recentlyAdded = new Map(); // name -> expiresAt (ms)
+  function isRecentlyAddedNow(name) {
+    const expiresAt = recentlyAdded.get(name);
+    if (expiresAt === undefined) return false;
+    if (Date.now() >= expiresAt) {
+      recentlyAdded.delete(name);
+      return false;
+    }
+    return true;
+  }
 
   // BroadcastChannel for cross-window coordination
   let channel = null;
@@ -92,22 +106,7 @@ export function createWindowTabSet({ getCurrentSession } = {}) {
 
     addTab(name, position) {
       if (tabs.includes(name)) return;
-      recentlyAdded.add(name);
-      if (position !== undefined && position >= 0) {
-        tabs.splice(position, 0, name);
-      } else {
-        tabs.push(name);
-      }
-      saveTabs();
-      notify();
-    },
-
-    /** Insert a tab without granting it the just-added grace period.
-     *  Use this when restoring a tab from a source that may be stale
-     *  (URL bookmark, post-fetch boot) — the reconciler must be free to
-     *  prune it if the server has no matching session. */
-    restoreTab(name, position) {
-      if (tabs.includes(name)) return;
+      recentlyAdded.set(name, Date.now() + RECENTLY_ADDED_TTL_MS);
       if (position !== undefined && position >= 0) {
         tabs.splice(position, 0, name);
       } else {
@@ -135,7 +134,7 @@ export function createWindowTabSet({ getCurrentSession } = {}) {
       const idx = tabs.indexOf(oldName);
       if (idx === -1) return;
       tabs[idx] = newName;
-      recentlyAdded.add(newName);
+      recentlyAdded.set(newName, Date.now() + RECENTLY_ADDED_TTL_MS);
       recentlyAdded.delete(oldName);
       saveTabs();
       notify();
@@ -162,9 +161,10 @@ export function createWindowTabSet({ getCurrentSession } = {}) {
 
     /** Whether a tab name is in the local "just added" grace period.
      *  Used by the tile reconciler to skip pruning sessions the server
-     *  may not yet have caught up to. */
+     *  may not yet have caught up to. Grace expires after the TTL so
+     *  stale URL bookmarks eventually become prunable. */
     isRecentlyAdded(name) {
-      return recentlyAdded.has(name);
+      return isRecentlyAddedNow(name);
     },
 
     /** Mark a tab as confirmed by the server, ending its grace period. */
