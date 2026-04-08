@@ -2,13 +2,17 @@
 
 This directory contains the Homebrew formula for installing Katulong.
 
+This file is the source-of-truth template. CI publishes it to the
+canonical multi-formula tap at `Dorky-Robot/homebrew-tap` on every
+release.
+
 ## For Users
 
 ### Installation
 
 ```bash
 # Add the tap
-brew tap dorky-robot/katulong
+brew tap dorky-robot/tap
 
 # Install katulong
 brew install katulong
@@ -77,22 +81,6 @@ brew services stop katulong
    brew services start katulong
    brew services list | grep katulong
    ```
-
-### Setting Up the Tap
-
-For the first release, create the tap repository:
-
-```bash
-# Create a new repository: dorky-robot/homebrew-katulong
-# Copy Formula/katulong.rb to the tap repository
-
-cd ../homebrew-katulong
-mkdir -p Formula
-cp ../katulong/Formula/katulong.rb Formula/
-git add Formula/katulong.rb
-git commit -m "Add katulong formula"
-git push origin main
-```
 
 ## Formula Details
 

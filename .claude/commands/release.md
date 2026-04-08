@@ -1,4 +1,4 @@
-Cut a new release for katulong — bump version, tag, push, update Homebrew formulas, and verify the install.
+Cut a new release for katulong — bump version, tag, push, update the Homebrew formula in `Dorky-Robot/homebrew-tap`, and verify the install.
 
 ## Step 1: Pre-flight checks
 
@@ -84,9 +84,11 @@ Compute the SHA:
 shasum -a 256 "/tmp/katulong-v${NEW_VERSION}.tar.gz"
 ```
 
-## Step 6: Update both formula files
+## Step 6: Update local formula
 
-### 6a: Local formula (`Formula/katulong.rb`)
+`Formula/katulong.rb` is the source-of-truth template. CI propagates it to
+`Dorky-Robot/homebrew-tap` on tag push — you only need to update the local
+copy here.
 
 Read the file, then update the `url` and `sha256` lines using the Edit tool.
 
@@ -97,16 +99,6 @@ git pull origin main
 git add Formula/katulong.rb
 git commit -m "formula: update to v${NEW_VERSION}"
 git push origin main
-```
-
-### 6b: Tap formula (`homebrew-katulong/Formula/katulong.rb`)
-
-Read the tap formula file, update `url` and `sha256` with the same values.
-
-Commit and push. **Note**: the tap repo uses `master` as its default branch:
-
-```bash
-cd homebrew-katulong && git pull origin master && git add Formula/katulong.rb && git commit -m "formula: update to v${NEW_VERSION}" && git push origin master
 ```
 
 ## Step 7: Brew upgrade

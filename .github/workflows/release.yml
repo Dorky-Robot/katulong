@@ -33,7 +33,7 @@ jobs:
           SHA=$(curl -fsSL "$URL" | sha256sum | cut -d' ' -f1)
           echo "SOURCE_SHA=${SHA}" >> "$GITHUB_ENV"
 
-      - name: Update tap repos
+      - name: Update homebrew-tap
         env:
           TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
         run: |
@@ -45,25 +45,24 @@ jobs:
           sed -i "s|url \".*\"|url \"https://github.com/Dorky-Robot/katulong/archive/refs/tags/${TAG}.tar.gz\"|" /tmp/katulong.rb
           sed -i "s|sha256 \".*\"|sha256 \"${SOURCE_SHA}\"|" /tmp/katulong.rb
 
-          # Update both tap repos (homebrew-tap and homebrew-katulong)
-          for REPO in homebrew-tap homebrew-katulong; do
-            BRANCH="main"
-            if [ "$REPO" = "homebrew-katulong" ]; then BRANCH="master"; fi
+          # Update the canonical multi-formula tap (Dorky-Robot/homebrew-tap).
+          # The standalone Dorky-Robot/homebrew-katulong repo is deprecated —
+          # see docs/ecosystem-refocus.md for the canonicalization rationale.
+          echo "Updating dorky-robot/homebrew-tap (main)..."
+          git clone --depth 1 -b main \
+            "https://x-access-token:${TAP_TOKEN}@github.com/Dorky-Robot/homebrew-tap.git" \
+            /tmp/homebrew-tap
 
-            echo "Updating dorky-robot/${REPO} (${BRANCH})..."
-            git clone --depth 1 -b "$BRANCH" \
-              "https://x-access-token:${TAP_TOKEN}@github.com/Dorky-Robot/${REPO}.git" \
-              "/tmp/${REPO}" 2>/dev/null || continue
-
-            mkdir -p "/tmp/${REPO}/Formula"
-            cp /tmp/katulong.rb "/tmp/${REPO}/Formula/katulong.rb"
-            cd "/tmp/${REPO}"
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add Formula/katulong.rb
-            git diff --cached --quiet && echo "  No changes" && cd - && continue
+          mkdir -p /tmp/homebrew-tap/Formula
+          cp /tmp/katulong.rb /tmp/homebrew-tap/Formula/katulong.rb
+          cd /tmp/homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/katulong.rb
+          if git diff --cached --quiet; then
+            echo "  No changes"
+          else
             git commit -m "katulong ${VERSION}"
             git push
             echo "  Updated to ${VERSION}"
-            cd -
-          done
+          fi
