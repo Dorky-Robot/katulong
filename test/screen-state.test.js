@@ -1,19 +1,19 @@
 /**
- * Tests for the ScreenState abstraction extracted from Session in Tier 3.1.
+ * Tests for the ScreenState abstraction — the server-side mirror of a
+ * terminal's visible state.
  *
- * ScreenState is the server-side mirror of a terminal's visible state. It
- * wraps a headless `@xterm/headless` Terminal plus the SerializeAddon and
- * tracks the current dimensions. The contract this test pins:
+ * Raptor 3 made ScreenState the sole source of truth for "what the terminal
+ * looks like right now". Drift detection (computeHash) was deleted because
+ * Raptor 3 flows every dim change through an atomic `snapshot` message, so
+ * the client is guaranteed to be at matching dims by construction — there
+ * is nothing left to compare between. The contract this test pins:
  *
  *   - dimensions update via resize() and are observable via cols/rows
  *   - write() / seed() reach the underlying mirror
- *   - serialize() and computeHash() return non-trivial values for non-empty
- *     content and zero/empty values once disposed
+ *   - serialize() returns escape sequences for non-empty content and an
+ *     empty string once disposed
  *   - dispose() is idempotent and turns every mutator into a no-op
  *   - flush() returns false after dispose so callers can bail safely
- *
- * The Lamport-style { hash, seq } pairing lives on Session, NOT here —
- * ScreenState owns no concept of byte-stream sequence on purpose.
  */
 
 import { describe, it } from "node:test";
@@ -46,7 +46,7 @@ describe("ScreenState", () => {
       assert.strictEqual(screen.cols, 120);
       assert.strictEqual(screen.rows, 40);
       assert.strictEqual(screen.term.cols, 120,
-        "underlying xterm dimensions must match — fingerprint hashes them");
+        "underlying xterm dims must match — serialize() walks this grid");
       assert.strictEqual(screen.term.rows, 40);
       screen.dispose();
     });
@@ -102,8 +102,8 @@ describe("ScreenState", () => {
       assert.strictEqual(await screen.flush(), true);
       screen.dispose();
       assert.strictEqual(await screen.flush(), false,
-        "callers (Session.screenFingerprint) bail on false to avoid hashing " +
-        "a disposed mirror");
+        "callers (Session._applyResize) bail on false so a deferred " +
+        "resize racing a dispose does not throw");
     });
   });
 
@@ -122,39 +122,6 @@ describe("ScreenState", () => {
       const screen = new ScreenState();
       screen.dispose();
       assert.strictEqual(await screen.serialize(), "");
-    });
-  });
-
-  describe("computeHash", () => {
-    it("returns a non-zero hash after content is written", async () => {
-      const screen = new ScreenState();
-      screen.write("anything");
-      await screen.flush();
-      const hash = screen.computeHash();
-      assert.strictEqual(typeof hash, "number");
-      assert.notStrictEqual(hash, 0,
-        "DJB2 of dimensions+cursor+content must be non-zero for non-empty content");
-      screen.dispose();
-    });
-
-    it("changes when dimensions change (dims are part of the hash)", async () => {
-      const screen = new ScreenState();
-      screen.write("padded text");
-      await screen.flush();
-      const before = screen.computeHash();
-      screen.resize(120, 30);
-      await screen.flush();
-      const after = screen.computeHash();
-      assert.notStrictEqual(before, after,
-        "dimensions must hash differently — drift detection compares dims " +
-        "between client and server fingerprints");
-      screen.dispose();
-    });
-
-    it("returns 0 when disposed", () => {
-      const screen = new ScreenState();
-      screen.dispose();
-      assert.strictEqual(screen.computeHash(), 0);
     });
   });
 

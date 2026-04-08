@@ -7,8 +7,6 @@
 
 import { scrollToBottom, terminalWriteWithScroll, isAtBottom } from "/lib/scroll-utils.js";
 import { basePath } from "/lib/base-path.js";
-import { createPullManager } from "/lib/pull-manager.js";
-import { screenFingerprint } from "/lib/screen-fingerprint.js";
 import { DEFAULT_COLS, TERMINAL_ROWS_DEFAULT } from "/lib/terminal-config.js";
 import { createTransportLayer } from "/lib/transport-layer.js";
 import { createWebRTCPeer } from "/lib/webrtc-peer.js";
@@ -53,42 +51,25 @@ export function createWebSocketConnection(deps = {}) {
   let transport = null;  // TransportLayer wrapping WS + optional DataChannel
   let rtcPeer = null;    // WebRTC peer for DataChannel negotiation
 
-  // --- Pull-based output ---
-  // Extracted to pull-manager.js: pure state machine with callbacks.
-  const pulls = createPullManager({
-    onSendPull(session, fromSeq) {
-      const ws = state.connection.ws;
-      if (ws?.readyState === 1) {
-        ws.send(JSON.stringify({ type: "pull", session, fromSeq }));
-      }
-    },
-    onWrite(session, data, done) {
-      const term = getOutputTerm(session);
-      if (term) {
-        terminalWriteWithScroll(term, data, done);
-      } else {
-        // No terminal yet — reject the write so pull manager doesn't
-        // advance the cursor. Data will be re-pulled when the terminal
-        // is created and a data-available fires.
-        done(false); // false = write rejected, don't advance cursor
-      }
-    },
-    onReset(session) {
-      const term = getOutputTerm(session);
-      if (!term) return;
-      // Clear screen + cursor home WITHOUT resetting terminal modes.
-      // term.reset() nukes bracketed paste, application cursor, and
-      // other DEC private modes that the shell/TUI enabled.  The
-      // serialize snapshot doesn't restore all modes, so using
-      // escape sequences to clear is less destructive.
-      term.write("\x1b[2J\x1b[H");
-      // Clear scrollback separately (escape sequence only clears screen)
-      term.clear();
-    },
-  });
-
   // --- Pure WebSocket message handlers (functional core) ---
+  //
+  // Raptor 3: the client is a passive viewer. The server is the sole
+  // authority on terminal state — its ScreenState is the single source
+  // of truth. Three message types drive every client-visible change:
+  //   - `output`  — raw bytes while dims are stable; write through.
+  //   - `snapshot` — atomic dim transition: resize → clear → write.
+  //   - `attached`/`switched`/`subscribed` — carry an initial snapshot
+  //     the client applies before any subsequent `output` arrives.
+  // There is no pull path, no drift detection, no fingerprint check,
+  // and no sequence-number plumbing. Every garble class tracked down
+  // in Raptor 1/2 traced back to "bytes emitted at dims A applied to
+  // a buffer at dims B" — Raptor 3 deletes the possibility.
   const wsMessageHandlers = {
+    // Initial attach — carries dims + serialized screen for the attached
+    // session. Apply atomically: resize → clear → write. From this moment
+    // onward, every `output` message for this session is guaranteed to be
+    // at the snapshot's dims (the server serializes output-after-resize
+    // on its end), and every subsequent dim change arrives as a `snapshot`.
     attached: (msg, currentState) => ({
       stateUpdates: {
         'connection.attached': true,
@@ -96,9 +77,7 @@ export function createWebSocketConnection(deps = {}) {
         'scroll.userScrolledUpBeforeDisconnect': false
       },
       effects: [
-        { type: 'seqClear' },
-        { type: 'terminalReset' },
-        ...(msg.data ? [{ type: 'terminalWrite', data: msg.data, session: msg.session, useOutputTerm: true }] : []),
+        { type: 'applySnapshot', session: msg.session, cols: msg.cols, rows: msg.rows, data: msg.data || "" },
         { type: 'updateConnectionIndicator' },
         { type: 'invalidateSessions', name: msg.session },
         { type: 'scrollToBottomIfNeeded', condition: !currentState.scroll.userScrolledUpBeforeDisconnect },
@@ -106,62 +85,56 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
+    // Foreground a session already subscribed in the background. Apply
+    // the snapshot authoritatively so the client's xterm matches the
+    // server regardless of whatever dim or content drift accumulated
+    // while this session was offscreen.
     switched: (msg) => ({
       stateUpdates: {
         'connection.attached': true,
         'session.name': msg.session,
       },
       effects: [
-        // No terminalReset — the terminal pool keeps each session's xterm
-        // intact with its content. No snapshot replay either — the pull
-        // mechanism resumes from the last known cursor and fills in any
-        // output that arrived while we were away. This eliminates the
-        // serialize snapshot (source of garble from mid-frame captures).
+        { type: 'applySnapshot', session: msg.session, cols: msg.cols, rows: msg.rows, data: msg.data || "" },
         { type: 'invalidateSessions', name: msg.session },
         { type: 'scrollToBottomIfNeeded', condition: true },
         { type: 'syncCarouselSubscriptions' },
       ]
     }),
 
+    // View-only subscribe (carousel card, background tab). The server
+    // does NOT resize tmux for a subscribe — the snapshot carries the
+    // session's current dims, which the client adopts for its local xterm.
     'subscribed': (msg) => ({
       stateUpdates: {},
       effects: [
-        // Write snapshot only if the terminal is empty (fresh from pool
-        // after page refresh). If the terminal already has content (tab
-        // switch), skip to avoid mid-frame garble from serializeScreen.
-        ...(msg.data ? [{ type: 'subscribeSnapshot', data: msg.data, session: msg.session }] : []),
+        { type: 'applySnapshot', session: msg.session, cols: msg.cols, rows: msg.rows, data: msg.data || "" },
       ]
     }),
 
-    'unsubscribed': (msg) => ({
+    'unsubscribed': () => ({
       stateUpdates: {},
-      effects: [
-        { type: 'seqClear', session: msg.session }
-      ]
+      effects: []
     }),
 
-    // Server notifies that new data is available for a session topic
-    'data-available': (msg) => ({
-      stateUpdates: {},
-      effects: [{ type: 'dataAvailable', session: msg.session }]
-    }),
-
-    // Server-pushed output — data sent inline, zero round trips
+    // Raw bytes emitted by tmux at the current session dims. Stream
+    // straight to the target terminal — no sequence number, no cursor
+    // tracking, no drift check. Ordering inside a single session is
+    // preserved by the server's per-session coalescer, and dim stability
+    // is guaranteed because any resize interleaves a `snapshot` message
+    // through the same per-session bridge topic.
     'output': (msg) => ({
       stateUpdates: {},
-      effects: [{ type: 'outputReceived', session: msg.session, data: msg.data, cursor: msg.cursor, fromSeq: msg.fromSeq }]
+      effects: [{ type: 'output', session: msg.session, data: msg.data }]
     }),
 
-    // Response to a pull request — contains data from cursor to head
-    'pull-response': (msg) => ({
+    // Atomic dim transition — the server resized tmux, reserialized its
+    // headless mirror, and is now handing us the ground truth for this
+    // session. Apply resize → clear → write so the next `output` byte
+    // lands on the new grid.
+    'snapshot': (msg) => ({
       stateUpdates: {},
-      effects: [{ type: 'pullResponse', session: msg.session, data: msg.data, cursor: msg.cursor }]
-    }),
-
-    // Cursor was evicted — server sends a pane snapshot to recover
-    'pull-snapshot': (msg) => ({
-      stateUpdates: {},
-      effects: [{ type: 'pullSnapshot', session: msg.session, data: msg.data, cursor: msg.cursor }]
+      effects: [{ type: 'applySnapshot', session: msg.session, cols: msg.cols, rows: msg.rows, data: msg.data || "" }]
     }),
 
     reload: () => ({
@@ -216,28 +189,6 @@ export function createWebSocketConnection(deps = {}) {
       ]
     }),
 
-    'resize-sync': (msg) => ({
-      stateUpdates: {},
-      effects: [
-        { type: 'resizeSync', cols: msg.cols, rows: msg.rows }
-      ]
-    }),
-
-    // Drift detection: server sends screen fingerprint after output settles.
-    // Client compares against its own xterm — on mismatch, request resync.
-    // `seq` is the byte position the server's hash describes; the client
-    // must wait until its pull cursor reaches that position before comparing.
-    'state-check': (msg) => ({
-      stateUpdates: {},
-      effects: [{ type: 'stateCheck', session: msg.session, fingerprint: msg.fingerprint, seq: msg.seq }]
-    }),
-
-    // seq-init: server tells us where the log head is — initialize pull cursor
-    'seq-init': (msg) => ({
-      stateUpdates: {},
-      effects: [{ type: 'pullInit', session: msg.session, seq: msg.seq }]
-    }),
-
     'server-draining': () => ({
       stateUpdates: {},
       effects: [
@@ -286,74 +237,31 @@ export function createWebSocketConnection(deps = {}) {
     log: (e) => console.log(e.message),
     pasteComplete: (e) => deps.onPasteComplete?.(e.path),
     scrollToBottomIfNeeded: (e) => { const t = getTerm(); if (e.condition && t) scrollToBottom(t); },
-    seqClear: (e) => pulls.clear(e.session || null),
-    pullInit: (e) => { if (e.session) pulls.init(e.session, e.seq); },
-    dataAvailable: (e) => pulls.dataAvailable(e.session),
-    outputReceived: (e) => pulls.outputReceived(e.session, e.data, e.cursor, e.fromSeq),
-    pullResponse: (e) => pulls.pullResponse(e.session, e.data, e.cursor),
-    pullSnapshot: (e) => pulls.pullSnapshot(e.session, e.data || "", e.cursor),
-    stateCheck: (e) => {
-      // Lamport's lesson: comparing two states requires they describe the
-      // SAME logical time. The server captures fingerprint at byte `e.seq`;
-      // the client must wait until its pull cursor has reached that same
-      // byte position before comparing — otherwise it compares an older
-      // client state to a newer server state and reports false drift.
-      //
-      // Skip the compare entirely once cursor has advanced past `e.seq`:
-      // newer output will trigger a fresh state-check on the server side
-      // when output settles again.
-      const POLL_MS = 50;
-      const MAX_WAIT_MS = 2000;
-      const deadline = Date.now() + MAX_WAIT_MS;
-
-      function tryCheck() {
-        const term = getOutputTerm(e.session);
-        if (!term) return true; // session gone — give up
-
-        const ps = pulls.get(e.session);
-        // Cursor undefined ⇒ session not initialized for pull yet, skip.
-        if (!ps) return true;
-
-        // If client cursor has overshot the snapshot point, a newer
-        // state-check will arrive — drop this stale one.
-        if (typeof e.seq === 'number' && ps.cursor > e.seq) return true;
-
-        // Wait for any in-flight write/pull to settle and for the cursor
-        // to reach the snapshot point.
-        const cursorReady = typeof e.seq !== 'number' || ps.cursor >= e.seq;
-        if (ps.writing || ps.pulling || !cursorReady) return false;
-
-        const clientFp = screenFingerprint(term);
-        if (clientFp !== e.fingerprint) {
-          console.log(`[drift] session=${e.session} server=${e.fingerprint} client=${clientFp} seq=${e.seq} — requesting resync`);
-          const ws = state.connection.ws;
-          if (ws?.readyState === 1) {
-            ws.send(JSON.stringify({ type: "resync", session: e.session }));
-          }
-        }
-        return true;
-      }
-
-      if (tryCheck()) return;
-      // Poll until ready or timeout. The previous code used a single 300ms
-      // blind retry which still raced slow xterm renders on mobile.
-      const poll = setInterval(() => {
-        if (tryCheck() || Date.now() >= deadline) clearInterval(poll);
-      }, POLL_MS);
+    // Raw byte relay. Raptor 3 guarantees these bytes are at the current
+    // session dims — any resize arrived first as a `snapshot` message
+    // through the same bridge topic, so write-through is safe.
+    output: (e) => {
+      const t = getOutputTerm(e.session);
+      if (t) terminalWriteWithScroll(t, e.data);
     },
-    terminalReset: () => { const t = getTerm(); if (t) { t.clear(); t.reset(); } },
-    terminalWrite: (e) => { const t = e.useOutputTerm ? getOutputTerm(e.session) : getTerm(); if (t) terminalWriteWithScroll(t, e.data); },
-    subscribeSnapshot: (e) => {
-      // Only write snapshot if the terminal is empty (fresh after page refresh).
-      // If it already has content (tab switch), skip to avoid mid-frame garble.
+    // Atomic dim transition + ground-truth replay. Used on attach,
+    // subscribe, switch, and any mid-session resize. Resizes the
+    // xterm to the server's dims, clears the buffer/scrollback, then
+    // writes the serialized screen. The critical invariant: no `output`
+    // byte for this session is processed between the resize and the
+    // write, because wsMessageHandlers run serially per message and
+    // `snapshot` includes the entire new-grid content inline.
+    applySnapshot: (e) => {
       const t = getOutputTerm(e.session);
       if (!t) return;
-      const buf = t.buffer?.active;
-      const isEmpty = buf && buf.baseY === 0 && buf.cursorY === 0 && buf.cursorX === 0;
-      if (isEmpty && e.data) {
-        t.clear(); t.reset();
-        terminalWriteWithScroll(t, e.data);
+      if (e.cols && e.rows && (t.cols !== e.cols || t.rows !== e.rows)) {
+        t.resize(e.cols, e.rows);
       }
+      // clear() wipes scrollback; reset() restores the parser to a
+      // known state so stale DEC private modes don't bleed through.
+      t.clear();
+      t.reset();
+      if (e.data) terminalWriteWithScroll(t, e.data);
     },
     reload: () => location.reload(),
     invalidateSessions: (e) => deps.invalidateSessions?.(e.name),
@@ -363,14 +271,11 @@ export function createWebSocketConnection(deps = {}) {
     sessionRemoved: (e) => deps.onSessionRemoved?.(e.name),
     poolRename: (e) => deps.poolRename?.(e.oldName, e.newName),
     tabRename: (e) => deps.tabRename?.(e.oldName, e.newName),
-    resizeSync: () => {
-      // Another client resized the shared PTY.  Don't blindly apply their
-      // cols/rows — that breaks font scaling and forces a row count that
-      // doesn't match this client's viewport height.  Instead, recalculate
-      // our own dimensions via scaleToFit (font + rows from THIS viewport).
-      // The server's client-tracker ignores resize from inactive clients,
-      // so this won't override the active client's PTY dimensions.
-      if (deps.fit) deps.fit();
+    terminalWrite: (e) => {
+      // Legacy escape hatch used only by the `exit` handler to paint
+      // `[shell exited]` into whatever terminal is on screen.
+      const t = e.useOutputTerm ? getOutputTerm(e.session) : getTerm();
+      if (t) terminalWriteWithScroll(t, e.data);
     },
     fastReconnect: () => {
       state.connection.reconnectDelay = 500;
@@ -425,8 +330,11 @@ export function createWebSocketConnection(deps = {}) {
       const term = getTerm();
       const cols = term?.cols || DEFAULT_COLS;
       const rows = term?.rows || TERMINAL_ROWS_DEFAULT;
-      // Attach via WebSocket (always — DC doesn't exist yet)
-      ws.send(JSON.stringify({ type: "attach", session: state.session.name, cols, rows }));
+      // All data goes through the transport abstraction — it routes to
+      // WS when DC doesn't exist and to DC after upgrade. Keeping the
+      // application layer free of `ws.send` preserves the invariant that
+      // message ordering is the transport's concern, not ours.
+      transport.send(JSON.stringify({ type: "attach", session: state.session.name, cols, rows }));
     };
 
     // Messages arrive via the transport layer (active channel — WS or DC).
@@ -485,7 +393,6 @@ export function createWebSocketConnection(deps = {}) {
       const term = getTerm();
       state.scroll.userScrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
       state.connection.attached = false;
-      pulls.clear();
       if (deps.updateConnectionIndicator) deps.updateConnectionIndicator();
       if (deps.onDisconnect) deps.onDisconnect();
 
@@ -558,18 +465,22 @@ export function createWebSocketConnection(deps = {}) {
           return;
         }
 
-        // Force reconnect after extended backgrounding to get fresh state
+        // Force reconnect after extended backgrounding to get fresh state.
+        // Closing the underlying WS is deliberate — the WS is the signaling
+        // channel, and closing it also tears down the DataChannel via
+        // transport's onclose path, giving us a clean reconnect.
         if (hiddenDuration > 5000 && state.connection.ws) {
           state.connection.ws.close();
-        } else if (state.connection.ws && state.connection.ws.readyState === WebSocket.OPEN) {
-          // Brief background — ping with resize to verify connection
+        } else if (transport && transport.readyState === 1) {
+          // Brief background — ping with resize to verify the active
+          // transport (WS or DC) still carries data end-to-end.
           try {
             const term = getTerm();
             const cols = term?.cols || DEFAULT_COLS;
             const rows = term?.rows || TERMINAL_ROWS_DEFAULT;
-            state.connection.ws.send(JSON.stringify({ type: "resize", session: state.session.name, cols, rows }));
+            transport.send(JSON.stringify({ type: "resize", session: state.session.name, cols, rows }));
           } catch {
-            state.connection.ws.close();
+            if (state.connection.ws) state.connection.ws.close();
           }
         }
       }
@@ -604,12 +515,13 @@ export function createWebSocketConnection(deps = {}) {
     wsMessageHandlers,
     executeEffect,
     getConnectionState: () => connectionState,
-    sendSubscribe(sessionName, cols, rows) {
+    sendSubscribe(sessionName) {
+      // Raptor 3: subscribe is view-only and never resizes tmux, so
+      // cols/rows from the caller are ignored — the server sends back
+      // a `subscribed` message whose snapshot carries the session's
+      // current dims for the client to adopt.
       if (transport?.readyState === 1) {
-        const msg = { type: "subscribe", session: sessionName };
-        if (cols) msg.cols = cols;
-        if (rows) msg.rows = rows;
-        transport.send(JSON.stringify(msg));
+        transport.send(JSON.stringify({ type: "subscribe", session: sessionName }));
       }
     },
     sendUnsubscribe(sessionName) {

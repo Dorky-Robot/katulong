@@ -27,8 +27,6 @@ import {
 class MockSession extends BaseMockSession {
   constructor(name, tmuxName, options = {}) {
     super(name, tmuxName, options);
-    this._cols = 0;
-    this._rows = 0;
     this._written = [];
     this._resizes = [];
     this._seedCalls = [];
@@ -40,8 +38,7 @@ class MockSession extends BaseMockSession {
   write(data) { this._written.push(data); }
   resize(cols, rows) {
     this._resizes.push({ cols, rows });
-    this._cols = cols;
-    this._rows = rows;
+    super.resize(cols, rows);
   }
 }
 
@@ -171,12 +168,14 @@ describe("session manager", () => {
   });
 
   describe("client attach/detach", () => {
-    it("attaches a client to a session and returns visible pane snapshot", async () => {
+    it("attaches a client to a session and returns a screen snapshot", async () => {
       const { mgr } = makeManager();
       await mgr.createSession("sess");
       const result = await mgr.attachClient("client1", "sess", 80, 24);
       assert.strictEqual(result.alive, true);
-      assert.strictEqual(typeof result.buffer, "string");
+      assert.strictEqual(typeof result.data, "string");
+      assert.strictEqual(typeof result.cols, "number");
+      assert.strictEqual(typeof result.rows, "number");
     });
 
     it("creates session on attach if missing", async () => {
@@ -311,12 +310,15 @@ describe("session manager", () => {
     // the last %output burst and the next one — for a quiescent TUI mid-
     // redraw, this was a true liveness hole. The fix flushes instead of
     // cancelling so currently-routed clients always receive what was queued.
-    function primeCoalescer(session) {
-      // Plant some bytes in the RingBuffer mock and notify the manager
-      // exactly the way Session does on incoming %output.
-      session.outputBuffer.totalBytes = 100;
-      session.outputBuffer.sliceFrom = (from) => (from === 0 ? "queued bytes" : "");
-      session._options.onData(session.name, 0);
+    //
+    // Raptor 3: the coalescer holds concatenated bytes directly (push),
+    // and the output message carries `data` only — no fromSeq/cursor.
+    function primeCoalescer(session, payload = "queued bytes") {
+      // Replicate Session's onData call into the coalescer: the manager
+      // subscribed `outputCoalescer.push(name, payload)` in adoptSession,
+      // so invoking the captured onData with the same signature pushes
+      // bytes into the pending batch for this session.
+      session._options.onData(session.name, payload);
     }
 
     it("attachClient flushes queued output before snapshotting", async () => {
@@ -331,8 +333,6 @@ describe("session manager", () => {
       const output = bridge.messages.find(m => m.type === "output" && m.session === "multi");
       assert.ok(output, "queued output should be flushed before attach completes");
       assert.strictEqual(output.data, "queued bytes");
-      assert.strictEqual(output.fromSeq, 0);
-      assert.strictEqual(output.cursor, 100);
       mgr.shutdown();
     });
 
@@ -343,7 +343,7 @@ describe("session manager", () => {
       bridge.messages.length = 0;
 
       primeCoalescer(session);
-      await mgr.subscribeClient("c1", "sub-target", 80, 24);
+      await mgr.subscribeClient("c1", "sub-target");
 
       const output = bridge.messages.find(m => m.type === "output" && m.session === "sub-target");
       assert.ok(output, "queued output should be flushed before subscribe completes");

@@ -306,25 +306,4 @@ describe("validateMessage", () => {
     assert.match(result.error, /object/i);
   });
 
-  it("validates pull messages with required fromSeq", () => {
-    const result = validateMessage({ type: "pull", fromSeq: 0 });
-    assert.strictEqual(result.valid, true);
-  });
-
-  it("validates pull with session field", () => {
-    const result = validateMessage({ type: "pull", session: "alpha", fromSeq: 100 });
-    assert.strictEqual(result.valid, true);
-  });
-
-  it("rejects pull with missing fromSeq", () => {
-    const result = validateMessage({ type: "pull" });
-    assert.strictEqual(result.valid, false);
-    assert.match(result.error, /fromSeq/i);
-  });
-
-  it("rejects pull with negative fromSeq", () => {
-    const result = validateMessage({ type: "pull", fromSeq: -1 });
-    assert.strictEqual(result.valid, false);
-    assert.match(result.error, /fromSeq/i);
-  });
 });

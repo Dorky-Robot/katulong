@@ -104,12 +104,16 @@ function scaleToFit(term, container) {
     : fontSize * 1.2;
   const rows = Math.max(2, Math.floor(availableHeight / cellHeight));
 
-  let changed = false;
-  if (term.cols !== cols || term.rows !== rows) {
-    term.resize(cols, rows);
-    changed = true;
-  }
-
+  // Raptor 3: do NOT call `term.resize()` here. The client is a passive
+  // viewer — the server owns PTY dims and is the single source of truth
+  // for the xterm grid. This function only computes the dims the client
+  // *wants*, then the caller sends a `resize` message to the server and
+  // waits for the server's `snapshot` reply to actually apply the new
+  // grid via applySnapshot in websocket-connection.js. Attempting to
+  // pre-resize locally caused "bytes at dims A applied to buffer at
+  // dims B" garble every time the client's request raced tmux's next
+  // %output frame.
+  const changed = term.cols !== cols || term.rows !== rows;
   return { cols, rows, changed };
 }
 

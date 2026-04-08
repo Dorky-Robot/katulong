@@ -24,13 +24,14 @@ class MockSession {
     this.name = name;
     this.tmuxName = tmuxName;
     this._alive = true;
-    this._cols = 0;
-    this._rows = 0;
+    this._cols = 80;
+    this._rows = 24;
     this._resizeCalls = [];
-    this.outputBuffer = { totalBytes: 0 };
     this.external = options.external || false;
   }
   get alive() { return this._alive; }
+  get cols() { return this._cols; }
+  get rows() { return this._rows; }
   attachControlMode(/* cols, rows */) { /* Real Session does NOT set _cols here */ }
   async seedScreen() {}
   updateChildCount() {}
@@ -38,7 +39,9 @@ class MockSession {
   resize(cols, rows) { this._resizeCalls.push({ cols, rows }); this._cols = cols; this._rows = rows; }
   detach() { this._alive = false; }
   kill() { this._alive = false; tmuxSessions.delete(this.tmuxName); }
-  serializeScreen() { return ""; }
+  async snapshot() {
+    return { cols: this._cols, rows: this._rows, data: "", alive: this._alive };
+  }
   toJSON() { return { name: this.name, alive: this.alive }; }
 }
 

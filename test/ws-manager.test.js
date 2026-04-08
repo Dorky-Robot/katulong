@@ -67,18 +67,26 @@ function createMockBridge() {
   };
 }
 
+/**
+ * Raptor 3 mock session manager. attachClient/subscribeClient return the
+ * snapshot shape `{cols, rows, data, alive}` (optionally with `isNew`
+ * for subscribe). No pull path, no seq, no outputBuffer.
+ */
 function createMockSessionManager() {
   // Track client-session bindings (single source of truth, like client-tracker)
   const clientSessions = new Map();
   // Track subscriptions (clientId -> Set<sessionName>)
   const clientSubscriptions = new Map();
-  // Mock sessions with outputBuffer for seq tracking
+  // Mock sessions — plain objects with a `snapshot()` the test can inject.
   const mockSessions = new Map();
   return {
-    attachClient: async (clientId, session) => {
+    attachClient: async (clientId, session, cols, rows) => {
       clientSessions.set(clientId, session);
       const s = mockSessions.get(session);
-      return { buffer: "", alive: true, seq: s?.outputBuffer?.totalBytes };
+      if (s && typeof s.snapshot === "function") {
+        return await s.snapshot();
+      }
+      return { cols: cols || 80, rows: rows || 24, data: "", alive: true };
     },
     subscribeClient: async (clientId, sessionName) => {
       if (!clientSubscriptions.has(clientId)) clientSubscriptions.set(clientId, new Set());
@@ -86,12 +94,10 @@ function createMockSessionManager() {
       const isNew = !subs.has(sessionName);
       subs.add(sessionName);
       const s = mockSessions.get(sessionName);
-      return {
-        buffer: isNew ? (s?._subscribeBuffer || "") : "",
-        seq: s?.outputBuffer?.totalBytes,
-        alive: s?.alive ?? true,
-        isNew,
-      };
+      if (s && typeof s.snapshot === "function") {
+        return { ...(await s.snapshot()), isNew };
+      }
+      return { cols: 80, rows: 24, data: "", alive: true, isNew };
     },
     unsubscribeClient: (clientId, sessionName) => {
       const subs = clientSubscriptions.get(clientId);
@@ -116,28 +122,17 @@ function createMockSessionManager() {
         if (s === oldName) clientSessions.set(cid, newName);
       }
     },
-    // Test helper: register a mock session.
-    // Wraps plain mocks with default pullFrom/snapshot/cursor so they
-    // satisfy the contract ws-manager expects (Tier 3.2).
+    /**
+     * Test helper: register a mock session. Fills in a default
+     * Raptor 3 snapshot shape when the caller hasn't supplied one.
+     */
     _addSession(name, session) {
-      if (!session.pullFrom) {
-        session.pullFrom = (fromSeq) => ({
-          data: session.outputBuffer?.sliceFrom
-            ? session.outputBuffer.sliceFrom(fromSeq)
-            : "",
-          cursor: session.outputBuffer?.totalBytes ?? 0,
-        });
-      }
       if (!session.snapshot) {
         session.snapshot = async () => ({
-          buffer: session._subscribeBuffer || "",
-          seq: session.outputBuffer?.totalBytes ?? 0,
+          cols: session._cols ?? 80,
+          rows: session._rows ?? 24,
+          data: session._snapshotData || "",
           alive: session.alive ?? true,
-        });
-      }
-      if (!("cursor" in session)) {
-        Object.defineProperty(session, "cursor", {
-          get() { return session.outputBuffer?.totalBytes ?? 0; },
         });
       }
       mockSessions.set(name, session);
@@ -240,11 +235,37 @@ describe("createWebSocketManager", () => {
       wsMgr.wsClients.set("client-1", { transport: mockTransport(ws) });
       sessionManager._setSession("client-1", "alpha");
 
-      bridge.relay({ type: "output", session: "alpha", data: "hello", fromSeq: 0, cursor: 5 });
+      bridge.relay({ type: "output", session: "alpha", data: "hello" });
 
       assert.equal(ws.sent.length, 1);
       assert.deepEqual(JSON.parse(ws.sent[0]), {
-        type: "output", session: "alpha", data: "hello", fromSeq: 0, cursor: 5,
+        type: "output", session: "alpha", data: "hello",
+      });
+    });
+
+    it("relays snapshot messages to subscribed clients", () => {
+      // Raptor 3: the bridge case for `snapshot` ships the full
+      // {cols, rows, data} envelope so clients can atomically reset
+      // their xterm to the new server-authoritative state.
+      const ws = createMockWs();
+      wsMgr.wsClients.set("client-1", { transport: mockTransport(ws) });
+      sessionManager._setSession("client-1", "alpha");
+
+      bridge.relay({
+        type: "snapshot",
+        session: "alpha",
+        cols: 120,
+        rows: 40,
+        data: "fresh-screen",
+      });
+
+      assert.equal(ws.sent.length, 1);
+      assert.deepEqual(JSON.parse(ws.sent[0]), {
+        type: "snapshot",
+        session: "alpha",
+        cols: 120,
+        rows: 40,
+        data: "fresh-screen",
       });
     });
 
@@ -351,32 +372,18 @@ describe("createWebSocketManager", () => {
       assert.equal(writeInputCalls[0].session, undefined);
     });
 
-    it("resize-sync excludes the active client", () => {
-      const ws1 = createMockWs();
-      const ws2 = createMockWs();
-
-      wsMgr.wsClients.set("active-client", { transport: mockTransport(ws1) });
-      wsMgr.wsClients.set("passive-client", { transport: mockTransport(ws2) });
-      sessionManager._setSession("active-client", "alpha");
-      sessionManager._setSession("passive-client", "alpha");
-
-      bridge.relay({ type: "resize-sync", session: "alpha", activeClientId: "active-client", cols: 120, rows: 40 });
-
-      assert.equal(ws1.sent.length, 0, "active client should not receive resize-sync");
-      assert.equal(ws2.sent.length, 1);
-      assert.deepEqual(JSON.parse(ws2.sent[0]), { type: "resize-sync", cols: 120, rows: 40 });
-    });
-
-    it("pull responds with pull-response when data available", async () => {
+    it("attach responds with attached carrying the snapshot envelope", async () => {
+      // Raptor 3: the `attached` message is the only way the client
+      // learns authoritative dims + initial screen content. The client
+      // applies term.resize → clear → write atomically.
       const ws = createMockWs();
       wsMgr.handleConnection(ws);
 
       sessionManager._addSession("test-session", {
-        tmuxName: "katulong_test-session",
-        outputBuffer: {
-          totalBytes: 100,
-          sliceFrom: (offset) => offset >= 100 ? "" : "pulled-data-here",
-        },
+        _cols: 100,
+        _rows: 30,
+        _snapshotData: "hello world",
+        alive: true,
       });
 
       await ws._fireMessage(Buffer.from(JSON.stringify({
@@ -384,45 +391,22 @@ describe("createWebSocketManager", () => {
       })));
       await new Promise(r => setTimeout(r, 10));
 
-      ws.sent.length = 0;
-
-      await ws._fireMessage(Buffer.from(JSON.stringify({
-        type: "pull", session: "test-session", fromSeq: 50,
-      })));
-      await new Promise(r => setTimeout(r, 10));
-
-      const pullMsg = ws.sent.map(s => JSON.parse(s)).find(m => m.type === "pull-response");
-      assert.ok(pullMsg, "should receive pull-response");
-      assert.equal(pullMsg.data, "pulled-data-here");
-      assert.equal(pullMsg.cursor, 100);
+      const attachedMsg = ws.sent.map(s => JSON.parse(s)).find(m => m.type === "attached");
+      assert.ok(attachedMsg, "should receive attached");
+      assert.equal(attachedMsg.session, "test-session");
+      assert.equal(attachedMsg.cols, 100);
+      assert.equal(attachedMsg.rows, 30);
+      assert.equal(attachedMsg.data, "hello world");
     });
 
-    it("attach sends seq-init after buffer replay", async () => {
-      const ws = createMockWs();
-      wsMgr.handleConnection(ws);
-
-      sessionManager._addSession("test-session", {
-        outputBuffer: { totalBytes: 250 },
-      });
-
-      await ws._fireMessage(Buffer.from(JSON.stringify({
-        type: "attach", session: "test-session", cols: 80, rows: 24,
-      })));
-      await new Promise(r => setTimeout(r, 10));
-
-      const seqInitMsg = ws.sent.map(s => JSON.parse(s)).find(m => m.type === "seq-init");
-      assert.ok(seqInitMsg, "should receive seq-init");
-      assert.equal(seqInitMsg.session, "test-session");
-      assert.equal(seqInitMsg.seq, 250);
-    });
-
-    it("subscribe sends subscribed with snapshot + seq-init", async () => {
+    it("subscribe sends subscribed with the session snapshot envelope", async () => {
       const ws = createMockWs();
       wsMgr.handleConnection(ws);
 
       sessionManager._addSession("bg-session", {
-        _subscribeBuffer: "$ hello world\r\nprompt> ",
-        outputBuffer: { totalBytes: 500 },
+        _cols: 90,
+        _rows: 24,
+        _snapshotData: "$ hello world\r\nprompt> ",
         alive: true,
       });
 
@@ -441,21 +425,19 @@ describe("createWebSocketManager", () => {
       const subscribedMsg = msgs.find(m => m.type === "subscribed");
       assert.ok(subscribedMsg, "should receive subscribed");
       assert.equal(subscribedMsg.session, "bg-session");
-      // Snapshot included for fresh terminals on page refresh
-      assert.equal(typeof subscribedMsg.data, "string");
-
-      const seqMsg = msgs.find(m => m.type === "seq-init");
-      assert.ok(seqMsg, "should receive seq-init");
-      assert.equal(seqMsg.seq, 500);
+      assert.equal(subscribedMsg.cols, 90);
+      assert.equal(subscribedMsg.rows, 24);
+      assert.equal(subscribedMsg.data, "$ hello world\r\nprompt> ");
     });
 
-    it("subscribe with empty session still sends subscribed + seq-init", async () => {
+    it("subscribe with empty session still sends a subscribed envelope", async () => {
       const ws = createMockWs();
       wsMgr.handleConnection(ws);
 
       sessionManager._addSession("empty-session", {
-        _subscribeBuffer: "",
-        outputBuffer: { totalBytes: 0 },
+        _cols: 80,
+        _rows: 24,
+        _snapshotData: "",
         alive: true,
       });
 
@@ -473,6 +455,7 @@ describe("createWebSocketManager", () => {
       const msgs = ws.sent.map(s => JSON.parse(s));
       const subscribedMsg = msgs.find(m => m.type === "subscribed");
       assert.ok(subscribedMsg, "should receive subscribed");
+      assert.equal(subscribedMsg.data, "");
     });
 
     it("subscribe sends exit for dead session", async () => {
@@ -480,8 +463,9 @@ describe("createWebSocketManager", () => {
       wsMgr.handleConnection(ws);
 
       sessionManager._addSession("dead-session", {
-        _subscribeBuffer: "final output",
-        outputBuffer: { totalBytes: 100 },
+        _cols: 80,
+        _rows: 24,
+        _snapshotData: "final output",
         alive: false,
       });
 

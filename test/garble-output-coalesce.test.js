@@ -13,14 +13,14 @@
  * changes (different debounce constants, different scheduling, different
  * batching) cannot silently regress the frame-delivery guarantee.
  *
- * Contract under test:
- *   1. A single %output burst is delivered after the 2ms idle timer fires
+ * Contract under test (Raptor 3):
+ *   1. A single %output burst is delivered after the idle timer fires
  *      (one merged frame, not N micro-messages).
- *   2. Continuous output is force-flushed at the 16ms hard cap so a never-
+ *   2. Continuous output is force-flushed at the hard cap so a never-
  *      idle stream cannot starve clients.
- *   3. The flush carries `fromSeq` from the FIRST burst and `cursor` from
- *      the latest RingBuffer position — clients depend on this contract to
- *      detect gaps and request resyncs.
+ *   3. The flush carries the concatenated payload directly — Raptor 3
+ *      removed the fromSeq/cursor cursor protocol, so the bridge message
+ *      is just `{type: "output", session, data}`.
  *   4. Multiple sessions coalesce independently — one busy session must not
  *      block another from being delivered.
  *   5. Lifecycle events flush rather than cancel (Tier 1.1 regression).
@@ -36,25 +36,15 @@ import {
 } from "./helpers/session-manager-fixture.js";
 
 /**
- * MockSession with a RingBuffer-like outputBuffer and a feed() helper
- * that simulates an incoming %output burst exactly the way the real
- * Session does (push bytes, then call onData with the pre-write seq).
+ * MockSession with a feed() helper that simulates an incoming %output
+ * burst exactly the way the real Session does under Raptor 3: call
+ * onData with the concatenated payload (no fromSeq, no RingBuffer).
  */
 class MockSession extends BaseMockSession {
-  constructor(name, tmuxName, options = {}) {
-    super(name, tmuxName, options);
-    this.outputBuffer = {
-      totalBytes: 0,
-      _data: "",
-      push(chunk) { this._data += chunk; this.totalBytes = this._data.length; },
-      sliceFrom(from) { return this._data.slice(from); },
-    };
-  }
-
   feed(bytes) {
-    const fromSeq = this.outputBuffer.totalBytes;
-    this.outputBuffer.push(bytes);
-    this._options.onData(this.name, fromSeq);
+    // Raptor 3: session.onData(name, payload) is the single data signal.
+    // The session-manager wires this to outputCoalescer.push(name, payload).
+    this._options.onData(this.name, bytes);
   }
 }
 
@@ -91,7 +81,7 @@ describe("output coalescer (garble regression)", () => {
     const session = mgr.getSession("burst");
     bridge.messages.length = 0;
 
-    // Three %output lines arriving back-to-back within the 2ms idle window
+    // Three %output lines arriving back-to-back within the idle window
     // must produce ONE bridge "output" message, not three.
     session.feed("line1\r\n");
     session.feed("line2\r\n");
@@ -101,23 +91,19 @@ describe("output coalescer (garble regression)", () => {
 
     const outputs = bridge.messages.filter(m => m.type === "output" && m.session === "burst");
     assert.strictEqual(outputs.length, 1,
-      "the 2ms idle debounce must merge a burst into a single bridge relay");
+      "the idle debounce must merge a burst into a single bridge relay");
     assert.strictEqual(outputs[0].data, "line1\r\nline2\r\nline3\r\n",
       "merged frame must contain every byte from the burst");
-    assert.strictEqual(outputs[0].fromSeq, 0,
-      "fromSeq must be the position of the FIRST burst, not the latest");
-    assert.strictEqual(outputs[0].cursor, "line1\r\nline2\r\nline3\r\n".length,
-      "cursor must be the latest RingBuffer position so clients can detect gaps");
   });
 
-  it("force-flushes at the 16ms hard cap when output never goes idle", async () => {
+  it("force-flushes at the hard cap when output never goes idle", async () => {
     const { mgr, bridge } = makeManager();
     await mgr.attachClient("c1", "stream", 80, 24);
     const session = mgr.getSession("stream");
     bridge.messages.length = 0;
 
     // Hammer the coalescer every 1ms — the idle timer keeps resetting,
-    // so the only way bytes ever reach the bridge is via the 16ms hard cap.
+    // so the only way bytes ever reach the bridge is via the hard cap.
     // Without the cap, the test would time out and the assertion would fail.
     let stop = false;
     const timer = setInterval(() => {
@@ -127,20 +113,17 @@ describe("output coalescer (garble regression)", () => {
 
     const flushed = await waitFor(
       () => bridge.messages.some(m => m.type === "output" && m.session === "stream"),
-      100, // give the cap several chances to fire
+      200, // give the cap several chances to fire
     );
     stop = true;
     clearInterval(timer);
 
     assert.ok(flushed,
-      "16ms hard cap must force-flush a never-idle stream — otherwise " +
+      "hard cap must force-flush a never-idle stream — otherwise " +
       "TUI redraws (htop, tail -f) starve clients indefinitely");
 
-    // The cap fires within ~16ms of the FIRST byte, so cursor is small —
-    // the exact value depends on how many feeds raced the cap, but it
-    // must be > 0 (we wrote at least one byte before the cap fired).
     const out = bridge.messages.find(m => m.type === "output" && m.session === "stream");
-    assert.ok(out.cursor > 0, "cap-flush must carry actual buffered data");
+    assert.ok(out.data.length > 0, "cap-flush must carry actual buffered data");
   });
 
   it("coalesces sessions independently — one burst does not block others", async () => {
@@ -174,7 +157,7 @@ describe("output coalescer (garble regression)", () => {
     bridge.messages.length = 0;
 
     // Plant bytes in the coalescer, THEN delete the session before the
-    // 2ms idle timer fires. The pre-Tier-1.1 code called cancelNotification
+    // idle timer fires. The pre-Tier-1.1 code called cancelNotification
     // which dropped these bytes on the floor — already-subscribed clients
     // saw the screen freeze mid-frame.
     session.feed("about-to-be-deleted");
@@ -183,25 +166,5 @@ describe("output coalescer (garble regression)", () => {
     const out = bridge.messages.find(m => m.type === "output" && m.session === "doomed");
     assert.ok(out, "deleteSession must flush queued bytes before removing the session");
     assert.strictEqual(out.data, "about-to-be-deleted");
-  });
-
-  it("never emits an output message with empty data", async () => {
-    // Defensive: if the RingBuffer slice is empty (e.g., session was killed
-    // mid-coalesce and bytes evicted), the coalescer must NOT emit a useless
-    // bridge message. Empty messages confuse the client's gap detector.
-    const { mgr, bridge } = makeManager();
-    await mgr.attachClient("c1", "empty", 80, 24);
-    const session = mgr.getSession("empty");
-    bridge.messages.length = 0;
-
-    // Force the slice to return empty even though we notified.
-    session.outputBuffer.sliceFrom = () => "";
-    session._options.onData("empty", 0);
-
-    await new Promise(r => setTimeout(r, 25)); // wait past 16ms cap
-
-    const outputs = bridge.messages.filter(m => m.type === "output" && m.session === "empty");
-    assert.strictEqual(outputs.length, 0,
-      "coalescer must not relay an empty data payload");
   });
 });

@@ -243,10 +243,11 @@ describe("Session tmux output parser — partial octal escape across %output lin
 
     const captured = [];
     const { session, proc } = createWiredSession("octal-split-test");
-    session._onData = (_name, fromSeq) => {
-      // sliceFrom returns the concatenated string from `fromSeq` onward.
-      const slice = session.outputBuffer.sliceFrom(fromSeq);
-      if (typeof slice === "string" && slice.length) captured.push(slice);
+    // Raptor 3: onData fires with the decoded string payload for each
+    // %output line. No RingBuffer cursor, no sliceFrom — the parser hands
+    // the payload directly to the callback.
+    session._onData = (_name, payload) => {
+      if (typeof payload === "string" && payload.length) captured.push(payload);
     };
 
     proc.stdout.emit(`%output %0 ${part1}\n`);
@@ -281,9 +282,8 @@ describe("Session tmux output parser — partial octal escape across %output lin
     for (let split = 0; split <= wire.length; split++) {
       const captured = [];
       const { session, proc } = createWiredSession(`split-${split}`);
-      session._onData = (_name, fromSeq) => {
-        const slice = session.outputBuffer.sliceFrom(fromSeq);
-        if (typeof slice === "string" && slice.length) captured.push(slice);
+      session._onData = (_name, payload) => {
+        if (typeof payload === "string" && payload.length) captured.push(payload);
       };
 
       proc.stdout.emit(`%output %0 ${wire.slice(0, split)}\n`);
@@ -339,9 +339,8 @@ describe("Session tmux output parser — partial octal escape across %output lin
     // the stuck `\34` would combine with the first `\342...` and desync
     // every following escape, producing FFFD glyphs.
     const captured = [];
-    session._onData = (_name, fromSeq) => {
-      const slice = session.outputBuffer.sliceFrom(fromSeq);
-      if (typeof slice === "string" && slice.length) captured.push(slice);
+    session._onData = (_name, payload) => {
+      if (typeof payload === "string" && payload.length) captured.push(payload);
     };
     const wire = tmuxOctalEscape(Buffer.from("█".repeat(5), "utf-8"));
     proc.stdout.emit(`%output %0 ${wire}\n`);

@@ -50,17 +50,23 @@ export const tmuxSessions = new Map();
 
 /**
  * Minimal Session mock implementing every method session-manager.js
- * calls. Subclass and override only what your test needs.
+ * calls under Raptor 3. Subclass and override only what your test needs.
  *
  * The base implementation:
  *   - tracks lifecycle state via STATE_* constants
- *   - exposes a stub outputBuffer with totalBytes/sliceFrom
- *   - returns the structured screenFingerprint() shape: { hash, seq }
- *   - returns the structured snapshot() shape: { buffer, seq, alive }
- *   - returns the structured pullFrom() shape: { data, cursor }
- *   - returns the structured pullTail() shape: { data, cursor }
+ *   - exposes mutable `_cols`/`_rows` so tests can set starting dims
+ *     and verify resize() calls
+ *   - returns the structured snapshot() shape: { cols, rows, data, alive }
+ *     — the single "authoritative screen state" object used by
+ *     attachClient/subscribeClient
  *   - removes itself from tmuxSessions on kill so listSessions stays
  *     consistent with the manager's view
+ *
+ * The old pull/fingerprint/sliceFrom/cursor surface was deleted alongside
+ * the byte-replay pipeline. Tests that need to simulate bytes arriving
+ * at clients should invoke `_options.onData(this.name, payload)` (the
+ * coalescer push path) and/or `_options.onSnapshot({ session, cols,
+ * rows, data })` directly.
  */
 export class BaseMockSession {
   static STATE_ATTACHED = "attached";
@@ -74,32 +80,26 @@ export class BaseMockSession {
     this.external = options.external || false;
     this._options = options;
     this._childCount = 0;
-    this.outputBuffer = { totalBytes: 0, sliceFrom: () => "" };
+    this._cols = 80;
+    this._rows = 24;
   }
 
   get alive() { return this.state === BaseMockSession.STATE_ATTACHED; }
-  get cursor() { return this.outputBuffer.totalBytes; }
+  get cols() { return this._cols; }
+  get rows() { return this._rows; }
   attachControlMode() {}
   async seedScreen() {}
-  async serializeScreen() { return ""; }
-  async screenFingerprint() { return { hash: 0, seq: this.cursor }; }
   async snapshot() {
-    if (!this.alive) {
-      return { buffer: "", seq: this.cursor, alive: false };
-    }
-    return { buffer: await this.serializeScreen(), seq: this.cursor, alive: true };
-  }
-  pullFrom(fromSeq) {
-    return { data: this.outputBuffer.sliceFrom(fromSeq), cursor: this.cursor };
-  }
-  pullTail(maxBytes) {
-    const cursor = this.cursor;
-    const fromSeq = Math.max(cursor - maxBytes, 0);
-    return { data: this.outputBuffer.sliceFrom(fromSeq) || "", cursor };
+    return {
+      cols: this._cols,
+      rows: this._rows,
+      data: "",
+      alive: this.alive,
+    };
   }
   updateChildCount(count) { this._childCount = count; }
   write() {}
-  resize() {}
+  resize(cols, rows) { this._cols = cols; this._rows = rows; }
   setIcon() {}
 
   detach() {

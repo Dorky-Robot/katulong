@@ -92,12 +92,26 @@ describe("wsMessageHandlers", () => {
       assert.strictEqual(result.stateUpdates["scroll.userScrolledUpBeforeDisconnect"], false);
     });
 
-    it("emits terminalReset and updateConnectionIndicator effects", () => {
+    it("emits applySnapshot and updateConnectionIndicator effects", () => {
+      // Raptor 3: the attached message carries an initial snapshot that
+      // the client applies atomically (resize → clear → write). The
+      // `terminalReset` effect is gone — applySnapshot handles it in one
+      // step, which is the whole point of the atomic dim-transition path.
       const state = makeState();
-      const result = handlers.attached({ session: "alpha" }, state);
+      const result = handlers.attached({ session: "alpha", cols: 120, rows: 40, data: "" }, state);
       const effectTypes = result.effects.map(e => e.type);
-      assert.ok(effectTypes.includes("terminalReset"));
+      assert.ok(effectTypes.includes("applySnapshot"));
       assert.ok(effectTypes.includes("updateConnectionIndicator"));
+    });
+
+    it("applySnapshot effect carries dims and data from the message", () => {
+      const state = makeState();
+      const result = handlers.attached({ session: "alpha", cols: 120, rows: 40, data: "hello" }, state);
+      const snap = result.effects.find(e => e.type === "applySnapshot");
+      assert.strictEqual(snap.session, "alpha");
+      assert.strictEqual(snap.cols, 120);
+      assert.strictEqual(snap.rows, 40);
+      assert.strictEqual(snap.data, "hello");
     });
 
     it("includes invalidateSessions with server-confirmed session name", () => {
@@ -170,16 +184,36 @@ describe("wsMessageHandlers", () => {
   });
 
   describe("output (server-push)", () => {
-    it("emits outputReceived effect with data, cursor, and fromSeq", () => {
-      const result = handlers.output({ session: "my-session", data: "hello", cursor: 5, fromSeq: 0 });
+    it("emits a single 'output' effect carrying raw bytes for the target session", () => {
+      // Raptor 3: `output` messages carry raw bytes at the server's
+      // current session dims. No sequence number, no cursor — ordering
+      // and dim stability are guaranteed by the server-side coalescer
+      // and the atomic snapshot path respectively.
+      const result = handlers.output({ session: "my-session", data: "hello" });
       assert.deepStrictEqual(result.stateUpdates, {});
       assert.strictEqual(result.effects.length, 1);
       const eff = result.effects[0];
-      assert.strictEqual(eff.type, "outputReceived");
+      assert.strictEqual(eff.type, "output");
       assert.strictEqual(eff.session, "my-session");
       assert.strictEqual(eff.data, "hello");
-      assert.strictEqual(eff.cursor, 5);
-      assert.strictEqual(eff.fromSeq, 0);
+    });
+  });
+
+  describe("snapshot (mid-session dim transition)", () => {
+    it("emits applySnapshot carrying the new dims and serialized data", () => {
+      // Snapshot messages are the only channel for dim changes in
+      // Raptor 3. The client applies them atomically between output
+      // bytes so no `output` frame for this session can land on a
+      // mismatched grid.
+      const result = handlers.snapshot({ session: "my-session", cols: 80, rows: 24, data: "hi" });
+      assert.deepStrictEqual(result.stateUpdates, {});
+      assert.strictEqual(result.effects.length, 1);
+      const eff = result.effects[0];
+      assert.strictEqual(eff.type, "applySnapshot");
+      assert.strictEqual(eff.session, "my-session");
+      assert.strictEqual(eff.cols, 80);
+      assert.strictEqual(eff.rows, 24);
+      assert.strictEqual(eff.data, "hi");
     });
   });
 
@@ -187,16 +221,6 @@ describe("wsMessageHandlers", () => {
     it("emits refreshTokensAfterRegistration", () => {
       const result = handlers["credential-registered"]();
       assert.strictEqual(result.effects[0].type, "refreshTokensAfterRegistration");
-    });
-  });
-
-  describe("resize-sync", () => {
-    it("passes cols and rows to resizeSync effect", () => {
-      const result = handlers["resize-sync"]({ cols: 120, rows: 40 });
-      const eff = result.effects[0];
-      assert.strictEqual(eff.type, "resizeSync");
-      assert.strictEqual(eff.cols, 120);
-      assert.strictEqual(eff.rows, 40);
     });
   });
 

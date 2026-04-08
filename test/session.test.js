@@ -2,7 +2,6 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 import { Buffer } from "node:buffer";
 import { Session, SessionNotAliveError } from "../lib/session.js";
-import { RingBuffer } from "../lib/ring-buffer.js";
 import {
   tmuxSessionName, encodeHexKeys, unescapeTmuxOutputBytes, stripDaResponses,
 } from "../lib/tmux.js";
@@ -177,52 +176,6 @@ describe("stripDaResponses", () => {
   });
 });
 
-// --- RingBuffer tests ---
-
-describe("RingBuffer", () => {
-  it("initializes with default limits", () => {
-    const buf = new RingBuffer();
-    assert.strictEqual(buf.maxBytes, 20 * 1024 * 1024);
-  });
-
-  it("initializes with custom byte limit", () => {
-    const buf = new RingBuffer(1024);
-    assert.strictEqual(buf.maxBytes, 1024);
-  });
-
-  it("pushes and retrieves data", () => {
-    const buf = new RingBuffer();
-    buf.push("hello");
-    buf.push(" world");
-    assert.strictEqual(buf.toString(), "hello world");
-  });
-
-  it("evicts when byte limit exceeded", () => {
-    const buf = new RingBuffer(3);
-    buf.push("ab");   // 2 bytes
-    buf.push("cd");   // 2 bytes, total 4 -> evict "ab", leaves 2
-    buf.push("ef");   // 2 bytes, total 4 -> evict "cd", leaves 2
-    assert.strictEqual(buf.toString(), "ef");
-  });
-
-  it("reports stats", () => {
-    const buf = new RingBuffer();
-    buf.push("hello");
-    const stats = buf.stats();
-    assert.strictEqual(stats.items, 1);
-    assert.strictEqual(stats.bytes, 5);
-  });
-
-  it("clears all data", () => {
-    const buf = new RingBuffer();
-    buf.push("test");
-    buf.clear();
-    assert.strictEqual(buf.toString(), "");
-    assert.strictEqual(buf.stats().items, 0);
-    assert.strictEqual(buf.stats().bytes, 0);
-  });
-});
-
 // --- Session tests (using mock control mode) ---
 
 // MockControlProc simulates the tmux -C attach-session child process
@@ -340,17 +293,13 @@ describe("Session", () => {
       assert.strictEqual(session.alive, false, "starts detached until attachControlMode is called");
     });
 
-    it("initializes output buffer with default limits", () => {
+    it("exposes cols and rows via the screen mirror", () => {
       const session = new Session("test", "test");
-      assert.ok(session.outputBuffer);
-      assert.strictEqual(session.outputBuffer.maxBytes, 20 * 1024 * 1024);
-    });
-
-    it("initializes output buffer with custom byte limit", () => {
-      const session = new Session("test", "test", {
-        maxBufferBytes: 1024,
-      });
-      assert.strictEqual(session.outputBuffer.maxBytes, 1024);
+      // ScreenState initializes to default dims (40x24 — see ScreenState
+      // constructor) before any resize happens. Tests rely on these being
+      // readable even before attach.
+      assert.strictEqual(typeof session.cols, "number");
+      assert.strictEqual(typeof session.rows, "number");
     });
   });
 
@@ -732,77 +681,30 @@ describe("Session", () => {
   });
 
   describe("output via control mode", () => {
-    it("parses %output lines and buffers data", () => {
-      const { session, mockProc } = createSimpleTestSession("test");
-      // Manually push data to simulate output parsing
-      const data = "Hello World";
-      session.outputBuffer.push(data);
-
-      assert.strictEqual(session.getBuffer(), "Hello World");
-    });
-
-    it("calls onData callback", () => {
+    it("invokes onData with the decoded payload for each %output line", () => {
       const dataEvents = [];
-      const { session } = createSimpleTestSession("test", {
-        onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
+      const { mockProc } = createWiredTestSession("test", {
+        onData: (name, payload) => dataEvents.push({ name, payload }),
       });
 
-      // Simulate what the control mode parser does
-      const fromSeq = session.outputBuffer.totalBytes;
-      session.outputBuffer.push("test output");
-      session._onData("test", fromSeq);
+      mockProc.simulateOutput("%0", "hello");
 
       assert.strictEqual(dataEvents.length, 1);
       assert.strictEqual(dataEvents[0].name, "test");
-      assert.strictEqual(dataEvents[0].fromSeq, 0);
-    });
-  });
-
-  describe("getBuffer", () => {
-    it("returns empty string for new session", () => {
-      const { session } = createSimpleTestSession("test");
-      assert.strictEqual(session.getBuffer(), "");
-    });
-
-    it("returns buffered output", () => {
-      const { session } = createSimpleTestSession("test");
-      session.outputBuffer.push("$ ls\n");
-      session.outputBuffer.push("file1.txt\n");
-
-      assert.strictEqual(session.getBuffer(), "$ ls\nfile1.txt\n");
-    });
-
-    it("returns buffer even after session dies", () => {
-      const { session, mockProc } = createSimpleTestSession("test");
-      session.outputBuffer.push("output before exit\n");
-      mockProc.simulateClose(0);
-
-      assert.strictEqual(session.getBuffer(), "output before exit\n");
-    });
-  });
-
-  describe("clearBuffer", () => {
-    it("clears the output buffer", () => {
-      const { session } = createSimpleTestSession("test");
-      session.outputBuffer.push("test data");
-      assert.strictEqual(session.getBuffer(), "test data");
-
-      session.clearBuffer();
-      assert.strictEqual(session.getBuffer(), "");
+      assert.strictEqual(dataEvents[0].payload, "hello");
     });
   });
 
   describe("stats", () => {
-    it("returns session statistics", () => {
+    it("returns session statistics including dims", () => {
       const { session } = createSimpleTestSession("my-session");
-      session.outputBuffer.push("hello");
 
       const stats = session.stats();
       assert.strictEqual(stats.name, "my-session");
       assert.strictEqual(stats.tmuxSession, "my-session");
       assert.strictEqual(stats.alive, true);
-      assert.strictEqual(stats.buffer.items, 1);
-      assert.strictEqual(stats.buffer.bytes, 5);
+      assert.strictEqual(typeof stats.cols, "number");
+      assert.strictEqual(typeof stats.rows, "number");
     });
 
     it("reflects dead status after exit", () => {
@@ -863,42 +765,24 @@ describe("Session", () => {
     });
   });
 
-  describe("buffer overflow handling", () => {
-    it("respects byte limit", () => {
-      const { session } = createSimpleTestSession("test", {
-        maxBufferBytes: 18,  // fits 3 lines of 6 bytes each
-      });
-
-      session.outputBuffer.push("line1\n");  // 6 bytes
-      session.outputBuffer.push("line2\n");  // 6 bytes, total 12
-      session.outputBuffer.push("line3\n");  // 6 bytes, total 18
-      session.outputBuffer.push("line4\n");  // 6 bytes, total 24 -> evict "line1\n", leaves 18
-
-      const buffer = session.getBuffer();
-      assert.ok(!buffer.includes("line1"));
-      assert.ok(buffer.includes("line2"));
-      assert.ok(buffer.includes("line3"));
-      assert.ok(buffer.includes("line4"));
-    });
-  });
 });
 
 describe("output dispatch", () => {
   it("dispatches onData synchronously for each %output line", () => {
     const dataEvents = [];
     const { mockProc } = createWiredTestSession("test", {
-      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
+      onData: (name, payload) => dataEvents.push({ name, payload }),
     });
 
     mockProc.simulateOutput("%0", "hello");
     assert.strictEqual(dataEvents.length, 1);
-    assert.strictEqual(dataEvents[0].fromSeq, 0);
+    assert.strictEqual(dataEvents[0].payload, "hello");
   });
 
   it("dispatches each output chunk individually", () => {
     const dataEvents = [];
     const { mockProc } = createWiredTestSession("test", {
-      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
+      onData: (name, payload) => dataEvents.push({ name, payload }),
     });
 
     mockProc.simulateOutput("%0", "aaa");
@@ -906,27 +790,15 @@ describe("output dispatch", () => {
     mockProc.simulateOutput("%0", "ccc");
 
     assert.strictEqual(dataEvents.length, 3);
-    assert.strictEqual(dataEvents[0].fromSeq, 0);
-    assert.strictEqual(dataEvents[1].fromSeq, 3);
-    assert.strictEqual(dataEvents[2].fromSeq, 6);
-  });
-
-  it("preserves individual chunks in the RingBuffer", () => {
-    const { session, mockProc } = createWiredTestSession("test", {
-      onData: () => {},
-    });
-
-    mockProc.simulateOutput("%0", "aaa");
-    mockProc.simulateOutput("%0", "bbb");
-
-    assert.strictEqual(session.outputBuffer.items.length, 2);
-    assert.strictEqual(session.getBuffer(), "aaabbb");
+    assert.strictEqual(dataEvents[0].payload, "aaa");
+    assert.strictEqual(dataEvents[1].payload, "bbb");
+    assert.strictEqual(dataEvents[2].payload, "ccc");
   });
 
   it("does not dispatch after detach", () => {
     const dataEvents = [];
     const { session, mockProc } = createWiredTestSession("test", {
-      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
+      onData: (name, payload) => dataEvents.push({ name, payload }),
     });
 
     mockProc.simulateOutput("%0", "before");
@@ -940,7 +812,7 @@ describe("output dispatch", () => {
   it("does not dispatch after kill", () => {
     const dataEvents = [];
     const { session, mockProc } = createWiredTestSession("test", {
-      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
+      onData: (name, payload) => dataEvents.push({ name, payload }),
     });
 
     mockProc.simulateOutput("%0", "before");
@@ -952,287 +824,176 @@ describe("output dispatch", () => {
   it("dispatches on process close for decoder tail", () => {
     const dataEvents = [];
     const { mockProc } = createWiredTestSession("test", {
-      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
+      onData: (name, payload) => dataEvents.push({ name, payload }),
     });
 
     mockProc.simulateOutput("%0", "data");
     mockProc.simulateClose(0);
     assert.strictEqual(dataEvents.length, 1);
-    assert.strictEqual(dataEvents[0].fromSeq, 0);
+    assert.strictEqual(dataEvents[0].payload, "data");
   });
 
-  it("drains _outputDecoder partial UTF-8 on detach (regression)", () => {
+  it("drains parser partial UTF-8 on detach (regression)", () => {
     // Past bug: detach() went through _closeControlProc which nulled
     // controlProc before the close handler could fire, so the
     // `this.controlProc !== proc` guard skipped the decoder drain.
-    // Worse, _outputDecoder.end() was never called anywhere — partial
-    // multi-byte UTF-8 buffered inside it (e.g. the first 2 bytes of
-    // a 4-byte emoji) were silently dropped on every detach/kill.
-    // The fix drains both decoders synchronously inside _closeControlProc
-    // before the headless is disposed and _onData is cleared.
+    // Worse, the parser's internal string decoder was never drained
+    // anywhere — partial multi-byte UTF-8 buffered inside it (e.g. the
+    // first 2 bytes of a 4-byte emoji) were silently dropped on every
+    // detach/kill. The fix drains the parser synchronously inside
+    // _closeControlProc before the screen is disposed and _onData is
+    // cleared. Raptor 3 keeps the same drain path — only the observable
+    // symptom has moved from "bytes missing in RingBuffer" to "bytes
+    // missing in the onData callback stream".
     const dataEvents = [];
     const { session, mockProc } = createWiredTestSession("test", {
-      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
+      onData: (name, payload) => dataEvents.push({ name, payload }),
     });
 
     // Feed first 2 bytes of a 4-byte UTF-8 emoji (👋 = F0 9F 91 8B).
-    // unescapeTmuxOutputBytes returns [0xF0, 0x9F] and the inner
-    // StringDecoder buffers them as an incomplete sequence — nothing
-    // is pushed to the RingBuffer yet.
+    // The parser's internal StringDecoder buffers them as an incomplete
+    // sequence — nothing is pushed to onData yet.
     mockProc.simulateRawStdout("%output %0 \\360\\237\n");
-    assert.strictEqual(session.outputBuffer.totalBytes, 0,
-      "incomplete UTF-8 should buffer in _outputDecoder, not the RingBuffer");
-    assert.strictEqual(dataEvents.length, 0);
+    assert.strictEqual(dataEvents.length, 0,
+      "incomplete UTF-8 should buffer in the parser, not fire onData");
 
     session.detach();
 
-    assert.ok(session.outputBuffer.totalBytes > 0,
-      "detach must drain _outputDecoder tail into the RingBuffer");
     assert.ok(dataEvents.length >= 1,
-      "drained bytes should fire onData notification before _onData is cleared");
+      "detach must drain the parser's partial UTF-8 tail through onData " +
+      "before _onData is cleared");
   });
 
   it("drains parser state on kill (regression)", () => {
     // Same bug as above, on the kill path. kill() also goes through
-    // _closeControlProc; the drain must run before the headless is
-    // disposed.
+    // _closeControlProc; the drain must run before the screen mirror
+    // is disposed.
     const dataEvents = [];
     const { session, mockProc } = createWiredTestSession("test", {
-      onData: (name, fromSeq) => dataEvents.push({ name, fromSeq }),
+      onData: (name, payload) => dataEvents.push({ name, payload }),
     });
 
     mockProc.simulateRawStdout("%output %0 \\344\\275\n"); // first 2 bytes of 你 (E4 BD A0)
-    assert.strictEqual(session.outputBuffer.totalBytes, 0);
+    assert.strictEqual(dataEvents.length, 0);
 
     session.kill();
 
-    assert.ok(session.outputBuffer.totalBytes > 0,
-      "kill must drain _outputDecoder tail into the RingBuffer");
+    assert.ok(dataEvents.length >= 1,
+      "kill must drain the parser's partial UTF-8 tail through onData");
   });
 });
 
-describe("screenFingerprint seq tagging (regression)", () => {
-  // Lamport's lesson: comparing two states requires they describe the
-  // SAME logical time. The server's fingerprint must be paired with the
-  // byte position it describes — otherwise the client compares a hash
-  // taken at byte N to its own state at some other byte M and reports
-  // false drift, triggering a spurious resync (the same garble symptom
-  // we are trying to fix).
+describe("Session.snapshot (Raptor 3)", () => {
+  // Under Raptor 3, snapshot() is the single authoritative method that
+  // converts the live ScreenState mirror into a client-facing tuple. The
+  // contract:
   //
-  // These tests pin the contract: { hash, seq } shape, and seq matches
-  // outputBuffer.totalBytes at the moment the hash was computed.
-
-  it("returns { hash, seq } shape on a freshly attached session", async () => {
-    const { session } = createWiredTestSession("test");
-    const fp = await session.screenFingerprint();
-    assert.strictEqual(typeof fp, "object",
-      "must return an object so callers can pair the hash with a sequence number");
-    assert.ok("hash" in fp, "must include hash field");
-    assert.ok("seq" in fp, "must include seq field");
-    assert.strictEqual(typeof fp.hash, "number");
-    assert.strictEqual(typeof fp.seq, "number");
-    assert.strictEqual(fp.seq, 0,
-      "fresh session has not received any output, seq should be 0");
-  });
-
-  it("seq matches outputBuffer.totalBytes after data has been written", async () => {
-    const { session, mockProc } = createWiredTestSession("test");
-    mockProc.simulateOutput("%0", "hello world");
-    // Wait one tick so the inner setImmediate flush completes.
-    await new Promise(resolve => setImmediate(resolve));
-    const fp = await session.screenFingerprint();
-    assert.strictEqual(fp.seq, session.outputBuffer.totalBytes,
-      "seq must equal the byte position the hash describes — anything else " +
-      "lets the client compare hashes from different points in the stream");
-    assert.ok(fp.seq > 0, "after writing data, seq should advance past 0");
-  });
-
-  it("returns { hash: 0, seq: 0 } when headless is disposed", async () => {
-    const { session } = createWiredTestSession("test");
-    session._screen.dispose();
-    const fp = await session.screenFingerprint();
-    assert.deepStrictEqual(fp, { hash: 0, seq: 0 },
-      "disposed headless must still return the structured shape — " +
-      "callers destructure { hash, seq }, not a bare number");
-  });
-});
-
-describe("Session.snapshot (Tier 3.2)", () => {
-  // snapshot() consolidates the attach/subscribe/resync code paths in
-  // session-manager and ws-manager into a single method that returns a
-  // Lamport-correct { buffer, seq, alive } tuple. The contract:
+  //   - cols, rows — current dims of the ScreenState mirror (server owns dims)
+  //   - data — serialized escape-sequence representation of the visible screen
+  //   - alive — whether the session is still attached to tmux
   //
-  //   - buffer is the escape-sequence serialization of the screen mirror
-  //   - seq is the byte position the buffer reflects (NOT some later cursor)
-  //   - alive is true iff the session is still attached
-  //
-  // Pre-Tier-3.2, every caller open-coded the flush → serialize → totalBytes
-  // sequence. snapshot() pins the order so future callers can't reintroduce
-  // a Lamport ordering bug.
+  // There is no sequence number, no pull cursor, and no byte-replay path.
+  // Clients apply the snapshot atomically (resize → clear → write) and
+  // then stream plain `output` messages that are guaranteed to be at the
+  // same dims because any resize arrives as a new snapshot in-band.
 
-  it("returns { buffer, seq, alive } shape on a fresh session", async () => {
+  it("returns { cols, rows, data, alive } shape on a fresh session", async () => {
     const { session } = createWiredTestSession("snap");
     const snap = await session.snapshot();
     assert.strictEqual(typeof snap, "object");
-    assert.ok("buffer" in snap, "must include buffer field");
-    assert.ok("seq" in snap, "must include seq field");
+    assert.ok("cols" in snap, "must include cols field");
+    assert.ok("rows" in snap, "must include rows field");
+    assert.ok("data" in snap, "must include data field");
     assert.ok("alive" in snap, "must include alive field");
-    assert.strictEqual(typeof snap.buffer, "string");
-    assert.strictEqual(typeof snap.seq, "number");
+    assert.strictEqual(typeof snap.cols, "number");
+    assert.strictEqual(typeof snap.rows, "number");
+    assert.strictEqual(typeof snap.data, "string");
     assert.strictEqual(typeof snap.alive, "boolean");
   });
 
-  it("buffer reflects bytes pushed before the snapshot", async () => {
+  it("data reflects bytes written to the screen mirror before the snapshot", async () => {
     const { session, mockProc } = createWiredTestSession("snap");
     mockProc.simulateOutput("%0", "hello world");
+    // Wait one tick so the parser's internal flush completes.
     await new Promise(resolve => setImmediate(resolve));
     const snap = await session.snapshot();
-    assert.ok(snap.buffer.length > 0,
-      "buffer should be non-empty after data has been written to the screen mirror");
+    assert.ok(snap.data.length > 0,
+      "data should be non-empty after content has been written to the screen mirror");
   });
 
-  it("seq matches the byte position the buffer reflects", async () => {
-    const { session, mockProc } = createWiredTestSession("snap");
-    mockProc.simulateOutput("%0", "test data");
-    await new Promise(resolve => setImmediate(resolve));
+  it("cols and rows match the current ScreenState dims", async () => {
+    const { session } = createWiredTestSession("snap");
     const snap = await session.snapshot();
-    assert.strictEqual(snap.seq, session.cursor,
-      "snapshot seq must equal session.cursor — clients pull from seq onward, " +
-      "anything else would tell them to skip bytes the buffer already includes");
-    assert.ok(snap.seq > 0);
+    assert.strictEqual(snap.cols, session.cols);
+    assert.strictEqual(snap.rows, session.rows);
   });
 
-  it("returns empty buffer with current cursor when not alive", async () => {
+  it("returns empty data with current dims when not alive", async () => {
     const { session } = createWiredTestSession("snap");
     session.kill();
     const snap = await session.snapshot();
     assert.strictEqual(snap.alive, false);
-    assert.strictEqual(snap.buffer, "");
-    assert.strictEqual(snap.seq, session.cursor);
+    assert.strictEqual(snap.data, "");
+    // cols/rows are still reported from the (now disposed) screen mirror
+    assert.strictEqual(typeof snap.cols, "number");
+    assert.strictEqual(typeof snap.rows, "number");
   });
 
   it("does not throw when the screen is disposed mid-snapshot", async () => {
     const { session } = createWiredTestSession("snap");
-    // Simulate the race: screen is disposed before snapshot() finishes flushing
+    // Simulate the race: screen is disposed before snapshot() finishes serializing
     session._screen.dispose();
     const snap = await session.snapshot();
     // Must return the structured shape, not throw
-    assert.strictEqual(typeof snap.buffer, "string");
-    assert.strictEqual(typeof snap.seq, "number");
+    assert.strictEqual(typeof snap.data, "string");
+    assert.strictEqual(typeof snap.cols, "number");
+    assert.strictEqual(typeof snap.rows, "number");
   });
 });
 
-describe("Session.pullFrom (Tier 3.2)", () => {
-  // pullFrom() replaces the open-coded `outputBuffer.sliceFrom + totalBytes`
-  // pattern in session-manager.flushOutput, ws-manager.pull, and
-  // routes.js GET /sessions/:name/buffer.
+describe("Session.onSnapshot (Raptor 3)", () => {
+  // onSnapshot is the server-authoritative dim transition callback. It
+  // fires from _applyResize after ScreenState has been resized and
+  // re-serialized, so subscribers can transition their xterms atomically
+  // (resize → clear → write) to the new dims.
   //
-  // The contract:
-  //   - { data, cursor } where data is the slice and cursor is the new head
-  //   - data === null on eviction (caller must fall back to snapshot())
-  //   - data === "" when the caller is already caught up
+  // The callback payload is { session, cols, rows, data }. Callers must
+  // flush pending %output BEFORE invoking resize() so the coalescer has
+  // already drained old-dim bytes by the time onSnapshot fires.
 
-  it("returns { data, cursor } shape", async () => {
-    const { session } = createWiredTestSession("pull");
-    const result = session.pullFrom(0);
-    assert.strictEqual(typeof result, "object");
-    assert.ok("data" in result);
-    assert.ok("cursor" in result);
-  });
-
-  it("returns the buffered bytes and the new cursor", async () => {
-    const { session, mockProc } = createWiredTestSession("pull");
-    mockProc.simulateOutput("%0", "hello");
-    const before = session.cursor;
-    mockProc.simulateOutput("%0", " world");
-    const { data, cursor } = session.pullFrom(before);
-    assert.strictEqual(data, " world",
-      "pullFrom must return bytes from fromSeq to current cursor — anything " +
-      "else would skip or duplicate output for the client");
-    assert.strictEqual(cursor, session.cursor,
-      "cursor must equal the byte position the data ends at");
-  });
-
-  it("returns empty data when caller is caught up", async () => {
-    const { session, mockProc } = createWiredTestSession("pull");
-    mockProc.simulateOutput("%0", "anything");
-    const here = session.cursor;
-    const { data, cursor } = session.pullFrom(here);
-    assert.strictEqual(data, "");
-    assert.strictEqual(cursor, here);
-  });
-
-  it("returns null data when fromSeq has been evicted from the RingBuffer", () => {
-    // Construct a tiny session so the RingBuffer evicts on every push
-    const { session, mockProc } = createWiredTestSession("pull-evict", {
-      maxBufferBytes: 16,
+  it("fires after a successful resize with the new dims", async () => {
+    const events = [];
+    const { session } = createSimpleTestSession("snap-resize", {
+      onSnapshot: (evt) => events.push(evt),
     });
-    mockProc.simulateOutput("%0", "first chunk that will be evicted");
-    mockProc.simulateOutput("%0", "second chunk that pushes the first out");
-    // fromSeq=0 is older than the oldest retained byte
-    const { data } = session.pullFrom(0);
-    assert.strictEqual(data, null,
-      "pullFrom must return null when fromSeq is below the start of the " +
-      "RingBuffer — callers (ws-manager.pull) use this signal to fall back " +
-      "to a full snapshot rather than silently sending partial data");
-  });
-});
 
-describe("Session.cursor (Tier 3.2)", () => {
-  it("equals outputBuffer.totalBytes", async () => {
-    const { session, mockProc } = createWiredTestSession("cursor");
-    assert.strictEqual(session.cursor, 0);
-    mockProc.simulateOutput("%0", "abcdef");
-    assert.strictEqual(session.cursor, session.outputBuffer.totalBytes,
-      "cursor is sugar for outputBuffer.totalBytes — callers use it to " +
-      "avoid reaching into the RingBuffer's internals");
-  });
-});
+    // Mark output idle so the resize gate doesn't defer.
+    session._lastOutputAt = Date.now() - 1000;
+    await session.resize(120, 40);
 
-describe("Session.pullTail (Tier 3.2)", () => {
-  // pullTail(maxBytes) encapsulates the "last N bytes" arithmetic that
-  // routes/app-routes.js previously open-coded via
-  // `Math.max(cursor - 4096, outputBuffer.getStartOffset())`. Exposing it
-  // on Session means callers don't reach into RingBuffer internals.
-
-  it("returns the last maxBytes when the buffer holds more", async () => {
-    const { session, mockProc } = createWiredTestSession("tail");
-    mockProc.simulateOutput("%0", "0123456789abcdef"); // 16 bytes
-    const { data, cursor } = session.pullTail(8);
-    assert.strictEqual(data, "89abcdef",
-      "pullTail must return the trailing maxBytes of the buffer");
-    assert.strictEqual(cursor, session.cursor,
-      "cursor must be the authoritative total byte position");
+    assert.strictEqual(events.length, 1, "onSnapshot should fire exactly once per resize");
+    assert.strictEqual(events[0].session, "snap-resize");
+    assert.strictEqual(events[0].cols, 120);
+    assert.strictEqual(events[0].rows, 40);
+    assert.strictEqual(typeof events[0].data, "string");
   });
 
-  it("returns everything when maxBytes exceeds the buffer", async () => {
-    const { session, mockProc } = createWiredTestSession("tail-small");
-    mockProc.simulateOutput("%0", "tiny");
-    const { data } = session.pullTail(4096);
-    assert.strictEqual(data, "tiny",
-      "pullTail must clamp to what the RingBuffer holds — requesting more " +
-      "than the buffer has must not reach below byte 0");
-  });
-
-  it("clamps to the RingBuffer start offset after eviction", () => {
-    const { session, mockProc } = createWiredTestSession("tail-evict", {
-      maxBufferBytes: 8,
+  it("does not fire when the new dims match the current ones", async () => {
+    const events = [];
+    const { session } = createSimpleTestSession("snap-noop", {
+      onSnapshot: (evt) => events.push(evt),
     });
-    mockProc.simulateOutput("%0", "evicted-");     // 8 bytes — fills buffer
-    mockProc.simulateOutput("%0", "kept-more");    // evicts the first chunk
-    const { data, cursor } = session.pullTail(4096);
-    assert.strictEqual(cursor, session.cursor);
-    assert.ok(!data.includes("evicted-"),
-      "pullTail must not attempt to read bytes that have been evicted");
-    assert.ok(data.length > 0,
-      "pullTail must return whatever the RingBuffer still holds");
-  });
 
-  it("returns empty string for an empty buffer", () => {
-    const { session } = createWiredTestSession("tail-empty");
-    const { data, cursor } = session.pullTail(4096);
-    assert.strictEqual(data, "");
-    assert.strictEqual(cursor, 0);
+    session._lastOutputAt = Date.now() - 1000;
+    // First resize establishes the dims.
+    await session.resize(100, 30);
+    assert.strictEqual(events.length, 1, "first resize should fire onSnapshot");
+    events.length = 0;
+
+    // Second resize to the same dims should be a no-op.
+    await session.resize(100, 30);
+    assert.strictEqual(events.length, 0,
+      "resize to identical dims must not fire onSnapshot (would cause needless repaints)");
   });
 });
 
@@ -1263,9 +1024,9 @@ describe("seedScreen", () => {
 
     await session.seedScreen("$ hello world\r\n$ ");
 
-    const serialized = await session.serializeScreen();
-    assert.ok(serialized.length > 0, "serialized screen should not be empty after seed");
-    assert.ok(serialized.includes("hello world"), "serialized screen should contain seeded content");
+    const { data } = await session.snapshot();
+    assert.ok(data.length > 0, "snapshot data should not be empty after seed");
+    assert.ok(data.includes("hello world"), "snapshot data should contain seeded content");
   });
 
   it("positions cursor after seed content", async () => {
@@ -1280,17 +1041,6 @@ describe("seedScreen", () => {
     assert.ok(x > 0 || y > 0, "cursor should not be at origin after seed");
   });
 
-  it("does not affect the RingBuffer", async () => {
-    const { session } = createWiredTestSession("seed-no-ring", {
-      onData: () => {},
-    });
-
-    await session.seedScreen("some pane content\r\n");
-
-    assert.strictEqual(session.outputBuffer.totalBytes, 0, "RingBuffer should remain empty after seed");
-    assert.strictEqual(session.getBuffer(), "", "getBuffer should return empty after seed");
-  });
-
   it("no-ops when content is null", async () => {
     const { session } = createWiredTestSession("seed-null", {
       onData: () => {},
@@ -1298,9 +1048,9 @@ describe("seedScreen", () => {
 
     await session.seedScreen(null);
 
-    const serialized = await session.serializeScreen();
+    const { data } = await session.snapshot();
     // Should be empty or minimal (no crash)
-    assert.strictEqual(typeof serialized, "string");
+    assert.strictEqual(typeof data, "string");
   });
 
   it("no-ops when content is empty string", async () => {
@@ -1311,8 +1061,8 @@ describe("seedScreen", () => {
     await session.seedScreen("");
 
     // Should not crash
-    const serialized = await session.serializeScreen();
-    assert.strictEqual(typeof serialized, "string");
+    const { data } = await session.snapshot();
+    assert.strictEqual(typeof data, "string");
   });
 
   it("no-ops when headless terminal is disposed", async () => {
@@ -1337,8 +1087,8 @@ describe("seedScreen", () => {
     // Now simulate real output arriving
     mockProc.simulateOutput("%0", "\x1b[H\x1b[2J$ new prompt");
 
-    const serialized = await session.serializeScreen();
-    assert.ok(serialized.includes("new prompt"), "real output should overwrite seed");
+    const { data } = await session.snapshot();
+    assert.ok(data.includes("new prompt"), "real output should overwrite seed");
   });
 
   it("positions cursor correctly when cursorPos is provided", async () => {

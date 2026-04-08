@@ -34,13 +34,18 @@ class MockSession {
     this._childCount = 0;
     this.external = options.external || false;
     this._options = options;
-    this.outputBuffer = { totalBytes: 0, sliceFrom: () => "" };
+    this._cols = 80;
+    this._rows = 24;
   }
 
   get alive() { return this.state === MockSession.STATE_ATTACHED; }
+  get cols() { return this._cols; }
+  get rows() { return this._rows; }
   attachControlMode() {}
   async seedScreen() {}
-  async serializeScreen() { return ""; }
+  async snapshot() {
+    return { cols: this._cols, rows: this._rows, data: "", alive: this.alive };
+  }
   updateChildCount(count) { this._childCount = count; }
   write() {}
   resize() {}
