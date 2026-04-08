@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
-import { readFileSync, existsSync, watch, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { readFileSync, watch, writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { execFile } from "node:child_process";
@@ -38,6 +38,8 @@ import { createRefiner } from "./lib/dispatch-refine.js";
 import { createExecutor } from "./lib/dispatch-executor.js";
 import { createDispatchStore } from "./lib/dispatch-store.js";
 import { createDispatchRoutes } from "./lib/dispatch-routes.js";
+import { createUpgradeHandler } from "./lib/server-upgrade.js";
+import { createServerShutdown } from "./lib/server-shutdown.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = envConfig.port;
@@ -94,11 +96,8 @@ const authRateLimit = rateLimit(10, 60000, (req) => {
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const SERVER_PID_PATH = join(DATA_DIR, "server.pid");
+const SERVER_INFO_PATH = join(DATA_DIR, "server.json");
 const DRAIN_TIMEOUT_MS = envConfig.drainTimeout;
-
-// --- Graceful shutdown state ---
-
-let draining = false;
 
 // --- Challenge storage (in-memory, 5-min expiry) ---
 
@@ -246,6 +245,16 @@ const { pluginRoutes, pluginWsHandlers, shutdownPlugins } = await loadPlugins({
 const wsManager = createWebSocketManager({ bridge, sessionManager, helmSessionManager, pluginWsHandlers });
 const { wsClients, broadcastToAll, closeAllWebSockets } = wsManager;
 
+// --- Graceful shutdown (late-bound; created once `server` and `wss` exist below) ---
+// `getDraining` needs a stable reference that routes can capture during
+// `createAppRoutes` below, but the shutdown object itself depends on `server`
+// and `wss` which don't exist yet. We assign after both are constructed, and
+// the getter returns `false` in the brief window before shutdown is wired up
+// (which, in practice, is only during module evaluation — never in a served
+// request).
+let shutdown = null;
+const getDraining = () => shutdown?.isDraining() ?? false;
+
 // --- Dispatch store (feature queue) ---
 const dispatchStore = createDispatchStore(DATA_DIR);
 const dispatchRefiner = createRefiner();
@@ -265,7 +274,7 @@ const routes = [
     helmSessionManager, bridge,
     configManager,
     __dirname, DATA_DIR, APP_VERSION,
-    getDraining: () => draining,
+    getDraining,
     shortcutsPath: join(DATA_DIR, "shortcuts.json"),
     auth, csrf,
     topicBroker: createTopicBroker(),
@@ -375,86 +384,16 @@ const server = createServer(handleRequest);
 
 const wss = new WebSocketServer({ noServer: true });
 
-function rejectUpgrade(socket, status) {
-  socket.write(`HTTP/1.1 ${status}\r\n\r\n`);
-  socket.destroy();
-}
-
-function authenticateUpgrade(req) {
-  const auth = isAuthenticated(req);
-  if (!auth) return null;
-  return { sessionToken: auth.sessionToken, credentialId: auth.credentialId };
-}
-
-function validateUpgradeOrigin(req) {
-  if (isTrustedProxy(req)) return true;
-  if (isLocalRequest(req)) return true;
-  const origin = req.headers.origin;
-  const host = req.headers.host;
-  if (!origin) return false;
-  try {
-    return new URL(origin).host === host;
-  } catch {
-    return false;
-  }
-}
-
-function handleUpgrade(req, socket, head) {
-  log.info("WebSocket upgrade attempt", {
-    ip: req.socket.remoteAddress,
-    origin: req.headers.origin,
-    host: req.headers.host
-  });
-
-  const auth = authenticateUpgrade(req);
-  if (!auth) {
-    log.warn("WebSocket rejected: not authenticated", { ip: req.socket.remoteAddress });
-    return rejectUpgrade(socket, "401 Unauthorized");
-  }
-
-  if (!validateUpgradeOrigin(req)) {
-    log.warn("WebSocket rejected: origin validation failed", { origin: req.headers.origin, host: req.headers.host });
-    return rejectUpgrade(socket, "403 Forbidden");
-  }
-
-  const { pathname: wsPathname } = new URL(req.url, `http://${req.headers.host}`);
-
-  // Claude session WebSocket — yolo processes connect here
-  if (wsPathname === "/ws/helm") {
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      helmSessionManager.handleConnection(ws);
-    });
-    return;
-  }
-
-  // Port proxy WebSocket — intercept before terminal WS handling
-  if (wsPathname.startsWith("/_proxy/")) {
-    if (configManager.getPortProxyEnabled() === false) {
-      return rejectUpgrade(socket, "403 Forbidden");
-    }
-    proxyWebSocket(req, socket, head, wsPathname);
-    return;
-  }
-
-  const { sessionToken, credentialId } = auth;
-  wss.handleUpgrade(req, socket, head, (ws) => {
-    if (sessionToken && !isLocalRequest(req)) {
-      const freshState = loadState();
-      if (!freshState || !freshState.isValidLoginToken(sessionToken)) {
-        log.warn("WebSocket rejected during upgrade: session invalidated", { ip: req.socket.remoteAddress });
-        ws.close(1008, "Session invalidated");
-        return;
-      }
-    }
-    // Pass auth context explicitly instead of stashing it on the ws object.
-    // ws-manager treats WebSocket as a transport, not an application-state
-    // data carrier — see lib/ws-manager.js handleConnection() for the
-    // rationale.
-    wsManager.handleConnection(ws, { sessionToken, credentialId });
-  });
-}
-
-server.on("upgrade", handleUpgrade);
+server.on("upgrade", createUpgradeHandler({
+  wss,
+  isAuthenticated,
+  isTrustedProxy,
+  loadState,
+  helmSessionManager,
+  configManager,
+  proxyWebSocket,
+  wsManager,
+}));
 
 // Live-reload (dev only)
 if (envConfig.nodeEnv !== "production") {
@@ -473,8 +412,6 @@ process.on("unhandledRejection", (err) => {
   log.error("Unhandled rejection — crashing to allow clean restart", { error: err?.message || String(err), stack: err?.stack });
   process.exit(1);
 });
-
-const SERVER_INFO_PATH = join(DATA_DIR, "server.json");
 
 server.listen(PORT, envConfig.bindHost, () => {
   log.info("Katulong HTTP started", { port: PORT, host: envConfig.bindHost });
@@ -498,78 +435,17 @@ server.listen(PORT, envConfig.bindHost, () => {
 
 // --- Graceful shutdown ---
 
-function cleanupPidFile() {
-  try {
-    // Only remove if it's our PID (another server may have overwritten it)
-    if (existsSync(SERVER_PID_PATH)) {
-      const content = readFileSync(SERVER_PID_PATH, "utf-8").trim();
-      if (content === String(process.pid)) {
-        unlinkSync(SERVER_PID_PATH);
-      }
-    }
-  } catch {
-    // Best-effort cleanup
-  }
-  try {
-    if (existsSync(SERVER_INFO_PATH)) {
-      const info = JSON.parse(readFileSync(SERVER_INFO_PATH, "utf-8"));
-      if (info.pid === process.pid) {
-        unlinkSync(SERVER_INFO_PATH);
-      }
-    }
-  } catch {
-    // Best-effort cleanup
-  }
-}
-
-let shutdownInProgress = false;
-
-async function gracefulShutdown(signal) {
-  if (shutdownInProgress) return;
-  shutdownInProgress = true;
-  draining = true;
-
-  log.info("Graceful shutdown starting", { signal, pid: process.pid });
-
-  // 1. Notify all WebSocket clients that this server is draining
-  //    (triggers fast reconnect on the frontend)
-  broadcastToAll({ type: "server-draining" });
-
-  // 2. Stop accepting new HTTP connections — releases the port immediately
-  server.close(() => {
-    log.info("HTTP server closed, no more new connections");
-  });
-
-  // 3. Wait briefly for clients to receive the draining message, then close WebSockets
-  await new Promise((resolve) => setTimeout(resolve, 500));
-
-  closeAllWebSockets(1001, "Server shutting down");
-
-  // 4. Wait for WebSocket connections to drain (up to DRAIN_TIMEOUT_MS)
-  const drainDeadline = Date.now() + DRAIN_TIMEOUT_MS;
-  while (wss.clients.size > 0 && Date.now() < drainDeadline) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-
-  // 5. Force-close any remaining connections
-  for (const client of wss.clients) {
-    client.terminate();
-  }
-
-  // 6. Shutdown session manager (close control mode procs, leave tmux sessions alive)
-  sessionManager.shutdown();
-  helmSessionManager.shutdown();
-
-  // 7. Shutdown plugins
-  await shutdownPlugins();
-
-  // 8. Clean up PID file
-  cleanupPidFile();
-
-  log.info("Graceful shutdown complete", { signal });
-  process.exit(0);
-}
-
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+shutdown = createServerShutdown({
+  server,
+  wss,
+  broadcastToAll,
+  closeAllWebSockets,
+  sessionManager,
+  helmSessionManager,
+  shutdownPlugins,
+  drainTimeoutMs: DRAIN_TIMEOUT_MS,
+  pidPath: SERVER_PID_PATH,
+  infoPath: SERVER_INFO_PATH,
+});
+shutdown.install();
 
