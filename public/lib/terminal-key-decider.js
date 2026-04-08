@@ -84,9 +84,16 @@ export function decideTerminalKey(ev, ctx = {}) {
       return pass(false);
     }
 
-    // Terminal Option shortcuts — handled here
-    if (ev.key === "f") return { action: "toggleSearch", sequence: null, allowDefault: false };
-    if (ev.key === "k") return { action: "clearTerminal", sequence: null, allowDefault: false };
+    // Terminal Option shortcuts — handled here.
+    //
+    // Must key off ev.code (physical key), NOT ev.key. With macOptionIsMeta,
+    // macOS delivers Option+F as ev.key="ƒ" and Option+K as ev.key="˚" — the
+    // Unicode characters produced by the Option layer. Checking ev.key === "f"
+    // never matches and the shortcut silently dies. ev.code stays "KeyF" /
+    // "KeyK" regardless of modifier or layout, which is why the app-level
+    // Option block above also uses ev.code.
+    if (ev.code === "KeyF") return { action: "toggleSearch", sequence: null, allowDefault: false };
+    if (ev.code === "KeyK") return { action: "clearTerminal", sequence: null, allowDefault: false };
 
     // Line-editing sequences. macOS convention puts these on Cmd+arrow,
     // but Cmd+arrow is owned by the browser (history back/forward) inside

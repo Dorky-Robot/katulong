@@ -82,9 +82,18 @@ export function decideAppKey(ev, ctx = {}) {
 /**
  * Helper for the wiring layer to detect text-input focus.
  * Pulled out so app.js doesn't have to duplicate the logic.
+ *
+ * Important: xterm.js captures keystrokes via a hidden
+ * `<textarea class="xterm-helper-textarea">`. When the terminal has focus,
+ * document.activeElement is that textarea — which is almost always. Treating
+ * it as a text input would block every Option shortcut (Option+T new tab,
+ * Option+W close, etc.) whenever the user has the terminal focused, which is
+ * the primary case we care about. Exempt it here. paste-handler.js applies
+ * the same exemption for the same reason.
  */
 export function isTextInputTarget(target) {
   if (!target) return false;
+  if (target.classList?.contains("xterm-helper-textarea")) return false;
   const tag = target.tagName;
   return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable === true;
 }
