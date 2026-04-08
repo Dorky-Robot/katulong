@@ -42,7 +42,6 @@
     import { createDashboardTileFactory } from "/lib/tiles/dashboard-tile.js";
     import { createHtmlTileFactory } from "/lib/tiles/html-tile.js";
     import { dispatchNotification } from "/lib/notify.js";
-    import { createDispatchPanel } from "/lib/dispatch-panel.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -1587,32 +1586,6 @@
       }
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
-
-    // --- Dispatch panel (right-side, independent of session sidebar) ---
-    const dispatchSidebar = document.getElementById("dispatch-sidebar");
-    const dispatchContainer = document.getElementById("dispatch-container");
-    const dispatchFab = document.getElementById("dispatch-fab");
-    const dispatchCloseBtn = document.getElementById("dispatch-close-btn");
-    let dispatchPanel = null;
-
-    function openDispatch() {
-      if (!dispatchPanel && dispatchContainer) {
-        dispatchPanel = createDispatchPanel(dispatchContainer);
-      }
-      dispatchSidebar?.classList.remove("dispatch-closed");
-      dispatchFab?.classList.add("dispatch-open");
-      // Blur terminal so keystrokes go to the dispatch input
-      getTerm()?.blur();
-    }
-
-    function closeDispatch() {
-      dispatchSidebar?.classList.add("dispatch-closed");
-      dispatchFab?.classList.remove("dispatch-open");
-      getTerm()?.focus();
-    }
-
-    if (dispatchFab) dispatchFab.addEventListener("click", openDispatch);
-    if (dispatchCloseBtn) dispatchCloseBtn.addEventListener("click", closeDispatch);
 
     const sidebarFilesBtn = document.getElementById("sidebar-files-btn");
     if (sidebarFilesBtn) {
