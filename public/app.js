@@ -27,6 +27,7 @@
     import { createNetworkMonitor } from "/lib/network-monitor.js";
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
+    import { decideAppKey, isTextInputTarget } from "/lib/app-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
     import { createHelmComponent } from "/lib/helm/helm-component.js";
@@ -1026,73 +1027,41 @@
       if (closeBtn) closeBtn.addEventListener("click", toggleKeyboardHelp);
     }
 
-    // Option (Alt) based shortcuts work in both browser and PWA mode
-    // because browsers don't reserve Option+key combinations.
-    // Note: macOptionIsMeta is true for xterm.js, so we intercept at
-    // the document level BEFORE xterm processes them.
+    // Global keyboard shortcuts. Decision logic lives in app-keyboard.js
+    // (decideAppKey) so it can be unit-tested. This wiring layer maps
+    // action names to handlers and runs them.
+    //
+    // Capture phase: required so we beat xterm.js (macOptionIsMeta=true)
+    // and any input/textarea bubble-phase handlers — Option+R must not
+    // re-enter the rename flow while a rename input is already focused.
+    const appKeyActions = {
+      toggleHelp: () => toggleKeyboardHelp(),
+      newSession: () => createNewSession(),
+      closeSession: () => closeCurrentSession(),
+      killSession: () => killCurrentSession(),
+      renameSession: () => renameCurrentSession(),
+      navigateTab: (dir) => navigateTab(dir),
+      moveTab: (dir) => moveTab(dir),
+      jumpToTab: (n) => jumpToTab(n),
+    };
 
     document.addEventListener("keydown", (ev) => {
-      // Escape closes keyboard help
+      // Escape closes the keyboard help overlay. Other modals own their
+      // own Escape handling via ModalRegistry.
       if (ev.key === "Escape" && kbHelpOverlay?.classList.contains("visible")) {
         ev.preventDefault();
         toggleKeyboardHelp();
         return;
       }
 
-      // --- Cmd shortcuts (non-conflicting) ---
-      if (ev.metaKey) {
-        // Cmd+/ — keyboard shortcuts help
-        if (ev.key === "/" && !ev.shiftKey) {
-          ev.preventDefault();
-          toggleKeyboardHelp();
-          return;
-        }
-      }
+      const decision = decideAppKey(ev, { isTextInput: isTextInputTarget(ev.target) });
+      if (!decision.action) return;
 
-      // --- Option (Alt) shortcuts — work in browser + PWA ---
-      if (ev.altKey && !ev.metaKey && !ev.ctrlKey) {
-        // Don't hijack Option+key when the user is typing into an input,
-        // textarea, or contenteditable. This fixes Option+R re-entering
-        // the rename flow while the rename <input> is already focused —
-        // the capture-phase listener here would otherwise fire even though
-        // the input's own keydown handler calls stopPropagation (which
-        // only blocks the bubble phase, not the earlier capture phase).
-        // Also prevents phantom Option+T/W/etc. while typing in settings
-        // panels, the inline textbox, or file-browser rename inputs.
-        const tgt = ev.target;
-        const tag = tgt?.tagName;
-        if (tag === "INPUT" || tag === "TEXTAREA" || tgt?.isContentEditable) return;
+      const handler = appKeyActions[decision.action];
+      if (!handler) return;
 
-        // Shift variants first — must check before non-shift
-        if (ev.shiftKey && ev.code === "BracketLeft") { ev.preventDefault(); moveTab(-1); return; }
-        if (ev.shiftKey && ev.code === "BracketRight") { ev.preventDefault(); moveTab(+1); return; }
-        if (ev.shiftKey && ev.code === "KeyW") { ev.preventDefault(); killCurrentSession(); return; }
-        // Non-shift
-        if (!ev.shiftKey) {
-          // Option+Digit → positional tab jump. 1..9 = tabs 1..9, 0 = tab 10.
-          // Use ev.code (layout-independent) so the shortcut works across
-          // non-US keyboard layouts where ev.key may be a Unicode char on macOS.
-          if (/^Digit[0-9]$/.test(ev.code)) {
-            const d = Number(ev.code.slice(5));
-            ev.preventDefault();
-            jumpToTab(d === 0 ? 10 : d);
-            return;
-          }
-          switch (ev.code) {
-            case "KeyT": ev.preventDefault(); createNewSession(); return;
-            case "KeyW": ev.preventDefault(); closeCurrentSession(); return;
-            case "KeyQ": ev.preventDefault(); killCurrentSession(); return;
-            // Tradeoff: this takes over readline's `revert-line` (\er).
-            // The app owns the whole Option key space for tab management
-            // (see 2a13634), and tab rename is a far more common need for
-            // katulong users than revert-line. Users who rely on revert-line
-            // can still invoke it via `Ctrl+_` or the readline bind `Ctrl+X u`.
-            case "KeyR": ev.preventDefault(); renameCurrentSession(); return;
-            case "BracketLeft": ev.preventDefault(); navigateTab(-1); return;
-            case "BracketRight": ev.preventDefault(); navigateTab(+1); return;
-          }
-        }
-      }
+      if (decision.preventDefault) ev.preventDefault();
+      handler(decision.args);
     }, true); // Capture phase to intercept before browser defaults
 
     // --- Settings ---
