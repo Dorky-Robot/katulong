@@ -40,7 +40,6 @@
     import { registerTileType, createTile } from "/lib/tile-registry.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
     import { createDashboardTileFactory } from "/lib/tiles/dashboard-tile.js";
-    import { createHtmlTileFactory } from "/lib/tiles/html-tile.js";
     import { dispatchNotification } from "/lib/notify.js";
     import { createDispatchPanel } from "/lib/dispatch-panel.js";
 
@@ -362,7 +361,6 @@
     };
     registerTileType("terminal", createTerminalTileFactory(terminalDeps));
     registerTileType("dashboard", createDashboardTileFactory({ createTileFn: createTile }));
-    registerTileType("html", createHtmlTileFactory());
 
     /** Create a terminal tile for a session, using the session name as tile ID. */
     function makeTerminalTile(sessionName) {
@@ -1302,28 +1300,14 @@
       tileTypes: [
         { type: "terminal", name: "Terminal", icon: "terminal-window" },
       ],
-      onCreateTile: (type, _meta) => {
+      onCreateTile: (type) => {
         if (type === "terminal") {
-          // Terminal tiles create a server-side session
+          // Terminal tiles create a server-side session.
           createNewSession();
-        } else if (carousel.isActive()) {
-          // Non-terminal tiles: create directly in the carousel. We gate on
-          // `carousel.isActive()` — otherwise `carousel.addCard` silently
-          // no-ops while `windowTabSet.addTab` would still run, leaving a
-          // tab-set entry with no matching card.
-          const id = `${type}-${Date.now().toString(36)}`;
-          const options = type === "dashboard"
-            ? { cols: 2, rows: 1, title: "Dashboard", slots: [] }
-            : { title: `New ${_meta?.name || type}`, html: `<div style="padding:40px;text-align:center;opacity:0.5"><h2>${_meta?.name || type}</h2><p>Empty tile — content will appear here.</p></div>` };
-          const tile = createTile(type, options);
-          // Insert right of the active card (Chrome-style). Same insertAt
-          // goes to both stores so their order cannot drift apart.
-          const insertAt = insertAtRightOfActive();
-          carousel.addCard(id, tile, insertAt);
-          carousel.focusCard(id);
-          windowTabSet.addTab(id, insertAt);
-          if (shortcutBarInstance) shortcutBarInstance.render(id);
         }
+        // Non-terminal tile types are added in Tier 3 (cluster); today
+        // the `+` menu only offers "terminal" so no other branch is
+        // reachable.
       },
       onTabClick: (name) => {
         if (carousel.isActive()) {
