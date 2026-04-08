@@ -1049,12 +1049,190 @@ describe("screenFingerprint seq tagging (regression)", () => {
 
   it("returns { hash: 0, seq: 0 } when headless is disposed", async () => {
     const { session } = createWiredTestSession("test");
-    session._headless.dispose();
-    session._headless = null;
+    session._screen.dispose();
     const fp = await session.screenFingerprint();
     assert.deepStrictEqual(fp, { hash: 0, seq: 0 },
       "disposed headless must still return the structured shape — " +
       "callers destructure { hash, seq }, not a bare number");
+  });
+});
+
+describe("Session.snapshot (Tier 3.2)", () => {
+  // snapshot() consolidates the attach/subscribe/resync code paths in
+  // session-manager and ws-manager into a single method that returns a
+  // Lamport-correct { buffer, seq, alive } tuple. The contract:
+  //
+  //   - buffer is the escape-sequence serialization of the screen mirror
+  //   - seq is the byte position the buffer reflects (NOT some later cursor)
+  //   - alive is true iff the session is still attached
+  //
+  // Pre-Tier-3.2, every caller open-coded the flush → serialize → totalBytes
+  // sequence. snapshot() pins the order so future callers can't reintroduce
+  // a Lamport ordering bug.
+
+  it("returns { buffer, seq, alive } shape on a fresh session", async () => {
+    const { session } = createWiredTestSession("snap");
+    const snap = await session.snapshot();
+    assert.strictEqual(typeof snap, "object");
+    assert.ok("buffer" in snap, "must include buffer field");
+    assert.ok("seq" in snap, "must include seq field");
+    assert.ok("alive" in snap, "must include alive field");
+    assert.strictEqual(typeof snap.buffer, "string");
+    assert.strictEqual(typeof snap.seq, "number");
+    assert.strictEqual(typeof snap.alive, "boolean");
+  });
+
+  it("buffer reflects bytes pushed before the snapshot", async () => {
+    const { session, mockProc } = createWiredTestSession("snap");
+    mockProc.simulateOutput("%0", "hello world");
+    await new Promise(resolve => setImmediate(resolve));
+    const snap = await session.snapshot();
+    assert.ok(snap.buffer.length > 0,
+      "buffer should be non-empty after data has been written to the screen mirror");
+  });
+
+  it("seq matches the byte position the buffer reflects", async () => {
+    const { session, mockProc } = createWiredTestSession("snap");
+    mockProc.simulateOutput("%0", "test data");
+    await new Promise(resolve => setImmediate(resolve));
+    const snap = await session.snapshot();
+    assert.strictEqual(snap.seq, session.cursor,
+      "snapshot seq must equal session.cursor — clients pull from seq onward, " +
+      "anything else would tell them to skip bytes the buffer already includes");
+    assert.ok(snap.seq > 0);
+  });
+
+  it("returns empty buffer with current cursor when not alive", async () => {
+    const { session } = createWiredTestSession("snap");
+    session.kill();
+    const snap = await session.snapshot();
+    assert.strictEqual(snap.alive, false);
+    assert.strictEqual(snap.buffer, "");
+    assert.strictEqual(snap.seq, session.cursor);
+  });
+
+  it("does not throw when the screen is disposed mid-snapshot", async () => {
+    const { session } = createWiredTestSession("snap");
+    // Simulate the race: screen is disposed before snapshot() finishes flushing
+    session._screen.dispose();
+    const snap = await session.snapshot();
+    // Must return the structured shape, not throw
+    assert.strictEqual(typeof snap.buffer, "string");
+    assert.strictEqual(typeof snap.seq, "number");
+  });
+});
+
+describe("Session.pullFrom (Tier 3.2)", () => {
+  // pullFrom() replaces the open-coded `outputBuffer.sliceFrom + totalBytes`
+  // pattern in session-manager.flushOutput, ws-manager.pull, and
+  // routes.js GET /sessions/:name/buffer.
+  //
+  // The contract:
+  //   - { data, cursor } where data is the slice and cursor is the new head
+  //   - data === null on eviction (caller must fall back to snapshot())
+  //   - data === "" when the caller is already caught up
+
+  it("returns { data, cursor } shape", async () => {
+    const { session } = createWiredTestSession("pull");
+    const result = session.pullFrom(0);
+    assert.strictEqual(typeof result, "object");
+    assert.ok("data" in result);
+    assert.ok("cursor" in result);
+  });
+
+  it("returns the buffered bytes and the new cursor", async () => {
+    const { session, mockProc } = createWiredTestSession("pull");
+    mockProc.simulateOutput("%0", "hello");
+    const before = session.cursor;
+    mockProc.simulateOutput("%0", " world");
+    const { data, cursor } = session.pullFrom(before);
+    assert.strictEqual(data, " world",
+      "pullFrom must return bytes from fromSeq to current cursor — anything " +
+      "else would skip or duplicate output for the client");
+    assert.strictEqual(cursor, session.cursor,
+      "cursor must equal the byte position the data ends at");
+  });
+
+  it("returns empty data when caller is caught up", async () => {
+    const { session, mockProc } = createWiredTestSession("pull");
+    mockProc.simulateOutput("%0", "anything");
+    const here = session.cursor;
+    const { data, cursor } = session.pullFrom(here);
+    assert.strictEqual(data, "");
+    assert.strictEqual(cursor, here);
+  });
+
+  it("returns null data when fromSeq has been evicted from the RingBuffer", () => {
+    // Construct a tiny session so the RingBuffer evicts on every push
+    const { session, mockProc } = createWiredTestSession("pull-evict", {
+      maxBufferBytes: 16,
+    });
+    mockProc.simulateOutput("%0", "first chunk that will be evicted");
+    mockProc.simulateOutput("%0", "second chunk that pushes the first out");
+    // fromSeq=0 is older than the oldest retained byte
+    const { data } = session.pullFrom(0);
+    assert.strictEqual(data, null,
+      "pullFrom must return null when fromSeq is below the start of the " +
+      "RingBuffer — callers (ws-manager.pull) use this signal to fall back " +
+      "to a full snapshot rather than silently sending partial data");
+  });
+});
+
+describe("Session.cursor (Tier 3.2)", () => {
+  it("equals outputBuffer.totalBytes", async () => {
+    const { session, mockProc } = createWiredTestSession("cursor");
+    assert.strictEqual(session.cursor, 0);
+    mockProc.simulateOutput("%0", "abcdef");
+    assert.strictEqual(session.cursor, session.outputBuffer.totalBytes,
+      "cursor is sugar for outputBuffer.totalBytes — callers use it to " +
+      "avoid reaching into the RingBuffer's internals");
+  });
+});
+
+describe("Session.pullTail (Tier 3.2)", () => {
+  // pullTail(maxBytes) encapsulates the "last N bytes" arithmetic that
+  // routes/app-routes.js previously open-coded via
+  // `Math.max(cursor - 4096, outputBuffer.getStartOffset())`. Exposing it
+  // on Session means callers don't reach into RingBuffer internals.
+
+  it("returns the last maxBytes when the buffer holds more", async () => {
+    const { session, mockProc } = createWiredTestSession("tail");
+    mockProc.simulateOutput("%0", "0123456789abcdef"); // 16 bytes
+    const { data, cursor } = session.pullTail(8);
+    assert.strictEqual(data, "89abcdef",
+      "pullTail must return the trailing maxBytes of the buffer");
+    assert.strictEqual(cursor, session.cursor,
+      "cursor must be the authoritative total byte position");
+  });
+
+  it("returns everything when maxBytes exceeds the buffer", async () => {
+    const { session, mockProc } = createWiredTestSession("tail-small");
+    mockProc.simulateOutput("%0", "tiny");
+    const { data } = session.pullTail(4096);
+    assert.strictEqual(data, "tiny",
+      "pullTail must clamp to what the RingBuffer holds — requesting more " +
+      "than the buffer has must not reach below byte 0");
+  });
+
+  it("clamps to the RingBuffer start offset after eviction", () => {
+    const { session, mockProc } = createWiredTestSession("tail-evict", {
+      maxBufferBytes: 8,
+    });
+    mockProc.simulateOutput("%0", "evicted-");     // 8 bytes — fills buffer
+    mockProc.simulateOutput("%0", "kept-more");    // evicts the first chunk
+    const { data, cursor } = session.pullTail(4096);
+    assert.strictEqual(cursor, session.cursor);
+    assert.ok(!data.includes("evicted-"),
+      "pullTail must not attempt to read bytes that have been evicted");
+    assert.ok(data.length > 0,
+      "pullTail must return whatever the RingBuffer still holds");
+  });
+
+  it("returns empty string for an empty buffer", () => {
+    const { session } = createWiredTestSession("tail-empty");
+    const { data, cursor } = session.pullTail(4096);
+    assert.strictEqual(data, "");
+    assert.strictEqual(cursor, 0);
   });
 });
 
@@ -1097,9 +1275,9 @@ describe("seedScreen", () => {
 
     await session.seedScreen("$ prompt here");
 
-    // The headless terminal cursor should be positioned after the seed text
-    const buf = session._headless.buffer.active;
-    assert.ok(buf.cursorX > 0 || buf.cursorY > 0, "cursor should not be at origin after seed");
+    // The screen mirror's cursor should be positioned after the seed text
+    const { x, y } = session._screen.cursor;
+    assert.ok(x > 0 || y > 0, "cursor should not be at origin after seed");
   });
 
   it("does not affect the RingBuffer", async () => {
@@ -1142,8 +1320,7 @@ describe("seedScreen", () => {
       onData: () => {},
     });
 
-    session._headless.dispose();
-    session._headless = null;
+    session._screen.dispose();
 
     // Should not throw
     await session.seedScreen("some content");
@@ -1172,9 +1349,9 @@ describe("seedScreen", () => {
     // Seed with content and explicit cursor position (row 2, col 5 — 1-based)
     await session.seedScreen("line1\r\nline2\r\nline3", { row: 2, col: 5 });
 
-    const buf = session._headless.buffer.active;
-    // cursorY is 0-based; row is 1-based
-    assert.strictEqual(buf.cursorY, 1, "cursor row should be 1 (0-based) for row:2");
-    assert.strictEqual(buf.cursorX, 4, "cursor col should be 4 (0-based) for col:5");
+    const { x, y } = session._screen.cursor;
+    // cursor coords are 0-based; row/col are 1-based
+    assert.strictEqual(y, 1, "cursor row should be 1 (0-based) for row:2");
+    assert.strictEqual(x, 4, "cursor col should be 4 (0-based) for col:5");
   });
 });

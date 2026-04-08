@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
-import { detectImage, MAX_UPLOAD_BYTES } from "../lib/routes.js";
+import { detectImage, MAX_UPLOAD_BYTES } from "../lib/routes/upload.js";
 import { readRawBody } from "../lib/request-util.js";
 
 describe("detectImage", () => {
