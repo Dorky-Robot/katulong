@@ -1102,14 +1102,17 @@
     refreshNotificationRow = () => {
       const statusEl = document.getElementById("notification-permission-status");
       const descEl = document.getElementById("notification-permission-desc");
-      const row = document.getElementById("notification-permission-row");
-      if (!row || !statusEl || !descEl) return;
+      if (!statusEl || !descEl) return;
 
-      // Clear prior content — we may be re-rendering over an earlier
-      // state (e.g., replacing an "Enable" button with "Enabled" text
-      // after the user grants permission, or flipping "Blocked" back
-      // to "Enabled" after they unblock in Safari/macOS settings).
+      // Clear prior content AND inline color — we may be re-rendering
+      // over an earlier state (Enable button → "Enabled" text after
+      // grant, "Blocked" → "Enabled" after the user unblocks in
+      // Safari/macOS settings, or "Blocked" → default after a
+      // Chromium-side revoke). innerHTML="" only clears children, so
+      // style.color is reset explicitly to avoid leaking the previous
+      // state's red/green tint into the next render.
       statusEl.innerHTML = "";
+      statusEl.style.color = "";
 
       if ("Notification" in window) {
         const perm = Notification.permission;
