@@ -8,6 +8,7 @@
  */
 
 import { createDashboardBackTile } from "./dashboard-back-tile.js";
+import { createSessionStatusWatcher } from "../session-status-watcher.js";
 
 /**
  * Create the terminal tile factory. Call once at startup with shared deps,
@@ -16,11 +17,10 @@ import { createDashboardBackTile } from "./dashboard-back-tile.js";
  * @param {object} deps
  * @param {object} deps.terminalPool — the terminal pool instance
  * @param {object} [deps.carousel] — carousel instance (for setBackTile)
- * @param {function} [deps.createTileFn] — createTile from registry
  * @returns {(options: { sessionName: string }) => TilePrototype}
  */
 export function createTerminalTileFactory(deps) {
-  const { terminalPool, createTileFn } = deps;
+  const { terminalPool } = deps;
   return function createTerminalTile({ sessionName }) {
     // Mutable: rename updates this via setSessionName(). Every method below
     // reads `currentSessionName` (not the destructured parameter) so that
@@ -29,71 +29,14 @@ export function createTerminalTileFactory(deps) {
     let mounted = false;
     let container = null;
     let backTile = null;
-    let statusPollTimer = null;
-    let prevHasChildProcesses = false;
+    let watcher = null;
+    let watcherUnsubscribe = null;
     let autoFlipTimer = null;
     // `destroyed` guards against async callbacks landing after unmount.
-    // clearInterval/clearTimeout can't cancel an already-inflight fetch
-    // `.then()`, so the promise chain may resolve against a tile whose
-    // carousel/backTile references are stale. Mirrors the pattern in
-    // dashboard-back-tile.js (see its pollStatus/unmount).
+    // The watcher has its own `destroyed` guard for its fetches, but the
+    // 1.5s auto-flip debounce is owned by this tile and needs its own
+    // guard so a timeout callback can't touch a stale carousel ref.
     let destroyed = false;
-
-    // ── Status polling for auto-flip ──────────────────────────────
-    // Declared above the tile object so the textual order matches the
-    // execution order — function declarations would hoist either way,
-    // but placing them after `return tile` reads as dead code.
-
-    function startStatusPoll(ctx, carousel) {
-      if (statusPollTimer) return;
-      statusPollTimer = setInterval(async () => {
-        if (destroyed) return;
-        try {
-          const res = await fetch(`/sessions/${encodeURIComponent(currentSessionName)}/status`);
-          // The tile may have unmounted while the fetch was in flight.
-          // clearInterval can't cancel an already-awaited promise, so
-          // re-check `destroyed` before touching carousel/backTile state.
-          if (destroyed) return;
-          if (!res.ok) return;
-          const status = await res.json();
-          if (destroyed) return;
-          const hasChild = status.hasChildProcesses || false;
-
-          // Detect transition: had child processes -> no child processes
-          if (prevHasChildProcesses && !hasChild && carousel && !carousel.isFlipped(currentSessionName)) {
-            // Small delay (1.5s) to avoid flipping during brief pauses
-            if (autoFlipTimer) clearTimeout(autoFlipTimer);
-            autoFlipTimer = setTimeout(() => {
-              if (destroyed) return;
-              // Re-check: still no child processes?
-              fetch(`/sessions/${encodeURIComponent(currentSessionName)}/status`)
-                .then(r => r.ok ? r.json() : null)
-                .then(s => {
-                  // Same race: the fetch may resolve after unmount.
-                  // Without this guard, a stale success response would
-                  // call carousel.flipCard() on a tile that no longer
-                  // exists (the carousel has since removed the card).
-                  if (destroyed) return;
-                  if (s && !s.hasChildProcesses && !carousel.isFlipped(currentSessionName)) {
-                    if (backTile?.addEvent) backTile.addEvent("Agent work completed");
-                    carousel.flipCard(currentSessionName, true);
-                  }
-                })
-                .catch(() => {});
-            }, 1500);
-          }
-
-          prevHasChildProcesses = hasChild;
-        } catch {
-          // Network error or session doesn't exist — ignore
-        }
-      }, 5000);
-    }
-
-    function stopStatusPoll() {
-      if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
-      if (autoFlipTimer) { clearTimeout(autoFlipTimer); autoFlipTimer = null; }
-    }
 
     const tile = {
       type: "terminal",
@@ -106,6 +49,8 @@ export function createTerminalTileFactory(deps) {
        *  serialize, etc.) see the new name instead of the original. */
       setSessionName(newName) {
         currentSessionName = newName;
+        watcher?.setSessionName(newName);
+        backTile?.setSessionName(newName);
       },
 
       mount(el, ctx) {
@@ -117,23 +62,54 @@ export function createTerminalTileFactory(deps) {
         el.appendChild(entry.container);
         mounted = true;
 
+        // ── Shared status watcher ──────────────────────────────────
+        // One poller per session, not one per tile face. Terminal tile
+        // owns the watcher; the back tile subscribes instead of running
+        // its own interval. See public/lib/session-status-watcher.js.
+        watcher = createSessionStatusWatcher({ sessionName: currentSessionName });
+
         // ── Register dashboard back-face ───────────────────────────
         const carousel = deps.carousel;
         if (carousel) {
-          backTile = createDashboardBackTile({ sessionName: currentSessionName });
+          backTile = createDashboardBackTile({ sessionName: currentSessionName, watcher });
           carousel.setBackTile(currentSessionName, backTile);
         }
 
         // ── Auto-flip on child process exit ────────────────────────
-        // Poll session status; when child processes transition from
-        // true -> false, auto-flip to the dashboard after a short delay.
-        startStatusPoll(ctx, carousel);
+        // When the watcher reports a had-children → no-children
+        // transition, schedule a 1.5s debounce then re-poll and flip
+        // if still idle. The debounce absorbs brief pauses between
+        // commands. The watcher's own destroyed guard covers the fetch
+        // side; the `destroyed` flag here covers the setTimeout side.
+        watcherUnsubscribe = watcher.subscribe((event) => {
+          if (destroyed) return;
+          if (!event.transitions?.idle) return;
+          if (!carousel || carousel.isFlipped(currentSessionName)) return;
+          if (autoFlipTimer) clearTimeout(autoFlipTimer);
+          autoFlipTimer = setTimeout(() => {
+            if (destroyed) return;
+            if (carousel.isFlipped(currentSessionName)) return;
+            // Re-check via an immediate poll so we don't flip on a
+            // momentary pause between commands. If that poll reports
+            // child processes are back, the flip is cancelled.
+            watcher.poll().then(() => {
+              if (destroyed) return;
+              if (carousel.isFlipped(currentSessionName)) return;
+              if (backTile?.addEvent) backTile.addEvent("Agent work completed");
+              carousel.flipCard(currentSessionName, true);
+            }).catch(() => {});
+          }, 1500);
+        });
       },
 
       unmount() {
         if (!mounted) return;
         destroyed = true;
-        stopStatusPoll();
+        if (autoFlipTimer) { clearTimeout(autoFlipTimer); autoFlipTimer = null; }
+        watcherUnsubscribe?.();
+        watcherUnsubscribe = null;
+        watcher?.destroy();
+        watcher = null;
         terminalPool.unprotect(currentSessionName);
         const entry = terminalPool.get(currentSessionName);
         if (entry) {

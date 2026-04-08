@@ -47,8 +47,13 @@ function statusLabel(status) {
 /**
  * @param {object} options
  * @param {string} options.sessionName — primary session name
+ * @param {object} [options.watcher] — optional shared SessionStatusWatcher.
+ *   Terminal tile passes its watcher in so the front and back faces share
+ *   a single poller instead of running duplicate intervals. When omitted
+ *   (e.g. in tests that render the back tile in isolation) the back tile
+ *   is inert — no polling, no status updates beyond what's set manually.
  */
-export function createDashboardBackTile({ sessionName } = {}) {
+export function createDashboardBackTile({ sessionName, watcher } = {}) {
   // Mutable: kept in sync with the carousel's tile ID via setSessionName().
   // The carousel calls this from renameCard() so polling, action APIs,
   // and rendering all use the current name after a tab rename.
@@ -56,16 +61,15 @@ export function createDashboardBackTile({ sessionName } = {}) {
   let container = null;
   let ctx = null;
   let rootEl = null;
-  let pollTimer = null;
   let durationTimer = null;
   let startTime = Date.now();
   let destroyed = false;
+  let watcherUnsubscribe = null;
 
   // State
   let currentStatus = "idle";    // "active" | "idle" | "exited"
   let childCount = 0;
   let hasChildProcesses = false;
-  let prevHasChildProcesses = false;
   const events = [];             // { time: Date, text: string }[]
 
   function addEvent(text) {
@@ -169,7 +173,6 @@ export function createDashboardBackTile({ sessionName } = {}) {
 
   function updateProcessInfo(info) {
     childCount = info.childCount || 0;
-    prevHasChildProcesses = hasChildProcesses;
     hasChildProcesses = info.hasChildProcesses || false;
 
     const countEl = rootEl?.querySelector('[data-role="child-count"]');
@@ -250,32 +253,33 @@ export function createDashboardBackTile({ sessionName } = {}) {
     }
   }
 
-  // ── Polling ────────────────────────────────────────────────────────
+  // ── Status subscription ────────────────────────────────────────────
+  //
+  // The terminal tile owns the SessionStatusWatcher for this session
+  // and passes it to us at construction time. We subscribe instead of
+  // running our own interval — one poller per session, not two racing.
+  // The duration timer is still ours (local UI tick; no fetch).
 
-  async function pollStatus() {
+  function handleStatusEvent(event) {
     if (destroyed) return;
-    try {
-      const status = await api.get(`/sessions/${encodeURIComponent(currentSessionName)}/status`);
-      updateProcessInfo(status);
-
-      // Detect transition: had child processes -> no child processes
-      if (prevHasChildProcesses && !hasChildProcesses) {
-        addEvent("Child processes exited");
-      }
-    } catch {
-      // Session may not exist yet or network error — ignore
+    if (!event.status) return;
+    updateProcessInfo(event.status);
+    if (event.transitions?.idle) {
+      addEvent("Child processes exited");
     }
   }
 
-  function startPolling() {
-    if (pollTimer) return;
-    pollStatus(); // immediate first poll
-    pollTimer = setInterval(pollStatus, 5000);
-    durationTimer = setInterval(updateDuration, 1000);
+  function startSubscription() {
+    if (watcher && !watcherUnsubscribe) {
+      watcherUnsubscribe = watcher.subscribe(handleStatusEvent);
+    }
+    if (!durationTimer) {
+      durationTimer = setInterval(updateDuration, 1000);
+    }
   }
 
-  function stopPolling() {
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  function stopSubscription() {
+    if (watcherUnsubscribe) { watcherUnsubscribe(); watcherUnsubscribe = null; }
     if (durationTimer) { clearInterval(durationTimer); durationTimer = null; }
   }
 
@@ -308,7 +312,7 @@ export function createDashboardBackTile({ sessionName } = {}) {
       el.appendChild(rootEl);
 
       render();
-      startPolling();
+      startSubscription();
       addEvent("Dashboard opened");
 
       // Wire up toolbar
@@ -325,7 +329,7 @@ export function createDashboardBackTile({ sessionName } = {}) {
 
     unmount() {
       destroyed = true;
-      stopPolling();
+      stopSubscription();
       rootEl?.remove();
       rootEl = null;
       container = null;
@@ -333,13 +337,15 @@ export function createDashboardBackTile({ sessionName } = {}) {
     },
 
     focus() {
-      // Resume polling when visible
-      startPolling();
+      // Resume subscription when visible
+      startSubscription();
     },
 
     blur() {
-      // Pause polling when hidden
-      stopPolling();
+      // Pause subscription when hidden — the terminal tile's watcher
+      // keeps polling (terminal tile stays mounted under the flipped
+      // card), so resuming on focus picks up the next tick.
+      stopSubscription();
     },
 
     resize() {
