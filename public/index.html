@@ -619,10 +619,6 @@
       backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
     }
     #scroll-bottom:active { opacity: 0.7; }
-    @media (pointer: coarse) {
-      /* Offset left to avoid overlap with the joystick */
-      #scroll-bottom { right: calc(1rem + 5.5rem); bottom: 1.5rem; }
-    }
 
     /* --- Swipe feedback --- */
     .swipe-feedback {
@@ -1180,7 +1176,7 @@
     /* Floating action buttons (touch devices only) */
     #joystick {
       display: flex; position: absolute; z-index: var(--z-bar);
-      right: 1rem; bottom: 1rem;
+      right: 1rem; top: 1rem;
       flex-direction: column; gap: 0.5rem;
       align-items: center;
     }
