@@ -590,9 +590,19 @@
       get returnFocus() { return getTerm(); },
       onClose: () => getTerm()?.focus()
     });
+    // Late-bound so the settings modal can refresh the notification-
+    // permission row each time it opens. `Notification.permission`
+    // has no change event, and Safari/macOS can mutate it out-of-band
+    // (Safari per-site settings, System Settings → Notifications), so
+    // we can't rely on the one-shot read at init time. The real
+    // implementation is assigned further down under "--- Notification
+    // permission ---"; this declaration reserves the closure slot.
+    let refreshNotificationRow = () => {};
+
     modals.register('settings', 'settings-overlay', {
       get returnFocus() { return getTerm(); },
-      onClose: () => getTerm()?.focus()
+      onClose: () => getTerm()?.focus(),
+      onOpen: () => refreshNotificationRow(),
     });
 
     document.fonts.ready.then(() => {
@@ -1082,64 +1092,79 @@
     settingsTabManager.init();
 
     // --- Notification permission ---
-    {
+    //
+    // Assigns the real implementation into the closure slot reserved
+    // above at modals.register('settings', ...). The function is
+    // idempotent: every call fully resets the DOM and rebuilds it
+    // from the current Notification.permission value, so it's safe
+    // to call on init, on every settings-modal open, on
+    // visibilitychange, and after a requestPermission() resolves.
+    refreshNotificationRow = () => {
       const statusEl = document.getElementById("notification-permission-status");
       const descEl = document.getElementById("notification-permission-desc");
-      const row = document.getElementById("notification-permission-row");
-      if (row && statusEl && descEl) {
-        if ("Notification" in window) {
-          const perm = Notification.permission;
-          if (perm === "granted") {
-            statusEl.textContent = "Enabled";
-            statusEl.style.color = "var(--success)";
-            descEl.textContent = "You\u2019ll receive alerts from katulong notify commands.";
-          } else if (perm === "denied") {
-            statusEl.textContent = "Blocked";
-            statusEl.style.color = "var(--error, #f38ba8)";
-            descEl.textContent = "Notifications were blocked. Reset in your browser or system settings.";
-          } else {
-            // Create enable button inline
-            statusEl.innerHTML = "";
-            const btn = document.createElement("button");
-            btn.className = "shortcut-btn";
-            btn.textContent = "Enable";
-            btn.addEventListener("click", () => {
-              Notification.requestPermission().then((p) => {
-                if (p === "granted") {
-                  btn.replaceWith(document.createTextNode("Enabled"));
-                  statusEl.style.color = "var(--success)";
-                  descEl.textContent = "You\u2019ll receive alerts from katulong notify commands.";
-                } else {
-                  btn.replaceWith(document.createTextNode("Blocked"));
-                  statusEl.style.color = "var(--error, #f38ba8)";
-                  descEl.textContent = "Notifications were blocked. Reset in your browser or system settings.";
-                }
-              });
-            });
-            statusEl.appendChild(btn);
-            descEl.textContent = "Receive alerts from katulong notify commands.";
-          }
+      if (!statusEl || !descEl) return;
+
+      // Clear prior content AND inline color — we may be re-rendering
+      // over an earlier state (Enable button → "Enabled" text after
+      // grant, "Blocked" → "Enabled" after the user unblocks in
+      // Safari/macOS settings, or "Blocked" → default after a
+      // Chromium-side revoke). innerHTML="" only clears children, so
+      // style.color is reset explicitly to avoid leaking the previous
+      // state's red/green tint into the next render.
+      statusEl.innerHTML = "";
+      statusEl.style.color = "";
+
+      if ("Notification" in window) {
+        const perm = Notification.permission;
+        if (perm === "granted") {
+          statusEl.textContent = "Enabled";
+          statusEl.style.color = "var(--success)";
+          descEl.textContent = "You\u2019ll receive alerts from katulong notify commands.";
+        } else if (perm === "denied") {
+          statusEl.textContent = "Blocked";
+          statusEl.style.color = "var(--error, #f38ba8)";
+          descEl.textContent = "Notifications were blocked. Reset in your browser or system settings.";
         } else {
-          // Notification API not available — detect browser and show install instructions
-          statusEl.textContent = "Not available";
-          statusEl.style.color = "var(--text-muted)";
-          const ua = navigator.userAgent;
-          const isIPad = /iPad/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-          const isIPhone = /iPhone/.test(ua);
-          const isSafari = /Safari/.test(ua) && !/Chrome/.test(ua);
-          const isAndroid = /Android/.test(ua);
-          if ((isIPad || isIPhone) && isSafari) {
-            descEl.innerHTML = 'To enable notifications, install as an app:<br>Tap <strong>\u{1F4E4} Share</strong> \u2192 <strong>Add to Home Screen</strong>.';
-          } else if (isAndroid) {
-            descEl.innerHTML = 'To enable notifications, install as an app:<br>Tap <strong>\u22EE Menu</strong> \u2192 <strong>Install app</strong> or <strong>Add to Home screen</strong>.';
-          } else if (/Chrome/.test(ua)) {
-            descEl.innerHTML = 'To enable notifications, install as an app:<br>Click the <strong>install icon</strong> in the address bar, or <strong>\u22EE Menu \u2192 Install</strong>.';
-          } else {
-            descEl.textContent = "Notifications require installing this site as an app (PWA).";
-          }
+          const btn = document.createElement("button");
+          btn.className = "shortcut-btn";
+          btn.textContent = "Enable";
+          btn.addEventListener("click", () => {
+            Notification.requestPermission().then(() => refreshNotificationRow());
+          });
+          statusEl.appendChild(btn);
+          descEl.textContent = "Receive alerts from katulong notify commands.";
+        }
+      } else {
+        // Notification API not available — detect browser and show install instructions
+        statusEl.textContent = "Not available";
+        statusEl.style.color = "var(--text-muted)";
+        const ua = navigator.userAgent;
+        const isIPad = /iPad/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+        const isIPhone = /iPhone/.test(ua);
+        const isSafari = /Safari/.test(ua) && !/Chrome/.test(ua);
+        const isAndroid = /Android/.test(ua);
+        if ((isIPad || isIPhone) && isSafari) {
+          descEl.innerHTML = 'To enable notifications, install as an app:<br>Tap <strong>\u{1F4E4} Share</strong> \u2192 <strong>Add to Home Screen</strong>.';
+        } else if (isAndroid) {
+          descEl.innerHTML = 'To enable notifications, install as an app:<br>Tap <strong>\u22EE Menu</strong> \u2192 <strong>Install app</strong> or <strong>Add to Home screen</strong>.';
+        } else if (/Chrome/.test(ua)) {
+          descEl.innerHTML = 'To enable notifications, install as an app:<br>Click the <strong>install icon</strong> in the address bar, or <strong>\u22EE Menu \u2192 Install</strong>.';
+        } else {
+          descEl.textContent = "Notifications require installing this site as an app (PWA).";
         }
       }
-    }
+    };
+    refreshNotificationRow();
+
+    // Safari/Chrome don't fire a permission-change event for the
+    // Notification API, so we re-probe on visibility change — this
+    // catches the common flow of "user tabs to Safari settings (or
+    // macOS System Settings) to unblock notifications, then tabs
+    // back to the PWA". Without this, the row stays stuck on its
+    // initial "Blocked" reading until a full page reload.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") refreshNotificationRow();
+    });
 
     // --- Token management ---
 
