@@ -10,10 +10,6 @@
 import { filterTerminalResponses, registerResponseSuppressors } from "/lib/terminal-input-filter.js";
 import { decideTerminalKey } from "/lib/terminal-key-decider.js";
 
-// Re-export so callers can import the decider through this module
-// without knowing about the split.
-export { decideTerminalKey };
-
 /**
  * Create terminal keyboard handlers
  */

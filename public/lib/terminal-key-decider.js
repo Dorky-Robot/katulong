@@ -20,19 +20,23 @@
  *                  true = let xterm process; false = block.
  */
 export function decideTerminalKey(ev, ctx = {}) {
-  const noop = (allowDefault) => ({ action: null, sequence: null, allowDefault });
+  const pass = (allowDefault) => ({ action: null, sequence: null, allowDefault });
 
-  // Allow browser copy when text is selected
-  if (ev.metaKey && ev.key === "c" && ctx.hasSelection) return noop(false);
+  // Cmd+C with selection: block xterm so the browser's native copy
+  // (which fires from the keydown event) is what handles the keystroke.
+  // allowDefault=false here means "don't let xterm process" — the browser
+  // copy still happens because we don't call ev.preventDefault().
+  if (ev.metaKey && ev.key === "c" && ctx.hasSelection) return pass(false);
 
-  // Allow browser paste (handled by paste-handler at document level)
-  if ((ev.metaKey || ev.ctrlKey) && ev.key === "v") return noop(false);
+  // Cmd+V / Ctrl+V: same pattern. Block xterm; paste-handler.js intercepts
+  // the resulting paste event at the document level for image bridging.
+  if ((ev.metaKey || ev.ctrlKey) && ev.key === "v") return pass(false);
 
-  // Allow terminal Ctrl+C when no selection (sends SIGINT to PTY)
-  if (ev.ctrlKey && ev.key === "c" && !ctx.hasSelection) return noop(true);
+  // Ctrl+C without selection: let xterm process so it sends SIGINT to PTY.
+  if (ev.ctrlKey && ev.key === "c" && !ctx.hasSelection) return pass(true);
 
   // Tab handled by capture-phase listener — block xterm from also processing
-  if (ev.key === "Tab") return noop(false);
+  if (ev.key === "Tab") return pass(false);
 
   // Shift+Enter: send kitty CSI u sequence so modern TUI apps (Claude Code,
   // etc.) insert a literal newline instead of submitting.
@@ -47,11 +51,15 @@ export function decideTerminalKey(ev, ctx = {}) {
     if (ev.type === "keydown") {
       return { action: "kittyShiftEnter", sequence: "\x1b[13;2u", allowDefault: false };
     }
-    return noop(false);
+    return pass(false);
   }
 
-  // Cmd+/ — handled by app-level listener; block xterm so it doesn't see "/"
-  if (ev.metaKey && ev.type === "keydown" && ev.key === "/") return noop(false);
+  // Cmd+/ — handled by app-level listener. Block xterm on ALL event types
+  // for the same reason Shift+Enter has to: if we only block keydown,
+  // xterm's _keyDownHandled stays false, and _keyPress then reprocesses
+  // the keypress and sends "/" to the PTY. macOS rarely fires keypress
+  // for Cmd+letter, but the consistency makes the contract obvious.
+  if (ev.metaKey && ev.key === "/") return pass(false);
 
   // Option (Alt) shortcuts.
   //
@@ -73,7 +81,7 @@ export function decideTerminalKey(ev, ctx = {}) {
       ev.code === "BracketRight" ||
       /^Digit[0-9]$/.test(ev.code || "")
     ) {
-      return noop(false);
+      return pass(false);
     }
 
     // Terminal Option shortcuts — handled here
@@ -96,5 +104,5 @@ export function decideTerminalKey(ev, ctx = {}) {
     }
   }
 
-  return noop(true);
+  return pass(true);
 }

@@ -1058,7 +1058,13 @@
       if (!decision.action) return;
 
       const handler = appKeyActions[decision.action];
-      if (!handler) return;
+      if (!handler) {
+        // Drift guard: if decideAppKey is extended without a matching
+        // entry here, surface it loudly during development instead of
+        // silently swallowing the keystroke.
+        console.warn("[app-keyboard] no handler for action:", decision.action);
+        return;
+      }
 
       if (decision.preventDefault) ev.preventDefault();
       handler(decision.args);

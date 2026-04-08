@@ -117,6 +117,18 @@ describe("decideTerminalKey — Tab", () => {
   });
 });
 
+describe("decideTerminalKey — Cmd+/ blocks all event types", () => {
+  // Same reason as Shift+Enter: if we only block keydown, xterm's
+  // _keyDownHandled stays false and _keyPress reprocesses the keypress,
+  // sending "/" to the PTY.
+  for (const type of ["keydown", "keypress", "keyup"]) {
+    it(`Cmd+/ ${type} → blocked`, () => {
+      const r = decideTerminalKey(ev({ key: "/", metaKey: true, type }));
+      assert.equal(r.allowDefault, false, `Cmd+/ ${type} must not reach PTY`);
+    });
+  }
+});
+
 describe("decideTerminalKey — clipboard passthroughs", () => {
   it("Cmd+C with selection → allow browser copy", () => {
     const r = decideTerminalKey(ev({ key: "c", metaKey: true }), { hasSelection: true });

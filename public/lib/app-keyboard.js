@@ -26,9 +26,12 @@
  *    inline textbox. Without this guard, Option+R re-enters rename while
  *    the rename input is already focused.
  */
-export function decideAppKey(ev, ctx = {}) {
-  const noop = { action: null, args: null, preventDefault: false };
+// Returned as a fresh object every call so callers can never accidentally
+// mutate a shared instance. Distinct from terminal-key-decider's `pass`
+// helper (different fields, different shape).
+const NO_ACTION = () => ({ action: null, args: null, preventDefault: false });
 
+export function decideAppKey(ev, ctx = {}) {
   // ── Cmd shortcuts ────────────────────────────────────────────────────
   // Cmd+/ — keyboard shortcuts help. Plain Cmd+/, no Shift.
   if (ev.metaKey && ev.key === "/" && !ev.shiftKey) {
@@ -37,10 +40,10 @@ export function decideAppKey(ev, ctx = {}) {
 
   // ── Option (Alt) shortcuts ───────────────────────────────────────────
   // Must be Option alone, not Cmd+Option or Ctrl+Option.
-  if (!ev.altKey || ev.metaKey || ev.ctrlKey) return noop;
+  if (!ev.altKey || ev.metaKey || ev.ctrlKey) return NO_ACTION();
 
   // Suppressed inside text inputs.
-  if (ctx.isTextInput) return noop;
+  if (ctx.isTextInput) return NO_ACTION();
 
   // Shift variants — must check before non-shift so Option+Shift+W doesn't
   // get caught by the Option+W branch.
@@ -48,7 +51,7 @@ export function decideAppKey(ev, ctx = {}) {
     if (ev.code === "BracketLeft") return { action: "moveTab", args: -1, preventDefault: true };
     if (ev.code === "BracketRight") return { action: "moveTab", args: 1, preventDefault: true };
     if (ev.code === "KeyW") return { action: "killSession", args: null, preventDefault: true };
-    return noop;
+    return NO_ACTION();
   }
 
   // Option+Digit → positional tab jump. 1..9 = tabs 1..9, 0 = tab 10.
@@ -73,7 +76,7 @@ export function decideAppKey(ev, ctx = {}) {
     case "BracketRight": return { action: "navigateTab", args: 1, preventDefault: true };
   }
 
-  return noop;
+  return NO_ACTION();
 }
 
 /**
