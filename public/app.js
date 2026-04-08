@@ -1799,7 +1799,10 @@
         removeDeadSession(name);
         if (!wasFocused) return;
         // The focused session is gone — route to another or clear the page.
-        fetch("/sessions").then(r => r.json()).then(allSessions => {
+        fetch("/sessions").then(r => {
+          if (!r.ok) throw new Error(`/sessions returned ${r.status}`);
+          return r.json();
+        }).then(allSessions => {
           const sessions = allSessions.filter(s => s.name !== name);
           if (sessions.length > 0) {
             switchSession(sessions[0].name);

@@ -33,6 +33,50 @@ export function createTerminalTileFactory(deps) {
     let prevHasChildProcesses = false;
     let autoFlipTimer = null;
 
+    // ── Status polling for auto-flip ──────────────────────────────
+    // Declared above the tile object so the textual order matches the
+    // execution order — function declarations would hoist either way,
+    // but placing them after `return tile` reads as dead code.
+
+    function startStatusPoll(ctx, carousel) {
+      if (statusPollTimer) return;
+      statusPollTimer = setInterval(async () => {
+        try {
+          const res = await fetch(`/sessions/${encodeURIComponent(currentSessionName)}/status`);
+          if (!res.ok) return;
+          const status = await res.json();
+          const hasChild = status.hasChildProcesses || false;
+
+          // Detect transition: had child processes -> no child processes
+          if (prevHasChildProcesses && !hasChild && carousel && !carousel.isFlipped(currentSessionName)) {
+            // Small delay (1.5s) to avoid flipping during brief pauses
+            if (autoFlipTimer) clearTimeout(autoFlipTimer);
+            autoFlipTimer = setTimeout(() => {
+              // Re-check: still no child processes?
+              fetch(`/sessions/${encodeURIComponent(currentSessionName)}/status`)
+                .then(r => r.ok ? r.json() : null)
+                .then(s => {
+                  if (s && !s.hasChildProcesses && !carousel.isFlipped(currentSessionName)) {
+                    if (backTile?.addEvent) backTile.addEvent("Agent work completed");
+                    carousel.flipCard(currentSessionName, true);
+                  }
+                })
+                .catch(() => {});
+            }, 1500);
+          }
+
+          prevHasChildProcesses = hasChild;
+        } catch {
+          // Network error or session doesn't exist — ignore
+        }
+      }, 5000);
+    }
+
+    function stopStatusPoll() {
+      if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
+      if (autoFlipTimer) { clearTimeout(autoFlipTimer); autoFlipTimer = null; }
+    }
+
     const tile = {
       type: "terminal",
 
@@ -116,46 +160,5 @@ export function createTerminalTileFactory(deps) {
     };
 
     return tile;
-
-    // ── Status polling for auto-flip ──────────────────────────────
-
-    function startStatusPoll(ctx, carousel) {
-      if (statusPollTimer) return;
-      statusPollTimer = setInterval(async () => {
-        try {
-          const res = await fetch(`/sessions/${encodeURIComponent(currentSessionName)}/status`);
-          if (!res.ok) return;
-          const status = await res.json();
-          const hasChild = status.hasChildProcesses || false;
-
-          // Detect transition: had child processes -> no child processes
-          if (prevHasChildProcesses && !hasChild && carousel && !carousel.isFlipped(currentSessionName)) {
-            // Small delay (1.5s) to avoid flipping during brief pauses
-            if (autoFlipTimer) clearTimeout(autoFlipTimer);
-            autoFlipTimer = setTimeout(() => {
-              // Re-check: still no child processes?
-              fetch(`/sessions/${encodeURIComponent(currentSessionName)}/status`)
-                .then(r => r.ok ? r.json() : null)
-                .then(s => {
-                  if (s && !s.hasChildProcesses && !carousel.isFlipped(currentSessionName)) {
-                    if (backTile?.addEvent) backTile.addEvent("Agent work completed");
-                    carousel.flipCard(currentSessionName, true);
-                  }
-                })
-                .catch(() => {});
-            }, 1500);
-          }
-
-          prevHasChildProcesses = hasChild;
-        } catch {
-          // Network error or session doesn't exist — ignore
-        }
-      }, 5000);
-    }
-
-    function stopStatusPoll() {
-      if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
-      if (autoFlipTimer) { clearTimeout(autoFlipTimer); autoFlipTimer = null; }
-    }
   };
 }
