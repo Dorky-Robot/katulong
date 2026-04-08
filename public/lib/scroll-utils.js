@@ -75,28 +75,41 @@ export function initScrollTracking(term) {
  * Animates the scroll using an easeOutBack curve.
  * xterm.js doesn't support native smooth scrolling, so we step
  * through scrollLines() on each animation frame.
+ *
+ * Two streaming-output fixes baked in:
+ *  1. Live re-targeting — each frame re-reads buffer.active and eases
+ *     toward the *current* baseY, so new lines arriving mid-animation
+ *     (tail -f, build logs, Claude Code typing) extend the journey
+ *     instead of stranding the user at the old bottom.
+ *  2. Deferred final snap — the final "ensure at bottom" call rides
+ *     xterm's WriteBuffer queue via `term.write("", cb)`, so it fires
+ *     *after* any in-flight (queued) writes have flushed. Without this,
+ *     a synchronous term.scrollToBottom() can land before pending writes
+ *     grow baseY again, leaving the viewport stuck partway.
  */
 let _smoothScrollRaf = 0;
 export const scrollToBottom = (term, { smooth = true } = {}) => {
+  // term.write() is async (queued in xterm's WriteBuffer). A synchronous
+  // term.scrollToBottom() can race in-flight writes. Riding the queue
+  // with term.write("", cb) guarantees we snap after pending output.
   _scrollLocked.set(term, false);
 
   if (!smooth) {
     if (_smoothScrollRaf) { cancelAnimationFrame(_smoothScrollRaf); _smoothScrollRaf = 0; }
-    term.scrollToBottom();
+    term.write("", () => term.scrollToBottom());
     return;
   }
 
   const buf = term.buffer.active;
   const remaining = buf.baseY - buf.viewportY;
-  if (remaining <= 0) { term.scrollToBottom(); return; }
+  if (remaining <= 0) { term.write("", () => term.scrollToBottom()); return; }
 
   // For small distances, just jump
-  if (remaining <= 3) { term.scrollToBottom(); return; }
+  if (remaining <= 3) { term.write("", () => term.scrollToBottom()); return; }
 
   const duration = Math.min(500, 150 + remaining * 0.8); // 150-500ms depending on distance
   const startTime = performance.now();
   const startOffset = buf.viewportY;
-  const distance = remaining;
 
   // Flat acceleration into bouncy overshoot deceleration.
   // Inspired by iOS rubber-band: linear ramp up, then elastic settle.
@@ -107,11 +120,15 @@ export const scrollToBottom = (term, { smooth = true } = {}) => {
   }
 
   function step(now) {
+    // Re-read the buffer every frame so streaming output extends the
+    // target instead of leaving us aimed at the stale "bottom at click".
+    const liveBuf = term.buffer.active;
+    const currentBaseY = liveBuf.baseY;
     const elapsed = now - startTime;
     const progress = Math.min(1, elapsed / duration);
     const easedProgress = easeOutBack(progress);
-    const targetY = Math.round(startOffset + distance * easedProgress);
-    const currentY = buf.viewportY;
+    const targetY = Math.round(startOffset + (currentBaseY - startOffset) * easedProgress);
+    const currentY = liveBuf.viewportY;
     const linesToScroll = targetY - currentY;
 
     if (linesToScroll > 0) term.scrollLines(linesToScroll);
@@ -120,7 +137,8 @@ export const scrollToBottom = (term, { smooth = true } = {}) => {
       _smoothScrollRaf = requestAnimationFrame(step);
     } else {
       _smoothScrollRaf = 0;
-      term.scrollToBottom(); // ensure we're exactly at bottom
+      // Defer the final snap past any in-flight xterm writes.
+      term.write("", () => term.scrollToBottom());
     }
   }
 
