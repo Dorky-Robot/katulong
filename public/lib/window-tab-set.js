@@ -29,7 +29,7 @@ function generateId() {
   return "w_" + Math.random().toString(36).slice(2, 10);
 }
 
-export function createWindowTabSet({ getCurrentSession } = {}) {
+export function createWindowTabSet({ getCurrentSession, onRemoteKill } = {}) {
   const windowId = sessionStorage.getItem(WINDOW_ID_KEY) || generateId();
   sessionStorage.setItem(WINDOW_ID_KEY, windowId);
 
@@ -52,9 +52,18 @@ export function createWindowTabSet({ getCurrentSession } = {}) {
     channel.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === "session-killed" && tabs.includes(msg.sessionName)) {
+        // Remove locally so subscribers (including the full-teardown
+        // onRemoteKill hook) see the authoritative post-kill state.
         tabs = tabs.filter(n => n !== msg.sessionName);
+        recentlyAdded.delete(msg.sessionName);
         saveTabs();
         notify();
+        // Delegate carousel/pool/WS cleanup to the host. Without this,
+        // the generic `subscribe()` bridge only reorders — carousel's
+        // reorderCards preserves missing ids (it re-appends them) so the
+        // killed card would linger as a zombie until the /sessions
+        // reconciler catches up several seconds later.
+        if (onRemoteKill) onRemoteKill(msg.sessionName);
       }
       if (msg.type === "session-renamed") {
         const idx = tabs.indexOf(msg.oldName);

@@ -29,9 +29,16 @@ globalThis.localStorage = {
   removeItem: (k) => { delete stores.local[k]; },
 };
 
-// BroadcastChannel stub — postMessage is a no-op
+// BroadcastChannel stub — postMessage is a no-op.
+// Track constructed instances so tests can simulate a remote message by
+// calling `channel.onmessage({ data: ... })` on the most recent instance.
+const broadcastChannels = [];
 globalThis.BroadcastChannel = class {
-  onmessage = null;
+  constructor(name) {
+    this.name = name;
+    this.onmessage = null;
+    broadcastChannels.push(this);
+  }
   postMessage() {}
   close() {}
 };
@@ -236,6 +243,74 @@ describe("WindowTabSet persistence cap", () => {
     assert.equal(persistedLocal.length, 50);
     // Sanity: the freshly added tab made it through the cap.
     assert.ok(persistedSession.includes("new"));
+  });
+});
+
+describe("WindowTabSet.onRemoteKill", () => {
+  beforeEach(() => {
+    stores.session = {};
+    stores.local = {};
+    broadcastChannels.length = 0;
+  });
+
+  it("invokes onRemoteKill when a session-killed message arrives for a local tab", () => {
+    // Regression: previously the BroadcastChannel handler only mutated the
+    // local tab list and relied on the subscribe() bridge to reorder the
+    // carousel. But carousel.reorderCards re-appends missing ids instead of
+    // removing them, so the killed card lingered as a zombie until the
+    // /sessions reconciler caught up several seconds later. The fix is a
+    // targeted `onRemoteKill` callback that tears down carousel/pool/WS.
+    const killed = [];
+    stores.session["katulong-window-tabs"] = JSON.stringify(["a", "b"]);
+    const ts = createWindowTabSet({
+      getCurrentSession: () => "a",
+      onRemoteKill: (name) => killed.push(name),
+    });
+    const channel = broadcastChannels[broadcastChannels.length - 1];
+    channel.onmessage({ data: { type: "session-killed", sessionName: "b" } });
+    assert.deepEqual(killed, ["b"]);
+    // Tab removed from local state before the callback fires, so host
+    // teardown sees the authoritative post-kill view.
+    assert.deepEqual(ts.getTabs(), ["a"]);
+  });
+
+  it("does not invoke onRemoteKill when the killed session is not a local tab", () => {
+    // Cross-window broadcasts reach every window, but only windows that
+    // had the session open need to tear anything down.
+    const killed = [];
+    stores.session["katulong-window-tabs"] = JSON.stringify(["a"]);
+    createWindowTabSet({
+      getCurrentSession: () => "a",
+      onRemoteKill: (name) => killed.push(name),
+    });
+    const channel = broadcastChannels[broadcastChannels.length - 1];
+    channel.onmessage({ data: { type: "session-killed", sessionName: "other" } });
+    assert.deepEqual(killed, []);
+  });
+
+  it("clears the grace period for the killed session", () => {
+    // A freshly-added local tab that another window kills must not keep
+    // its grace entry alive — the reconciler would then refuse to prune
+    // it if it somehow reappeared in the local array.
+    stores.session["katulong-window-tabs"] = JSON.stringify(["a", "b"]);
+    const ts = createWindowTabSet({
+      getCurrentSession: () => "a",
+      onRemoteKill: () => {},
+    });
+    ts.addTab("b"); // grant grace (idempotent — re-stamps)
+    assert.equal(ts.isRecentlyAdded("b"), true);
+    const channel = broadcastChannels[broadcastChannels.length - 1];
+    channel.onmessage({ data: { type: "session-killed", sessionName: "b" } });
+    assert.equal(ts.isRecentlyAdded("b"), false);
+  });
+
+  it("tolerates missing onRemoteKill callback (backwards compatible)", () => {
+    stores.session["katulong-window-tabs"] = JSON.stringify(["a", "b"]);
+    const ts = createWindowTabSet({ getCurrentSession: () => "a" });
+    const channel = broadcastChannels[broadcastChannels.length - 1];
+    // Should not throw when onRemoteKill is undefined.
+    channel.onmessage({ data: { type: "session-killed", sessionName: "b" } });
+    assert.deepEqual(ts.getTabs(), ["a"]);
   });
 });
 

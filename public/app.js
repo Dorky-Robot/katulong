@@ -713,7 +713,14 @@
 
     const sessionStore = createSessionStore(state.session.name);
     const windowTabSet = createWindowTabSet({
-      getCurrentSession: () => state.session.name
+      getCurrentSession: () => state.session.name,
+      // When another browser window kills a session, tear it down fully in
+      // this window: carousel card, pooled terminal, WS unsubscribe. Without
+      // this, reorderCards only reorders — it re-appends missing ids — so
+      // the zombie card would linger until the /sessions reconciler caught
+      // up seconds later. `removeDeadSession` is hoisted (declared below at
+      // function scope) so the closure resolves correctly at call time.
+      onRemoteKill: (name) => removeDeadSession(name),
     });
     // Ensure the initial session from the URL is in this window's tab set.
     // addTab grants a time-limited grace period (RECENTLY_ADDED_TTL_MS in
