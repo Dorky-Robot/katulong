@@ -253,6 +253,7 @@ describe("Garble Detection", { timeout: 300000 }, () => {
       HOME: process.env.HOME,
       DISPLAY: process.env.DISPLAY || "",
       KATULONG_DATA_DIR: testDataDir,
+      KATULONG_TMUX_SOCKET: process.env.KATULONG_TMUX_SOCKET,
       PORT: String(TEST_PORT),
     };
 

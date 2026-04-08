@@ -95,7 +95,7 @@ describe("Tab Switch Duplicate", { timeout: 60000 }, () => {
   before(async () => {
     dataDir = mkdtempSync(join(tmpdir(), "katulong-dup-test-"));
     server = spawn("node", [SERVER_PATH], {
-      env: { PATH: process.env.PATH, HOME: process.env.HOME, DISPLAY: process.env.DISPLAY || "", KATULONG_DATA_DIR: dataDir, PORT: String(TEST_PORT) },
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, DISPLAY: process.env.DISPLAY || "", KATULONG_DATA_DIR: dataDir, KATULONG_TMUX_SOCKET: process.env.KATULONG_TMUX_SOCKET, PORT: String(TEST_PORT) },
       stdio: "pipe",
     });
     server.stderr.on("data", () => {});
