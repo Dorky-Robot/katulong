@@ -1281,36 +1281,6 @@
     .sidebar-icon-btn:active { background: rgba(255,255,255,0.08); }
     .sidebar-icon-btn.active { color: var(--accent-active); }
 
-    /* --- Dispatch left-side panel --- */
-    #dispatch-sidebar {
-      position: fixed; top: 0; left: 0; bottom: 0;
-      width: 340px; max-width: 90vw;
-      background: var(--bg); border-right: 1px solid var(--border);
-      z-index: 200; display: flex; flex-direction: column;
-      transition: transform 0.2s ease;
-      box-shadow: 4px 0 20px rgba(0,0,0,0.3);
-    }
-    #dispatch-sidebar.dispatch-closed { transform: translateX(-100%); pointer-events: none; }
-    #dispatch-toolbar {
-      display: flex; align-items: center; gap: var(--space-xs);
-      padding: 0.75rem; border-bottom: 1px solid var(--border); flex-shrink: 0;
-    }
-    .dispatch-title {
-      font-size: var(--text-sm); font-weight: 600; color: var(--text);
-      font-family: var(--font-mono);
-    }
-    #dispatch-container { flex: 1; overflow-y: auto; min-height: 0; }
-    #dispatch-fab {
-      position: fixed; top: 0.75rem; left: 0.75rem;
-      width: 36px; height: 36px; border-radius: 50%;
-      background: var(--accent-active); color: var(--bg);
-      border: none; cursor: pointer; z-index: 199;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 1.1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-      transition: transform 0.15s ease, opacity 0.15s ease;
-    }
-    #dispatch-fab:hover { transform: scale(1.1); }
-    #dispatch-fab.dispatch-open { opacity: 0; pointer-events: none; transform: scale(0.8); }
     .sidebar-spacer { margin-left: auto; }
     #sidebar-footer {
       display: flex; align-items: center; gap: var(--space-xs);
@@ -2305,19 +2275,6 @@
       <div id="port-forward"></div>
       <div id="plugin-panels"></div>
     </div>
-    <!-- Dispatch: right-side panel, independent of session sidebar -->
-    <aside id="dispatch-sidebar" class="dispatch-closed" role="complementary" aria-label="Dispatch queue">
-      <div id="dispatch-toolbar">
-        <button class="sidebar-icon-btn" id="dispatch-close-btn" aria-label="Close dispatch">
-          <i class="ph ph-x"></i>
-        </button>
-        <span class="dispatch-title">Dispatch</span>
-      </div>
-      <div id="dispatch-container"></div>
-    </aside>
-    <button id="dispatch-fab" aria-label="Open dispatch queue" title="Dispatch">
-      <i class="ph ph-lightning"></i>
-    </button>
   </div>
 
   <!-- Floating action buttons: reparented by JS into the active terminal pane -->

@@ -34,10 +34,6 @@ import { createHelmSessionManager } from "./lib/helm-session-manager.js";
 import { createTopicBroker } from "./lib/topic-broker.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 import { loadPlugins } from "./lib/plugin-loader.js";
-import { createRefiner } from "./lib/dispatch-refine.js";
-import { createExecutor } from "./lib/dispatch-executor.js";
-import { createDispatchStore } from "./lib/dispatch-store.js";
-import { createDispatchRoutes } from "./lib/dispatch-routes.js";
 import { createUpgradeHandler } from "./lib/server-upgrade.js";
 import { createServerShutdown } from "./lib/server-shutdown.js";
 
@@ -255,11 +251,6 @@ const { wsClients, broadcastToAll, closeAllWebSockets } = wsManager;
 let shutdown = null;
 const getDraining = () => shutdown?.isDraining() ?? false;
 
-// --- Dispatch store (feature queue) ---
-const dispatchStore = createDispatchStore(DATA_DIR);
-const dispatchRefiner = createRefiner();
-const dispatchExecutor = createExecutor();
-
 const routes = [
   ...createAuthRoutes({
     json, parseJSON, isAuthenticated,
@@ -282,7 +273,6 @@ const routes = [
   }),
   ...createFileBrowserRoutes({ json, parseJSON, auth, csrf }),
   ...createPortProxyRoutes({ auth, PORT, configManager }),
-  ...createDispatchRoutes({ store: dispatchStore, refiner: dispatchRefiner, executor: dispatchExecutor, json, parseJSON, auth, csrf }),
   ...pluginRoutes,
 ];
 
