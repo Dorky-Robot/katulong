@@ -95,8 +95,14 @@ export function createWindowTabSet({ getCurrentSession } = {}) {
     hasTab(name) { return tabs.includes(name); },
 
     addTab(name, position) {
-      if (tabs.includes(name)) return;
+      // Always (re)stamp the grace period — including for tabs that already
+      // exist in the array. The URL-boot path seeds `tabs` directly via
+      // loadTabs() (sessionStorage / localStorage / getCurrentSession),
+      // then app.js calls addTab() to grant grace; without this stamp the
+      // reconciler would prune the freshly-booted explicit `?s=` session
+      // before the first /sessions response confirms it.
       recentlyAdded.set(name, Date.now() + RECENTLY_ADDED_TTL_MS);
+      if (tabs.includes(name)) return;
       if (position !== undefined && position >= 0) {
         tabs.splice(position, 0, name);
       } else {

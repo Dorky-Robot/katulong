@@ -109,6 +109,25 @@ describe("WindowTabSet.addTab", () => {
     ts.addTab("a");
     assert.ok(!notified);
   });
+
+  it("grants grace to a tab seeded by loadTabs (URL-boot path)", () => {
+    // Regression: when loadTabs() seeds the URL session into `tabs` via
+    // getCurrentSession, app.js then calls addTab(name) to grant the
+    // reconciler grace period. The original addTab() early-returned for
+    // already-present tabs and never set recentlyAdded — so the reconciler
+    // pruned the freshly-booted explicit `?s=` session, breaking the
+    // smoke E2E tests and any URL bookmark boot.
+    stores.session = {};
+    stores.local = {};
+    const ts = createWindowTabSet({ getCurrentSession: () => "boot-session" });
+    // Tab already present from loadTabs() seed
+    assert.deepEqual(ts.getTabs(), ["boot-session"]);
+    // No grace yet — only loadTabs ran, addTab hasn't been called
+    assert.equal(ts.isRecentlyAdded("boot-session"), false);
+    // App calls addTab to grant grace
+    ts.addTab("boot-session");
+    assert.equal(ts.isRecentlyAdded("boot-session"), true);
+  });
 });
 
 describe("WindowTabSet.renameTab", () => {
