@@ -1,7 +1,7 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { decideTerminalKey } from "../public/lib/terminal-key-decider.js";
-import { decideAppKey } from "../public/lib/app-keyboard.js";
+import { decideAppKey, isTextInputTarget } from "../public/lib/app-keyboard.js";
 
 /**
  * Keyboard shortcut spec — single source of truth.
@@ -49,15 +49,21 @@ function ev(overrides = {}) {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("decideTerminalKey — Option (Alt) terminal shortcuts", () => {
-  it("Option+F → toggle search, blocks PTY", () => {
-    const r = decideTerminalKey(ev({ key: "f", code: "KeyF", altKey: true }));
+  // REGRESSION: these tests simulate REAL macOS event shapes. With
+  // macOptionIsMeta=true, pressing Option+F produces ev.key="ƒ" (Unicode
+  // U+0192), not "f" — macOS substitutes the Option layer character
+  // before the event reaches JS. Checking ev.key === "f" never matched
+  // and the shortcut silently dropped. The decider must key off ev.code
+  // (physical key, stable across layout and modifier).
+  it("Option+F (macOS: ev.key='ƒ') → toggle search, blocks PTY", () => {
+    const r = decideTerminalKey(ev({ key: "ƒ", code: "KeyF", altKey: true }));
     assert.equal(r.action, "toggleSearch");
     assert.equal(r.allowDefault, false);
     assert.equal(r.sequence, null);
   });
 
-  it("Option+K → clear terminal, blocks PTY", () => {
-    const r = decideTerminalKey(ev({ key: "k", code: "KeyK", altKey: true }));
+  it("Option+K (macOS: ev.key='˚') → clear terminal, blocks PTY", () => {
+    const r = decideTerminalKey(ev({ key: "˚", code: "KeyK", altKey: true }));
     assert.equal(r.action, "clearTerminal");
     assert.equal(r.allowDefault, false);
     assert.equal(r.sequence, null);
@@ -326,6 +332,65 @@ describe("decideAppKey — text input guard", () => {
   it("Cmd+/ inside input → still fires (help is global)", () => {
     const r = decideAppKey(ev({ key: "/", metaKey: true }), { isTextInput: true });
     assert.equal(r.action, "toggleHelp");
+  });
+});
+
+describe("decideAppKey — macOS real event shapes", () => {
+  // REGRESSION: with macOptionIsMeta=true, macOS produces Option-layer
+  // Unicode for Option+letter (e.g. Option+T → ev.key="†"). The decider
+  // must key off ev.code, never ev.key, for Option shortcuts. If someone
+  // adds an ev.key check later thinking "t" will match, these tests fail.
+  const realMacShapes = [
+    ["Option+T", { code: "KeyT", key: "†", altKey: true }, "newSession"],
+    ["Option+W", { code: "KeyW", key: "∑", altKey: true }, "closeSession"],
+    ["Option+Q", { code: "KeyQ", key: "œ", altKey: true }, "killSession"],
+    ["Option+R", { code: "KeyR", key: "®", altKey: true }, "renameSession"],
+    ["Option+[", { code: "BracketLeft", key: "“", altKey: true }, "navigateTab"],
+    ["Option+]", { code: "BracketRight", key: "‘", altKey: true }, "navigateTab"],
+    ["Option+1", { code: "Digit1", key: "¡", altKey: true }, "jumpToTab"],
+    ["Option+5", { code: "Digit5", key: "∞", altKey: true }, "jumpToTab"],
+  ];
+
+  for (const [label, overrides, expectedAction] of realMacShapes) {
+    it(`${label} (macOS Unicode ev.key) → ${expectedAction}`, () => {
+      const r = decideAppKey(ev(overrides));
+      assert.equal(r.action, expectedAction);
+    });
+  }
+});
+
+describe("isTextInputTarget", () => {
+  // REGRESSION: xterm.js captures keystrokes via a hidden
+  // <textarea class="xterm-helper-textarea">. When the terminal is
+  // focused (the primary case users care about) document.activeElement
+  // is that textarea. Treating it as a text input blocked EVERY Option
+  // shortcut whenever the terminal was focused — Option+T wouldn't open
+  // a new tab, Option+W wouldn't close, etc. This tripwire catches any
+  // future refactor that strips the exemption.
+  it("real text inputs return true", () => {
+    assert.equal(isTextInputTarget({ tagName: "INPUT", classList: { contains: () => false } }), true);
+    assert.equal(isTextInputTarget({ tagName: "TEXTAREA", classList: { contains: () => false } }), true);
+    assert.equal(isTextInputTarget({ tagName: "DIV", isContentEditable: true, classList: { contains: () => false } }), true);
+  });
+
+  it("xterm-helper-textarea returns false (terminal focus shouldn't block shortcuts)", () => {
+    const xtermTextarea = {
+      tagName: "TEXTAREA",
+      classList: {
+        contains: (cls) => cls === "xterm-helper-textarea",
+      },
+    };
+    assert.equal(isTextInputTarget(xtermTextarea), false);
+  });
+
+  it("non-input elements return false", () => {
+    assert.equal(isTextInputTarget({ tagName: "DIV", classList: { contains: () => false } }), false);
+    assert.equal(isTextInputTarget({ tagName: "BUTTON", classList: { contains: () => false } }), false);
+  });
+
+  it("null/undefined target returns false", () => {
+    assert.equal(isTextInputTarget(null), false);
+    assert.equal(isTextInputTarget(undefined), false);
   });
 });
 
