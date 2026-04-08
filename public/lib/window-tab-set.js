@@ -110,17 +110,17 @@ export function createWindowTabSet({ getCurrentSession } = {}) {
     // truncation (above) is the only place that legitimately trims
     // the live array, because at load time nothing has referenced it
     // yet.
-    let toWrite = tabs;
+    let toPersist = tabs;
     if (tabs.length > MAX_PERSISTED_TABS) {
       const overflow = tabs.length - MAX_PERSISTED_TABS;
       console.warn(
         `[window-tabs] ${tabs.length} tabs exceeds persist cap ` +
         `${MAX_PERSISTED_TABS}; dropping ${overflow} oldest entries from storage`
       );
-      toWrite = tabs.slice(-MAX_PERSISTED_TABS);
+      toPersist = tabs.slice(-MAX_PERSISTED_TABS);
     }
-    sessionStorage.setItem(WINDOW_TABS_KEY, JSON.stringify(toWrite));
-    try { localStorage.setItem(LAST_TABS_KEY, JSON.stringify(toWrite)); } catch { /* ignore */ }
+    sessionStorage.setItem(WINDOW_TABS_KEY, JSON.stringify(toPersist));
+    try { localStorage.setItem(LAST_TABS_KEY, JSON.stringify(toPersist)); } catch { /* ignore */ }
   }
 
   function notify() {
