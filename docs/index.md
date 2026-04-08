@@ -64,7 +64,7 @@ The session manager runs in-process. Sessions are backed by tmux — restart the
 | [Security](security/index.md) | Auth model, hardening, threat surface |
 | [Access Guide](access-guide/index.md) | Localhost, LAN, internet access setup |
 | [Architecture](architecture.md) | Server architecture, API, WebSocket protocol |
-| [Dorky Robot Stack](dorkyrobot-stack.md) | Full tool stack: katulong, sipag, kubo, diwa, yolo |
+| [Dorky Robot Stack](dorkyrobot-stack.md) | Full tool stack: katulong, sipag, hulma, tunnels, kubo, diwa, yolo |
 | [P2P Enhancement](p2p-progressive-enhancement.md) | WebRTC progressive enhancement on LAN |
 | [Clipboard Bridge](clipboard-bridge.md) | Remote clipboard architecture |
 | [Use Cases](use-cases.md) | Real-world scenarios |

@@ -1,6 +1,6 @@
 # Dorky Robot Stack — Architecture & Design
 
-How katulong, sipag, kubo, diwa, and yolo work together as an autonomous software consultancy toolkit.
+How katulong, sipag, hulma, tunnels, kubo, diwa, and yolo work together as an autonomous software consultancy toolkit.
 
 ## Philosophy
 
@@ -14,34 +14,42 @@ The second lesson: **don't reinvent what Claude Code has.** Subagents, skills, h
 ┌──────────────────────────────────────────────────────────────┐
 │                        User (iPad / browser)                 │
 └────────────────────────────┬─────────────────────────────────┘
-                             │ HTTPS (Cloudflare Tunnel)
+                             │ HTTPS (via tunnels)
 ┌────────────────────────────▼─────────────────────────────────┐
 │  katulong — data plane                                       │
-│  Web terminals, durable pub/sub, live tiles, cross-machine   │
+│  Web terminals, durable pub/sub, terminal clusters           │
 │  Node.js · host machine · ~/.katulong/                       │
 └────┬──────────┬──────────┬──────────┬────────────────────────┘
      │          │          │          │
      │   ┌──────▼──────┐   │   ┌──────▼──────┐
      │   │ kubo A      │   │   │ kubo B      │
-     │   │ (katulong)  │   │   │ (kubo)      │
-     │   │ Node, Rust  │   │   │ Go, Rust    │
+     │   │ (katulong)  │   │   │ (sipag)     │
+     │   │ Rust env    │   │   │ Rust env    │
      │   │ yolo, claude│   │   │ yolo, claude│
      │   └─────────────┘   │   └─────────────┘
      │                     │
 ┌────▼─────────────┐  ┌────▼─────────────┐
 │ sipag             │  │ diwa             │
-│ control plane     │  │ knowledge plane  │
-│ Tasks, roles,     │  │ Git history      │
-│ dispatch          │  │ search           │
-│ Rust TUI + CLI    │  │ Rust CLI         │
+│ refine + board    │  │ knowledge plane  │
+│ + dispatch        │  │ Git history      │
+│ Rust TUI + CLI    │  │ search (Rust)    │
 └──────────────────┘  └──────────────────┘
+        ▲
+        │ scaffolds .claude/
+┌───────┴──────────┐
+│ hulma            │
+│ scaffolder       │
+│ Rust CLI         │
+└──────────────────┘
 ```
 
 | Tool | Language | Role | Runs On |
 |------|----------|------|---------|
-| **katulong** | Node.js | Web terminals, durable pub/sub, live UI, crew sessions | Host (Mac) |
-| **sipag** | Rust | Cross-project task board, role templates, dispatch | Host or kubo |
-| **kubo** | Bash | Container management (Colima/Docker) | Host (Mac) |
+| **katulong** | Node.js | Web terminals, durable pub/sub, terminal clusters | Host (Mac) |
+| **sipag** | Rust | Feature refinement, task board, dispatch to katulong | Host or kubo |
+| **hulma** | Rust | Project-aware Claude Code scaffolder (`.claude/` setup) | Host |
+| **tunnels** | Rust | k9s-style TUI for managing cloudflared tunnel instances | Host (Mac) |
+| **kubo** | Rust | Isolated dev environments in Docker (Colima-backed) | Host (Mac) |
 | **diwa** | Rust | Git history search — institutional memory | Host or kubo |
 | **yolo** | Node.js | Claude Code launcher for kubos | Inside kubos |
 
@@ -66,14 +74,15 @@ What it doesn't own:
 What it owns:
 - **Multi-project task board** — kanban, filterable by project/role/status
 - **Role templates** — defines what dev/test/perf/product sessions look like per project
-- **Dispatch** — translates "work on ticket #12" into the right session, container, worktree, and yolo invocation
-- **Agent definitions** — sipag is the source of truth for role configs; deploys `.claude/agents/` files when spinning up projects
+- **Feature refinement** — `sipag feature add` captures raw ideas, `sipag refine` spawns Claude to turn them into actionable ticket bullets
+- **Dispatch** — translates "work on ticket #12" into the right session, worktree, and yolo invocation against katulong
 - **Cross-project visibility** — one TUI showing all projects, all roles, all tasks
 
 What it doesn't own:
 - Terminal sessions (that's katulong)
 - Container management (that's kubo)
 - Git history search (that's diwa)
+- Project scaffolding — `.claude/agents/`, slash commands, hooks (that's **hulma**, extracted from sipag in April 2026)
 
 ### kubo — sandbox
 
@@ -82,6 +91,24 @@ What it owns:
 - **Isolation** — each project gets its own container, host network shared
 - **Persistence** — home dir and work dir survive container updates
 - **Mount management** — `~/.katulong/`, `~/.diwa/`, `~/.sipag/` shared with host
+
+### hulma — scaffolder
+
+What it owns:
+- **Project scaffolding** — `hulma configure` writes `.claude/agents/`, `.claude/commands/`, and git hooks into a project
+- **Two paths** — generative (spawns `claude` to read the repo and pick the right templates) or `--static` (ships reference templates verbatim)
+- **Single static binary** — every template is embedded via `include_str!`; no runtime template directory
+- **Templates** — review agents, slash commands (`/commit`, `/review-pr`, etc.), pre-commit and pre-push hooks, katulong pub/sub bridges
+
+What it doesn't own:
+- Anything at runtime — once `hulma configure` is done, hulma is out of the loop. The boundary: **hulma writes files, sipag runs work**.
+
+### tunnels — connectivity
+
+What it owns:
+- **cloudflared tunnel lifecycle** — install, route, list, remove via a k9s-style TUI and a `tunnels` CLI
+- **LaunchAgent management** — daemonizes tunnels under launchd so they survive reboots
+- **Route mapping** — `tunnels route add <hostname> <port> --tunnel <name>`
 
 ### diwa — knowledge plane
 
@@ -232,6 +259,13 @@ Customizable per project. Transitions are monotonic — backward moves are expli
 
 ```bash
 sipag                                    # launch TUI (always, even if empty)
+
+# Feature refinement
+sipag feature add "wire up the new dispatcher"   # capture a raw idea
+sipag feature list                               # see what's queued
+sipag refine f-abc123                            # turn a raw idea into ticket bullets
+
+# Board + dispatch
 sipag add "Fix auth bug" -p katulong -l bug
 sipag list -p katulong --status todo
 sipag move 42 in-progress
@@ -412,14 +446,15 @@ What happens when you run `sipag dispatch 42 katulong`:
 
 For kubo-hosted roles, step 3 creates the session inside the kubo container (katulong sessions run in tmux inside the container via `kubo katulong`).
 
-## Build Order
+## Where things live now
 
-1. **Durable pub/sub** (katulong) — file-backed broker, replay from seq. Foundation for everything.
-2. **sipag v4 skeleton** (sipag) — Rust TUI + CLI, file-based task board, multi-project. Board only, no dispatch.
-3. **Hook configs** — wire Claude Code lifecycle → katulong pub/sub → sipag.
-4. **sipag dispatch** — role templates + katulong crew integration.
-5. **Live mini-tiles** (katulong) — crew-tile type with scaled xterm.js instances.
-6. **Tile flip dashboard** (katulong) — back-face agent status + quick actions.
+The big architectural moves of the v4 refocus (April 2026):
+
+- **sipag v3 → v4** — the legacy Docker-launching dispatcher path was deleted from sipag in Phase 3a. The Node.js dispatch feature store and refinement engine were ported into Rust as `sipag-core::feature` and `sipag-core::refine` in Phases 3b and 3c, then deleted from katulong in Phase 4 (~3,957 lines removed).
+- **hulma extracted from sipag** — the project-scaffolding surface (`sipag configure`, the templates, the agents/commands/hooks) was lifted into its own crate. sipag no longer scaffolds projects; hulma does.
+- **Tile plugin system stripped** — katulong's live mini-tile plugin layer was deleted in favor of the simpler **terminal cluster** primitive (one cluster card → CSS grid of independent tmux-backed mini-terminals).
+
+The boundary that came out of all this: **hulma writes files, sipag runs work, katulong hosts the sessions, kubo provides the sandbox.**
 
 ## Learnings from sipag v1-v3
 
