@@ -1,29 +1,27 @@
 /**
  * Tile Chrome
  *
- * Creates the chrome zones (toolbar, sidebar, shelf) for a tile card face.
- * Zones collapse to zero size when empty. Each face (front/back) gets its
- * own independent chrome instance.
+ * Builds a toolbar on top of a card face and exposes a small API for
+ * mounting the tile's actual content underneath it. Historically this
+ * module also owned sidebar and shelf zones, but neither ever had a
+ * runtime caller — the only consumer was the (now deleted) plugin
+ * SDK documentation. Removed in the terminal-focus refocus so the
+ * only chrome concept left is: "title + optional buttons at the top".
  *
  * DOM structure:
  *
  *   .card-face
- *     ├── .tile-toolbar     (top bar, hidden when empty)
- *     ├── .tile-body        (middle, flex row)
- *     │   ├── .tile-sidebar (left panel, hidden when empty)
- *     │   └── .tile-content (tile mounts here)
- *     └── .tile-shelf       (bottom bar, hidden when empty)
+ *     ├── .tile-toolbar   (top bar, hidden when empty)
+ *     └── .tile-content   (tile mounts here, fills remaining space)
  */
 
 /**
  * Build the chrome DOM inside a card face and return the API.
  *
  * @param {HTMLElement} faceEl — the .card-face element
- * @returns {{ contentEl: HTMLElement, chrome: TileChrome }}
+ * @returns {{ contentEl: HTMLElement, chrome: { toolbar: object }, destroy: () => void }}
  */
 export function createTileChrome(faceEl) {
-  // ── DOM ──────────────────────────────────────────────────────────
-
   const toolbarEl = document.createElement("div");
   toolbarEl.className = "tile-toolbar";
 
@@ -37,50 +35,23 @@ export function createTileChrome(faceEl) {
   toolbarEl.appendChild(toolbarTitle);
   toolbarEl.appendChild(toolbarRight);
 
-  const bodyEl = document.createElement("div");
-  bodyEl.className = "tile-body";
-
-  const sidebarEl = document.createElement("div");
-  sidebarEl.className = "tile-sidebar";
-
   const contentEl = document.createElement("div");
   contentEl.className = "tile-content";
 
-  bodyEl.appendChild(sidebarEl);
-  bodyEl.appendChild(contentEl);
-
-  const shelfEl = document.createElement("div");
-  shelfEl.className = "tile-shelf";
-
   faceEl.appendChild(toolbarEl);
-  faceEl.appendChild(bodyEl);
-  faceEl.appendChild(shelfEl);
-
-  // ── Visibility tracking ──────────────────────────────────────────
+  faceEl.appendChild(contentEl);
 
   let toolbarItems = 0;
-  let sidebarMounted = false;
-  let shelfMounted = false;
 
   function updateToolbarVisibility() {
     const hasContent = toolbarItems > 0 || toolbarTitle.textContent !== "";
     toolbarEl.classList.toggle("chrome-empty", !hasContent);
   }
 
-  function updateSidebarVisibility() {
-    sidebarEl.classList.toggle("chrome-empty", !sidebarMounted);
-  }
-
-  function updateShelfVisibility() {
-    shelfEl.classList.toggle("chrome-empty", !shelfMounted);
-  }
-
-  // Start collapsed
+  // Start collapsed — dashboard back tile sets a title on mount; the
+  // terminal front face mounts xterm.js directly and leaves the toolbar
+  // hidden (xterm draws its own status indicators).
   toolbarEl.classList.add("chrome-empty");
-  sidebarEl.classList.add("chrome-empty");
-  shelfEl.classList.add("chrome-empty");
-
-  // ── Toolbar API ──────────────────────────────────────────────────
 
   const toolbar = {
     setTitle(text) {
@@ -124,84 +95,15 @@ export function createTileChrome(faceEl) {
     get el() { return toolbarEl; },
   };
 
-  // ── Sidebar API ──────────────────────────────────────────────────
-
-  const sidebar = {
-    /**
-     * Mount a DOM element into the sidebar.
-     * @param {HTMLElement} el
-     */
-    mount(el) {
-      sidebarEl.innerHTML = "";
-      sidebarEl.appendChild(el);
-      sidebarMounted = true;
-      updateSidebarVisibility();
-    },
-
-    unmount() {
-      sidebarEl.innerHTML = "";
-      sidebarMounted = false;
-      updateSidebarVisibility();
-    },
-
-    setWidth(width) {
-      sidebarEl.style.width = width;
-      sidebarEl.style.flexShrink = "0";
-    },
-
-    collapse() {
-      sidebarEl.classList.add("chrome-collapsed");
-    },
-
-    expand() {
-      sidebarEl.classList.remove("chrome-collapsed");
-    },
-
-    get el() { return sidebarEl; },
-  };
-
-  // ── Shelf API ────────────────────────────────────────────────────
-
-  const shelf = {
-    /**
-     * Mount a DOM element into the shelf.
-     * @param {HTMLElement} el
-     */
-    mount(el) {
-      shelfEl.innerHTML = "";
-      shelfEl.appendChild(el);
-      shelfMounted = true;
-      updateShelfVisibility();
-    },
-
-    unmount() {
-      shelfEl.innerHTML = "";
-      shelfMounted = false;
-      updateShelfVisibility();
-    },
-
-    setHeight(height) {
-      shelfEl.style.height = height;
-      shelfEl.style.flexShrink = "0";
-    },
-
-    get el() { return shelfEl; },
-  };
-
-  // ── Cleanup ──────────────────────────────────────────────────────
-
   function destroy() {
     toolbarEl.remove();
-    bodyEl.remove();
-    shelfEl.remove();
+    contentEl.remove();
     toolbarItems = 0;
-    sidebarMounted = false;
-    shelfMounted = false;
   }
 
   return {
     contentEl,
-    chrome: { toolbar, sidebar, shelf },
+    chrome: { toolbar },
     destroy,
   };
 }
