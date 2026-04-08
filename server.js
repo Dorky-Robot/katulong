@@ -446,15 +446,15 @@ function handleUpgrade(req, socket, head) {
         return;
       }
     }
-    ws.sessionToken = sessionToken;
-    ws.credentialId = credentialId;
-    wss.emit("connection", ws, req);
+    // Pass auth context explicitly instead of stashing it on the ws object.
+    // ws-manager treats WebSocket as a transport, not an application-state
+    // data carrier — see lib/ws-manager.js handleConnection() for the
+    // rationale.
+    wsManager.handleConnection(ws, { sessionToken, credentialId });
   });
 }
 
 server.on("upgrade", handleUpgrade);
-
-wss.on("connection", (ws) => wsManager.handleConnection(ws));
 
 // Live-reload (dev only)
 if (envConfig.nodeEnv !== "production") {
