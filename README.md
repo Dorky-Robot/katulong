@@ -117,116 +117,27 @@ katulong info                           # System info
 katulong service install                # Auto-start on login (macOS)
 ```
 
-## Tiles
+## Terminals as first-class cards
 
-Katulong's UI is built on a **tile system** — each card in the carousel is a generic container that can hold anything. Terminals are just one tile type. The `+` menu lets you create different tile types:
-
-- **Terminal** — tmux-backed shell session
-- **HTML View** — custom HTML content
-- **Dashboard** — configurable grid of sub-tiles
-
-### Flippable cards
-
-Every tile has a front and back face. Flip between them with a 3D animation — terminal on the front, dashboard on the back.
+Katulong's UI is a carousel of terminal cards. Each card is a live tmux
+session with its own xterm.js front face and a small status dashboard
+on the back face — flip between them with a 3D animation.
 
 ```js
 // From the browser console:
-const { carousel, createTile } = window.__tiles;
+const { carousel } = window.__tiles;
 const id = carousel.getFocusedCard();
-
-// Set a back face and flip
-carousel.setBackTile(id, createTile("html", {
-  title: "Status",
-  html: "<h1>All systems go</h1>"
-}));
 carousel.flipCard(id);
 ```
 
-### Chrome zones
+Flipping to the back face shows the session's child processes, run
+duration, and quick actions (kill, restart, copy output). When the
+agent running inside the terminal finishes its work, the card
+auto-flips to the dashboard after a short delay.
 
-Each tile has optional chrome areas that content can populate:
-
-```
-┌─────────────────────────────────┐
-│ [toolbar]                    ⟳  │
-├────────┬────────────────────────┤
-│[sidebar]│     [content]         │
-├────────┴────────────────────────┤
-│ [shelf]                         │
-└─────────────────────────────────┘
-```
-
-Zones collapse when empty — a plain terminal uses none and looks identical to before.
-
-### Create your own tiles
-
-Drop a folder in `~/.katulong/tiles/` with a `manifest.json` and a `tile.js`:
-
-```
-~/.katulong/tiles/my-tile/
-  manifest.json    — name, icon, config fields
-  tile.js          — implements the tile interface
-  style.css        — optional custom styles
-```
-
-**manifest.json:**
-```json
-{
-  "name": "My Tile",
-  "description": "A custom tile",
-  "icon": "star",
-  "config": [
-    { "key": "url", "label": "URL", "type": "text", "required": true }
-  ]
-}
-```
-
-**tile.js:**
-```js
-export default function setup(sdk, options) {
-  return {
-    type: "my-tile",
-    mount(el, ctx) {
-      el.innerHTML = `<h1>Hello from ${options.url}</h1>`;
-      ctx.chrome.toolbar.setTitle("My Tile");
-      ctx.chrome.toolbar.addButton({
-        icon: "arrow-clockwise",
-        label: "Refresh",
-        position: "right",
-        onClick: () => refresh(),
-      });
-    },
-    unmount() {},
-    focus() {},
-    blur() {},
-    resize() {},
-    getTitle() { return "My Tile"; },
-    getIcon() { return "star"; },
-  };
-}
-```
-
-The SDK gives your tile access to katulong's platform:
-
-| API | Description |
-|-----|-------------|
-| `sdk.sessions` | Create, list, kill terminal sessions |
-| `sdk.pubsub` | Subscribe/publish to events |
-| `sdk.terminal` | Spawn headless terminals, run commands |
-| `sdk.storage` | Per-tile persistent key/value store |
-| `sdk.tiles` | Create, remove, flip tiles in the carousel |
-| `sdk.toast` | Show notifications |
-| `sdk.api` | HTTP client for katulong's REST API |
-| `sdk.ws` | Raw WebSocket send/receive |
-
-See [docs/tile-sdk.md](docs/tile-sdk.md) for the full SDK reference and [docs/tile-system.md](docs/tile-system.md) for architecture details.
-
-### Install community tiles
-
-```bash
-git clone https://github.com/someone/katulong-tile-foo ~/.katulong/tiles/foo
-katulong restart
-```
+Multiple terminals in one view (the "cluster") and persistent
+per-project crews (`{project}--{role}`) are the next step — see
+`docs/dorkyrobot-stack.md`.
 
 ## Security
 
@@ -236,7 +147,6 @@ This application provides direct shell access to the host. Security isn't option
 - **No passwords** — Identity is proven by cryptographic key, not a shared secret.
 - **Localhost bypass** — Local connections auto-authenticate. Remote connections require a session cookie.
 - **30-day sessions** — Server-side tokens, pruned on expiry. No tokens in URLs or localStorage.
-- **Tile sandboxing** — Tiles run in the same origin as katulong (no iframe isolation). Only install tiles from trusted sources.
 
 ## How it works
 

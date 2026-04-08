@@ -315,18 +315,6 @@
       -webkit-tap-highlight-color: transparent;
     }
     .tile-toolbar-btn:hover, .tile-toolbar-btn:active { opacity: 1; background: rgba(255,255,255,0.1); }
-    .tile-body {
-      flex: 1;
-      display: flex;
-      min-height: 0;
-      overflow: hidden;
-    }
-    .tile-sidebar {
-      overflow: auto;
-      flex-shrink: 0;
-    }
-    .tile-sidebar.chrome-empty { display: none; }
-    .tile-sidebar.chrome-collapsed { width: 0 !important; overflow: hidden; }
     .tile-content {
       flex: 1;
       min-width: 0;
@@ -335,22 +323,6 @@
       display: flex;
       flex-direction: column;
     }
-    .tile-shelf {
-      flex-shrink: 0;
-      padding: 4px 8px;
-    }
-    .tile-shelf.chrome-empty { display: none; }
-    /* HTML tile content */
-    .html-tile-content {
-      flex: 1;
-      overflow: auto;
-      padding: 16px 20px;
-      color: var(--fg, #e0e0e0);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.5;
-    }
-    .html-tile-content h1, .html-tile-content h2, .html-tile-content h3 { margin: 0 0 8px; }
-    .html-tile-content p { margin: 0 0 12px; }
 
     /* ── Dashboard back-face ────────────────────────────── */
     .dashboard-back-root {
@@ -543,19 +515,19 @@
       flex: 1; display: block;
       min-width: 0; min-height: 0; overflow: hidden;
     }
-    /* Dashboard tile: CSS Grid of sub-tiles */
-    .dashboard-grid {
+    /* Terminal cluster tile: CSS Grid of independent mini terminals */
+    .cluster-grid {
       display: grid;
       width: 100%; height: 100%;
       box-sizing: border-box;
     }
-    .dashboard-slot {
+    .cluster-slot {
       overflow: hidden;
       border-radius: var(--radius-md, 8px);
       position: relative;
       min-width: 0; min-height: 0;
     }
-    .dashboard-slot > .terminal-pane {
+    .cluster-slot > .terminal-pane {
       position: relative; inset: auto;
       flex: 1; display: block;
       width: 100%; height: 100%;

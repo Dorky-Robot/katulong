@@ -37,10 +37,8 @@
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
     import { createCardCarousel } from "/lib/card-carousel.js";
-    import { registerTileType, createTile } from "/lib/tile-registry.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
-    import { createDashboardTileFactory } from "/lib/tiles/dashboard-tile.js";
-    import { createHtmlTileFactory } from "/lib/tiles/html-tile.js";
+    import { createClusterTileFactory } from "/lib/tiles/cluster-tile.js";
     import { dispatchNotification } from "/lib/notify.js";
 
     // --- Modal Manager ---
@@ -352,20 +350,88 @@
     const getTerm = () => terminalPool.getActive()?.term;
     const getSearchAddon = () => terminalPool.getActive()?.searchAddon;
 
-    // --- Tile Registry ---
-    // terminalDeps uses a getter for carousel since it's created after the registry.
+    // --- Tile Factories ---
+    // terminalDeps uses a getter for carousel since it's created after the factories.
+    // Two factories, no registry: terminals and clusters (grids of terminals).
+    // The generic tile plugin system was removed — these are the only tile
+    // kinds katulong ships, and both are owned by app.js directly.
     const terminalDeps = {
       terminalPool,
-      createTileFn: createTile,
       get carousel() { return carousel; },
     };
-    registerTileType("terminal", createTerminalTileFactory(terminalDeps));
-    registerTileType("dashboard", createDashboardTileFactory({ createTileFn: createTile }));
-    registerTileType("html", createHtmlTileFactory());
+    const terminalTileFactory = createTerminalTileFactory(terminalDeps);
+    const clusterTileFactory = createClusterTileFactory({
+      createTerminalTile: (options) => terminalTileFactory(options),
+    });
+
+    /**
+     * Dispatcher for reconstructing tiles from serialized state (carousel
+     * restore). Accepts the legacy `"dashboard"` type for forward-compat
+     * with state saved before the rename.
+     */
+    function restoreTile(type, options = {}) {
+      if (type === "terminal") return terminalTileFactory(options);
+      if (type === "cluster" || type === "dashboard") return clusterTileFactory(options);
+      throw new Error(`Unknown tile type: "${type}"`);
+    }
 
     /** Create a terminal tile for a session, using the session name as tile ID. */
     function makeTerminalTile(sessionName) {
-      return { id: sessionName, tile: createTile("terminal", { sessionName }) };
+      return { id: sessionName, tile: terminalTileFactory({ sessionName }) };
+    }
+
+    /**
+     * Create a terminal cluster: a single card holding a 2x2 grid of new
+     * tmux sessions, each its own PTY. Spawns sessions in parallel; on
+     * partial failure, deletes the successfully created ones so the server
+     * never ends up with orphaned sessions that have no UI owner.
+     *
+     * Fixed at 4 cells for now — the `+` menu is touch-driven and a
+     * native `prompt()` dialog is blocked or jarring on iOS Safari.
+     * A proper picker lives in the future-work list (see
+     * docs/cluster-state-machine.md).
+     */
+    const CLUSTER_DEFAULT_CELLS = 4;
+
+    async function createNewCluster() {
+      const count = CLUSTER_DEFAULT_CELLS;
+      const base = Date.now().toString(36);
+      // Spawn N sessions in parallel. Each has its own PTY — there is no
+      // shared shell. This is the whole reason clusters exist: PTYs have
+      // exactly one size, so only separate sessions can render at
+      // different dimensions across devices.
+      const results = await Promise.allSettled(
+        Array.from({ length: count }, (_, i) =>
+          api.post("/sessions", { name: `cluster-${base}-${i}` })
+        )
+      );
+      const created = [];
+      const failures = [];
+      for (const r of results) {
+        if (r.status === "fulfilled") created.push(r.value);
+        else failures.push(r.reason);
+      }
+      if (failures.length > 0) {
+        // Partial failure — roll back any sessions we did create so the
+        // server isn't left with orphaned tmux sessions that no UI owns.
+        await Promise.allSettled(
+          created.map(s => api.delete(`/sessions/${encodeURIComponent(s.name)}`))
+        );
+        const first = failures[0];
+        console.error("Failed to create cluster:", first);
+        showToast(`Failed to create cluster: ${first?.message || "unknown error"}`);
+        return;
+      }
+      const slots = created.map(s => ({ sessionName: s.name }));
+      const tile = clusterTileFactory({ slots, cells: count });
+      const tileId = `cluster-${base}`;
+      if (!carousel.isActive()) {
+        carousel.activate([{ id: tileId, tile }], tileId);
+        wsConnection.connect();
+      } else {
+        carousel.addCard(tileId, tile, insertAtRightOfActive());
+        carousel.focusCard(tileId);
+      }
     }
 
     /** Resolve the session name for a tile ID (works for terminal tiles). */
@@ -1300,28 +1366,13 @@
       onNewSessionClick: createNewSession,
       tileTypes: [
         { type: "terminal", name: "Terminal", icon: "terminal-window" },
+        { type: "cluster",  name: "Cluster",  icon: "squares-four" },
       ],
-      onCreateTile: (type, _meta) => {
+      onCreateTile: (type) => {
         if (type === "terminal") {
-          // Terminal tiles create a server-side session
           createNewSession();
-        } else if (carousel.isActive()) {
-          // Non-terminal tiles: create directly in the carousel. We gate on
-          // `carousel.isActive()` — otherwise `carousel.addCard` silently
-          // no-ops while `windowTabSet.addTab` would still run, leaving a
-          // tab-set entry with no matching card.
-          const id = `${type}-${Date.now().toString(36)}`;
-          const options = type === "dashboard"
-            ? { cols: 2, rows: 1, title: "Dashboard", slots: [] }
-            : { title: `New ${_meta?.name || type}`, html: `<div style="padding:40px;text-align:center;opacity:0.5"><h2>${_meta?.name || type}</h2><p>Empty tile — content will appear here.</p></div>` };
-          const tile = createTile(type, options);
-          // Insert right of the active card (Chrome-style). Same insertAt
-          // goes to both stores so their order cannot drift apart.
-          const insertAt = insertAtRightOfActive();
-          carousel.addCard(id, tile, insertAt);
-          carousel.focusCard(id);
-          windowTabSet.addTab(id, insertAt);
-          if (shortcutBarInstance) shortcutBarInstance.render(id);
+        } else if (type === "cluster") {
+          createNewCluster();
         }
       },
       onTabClick: (name) => {
@@ -1854,8 +1905,9 @@
     // sessions (?s=liveN) from being mistaken for phantoms during this
     // first pass.
     //
-    // Non-terminal tiles (notepad, dashboard, web preview) are skipped — they
-    // have no server-side session and own their own lifecycle.
+    // Non-terminal tiles (clusters) are skipped here — a cluster is a
+    // container, not a session, so serverSet never knows about it. The
+    // cluster's own slots own their sub-session lifecycle.
     const RECONCILE_PRUNE_THRESHOLD = 2;
     let reconcilePruneConfirmations = 0;
     let lastDeadKey = "";
@@ -1924,7 +1976,9 @@
       // session is added to the tab set before the carousel activates.
       for (const tab of windowTabSet.getTabs()) {
         if (serverSet.has(tab) || windowTabSet.isRecentlyAdded(tab)) continue;
-        // Skip non-terminal carousel tiles (dashboards, notepads, etc.)
+        // Skip non-terminal carousel tiles (clusters) — they own their
+        // own slot lifecycle, and their tile IDs never appear in the
+        // server's session list.
         const tile = carousel.isActive() ? carousel.getTile(tab) : null;
         if (tile && tile.type !== "terminal") continue;
         dead.add(tab);
@@ -2039,13 +2093,24 @@
     setTimeout(() => {
       const carouselState = carousel.restore();
       if (carouselState && carouselState.tiles?.length > 0 && !carousel.isActive()) {
-        const tiles = carouselState.tiles.map(t => {
-          const tile = createTile(t.type, t);
-          return { id: t.id, tile, cardWidth: t.cardWidth };
-        });
-        carousel.activate(tiles, carouselState.focused);
-        // Sync tab set to carousel order (carousel is source of truth)
-        if (windowTabSet) windowTabSet.reorderTabs(carousel.getCards());
+        // Restore entries one at a time and drop any that fail to
+        // reconstruct — corrupt sessionStorage, a tile type written by a
+        // newer version, or any tile whose factory throws. A single bad
+        // entry must not take down the entire restore path.
+        const tiles = [];
+        for (const t of carouselState.tiles) {
+          try {
+            const tile = restoreTile(t.type, t);
+            tiles.push({ id: t.id, tile, cardWidth: t.cardWidth });
+          } catch (err) {
+            console.warn(`[carousel] skipping tile ${t.id} (${t.type}):`, err.message);
+          }
+        }
+        if (tiles.length > 0) {
+          carousel.activate(tiles, carouselState.focused);
+          // Sync tab set to carousel order (carousel is source of truth)
+          if (windowTabSet) windowTabSet.reorderTabs(carousel.getCards());
+        }
       }
     }, 500);
 
@@ -2076,5 +2141,5 @@
       }, 3000);
     }
 
-    // Expose tile system for console testing / plugin development
-    window.__tiles = { carousel, createTile, registerTileType };
+    // Expose the carousel for console testing (flip, focus, inspect).
+    window.__tiles = { carousel };
