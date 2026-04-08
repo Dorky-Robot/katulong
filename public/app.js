@@ -502,6 +502,19 @@
         _attachScrollButton();
       },
       onCardDismissed: (tileId) => {
+        const tile = carousel.getTile(tileId);
+        if (tile?.type === "cluster") {
+          // Cluster dismiss must unsubscribe every sub-session. Using the
+          // cluster's own sessionName (the first sub-tile) would leak the
+          // remaining sub-sessions as live subscriptions on the server.
+          for (const { tile: subTile } of tile.getSubTiles()) {
+            const subName = subTile?.sessionName;
+            if (!subName) continue;
+            if (windowTabSet) windowTabSet.removeTab(subName);
+            wsConnection.sendUnsubscribe(subName);
+          }
+          return;
+        }
         const sessionName = tileSessionName(tileId);
         // Detach: remove from this window's tab set (session stays on server)
         if (windowTabSet) windowTabSet.removeTab(sessionName);
@@ -537,6 +550,19 @@
           const cols = entry?.term?.cols;
           const rows = entry?.term?.rows;
           wsConnection.sendSubscribe(tile.sessionName, cols, rows);
+        } else if (tile?.type === "cluster") {
+          // Cluster tiles host multiple independent sub-sessions. Each
+          // sub-terminal needs its own subscription; without this every
+          // sub-terminal past the first appears stuck (data-available
+          // notifications dropped for unsubscribed sessions).
+          for (const { tile: subTile } of tile.getSubTiles()) {
+            const subName = subTile?.sessionName;
+            if (!subName) continue;
+            const entry = terminalPool.get(subName);
+            const cols = entry?.term?.cols;
+            const rows = entry?.term?.rows;
+            wsConnection.sendSubscribe(subName, cols, rows);
+          }
         }
       }
       carousel.fitAll();
@@ -565,7 +591,10 @@
     function routeToSession(name, insertAt) {
       if (carousel.isActive()) {
         // Check if a terminal tile for this session already exists
-        const existing = carousel.findCard((tile) => tile.sessionName === name);
+        // Restrict match to terminal tiles: a cluster's sessionName getter
+        // aliases its first sub-tile, which would otherwise make this
+        // predicate falsely hit a cluster card when routing a real terminal.
+        const existing = carousel.findCard((tile) => tile.type === "terminal" && tile.sessionName === name);
         if (!existing) {
           const { id, tile } = makeTerminalTile(name);
           carousel.addCard(id, tile, insertAt);

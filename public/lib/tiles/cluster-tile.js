@@ -91,6 +91,15 @@ export function createClusterTileFactory({ createTerminalTile }) {
     return {
       type: "cluster",
 
+      /**
+       * Aliases the first sub-tile's sessionName so the carousel's
+       * single-focused-session model works for clusters. Returns
+       * undefined before mount. See commit 7a285e6 for the root cause.
+       */
+      get sessionName() {
+        return subTiles[0]?.tile?.sessionName;
+      },
+
       mount(el, ctx) {
         container = el;
         parentContext = ctx;
@@ -174,6 +183,10 @@ export function createClusterTileFactory({ createTerminalTile }) {
        * the cluster's display title would drift from its card id.
        */
       setSessionName(newName) {
+        // Intentional asymmetry with terminal-tile: this updates the
+        // cluster's display title only. Sub-session names are owned by
+        // their individual sub-tiles and must not be renamed from here
+        // (they map to real tmux sessions on the server).
         title = newName;
       },
 
