@@ -37,7 +37,6 @@
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
     import { createCardCarousel } from "/lib/card-carousel.js";
-    import { registerTileType, createTile } from "/lib/tile-registry.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
     import { createDashboardTileFactory } from "/lib/tiles/dashboard-tile.js";
     import { dispatchNotification } from "/lib/notify.js";
@@ -352,19 +351,28 @@
     const getTerm = () => terminalPool.getActive()?.term;
     const getSearchAddon = () => terminalPool.getActive()?.searchAddon;
 
-    // --- Tile Registry ---
-    // terminalDeps uses a getter for carousel since it's created after the registry.
+    // --- Tile Factories ---
+    // terminalDeps uses a getter for carousel since it's created after the factories.
+    // createTile is a local dispatcher for the two tile types katulong actually ships —
+    // terminals, and composite grids of terminals. No generic registry, no plugin surface.
     const terminalDeps = {
       terminalPool,
-      createTileFn: createTile,
+      createTileFn: (...args) => createTile(...args),
       get carousel() { return carousel; },
     };
-    registerTileType("terminal", createTerminalTileFactory(terminalDeps));
-    registerTileType("dashboard", createDashboardTileFactory({ createTileFn: createTile }));
+    const terminalTileFactory = createTerminalTileFactory(terminalDeps);
+    const dashboardTileFactory = createDashboardTileFactory({
+      createTileFn: (type, options) => createTile(type, options),
+    });
+    function createTile(type, options = {}) {
+      if (type === "terminal") return terminalTileFactory(options);
+      if (type === "dashboard") return dashboardTileFactory(options);
+      throw new Error(`Unknown tile type: "${type}"`);
+    }
 
     /** Create a terminal tile for a session, using the session name as tile ID. */
     function makeTerminalTile(sessionName) {
-      return { id: sessionName, tile: createTile("terminal", { sessionName }) };
+      return { id: sessionName, tile: terminalTileFactory({ sessionName }) };
     }
 
     /** Resolve the session name for a tile ID (works for terminal tiles). */
@@ -2087,5 +2095,5 @@
       }, 3000);
     }
 
-    // Expose tile system for console testing / plugin development
-    window.__tiles = { carousel, createTile, registerTileType };
+    // Expose the carousel for console testing (flip, focus, inspect).
+    window.__tiles = { carousel };
