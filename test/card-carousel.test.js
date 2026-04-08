@@ -124,20 +124,8 @@ function setupGlobals() {
 async function importCarousel() {
   const url = new URL('../public/lib/card-carousel.js', import.meta.url);
   const mod = await import(url.href + '?t=' + Date.now() + Math.random());
-  return { createCardCarousel: mod.createCardCarousel, isCarouselDevice: mod.isCarouselDevice };
+  return { createCardCarousel: mod.createCardCarousel };
 }
-
-describe('isCarouselDevice()', () => {
-  it('returns true for all platforms (unified carousel UI)', async () => {
-    setupGlobals();
-    Object.defineProperty(globalThis, 'navigator', {
-      value: { maxTouchPoints: 0, userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-      writable: true, configurable: true,
-    });
-    const { isCarouselDevice } = await importCarousel();
-    assert.strictEqual(isCarouselDevice(), true);
-  });
-});
 
 describe('card-carousel', () => {
   let createCardCarousel;

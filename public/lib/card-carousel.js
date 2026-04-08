@@ -1,5 +1,5 @@
 /**
- * Card Carousel (iPad/tablet only)
+ * Card Carousel — the single unified tile layout for all platforms.
  *
  * Horizontal strip of tile "cards". Each card is a generic container that
  * holds a TilePrototype instance (terminal, dashboard, web preview, etc.).
@@ -10,7 +10,6 @@
  * the shortcut bar — the carousel only manages the card tile layout.
  */
 
-import { isIPad } from "./platform.js";
 import { createTileChrome } from "./tile-chrome.js";
 import { createResizeHandles } from "./tile-resize.js";
 
@@ -26,14 +25,6 @@ const STORAGE_KEY = "katulong-carousel";
 // enough to never hit in legitimate use; entries beyond the cap are dropped
 // oldest-first on save, keeping the most recently focused cards.
 const MAX_PERSISTED_CARDS = 50;
-
-/**
- * All platforms use the card carousel layout.
- * Previously iPad-only; now the single unified UI.
- */
-export function isCarouselDevice() {
-  return true;
-}
 
 export function createCardCarousel({
   container,
@@ -405,46 +396,6 @@ export function createCardCarousel({
     }
   }
 
-  // ── Layout ───────────────────────────────────────────────────────────
-
-  function buildLayout() {
-    // Remove carousel wrapper elements
-    for (const el of [...container.querySelectorAll(".carousel-card")]) {
-      el.remove();
-    }
-    cardEls.clear();
-
-    if (!active || cards.length === 0) return;
-
-    container.dataset.carousel = "true";
-
-    // Re-mount tiles into fresh wrappers.
-    // We iterate a snapshot of `cards` because tiles are already tracked
-    // in the tiles map passed to activate().
-    for (const id of cards) {
-      const entry = cardEls.get(id);
-      if (!entry) continue;
-      const { wrapper, inner, frontFace, backFace } = createCardWrapper(id);
-      const frontChrome = createTileChrome(frontFace);
-      entry.tile.mount(frontChrome.contentEl, entry.context);
-      if (entry.backTile) {
-        const backChrome = createTileChrome(backFace);
-        entry.backTile.mount(backChrome.contentEl, entry.context);
-        entry.backChrome = backChrome;
-      }
-      if (entry.flipped) inner.classList.add("flipped");
-      entry.wrapper = wrapper;
-      entry.inner = inner;
-      entry.frontFace = frontFace;
-      entry.backFace = backFace;
-      entry.frontChrome = frontChrome;
-      container.appendChild(wrapper);
-    }
-
-    positionCards(false); // instant positioning on build
-    fitAll();
-  }
-
   // ── Tile context builder ────────────────────────────────────────────
 
   /** Build a TileContext for a tile, including chrome and flip access. */
@@ -813,7 +764,6 @@ export function createCardCarousel({
     fitAll,
     save,
     restore,
-    buildLayout,
     setBackTile,
     flipCard,
     isFlipped,

@@ -36,7 +36,7 @@
     import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
-    import { createCardCarousel, isCarouselDevice } from "/lib/card-carousel.js";
+    import { createCardCarousel } from "/lib/card-carousel.js";
     import { registerTileType, createTile } from "/lib/tile-registry.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
     import { createDashboardTileFactory } from "/lib/tiles/dashboard-tile.js";
@@ -492,15 +492,12 @@
       return idx >= 0 ? idx + 1 : undefined;
     }
 
-    /** Route a session to the appropriate view (carousel on iPad, switchSession on desktop).
+    /** Route a session through the carousel — activating it if needed
+     *  or focusing/adding a card if already active.
      *  @param {string} name
      *  @param {number} [insertAt] — insertion index for new cards (Chrome-style
      *    "right of active"). Ignored when the card already exists. */
     function routeToSession(name, insertAt) {
-      if (!isCarouselDevice()) {
-        switchSession(name);
-        return;
-      }
       if (carousel.isActive()) {
         // Check if a terminal tile for this session already exists
         const existing = carousel.findCard((tile) => tile.sessionName === name);
@@ -817,10 +814,9 @@
         // Insert right of the active card (Chrome-style) instead of at the end.
         const insertAt = insertAtRightOfActive();
         windowTabSet.addTab(data.name, insertAt);
-        // routeToSession handles both iPad (carousel) and desktop (switchSession)
         routeToSession(data.name, insertAt);
         // If carousel was just activated from empty state, reconnect WS
-        if (isCarouselDevice() && carousel.isActive()) {
+        if (carousel.isActive()) {
           wsConnection.connect();
         }
       } catch (err) {
@@ -837,7 +833,6 @@
     if (!isOverlayViewport() || !isInitiallyCollapsed) loadSidebarData();
 
     // --- Session switching (no page reload) ---
-    let pendingSwitch = null;
     // Late-bound: viewportManager is created after activateSession but called lazily
     let _attachScrollButton = () => {};
 
@@ -859,48 +854,14 @@
         windowTabSet.addTab(name);
       }
 
-      // On iPad/tablet, route through carousel (onFocusChange handles state sync)
-      if (isCarouselDevice()) {
-        routeToSession(name);
-        invalidateSessions(sessionStore, name);
-        return;
-      }
-
-      const ws = state.connection.ws;
-      const wsOpen = ws && ws.readyState === WebSocket.OPEN;
-
-      const wasCached = terminalPool.has(name);
-      const entry = terminalPool.activate(name);
-
-      // If this is a fresh terminal (not cached), clear it so we start clean
-      if (!wasCached) {
-        entry.term.clear();
-        entry.term.reset();
-      }
-
-      // Visual updates only — state.session.name is set by the server's
-      // "switched" or "attached" confirmation to avoid stale routing during
-      // the switch window.
-      setDocTitle(name);
-
-      if (wsOpen) {
-        // Switch session over the existing WebSocket — no disconnect/reconnect needed
-        pendingSwitch = name;
-        ws.send(JSON.stringify({ type: "switch", session: name, cols: entry.term.cols, rows: entry.term.rows, cached: wasCached }));
-      } else if (!ws || ws.readyState === WebSocket.CLOSED) {
-        // No WebSocket yet — set session name for the attach message, then connect
-        state.update('session.name', name);
-        wsConnection.connect();
-      }
-      if (shortcutBarInstance) shortcutBarInstance.render(name);
+      // Route through the carousel — onFocusChange handles state sync,
+      // WS attach/subscribe, and tab bar re-render.
+      routeToSession(name);
       invalidateSessions(sessionStore, name);
-      // Attach scroll-to-bottom button listener to the new viewport.
-      // scroll events don't bubble, so we must listen on the viewport directly.
-      _attachScrollButton();
     }
 
     function switchSession(name) {
-      if (name === state.session.name || name === pendingSwitch) return;
+      if (name === state.session.name) return;
       const url = new URL(window.location);
       url.searchParams.set("s", name);
       history.pushState(null, "", url);
@@ -911,7 +872,7 @@
     window.addEventListener("popstate", () => {
       const name = new URLSearchParams(location.search).get("s");
       if (!name) return; // bare URL without ?s= — stay on current session
-      if (name !== state.session.name && name !== pendingSwitch) activateSession(name);
+      if (name !== state.session.name) activateSession(name);
     });
 
     const openSessionManager = () => toggleSidebar();
@@ -952,7 +913,7 @@
       if (idx < 0 || idx >= tabs.length) return;
       const name = tabs[idx];
       if (name === state.session.name) return;
-      if (isCarouselDevice() && carousel.isActive()) {
+      if (carousel.isActive()) {
         routeToSession(name);
       } else {
         switchSession(name);
@@ -1321,10 +1282,10 @@
           // Terminal tiles create a server-side session
           createNewSession();
         } else if (carousel.isActive()) {
-          // Non-terminal tiles: create directly in the carousel. We require
-          // `carousel.isActive()` (not just `isCarouselDevice()`) — otherwise
-          // `carousel.addCard` silently no-ops while `windowTabSet.addTab`
-          // would still run, leaving a tab-set entry with no matching card.
+          // Non-terminal tiles: create directly in the carousel. We gate on
+          // `carousel.isActive()` — otherwise `carousel.addCard` silently
+          // no-ops while `windowTabSet.addTab` would still run, leaving a
+          // tab-set entry with no matching card.
           const id = `${type}-${Date.now().toString(36)}`;
           const options = type === "dashboard"
             ? { cols: 2, rows: 1, title: "Dashboard", slots: [] }
@@ -1340,7 +1301,7 @@
         }
       },
       onTabClick: (name) => {
-        if (isCarouselDevice() && carousel.isActive()) {
+        if (carousel.isActive()) {
           routeToSession(name);
         } else {
           switchSession(name);
@@ -1758,7 +1719,6 @@
       invalidateSessions: (name) => invalidateSessions(sessionStore, name),
       syncCarouselSubscriptions: () => syncCarouselSubscriptions(),
       updateSessionUI: (name) => {
-        pendingSwitch = null;
         setDocTitle(name);
         const url = new URL(window.location);
         url.searchParams.set("s", name);
@@ -1795,7 +1755,6 @@
           clearFocusedSessionUI();
         });
       },
-      onDisconnect: () => { pendingSwitch = null; },
       poolRename: (oldName, newName) => terminalPool.rename(oldName, newName),
       tabRename: (oldName, newName) => windowTabSet.renameTab(oldName, newName),
       fit: fitActiveTerminal,
@@ -2049,16 +2008,11 @@
           const url = new URL(window.location);
           url.searchParams.set("s", name);
           history.replaceState(null, "", url);
-          if (isCarouselDevice()) {
-            const tabSessions = windowTabSet.getTabs();
-            const allNames = tabSessions.length > 0 ? [...tabSessions] : [name];
-            if (!allNames.includes(name)) allNames.unshift(name);
-            carousel.activate(allNames.map(n => makeTerminalTile(n)), name);
-            renderBar(name);
-          } else {
-            terminalPool.activate(name);
-            renderBar(name);
-          }
+          const tabSessions = windowTabSet.getTabs();
+          const allNames = tabSessions.length > 0 ? [...tabSessions] : [name];
+          if (!allNames.includes(name)) allNames.unshift(name);
+          carousel.activate(allNames.map(n => makeTerminalTile(n)), name);
+          renderBar(name);
           // Server already confirmed this session exists in the /sessions
           // response above, so the grace period from addTab is harmless —
           // confirmTab() will clear it on the next reconciler pass.
@@ -2072,16 +2026,12 @@
         // User can create or pick a session via the sidebar.
       });
     } else {
-      // Explicit ?s= session — activate carousel on iPad/tablet
-      if (isCarouselDevice()) {
-        const tabSessions = windowTabSet.getTabs();
-        const allNames = tabSessions.length > 0 ? [...tabSessions] : [state.session.name];
-        if (state.session.name && !allNames.includes(state.session.name)) allNames.unshift(state.session.name);
-        carousel.activate(allNames.map(n => makeTerminalTile(n)), state.session.name);
-        renderBar(state.session.name);
-      } else {
-        renderBar(state.session.name);
-      }
+      // Explicit ?s= session — activate the carousel with the tab set
+      const tabSessions = windowTabSet.getTabs();
+      const allNames = tabSessions.length > 0 ? [...tabSessions] : [state.session.name];
+      if (state.session.name && !allNames.includes(state.session.name)) allNames.unshift(state.session.name);
+      carousel.activate(allNames.map(n => makeTerminalTile(n)), state.session.name);
+      renderBar(state.session.name);
       wsConnection.connect();
     }
     loadShortcuts();
