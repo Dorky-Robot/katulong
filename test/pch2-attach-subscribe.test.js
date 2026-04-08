@@ -12,88 +12,30 @@
  * inherent PTY limitation" for why per-client replay cannot work.
  */
 
-import { describe, it, beforeEach, mock } from "node:test";
+import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import {
+  setupSessionManagerMocks,
+  BaseMockSession,
+  makeBridge,
+  tmuxSessions,
+} from "./helpers/session-manager-fixture.js";
 
-// --- Mock setup (must happen before importing session-manager) ---
-
-const tmuxSessions = new Map();
-
-const sessionModuleUrl = new URL("../lib/session.js", import.meta.url).href;
-const tmuxModuleUrl = new URL("../lib/tmux.js", import.meta.url).href;
-const envFilterUrl = new URL("../lib/env-filter.js", import.meta.url).href;
-
-// MockSession exposes the minimum API that session-manager exercises.
-// _serializeResult is what session.serializeScreen() returns — the attach/
-// subscribe snapshot paths should surface this value unchanged.
-class MockSession {
-  static STATE_ATTACHED = "attached";
-  static STATE_DETACHED = "detached";
-  static STATE_KILLED = "killed";
-
+/**
+ * MockSession with a configurable serializeScreen result. The attach/
+ * subscribe snapshot paths should surface this value unchanged — that's
+ * the behaviour every test in this file pins.
+ */
+class MockSession extends BaseMockSession {
   constructor(name, tmuxName, options = {}) {
-    this.name = name;
-    this.tmuxName = tmuxName;
-    this.state = MockSession.STATE_ATTACHED;
-    this._childCount = 0;
-    this.external = options.external || false;
-    this._options = options;
+    super(name, tmuxName, options);
     this._serializeResult = "shared-headless-snapshot";
-    this.outputBuffer = { totalBytes: 0 };
   }
 
-  get alive() { return this.state === MockSession.STATE_ATTACHED; }
-  attachControlMode() {}
-  async seedScreen() {}
   async serializeScreen() { return this._serializeResult; }
-  async screenFingerprint() { return { hash: 0, seq: 0 }; }
-  updateChildCount(count) { this._childCount = count; }
-  write() {}
-  resize() {}
-  detach() { if (this.state === MockSession.STATE_ATTACHED) this.state = MockSession.STATE_DETACHED; }
-  kill() { if (this.state !== MockSession.STATE_KILLED) { this.state = MockSession.STATE_KILLED; tmuxSessions.delete(this.tmuxName); } }
-  setIcon() {}
-  toJSON() { return { name: this.name, alive: this.alive, external: this.external }; }
 }
 
-mock.module(sessionModuleUrl, {
-  namedExports: { Session: MockSession },
-});
-
-mock.module(tmuxModuleUrl, {
-  namedExports: {
-    tmuxSessionName: (name) => name.replace(/[.: ]/g, "_"),
-    tmuxExec: async () => ({ code: 0 }),
-    tmuxNewSession: async (tmuxName) => { tmuxSessions.set(tmuxName, true); },
-    tmuxHasSession: async (tmuxName) => tmuxSessions.has(tmuxName),
-    applyTmuxSessionOptions: async () => {},
-    captureVisiblePane: async () => "$ ",
-    getCursorPosition: async () => ({ row: 0, col: 2 }),
-    getPaneCwd: async () => "/tmp",
-    checkTmux: async () => {},
-    cleanTmuxServerEnv: async () => {},
-    setTmuxKatulongEnv: async () => {},
-    tmuxListSessions: async () => [...tmuxSessions.keys()],
-    tmuxKillSession: async (tmuxName) => { tmuxSessions.delete(tmuxName); },
-    tmuxListSessionsDetailed: async () => new Map(),
-    tmuxSocketArgs: () => [],
-  },
-});
-
-mock.module(envFilterUrl, {
-  namedExports: { getSafeEnv: () => ({}) },
-});
-
-const { createSessionManager } = await import("../lib/session-manager.js");
-
-function makeBridge() {
-  const messages = [];
-  return {
-    relay(msg) { messages.push(msg); },
-    register() {},
-    messages,
-  };
-}
+const { createSessionManager } = await setupSessionManagerMocks(MockSession);
 
 function makeManager() {
   const bridge = makeBridge();
