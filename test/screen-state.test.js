@@ -123,6 +123,102 @@ describe("ScreenState", () => {
       screen.dispose();
       assert.strictEqual(await screen.serialize(), "");
     });
+
+    it("returns empty string without throwing when disposed mid-flush", async () => {
+      // Regression: after `await this.flush()` returns true, a concurrent
+      // dispose() can null `this._term` before we reach the _core access
+      // in the DECSTBM path. Without a post-await null guard on `term`,
+      // this races into a TypeError. Simulate by kicking off serialize()
+      // and disposing synchronously before the microtask resolves.
+      const screen = new ScreenState();
+      screen.write("some content");
+      const promise = screen.serialize();
+      screen.dispose();
+      const result = await promise;
+      assert.strictEqual(result, "",
+        "serialize() must resolve to '' (not throw) if dispose races the flush");
+    });
+
+    it("appends DECSTBM when the active buffer has a non-default scroll region", async () => {
+      // Regression: SerializeAddon does not emit DECSTBM, so TUI apps that
+      // pin a footer via scroll margins (notably Claude Code) lose the region
+      // on attach/subscribe/resync replay, and subsequent streaming writes
+      // scroll the pinned footer out of view. ScreenState.serialize() must
+      // append a cursor-safe DECSTBM so the client xterm re-establishes the
+      // region on whichever buffer SerializeAddon landed on.
+      const screen = new ScreenState();
+      screen.resize(40, 10);
+      // Enter alt-screen (Claude Code's case), set region rows 1..7,
+      // put content in the region and in the pinned footer.
+      screen.write("\x1b[?1049h\x1b[1;7r\x1b[1;1Hregion\x1b[8;1Hfooter");
+      const out = await screen.serialize();
+      assert.match(out, /\x1b\[1;7r/, "must emit DECSTBM for rows 1..7");
+      // Cursor save/restore dance must wrap the DECSTBM so cursor position
+      // from SerializeAddon's tail is preserved (DECSTBM homes the cursor).
+      assert.ok(out.includes("\x1b7") && out.includes("\x1b8"),
+        "DECSTBM must be wrapped in DECSC/DECRC to preserve cursor");
+      screen.dispose();
+    });
+
+    it("preserves pinned footer across replay + scrolling writes (Claude TUI repro)", async () => {
+      // End-to-end regression for the "bottom rows overwritten in Claude TUI"
+      // bug: Claude Code enters alt-screen, sets a scroll region above its
+      // pinned footer, and streams content into the region. If the replay
+      // loses DECSTBM, scrolling writes push the footer out. This test
+      // simulates the exact flow: source terminal sets up the scene, we
+      // serialize, replay into a second headless (the "client"), then push
+      // scroll-inducing writes into the region and assert the footer rows
+      // are untouched.
+      const { ScreenState: _SS } = await import("../lib/screen-state.js");
+      const src = new _SS();
+      src.resize(40, 10);
+      // Alt-screen, region rows 1..7, content in region, "footer" at rows 8-9.
+      src.write("\x1b[?1049h\x1b[1;7r\x1b[1;1Hregion-content\x1b[8;1HFOOTER-A\x1b[9;1HFOOTER-B");
+      const snapshot = await src.serialize();
+
+      // Replay into a fresh ScreenState playing the role of the client.
+      const dst = new _SS();
+      dst.resize(40, 10);
+      dst.write(snapshot);
+      await dst.flush();
+      // Verify the region was re-established on the destination's active buffer.
+      const dBuf = dst.term._core.buffers.active;
+      assert.strictEqual(dBuf.scrollTop, 0, "destination scrollTop must match source (row 0)");
+      assert.strictEqual(dBuf.scrollBottom, 6, "destination scrollBottom must match source (row 6)");
+
+      // Now push scroll-inducing writes from the bottom of the region.
+      // With DECSTBM intact, these scroll the region internally and leave
+      // rows 7-8 (0-indexed; "FOOTER-A"/"FOOTER-B") untouched. Without the
+      // fix, the footer gets scrolled up and overwritten.
+      dst.write("\x1b[7;1H"); // bottom of region (row 7 1-indexed)
+      for (let i = 0; i < 10; i++) dst.write(`streaming-line-${i}\n`);
+      await dst.flush();
+
+      // Use the public buffer API (term.buffer.active) for reading lines —
+      // _core.buffers.active is the internal shape used for scrollTop/Bottom
+      // but getLine() lives on the public wrapper.
+      const pubBuf = dst.term.buffer.active;
+      const footerA = pubBuf.getLine(pubBuf.baseY + 7).translateToString(true);
+      const footerB = pubBuf.getLine(pubBuf.baseY + 8).translateToString(true);
+      assert.strictEqual(footerA, "FOOTER-A",
+        "pinned footer row A must survive scrolling inside the region");
+      assert.strictEqual(footerB, "FOOTER-B",
+        "pinned footer row B must survive scrolling inside the region");
+
+      src.dispose();
+      dst.dispose();
+    });
+
+    it("does not append DECSTBM when scroll region is default", async () => {
+      const screen = new ScreenState();
+      screen.write("plain content");
+      const out = await screen.serialize();
+      // No DECSTBM when region is the full screen — avoid emitting a noop
+      // that would still cost the client a parser round-trip.
+      assert.doesNotMatch(out, /\x1b\[\d+;\d+r/,
+        "default scroll region must not emit DECSTBM");
+      screen.dispose();
+    });
   });
 
   describe("computeHash", () => {

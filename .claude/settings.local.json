@@ -26,7 +26,11 @@
       "Bash(DEBUG_TEST_SERVER=1 node --test --test-reporter=spec --import ./test/helpers/setup-env.js test/sessions-crud.integration.js)",
       "Bash(diwa:*)",
       "Bash(lsof -ti:3001 -ti:3002)",
-      "Bash(lsof -i:3099)"
+      "Bash(lsof -i:3099)",
+      "Bash(sipag --help)",
+      "Bash(sipag board:*)",
+      "Bash(bin/katulong-stage stop:*)",
+      "Bash(bin/katulong-stage start:*)"
     ]
   }
 }
