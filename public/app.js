@@ -1058,10 +1058,13 @@
     function removeFocusedSessionFromUI() {
       const name = state.session.name;
       if (!name) return { name: null, hasNext: false };
+      // Capture currentId BEFORE switchSession — otherwise getFocusedCard()
+      // would return the neighbor we just moved to and we'd remove the
+      // wrong card from the carousel.
+      const currentId = carousel.isActive() ? (carousel.getFocusedCard() || name) : name;
       const next = pickRightNeighbor(name);
       if (next) switchSession(next);
       if (carousel.isActive()) {
-        const currentId = carousel.getFocusedCard() || name;
         carousel.removeCard(currentId);
       } else {
         windowTabSet.removeTab(name);
