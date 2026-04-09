@@ -532,7 +532,13 @@
         // unsubscribe. Sending `unsubscribe` with a tile ID like
         // `file-browser-abc` used to produce a spurious server-side
         // unsubscribe for a session that never existed.
-        if (tile && tile.type !== "terminal") return;
+        if (tile && tile.type !== "terminal") {
+          // Mirror the add path: since non-terminal tiles bypass
+          // windowTabSet, we must push a bar re-render manually so the
+          // now-removed tab actually disappears from the tab strip.
+          if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
+          return;
+        }
         const sessionName = tileSessionName(tileId);
         // Detach: remove from this window's tab set (session stays on server)
         if (windowTabSet) windowTabSet.removeTab(sessionName);
@@ -1697,6 +1703,12 @@
         carousel.addCard(tileId, tile, insertAtRightOfActive());
         carousel.focusCard(tileId);
       }
+      // Non-terminal tiles don't participate in windowTabSet, which is
+      // what normally triggers a shortcut-bar re-render. Without this
+      // explicit nudge, the new file-browser tile is invisible in the
+      // tab bar — no tab element, no right-click menu, nothing. The
+      // carousel has the card; the bar just hasn't learned about it.
+      if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 

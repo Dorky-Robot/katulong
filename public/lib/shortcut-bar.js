@@ -771,13 +771,15 @@ export function createShortcutBar(options = {}) {
     tab.setAttribute("aria-label", `Session: ${s.name}`);
 
     const iconEl = document.createElement("i");
-    iconEl.className = `ph ph-${iconForSession(s.name)}`;
+    // Non-terminal tiles provide their own icon via getSessionList shim.
+    iconEl.className = `ph ph-${s.icon || iconForSession(s.name)}`;
     tab.appendChild(iconEl);
 
     const nameSpan = document.createElement("span");
     nameSpan.className = "tab-label";
-    nameSpan.textContent = s.name;
-    nameSpan.dataset.fullName = s.name;
+    const displayLabel = s.label || s.name;
+    nameSpan.textContent = displayLabel;
+    nameSpan.dataset.fullName = displayLabel;
     tab.appendChild(nameSpan);
 
     // Double-click to rename
@@ -829,7 +831,25 @@ export function createShortcutBar(options = {}) {
     // Carousel is the source of truth for visual order when active
     const tabNames = carousel?.isActive() ? carousel.getCards() : windowTabSet.getTabs();
     const sessionMap = new Map(allSessions.map(s => [s.name, s]));
-    return tabNames.map(n => sessionMap.get(n) || { name: n }).filter(Boolean);
+    return tabNames.map(n => {
+      const existing = sessionMap.get(n);
+      if (existing) return existing;
+      // Non-terminal tile (e.g. file-browser): synthesize a session-like
+      // entry from the tile's own getTitle/getIcon. The tab bar doesn't
+      // know about tile types; branding a tile-specific label/icon via
+      // this shim keeps the unified tab render path working without
+      // teaching it the tile taxonomy.
+      const tile = carousel?.getTile?.(n);
+      if (tile) {
+        return {
+          name: n,
+          label: typeof tile.getTitle === "function" ? tile.getTitle() : n,
+          icon: typeof tile.getIcon === "function" ? tile.getIcon() : null,
+          tileType: tile.type || null,
+        };
+      }
+      return { name: n };
+    }).filter(Boolean);
   }
 
   function _renderIPadBar(sessionName, sessions) {
