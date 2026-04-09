@@ -16,8 +16,14 @@ import { createSessionStatusWatcher } from "../session-status-watcher.js";
  *
  * @param {object} deps
  * @param {object} deps.terminalPool — the terminal pool instance
- * @param {object} [deps.carousel] — carousel instance (for setBackTile)
  * @returns {(options: { sessionName: string }) => TilePrototype}
+ *
+ * Note: this factory intentionally does NOT receive the carousel. The
+ * previous `a carousel dep` lazy-getter (removed in Tier 1 T1a) was a
+ * confession of circular wiring — the carousel creates the tile, then
+ * the tile reached back up into the carousel to register a back face.
+ * The replacement is `ctx.faceStack`, which the container (carousel)
+ * hands to the tile at mount time. See docs/tile-clusters-design.md.
  */
 export function createTerminalTileFactory(deps) {
   const { terminalPool } = deps;
@@ -68,11 +74,16 @@ export function createTerminalTileFactory(deps) {
         // its own interval. See public/lib/session-status-watcher.js.
         watcher = createSessionStatusWatcher({ sessionName: currentSessionName });
 
-        // ── Register dashboard back-face ───────────────────────────
-        const carousel = deps.carousel;
-        if (carousel) {
+        // ── Register dashboard back-face via faceStack ─────────────
+        // `ctx.faceStack` is the container-provided affordance that
+        // replaced `a carousel dep.setBackTile` in Tier 1 T1a. The tile
+        // doesn't know or care whether the container is a carousel, an
+        // exposé pack, or a Level 2 mini-strip — it just says "here's
+        // my secondary face, show it when I tell you to".
+        const faceStack = ctx?.faceStack;
+        if (faceStack) {
           backTile = createDashboardBackTile({ sessionName: currentSessionName, watcher });
-          carousel.setBackTile(currentSessionName, backTile);
+          faceStack.setSecondary(backTile);
         }
 
         // ── Auto-flip on child process exit ────────────────────────
@@ -81,22 +92,28 @@ export function createTerminalTileFactory(deps) {
         // if still idle. The debounce absorbs brief pauses between
         // commands. The watcher's own destroyed guard covers the fetch
         // side; the `destroyed` flag here covers the setTimeout side.
+        //
+        // The `destroyed` guard remains load-bearing even though the
+        // tile now owns its affordance cleanly: the 1.5s debounce and
+        // the re-poll inside it are both async hops that can land
+        // after unmount(). Removing the guard would let a late
+        // setTimeout flip a stale faceStack reference.
         watcherUnsubscribe = watcher.subscribe((event) => {
           if (destroyed) return;
           if (!event.transitions?.idle) return;
-          if (!carousel || carousel.isFlipped(currentSessionName)) return;
+          if (!faceStack || faceStack.isShowingSecondary()) return;
           if (autoFlipTimer) clearTimeout(autoFlipTimer);
           autoFlipTimer = setTimeout(() => {
             if (destroyed) return;
-            if (carousel.isFlipped(currentSessionName)) return;
+            if (faceStack.isShowingSecondary()) return;
             // Re-check via an immediate poll so we don't flip on a
             // momentary pause between commands. If that poll reports
             // child processes are back, the flip is cancelled.
             watcher.poll().then(() => {
               if (destroyed) return;
-              if (carousel.isFlipped(currentSessionName)) return;
+              if (faceStack.isShowingSecondary()) return;
               if (backTile?.addEvent) backTile.addEvent("Agent work completed");
-              carousel.flipCard(currentSessionName, true);
+              faceStack.showSecondary(true);
             }).catch(() => {});
           }, 1500);
         });

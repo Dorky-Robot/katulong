@@ -351,14 +351,16 @@
     const getSearchAddon = () => terminalPool.getActive()?.searchAddon;
 
     // --- Tile Factories ---
-    // terminalDeps uses a getter for carousel since it's created after the factories.
     // Two factories, no registry: terminals and clusters (grids of terminals).
     // The generic tile plugin system was removed — these are the only tile
     // kinds katulong ships, and both are owned by app.js directly.
-    const terminalDeps = {
-      terminalPool,
-      get carousel() { return carousel; },
-    };
+    //
+    // Note: terminalDeps used to carry a `get carousel()` lazy getter so
+    // the tile could reach back into the container for setBackTile/flipCard.
+    // That circular wiring was removed in Tier 1 T1a — the carousel now
+    // exposes `ctx.faceStack` to tiles at mount time. See
+    // docs/tile-clusters-design.md and public/lib/tiles/terminal-tile.js.
+    const terminalDeps = { terminalPool };
     const terminalTileFactory = createTerminalTileFactory(terminalDeps);
     const clusterTileFactory = createClusterTileFactory({
       createTerminalTile: (options) => terminalTileFactory(options),

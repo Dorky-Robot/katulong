@@ -517,7 +517,25 @@ export function createCardCarousel({
 
   // ── Tile context builder ────────────────────────────────────────────
 
-  /** Build a TileContext for a tile, including chrome and flip access. */
+  /** Build a TileContext for a tile, including chrome and faceStack access.
+   *
+   * `ctx.faceStack` is the tile-facing abstraction that replaced the
+   * previous `deps.carousel.{setBackTile,flipCard,isFlipped}` reach-around
+   * (see Tier 1 T1a, docs/tile-clusters-design.md). It exposes a minimal
+   * "this tile may have a secondary face" affordance:
+   *
+   *   setSecondary(tile)     — attach/replace the back-face tile
+   *   showSecondary(bool)    — flip to the secondary face (true) or primary (false)
+   *   isShowingSecondary()   — is the back face currently visible?
+   *
+   * Shaped deliberately to be additive for T2c (face-stack-of-N). Today
+   * there are only two faces (primary + secondary), so the API stays
+   * boolean; when N>2 lands, `setSecondary` will gain index-aware siblings
+   * without breaking existing callers. The terminal tile uses this to
+   * drive its auto-flip-on-idle behavior without ever touching
+   * deps.carousel — which kills the circular wiring that app.js used to
+   * plumb via a lazy getter.
+   */
   function buildTileContext(tileId, tile, entry) {
     const base = createTileContext ? createTileContext(tileId, tile) : { tileId };
     // Determine which chrome this tile is mounted in
@@ -525,6 +543,11 @@ export function createCardCarousel({
     return {
       ...base,
       flip: () => flipCard(tileId),
+      faceStack: {
+        setSecondary: (secondary) => setBackTile(tileId, secondary),
+        showSecondary: (show) => flipCard(tileId, show),
+        isShowingSecondary: () => isFlipped(tileId),
+      },
       get chrome() {
         // Return the chrome for whichever face this tile is on
         return isFront ? entry.frontChrome?.chrome : entry.backChrome?.chrome;
@@ -886,9 +909,6 @@ export function createCardCarousel({
     fitAll,
     save,
     restore,
-    setBackTile,
-    flipCard,
-    isFlipped,
     setMode,
     getMode,
   };
