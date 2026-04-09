@@ -37,6 +37,14 @@ export function createFileBrowserTileFactory(_deps = {}) {
     const tile = {
       type: "file-browser",
 
+      // File browsers have no server-backed state, so "persist across
+      // reload" would resurrect an empty tile for no reason. Opt out of
+      // carousel persistence via this capability flag — the carousel's
+      // save() filters on it. Tier 2 will fold this into a broader
+      // capability snapshot; for now a single boolean keeps the opt-out
+      // one line per tile kind. See docs/tile-clusters-design.md.
+      persistable: false,
+
       get sessionName() { return sessionName; },
       get cwd() { return currentCwd; },
 

@@ -445,8 +445,16 @@
     }
 
     // --- Card Carousel (iPad/tablet) ---
+    // Tile types that opt out of carousel persistence. Keep in lockstep
+    // with `persistable: false` on the tile prototype — the carousel's
+    // save() path filters on the instance flag, but restore() only has
+    // the serialized type string to work with, so the type-side
+    // opt-out lives here at the host. One entry per ephemeral tile
+    // kind; Tier 2 replaces this with a polymorphic capability snapshot.
+    const NON_PERSISTABLE_TILE_TYPES = new Set(["file-browser"]);
     const carousel = createCardCarousel({
       container: document.getElementById("terminal-container"),
+      isTypePersistable: (type) => !NON_PERSISTABLE_TILE_TYPES.has(type),
       createTileContext: (tileId, _tile) => ({
         tileId,
         sendWs(msg) {

@@ -26,12 +26,39 @@ const STORAGE_KEY = "katulong-carousel";
 // oldest-first on save, keeping the most recently focused cards.
 const MAX_PERSISTED_CARDS = 50;
 
+/**
+ * Is the given tile instance persistable across page reloads?
+ *
+ * Tile persistence is a *capability*, not a default. A tile opts out of
+ * persistence by setting `persistable: false` on its prototype. Today
+ * the file-browser tile is the only opt-out — it has no tmux-backed
+ * state, so "remember across reload" would just resurrect an empty
+ * pane for no reason. Terminal and cluster tiles omit the flag and
+ * default to persistable, preserving prior behavior.
+ *
+ * Tier 2 will generalize this to a richer capability snapshot emitted
+ * by the tile prototype; until then, a single boolean at the save /
+ * restore seam keeps the opt-out one-line per tile kind.
+ */
+function isTilePersistable(tile) {
+  return tile?.persistable !== false;
+}
+
 export function createCardCarousel({
   container,
   onFocusChange,
   onCardDismissed,
   onAllCardsDismissed,
   createTileContext,
+  /**
+   * Optional predicate for the *restore* path: given a tile type string
+   * from persisted JSON, should we rebuild it? Save() already filters
+   * non-persistable tiles from being written, but users upgrading from
+   * a buggy build may have stale entries in their localStorage. This
+   * hook lets the host (app.js) drop them on read so nobody has to
+   * manually clear their storage. Defaults to "yes, restore everything".
+   */
+  isTypePersistable = () => true,
 }) {
   let active = false;
   let cards = [];             // ordered tile IDs
@@ -48,22 +75,34 @@ export function createCardCarousel({
 
   function save() {
     try {
-      if (active && cards.length > 0) {
+      // Filter out non-persistable tiles (e.g. file-browser). Persistence
+      // is a capability the tile opts into by omitting `persistable:
+      // false`. Doing the filter at the top of save() — not inside the
+      // map — means the MAX_PERSISTED_CARDS cap below is computed over
+      // *persistable* cards, so a window full of ephemeral file-browser
+      // tiles can't push real terminal tabs out of the cap.
+      const persistableCards = cards.filter(id => {
+        const entry = cardEls.get(id);
+        return entry && isTilePersistable(entry.tile);
+      });
+      if (active && persistableCards.length > 0) {
         // Cap: if we're somehow above MAX_PERSISTED_CARDS, drop the oldest
         // entries (beginning of the array) and keep the most recent. The
         // focused card is promoted to the kept tail so user focus is never
         // the one thrown away. This is defensive — the UI shouldn't
         // normally mount this many cards, but phantom-leak bugs can push
         // past it, and the cap keeps one bad boot from cascading forever.
-        let toPersist = cards;
-        if (cards.length > MAX_PERSISTED_CARDS) {
-          const overflow = cards.length - MAX_PERSISTED_CARDS;
+        let toPersist = persistableCards;
+        if (toPersist.length > MAX_PERSISTED_CARDS) {
+          const overflow = toPersist.length - MAX_PERSISTED_CARDS;
           console.warn(
-            `[carousel] ${cards.length} cards exceeds persist cap ` +
+            `[carousel] ${toPersist.length} cards exceeds persist cap ` +
             `${MAX_PERSISTED_CARDS}; dropping ${overflow} oldest entries from storage`
           );
-          toPersist = cards.slice(-MAX_PERSISTED_CARDS);
-          if (focusedId && !toPersist.includes(focusedId) && cards.includes(focusedId)) {
+          toPersist = toPersist.slice(-MAX_PERSISTED_CARDS);
+          // Promote focused card to the kept tail only if it's itself
+          // persistable — otherwise we'd be writing a non-persistable id.
+          if (focusedId && !toPersist.includes(focusedId) && persistableCards.includes(focusedId)) {
             toPersist = [focusedId, ...toPersist.slice(0, -1)];
           }
         }
@@ -81,9 +120,17 @@ export function createCardCarousel({
           }
           return base;
         }).filter(Boolean);
+        // Only persist `focused` if it's actually in the serialized set.
+        // Focusing a non-persistable tile (e.g. a file browser) should
+        // not leave a dangling focused id pointing at nothing after
+        // reload — restore() would try to focus a tile it didn't
+        // rebuild and fall back to the first tile silently, which
+        // works but looks like a bug.
+        const persistedIds = new Set(serialized.map(s => s.id));
+        const persistedFocus = persistedIds.has(focusedId) ? focusedId : null;
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
           cards: serialized,
-          focused: focusedId,
+          focused: persistedFocus,
         }));
       } else {
         localStorage.removeItem(STORAGE_KEY);
@@ -149,7 +196,17 @@ export function createCardCarousel({
       };
     }
 
-    return { tiles: rawCards, focused: state.focused };
+    // Storage migration: drop any entry whose tile type is known to be
+    // non-persistable. A previous (buggy) build wrote file-browser
+    // tiles into localStorage; users on that build shouldn't have to
+    // manually clear their storage to stop seeing a phantom file
+    // browser on every reload. Idempotent — runs every restore, drops
+    // zero entries once the storage is clean.
+    const tiles = rawCards.filter(c => isTypePersistable(c?.type));
+    const focused = tiles.some(c => (typeof c === "string" ? c : c?.id) === state.focused)
+      ? state.focused
+      : null;
+    return { tiles, focused };
   }
 
   /**
