@@ -1042,15 +1042,27 @@
      * current card and we pick the correct right-neighbor — otherwise
      * idx falls to -1 and `next` collapses to tabs[0] (the first tile).
      */
+    // Pick the right neighbor of `id` in the current tab/carousel order,
+    // falling back to the previous tile if `id` is the last one. Returns
+    // null if there is no neighbor (single tile, or id not found). Shared
+    // by the explicit close path (Option+W) and the reactive session-
+    // removed path so both land focus on the same tile.
+    function pickRightNeighbor(id) {
+      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
+      const currentId = carousel.isActive() ? (carousel.getFocusedCard() || id) : id;
+      const idx = tabs.indexOf(currentId);
+      if (tabs.length <= 1 || idx === -1) return null;
+      return tabs[idx === tabs.length - 1 ? idx - 1 : idx + 1];
+    }
+
     function removeFocusedSessionFromUI() {
       const name = state.session.name;
       if (!name) return { name: null, hasNext: false };
-      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
+      // Capture currentId BEFORE switchSession — otherwise getFocusedCard()
+      // would return the neighbor we just moved to and we'd remove the
+      // wrong card from the carousel.
       const currentId = carousel.isActive() ? (carousel.getFocusedCard() || name) : name;
-      const idx = tabs.indexOf(currentId);
-      const next = tabs.length > 1 && idx !== -1
-        ? tabs[idx === tabs.length - 1 ? idx - 1 : idx + 1]
-        : null;
+      const next = pickRightNeighbor(name);
       if (next) switchSession(next);
       if (carousel.isActive()) {
         carousel.removeCard(currentId);
@@ -1812,22 +1824,18 @@
         // for sessions killed while we were offline; this path covers the
         // live case where the server pushes us a session-removed event.
         const wasFocused = state.session.name === name;
+        // Pick the right-neighbor BEFORE tearing down, so the carousel
+        // order still contains this tile. Shared with Option+W close so
+        // typing `exit` and pressing Option+W land focus on the same tile
+        // (see PR #543 — fix only covered the Option+W path originally).
+        const next = wasFocused ? pickRightNeighbor(name) : null;
         removeDeadSession(name);
         if (!wasFocused) return;
-        // The focused session is gone — route to another or clear the page.
-        fetch("/sessions").then(r => {
-          if (!r.ok) throw new Error(`/sessions returned ${r.status}`);
-          return r.json();
-        }).then(allSessions => {
-          const sessions = allSessions.filter(s => s.name !== name);
-          if (sessions.length > 0) {
-            switchSession(sessions[0].name);
-          } else {
-            clearFocusedSessionUI();
-          }
-        }).catch(() => {
+        if (next) {
+          switchSession(next);
+        } else {
           clearFocusedSessionUI();
-        });
+        }
       },
       poolRename: (oldName, newName) => terminalPool.rename(oldName, newName),
       tabRename: (oldName, newName) => windowTabSet.renameTab(oldName, newName),
