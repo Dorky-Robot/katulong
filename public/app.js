@@ -1033,14 +1033,20 @@
     function closeCurrentSession() {
       const name = state.session.name;
       if (!name) return;
+      // For clusters, the focused card id is NOT the session name (the
+      // cluster's sessionName getter aliases its first sub-tile). Use the
+      // carousel's actual focused id when active so indexOf finds the
+      // current card and we pick the correct right-neighbor — otherwise
+      // idx falls to -1 and `next` collapses to tabs[0] (the first tile).
       const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-      const idx = tabs.indexOf(name);
-      const next = tabs.length > 1
+      const currentId = carousel.isActive() ? (carousel.getFocusedCard() || name) : name;
+      const idx = tabs.indexOf(currentId);
+      const next = tabs.length > 1 && idx !== -1
         ? tabs[idx === tabs.length - 1 ? idx - 1 : idx + 1]
         : null;
       if (next) switchSession(next);
       if (carousel.isActive()) {
-        carousel.removeCard(name);
+        carousel.removeCard(currentId);
       } else {
         windowTabSet.removeTab(name);
         wsConnection.sendUnsubscribe(name);
@@ -1056,15 +1062,17 @@
     async function killCurrentSession() {
       const name = state.session.name;
       if (!name) return;
+      // See closeCurrentSession — clusters' focused card id != session name.
       const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-      const idx = tabs.indexOf(name);
-      const next = tabs.length > 1
+      const currentId = carousel.isActive() ? (carousel.getFocusedCard() || name) : name;
+      const idx = tabs.indexOf(currentId);
+      const next = tabs.length > 1 && idx !== -1
         ? tabs[idx === tabs.length - 1 ? idx - 1 : idx + 1]
         : null;
       if (next) switchSession(next);
       // Remove from UI immediately
       if (carousel.isActive()) {
-        carousel.removeCard(name);
+        carousel.removeCard(currentId);
       } else {
         windowTabSet.removeTab(name);
         wsConnection.sendUnsubscribe(name);
