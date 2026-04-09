@@ -124,6 +124,21 @@ describe("ScreenState", () => {
       assert.strictEqual(await screen.serialize(), "");
     });
 
+    it("returns empty string without throwing when disposed mid-flush", async () => {
+      // Regression: after `await this.flush()` returns true, a concurrent
+      // dispose() can null `this._term` before we reach the _core access
+      // in the DECSTBM path. Without a post-await null guard on `term`,
+      // this races into a TypeError. Simulate by kicking off serialize()
+      // and disposing synchronously before the microtask resolves.
+      const screen = new ScreenState();
+      screen.write("some content");
+      const promise = screen.serialize();
+      screen.dispose();
+      const result = await promise;
+      assert.strictEqual(result, "",
+        "serialize() must resolve to '' (not throw) if dispose races the flush");
+    });
+
     it("appends DECSTBM when the active buffer has a non-default scroll region", async () => {
       // Regression: SerializeAddon does not emit DECSTBM, so TUI apps that
       // pin a footer via scroll margins (notably Claude Code) lose the region
