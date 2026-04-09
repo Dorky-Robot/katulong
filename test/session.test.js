@@ -583,6 +583,53 @@ describe("Session", () => {
         "deferred resize must apply after RESIZE_MAX_DEFER_MS even when output never idles");
     });
 
+    it("force:true bypasses the idle gate and applies immediately (regression)", () => {
+      // Past bug: tracker.attach() called session.resize() while output was
+      // flowing. The gate deferred the SIGWINCH; attachClient() then ran
+      // session.snapshot() which serialized the headless at the OLD dims.
+      // The client rendered the snapshot at the NEW dims and absolute cursor
+      // escapes (\e[row;colH) landed on wrong cells, leaving fragments
+      // stranded in columns the next repaint never touched. Resizing the
+      // tile masked it because a fresh SIGWINCH triggered a full redraw.
+      // Lifecycle events (attach, active-client promotion) need to bypass
+      // the gate so the snapshot dims match the consumer's render dims.
+      const { session, mockProc } = createSimpleTestSession("test");
+
+      // Output is actively flowing — without force, the gate would defer.
+      session._lastOutputAt = Date.now();
+      session.resize(100, 40, { force: true });
+
+      assert.ok(mockProc.stdin.written.some(cmd =>
+        cmd.includes("refresh-client -C 100x40")
+      ), "force:true must bypass the idle gate");
+      assert.strictEqual(session._screen.cols, 100,
+        "headless screen dims must update synchronously so a snapshot " +
+        "taken right after resize() reflects the new dims");
+      assert.strictEqual(session._screen.rows, 40);
+      assert.strictEqual(session._resizeTimer, null,
+        "force should clear any pending deferred timer");
+      assert.strictEqual(session._resizeDeadline, 0,
+        "force should clear the deferral deadline");
+    });
+
+    it("force:true cancels a pending deferred resize (regression)", () => {
+      // If a gated resize is already queued and a lifecycle event then
+      // forces a different size, the queued one must not fire later and
+      // clobber the forced dims. Verify the timer is cleared.
+      const { session } = createSimpleTestSession("test");
+
+      session._lastOutputAt = Date.now();
+      session.resize(80, 24); // queued behind the gate
+      assert.ok(session._resizeTimer !== null, "first call should defer");
+
+      session.resize(100, 40, { force: true });
+
+      assert.strictEqual(session._resizeTimer, null,
+        "force should clear the previously queued timer");
+      assert.strictEqual(session._screen.cols, 100);
+      assert.strictEqual(session._screen.rows, 40);
+    });
+
     it("first resize after construction is gated by initial _lastOutputAt (regression)", () => {
       // Past bug: _lastOutputAt = 0 in the constructor meant the very
       // first resize saw sinceLast = Date.now() (a huge number) and fired
