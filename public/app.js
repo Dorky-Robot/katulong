@@ -516,6 +516,10 @@
           }
           return;
         }
+        // File-browser tiles are views over a session, not owners.
+        // Dismissing one must not unsubscribe the real terminal session.
+        // Regression: #542 (545b110) — see test/file-browser-dismiss.test.js.
+        if (tile?.type === "file-browser") return;
         const sessionName = tileSessionName(tileId);
         // Detach: remove from this window's tab set (session stays on server)
         if (windowTabSet) windowTabSet.removeTab(sessionName);
