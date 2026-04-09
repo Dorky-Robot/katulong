@@ -35,6 +35,7 @@
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
     import { createCardCarousel } from "/lib/card-carousel.js";
+    import { createPinchGesture } from "/lib/pinch-gesture.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
     import { createClusterTileFactory } from "/lib/tiles/cluster-tile.js";
     import { createFileBrowserTileFactory } from "/lib/tiles/file-browser-tile.js";
@@ -532,6 +533,44 @@
         sessionStorage.setItem("katulong-empty-state", "1");
       },
     });
+
+    // ── Pinch-to-expose gesture ──────────────────────────────────────
+    //
+    // Step 1 of the tile-clusters design: pinch is the zoom verb.
+    // Pinch-out morphs the carousel into exposé (all tiles visible at
+    // once); pinch-in returns to carousel. Once Level 2 (cluster
+    // overview) exists this same gesture will carry through to it —
+    // the commit thresholds below are intentionally conservative so
+    // they can be re-framed as "level change" without rewriting.
+    //
+    // Commit thresholds: we only switch mode on gesture end, and only
+    // if the final scale crossed ~15%. Mid-gesture we do NOT live-morph
+    // — that would require interpolating transforms per frame while
+    // dodging the running CSS transition, which in turn means reading
+    // offsetWidth mid-animation (the exact trap called out in
+    // positionCards's cachedCardW comment). A discrete commit-on-end
+    // is simpler, passes tests, and still feels gestural because the
+    // subsequent CSS transition is fast (350ms). Live interpolation
+    // can be layered on later without changing this contract.
+    const pinchCommitOut = 1.15; // >= this at end => carousel -> expose
+    const pinchCommitIn  = 0.87; // <= this at end => expose -> carousel
+    const pinchTarget = document.getElementById("terminal-container");
+    if (pinchTarget) {
+      const pinch = createPinchGesture({
+        target: pinchTarget,
+        onPinch: ({ scale, phase }) => {
+          if (!carousel.isActive()) return;
+          if (phase !== "end") return;
+          const cur = carousel.getMode();
+          if (cur === "carousel" && scale >= pinchCommitOut) {
+            carousel.setMode("expose");
+          } else if (cur === "expose" && scale <= pinchCommitIn) {
+            carousel.setMode("carousel");
+          }
+        },
+      });
+      pinch.attach();
+    }
 
     /** Subscribe all carousel terminal tiles to WS output.
      *  ALL tiles need subscriptions — including the focused one — because

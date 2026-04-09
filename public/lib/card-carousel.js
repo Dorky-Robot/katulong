@@ -38,6 +38,12 @@ export function createCardCarousel({
   let focusedId = null;
   const cardEls = new Map();  // tileId -> { wrapper, frontFace, backFace, tile, backTile, context, flipped, resizeHandles }
 
+  // View mode: "carousel" (default, horizontal strip) or "expose" (grid
+  // of all tiles, macOS-Expose-style). Switching between them morphs the
+  // same DOM elements via transform transitions — no teardown / rebuild.
+  // See docs/tile-clusters-design.md Step 1 for the mental model.
+  let mode = "carousel";
+
   // ── Persistence ──────────────────────────────────────────────────────
 
   function save() {
@@ -332,6 +338,7 @@ export function createCardCarousel({
 
   function positionCards(animate = true, focusedWidth) {
     if (!focusedId) return;
+    if (mode === "expose") { positionExpose(animate); return; }
     const focusedIdx = cards.indexOf(focusedId);
     if (focusedIdx === -1) return;
 
@@ -396,6 +403,118 @@ export function createCardCarousel({
     }
   }
 
+  // ── Exposé layout ────────────────────────────────────────────────────
+  //
+  // Grid-packs every card so all tiles are visible at once. Same DOM
+  // elements as carousel — we only change the target transform. Each
+  // `.carousel-card` is absolutely positioned with `left:50%` plus a
+  // negative `margin-left` that centers the card on the container's
+  // horizontal axis; its natural position is therefore the container
+  // center. Exposé positions are expressed as a translate *away from
+  // that center point* plus a uniform scale, which lets the existing
+  // `transition: transform` rule handle the morph with no layout change.
+  //
+  // This IS the FLIP technique's "play" phase. Full FLIP (measure
+  // first/last, invert-transform, transition to identity) is only
+  // necessary when layout flow actually changes between states.
+  // Katulong's carousel already positions via `transform` at all times,
+  // so the first and last DOM positions are identical — only the
+  // transform value changes. Swapping target transforms across a
+  // transition gives visually identical results to a full FLIP pass
+  // without the forced-reflow cost of getBoundingClientRect().
+  //
+  // Packing: simple row-major grid with ceil(sqrt(n)) columns. The
+  // existing tile chrome is reused as-is — tiles shrink proportionally
+  // via scale() rather than reflowing their contents, which sidesteps
+  // the "multiple terminal dimensions" trap called out in CLAUDE.md
+  // (PTYs only have one size; reflowing a TUI to a mini-cell and back
+  // would garble it). Since we only scale, tmux is never notified and
+  // the underlying terminal keeps its real dims. resize() is therefore
+  // deliberately NOT called on exposé entry/exit.
+  function computeExposeCells() {
+    const n = cards.length;
+    if (n === 0) return new Map();
+    const cw = container.offsetWidth || 800;
+    const ch = container.offsetHeight || 600;
+    const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
+    const rows = Math.max(1, Math.ceil(n / cols));
+    // Pack more tightly than macOS Exposé (per design doc): small
+    // outer padding, small inter-cell gap.
+    const pad = 24;
+    const gap = 16;
+    const cellW = (cw - 2 * pad - (cols - 1) * gap) / cols;
+    const cellH = (ch - 2 * pad - (rows - 1) * gap) / rows;
+
+    const cells = new Map();
+    for (let i = 0; i < cards.length; i++) {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      // Cell center relative to container top-left.
+      const cellCx = pad + col * (cellW + gap) + cellW / 2;
+      const cellCy = pad + row * (cellH + gap) + cellH / 2;
+      // Card natural center (before any transform) = container center
+      // horizontally + (top inset + height/2) vertically. We don't know
+      // the exact card rendered size without a measurement, but we
+      // only need the *delta* from natural center to target cell, so
+      // expressing the translate in viewport/container coords and
+      // letting the scale() shrink the chrome works regardless.
+      const dx = cellCx - cw / 2;
+      // Natural vertical center: card occupies top:var(--card-inset-top)
+      // to bottom:var(--card-inset-bottom), i.e. ~ch/2 in practice.
+      const dy = cellCy - ch / 2;
+
+      // Scale to fit: compare cell size to the card's natural size.
+      // We use cardWidthOf() for width and approximate natural height
+      // as (ch - insets). defaultCardGap has the inset values baked
+      // into CSS; reading offsetHeight here would force reflow, so
+      // approximate conservatively.
+      const naturalW = cardWidthOf(cards[i]);
+      const naturalH = Math.max(200, ch - 16); // matches --card-inset-*
+      const scale = Math.min(cellW / naturalW, cellH / naturalH, 1);
+
+      cells.set(cards[i], { dx, dy, scale });
+    }
+    return cells;
+  }
+
+  function positionExpose(animate = true) {
+    if (!defaultCardW) computeDefaultCardWidth();
+    const cells = computeExposeCells();
+
+    for (const [id, { wrapper }] of cardEls) {
+      const cell = cells.get(id);
+      if (!cell) continue;
+      if (!animate) wrapper.style.transition = "none";
+      wrapper.style.transform =
+        `translate(${cell.dx}px, ${cell.dy}px) scale(${cell.scale})`;
+      // In exposé every card must be visible — carousel hides cards
+      // more than 2 steps away from focus for perf, but that rule is
+      // nonsense at this zoom level.
+      wrapper.classList.remove("carousel-hidden");
+      wrapper.classList.toggle("focused", id === focusedId);
+      if (!animate) {
+        wrapper.offsetHeight;
+        requestAnimationFrame(() => { wrapper.style.transition = ""; });
+      }
+    }
+  }
+
+  /**
+   * Switch view mode. Same DOM elements morph between carousel and
+   * exposé layouts via their existing transform transition. The caller
+   * (pinch gesture controller) decides when to commit; this function
+   * is the cheap atomic switch.
+   */
+  function setMode(next) {
+    if (next !== "carousel" && next !== "expose") return;
+    if (mode === next) return;
+    mode = next;
+    container.dataset.mode = next;
+    positionCards(true);
+  }
+
+  function getMode() { return mode; }
+
   // ── Tile context builder ────────────────────────────────────────────
 
   /** Build a TileContext for a tile, including chrome and flip access. */
@@ -450,6 +569,7 @@ export function createCardCarousel({
     }
 
     container.dataset.carousel = "true";
+    container.dataset.mode = mode;
     positionCards(false);
     save();
 
@@ -480,6 +600,8 @@ export function createCardCarousel({
 
     // Remove card wrappers
     delete container.dataset.carousel;
+    delete container.dataset.mode;
+    mode = "carousel";
     for (const el of [...container.querySelectorAll(".carousel-card")]) {
       el.remove();
     }
@@ -767,5 +889,7 @@ export function createCardCarousel({
     setBackTile,
     flipCard,
     isFlipped,
+    setMode,
+    getMode,
   };
 }
