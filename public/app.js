@@ -1030,14 +1030,21 @@
       shortcutBarInstance.beginRename(name);
     }
 
-    function closeCurrentSession() {
+    /**
+     * Tear down the focused session's UI: pick a neighbor to switch to,
+     * remove the card/tab, dispose the pooled terminal, and show the add
+     * menu if nothing's left. Returns whether a neighbor was activated, so
+     * callers can branch on "last tab closed".
+     *
+     * For clusters, the focused card id is NOT the session name (the
+     * cluster's sessionName getter aliases its first sub-tile). Use the
+     * carousel's actual focused id when active so indexOf finds the
+     * current card and we pick the correct right-neighbor — otherwise
+     * idx falls to -1 and `next` collapses to tabs[0] (the first tile).
+     */
+    function removeFocusedSessionFromUI() {
       const name = state.session.name;
-      if (!name) return;
-      // For clusters, the focused card id is NOT the session name (the
-      // cluster's sessionName getter aliases its first sub-tile). Use the
-      // carousel's actual focused id when active so indexOf finds the
-      // current card and we pick the correct right-neighbor — otherwise
-      // idx falls to -1 and `next` collapses to tabs[0] (the first tile).
+      if (!name) return { name: null, hasNext: false };
       const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
       const currentId = carousel.isActive() ? (carousel.getFocusedCard() || name) : name;
       const idx = tabs.indexOf(currentId);
@@ -1052,41 +1059,24 @@
         wsConnection.sendUnsubscribe(name);
       }
       terminalPool.dispose(name);
-      // Last tab closed — show the add session menu
       if (!next && shortcutBarInstance) {
         const addBtn = document.querySelector(".ipad-add-btn, .tab-add-btn");
         shortcutBarInstance.showAddMenu(addBtn);
       }
+      return { name, hasNext: !!next };
+    }
+
+    function closeCurrentSession() {
+      removeFocusedSessionFromUI();
     }
 
     async function killCurrentSession() {
-      const name = state.session.name;
+      const { name } = removeFocusedSessionFromUI();
       if (!name) return;
-      // See closeCurrentSession — clusters' focused card id != session name.
-      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-      const currentId = carousel.isActive() ? (carousel.getFocusedCard() || name) : name;
-      const idx = tabs.indexOf(currentId);
-      const next = tabs.length > 1 && idx !== -1
-        ? tabs[idx === tabs.length - 1 ? idx - 1 : idx + 1]
-        : null;
-      if (next) switchSession(next);
-      // Remove from UI immediately
-      if (carousel.isActive()) {
-        carousel.removeCard(currentId);
-      } else {
-        windowTabSet.removeTab(name);
-        wsConnection.sendUnsubscribe(name);
-      }
-      terminalPool.dispose(name);
       // Kill on server (best-effort — may fail if disconnected)
       try {
         await api.delete(`/sessions/${encodeURIComponent(name)}`);
       } catch { /* disconnected or already dead — that's fine */ }
-      // Last tab — show add menu
-      if (!next && shortcutBarInstance) {
-        const addBtn = document.querySelector(".ipad-add-btn, .tab-add-btn");
-        shortcutBarInstance.showAddMenu(addBtn);
-      }
     }
 
     function toggleKeyboardHelp() {
