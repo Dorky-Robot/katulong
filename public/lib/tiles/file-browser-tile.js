@@ -40,7 +40,7 @@ export function createFileBrowserTileFactory(_deps = {}) {
       get sessionName() { return sessionName; },
       get cwd() { return currentCwd; },
 
-      mount(el, _ctx) {
+      mount(el, ctx) {
         container = el;
         // Mount the component directly onto the tile-chrome content
         // element. Previously a wrapper <div> existed to protect
@@ -49,10 +49,14 @@ export function createFileBrowserTileFactory(_deps = {}) {
         // "file-browser"`. Tier 1 T1b fixed the component to own a
         // `.fb-root` child, so the wrapper is no longer needed.
         component = createFileBrowserComponent(store, {
-          // Overlay had an onClose that called toggleFileBrowser. As a
-          // tile there is no overlay to close — the carousel handles
-          // tile removal via its close button.
-          onClose: () => {},
+          // The file-browser component draws its own X button in its
+          // header. When hosted as a tile, that X must remove this
+          // tile from its container. Route through ctx.requestClose
+          // (carousel-provided) so onCardDismissed fires and the
+          // tab set / subscriptions stay consistent. Falls back to a
+          // no-op if the container does not supply requestClose (e.g.
+          // a future non-carousel host) so the tile never throws.
+          onClose: () => { ctx?.requestClose?.(); },
         });
         component.mount(el);
         loadRoot(store, currentCwd);

@@ -519,6 +519,12 @@
           }
           return;
         }
+        // Non-terminal tiles (file-browser, future kinds) have no tmux
+        // session behind them — skip tab-set cleanup and the WS
+        // unsubscribe. Sending `unsubscribe` with a tile ID like
+        // `file-browser-abc` used to produce a spurious server-side
+        // unsubscribe for a session that never existed.
+        if (tile && tile.type !== "terminal") return;
         const sessionName = tileSessionName(tileId);
         // Detach: remove from this window's tab set (session stays on server)
         if (windowTabSet) windowTabSet.removeTab(sessionName);

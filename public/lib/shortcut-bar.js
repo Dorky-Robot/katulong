@@ -269,37 +269,65 @@ export function createShortcutBar(options = {}) {
 
   /**
    * Show right-click context menu on a tab
+   *
+   * Note: in carousel mode, `sessionName` here is actually the tile ID,
+   * which for terminal tiles happens to equal the session name but for
+   * file-browser / cluster / future tile kinds does not. The tab bar
+   * still treats every tab uniformly, so we branch on the tile's `type`
+   * (looked up via the carousel) to decide which actions are meaningful.
+   * Tier 2 will replace this with a polymorphic onLayoutChange snapshot
+   * from the carousel; until then this is the surgical fix that keeps
+   * file-browser tiles closable without regressing terminal tiles.
    */
   function showTabContextMenu(e, sessionName) {
     e.preventDefault();
     const tab = e.currentTarget;
+    const tile = carousel?.getTile?.(sessionName);
+    const isTerminalLike = !tile || tile.type === "terminal" || tile.type === "cluster";
     const items = [
       {
         icon: "pencil-simple",
         label: "Rename",
         action: () => startTabRename(tab, sessionName)
       },
-      {
+    ];
+    if (isTerminalLike) {
+      items.push({
         icon: "eject",
         label: "Detach",
         action: () => detachTab(sessionName)
-      },
-      {
+      });
+      items.push({
         icon: "x-circle",
         label: "Kill session",
         danger: true,
         action: () => killTab(sessionName)
-      },
-      { divider: true },
-      {
+      });
+    } else {
+      // Non-terminal tiles (file browser, etc.) have no tmux session to
+      // detach from or kill. Close is the only meaningful destructive
+      // action — route it through closeTab so the carousel removes the
+      // card and onCardDismissed fires normally. Hitting the REST
+      // /sessions/:id endpoints with a tile ID would 404 and leave the
+      // tile stuck on screen (this was the original bug).
+      items.push({
+        icon: "x-circle",
+        label: "Close",
+        danger: true,
+        action: () => closeTab(sessionName)
+      });
+    }
+    if (isTerminalLike) {
+      items.push({ divider: true });
+      items.push({
         icon: "arrow-square-out",
         label: "Open in new window",
         action: () => {
           openInNewWindow(sessionName);
           closeTab(sessionName);
         }
-      }
-    ];
+      });
+    }
     showMenu(items, tab);
   }
 

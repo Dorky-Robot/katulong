@@ -543,6 +543,13 @@ export function createCardCarousel({
     return {
       ...base,
       flip: () => flipCard(tileId),
+      // Tile-initiated close. A tile calls this when it wants to be
+      // removed from its container (e.g. file-browser's own X button).
+      // Routes through removeCard so onCardDismissed fires and the
+      // windowTabSet / subscriptions stay consistent. Deferred via
+      // queueMicrotask so callers can finish their click handler
+      // before the DOM is torn out from under them.
+      requestClose: () => { queueMicrotask(() => removeCard(tileId)); },
       faceStack: {
         setSecondary: (secondary) => setBackTile(tileId, secondary),
         showSecondary: (show) => flipCard(tileId, show),
