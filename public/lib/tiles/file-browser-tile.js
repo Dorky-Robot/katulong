@@ -14,7 +14,7 @@
  * existing tile-chrome primitive.
  */
 
-import { createFileBrowserStore, loadRoot } from "../file-browser/file-browser-store.js";
+import { createFileBrowserStore, loadRoot, getDeepestPath } from "../file-browser/file-browser-store.js";
 import { createFileBrowserComponent } from "../file-browser/file-browser-component.js";
 
 /**
@@ -29,6 +29,7 @@ export function createFileBrowserTileFactory(_deps = {}) {
     let container = null;
     let mounted = false;
     let component = null;
+    let unsubscribeStore = null;
     // Each tile has its own store — mirroring per-tile independence of
     // terminal tiles. Sharing one global store across multiple browser
     // tiles would couple their navigation state and break serialize().
@@ -37,13 +38,13 @@ export function createFileBrowserTileFactory(_deps = {}) {
     const tile = {
       type: "file-browser",
 
-      // File browsers have no server-backed state, so "persist across
-      // reload" would resurrect an empty tile for no reason. Opt out of
-      // carousel persistence via this capability flag — the carousel's
-      // save() filters on it. Tier 2 will fold this into a broader
-      // capability snapshot; for now a single boolean keeps the opt-out
-      // one line per tile kind. See docs/tile-clusters-design.md.
-      persistable: false,
+      // File-browser tiles persist across reload. Earlier (commit b86275c)
+      // they were marked non-persistable out of a concern that resurrecting
+      // them would produce "empty phantom" tiles — but that was only true
+      // before serialize() captured `cwd`. With cwd in the snapshot and
+      // restoreTile() in app.js rebuilding the factory at that cwd, the
+      // restored tile lands in the same directory the user left it.
+      persistable: true,
 
       get sessionName() { return sessionName; },
       get cwd() { return currentCwd; },
@@ -68,11 +69,22 @@ export function createFileBrowserTileFactory(_deps = {}) {
         });
         component.mount(el);
         loadRoot(store, currentCwd);
+        // Track the deepest navigated path as the tile's "current" path
+        // so the tab label follows the user's folder navigation. Notify
+        // the host (carousel/tab bar) via ctx.setTitle whenever it moves.
+        unsubscribeStore = store.subscribe(() => {
+          const deepest = getDeepestPath(store.getState());
+          if (deepest && deepest !== currentCwd) {
+            currentCwd = deepest;
+            ctx?.setTitle?.(tile.getTitle());
+          }
+        });
         mounted = true;
       },
 
       unmount() {
         if (!mounted) return;
+        if (unsubscribeStore) { unsubscribeStore(); unsubscribeStore = null; }
         component?.unmount?.();
         component = null;
         if (container) container.innerHTML = "";
@@ -93,8 +105,9 @@ export function createFileBrowserTileFactory(_deps = {}) {
       },
 
       getTitle() {
-        if (!currentCwd || currentCwd === "/") return "Files";
-        const segments = currentCwd.split("/").filter(Boolean);
+        const cwd = typeof currentCwd === "string" ? currentCwd : "";
+        if (!cwd || cwd === "/") return "Files";
+        const segments = cwd.split("/").filter(Boolean);
         return segments.length > 0 ? segments[segments.length - 1] : "Files";
       },
 

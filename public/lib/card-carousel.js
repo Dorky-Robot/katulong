@@ -71,6 +71,14 @@ export function createCardCarousel({
   // See docs/tile-clusters-design.md Step 1 for the mental model.
   let mode = "carousel";
 
+  // Snapshot localStorage at construction, BEFORE anything can call save().
+  // The boot sequence in app.js activates a terminal tile from the ?s= URL
+  // param and only calls restore() later inside a setTimeout. That initial
+  // activate() fires save() with only the terminal, overwriting any
+  // previously persisted non-terminal tiles (e.g. file browsers). Capturing
+  // the raw state here preserves the pre-boot snapshot for restore().
+  let initialStoredState = null;
+
   // ── Persistence ──────────────────────────────────────────────────────
 
   function save() {
@@ -128,6 +136,7 @@ export function createCardCarousel({
         // works but looks like a bug.
         const persistedIds = new Set(serialized.map(s => s.id));
         const persistedFocus = persistedIds.has(focusedId) ? focusedId : null;
+        console.log("[carousel.save] " + JSON.stringify(serialized.map(s => ({id: s.id, type: s.type}))) + " focus=" + persistedFocus);
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
           cards: serialized,
           focused: persistedFocus,
@@ -155,8 +164,16 @@ export function createCardCarousel({
     return null;
   }
 
+  // Capture the pre-boot snapshot immediately at construction, before any
+  // activate()/addCard() call can fire save() and clobber it.
+  initialStoredState = parseStoredState();
+  console.log("[carousel.construct] initialStoredState=" + JSON.stringify(initialStoredState?.cards?.map(c => ({id: c?.id, type: c?.type})) || null) + " rawLS=" + (localStorage.getItem(STORAGE_KEY) || "null").slice(0, 300));
+
   function restore() {
-    const state = parseStoredState();
+    // Use the snapshot captured at construction, not the live localStorage —
+    // see comment on `initialStoredState`. Falls back to parseStoredState()
+    // if the snapshot wasn't captured for any reason (defensive).
+    const state = initialStoredState || parseStoredState();
     if (!state) return null;
 
     // Truncate on read too. A user upgrading into this cap for the first
@@ -202,7 +219,9 @@ export function createCardCarousel({
     // manually clear their storage to stop seeing a phantom file
     // browser on every reload. Idempotent — runs every restore, drops
     // zero entries once the storage is clean.
+    console.log("[carousel.restore] raw " + JSON.stringify(rawCards.map(c => ({id: c?.id, type: c?.type}))));
     const tiles = rawCards.filter(c => isTypePersistable(c?.type));
+    console.log("[carousel.restore] after typefilter " + JSON.stringify(tiles.map(c => ({id: c?.id, type: c?.type}))));
     const focused = tiles.some(c => (typeof c === "string" ? c : c?.id) === state.focused)
       ? state.focused
       : null;

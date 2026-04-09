@@ -449,9 +449,9 @@
     // with `persistable: false` on the tile prototype — the carousel's
     // save() path filters on the instance flag, but restore() only has
     // the serialized type string to work with, so the type-side
-    // opt-out lives here at the host. One entry per ephemeral tile
-    // kind; Tier 2 replaces this with a polymorphic capability snapshot.
-    const NON_PERSISTABLE_TILE_TYPES = new Set(["file-browser"]);
+    // opt-out lives here at the host. Empty for now; Tier 2 replaces
+    // this with a polymorphic capability snapshot.
+    const NON_PERSISTABLE_TILE_TYPES = new Set();
     const carousel = createCardCarousel({
       container: document.getElementById("terminal-container"),
       isTypePersistable: (type) => !NON_PERSISTABLE_TILE_TYPES.has(type),
@@ -467,20 +467,39 @@
           return () => {};
         },
         setTitle(_title) {
-          // Future: update tab bar dynamically
+          // Re-render the shortcut bar so tile-provided labels (file
+          // browser tracks its cwd, future tiles may have dynamic titles)
+          // flow into tab labels via getSessionList()/tile.getTitle().
+          if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
         },
         setIcon(_icon) {
           // Future: update tab icon dynamically
         },
       }),
       onFocusChange: (tileId) => {
+        const focusedTile = carousel.getTile(tileId);
+        const isTerminal = focusedTile?.type === "terminal";
         const sessionName = tileSessionName(tileId);
-        state.update('session.name', sessionName);
-        setDocTitle(sessionName);
-        const url = new URL(window.location);
-        url.searchParams.set("s", sessionName);
-        history.replaceState(null, "", url);
-        if (shortcutBarInstance) shortcutBarInstance.setActiveTab(sessionName);
+        // Only update state.session.name and the URL ?s= when focusing a
+        // terminal. Non-terminal tiles (file browser, future kinds) have
+        // no backing tmux session; writing their tile id into the URL
+        // turns a refresh into "attach a terminal named file-browser-xyz",
+        // which then races with the carousel restore and leaves orphan
+        // phantom tabs. Keep the underlying session pointer on whatever
+        // terminal was previously active.
+        if (isTerminal) {
+          state.update('session.name', sessionName);
+          setDocTitle(sessionName);
+          const url = new URL(window.location);
+          url.searchParams.set("s", sessionName);
+          history.replaceState(null, "", url);
+        }
+        if (shortcutBarInstance) shortcutBarInstance.setActiveTab(tileId);
+        // Non-terminal tiles have no PTY, so there's nothing to switch,
+        // resize, or reconnect. Bail early — the WS bookkeeping below is
+        // terminal-only and would otherwise try to send a `switch` for a
+        // nonexistent session.
+        if (!isTerminal) return;
         // For terminals with content (tab switch): just resize, no switch needed.
         // For empty terminals (new session): send switch to get seq-init + start pulling.
         const ws = state.connection.ws;
@@ -1478,6 +1497,16 @@
       },
       onTabClick: (name) => {
         if (carousel.isActive()) {
+          // Tab bar items can be either terminal session names or
+          // non-terminal tile ids (e.g. file browser). routeToSession
+          // assumes the name is a terminal and spawns one if missing —
+          // calling it with a fb tile id would create a phantom terminal.
+          // Detect non-terminal tiles up front and just focus them.
+          const existingTile = carousel.getTile(name);
+          if (existingTile && existingTile.type !== "terminal") {
+            carousel.focusCard(name);
+            return;
+          }
           routeToSession(name);
         } else {
           switchSession(name);
@@ -2186,18 +2215,26 @@
     loadShortcuts();
     getTerm()?.focus();
 
-    // Restore carousel state from sessionStorage after a short delay
+    // Restore carousel state from localStorage after a short delay.
+    //
+    // Two boot shapes to handle:
+    //   (a) No URL ?s= and nothing pre-activated — carousel is empty, so we
+    //       reconstruct the full persisted state via carousel.activate().
+    //   (b) URL ?s= pointed at an existing session, so app.js already
+    //       activated the carousel with that one terminal tile. In that
+    //       case we need to MERGE any persisted non-terminal tiles (e.g.
+    //       file browsers) that aren't already present — a plain activate()
+    //       would either be skipped or duplicate the terminal.
     setTimeout(() => {
       const carouselState = carousel.restore();
-      if (carouselState && carouselState.tiles?.length > 0 && !carousel.isActive()) {
-        // Restore entries one at a time and drop any that fail to
-        // reconstruct — corrupt sessionStorage, a tile type written by a
-        // newer version, or any tile whose factory throws. A single bad
-        // entry must not take down the entire restore path.
+      if (!carouselState || !carouselState.tiles?.length) return;
+
+      if (!carousel.isActive()) {
         const tiles = [];
         for (const t of carouselState.tiles) {
           try {
             const tile = restoreTile(t.type, t);
+            if (!tile) continue;
             tiles.push({ id: t.id, tile, cardWidth: t.cardWidth });
           } catch (err) {
             console.warn(`[carousel] skipping tile ${t.id} (${t.type}):`, err.message);
@@ -2205,10 +2242,46 @@
         }
         if (tiles.length > 0) {
           carousel.activate(tiles, carouselState.focused);
-          // Sync tab set to carousel order (carousel is source of truth)
           if (windowTabSet) windowTabSet.reorderTabs(carousel.getCards());
         }
+        return;
       }
+
+      // Carousel already active — append any persisted tiles not already
+      // present. Preserves whatever the URL-driven boot set up.
+      const existing = new Set(carousel.getCards());
+      for (const t of carouselState.tiles) {
+        if (existing.has(t.id)) continue;
+        try {
+          const tile = restoreTile(t.type, t);
+          if (!tile) continue;
+          carousel.addCard(t.id, tile);
+        } catch (err) {
+          console.warn(`[carousel] skipping tile ${t.id} (${t.type}):`, err.message);
+        }
+      }
+      // Reorder the carousel to match the persisted order. Without this,
+      // addCard() appends newly-merged tiles to the end, so a pre-refresh
+      // layout of [fb, terminal] comes back as [terminal, fb] because the
+      // URL-driven boot inserts the terminal first.
+      carousel.reorderCards(carouselState.tiles.map(t => t.id));
+      if (windowTabSet) windowTabSet.reorderTabs(carousel.getCards());
+      // Restore focused tile if it's a non-terminal — the URL ?s= param
+      // always wins for terminals (URL is the canonical attachment point),
+      // but non-terminal tiles like the file browser have no URL analogue,
+      // so persisted focus is the only way to put them back in front.
+      const persistedFocus = carouselState.focused;
+      if (persistedFocus && carousel.getCards().includes(persistedFocus)) {
+        const focusedTile = carousel.getTile(persistedFocus);
+        if (focusedTile && focusedTile.type !== "terminal") {
+          carousel.focusCard(persistedFocus);
+        }
+      }
+      // Re-render the tab bar so non-terminal tiles merged in above pick
+      // up their tile-provided label/icon via getSessionList(). Without
+      // this, the initial bar render ran before restore and fell back to
+      // raw tile ids (e.g. `file-browser-mnrzz1`) as tab labels.
+      if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
     }, 500);
 
     if ("serviceWorker" in navigator) {

@@ -527,7 +527,16 @@ export function createShortcutBar(options = {}) {
       if (drag?.isTouch) return; // touch owns the gesture
 
       if (!started) {
-        if (name !== currentSessionName) {
+        // Compare against the carousel's focused tile id, not
+        // currentSessionName. When a non-terminal tile (e.g. file
+        // browser) is focused, currentSessionName still holds the
+        // backing terminal session, so clicking the terminal tab while
+        // the file browser is focused would short-circuit here and
+        // never switch. The carousel's focused card is the real
+        // "what's front-and-center" answer.
+        const focusedCardId = carousel?.isActive?.() ? carousel.getFocusedCard?.() : null;
+        const currentId = focusedCardId || currentSessionName;
+        if (name !== currentId) {
           if (onTabClick) onTabClick(name);
         }
         return;
@@ -754,6 +763,16 @@ export function createShortcutBar(options = {}) {
       if (windowTabSet) {
         windowTabSet.reorderTabs(names);
       }
+      // Also reorder the carousel directly. windowTabSet.reorderTabs filters
+      // out ids it doesn't persist (e.g. file-browser tiles are session-scoped
+      // — see commit b86275c), so the subscribe() bridge would drop them from
+      // the order it forwards to carousel.reorderCards, which then re-appends
+      // missing ids at the end — exactly the "snaps back" symptom. Reordering
+      // the carousel here with the full names array keeps non-persisted tiles
+      // in their dragged position. Matches the moveTab() pattern in app.js.
+      if (carousel?.isActive?.()) {
+        carousel.reorderCards(names);
+      }
     }
 
     // drag is null now — flush any deferred render
@@ -841,13 +860,23 @@ export function createShortcutBar(options = {}) {
       // teaching it the tile taxonomy.
       const tile = carousel?.getTile?.(n);
       if (tile) {
+        let label = n;
+        try {
+          if (typeof tile.getTitle === "function") {
+            const t = tile.getTitle();
+            if (t) label = t;
+          }
+        } catch (_) { /* tile getTitle threw — fall through to id */ }
         return {
           name: n,
-          label: typeof tile.getTitle === "function" ? tile.getTitle() : n,
+          label,
           icon: typeof tile.getIcon === "function" ? tile.getIcon() : null,
           tileType: tile.type || null,
         };
       }
+      // No tile registered — best-effort friendly label for known id
+      // prefixes so stale tab entries don't show raw tile ids.
+      if (n.startsWith("file-browser-")) return { name: n, label: "Files", icon: "folder" };
       return { name: n };
     }).filter(Boolean);
   }
@@ -1002,7 +1031,14 @@ export function createShortcutBar(options = {}) {
     // Unified tab bar — all platforms use the same renderer
     // with the card carousel layout.
     const sessions = getSessionList();
-    _renderIPadBar(sessionName, sessions);
+    // When the carousel is active, the highlighted tab must track the
+    // carousel's focused card id — which may be a non-terminal tile id
+    // like `file-browser-xxx`. Callers pass `state.session.name` (the
+    // terminal) for the active name, which would otherwise light up the
+    // wrong tab whenever a file browser is front-and-center.
+    const activeId = carousel?.isActive?.() ? (carousel.getFocusedCard?.() || sessionName) : sessionName;
+    console.log("[bar.render] sessionName=" + sessionName + " carouselActive=" + carousel?.isActive?.() + " focusedCard=" + carousel?.getFocusedCard?.() + " activeId=" + activeId);
+    _renderIPadBar(activeId, sessions);
 
     // Adaptive tab truncation — fit tabs to available width
     requestAnimationFrame(() => fitTabLabels());

@@ -1,0 +1,154 @@
+# Tile Clusters — Design Notes
+
+Living design doc for the tile-cluster / virtual-desktop UX. Captured from a brainstorming session so subagents can pick up individual iterations without losing the high-level model. Update as decisions evolve.
+
+## Core mental model
+
+- **Cluster = virtual desktop.** A cluster is a *container of tiles*, not a tile itself. Each cluster is its own independent workspace, like a macOS Space.
+- **Tiles** are the existing terminal tiles. They live inside a cluster.
+- **The `+` button on the tile bar creates a new terminal in the current cluster.** No "New Cluster" option there. Cluster create/manage lives in the zoomed-out view.
+- The carousel-of-tiles UI we have today is *one view mode of one cluster*. Everything below extends from there.
+
+## Zoom levels
+
+There are (at least) two zoom levels, navigated by **pinch**:
+
+### Level 1 — Focused (current default)
+Single cluster fills the screen, in one of its view modes (carousel or exposé).
+
+### Level 2 — Cluster overview
+Pinch out from Level 1. You see **all clusters as a vertical stack of horizontal strips**. Think: multiple stacked copies of <https://auto-replicating-draggable-carousel.webflow.io/>, each strip scrollable horizontally and independently.
+
+- **Uniform mode**: every strip renders in the *same* mode as the one you pinched out from. If you were in carousel, all strips are mini-carousels. If you were in exposé, all strips are mini-exposés. Not heterogeneous.
+- **Vertical scroll** moves between cluster strips.
+- **`+` button** at this level creates a new cluster. Position TBD.
+- **Tap a cluster (or pinch in)** to zoom back into Level 1 on that cluster.
+
+### Level 3 — Spatial canvas (parked)
+Maybe a freeform 2D canvas like the Cosmic / Stage Manager screenshots — clusters placed at xy positions, pan-and-zoom. Iterate on this once Level 2 is alive. **Not in scope yet.**
+
+## Level 1 view modes
+
+A cluster has two view modes:
+
+### Carousel
+1D horizontal axis of **columns** (see "Columns" below). One column is focused; neighbors peek. Existing behavior, generalized.
+
+### Exposé
+All tiles in the cluster visible at once via the existing tiling/packing algorithm — but **packed more tightly than the macOS reference**. Tiles use the cluster's tiling algorithm to land at non-overlapping positions.
+
+**Mode switch is animated**, not a teardown/rebuild. Same DOM elements morph from carousel layout to exposé layout. Implementation technique: FLIP (First-Last-Invert-Play) — measure old positions, change layout, measure new, transform-back-then-transition. The user-visible behavior is "macOS Exposé morph", FLIP is just the web technique.
+
+## Columns (vertical stacking within a carousel slot)
+
+Carousel x-slots are not "one tile fills the viewport." Each x-slot is a **column** that may contain 1..N tiles.
+
+- **Default**: 1 tile per column. Existing behavior.
+- **Stacking**: drag tile B onto tile A → column of two. Drag tile B back out → its own column again. **Stacking is a drag verb, not a "split" button.** No menu, no mode switch.
+- **Resize**: same edge-handle pattern as today's left/right column-width handles, mirrored on top/bottom for tile-height-within-column. Symmetric.
+- **Sane default / min / max**: same pattern as horizontal sizing today. Default = sensible split. Min = some floor. Max = viewport.
+- **Vertical scroll within a column** when total tile heights exceed viewport. Each column scrolls independently. Same behavior as horizontal carousel scroll, rotated 90°.
+- **A single tile can be taller than the viewport** if the user resizes it that way; the column scrolls to expose the rest. (Mirrors the horizontal "tile can be wider than viewport" affordance.)
+- **Anti-pattern**: the macOS Terminal.app vertical-split behavior where each split shrinks all siblings into uselessness. We explicitly do not want that.
+
+### Drag-to-stack collision target (decision pending, leaning)
+- **Center of target tile** = stack into this column.
+- **Left/right edges of target tile** = insert as new column on that side.
+- Visual highlight on the drop zone as you hover.
+- Lets drag-to-reorder and drag-to-stack coexist unambiguously.
+
+### Active tile / focus navigation
+- Each column has its own active tile (the one keystrokes go to).
+- **Option+↑ / Option+↓** moves focus within a column (vertical analogue of how horizontal arrows snap-to-active across columns).
+- **Option+←/→** for column navigation (add for symmetry if not already present).
+- Focus snap = scroll the column so the active tile is in view.
+
+### Exposé treatment of stacked columns
+- Stacked columns become **deck-of-cards** in z-space. Each column = one card pile in the 2D pack, slightly fanned so you can see depth.
+- Tap a deck → fans out → tap a card → returns to Level 1 carousel with that column focused and that tile active. (Two-step, more spatial. Pending confirmation.)
+
+### Level 2 thumbnail of stacked columns
+Same deck-of-cards metaphor, miniaturized. A column with 3 tiles renders as a tiny card stack in the mini-strip, not as 3 stacked rectangles. Honest about structure, visually quiet.
+
+## Pinch gesture
+
+- **Pinch is the zoom verb.** Pinch out = zoom out (Level 1 → Level 2). Pinch in = zoom in.
+- Pinch is **not** the carousel↔exposé switch. That's a different verb (TBD: button, gesture, or keyboard).
+- **Trackpad pinch on desktop** arrives as `wheel` events with `ctrlKey` set. Support both touch and trackpad from day one so dev iteration is possible on the Mac mini.
+- Greenfield in the codebase as far as we know — verify before implementing. If greenfield, raw pointer events with two-pointer tracking, no gesture lib.
+
+## File browser as a tile
+
+> **Status:** The /consult review revealed PR #533 already converted the file browser from a fullscreen overlay into a real tile (`public/lib/tiles/file-browser-tile.js`). What remains is captured below; most of it is absorbed into **T1b** in the build order.
+
+- **Multi-instance**: clicking the folder button on terminal A and then on terminal B creates **two independent file browser tiles**. Not one that jumps around. Today `openFileBrowserTile` in `app.js` has a singleton guard that focuses an existing FB tile; delete it.
+- **Spawn position**: a new file browser tile appears as a **new column immediately to the LEFT of the spawning terminal**, pushing earlier columns over. Matches the Finder mental model (file list on the left, terminal on the right).
+- **cwd inheritance**: the new file browser opens at the spawning terminal's current working directory.
+- **Repeat click**: each click on a terminal's folder button creates a **new** file browser tile. No reuse-if-exists.
+- **Lifetime**: once created, a file browser tile is independent of its spawning terminal. Closing the terminal does not close the file browser.
+- **Sized like a tile**, not a sidebar. Participates in carousel scroll, exposé pack, column resize, drag-to-stack, and Level 2 thumbnails like any terminal tile.
+- **Component root-class collision**: `file-browser-component.js` currently clobbers its container's className, forcing `file-browser-tile.js` to wrap it in an extra `<div>`. Fix the component so it owns a child (e.g. `.fb-root`) rather than stamping on its parent's class.
+
+Note: the `#sidebar` element in `index.html` is the **session-list launcher**, *not* the file browser — do not conflate it with this work.
+
+## Future input modes (parked, not in scope)
+
+Discussed but explicitly deferred until pinch + Level 1/2 are working:
+
+- **Multi-touch**: two-finger swipe between clusters, three-finger gestures, long-press-drag to rearrange in exposé.
+- **Gyro**: ambient parallax, peek at neighbors, tilt-to-switch.
+- **Camera tracking**: face-tracking like the felixflor.es experiment. Aesthetic / "feels alive", or load-bearing (look-away-to-blur for shoulder-surfing protection). Permission/battery/privacy cost is real — treat as separate experiment.
+
+## Build order
+
+**Step 1 (landed, `edf8c88`)** — Pinch + Level 1 carousel↔exposé morph. Pinch gesture plumbing (touch + trackpad `wheel`+`ctrlKey`), mode switch via same-DOM transform morph, no tmux resize in exposé. Columns are still 1-tile-each at this stage.
+
+Everything after Step 1 follows the **Tier 1 / Tier 2 / Tier 3** plan in "Architectural decisions" below — a refactor lands *before* the new features so columns, file-browser-as-tile, and Level 2 build on a clean substrate instead of bolting onto the flat-array model.
+
+## Architectural decisions (from /consult, 2026-04-09)
+
+The /consult agent revealed the file browser is *already* a tile (PR #533). The real structural problems are in the **container** (`card-carousel.js`), not the content. Recorded decisions:
+
+1. **Auto-flip-on-idle stays load-bearing.** `ctx.faceStack` (the new abstraction replacing `setBackTile`/`flipCard`/`isFlipped`) must be observable from inside a tile so terminal-tile can keep driving its own flip-on-idle without reaching `deps.carousel`.
+2. **`cluster-tile.js` is extracted, not deleted.** The reusable primitive is a **tile container** — the same abstraction used by Level 1 carousel, Level 2 cluster overview, and existing composite tiles (`cluster-tile`, `crew-tile` from `da66182`). `cluster-tile` becomes a thin wrapper that mounts a container inside itself. One implementation, three use sites. Prior history: `9f58df9` introduced the generic tile container, `816cf08` added a plugin SDK / manifest discovery, PR #533 deliberately killed the SDK and registry. This extract is *internal* and **must not** re-introduce a plugin SDK, manifest discovery, or extensibility surface — all tile types remain in-tree.
+3. **Persistence is per-cluster.** `MAX_PERSISTED_CARDS = 50` becomes a per-cluster cap. Storage schema bumps to a workspace shape: `{ clusters: [{ id, columns, ... }], activeClusterId }`.
+4. **No tab bar at Level 2.** The shortcut/tab bar belongs to Level 1 only. Level 2 navigates via the cluster strips themselves (and pinch-in to return). The `onLayoutChange` snapshot contract from T2b only feeds Level 1.
+5. **Plugin SDK stays dead.** PR #533's deletion stands. `TileContext` is an *internal* contract, not a stability boundary, and can change as the team needs.
+
+### Build order (revised by consult)
+
+The original Step 1.5 / 1.6 order is replaced with a three-tier plan that lands a refactor *before* the new features:
+
+- **Tier 1 (small, ~1 day):**
+  - **T1a** — move flip off the carousel surface; `terminal-tile` calls `ctx.faceStack` instead of `deps.carousel`. Delete the lazy-getter circular wiring.
+  - **T1b** — fix `file-browser-component` root-class collision, drop the inner-div wrapper, delete the singleton guard in `openFileBrowserTile`. Step 1.6 essentially done after this.
+- **Tier 2 (large, 2–4 days, one PR):**
+  - **T2a** — `cards: string[]` → `columns: Array<Column>` with single-slot columns initially. Pure data-shape change, behavior identical, persistence migrates legacy.
+  - **T2b** — carousel emits `onLayoutChange` snapshot; shortcut-bar consumes it, stops importing carousel directly. Kills the dual-source-of-truth nerve that bit `4285396`/`48b48b2`.
+  - **T2c** — face-stack of N; current 2-face flip becomes the n=2 case. Same primitive supports the deck-of-cards in exposé.
+- **Tier 3 — features on top of the new substrate:**
+  - Step 1.5 (columns / drag-to-stack)
+  - Step 1.6 polish (the few remaining file-browser-as-tile bits not covered by T1b)
+  - Step 2 (Level 2 cluster overview, no tab bar)
+
+## Open questions / decisions to revisit
+
+- Carousel↔exposé switch verb (since pinch is reserved for zoom levels). Button? Keyboard? Different gesture?
+- Level 2 `+` button placement.
+- Drag-to-stack collision zones — confirm center=stack / edges=insert-column model with a real prototype.
+- Exposé deck interaction — single-tap-to-jump vs fan-out-then-pick.
+- Level 3 form factor.
+
+## Anti-patterns (do not do)
+
+- Tearing down and recreating tile DOM elements when switching modes. Same elements must morph.
+- Per-client xterm.js replay at different dimensions. Cursor-positioned TUI output cannot be reflowed. (See `CLAUDE.md` "Multi-device terminal dimensions".)
+- macOS Terminal.app-style vertical splits that shrink siblings to uselessness.
+- Adding "New Cluster" to the per-tile `+` menu. Cluster management lives at Level 2.
+- Bundling pinch animation and column stacking into the same implementation pass.
+
+## Reference material
+
+- Webflow draggable carousel that matches Level 2 strip behavior: <https://auto-replicating-draggable-carousel.webflow.io/>
+- macOS Mission Control / Exposé as the reference for the Level 1 morph visual.
+- macOS virtual-desktops strip as the reference for the Level 2 mental model (though our Level 2 is a *vertical* stack of cluster strips, not a horizontal strip of desktop thumbnails).

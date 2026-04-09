@@ -295,12 +295,19 @@ export function createFileBrowserComponent(store, options = {}) {
       renderSingleColumn(colEl, columns[i], i);
     }
 
-    // Auto-scroll to the rightmost column when a new column was added
-    if (columns.length > prevColumnCount && columns.length > 0) {
-      const lastColEl = columnsEl.lastElementChild;
-      if (lastColEl) {
-        lastColEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "end" });
-      }
+    // Auto-scroll horizontally so the newly opened column is visible.
+    // Why rAF + direct scrollLeft instead of scrollIntoView: the last column
+    // has `flex: 1` (so a single-column browser fills the pane). When content
+    // overflows, scrollIntoView({inline:"end"}) considers the last column
+    // already "in view" because its right edge is flush with the container —
+    // nothing scrolls. Writing scrollLeft = scrollWidth after layout settles
+    // pins the deepest column to the right edge regardless of flex sizing.
+    // Runs on every render (not just count-change) so that drilling deeper
+    // via keyboard, or refreshing into a pre-selected deep path, also scrolls.
+    if (columns.length > 0) {
+      requestAnimationFrame(() => {
+        if (columnsEl) columnsEl.scrollLeft = columnsEl.scrollWidth;
+      });
     }
     prevColumnCount = columns.length;
   }
