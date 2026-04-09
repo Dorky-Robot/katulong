@@ -2100,9 +2100,10 @@
     }
 
     /* --- File Browser --- */
-    #file-browser { display: none; flex: 1; min-height: 0; overflow: hidden; }
-    #file-browser.active { display: flex; }
-    #terminal-container.fb-hidden { display: none !important; }
+    /* Formerly a fullscreen overlay (#file-browser); now hosted as a
+       file-browser tile. The component's internal styles (.file-browser
+       and descendants) remain — they target whatever container the
+       tile's mount(el) passes in. */
     .file-browser { display: flex; flex-direction: column; height: 100%; width: 100%; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: var(--text-sm); }
     .fb-toolbar { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg-surface); }
     .fb-toolbar-nav { display: flex; gap: 2px; }
@@ -2243,7 +2244,6 @@
       </div>
       <nav id="shortcut-bar" role="toolbar" aria-label="Shortcut bar"></nav>
       <div id="helm-view"></div>
-      <div id="file-browser"></div>
       <div id="port-forward"></div>
       <div id="plugin-panels"></div>
     </div>

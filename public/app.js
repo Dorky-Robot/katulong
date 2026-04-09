@@ -32,13 +32,12 @@
     import { createViewportManager } from "/lib/viewport-manager.js";
     import { createHelmComponent } from "/lib/helm/helm-component.js";
     import { createWebSocketConnection } from "/lib/websocket-connection.js";
-    import { createFileBrowserStore, loadRoot } from "/lib/file-browser/file-browser-store.js";
-    import { createFileBrowserComponent } from "/lib/file-browser/file-browser-component.js";
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
     import { createCardCarousel } from "/lib/card-carousel.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
     import { createClusterTileFactory } from "/lib/tiles/cluster-tile.js";
+    import { createFileBrowserTileFactory } from "/lib/tiles/file-browser-tile.js";
     import { dispatchNotification } from "/lib/notify.js";
 
     // --- Modal Manager ---
@@ -363,6 +362,7 @@
     const clusterTileFactory = createClusterTileFactory({
       createTerminalTile: (options) => terminalTileFactory(options),
     });
+    const fileBrowserTileFactory = createFileBrowserTileFactory();
 
     /**
      * Dispatcher for reconstructing tiles from serialized state (carousel
@@ -372,6 +372,7 @@
     function restoreTile(type, options = {}) {
       if (type === "terminal") return terminalTileFactory(options);
       if (type === "cluster" || type === "dashboard") return clusterTileFactory(options);
+      if (type === "file-browser") return fileBrowserTileFactory(options);
       throw new Error(`Unknown tile type: "${type}"`);
     }
 
@@ -745,7 +746,7 @@
 
     // Wire Files + Upload + Settings into the joystick floating buttons
     joystickManager.setActions({
-      onFilesClick: () => toggleFileBrowser(),
+      onFilesClick: () => openFileBrowserTile(),
       onUploadClick: () => triggerImageUpload(),
       onSettingsClick: () => modals.open('settings'),
     });
@@ -943,7 +944,6 @@
     function activateSession(name) {
       // Close alternative views — switching sessions returns to terminal
       if (portForwardEl?.classList.contains("active")) closePortForward();
-      if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
       if (notepad.isActive()) notepad.hide();
       // If the target session has an active helm session, show helm view; otherwise terminal
       if (helmActiveSessions.has(name)) {
@@ -1394,14 +1394,17 @@
       onSessionClick: openSessionManager,
       onNewSessionClick: createNewSession,
       tileTypes: [
-        { type: "terminal", name: "Terminal", icon: "terminal-window" },
-        { type: "cluster",  name: "Cluster",  icon: "squares-four" },
+        { type: "terminal",     name: "Terminal", icon: "terminal-window" },
+        { type: "cluster",      name: "Cluster",  icon: "squares-four" },
+        { type: "file-browser", name: "Files",    icon: "folder" },
       ],
       onCreateTile: (type) => {
         if (type === "terminal") {
           createNewSession();
         } else if (type === "cluster") {
           createNewCluster();
+        } else if (type === "file-browser") {
+          openFileBrowserTile();
         }
       },
       onTabClick: (name) => {
@@ -1444,7 +1447,7 @@
         }
       },
       onTerminalClick: () => returnToTerminal(),
-      onFilesClick: () => toggleFileBrowser(),
+      onFilesClick: () => openFileBrowserTile(),
       onPortForwardClick: () => togglePortForward(),
       onSettingsClick: () => modals.open('settings'),
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
@@ -1547,7 +1550,14 @@
 
     const dragDropManager = createDragDropManager({
       isImageFile,
-      shouldIgnore: (e) => fileBrowserEl.classList.contains("active"),
+      shouldIgnore: (_e) => {
+        // Don't hijack drops when the active tile is a file browser —
+        // the file-browser component handles its own upload dnd.
+        if (!carousel.isActive()) return false;
+        const focusedId = carousel.getFocusedCard?.();
+        const activeTile = focusedId ? carousel.getTile(focusedId) : null;
+        return activeTile?.type === "file-browser";
+      },
       onDrop: async (imageFiles, totalFiles) => {
         if (imageFiles.length === 0) {
           if (totalFiles > 0) showToast("Not an image file", true);
@@ -1576,16 +1586,16 @@
     });
     pasteHandler.init();
 
-    // --- File Browser ---
-
-    const fileBrowserStore = createFileBrowserStore();
-    const fileBrowserEl = document.getElementById("file-browser");
-    let fileBrowserMounted = false;
-    let fileBrowserComponent = null;
+    // --- File Browser Tile ---
+    //
+    // Historically a fullscreen overlay (#file-browser div toggled via
+    // toggleFileBrowser). PR #533 stripped the tile plugin SDK; this
+    // replaces the overlay with a first-class in-tree tile kind built
+    // on the same tile-chrome primitive terminal-tile uses. See
+    // public/lib/tiles/file-browser-tile.js.
 
     function returnToTerminal() {
       if (portForwardEl?.classList.contains("active")) closePortForward();
-      if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
       if (notepad.isActive()) notepad.hide();
       if (helmViewEl?.classList.contains("active")) hideHelmView();
       getTerm()?.focus();
@@ -1598,41 +1608,32 @@
       if (joystickEl) joystickEl.style.display = "";
     }
 
-    function closeFileBrowser() {
-      fileBrowserEl.classList.remove("active");
-      termContainer.classList.remove("fb-hidden");
-    }
-
-    async function toggleFileBrowser() {
-      const isActive = fileBrowserEl.classList.contains("active");
-      if (isActive) {
-        closeFileBrowser();
-        getTerm()?.focus();
+    /** Create a file-browser tile at the active session's cwd, or focus
+     *  an existing file-browser tile if one is already open. */
+    async function openFileBrowserTile() {
+      const existing = carousel.isActive()
+        ? carousel.findCard((tile) => tile.type === "file-browser")
+        : null;
+      if (existing) {
+        carousel.focusCard(existing);
+        return;
+      }
+      const sessionName = state.session.name;
+      let cwd = "";
+      if (sessionName) {
+        try {
+          const data = await api.get(`/sessions/cwd/${encodeURIComponent(sessionName)}`);
+          if (data.cwd) cwd = data.cwd;
+        } catch {}
+      }
+      const tile = fileBrowserTileFactory({ cwd, sessionName });
+      const tileId = `file-browser-${Date.now().toString(36)}`;
+      if (!carousel.isActive()) {
+        carousel.activate([{ id: tileId, tile }], tileId);
+        wsConnection.connect();
       } else {
-        // Close other panels if open (mutual exclusion)
-        if (portForwardEl.classList.contains("active")) closePortForward();
-
-        // Get the active terminal's working directory
-        let cwd = "";
-        const sessionName = state.session.name;
-        if (sessionName) {
-          try {
-            const data = await api.get(`/sessions/cwd/${encodeURIComponent(sessionName)}`);
-            if (data.cwd) cwd = data.cwd;
-          } catch {}
-        }
-
-        if (!fileBrowserMounted) {
-          fileBrowserComponent = createFileBrowserComponent(fileBrowserStore, {
-            onClose: () => toggleFileBrowser(),
-          });
-          fileBrowserComponent.mount(fileBrowserEl);
-          fileBrowserMounted = true;
-        }
-        loadRoot(fileBrowserStore, cwd);
-        termContainer.classList.add("fb-hidden");
-        fileBrowserEl.classList.add("active");
-        fileBrowserComponent.focus();
+        carousel.addCard(tileId, tile, insertAtRightOfActive());
+        carousel.focusCard(tileId);
       }
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
@@ -1649,8 +1650,6 @@
         closePortForward();
         getTerm()?.focus();
       } else {
-        // Close other panels if open (mutual exclusion)
-        if (fileBrowserEl.classList.contains("active")) closeFileBrowser();
         if (!portForwardMounted) {
           portForwardComponent = createPortForwardComponent({
             onClose: () => togglePortForward(),
@@ -1669,7 +1668,7 @@
 
     const sidebarFilesBtn = document.getElementById("sidebar-files-btn");
     if (sidebarFilesBtn) {
-      sidebarFilesBtn.addEventListener("click", toggleFileBrowser);
+      sidebarFilesBtn.addEventListener("click", openFileBrowserTile);
     }
 
     const sidebarPortfwdBtn = document.getElementById("sidebar-portfwd-btn");
@@ -1727,7 +1726,6 @@
 
     function showHelmView() {
       ensureHelmMounted();
-      if (fileBrowserEl?.classList.contains("active")) closeFileBrowser();
       if (portForwardEl?.classList.contains("active")) closePortForward();
       termContainer.classList.add("helm-hidden");
       helmViewEl.classList.add("active");
