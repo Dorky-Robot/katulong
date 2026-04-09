@@ -68,9 +68,17 @@ export function createFileBrowserComponent(store, options = {}) {
   });
 
   function mount(el) {
-    container = el;
-    container.innerHTML = "";
-    container.className = "file-browser";
+    // The component owns a child element (.fb-root), not the parent
+    // element passed in. Previously mount() stamped `container.className
+    // = "file-browser"` on its host, forcing file-browser-tile.js to
+    // wrap it in an extra <div> so tile-chrome's `.tile-content` flex
+    // rules wouldn't get clobbered. Tier 1 T1b fixes that: we create
+    // and append our own root div here, and the tile mounts the
+    // component directly on its content element.
+    const root = document.createElement("div");
+    root.className = "fb-root";
+    el.appendChild(root);
+    container = root;
 
     container.innerHTML = `
       <div class="fb-toolbar">
@@ -363,6 +371,12 @@ export function createFileBrowserComponent(store, options = {}) {
     if (unsubscribe) unsubscribe();
     unsubscribe = null;
     contextMenu.close();
+    // Remove the .fb-root child we appended in mount(). The parent
+    // element belongs to the caller (tile-chrome) — we must not
+    // touch its className or its other children.
+    if (container && container.parentElement) {
+      container.parentElement.removeChild(container);
+    }
     container = null;
     columnsEl = null;
   }

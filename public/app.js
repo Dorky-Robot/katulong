@@ -1657,16 +1657,15 @@
       if (joystickEl) joystickEl.style.display = "";
     }
 
-    /** Create a file-browser tile at the active session's cwd, or focus
-     *  an existing file-browser tile if one is already open. */
+    /** Create a new file-browser tile at the active session's cwd.
+     *
+     *  Per the tile-clusters design (T1b), every click on the folder
+     *  button creates a fresh file-browser tile — no singleton reuse.
+     *  Two clicks from two different terminals produce two independent
+     *  browser tiles that can sit side-by-side in the carousel. The
+     *  previous "focus existing" shortcut was removed because it
+     *  conflicts with the multi-instance file-browser UX. */
     async function openFileBrowserTile() {
-      const existing = carousel.isActive()
-        ? carousel.findCard((tile) => tile.type === "file-browser")
-        : null;
-      if (existing) {
-        carousel.focusCard(existing);
-        return;
-      }
       const sessionName = state.session.name;
       let cwd = "";
       if (sessionName) {

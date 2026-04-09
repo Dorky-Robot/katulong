@@ -42,20 +42,19 @@ export function createFileBrowserTileFactory(_deps = {}) {
 
       mount(el, _ctx) {
         container = el;
-        // Wrap in an inner div because createFileBrowserComponent's
-        // mount() overwrites container.className = "file-browser",
-        // which would clobber tile-chrome's `.tile-content` flex rules
-        // if given the raw contentEl directly.
-        const inner = document.createElement("div");
-        inner.style.cssText = "flex:1; min-height:0; display:flex;";
-        el.appendChild(inner);
+        // Mount the component directly onto the tile-chrome content
+        // element. Previously a wrapper <div> existed to protect
+        // tile-chrome's `.tile-content` flex rules from
+        // createFileBrowserComponent clobbering `container.className =
+        // "file-browser"`. Tier 1 T1b fixed the component to own a
+        // `.fb-root` child, so the wrapper is no longer needed.
         component = createFileBrowserComponent(store, {
           // Overlay had an onClose that called toggleFileBrowser. As a
           // tile there is no overlay to close — the carousel handles
           // tile removal via its close button.
           onClose: () => {},
         });
-        component.mount(inner);
+        component.mount(el);
         loadRoot(store, currentCwd);
         mounted = true;
       },
