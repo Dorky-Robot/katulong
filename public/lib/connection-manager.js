@@ -172,6 +172,11 @@ export function createConnectionManager({
   function connect() {
     if (disposed) return;
 
+    // No-op if already connecting or ready — callers can safely call
+    // connect() without checking state first.
+    const { status } = connectionStore.getState();
+    if (status !== "disconnected") return;
+
     epoch += 1;
     const myEpoch = epoch;
 

@@ -49,7 +49,6 @@ export function createShortcutBar(options = {}) {
     onNotepadClick,
     onAllTabsClosed,
     sendFn,
-    updateConnectionIndicator,
     getInstanceIcon,
     getSessionIcon,
     sessionStore,
@@ -1017,7 +1016,7 @@ export function createShortcutBar(options = {}) {
     container.innerHTML = "";
     document.getElementById("key-island")?.remove();
 
-    // Connection indicator (hidden by default, shown by updateConnectionIndicator)
+    // Connection indicator (hidden by default)
     const connDot = document.createElement("span");
     connDot.id = "connection-indicator";
     connDot.style.display = "none";
@@ -1075,7 +1074,6 @@ export function createShortcutBar(options = {}) {
       }
     }
 
-    if (updateConnectionIndicator) updateConnectionIndicator();
   }
 
   // Store subscribers — coalesce rapid updates into a single render via rAF.

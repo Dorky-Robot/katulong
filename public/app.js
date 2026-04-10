@@ -24,14 +24,17 @@
     import { createShortcutBar } from "/lib/shortcut-bar.js";
     import { createWindowTabSet } from "/lib/window-tab-set.js";
     import { createPasteHandler } from "/lib/paste-handler.js";
-    import { createNetworkMonitor } from "/lib/network-monitor.js";
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
     import { decideAppKey, isTextInputTarget } from "/lib/app-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
     import { createHelmComponent } from "/lib/helm/helm-component.js";
-    import { createWebSocketConnection } from "/lib/websocket-connection.js";
+    import { createConnectionManager } from "/lib/connection-manager.js";
+    import { wsMessageHandlers } from "/lib/ws-message-handlers.js";
+    import { createPullManager } from "/lib/pull-manager.js";
+    import { screenFingerprint } from "/lib/screen-fingerprint.js";
+    import { createWebRTCPeer } from "/lib/webrtc-peer.js";
     import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
     import { createNotepad } from "/lib/notepad.js";
     import { createCardCarousel } from "/lib/card-carousel.js";
@@ -85,11 +88,6 @@
           name: initialSessionName,
           shortcuts: []
         },
-        connection: {
-          ws: null,
-          attached: false,
-          reconnectDelay: 1000
-        },
         scroll: {
           userScrolledUpBeforeDisconnect: false
         },
@@ -130,37 +128,7 @@
     // Subscribe to shortcuts changes for render side effects
     // Note: shortcuts store subscription moved after renderBar is defined (line ~640)
 
-    // --- Connection Indicator ---
-
-    const updateConnectionIndicator = () => {
-      const attached = state.connection.attached;
-      const transportType = state.connection.transportType || "websocket";
-
-      // Three-state indicator: grey (disconnected) → yellow (relay/WS) → green (direct/P2P)
-      let cssClass, title;
-      if (!attached) {
-        cssClass = "";
-        title = "Disconnected";
-      } else if (transportType === "datachannel") {
-        cssClass = "direct";
-        title = "Direct (P2P)";
-      } else {
-        cssClass = "relay";
-        title = "Relay (WebSocket)";
-      }
-
-      for (const id of ["sidebar-connection-dot", "connection-indicator", "island-connection-dot"]) {
-        const dot = document.getElementById(id);
-        if (!dot) continue;
-        dot.classList.remove("connected", "relay", "direct");
-        if (cssClass) dot.classList.add(cssClass);
-        dot.title = title;
-      }
-      joystickManager.setConnected(attached);
-      // Show/hide disconnect overlay to give visual feedback that input is disabled
-      const overlay = document.getElementById("disconnect-overlay");
-      if (overlay) overlay.classList.toggle("visible", !attached);
-    };
+    // Connection indicator is now driven by cm.subscribe() — see below.
 
     // --- Instance label ---
     // Show the page hostname verbatim in the sidebar footer + browser tab
@@ -199,10 +167,7 @@
     const terminalPool = createTerminalPool({
       parentEl: document.getElementById("terminal-container"),
       onResize: (sessionName, cols, rows) => {
-        const ws = state.connection.ws;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "resize", session: sessionName, cols, rows }));
-        }
+        cm.send(JSON.stringify({ type: "resize", session: sessionName, cols, rows }));
       },
       terminalOptions: {
         cols: DEFAULT_COLS,
@@ -318,10 +283,7 @@
           // Re-render tabs to show the new icon
           if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
           // Notify server so other clients see the change
-          const ws = state.connection.ws;
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "set-tab-icon", session: currentName, icon: iconName || null }));
-          }
+          cm.send(JSON.stringify({ type: "set-tab-icon", session: currentName, icon: iconName || null }));
           return true; // handled
         });
 
@@ -438,7 +400,7 @@
         { id: tileId, type: "cluster", props: { slots, cells: count } },
         { focus: true, insertAt: "afterFocus" },
       );
-      wsConnection.connect();
+      cm.connect();
     }
 
     // --- Card Carousel (iPad/tablet) ---
@@ -448,8 +410,7 @@
       createTileContext: (tileId, _tile) => ({
         tileId,
         sendWs(msg) {
-          const ws = state.connection.ws;
-          if (ws?.readyState === 1) ws.send(JSON.stringify(msg));
+          cm.send(JSON.stringify(msg));
         },
         onWsMessage(_type, _handler) {
           // Terminal tiles use the existing pull-based output system.
@@ -480,7 +441,7 @@
         // Dispatch empty state — tile-host's onTileRemoved fires for
         // each tile, handling WS unsubscribe generically.
         uiStore.reset(EMPTY_STATE);
-        wsConnection.disconnect();
+        cm.disconnect();
         state.update('session.name', null);
         setDocTitle(null);
         const url = new URL(window.location);
@@ -512,20 +473,18 @@
           state.update("session.name", desc.session);
           setDocTitle(desc.session);
 
-          const ws = state.connection.ws;
-          const wsOpen = ws?.readyState === WebSocket.OPEN;
+          const connReady = cm.getState().status === "ready";
           const entry = terminalPool.get(desc.session);
           const buf = entry?.term?.buffer?.active;
           const isEmpty = !buf || (buf.baseY === 0 && buf.cursorY === 0 && buf.cursorX === 0);
-          if (wsOpen && entry) {
+          if (connReady && entry) {
             if (isEmpty) {
-              ws.send(JSON.stringify({ type: "switch", session: desc.session, cols: entry.term.cols, rows: entry.term.rows }));
+              cm.send(JSON.stringify({ type: "switch", session: desc.session, cols: entry.term.cols, rows: entry.term.rows }));
             } else {
-              ws.send(JSON.stringify({ type: "resize", session: desc.session, cols: entry.term.cols, rows: entry.term.rows }));
+              cm.send(JSON.stringify({ type: "resize", session: desc.session, cols: entry.term.cols, rows: entry.term.rows }));
             }
           } else if (isEmpty) {
-            wsConnection.enableReconnect();
-            wsConnection.connect();
+            cm.connect();
           }
         }
         syncCarouselSubscriptions();
@@ -537,7 +496,7 @@
         const sessions = handle.getSessions?.() || [];
         for (const sessionName of sessions) {
           if (windowTabSet) windowTabSet.removeTab(sessionName);
-          wsConnection.sendUnsubscribe(sessionName);
+          cm.send(JSON.stringify({ type: "unsubscribe", session: sessionName }));
         }
         // Legacy shortcut bar re-render
         if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
@@ -616,7 +575,10 @@
         const sessions = handle.getSessions?.() || [];
         for (const sessionName of sessions) {
           const entry = terminalPool.get(sessionName);
-          wsConnection.sendSubscribe(sessionName, entry?.term?.cols, entry?.term?.rows);
+          const subMsg = { type: "subscribe", session: sessionName };
+          if (entry?.term?.cols) subMsg.cols = entry.term.cols;
+          if (entry?.term?.rows) subMsg.rows = entry.term.rows;
+          cm.send(JSON.stringify(subMsg));
         }
       }
       carousel.fitAll();
@@ -741,8 +703,7 @@
 
     // Create buffered input sender
     const inputSender = createInputSender({
-      getWebSocket: () => state.connection.ws,
-      getTransport: () => state.connection.transport,
+      sendFn: (payload) => cm.send(payload),
       getSession: () => state.session.name,
       onInput: () => {},
     });
@@ -750,7 +711,7 @@
     const rawSend = (data) => {
       // Drop all input when not attached — prevents blind typing during
       // disconnection from queuing keystrokes that execute on reconnect.
-      if (!state.connection.attached) return;
+      if (cm.getState().status !== "ready") return;
       inputSender.send(data);
     };
 
@@ -942,11 +903,10 @@
         if (sidebar?.classList.contains("collapsed")) {
           setSidebarCollapsed(false);
         }
-        wsConnection.enableReconnect();
         // routeToSession dispatches ADD_TILE with insertAt: "afterFocus"
         routeToSession(data.name);
         windowTabSet.addTab(data.name);
-        wsConnection.connect();
+        cm.reconnectNow();
       } catch (err) {
         console.error("Failed to create session:", err);
         showToast(`Failed to create session: ${err.message}`);
@@ -1495,7 +1455,7 @@
       onAllTabsClosed: () => {
         // Hide all terminal panes, disconnect WS, clear state
         terminalPool.forEach((name) => terminalPool.dispose(name));
-        wsConnection.disconnect();
+        cm.disconnect();
         state.update('session.name', null);
         setDocTitle(null);
         const url = new URL(window.location);
@@ -1505,7 +1465,6 @@
       sendFn: rawSend,
       get term() { return getTerm(); },
       terminalPool,
-      updateConnectionIndicator,
       getInstanceIcon,
       getSessionIcon,
       sessionStore,
@@ -1641,7 +1600,7 @@
       onSend: rawSend,
       toast: showToast,
       sessionName: sessionName || state.session.name,
-      getWebSocket: () => state.connection.ws
+      getWebSocket: () => cm.transport?.ws
     });
 
     // --- Upload button (file picker) ---
@@ -1659,7 +1618,7 @@
           onSend: rawSend,
           toast: showToast,
           sessionName: state.session.name,
-          getWebSocket: () => state.connection.ws,
+          getWebSocket: () => cm.transport?.ws,
         });
       }
       _uploadInput.value = ""; // reset so same file can be re-selected
@@ -1687,7 +1646,7 @@
           return;
         }
         // Upload in parallel, paste via single server request
-        uploadImagesToTerminalFn(imageFiles, { onSend: rawSend, toast: showToast, sessionName: state.session.name, getWebSocket: () => state.connection.ws });
+        uploadImagesToTerminalFn(imageFiles, { onSend: rawSend, toast: showToast, sessionName: state.session.name, getWebSocket: () => cm.transport?.ws });
       }
     });
 
@@ -1756,7 +1715,7 @@
         { id: tileId, type: "file-browser", props: { cwd, sessionName } },
         { focus: true, insertAt: "afterFocus" },
       );
-      wsConnection.connect();
+      cm.connect();
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
@@ -1829,16 +1788,10 @@
       if (helmMounted) return;
       helmComponent = createHelmComponent({
         onSendMessage: (session, content) => {
-          const ws = state.connection.ws;
-          if (ws?.readyState === 1) {
-            ws.send(JSON.stringify({ type: "helm-input", session, content }));
-          }
+          cm.send(JSON.stringify({ type: "helm-input", session, content }));
         },
         onAbort: (session) => {
-          const ws = state.connection.ws;
-          if (ws?.readyState === 1) {
-            ws.send(JSON.stringify({ type: "helm-abort", session }));
-          }
+          cm.send(JSON.stringify({ type: "helm-abort", session }));
         },
         onToggleTerminal: () => toggleHelmView(),
       });
@@ -1897,32 +1850,118 @@
       renderBar(state.session.name);
     }
 
-    // --- Network change monitoring ---
+    // --- Connection Manager ---
+    //
+    // Replaces createWebSocketConnection + createNetworkMonitor. The
+    // connection manager owns the WebSocket lifecycle: connect, disconnect,
+    // reconnect, heartbeat, and visibility-based reconnection. Message
+    // routing is handled by handleWsMessage (below) which dispatches to
+    // the pure wsMessageHandlers table and executes side effects.
 
-    const networkMonitor = createNetworkMonitor({
-      onNetworkChange: () => {
-        // Network changed — WebSocket will handle reconnection if needed
-      }
-    });
-    networkMonitor.init();
+    // Helper: route output to the correct terminal by session name.
+    function getOutputTerm(session) {
+      return terminalPool.get(session)?.term || (typeof getTerm === "function" ? getTerm() : null);
+    }
 
-    // --- WebSocket Connection ---
-
-    const wsConnection = createWebSocketConnection({
-      term: getTerm,
-      getTermForSession: (session) => terminalPool.get(session)?.term || null,
-      state,
-      updateConnectionIndicator,
-      isAtBottom,
-      invalidateSessions: (name) => invalidateSessions(sessionStore, name),
-      syncCarouselSubscriptions: () => syncCarouselSubscriptions(),
-      updateSessionUI: (name) => {
-        setDocTitle(name);
-        const url = new URL(window.location);
-        url.searchParams.set("s", name);
-        history.replaceState(null, "", url);
-        renderBar(name);
+    // Pull manager — pure state machine for terminal output streaming.
+    // Extracted from websocket-connection.js; callbacks now use cm.send.
+    const pulls = createPullManager({
+      onSendPull(session, fromSeq) {
+        cm.send(JSON.stringify({ type: "pull", session, fromSeq }));
       },
+      onWrite(session, data, done) {
+        const term = getOutputTerm(session);
+        if (term) {
+          terminalWriteWithScroll(term, data, done);
+        } else {
+          // No terminal yet — reject the write so pull manager doesn't
+          // advance the cursor. Data will be re-pulled when the terminal
+          // is created and a data-available fires.
+          done(false);
+        }
+      },
+      onReset(session) {
+        const term = getOutputTerm(session);
+        if (!term) return;
+        // Clear screen + cursor home WITHOUT resetting terminal modes.
+        term.write("\x1b[2J\x1b[H");
+        term.clear();
+      },
+    });
+
+    // WebRTC peer for DataChannel negotiation
+    let rtcPeer = null;
+
+    // Effect handlers — data-driven lookup instead of switch.
+    // Each handler receives the effect object. Moved from websocket-connection.js;
+    // deps.X references replaced with direct function calls.
+    const effectHandlers = {
+      fit: () => requestAnimationFrame(() => fitActiveTerminal()),
+      log: (e) => console.log(e.message),
+      pasteComplete: (e) => onPasteComplete(e.path),
+      scrollToBottomIfNeeded: (e) => { const t = getTerm(); if (e.condition && t) scrollToBottom(t); },
+      seqClear: (e) => pulls.clear(e.session || null),
+      pullInit: (e) => { if (e.session) pulls.init(e.session, e.seq); },
+      dataAvailable: (e) => pulls.dataAvailable(e.session),
+      outputReceived: (e) => pulls.outputReceived(e.session, e.data, e.cursor, e.fromSeq),
+      pullResponse: (e) => pulls.pullResponse(e.session, e.data, e.cursor),
+      pullSnapshot: (e) => pulls.pullSnapshot(e.session, e.data || "", e.cursor),
+      stateCheck: (e) => {
+        // Lamport's lesson: comparing two states requires they describe the
+        // SAME logical time. The server captures fingerprint at byte `e.seq`;
+        // the client must wait until its pull cursor has reached that same
+        // byte position before comparing.
+        const POLL_MS = 50;
+        const MAX_WAIT_MS = 2000;
+        const deadline = Date.now() + MAX_WAIT_MS;
+
+        function tryCheck() {
+          const term = getOutputTerm(e.session);
+          if (!term) return true; // session gone — give up
+
+          const ps = pulls.get(e.session);
+          if (!ps) return true;
+
+          if (typeof e.seq === 'number' && ps.cursor > e.seq) return true;
+
+          const cursorReady = typeof e.seq !== 'number' || ps.cursor >= e.seq;
+          if (ps.writing || ps.pulling || !cursorReady) return false;
+
+          const clientFp = screenFingerprint(term);
+          if (clientFp !== e.fingerprint) {
+            console.log(`[drift] session=${e.session} server=${e.fingerprint} client=${clientFp} seq=${e.seq} — requesting resync`);
+            cm.send(JSON.stringify({ type: "resync", session: e.session }));
+          }
+          return true;
+        }
+
+        if (tryCheck()) return;
+        const poll = setInterval(() => {
+          if (tryCheck() || Date.now() >= deadline) clearInterval(poll);
+        }, POLL_MS);
+      },
+      terminalReset: () => { const t = getTerm(); if (t) { t.clear(); t.reset(); } },
+      terminalWrite: (e) => { const t = e.useOutputTerm ? getOutputTerm(e.session) : getTerm(); if (t) terminalWriteWithScroll(t, e.data); },
+      subscribeSnapshot: (e) => {
+        const t = getOutputTerm(e.session);
+        if (!t) return;
+        const buf = t.buffer?.active;
+        const isEmpty = buf && buf.baseY === 0 && buf.cursorY === 0 && buf.cursorX === 0;
+        if (isEmpty && e.data) {
+          t.clear(); t.reset();
+          terminalWriteWithScroll(t, e.data);
+        }
+      },
+      reload: () => location.reload(),
+      invalidateSessions: (e) => invalidateSessions(sessionStore, e.name),
+      updateSessionUI: (e) => {
+        setDocTitle(e.name);
+        const url = new URL(window.location);
+        url.searchParams.set("s", e.name);
+        history.replaceState(null, "", url);
+        renderBar(e.name);
+      },
+      syncCarouselSubscriptions: () => syncCarouselSubscriptions(),
       refreshTokensAfterRegistration: () => {
         loadTokens();
         const form = document.getElementById("token-create-form");
@@ -1930,16 +1969,9 @@
         if (form) form.style.display = "none";
         if (btn) btn.style.display = "";
       },
-      onSessionRemoved: (name) => {
-        // Tear down the local view of this session — carousel tile, tab,
-        // pooled terminal. The reconciler in app.js handles the same job
-        // for sessions killed while we were offline; this path covers the
-        // live case where the server pushes us a session-removed event.
+      sessionRemoved: (e) => {
+        const name = e.name;
         const wasFocused = state.session.name === name;
-        // Pick the right-neighbor BEFORE tearing down, so the carousel
-        // order still contains this tile. Shared with Option+W close so
-        // typing `exit` and pressing Option+W land focus on the same tile
-        // (see PR #543 — fix only covered the Option+W path originally).
         const next = wasFocused ? pickRightNeighbor(name) : null;
         removeDeadSession(name);
         if (!wasFocused) return;
@@ -1949,36 +1981,36 @@
           clearFocusedSessionUI();
         }
       },
-      poolRename: (oldName, newName) => terminalPool.rename(oldName, newName),
-      tabRename: (oldName, newName) => windowTabSet.renameTab(oldName, newName),
-      fit: fitActiveTerminal,
-      // Helm mode
-      onHelmModeChanged,
-      onHelmEvent: (session, event) => helmComponent?.helmEvent(session, event),
-      onHelmTurnComplete: (session) => helmComponent?.helmTurnComplete(session),
-      onHelmWaitingForInput: (session) => helmComponent?.helmWaitingForInput(session),
-      onPasteComplete: (path) => onPasteComplete(path),
-      onTabIconChanged: (session, icon) => {
-        if (icon) {
-          sessionIcons.set(session, icon);
+      poolRename: (e) => terminalPool.rename(e.oldName, e.newName),
+      tabRename: (e) => windowTabSet.renameTab(e.oldName, e.newName),
+      resizeSync: () => {
+        // Another client resized the shared PTY. Recalculate our own
+        // dimensions via fitActiveTerminal (font + rows from THIS viewport).
+        fitActiveTerminal();
+      },
+      fastReconnect: () => cm.reconnectNow(),
+      helmModeChanged: (e) => onHelmModeChanged(e),
+      helmEvent: (e) => helmComponent?.helmEvent(e.session, e.event),
+      helmTurnComplete: (e) => helmComponent?.helmTurnComplete(e.session),
+      helmWaitingForInput: (e) => helmComponent?.helmWaitingForInput(e.session),
+      tabIconChanged: (e) => {
+        if (e.icon) {
+          sessionIcons.set(e.session, e.icon);
         } else {
-          sessionIcons.delete(session);
+          sessionIcons.delete(e.session);
         }
         if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
       },
-      onOpenTab: (session) => {
-        windowTabSet.addTab(session);
-        switchSession(session);
+      openTab: (e) => {
+        windowTabSet.addTab(e.session);
+        switchSession(e.session);
       },
-      onNotification: (title, message) => {
-        const t = title || "Katulong";
-        dispatchNotification(t, message);
-        // Always show in-app toast so notifications are visible even
-        // when native notifications aren't available (e.g., Android
-        // Chrome without PWA install, or permission not granted).
-        showToast(`${t}: ${message}`);
+      showNotification: (e) => {
+        const t = e.title || "Katulong";
+        dispatchNotification(t, e.message);
+        showToast(`${t}: ${e.message}`);
       },
-      onDeviceAuthRequest: (requestId, code, userAgent) => {
+      showDeviceAuthRequest: (e) => {
         const overlay = document.getElementById("device-auth-overlay");
         const agentEl = document.getElementById("device-auth-modal-agent");
         const codeEl = document.getElementById("device-auth-modal-code");
@@ -1986,9 +2018,8 @@
         const denyBtn = document.getElementById("device-auth-deny-btn");
         if (!overlay || !agentEl || !codeEl || !approveBtn || !denyBtn) return;
 
-        // Use textContent to prevent XSS from user-agent strings
-        agentEl.textContent = `Login request from: ${userAgent}`;
-        codeEl.textContent = String(code);
+        agentEl.textContent = `Login request from: ${e.userAgent}`;
+        codeEl.textContent = String(e.code);
         overlay.classList.add("visible");
 
         function cleanup() {
@@ -1999,7 +2030,7 @@
 
         async function onApprove() {
           try {
-            await api.post("/auth/device-auth/approve", { requestId });
+            await api.post("/auth/device-auth/approve", { requestId: e.requestId });
           } catch (err) {
             showToast(`Approve failed: ${err.message}`);
           }
@@ -2008,7 +2039,7 @@
 
         async function onDeny() {
           try {
-            await api.post("/auth/device-auth/deny", { requestId });
+            await api.post("/auth/device-auth/deny", { requestId: e.requestId });
           } catch (err) {
             showToast(`Deny failed: ${err.message}`);
           }
@@ -2018,8 +2049,152 @@
         approveBtn.addEventListener("click", onApprove);
         denyBtn.addEventListener("click", onDeny);
       },
+    };
+
+    function executeEffect(effect) {
+      const handler = effectHandlers[effect.type];
+      if (handler) handler(effect);
+    }
+
+    /**
+     * Attempt WebRTC DataChannel upgrade after successful WS attach.
+     * If RTCPeerConnection is not available (e.g., older browser), this is a no-op.
+     * On success, transport layer switches to DataChannel atomically.
+     * On failure, stays on WebSocket — no user-visible impact.
+     */
+    function initiateWebRTC() {
+      if (typeof RTCPeerConnection === "undefined") return;
+      if (rtcPeer) { rtcPeer.close(); rtcPeer = null; }
+
+      rtcPeer = createWebRTCPeer({
+        sendSignaling: (msg) => {
+          // Signaling always goes over WebSocket (DC doesn't exist yet)
+          const ws = cm.transport?.ws;
+          if (ws?.readyState === 1) ws.send(JSON.stringify(msg));
+        },
+        onDataChannel: (dc) => {
+          const transport = cm.transport;
+          if (transport) {
+            transport.upgradeToDataChannel(dc);
+            // Notify connection store of transport change
+            console.log("[WebRTC] Upgraded to DataChannel (P2P)");
+          }
+        },
+        onStateChange: (s) => {
+          if (s === "failed" || s === "closed") {
+            console.log("[WebRTC] Fell back to WebSocket");
+          }
+        },
+      });
+
+      rtcPeer.connect();
+    }
+
+    /** Handle parsed WS messages — dispatches to pure handlers, then executes effects. */
+    function handleWsMessage(msg) {
+      // WebRTC signaling — handle before regular dispatch
+      if (msg.type === "rtc-answer" && rtcPeer) {
+        rtcPeer.handleAnswer(msg.sdp);
+        return;
+      }
+      if (msg.type === "rtc-ice-candidate" && rtcPeer) {
+        rtcPeer.handleCandidate(msg.candidate);
+        return;
+      }
+
+      const handler = wsMessageHandlers[msg.type];
+      if (!handler) return;
+
+      const { stateUpdates, effects } = handler(msg, {
+        currentSessionName: state.session.name,
+      });
+
+      // Apply state updates — filter out connection.* keys since connection
+      // state is now managed by the connection store, not the app state object.
+      if (stateUpdates && Object.keys(stateUpdates).length > 0) {
+        const filtered = {};
+        for (const [key, value] of Object.entries(stateUpdates)) {
+          if (!key.startsWith("connection.")) filtered[key] = value;
+        }
+        if (Object.keys(filtered).length > 0) {
+          state.updateMany(filtered);
+        }
+      }
+
+      // Post-handler: initiate WebRTC on attach/switch
+      if (msg.type === "attached" || msg.type === "switched") {
+        initiateWebRTC();
+      }
+
+      // Execute effects sequentially
+      effects.forEach(executeEffect);
+    }
+
+    /** When transport is ready, send the attach message. */
+    function handleTransportReady(transport) {
+      const sessionName = state.session.name;
+      if (sessionName) {
+        const term = getTerm();
+        cm.send(JSON.stringify({
+          type: "attach",
+          session: sessionName,
+          cols: term?.cols || 80,
+          rows: term?.rows || 24,
+        }));
+      }
+    }
+
+    // Create connection manager (replaces createWebSocketConnection + createNetworkMonitor)
+    const cm = createConnectionManager({
+      getSessionName: () => state.session.name,
+      onMessage: handleWsMessage,
+      onTransportReady: handleTransportReady,
     });
-    wsConnection.initVisibilityReconnect();
+    cm.init(); // Wire DOM listeners (offline/online/visibilitychange)
+
+    // Connection indicator subscriber — replaces updateConnectionIndicator function.
+    // Reacts to connection store state changes and updates all indicator dots.
+    cm.subscribe((connState) => {
+      const dotIds = ["sidebar-connection-dot", "connection-indicator", "island-connection-dot"];
+      let cssClass = "";
+      let title = "Disconnected";
+
+      if (connState.status === "connecting") {
+        cssClass = "connecting";
+        title = "Connecting...";
+      } else if (connState.status === "ready") {
+        cssClass = connState.transport === "datachannel" ? "direct" : "relay";
+        title = connState.transport === "datachannel" ? "Direct (P2P)" : "Relay (WebSocket)";
+      }
+
+      for (const id of dotIds) {
+        const dot = document.getElementById(id);
+        if (!dot) continue;
+        dot.classList.remove("connected", "relay", "direct", "connecting");
+        if (cssClass) dot.classList.add(cssClass);
+        dot.title = title;
+      }
+
+      const overlay = document.getElementById("disconnect-overlay");
+      if (overlay) overlay.classList.toggle("visible", connState.status === "disconnected");
+
+      if (typeof joystickManager !== "undefined" && joystickManager) {
+        joystickManager.setConnected(connState.status === "ready");
+      }
+    });
+
+    // Disconnect handler subscriber — clears pull state and captures scroll position
+    // when connection drops (replaces the onclose + onDisconnect callbacks from
+    // websocket-connection.js).
+    cm.subscribe((connState) => {
+      if (connState.status === "disconnected") {
+        const term = getTerm();
+        state.scroll.userScrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
+        pulls.clear();
+        // Clean up WebRTC peer on disconnect
+        if (rtcPeer) { rtcPeer.close(); rtcPeer = null; }
+      }
+    });
 
     // --- Reconcile local tiles against the authoritative server session list ---
     //
@@ -2075,7 +2250,7 @@
      *  session is gone and there's nothing to fall back to. Both the live
      *  removal path (onSessionRemoved) and the reconciler call this. */
     function clearFocusedSessionUI() {
-      wsConnection.disconnect();
+      cm.disconnect();
       state.update('session.name', null);
       setDocTitle(null);
       const url = new URL(window.location);
@@ -2273,7 +2448,7 @@
       // Single dispatch — tile-host is already subscribed (init'd
       // unconditionally above) and will pick up the state change.
       uiStore.reset(bootState);
-      wsConnection.connect();
+      cm.connect();
     }
 
     // Subscribe tile-host unconditionally BEFORE any boot path can
@@ -2297,7 +2472,7 @@
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           return r.json();
         }).then(sessions => {
-          if (state.connection.ws || state.session.name !== null) return;
+          if (cm.getState().status !== "disconnected" || state.session.name !== null) return;
           if (sessions.length > 0 && sessions[0].name) {
             const name = sessions[0].name;
             bootState.tiles[name] = { id: name, type: "terminal", props: { sessionName: name } };

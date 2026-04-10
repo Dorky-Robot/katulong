@@ -15,8 +15,8 @@
  * These tests verify the contract between:
  *   - onFocusChange (app.js) — sends "switch" message
  *   - wsMessageHandlers.switched — sets connection.attached = true
- *   - rawSend (app.js) — guards on connection.attached
- *   - inputSender — routes input to the current session
+ *   - rawSend (app.js) — guards on connection readiness (cm.getState().status === "ready")
+ *   - inputSender — routes input via sendFn to the current session
  */
 
 import { describe, it, before, beforeEach, after } from "node:test";
@@ -170,9 +170,12 @@ function setupAttachedConnection(overrides = {}) {
 
 // ── rawSend replica ────────────────────────────────────────────────────
 // Mirror the rawSend guard from app.js to test the same contract.
-function createRawSend(state, inputSender) {
+// In the new architecture, app.js checks cm.getState().status !== "ready"
+// instead of state.connection.attached. The isReady callback abstracts
+// this so tests can supply the appropriate check.
+function createRawSend(isReady, inputSender) {
   return (data) => {
-    if (!state.connection.attached) return;
+    if (!isReady()) return;
     inputSender.send(data);
   };
 }
@@ -330,35 +333,33 @@ describe("new terminal input: switch message on focus", () => {
 describe("new terminal input: rawSend guard after switch", () => {
   after(restoreBrowserGlobals);
 
-  it("rawSend drops input when connection.attached is false", () => {
+  it("rawSend drops input when connection is not ready", () => {
     installBrowserGlobals();
-    const state = makeState({ connection: { attached: false } });
     const sent = [];
     const inputSender = createInputSender({
-      getWebSocket: () => ({ readyState: 1, send: (d) => sent.push(d) }),
-      getSession: () => state.session.name,
+      sendFn: (payload) => sent.push(payload),
+      getSession: () => "default",
       onInput: () => {},
     });
-    const rawSend = createRawSend(state, inputSender);
+    const rawSend = createRawSend(() => false, inputSender);
 
     rawSend("hello");
-    assert.strictEqual(sent.length, 0, "input must be dropped when not attached");
+    assert.strictEqual(sent.length, 0, "input must be dropped when not ready");
     restoreBrowserGlobals();
   });
 
-  it("rawSend allows input when connection.attached is true", () => {
+  it("rawSend allows input when connection is ready", () => {
     installBrowserGlobals();
-    const state = makeState({ connection: { attached: true } });
     const sent = [];
     const inputSender = createInputSender({
-      getWebSocket: () => ({ readyState: 1, send: (d) => sent.push(d) }),
-      getSession: () => state.session.name,
+      sendFn: (payload) => sent.push(payload),
+      getSession: () => "default",
       onInput: () => {},
     });
-    const rawSend = createRawSend(state, inputSender);
+    const rawSend = createRawSend(() => true, inputSender);
 
     rawSend("hello");
-    assert.strictEqual(sent.length, 1, "input must pass through when attached");
+    assert.strictEqual(sent.length, 1, "input must pass through when ready");
     const payload = JSON.parse(sent[0]);
     assert.strictEqual(payload.type, "input");
     assert.strictEqual(payload.data, "hello");
@@ -394,15 +395,14 @@ describe("new terminal input: session name sync", () => {
     installBrowserGlobals();
     const state = makeState({
       session: { name: "alpha" },
-      connection: { attached: true },
     });
     const sent = [];
     const inputSender = createInputSender({
-      getWebSocket: () => ({ readyState: 1, send: (d) => sent.push(d) }),
+      sendFn: (payload) => sent.push(payload),
       getSession: () => state.session.name,
       onInput: () => {},
     });
-    const rawSend = createRawSend(state, inputSender);
+    const rawSend = createRawSend(() => true, inputSender);
 
     // Simulate focus change to new session
     state.update("session.name", "beta");
@@ -568,17 +568,22 @@ describe("new terminal input: end-to-end switch + input flow", () => {
     assert.strictEqual(state.connection.attached, true);
     assert.strictEqual(state.session.name, newSession);
 
-    // Step 5: Create input sender and rawSend, verify input flows
+    // Step 5: Create input sender and rawSend, verify input flows.
+    // In the new architecture, rawSend checks cm.getState().status === "ready".
+    // Here we use state.connection.attached as a proxy since the test drives
+    // the old websocket-connection which still sets it.
+    const sent = [];
     const inputSender = createInputSender({
-      getWebSocket: () => ws,
+      sendFn: (payload) => sent.push(payload),
       getSession: () => state.session.name,
       onInput: () => {},
     });
-    const rawSend = createRawSend(state, inputSender);
+    const rawSend = createRawSend(() => state.connection.attached, inputSender);
 
     rawSend("ls\r");
-    const inputMsg = ws._sent.find((m) => m.type === "input");
-    assert.ok(inputMsg, "input message must be sent");
+    assert.strictEqual(sent.length, 1, "input message must be sent");
+    const inputMsg = JSON.parse(sent[0]);
+    assert.strictEqual(inputMsg.type, "input");
     assert.strictEqual(inputMsg.data, "ls\r");
     assert.strictEqual(inputMsg.session, newSession,
       "input must be routed to the new session");
@@ -630,16 +635,18 @@ describe("new terminal input: end-to-end switch + input flow", () => {
     assert.strictEqual(state.connection.attached, true);
     assert.strictEqual(state.session.name, newSession);
 
+    const sent = [];
     const inputSender = createInputSender({
-      getWebSocket: () => ws,
+      sendFn: (payload) => sent.push(payload),
       getSession: () => state.session.name,
       onInput: () => {},
     });
-    const rawSend = createRawSend(state, inputSender);
+    const rawSend = createRawSend(() => state.connection.attached, inputSender);
 
     rawSend("whoami\r");
-    const inputMsg = ws._sent.find((m) => m.type === "input");
-    assert.ok(inputMsg, "input must be delivered after reconnect + attach");
+    assert.strictEqual(sent.length, 1, "input must be delivered after reconnect + attach");
+    const inputMsg = JSON.parse(sent[0]);
+    assert.strictEqual(inputMsg.type, "input");
     assert.strictEqual(inputMsg.session, newSession);
 
     restoreBrowserGlobals();

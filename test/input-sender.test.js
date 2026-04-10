@@ -2,7 +2,7 @@
  * Tests for input-sender.js
  *
  * Verifies that the buffered input sender correctly batches data and
- * only sends when the WebSocket is open (readyState === 1).
+ * sends via the provided sendFn callback.
  */
 
 import { describe, it, beforeEach } from "node:test";
@@ -40,10 +40,10 @@ function restoreRAF() {
 describe("createInputSender", () => {
   beforeEach(() => installSyncRAF());
 
-  it("sends buffered data when WebSocket is open", () => {
+  it("sends buffered data via sendFn", () => {
     const sent = [];
     const sender = createInputSender({
-      getWebSocket: () => ({ readyState: 1, send: (d) => sent.push(d) }),
+      sendFn: (d) => sent.push(d),
       getSession: () => "test-session",
       onInput: () => {},
     });
@@ -61,23 +61,21 @@ describe("createInputSender", () => {
     restoreRAF();
   });
 
-  it("drops data silently when WebSocket is not open", () => {
-    const sent = [];
+  it("does not crash when sendFn is null", () => {
     const sender = createInputSender({
-      getWebSocket: () => ({ readyState: 3, send: (d) => sent.push(d) }),
+      sendFn: null,
       getSession: () => "s",
       onInput: () => {},
     });
 
     sender.send("dropped");
     flushRAF();
-    assert.strictEqual(sent.length, 0, "should not send when WS is closed");
+    // No assertion needed beyond "no crash"
     restoreRAF();
   });
 
-  it("drops data when WebSocket is null", () => {
+  it("does not crash when sendFn is omitted", () => {
     const sender = createInputSender({
-      getWebSocket: () => null,
       getSession: () => "s",
       onInput: () => {},
     });
@@ -91,7 +89,7 @@ describe("createInputSender", () => {
   it("clears buffer and cancels pending RAF on clear()", () => {
     const sent = [];
     const sender = createInputSender({
-      getWebSocket: () => ({ readyState: 1, send: (d) => sent.push(d) }),
+      sendFn: (d) => sent.push(d),
       getSession: () => "s",
       onInput: () => {},
     });
