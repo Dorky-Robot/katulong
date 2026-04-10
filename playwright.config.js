@@ -32,7 +32,7 @@ export default defineConfig({
     command: `bash test/e2e/start-test-server.sh`,
     port: TEST_PORT,
     reuseExistingServer: !process.env.CI,
-    timeout: 15_000,
+    timeout: 60_000,
     env: { TEST_SHARD_INDEX: String(SHARD_INDEX) },
   },
   projects: [
