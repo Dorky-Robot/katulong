@@ -276,9 +276,47 @@ cmd_list() {
 # ---------------------------------------------------------------------------
 # stop
 # ---------------------------------------------------------------------------
+# Kill any process listening on a given TCP port. Used as a fallback when the
+# PID in meta.env is stale (server was restarted, PID recycled, etc.). Without
+# this, `stop` would kill the wrong process (or nothing) and the actual server
+# would keep running as an orphan after `rm -rf` removes its tracking file.
+kill_port_listener() {
+  local port="$1"
+  [[ -n "$port" ]] || return 0
+  local pids
+  pids="$(lsof -ti "TCP:${port}" -sTCP:LISTEN 2>/dev/null || true)"
+  [[ -n "$pids" ]] || return 0
+  for p in $pids; do
+    kill "$p" 2>/dev/null || true
+  done
+  sleep 1
+  for p in $pids; do
+    is_alive "$p" && kill -9 "$p" 2>/dev/null || true
+  done
+}
+
 stop_one() {
   local target="$1"
   local dir="$STAGE_BASE/$target"
+
+  # If there's no meta.env, try to reap an orphan: kill any server whose
+  # KATULONG_DATA_DIR points at this staging dir, kill the tmux socket,
+  # and remove the directory. This handles the case where the start script
+  # was interrupted between `nohup node server.js` and `write_meta`.
+  if [[ -d "$dir" && ! -f "$dir/meta.env" ]]; then
+    local orphan_pids
+    orphan_pids="$(pgrep -f "KATULONG_DATA_DIR=$dir/data" 2>/dev/null || true)"
+    for p in $orphan_pids; do
+      kill "$p" 2>/dev/null || true
+    done
+    tmux -L "stage-$target" kill-server 2>/dev/null || true
+    rm -rf "$dir"
+    if [[ -n "$orphan_pids" ]]; then
+      echo "Reaped orphan staging: $target"
+    fi
+    return 0
+  fi
+
   if [[ ! -d "$dir" || ! -f "$dir/meta.env" ]]; then
     echo "No staging instance: $target" >&2
     return 1
@@ -293,6 +331,11 @@ stop_one() {
     sleep 1
     is_alive "$pid" && kill -9 "$pid" 2>/dev/null || true
   fi
+
+  # Fallback: also kill whatever is actually listening on the recorded port.
+  # Catches the case where the server was restarted (new PID) but meta.env
+  # still has the old PID.
+  kill_port_listener "${port:-}"
 
   if [[ -n "${tmux_socket:-}" ]]; then
     tmux -L "$tmux_socket" kill-server 2>/dev/null || true
@@ -412,7 +455,15 @@ cmd_start() {
     nohup node "$REPO_ROOT/server.js" > "$log_file" 2>&1 &
   local server_pid=$!
 
+  # Trap signals so an interrupted start doesn't orphan the server process.
+  # nohup makes the server immune to SIGHUP, so without this trap a Ctrl-C
+  # or Claude session timeout between server start and write_meta leaves a
+  # running server with no meta.env — invisible to list/stop.
+  # shellcheck disable=SC2064
+  trap "cleanup_start '$server_pid' '$dir'; exit 130" INT TERM HUP
+
   if ! wait_for_server "$port" "$server_pid" "$log_file"; then
+    trap - INT TERM HUP
     cleanup_start "$server_pid" "$dir"
     return 1
   fi
@@ -421,6 +472,7 @@ cmd_start() {
   token="$(mint_setup_token "$data_dir" "$name" || true)"
   if [[ -z "$token" ]]; then
     echo "ERROR: failed to mint setup token (server up but token CLI returned nothing)" >&2
+    trap - INT TERM HUP
     cleanup_start "$server_pid" "$dir"
     return 1
   fi
@@ -434,6 +486,7 @@ cmd_start() {
     echo "ERROR: 'tunnels' CLI is not installed." >&2
     echo "       Install it (brew tap dorky-robot/tap && brew install tunnels)" >&2
     echo "       and register at least one named tunnel via 'tunnels add'." >&2
+    trap - INT TERM HUP
     cleanup_start "$server_pid" "$dir"
     return 1
   fi
@@ -445,6 +498,7 @@ cmd_start() {
     echo "       Register one with 'tunnels add <name> --token <token>'," >&2
     echo "       or pin one in ~/.katulong/config.json via:" >&2
     echo '         { "stage": { "tunnel": "<tunnel-name>" } }' >&2
+    trap - INT TERM HUP
     cleanup_start "$server_pid" "$dir"
     return 1
   fi
@@ -453,10 +507,8 @@ cmd_start() {
   if ! tunnels route add "$host" "$port" --tunnel "$tunnel" >/dev/null 2>&1; then
     echo "ERROR: 'tunnels route add $host $port --tunnel $tunnel' failed." >&2
     echo "       Check 'tunnels list' and 'tunnels logs $tunnel'." >&2
-    # Attempt a best-effort route rm in case `route add` registered state
-    # before failing partway. `tunnels route rm` is a no-op if nothing was
-    # registered, so this is safe to call unconditionally on the failure path.
     tunnels route rm "$host" --tunnel "$tunnel" >/dev/null 2>&1 || true
+    trap - INT TERM HUP
     cleanup_start "$server_pid" "$dir"
     return 1
   fi
@@ -477,9 +529,14 @@ cmd_start() {
     log_file "$log_file"; then
     echo "ERROR: failed to write meta.env — refusing to leave a running server with no stop record" >&2
     tunnels route rm "$host" --tunnel "$tunnel" >/dev/null 2>&1 || true
+    trap - INT TERM HUP
     cleanup_start "$server_pid" "$dir"
     return 1
   fi
+
+  # meta.env is written — server is now trackable by stop/list. Clear the
+  # signal trap so normal script exit doesn't kill the server we just started.
+  trap - INT TERM HUP
 
   cat <<EOF
 

@@ -131,10 +131,10 @@ describe("createWebRTCSignaling", () => {
 
       const { signaling } = setup({ PeerConnection: CapturePeerConnection });
       await signaling.handleOffer("client-1", { type: "offer", sdp: "o" });
-      await signaling.handleCandidate("client-1", { candidate: "ice-1", sdpMid: "0" });
+      await signaling.handleCandidate("client-1", { candidate: "ice-1", sdpMid: "0", sdpMLineIndex: 0 });
 
       assert.equal(addedCandidates.length, 1);
-      assert.deepEqual(addedCandidates[0], { candidate: "ice-1", sdpMid: "0" });
+      assert.deepEqual(addedCandidates[0], { candidate: "ice-1", sdpMid: "0", sdpMLineIndex: 0 });
     });
 
     it("ignores candidates for unknown clients (no throw)", async () => {
@@ -206,12 +206,12 @@ describe("createWebRTCSignaling", () => {
       // Simulate the RTCPeerConnection generating a local ICE candidate
       const pc = signaling._getPeerConnection("client-1");
       assert.ok(pc.onicecandidate, "onicecandidate should be wired up");
-      pc.onicecandidate({ candidate: { candidate: "server-ice", sdpMid: "0" } });
+      pc.onicecandidate({ candidate: { candidate: "server-ice", sdpMid: "0", sdpMLineIndex: 0 } });
 
       const iceMsgs = sentMessages.filter((m) => m.msg.type === "rtc-ice-candidate");
       assert.equal(iceMsgs.length, 1);
       assert.equal(iceMsgs[0].clientId, "client-1");
-      assert.deepEqual(iceMsgs[0].msg.candidate, { candidate: "server-ice", sdpMid: "0" });
+      assert.deepEqual(iceMsgs[0].msg.candidate, { candidate: "server-ice", sdpMid: "0", sdpMLineIndex: 0 });
     });
 
     it("ignores null candidate events (end-of-candidates signal)", async () => {

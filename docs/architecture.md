@@ -149,7 +149,7 @@ Sessions are backed by tmux. Restart the server freely — your sessions survive
 
 **Terminal**: `terminal-pool.js`, `terminal-input-filter.js`, `terminal-keyboard.js`, `input-sender.js`, `scroll-utils.js`
 
-**Networking**: `websocket-connection.js`, `network-monitor.js`, `api-client.js`
+**Networking**: `connection-manager.js`, `connection-store.js`, `ws-message-handlers.js`, `api-client.js`
 
 **UI Components**: `shortcut-bar.js`, `shortcuts-components.js`, `tab-manager.js`, `window-tab-set.js`, `session-list-component.js`, `token-list-component.js`, `token-form.js`, `dictation-modal.js`, `modal.js`, `list-renderer.js`, `component.js`
 
