@@ -14,7 +14,7 @@
  * existing tile-chrome primitive.
  */
 
-import { createFileBrowserStore, loadRoot, getDeepestPath } from "../file-browser/file-browser-store.js";
+import { createFileBrowserStore, createNavController, getDeepestPath } from "../file-browser/file-browser-store.js";
 import { createFileBrowserComponent } from "../file-browser/file-browser-component.js";
 
 /**
@@ -30,10 +30,13 @@ export function createFileBrowserTileFactory(_deps = {}) {
     let mounted = false;
     let component = null;
     let unsubscribeStore = null;
-    // Each tile has its own store — mirroring per-tile independence of
-    // terminal tiles. Sharing one global store across multiple browser
-    // tiles would couple their navigation state and break serialize().
+    // Each tile has its own store and nav controller — mirroring per-tile
+    // independence of terminal tiles. Sharing one global store across
+    // multiple browser tiles would couple their navigation state and
+    // break serialize(). The nav controller scopes request cancellation
+    // per instance so rapid clicks in one tile don't cancel fetches in another.
     const store = createFileBrowserStore();
+    const nav = createNavController(store);
 
     const tile = {
       type: "file-browser",
@@ -51,13 +54,7 @@ export function createFileBrowserTileFactory(_deps = {}) {
 
       mount(el, ctx) {
         container = el;
-        // Mount the component directly onto the tile-chrome content
-        // element. Previously a wrapper <div> existed to protect
-        // tile-chrome's `.tile-content` flex rules from
-        // createFileBrowserComponent clobbering `container.className =
-        // "file-browser"`. Tier 1 T1b fixed the component to own a
-        // `.fb-root` child, so the wrapper is no longer needed.
-        component = createFileBrowserComponent(store, {
+        component = createFileBrowserComponent(store, nav, {
           // The file-browser component draws its own X button in its
           // header. When hosted as a tile, that X must remove this
           // tile from its container. Route through ctx.requestClose
@@ -68,7 +65,7 @@ export function createFileBrowserTileFactory(_deps = {}) {
           onClose: () => { ctx?.requestClose?.(); },
         });
         component.mount(el);
-        loadRoot(store, currentCwd);
+        nav.loadRoot(currentCwd);
         // Track the deepest navigated path as the tile's "current" path
         // so the tab label follows the user's folder navigation. Notify
         // the host (carousel/tab bar) via ctx.setTitle whenever it moves.

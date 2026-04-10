@@ -2,11 +2,11 @@
  * File Browser Actions — Miller Columns
  *
  * Handles file operations: rename, new folder, delete, upload, copy/cut/paste.
- * Works with the column-based store.
+ * Works with the column-based store and navigation controller.
  */
 
 import { api } from "/lib/api-client.js";
-import { refreshAll, getDeepestPath } from "/lib/file-browser/file-browser-store.js";
+import { getDeepestPath } from "/lib/file-browser/file-browser-store.js";
 
 /**
  * Get the path of the deepest column (where operations target).
@@ -41,7 +41,11 @@ export async function uploadFile(targetPath, file) {
   }
 }
 
-export function createFileBrowserActions(store) {
+/**
+ * @param {object} store — file-browser store
+ * @param {object} nav — navigation controller (for refreshAll)
+ */
+export function createFileBrowserActions(store, nav) {
 
   function startRename(container, entryName) {
     const row = container.querySelector(`.fb-miller-row[data-name="${CSS.escape(entryName)}"]`);
@@ -74,7 +78,7 @@ export function createFileBrowserActions(store) {
       committed = true;
       const newName = input.value.trim();
       if (!newName || newName === originalText) {
-        await refreshAll(store);
+        await nav.refreshAll();
         return;
       }
       try {
@@ -85,12 +89,12 @@ export function createFileBrowserActions(store) {
       } catch (err) {
         alert("Rename failed: " + err.message);
       }
-      await refreshAll(store);
+      await nav.refreshAll();
     }
 
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); commit(); }
-      if (e.key === "Escape") { e.preventDefault(); refreshAll(store); }
+      if (e.key === "Escape") { e.preventDefault(); nav.refreshAll(); }
       e.stopPropagation();
     });
     input.addEventListener("blur", () => commit());
@@ -111,7 +115,7 @@ export function createFileBrowserActions(store) {
 
     try {
       await api.post("/api/files/mkdir", { path: targetPath + "/" + finalName });
-      await refreshAll(store);
+      await nav.refreshAll();
       setTimeout(() => startRename(container, finalName), 50);
     } catch (err) {
       alert("Failed to create folder: " + err.message);
@@ -131,7 +135,7 @@ export function createFileBrowserActions(store) {
 
     try {
       await api.post("/api/files/delete", { items: paths });
-      await refreshAll(store);
+      await nav.refreshAll();
     } catch (err) {
       alert("Delete failed: " + err.message);
     }
@@ -153,7 +157,7 @@ export function createFileBrowserActions(store) {
           alert(`Upload failed for ${file.name}: ${err.message}`);
         }
       }
-      await refreshAll(store);
+      await nav.refreshAll();
       input.remove();
     });
     // Clean up if user cancels the file picker
@@ -195,7 +199,7 @@ export function createFileBrowserActions(store) {
         await api.post("/api/files/move", { items, destination: targetPath });
         store.dispatch({ type: "SET_CLIPBOARD", clipboard: null });
       }
-      await refreshAll(store);
+      await nav.refreshAll();
     } catch (err) {
       alert("Paste failed: " + err.message);
     }

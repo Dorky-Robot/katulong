@@ -8,10 +8,14 @@
  */
 
 import { api } from "/lib/api-client.js";
-import { refreshAll } from "/lib/file-browser/file-browser-store.js";
 import { uploadFile } from "/lib/file-browser/file-browser-actions.js";
 
-export function initColumnDnD(columnsEl, store) {
+/**
+ * @param {HTMLElement} columnsEl
+ * @param {object} store — file-browser store
+ * @param {object} nav — navigation controller (for refreshAll)
+ */
+export function initColumnDnD(columnsEl, store, nav) {
   let internalDrag = null; // { items: [path, ...] }
 
   // --- Resolve drop target path from the event ---
@@ -106,7 +110,7 @@ export function initColumnDnD(columnsEl, store) {
       const endpoint = e.altKey ? "/api/files/copy" : "/api/files/move";
       try {
         await api.post(endpoint, { items: internalDrag.items, destination: targetPath });
-        await refreshAll(store);
+        await nav.refreshAll();
       } catch (err) {
         alert(`${e.altKey ? "Copy" : "Move"} failed: ${err.message}`);
       }
@@ -125,7 +129,7 @@ export function initColumnDnD(columnsEl, store) {
         alert(`Upload failed for ${file.name}: ${err.message}`);
       }
     }
-    await refreshAll(store);
+    await nav.refreshAll();
   });
 
   columnsEl.addEventListener("dragend", () => {
