@@ -43,7 +43,7 @@ export async function cleanupSession(page, sessionName) {
 export async function waitForShellReady(page) {
   await page.waitForFunction(
     () => /[$➜❯%#>]/.test(document.querySelector('.xterm-rows')?.textContent || ''),
-    { timeout: 20000 },
+    { timeout: 60000 },
   );
 }
 

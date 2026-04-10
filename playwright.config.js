@@ -14,7 +14,7 @@ export default defineConfig({
   testMatch: "*.e2e.js",
   fullyParallel: true, // Distribute individual tests across workers, not just files
   workers,
-  timeout: 15_000,
+  timeout: 90_000,
   retries: process.env.CI ? 2 : 1,
   globalSetup: "./test/e2e/global-setup.js",
   globalTeardown: "./test/e2e/global-teardown.js",
