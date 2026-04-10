@@ -382,6 +382,14 @@
     // carousel + windowTabSet + sessionStore synchronization.
     const uiStore = createUiStore({ isPersistable });
 
+    /** Derive renderer capabilities for a tile descriptor.
+     *  Returns {} for unknown tiles so callers can safely destructure. */
+    function describeTile(tile) {
+      if (!tile) return {};
+      const renderer = getRenderer(tile.type);
+      return renderer?.describe(tile.props) || {};
+    }
+
     /**
      * Dispatcher for reconstructing tiles from serialized state (carousel
      * restore). Accepts the legacy `"dashboard"` type for forward-compat
@@ -450,12 +458,6 @@
       wsConnection.connect();
     }
 
-    /** Resolve the session name for a tile ID (works for terminal tiles). */
-    function tileSessionName(tileId) {
-      const tile = carousel.getTile(tileId);
-      return tile?.sessionName || tileId;
-    }
-
     // --- Card Carousel (iPad/tablet) ---
     // Tile types that opt out of carousel persistence. Keep in lockstep
     // with `persistable: false` on the tile prototype — the carousel's
@@ -488,95 +490,20 @@
           // Future: update tab icon dynamically
         },
       }),
+      // Thin dispatcher — all business logic lives in tile-host's
+      // onFocusChange callback (capability-driven, no type checks).
       onFocusChange: (tileId) => {
-        const focusedTile = carousel.getTile(tileId);
-        const isTerminal = focusedTile?.type === "terminal";
-        const sessionName = tileSessionName(tileId);
-        // Only update state.session.name and the URL ?s= when focusing a
-        // terminal. Non-terminal tiles (file browser, future kinds) have
-        // no backing tmux session; writing their tile id into the URL
-        // turns a refresh into "attach a terminal named file-browser-xyz",
-        // which then races with the carousel restore and leaves orphan
-        // phantom tabs. Keep the underlying session pointer on whatever
-        // terminal was previously active.
-        if (isTerminal) {
-          state.update('session.name', sessionName);
-          setDocTitle(sessionName);
-          const url = new URL(window.location);
-          url.searchParams.set("s", sessionName);
-          history.replaceState(null, "", url);
-        }
-        if (shortcutBarInstance) shortcutBarInstance.setActiveTab(tileId);
-        // Non-terminal tiles have no PTY, so there's nothing to switch,
-        // resize, or reconnect. Bail early — the WS bookkeeping below is
-        // terminal-only and would otherwise try to send a `switch` for a
-        // nonexistent session.
-        if (!isTerminal) return;
-        // For terminals with content (tab switch): just resize, no switch needed.
-        // For empty terminals (new session): send switch to get seq-init + start pulling.
-        const ws = state.connection.ws;
-        const wsOpen = ws?.readyState === WebSocket.OPEN;
-        const entry = terminalPool.get(sessionName);
-        const buf = entry?.term?.buffer?.active;
-        // Treat undefined buffer as empty — safer to send switch than to skip it.
-        // A skipped switch leaves the terminal with no seq-init and no output,
-        // making it appear permanently unresponsive to keyboard input.
-        const isEmpty = !buf || (buf.baseY === 0 && buf.cursorY === 0 && buf.cursorX === 0);
-        if (wsOpen && entry) {
-          if (isEmpty) {
-            // New session — need switch to get attached + seq-init
-            ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
-          } else {
-            // Existing session — just resize, content is already there
-            ws.send(JSON.stringify({ type: "resize", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
-          }
-        } else if (isEmpty) {
-          // WS not open but we're switching to a new empty terminal.
-          // Trigger reconnection — onopen will send "attach" for the
-          // current state.session.name (just updated above), which
-          // attaches the client to the new session and initializes
-          // the pull mechanism. Without this, the terminal stays
-          // permanently stuck with no output and no input routing.
-          wsConnection.enableReconnect();
-          wsConnection.connect();
-        }
-        syncCarouselSubscriptions();
-        // Reattach scroll-to-bottom button to the newly focused terminal
-        _attachScrollButton();
+        uiStore.focusTile(tileId);
       },
+      // Thin dispatcher — tile-host's onTileRemoved handles WS cleanup
+      // generically via getSessions() (no type checks).
       onCardDismissed: (tileId) => {
-        const tile = carousel.getTile(tileId);
-        if (tile?.type === "cluster") {
-          // Cluster dismiss must unsubscribe every sub-session. Using the
-          // cluster's own sessionName (the first sub-tile) would leak the
-          // remaining sub-sessions as live subscriptions on the server.
-          for (const { tile: subTile } of tile.getSubTiles()) {
-            const subName = subTile?.sessionName;
-            if (!subName) continue;
-            if (windowTabSet) windowTabSet.removeTab(subName);
-            wsConnection.sendUnsubscribe(subName);
-          }
-          return;
-        }
-        // Non-terminal tiles (file-browser, future kinds) have no tmux
-        // session behind them — skip tab-set cleanup and the WS
-        // unsubscribe. Sending `unsubscribe` with a tile ID like
-        // `file-browser-abc` used to produce a spurious server-side
-        // unsubscribe for a session that never existed.
-        if (tile && tile.type !== "terminal") {
-          // Mirror the add path: since non-terminal tiles bypass
-          // windowTabSet, we must push a bar re-render manually so the
-          // now-removed tab actually disappears from the tab strip.
-          if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
-          return;
-        }
-        const sessionName = tileSessionName(tileId);
-        // Detach: remove from this window's tab set (session stays on server)
-        if (windowTabSet) windowTabSet.removeTab(sessionName);
-        wsConnection.sendUnsubscribe(sessionName);
+        uiStore.removeTile(tileId);
       },
       onAllCardsDismissed: () => {
-        // All cards dismissed — clear state so refresh shows blank stage
+        // Dispatch empty state — tile-host's onTileRemoved fires for
+        // each tile, handling WS unsubscribe generically.
+        uiStore.reset(EMPTY_STATE);
         wsConnection.disconnect();
         state.update('session.name', null);
         setDocTitle(null);
@@ -613,34 +540,47 @@
         setIcon(_icon) {},
       }),
       onFocusChange: (tileId, tileType) => {
-        // WS bookkeeping: only terminals need state.session.name, URL
-        // update, and WS switch/resize. Non-terminal tiles are no-ops.
-        if (tileType === "terminal") {
-          const sessionName = tileId; // terminal tile ids ARE session names
-          state.update("session.name", sessionName);
-          setDocTitle(sessionName);
-          const url = new URL(window.location);
-          url.searchParams.set("s", sessionName);
-          history.replaceState(null, "", url);
+        // Legacy shortcut bar — <tile-tab-bar> updates via store subscription
+        if (shortcutBarInstance) shortcutBarInstance.setActiveTab(tileId);
+
+        // Capability-driven WS bookkeeping — no type checks
+        const desc = getRenderer(tileType)?.describe(
+          uiStore.getState().tiles[tileId]?.props || {},
+        ) || {};
+
+        if (desc.session) {
+          state.update("session.name", desc.session);
+          setDocTitle(desc.session);
 
           const ws = state.connection.ws;
           const wsOpen = ws?.readyState === WebSocket.OPEN;
-          const entry = terminalPool.get(sessionName);
+          const entry = terminalPool.get(desc.session);
           const buf = entry?.term?.buffer?.active;
           const isEmpty = !buf || (buf.baseY === 0 && buf.cursorY === 0 && buf.cursorX === 0);
           if (wsOpen && entry) {
             if (isEmpty) {
-              ws.send(JSON.stringify({ type: "switch", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
+              ws.send(JSON.stringify({ type: "switch", session: desc.session, cols: entry.term.cols, rows: entry.term.rows }));
             } else {
-              ws.send(JSON.stringify({ type: "resize", session: sessionName, cols: entry.term.cols, rows: entry.term.rows }));
+              ws.send(JSON.stringify({ type: "resize", session: desc.session, cols: entry.term.cols, rows: entry.term.rows }));
             }
           } else if (isEmpty) {
             wsConnection.enableReconnect();
             wsConnection.connect();
           }
-          syncCarouselSubscriptions();
-          _attachScrollButton();
         }
+        syncCarouselSubscriptions();
+        _attachScrollButton();
+      },
+      onTileRemoved: (id, handle) => {
+        // Generic cleanup via getSessions() — works for terminals,
+        // clusters (sub-sessions), and no-ops for sessionless tiles.
+        const sessions = handle.getSessions?.() || [];
+        for (const sessionName of sessions) {
+          if (windowTabSet) windowTabSet.removeTab(sessionName);
+          wsConnection.sendUnsubscribe(sessionName);
+        }
+        // Legacy shortcut bar re-render
+        if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
       },
     });
 
@@ -651,9 +591,10 @@
     // (the file-browser focus-loss bug — see tile-host init comment).
     uiStore.subscribe((uiState) => {
       const focused = uiState.tiles[uiState.focusedId];
+      const desc = describeTile(focused);
       const url = new URL(window.location);
-      if (focused?.type === "terminal") {
-        url.searchParams.set("s", focused.props.sessionName);
+      if (desc.updatesUrl && desc.session) {
+        url.searchParams.set("s", desc.session);
       } else if (focused) {
         url.searchParams.delete("s");
       }
@@ -700,37 +641,22 @@
       pinch.attach();
     }
 
-    /** Subscribe all carousel terminal tiles to WS output.
+    /** Subscribe all carousel tiles to WS output via getSessions().
      *  ALL tiles need subscriptions — including the focused one — because
      *  carousel swipe doesn't send `switch` (no server round-trip). Without
      *  a subscription, data-available notifications are dropped and the
      *  terminal appears stuck. */
     function syncCarouselSubscriptions() {
       if (!carousel.isActive()) return;
-      const cards = carousel.getCards();
-      for (const tileId of cards) {
-        const tile = carousel.getTile(tileId);
-        if (tile?.type === "terminal") {
-          // Send cols/rows so the server resizes the PTY before serializing
-          // the snapshot. Without this, the snapshot wraps at the wrong
-          // column width and live output renders garbled.
-          const entry = terminalPool.get(tile.sessionName);
-          const cols = entry?.term?.cols;
-          const rows = entry?.term?.rows;
-          wsConnection.sendSubscribe(tile.sessionName, cols, rows);
-        } else if (tile?.type === "cluster") {
-          // Cluster tiles host multiple independent sub-sessions. Each
-          // sub-terminal needs its own subscription; without this every
-          // sub-terminal past the first appears stuck (data-available
-          // notifications dropped for unsubscribed sessions).
-          for (const { tile: subTile } of tile.getSubTiles()) {
-            const subName = subTile?.sessionName;
-            if (!subName) continue;
-            const entry = terminalPool.get(subName);
-            const cols = entry?.term?.cols;
-            const rows = entry?.term?.rows;
-            wsConnection.sendSubscribe(subName, cols, rows);
-          }
+      for (const tileId of carousel.getCards()) {
+        const handle = tileHost.getHandle(tileId);
+        if (!handle) continue;
+        // getSessions() returns all WS session names this tile manages:
+        // one for terminals, multiple for clusters, none for file-browsers.
+        const sessions = handle.getSessions?.() || [];
+        for (const sessionName of sessions) {
+          const entry = terminalPool.get(sessionName);
+          wsConnection.sendSubscribe(sessionName, entry?.term?.cols, entry?.term?.rows);
         }
       }
       carousel.fitAll();
@@ -1569,17 +1495,14 @@
       },
       onTabClick: (name) => {
         if (carousel.isActive()) {
-          // Tab bar items can be either terminal session names or
-          // non-terminal tile ids (e.g. file browser). routeToSession
-          // assumes the name is a terminal and spawns one if missing —
-          // calling it with a fb tile id would create a phantom terminal.
-          // Detect non-terminal tiles up front and just focus them.
-          const existingTile = carousel.getTile(name);
-          if (existingTile && existingTile.type !== "terminal") {
-            carousel.focusCard(name);
-            return;
+          // If tile exists in ui-store, just focus it. routeToSession
+          // would create a phantom terminal for non-session tiles.
+          const uiState = uiStore.getState();
+          if (uiState.tiles[name]) {
+            uiStore.focusTile(name);
+          } else {
+            routeToSession(name);
           }
-          routeToSession(name);
         } else {
           switchSession(name);
         }
@@ -1664,47 +1587,48 @@
 
     bar.addEventListener("tab-rename", (e) => {
       const { id, oldName, newName } = e.detail;
-      // Terminal rename: update pool, notepad, carousel, server
       const uiState = uiStore.getState();
       const tile = uiState.tiles[id];
-      if (tile?.type === "terminal") {
-        if (carousel.isActive()) carousel.renameCard(oldName, newName);
-        terminalPool.rename(oldName, newName);
-        notepad.rename(oldName, newName);
-        windowTabSet.renameTab(oldName, newName);
-        invalidateSessions(sessionStore, newName);
-        // Update ui-store: remove old tile, add new one with new id
-        uiStore.removeTile(id);
-        uiStore.addTile(
-          { id: newName, type: "terminal", props: { sessionName: newName } },
-          { focus: uiState.focusedId === id },
-        );
-        if (state.session.name === oldName) {
-          state.update("session.name", newName);
-          setDocTitle(newName);
-        }
+      const desc = describeTile(tile);
+      if (!desc.renameable || !desc.session) return;
+
+      if (carousel.isActive()) carousel.renameCard(oldName, newName);
+      terminalPool.rename(oldName, newName);
+      notepad.rename(oldName, newName);
+      windowTabSet.renameTab(oldName, newName);
+      invalidateSessions(sessionStore, newName);
+      // Update ui-store: remove old tile, add new one with new id+session
+      uiStore.removeTile(id);
+      uiStore.addTile(
+        { id: newName, type: tile.type, props: { ...tile.props, sessionName: newName } },
+        { focus: uiState.focusedId === id },
+      );
+      if (state.session.name === oldName) {
+        state.update("session.name", newName);
+        setDocTitle(newName);
       }
     });
 
     bar.addEventListener("tab-context-menu", (e) => {
       const { id, type, anchorEl } = e.detail;
-      const isTerminalLike = !type || type === "terminal" || type === "cluster";
+      const tileDesc = uiStore.getState().tiles[id];
+      const desc = describeTile(tileDesc);
 
-      const items = [
-        { icon: "pencil-simple", label: "Rename", action: () => {
-          // Find the tab element and trigger rename inline
+      const items = [];
+      if (desc.renameable) {
+        items.push({ icon: "pencil-simple", label: "Rename", action: () => {
           const tabEl = bar.querySelector(`.tab-bar-tab[data-session="${CSS.escape(id)}"]`);
           if (tabEl) {
             const tabBarEl = bar.querySelector("tile-tab-bar");
             tabBarEl?._startRename(tabEl, id);
           }
-        }},
-      ];
-      if (isTerminalLike) {
+        }});
+      }
+      if (desc.session) {
+        // Session-backed tiles: detach (keep server session), kill, tear-off
         items.push({ icon: "eject", label: "Detach", action: async () => {
           try { await api.delete(`/sessions/${encodeURIComponent(id)}?action=detach`); } catch (_) {}
           uiStore.removeTile(id);
-          wsConnection.sendUnsubscribe(id);
         }});
         items.push({ icon: "x-circle", label: "Kill session", danger: true, action: async () => {
           if (!confirm(`Kill session "${id}"?\n\nThis will terminate the tmux session and all its processes.`)) return;
@@ -1717,14 +1641,13 @@
           uiStore.removeTile(id);
         }});
       }
-      if (isTerminalLike) {
+      if (desc.session) {
         items.push({ divider: true });
         items.push({ icon: "arrow-square-out", label: "Open in new window", action: () => {
-          window.open(`${window.location.origin}?s=${encodeURIComponent(id)}`, "_blank");
+          window.open(`${window.location.origin}?s=${encodeURIComponent(desc.session)}`, "_blank");
           uiStore.removeTile(id);
         }});
       }
-      // Use the shortcut bar's menu system
       if (shortcutBarInstance?.showMenuFromHost) {
         shortcutBarInstance.showMenuFromHost(items, anchorEl);
       }
@@ -1805,12 +1728,12 @@
     const dragDropManager = createDragDropManager({
       isImageFile,
       shouldIgnore: (_e) => {
-        // Don't hijack drops when the active tile is a file browser —
-        // the file-browser component handles its own upload dnd.
+        // Don't hijack drops when the active tile handles its own dnd
+        // (e.g. file-browser has built-in file upload drag-drop).
         if (!carousel.isActive()) return false;
-        const focusedId = carousel.getFocusedCard?.();
-        const activeTile = focusedId ? carousel.getTile(focusedId) : null;
-        return activeTile?.type === "file-browser";
+        const focusedId = uiStore.getState().focusedId;
+        const desc = describeTile(uiStore.getState().tiles[focusedId]);
+        return desc.handlesDnd === true;
       },
       onDrop: async (imageFiles, totalFiles) => {
         if (imageFiles.length === 0) {
@@ -2190,9 +2113,10 @@
     let bootReconcileDone = false;
 
     function removeDeadSession(name) {
-      // Remove from ui-store — tile-host will unmount and remove from carousel
+      // Remove from ui-store if it's a session-backed tile
       const uiState = uiStore.getState();
-      if (uiState.tiles[name]?.type === "terminal") {
+      const desc = describeTile(uiState.tiles[name]);
+      if (desc.session) {
         uiStore.removeTile(name);
       }
       // Tab set: remove + broadcast to other windows on this browser
@@ -2229,13 +2153,14 @@
         if (serverSet.has(tab)) windowTabSet.confirmTab(tab);
       }
 
-      // Find dead terminal sessions: present in ui-store, missing from server,
-      // not in the just-added grace period. Non-terminal tiles (file browser,
-      // clusters) are skipped — they have no server-side session.
+      // Find dead session-backed tiles: present in ui-store with a
+      // server session, but missing from the server list and not in the
+      // just-added grace period. Sessionless tiles (file browser) are
+      // skipped — they have no server-side session to reconcile against.
       const dead = new Set();
       const uiState = uiStore.getState();
       for (const [tileId, tile] of Object.entries(uiState.tiles)) {
-        if (tile.type !== "terminal") continue;
+        if (!describeTile(tile).session) continue;
         if (!serverSet.has(tileId) && !windowTabSet.isRecentlyAdded(tileId)) {
           dead.add(tileId);
         }
@@ -2244,7 +2169,7 @@
       for (const tab of windowTabSet.getTabs()) {
         if (serverSet.has(tab) || windowTabSet.isRecentlyAdded(tab)) continue;
         const tile = uiState.tiles[tab];
-        if (tile && tile.type !== "terminal") continue;
+        if (tile && !describeTile(tile).session) continue;
         dead.add(tab);
       }
 
@@ -2388,11 +2313,12 @@
     function bootFromState(bootState) {
       if (Object.keys(bootState.tiles).length === 0) return;
 
-      // Set the terminal session for WS bookkeeping
+      // Set active session for WS bookkeeping — capability-driven
       const focused = bootState.tiles[bootState.focusedId];
-      if (focused?.type === "terminal") {
-        state.update("session.name", focused.props.sessionName);
-        setDocTitle(focused.props.sessionName);
+      const desc = describeTile(focused);
+      if (desc.session) {
+        state.update("session.name", desc.session);
+        setDocTitle(desc.session);
       }
 
       // Single dispatch — tile-host is already subscribed (init'd

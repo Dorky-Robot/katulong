@@ -20,12 +20,19 @@ export const fileBrowserRenderer = {
 
   describe(props) {
     const cwd = typeof props.cwd === "string" ? props.cwd : "";
-    if (!cwd || cwd === "/") return { title: "Files", icon: "folder", persistable: true };
+    if (!cwd || cwd === "/") return {
+      title: "Files", icon: "folder", persistable: true,
+      session: null, updatesUrl: false, renameable: false, handlesDnd: true,
+    };
     const segments = cwd.split("/").filter(Boolean);
     return {
       title: segments.length > 0 ? segments[segments.length - 1] : "Files",
       icon: "folder",
       persistable: true,
+      session: null,
+      updatesUrl: false,
+      renameable: false,
+      handlesDnd: true,
     };
   },
 
@@ -51,6 +58,7 @@ export const fileBrowserRenderer = {
       focus()   { tile.focus(); },
       blur()    { tile.blur(); },
       resize()  { tile.resize(); },
+      getSessions() { return []; },
       tile,
     };
   },

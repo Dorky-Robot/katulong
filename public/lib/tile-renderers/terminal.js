@@ -28,6 +28,11 @@ export const terminalRenderer = {
       title: props.sessionName || "terminal",
       icon: "terminal-window",
       persistable: true,
+      // Capabilities — tile-host uses these instead of type checks
+      session: props.sessionName || null,
+      updatesUrl: true,
+      renameable: true,
+      handlesDnd: false,
     };
   },
 
@@ -50,6 +55,7 @@ export const terminalRenderer = {
       focus()   { tile.focus(); },
       blur()    { tile.blur(); },
       resize()  { tile.resize(); },
+      getSessions() { return [props.sessionName].filter(Boolean); },
       // Escape hatch for carousel rename / sub-tile queries
       tile,
     };

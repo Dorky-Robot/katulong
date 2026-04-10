@@ -24,6 +24,10 @@ export const clusterRenderer = {
       title: props.title || "Terminal Cluster",
       icon: "squares-four",
       persistable: true,
+      session: null,
+      updatesUrl: false,
+      renameable: false,
+      handlesDnd: false,
     };
   },
 
@@ -45,6 +49,11 @@ export const clusterRenderer = {
       focus()   { tile.focus(); },
       blur()    { tile.blur(); },
       resize()  { tile.resize(); },
+      getSessions() {
+        return tile.getSubTiles()
+          .map(({ tile: subTile }) => subTile?.sessionName)
+          .filter(Boolean);
+      },
       tile,
     };
   },

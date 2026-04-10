@@ -23,7 +23,7 @@
  * @param {function} [opts.onFocusChange] — called after carousel focus settles,
  *   with (tileId, tileType). App.js uses this for WS subscription switching.
  */
-export function createTileHost({ store, carousel, getRenderer, onFocusChange }) {
+export function createTileHost({ store, carousel, getRenderer, onFocusChange, onTileRemoved }) {
   // Map<tileId, { unmount, focus, blur, resize, tile }>
   const handles = new Map();
   let prevState = null;
@@ -58,6 +58,9 @@ export function createTileHost({ store, carousel, getRenderer, onFocusChange }) 
       if (!nextIds.has(id)) {
         const handle = handles.get(id);
         if (handle) {
+          // Notify host before teardown so it can do cleanup (WS
+          // unsubscribe, tab-set removal) while the handle is still live.
+          if (onTileRemoved) onTileRemoved(id, handle);
           // Let carousel handle DOM teardown (wrapper removal, chrome
           // destroy, resize handles). We just need to tell it.
           carousel.removeCard(id);

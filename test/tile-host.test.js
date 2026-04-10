@@ -61,7 +61,11 @@ function createFakeRenderer() {
       return {
         type: "terminal",
         describe(props) {
-          return { title: props.sessionName || "terminal", icon: "t", persistable: true };
+          return {
+            title: props.sessionName || "terminal", icon: "t", persistable: true,
+            session: props.sessionName || null, updatesUrl: true,
+            renameable: true, handlesDnd: false,
+          };
         },
         mount(_el, { id, props }) {
           const entry = { id, mounted: true };
@@ -71,6 +75,7 @@ function createFakeRenderer() {
             focus() {},
             blur() {},
             resize() {},
+            getSessions() { return [props.sessionName].filter(Boolean); },
             tile: { sessionName: props.sessionName || id },
           };
         },
@@ -401,6 +406,64 @@ describe("tile-host", () => {
       store.addTile("s1", "terminal", { sessionName: "s1" }, true);
 
       assert.strictEqual(renderer.mounts.length, 1, "exactly one mount, not two");
+    });
+  });
+
+  // ── onTileRemoved callback ────────────────────────────────────────
+  describe("onTileRemoved", () => {
+    it("fires with tile id and handle when a tile is removed", () => {
+      const removed = [];
+      store.setState({
+        tiles: {
+          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
+          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+        },
+        order: ["s1", "s2"],
+        focusedId: "s1",
+      });
+
+      host = createTileHost({
+        store,
+        carousel,
+        getRenderer: renderer.getRenderer,
+        onFocusChange: () => {},
+        onTileRemoved: (id, handle) => removed.push({ id, sessions: handle.getSessions?.() }),
+      });
+      host.init();
+
+      store.removeTile("s2");
+
+      assert.strictEqual(removed.length, 1);
+      assert.strictEqual(removed[0].id, "s2");
+      assert.deepStrictEqual(removed[0].sessions, ["s2"]);
+    });
+
+    it("fires for each tile on bulk removal (RESET to empty)", () => {
+      const removed = [];
+      store.setState({
+        tiles: {
+          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
+          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+        },
+        order: ["s1", "s2"],
+        focusedId: "s1",
+      });
+
+      host = createTileHost({
+        store,
+        carousel,
+        getRenderer: renderer.getRenderer,
+        onFocusChange: () => {},
+        onTileRemoved: (id, handle) => removed.push({ id, sessions: handle.getSessions?.() }),
+      });
+      host.init();
+
+      // Simulate RESET to empty state
+      store.setState({ tiles: {}, order: [], focusedId: null });
+
+      assert.strictEqual(removed.length, 2, "onTileRemoved fires for each tile");
+      const ids = removed.map(r => r.id).sort();
+      assert.deepStrictEqual(ids, ["s1", "s2"]);
     });
   });
 });
