@@ -508,6 +508,11 @@
           uiStore.getState().tiles[tileId]?.props || {},
         ) || {};
 
+        // Sessionless tiles (file browser) don't need the WebSocket.
+        // Set a data attribute so CSS can hide the disconnect overlay
+        // regardless of how many JS paths toggle .visible on it.
+        document.body.dataset.focusedNeedsWs = desc.session ? "1" : "0";
+
         if (desc.session) {
           state.update("session.name", desc.session);
           setDocTitle(desc.session);
@@ -561,6 +566,8 @@
       if (url.href !== window.location.href) {
         history.replaceState(null, "", url);
       }
+      // Keep body data attribute in sync for CSS-driven overlay hiding.
+      document.body.dataset.focusedNeedsWs = desc.session ? "1" : "0";
     });
 
     // ── Pinch-to-expose gesture ──────────────────────────────────────

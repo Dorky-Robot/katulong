@@ -3,10 +3,13 @@
  *
  * State is an array of columns. Each column has a path, entries, and selected item.
  * Clicking a folder in column N loads column N+1 and trims anything beyond.
+ *
+ * Navigation actions (loadRoot, selectItem, refreshAll, goBack) live in
+ * createNavController() — a per-instance factory that scopes request
+ * cancellation via a generation counter. See docs/file-browser-refactor.md.
  */
 
 import { createStore, createReducer } from "/lib/store.js";
-import { api } from "/lib/api-client.js";
 
 const initialState = {
   columns: [],         // [{ path, entries, selected, loading, error }]
@@ -29,11 +32,16 @@ const handlers = {
     return { ...state, columns };
   },
 
-  // Set error on a column
-  SET_COLUMN_ERROR: (state, { index, error }) => {
+  // Set error on a column. Creates the column entry if it was trimmed
+  // by a concurrent SET_COLUMN dispatch (e.g. refreshAll rebuilds the
+  // chain sequentially — column N's SET_COLUMN trims N+1, then N+1's
+  // error needs somewhere to land).
+  SET_COLUMN_ERROR: (state, { index, path, error, hint }) => {
     const columns = [...state.columns];
     if (columns[index]) {
-      columns[index] = { ...columns[index], loading: false, error };
+      columns[index] = { ...columns[index], loading: false, error, hint: hint || null };
+    } else {
+      columns[index] = { path: path || "", entries: [], selected: null, loading: false, error, hint: hint || null };
     }
     return { ...state, columns };
   },
@@ -88,77 +96,6 @@ export function sortEntries(entries) {
 }
 
 /**
- * Load the root column (first column) at the given path.
- */
-export async function loadRoot(store, path) {
-  store.dispatch({ type: "SET_COLUMN_LOADING", index: 0, path });
-  try {
-    const data = await api.get(`/api/files?path=${encodeURIComponent(path)}`);
-    store.dispatch({ type: "SET_COLUMN", index: 0, path: data.path, entries: sortEntries(data.entries) });
-  } catch (err) {
-    store.dispatch({ type: "SET_COLUMN_ERROR", index: 0, error: err.message });
-  }
-}
-
-/**
- * Select an item in a column. If it's a directory, load its contents in the next column.
- * If it's a file, just select it (trim columns after).
- */
-export async function selectItem(store, columnIndex, name) {
-  const state = store.getState();
-  const col = state.columns[columnIndex];
-  if (!col) return;
-
-  const entry = col.entries.find(e => e.name === name);
-  if (!entry) return;
-
-  // Set selection on this column
-  store.dispatch({ type: "SELECT_ITEM", columnIndex, name });
-
-  if (entry.type === "directory") {
-    const childPath = col.path + "/" + name;
-    const nextIndex = columnIndex + 1;
-    store.dispatch({ type: "SET_COLUMN_LOADING", index: nextIndex, path: childPath });
-    try {
-      const data = await api.get(`/api/files?path=${encodeURIComponent(childPath)}`);
-      store.dispatch({ type: "SET_COLUMN", index: nextIndex, path: data.path, entries: sortEntries(data.entries) });
-    } catch (err) {
-      store.dispatch({ type: "SET_COLUMN_ERROR", index: nextIndex, error: err.message });
-    }
-  }
-}
-
-/**
- * Navigate back: remove the last column.
- */
-export function goBack(store) {
-  const state = store.getState();
-  if (state.columns.length <= 1) return;
-  const parentIndex = state.columns.length - 2;
-  store.dispatch({ type: "CLEAR_SELECTION", columnIndex: parentIndex });
-}
-
-/**
- * Refresh all columns (re-fetch each in sequence).
- */
-export async function refreshAll(store) {
-  const state = store.getState();
-  for (let i = 0; i < state.columns.length; i++) {
-    const col = state.columns[i];
-    try {
-      const data = await api.get(`/api/files?path=${encodeURIComponent(col.path)}`);
-      store.dispatch({ type: "SET_COLUMN", index: i, path: data.path, entries: sortEntries(data.entries) });
-      // Re-select previously selected item if it still exists
-      if (col.selected && data.entries.some(e => e.name === col.selected)) {
-        store.dispatch({ type: "SELECT_ITEM", columnIndex: i, name: col.selected });
-      }
-    } catch {
-      break; // Stop refreshing deeper columns if a parent fails
-    }
-  }
-}
-
-/**
  * Get the deepest path from the current column state.
  */
 export function getDeepestPath(state) {
@@ -167,3 +104,129 @@ export function getDeepestPath(state) {
   return columns[columns.length - 1].path;
 }
 
+// ─── Fetch with timeout ─────────────────────────────────────────────
+// File browser needs stricter latency guarantees than general API
+// callers. Raw fetch() has no timeout — if the tunnel drops, the
+// promise hangs forever and the spinner never clears. This wrapper
+// aborts after `ms` milliseconds so SET_COLUMN_ERROR always fires.
+
+const DEFAULT_TIMEOUT_MS = 15000;
+
+async function fetchDir(url, ms = DEFAULT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      // Try to parse structured error from server (includes hint, tcc flag)
+      let body;
+      try { body = await res.json(); } catch { /* ignore */ }
+      const err = new Error(body?.error || `GET ${url} failed (${res.status})`);
+      if (body?.hint) err.hint = body.hint;
+      if (body?.tcc) err.tcc = true;
+      throw err;
+    }
+    return await res.json();
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error("Request timed out — the server may be unreachable");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ─── Navigation controller ──────────────────────────────────────────
+// Scoped per store instance so multiple file-browser tiles don't share
+// cancellation state. The generation counter is the simplest vanilla JS
+// pattern for "only the latest request matters": increment before the
+// await, check after — if it moved, a newer navigation superseded us.
+
+/**
+ * Create a navigation controller bound to a file-browser store.
+ *
+ * @param {object} store — file-browser store instance
+ * @returns {{ loadRoot, selectItem, refreshAll, goBack }}
+ */
+export function createNavController(store) {
+  let generation = 0;
+
+  async function loadRoot(path) {
+    const gen = ++generation;
+    store.dispatch({ type: "SET_COLUMN_LOADING", index: 0, path });
+    try {
+      const data = await fetchDir(`/api/files?path=${encodeURIComponent(path)}`);
+      if (gen !== generation) return;
+      store.dispatch({ type: "SET_COLUMN", index: 0, path: data.path, entries: sortEntries(data.entries) });
+    } catch (err) {
+      if (gen !== generation) return;
+      store.dispatch({ type: "SET_COLUMN_ERROR", index: 0, error: err.message, hint: err.hint });
+    }
+  }
+
+  async function selectItem(columnIndex, name) {
+    const state = store.getState();
+    const col = state.columns[columnIndex];
+    if (!col) return;
+
+    const entry = col.entries.find(e => e.name === name);
+    if (!entry) return;
+
+    store.dispatch({ type: "SELECT_ITEM", columnIndex, name });
+
+    if (entry.type === "directory") {
+      const childPath = col.path + "/" + name;
+      const nextIndex = columnIndex + 1;
+      const gen = ++generation;
+      store.dispatch({ type: "SET_COLUMN_LOADING", index: nextIndex, path: childPath });
+      try {
+        const data = await fetchDir(`/api/files?path=${encodeURIComponent(childPath)}`);
+        if (gen !== generation) return;
+        store.dispatch({ type: "SET_COLUMN", index: nextIndex, path: data.path, entries: sortEntries(data.entries) });
+      } catch (err) {
+        if (gen !== generation) return;
+        store.dispatch({ type: "SET_COLUMN_ERROR", index: nextIndex, error: err.message, hint: err.hint });
+      }
+    }
+  }
+
+  async function refreshAll() {
+    const gen = ++generation;
+    // Snapshot the column paths and selections up front. We can't
+    // re-read state.columns mid-loop because SET_COLUMN trims
+    // everything after the dispatched index — column N+1 vanishes
+    // when column N is refreshed. Instead, capture the full path
+    // list once, then re-build the column chain in order.
+    const snapshot = store.getState().columns.map(c => ({
+      path: c.path,
+      selected: c.selected,
+    }));
+
+    for (let i = 0; i < snapshot.length; i++) {
+      if (gen !== generation) return;
+      const { path, selected } = snapshot[i];
+      try {
+        const data = await fetchDir(`/api/files?path=${encodeURIComponent(path)}`);
+        if (gen !== generation) return;
+        store.dispatch({ type: "SET_COLUMN", index: i, path: data.path, entries: sortEntries(data.entries) });
+        if (selected && data.entries.some(e => e.name === selected)) {
+          store.dispatch({ type: "SELECT_ITEM", columnIndex: i, name: selected });
+        }
+      } catch (err) {
+        if (gen !== generation) return;
+        store.dispatch({ type: "SET_COLUMN_ERROR", index: i, path, error: err.message, hint: err.hint });
+        break;
+      }
+    }
+  }
+
+  function goBack() {
+    const state = store.getState();
+    if (state.columns.length <= 1) return;
+    const parentIndex = state.columns.length - 2;
+    store.dispatch({ type: "CLEAR_SELECTION", columnIndex: parentIndex });
+  }
+
+  return { loadRoot, selectItem, refreshAll, goBack };
+}
