@@ -700,6 +700,10 @@
       transition: opacity var(--transition-normal) ease;
     }
     #disconnect-overlay.visible { display: grid; }
+    /* Sessionless tiles (file browser) work over HTTP — hide the WS
+       disconnect overlay when one is focused, regardless of WS state.
+       The data attribute is set by onFocusChange in app.js. */
+    body[data-focused-needs-ws="0"] #disconnect-overlay.visible { display: none; }
     #disconnect-overlay .disconnect-label {
       font-size: var(--text-sm); color: var(--text-muted);
       background: var(--bg-surface); padding: 0.375rem 0.75rem;
@@ -2133,6 +2137,12 @@
     .fb-miller-empty { padding: var(--space-lg); text-align: center; color: var(--text-dim); font-size: var(--text-sm); }
     .fb-status { padding: var(--space-xs) var(--space-sm); border-top: 1px solid var(--border); font-size: var(--text-xs); color: var(--text-dim); flex-shrink: 0; background: var(--bg-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .fb-error { color: var(--danger); }
+    .fb-permission-error { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); padding: var(--space-xl); }
+    .fb-error-icon { font-size: 1.5rem; opacity: 0.6; }
+    .fb-error-text { font-size: var(--text-sm); }
+    .fb-grant-access-btn { padding: var(--space-xs) var(--space-md); font-size: var(--text-sm); background: var(--accent-active); color: var(--bg-base); border: none; border-radius: var(--radius-sm); cursor: pointer; }
+    .fb-grant-access-btn:hover { opacity: 0.85; }
+    .fb-error-hint { font-size: var(--text-xs); color: var(--text-dim); }
     .fb-loading-spinner { display: inline-block; width: 1rem; height: 1rem; border: 2px solid var(--border); border-top-color: var(--accent-active); border-radius: 50%; animation: fb-spin 0.6s linear infinite; }
     @keyframes fb-spin { to { transform: rotate(360deg); } }
     /* Drop target highlights */

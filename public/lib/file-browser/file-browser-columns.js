@@ -60,7 +60,16 @@ export function renderSingleColumn(colEl, col, colIndex, showHidden) {
     return;
   }
   if (col.error) {
-    colEl.innerHTML = `<div class="fb-miller-empty fb-error">${escapeHtml(col.error)}</div>`;
+    if (col.hint) {
+      colEl.innerHTML = `<div class="fb-miller-empty fb-error fb-permission-error">
+        <span class="fb-error-icon"><i class="ph ph-lock"></i></span>
+        <span class="fb-error-text">${escapeHtml(col.error)}</span>
+        <button class="fb-grant-access-btn" data-action="open-privacy">Grant Access</button>
+        <span class="fb-error-hint">Opens macOS Privacy &amp; Security settings</span>
+      </div>`;
+    } else {
+      colEl.innerHTML = `<div class="fb-miller-empty fb-error">${escapeHtml(col.error)}</div>`;
+    }
     return;
   }
 

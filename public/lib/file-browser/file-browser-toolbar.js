@@ -16,13 +16,12 @@ import { escapeHtml, escapeAttr } from "/lib/file-browser/file-browser-columns.j
  * @param {object} callbacks
  * @param {function} callbacks.onBack
  * @param {function} callbacks.onForward
- * @param {function} callbacks.onRefresh
  * @param {function} callbacks.onToggleHidden
  * @param {function} [callbacks.onClose]
  * @param {function} callbacks.onBreadcrumbNav — called with (path: string)
  * @returns {{ el: HTMLElement, update: (state) => void }}
  */
-export function createToolbar({ onBack, onForward, onRefresh, onToggleHidden, onClose, onBreadcrumbNav }) {
+export function createToolbar({ onBack, onForward, onToggleHidden, onClose, onBreadcrumbNav }) {
   const el = document.createElement("div");
   el.className = "fb-toolbar";
   el.innerHTML = `
@@ -39,9 +38,6 @@ export function createToolbar({ onBack, onForward, onRefresh, onToggleHidden, on
       <button class="fb-btn fb-hidden-btn" aria-label="Toggle hidden files">
         <i class="ph ph-eye-slash"></i>
       </button>
-      <button class="fb-btn fb-refresh-btn" aria-label="Refresh">
-        <i class="ph ph-arrow-clockwise"></i>
-      </button>
       <button class="fb-btn fb-close-btn" aria-label="Close file browser">
         <i class="ph ph-x"></i>
       </button>
@@ -51,14 +47,12 @@ export function createToolbar({ onBack, onForward, onRefresh, onToggleHidden, on
   const backBtn = el.querySelector(".fb-back-btn");
   const fwdBtn = el.querySelector(".fb-forward-btn");
   const hiddenBtn = el.querySelector(".fb-hidden-btn");
-  const refreshBtn = el.querySelector(".fb-refresh-btn");
   const closeBtn = el.querySelector(".fb-close-btn");
   const breadcrumbEl = el.querySelector(".fb-breadcrumb");
 
   backBtn.addEventListener("click", onBack);
   fwdBtn.addEventListener("click", onForward);
   hiddenBtn.addEventListener("click", onToggleHidden);
-  refreshBtn.addEventListener("click", onRefresh);
   if (onClose) closeBtn.addEventListener("click", onClose);
 
   // Event delegation for breadcrumb — one listener, reads data-path

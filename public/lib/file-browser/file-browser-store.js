@@ -36,12 +36,12 @@ const handlers = {
   // by a concurrent SET_COLUMN dispatch (e.g. refreshAll rebuilds the
   // chain sequentially — column N's SET_COLUMN trims N+1, then N+1's
   // error needs somewhere to land).
-  SET_COLUMN_ERROR: (state, { index, path, error }) => {
+  SET_COLUMN_ERROR: (state, { index, path, error, hint }) => {
     const columns = [...state.columns];
     if (columns[index]) {
-      columns[index] = { ...columns[index], loading: false, error };
+      columns[index] = { ...columns[index], loading: false, error, hint: hint || null };
     } else {
-      columns[index] = { path: path || "", entries: [], selected: null, loading: false, error };
+      columns[index] = { path: path || "", entries: [], selected: null, loading: false, error, hint: hint || null };
     }
     return { ...state, columns };
   },
@@ -117,7 +117,15 @@ async function fetchDir(url, ms = DEFAULT_TIMEOUT_MS) {
   const timer = setTimeout(() => controller.abort(), ms);
   try {
     const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) throw new Error(`GET ${url} failed (${res.status})`);
+    if (!res.ok) {
+      // Try to parse structured error from server (includes hint, tcc flag)
+      let body;
+      try { body = await res.json(); } catch { /* ignore */ }
+      const err = new Error(body?.error || `GET ${url} failed (${res.status})`);
+      if (body?.hint) err.hint = body.hint;
+      if (body?.tcc) err.tcc = true;
+      throw err;
+    }
     return await res.json();
   } catch (err) {
     if (err.name === "AbortError") {
@@ -153,7 +161,7 @@ export function createNavController(store) {
       store.dispatch({ type: "SET_COLUMN", index: 0, path: data.path, entries: sortEntries(data.entries) });
     } catch (err) {
       if (gen !== generation) return;
-      store.dispatch({ type: "SET_COLUMN_ERROR", index: 0, error: err.message });
+      store.dispatch({ type: "SET_COLUMN_ERROR", index: 0, error: err.message, hint: err.hint });
     }
   }
 
@@ -178,7 +186,7 @@ export function createNavController(store) {
         store.dispatch({ type: "SET_COLUMN", index: nextIndex, path: data.path, entries: sortEntries(data.entries) });
       } catch (err) {
         if (gen !== generation) return;
-        store.dispatch({ type: "SET_COLUMN_ERROR", index: nextIndex, error: err.message });
+        store.dispatch({ type: "SET_COLUMN_ERROR", index: nextIndex, error: err.message, hint: err.hint });
       }
     }
   }
@@ -207,7 +215,7 @@ export function createNavController(store) {
         }
       } catch (err) {
         if (gen !== generation) return;
-        store.dispatch({ type: "SET_COLUMN_ERROR", index: i, path, error: err.message });
+        store.dispatch({ type: "SET_COLUMN_ERROR", index: i, path, error: err.message, hint: err.hint });
         break;
       }
     }

@@ -16,6 +16,7 @@
  * See docs/file-browser-refactor.md for the design rationale.
  */
 
+import { api } from "/lib/api-client.js";
 import { getDeepestPath, filterHidden } from "/lib/file-browser/file-browser-store.js";
 import { renderColumns } from "/lib/file-browser/file-browser-columns.js";
 import { createToolbar } from "/lib/file-browser/file-browser-toolbar.js";
@@ -23,6 +24,7 @@ import { createKeyboardHandler } from "/lib/file-browser/file-browser-keyboard.j
 import { createContextMenu } from "/lib/file-browser/file-browser-context-menu.js";
 import { createFileBrowserActions } from "/lib/file-browser/file-browser-actions.js";
 import { initColumnDnD } from "/lib/file-browser/file-browser-dnd.js";
+import { createFileWatcher } from "/lib/file-browser/file-browser-watcher.js";
 
 /**
  * @param {object} store — file-browser store instance
@@ -37,6 +39,7 @@ export function createFileBrowserComponent(store, nav, options = {}) {
   let statusEl = null;
   let toolbar = null;
   let unsubscribe = null;
+  let watcher = null;
 
   const actions = createFileBrowserActions(store, nav);
   const keyboardHandler = createKeyboardHandler(nav, store);
@@ -100,12 +103,14 @@ export function createFileBrowserComponent(store, nav, options = {}) {
           nav.selectItem(state.columns.length - 1, lastCol.selected);
         }
       },
-      onRefresh: () => nav.refreshAll(),
       onToggleHidden: () => store.dispatch({ type: "TOGGLE_HIDDEN" }),
       onClose,
       onBreadcrumbNav: (path) => nav.loadRoot(path),
     });
     root.appendChild(toolbar.el);
+
+    // Live filesystem watcher — replaces manual refresh button
+    watcher = createFileWatcher(nav, store);
 
     // Columns container
     columnsEl = document.createElement("div");
@@ -120,6 +125,13 @@ export function createFileBrowserComponent(store, nav, options = {}) {
 
     // Event delegation on columns
     columnsEl.addEventListener("click", (e) => {
+      // "Grant Access" button in permission error columns
+      const grantBtn = e.target.closest(".fb-grant-access-btn");
+      if (grantBtn) {
+        api.post("/api/files/open-privacy-settings", {});
+        return;
+      }
+
       const row = e.target.closest(".fb-miller-row");
       if (!row) return;
       const colIndex = parseInt(row.dataset.col, 10);
@@ -150,7 +162,10 @@ export function createFileBrowserComponent(store, nav, options = {}) {
 
     initColumnDnD(columnsEl, store, nav);
 
-    unsubscribe = store.subscribe(() => render());
+    unsubscribe = store.subscribe(() => {
+      render();
+      watcher.sync();
+    });
     render();
   }
 
@@ -169,6 +184,8 @@ export function createFileBrowserComponent(store, nav, options = {}) {
   }
 
   function unmount() {
+    if (watcher) watcher.stop();
+    watcher = null;
     if (unsubscribe) unsubscribe();
     unsubscribe = null;
     contextMenu.close();
