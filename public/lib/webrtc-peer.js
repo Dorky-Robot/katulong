@@ -59,6 +59,9 @@ export function createWebRTCPeer({ sendSignaling, onDataChannel, onStateChange }
       };
 
       dc.onclose = () => {
+        // Only transition to "closed" if we weren't intentionally shut down.
+        // close() sets state to "closed" synchronously before closing the DC,
+        // so if state is already "closed" this is a redundant onclose fire.
         if (state === "connected") setState("closed");
       };
 
@@ -109,11 +112,9 @@ export function createWebRTCPeer({ sendSignaling, onDataChannel, onStateChange }
    */
   function handleCandidate(candidate) {
     if (!pc) return;
-    try {
-      pc.addIceCandidate(candidate);
-    } catch {
-      // Ignore ICE errors — connection may still succeed
-    }
+    // addIceCandidate returns a Promise — suppress rejection since
+    // individual ICE failures don't prevent the connection from succeeding.
+    pc.addIceCandidate(candidate).catch(() => {});
   }
 
   /**
@@ -121,9 +122,12 @@ export function createWebRTCPeer({ sendSignaling, onDataChannel, onStateChange }
    */
   function close() {
     if (iceTimer) { clearTimeout(iceTimer); iceTimer = null; }
+    // Set state BEFORE closing DC — dc.onclose fires synchronously and
+    // would otherwise trigger onStateChange("closed"), burning RTC retry
+    // budget on intentional teardowns (e.g., WS reconnect).
+    state = "closed";
     if (dc) { try { dc.close(); } catch {} dc = null; }
     if (pc) { try { pc.close(); } catch {} pc = null; }
-    setState("closed");
   }
 
   return {

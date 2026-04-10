@@ -95,10 +95,8 @@ export function createConnectionManager({
           transport.send(JSON.stringify({ type: "ping" }));
         }
       } else if (effect.type === "timeout") {
-        // Heartbeat timed out — connection is dead
-        if (transport) {
-          transport.close();
-        }
+        // Heartbeat timed out — connection is dead.
+        // handleDisconnect owns transport.close() + reconnect scheduling.
         handleDisconnect();
       }
     }
@@ -149,6 +147,12 @@ export function createConnectionManager({
   // ─── Disconnect / reconnect ─────────────────────────────────────
 
   function handleDisconnect() {
+    // Guard against re-entrancy: transport.close() triggers ws.onclose
+    // asynchronously, which calls handleDisconnect again. Without this
+    // guard, the second call leaks a reconnect timer and doubles backoff.
+    const { status } = connectionStore.getState();
+    if (status === "disconnected") return;
+
     stopHeartbeat();
 
     if (transport) {

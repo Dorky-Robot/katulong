@@ -2117,11 +2117,13 @@
       clearTimeout(rtcRetryTimer);
       rtcRetryTimer = setTimeout(() => {
         rtcRetryTimer = null;
+        // Update delay before initiateWebRTC — if it fails synchronously and
+        // calls scheduleRtcRetry again, the delay must already be bumped.
+        rtcRetryDelay = Math.min(rtcRetryDelay * RTC_RETRY_FACTOR, RTC_RETRY_MAX);
         const { status, transport } = cm.getState();
         if (status === "ready" && transport !== "datachannel") {
           initiateWebRTC();
         }
-        rtcRetryDelay = Math.min(rtcRetryDelay * RTC_RETRY_FACTOR, RTC_RETRY_MAX);
       }, rtcRetryDelay);
     }
 
@@ -2151,6 +2153,7 @@
 
       const { stateUpdates, effects } = handler(msg, {
         currentSessionName: state.session.name,
+        scroll: state.scroll,
       });
 
       // Apply state updates — filter out connection.* keys since connection

@@ -57,10 +57,6 @@ export function createJoystickManager(options = {}) {
       buildButtons();
     },
 
-    setConnected(connected) {
-      if (dotEl) dotEl.classList.toggle("connected", connected);
-    },
-
     getState: () => ({ mode: 'idle' })
   };
 }
