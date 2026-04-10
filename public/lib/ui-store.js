@@ -10,19 +10,25 @@
  * State shape:
  *   {
  *     version: 1,
- *     tiles:     { [id]: { id, type, props } },
- *     order:     [id, id, ...],   // left → right, permutation of tiles keys
+ *     tiles:     { [id]: { id, type, props, x } },  // x = horizontal position
+ *     order:     [id, id, ...],   // derived: tiles sorted by x
  *     focusedId: id | null,
  *   }
  *
+ * Position is a property of the tile itself (the `x` field) rather than
+ * a separate array.  Today x is a 1-D integer; the clusters design
+ * (docs/tile-clusters-design.md) will extend this to (cluster, x, y).
+ * `state.order` is kept as a derived convenience so consumers that just
+ * need "left-to-right list of ids" don't change.
+ *
  * Invariants (enforced by the reducer):
- *   - order is a permutation of Object.keys(tiles)
+ *   - order is derived from tiles sorted by x
  *   - focusedId is null or a key of tiles
  *   - ids are unique (tiles is a map, not a list)
  *   - every mutation returns a new state object (structural sharing)
  */
 
-import { createStore } from "/lib/store.js";
+import { createStore } from "./store.js";
 
 const STORAGE_KEY = "katulong-ui-v1";
 const VERSION = 1;
@@ -33,6 +39,23 @@ export const EMPTY_STATE = Object.freeze({
   order: Object.freeze([]),
   focusedId: null,
 });
+
+// ─── Helpers ─────────────────────────────────────────────────────────
+/** Derive the order array from tiles by sorting on x. */
+function deriveOrder(tiles) {
+  return Object.values(tiles)
+    .sort((a, b) => a.x - b.x)
+    .map(t => t.id);
+}
+
+/** One past the highest x coordinate (or 0 if no tiles). */
+function nextX(tiles) {
+  let max = -1;
+  for (const t of Object.values(tiles)) {
+    if (typeof t.x === "number" && t.x > max) max = t.x;
+  }
+  return max + 1;
+}
 
 // ─── Action types ────────────────────────────────────────────────────
 export const ADD_TILE     = "ui/ADD_TILE";
@@ -53,18 +76,24 @@ function reducer(state = EMPTY_STATE, action) {
         return focus ? { ...state, focusedId: tile.id } : state;
       }
       const newTile = { id: tile.id, type: tile.type, props: { ...(tile.props || {}) } };
-      const newTiles = { ...state.tiles, [tile.id]: newTile };
-      let newOrder;
+      let newTiles;
       if (insertAt === "afterFocus" && state.focusedId) {
-        const idx = state.order.indexOf(state.focusedId);
-        newOrder = [...state.order.slice(0, idx + 1), tile.id, ...state.order.slice(idx + 1)];
+        const insertX = state.tiles[state.focusedId].x + 1;
+        newTile.x = insertX;
+        // Shift tiles at or past the insertion point to make room
+        newTiles = {};
+        for (const [id, t] of Object.entries(state.tiles)) {
+          newTiles[id] = t.x >= insertX ? { ...t, x: t.x + 1 } : t;
+        }
+        newTiles[tile.id] = newTile;
       } else {
-        newOrder = [...state.order, tile.id];
+        newTile.x = nextX(state.tiles);
+        newTiles = { ...state.tiles, [tile.id]: newTile };
       }
       return {
         ...state,
         tiles: newTiles,
-        order: newOrder,
+        order: deriveOrder(newTiles),
         focusedId: focus ? tile.id : state.focusedId,
       };
     }
@@ -73,7 +102,7 @@ function reducer(state = EMPTY_STATE, action) {
       const { id } = action;
       if (!state.tiles[id]) return state;
       const { [id]: _removed, ...restTiles } = state.tiles;
-      const newOrder = state.order.filter(x => x !== id);
+      const newOrder = deriveOrder(restTiles);
       let focusedId = state.focusedId;
       if (focusedId === id) {
         // Focus the neighbor to the right (or left if we removed the
@@ -101,7 +130,14 @@ function reducer(state = EMPTY_STATE, action) {
       if (cleaned.length === state.order.length && cleaned.every((id, i) => id === state.order[i])) {
         return state;
       }
-      return { ...state, order: cleaned };
+      // Reassign x coordinates from the new order
+      const newTiles = { ...state.tiles };
+      cleaned.forEach((id, i) => {
+        if (newTiles[id].x !== i) {
+          newTiles[id] = { ...newTiles[id], x: i };
+        }
+      });
+      return { ...state, tiles: newTiles, order: cleaned };
     }
 
     case FOCUS_TILE: {
@@ -136,7 +172,9 @@ function reducer(state = EMPTY_STATE, action) {
   }
 }
 
-/** Coerce an arbitrary object into a valid ui-store state. */
+/** Coerce an arbitrary object into a valid ui-store state.
+ *  Handles migration: tiles may or may not carry `x`. When absent,
+ *  position is backfilled from raw.order (the old persistence format). */
 export function normalize(raw) {
   if (!raw || typeof raw !== "object") return EMPTY_STATE;
   const tiles = {};
@@ -144,16 +182,23 @@ export function normalize(raw) {
     for (const [id, t] of Object.entries(raw.tiles)) {
       if (t && typeof t.type === "string") {
         tiles[id] = { id, type: t.type, props: { ...(t.props || {}) } };
+        if (typeof t.x === "number") tiles[id].x = t.x;
       }
     }
   }
-  const known = new Set(Object.keys(tiles));
-  const order = Array.isArray(raw.order) ? raw.order.filter(id => known.has(id)) : [];
-  // Append any tiles that exist but weren't in order (corrupt save)
-  for (const id of known) {
-    if (!order.includes(id)) order.push(id);
+  // Backfill x for tiles that lack it (old format or manual state).
+  const needsX = Object.keys(tiles).filter(id => typeof tiles[id].x !== "number");
+  if (needsX.length > 0) {
+    let pos = nextX(tiles); // start after highest existing x (0 if none)
+    const orderHint = Array.isArray(raw.order) ? raw.order : [];
+    const pending = new Set(needsX);
+    for (const id of orderHint) {
+      if (pending.has(id)) { tiles[id].x = pos++; pending.delete(id); }
+    }
+    for (const id of pending) { tiles[id].x = pos++; }
   }
-  const focusedId = raw.focusedId && known.has(raw.focusedId) ? raw.focusedId : (order[0] || null);
+  const order = deriveOrder(tiles);
+  const focusedId = raw.focusedId && tiles[raw.focusedId] ? raw.focusedId : (order[0] || null);
   return { version: VERSION, tiles, order, focusedId };
 }
 
@@ -168,9 +213,11 @@ export function serialize(state, isPersistable = () => true) {
   for (const [id, t] of Object.entries(state.tiles)) {
     if (isPersistable(t.type)) tiles[id] = t;
   }
-  const known = new Set(Object.keys(tiles));
-  const order = state.order.filter(id => known.has(id));
-  const focusedId = state.focusedId && known.has(state.focusedId) ? state.focusedId : (order[0] || null);
+  // Derive order from the persisted tiles' x coordinates. The order
+  // field is redundant (x is authoritative) but included for backward
+  // compat if the user ever rolls back to a pre-coordinate build.
+  const order = deriveOrder(tiles);
+  const focusedId = state.focusedId && tiles[state.focusedId] ? state.focusedId : (order[0] || null);
   return { version: VERSION, tiles, order, focusedId };
 }
 
