@@ -284,9 +284,17 @@ class MockWritable {
     this.written = [];
     this.writable = true;
     this.ended = false;
+    this._errorHandlers = [];
   }
   write(data) { this.written.push(data); }
   end() { this.ended = true; this.writable = false; }
+  on(event, handler) {
+    if (event === "error") this._errorHandlers.push(handler);
+  }
+  // Test helper: simulate a stdin pipe error (EPIPE, broken pipe, etc.)
+  simulateError(err) {
+    for (const handler of [...this._errorHandlers]) handler(err);
+  }
 }
 
 class MockReadable {
@@ -926,6 +934,119 @@ describe("Session", () => {
       assert.ok(buffer.includes("line2"));
       assert.ok(buffer.includes("line3"));
       assert.ok(buffer.includes("line4"));
+    });
+  });
+
+  describe("zombie terminal detection", () => {
+    it("detects zombie when stdin becomes unwritable and triggers exit", () => {
+      let exitCalled = false;
+      let exitCode = null;
+      const { session, mockProc } = createSimpleTestSession("zombie-test", {
+        onExit: (name, code) => { exitCalled = true; exitCode = code; },
+      });
+
+      // Simulate stdin becoming unwritable (pipe break, tmux crash, etc.)
+      mockProc.stdin.writable = false;
+
+      // Session still thinks it's attached
+      assert.strictEqual(session.state, Session.STATE_ATTACHED);
+      assert.strictEqual(session.alive, true);
+
+      // Attempt to write — should detect zombie and trigger exit
+      session.write("hello");
+
+      assert.strictEqual(session.state, Session.STATE_DETACHED);
+      assert.strictEqual(session.alive, false);
+      assert.strictEqual(exitCalled, true);
+      assert.strictEqual(exitCode, 1);
+    });
+
+    it("only triggers exit once even with multiple writes to dead stdin", () => {
+      let exitCount = 0;
+      const { session, mockProc } = createSimpleTestSession("zombie-multi", {
+        onExit: () => { exitCount++; },
+      });
+
+      mockProc.stdin.writable = false;
+
+      // First write detects zombie and triggers exit
+      session.write("a");
+      assert.strictEqual(exitCount, 1);
+      assert.strictEqual(session.state, Session.STATE_DETACHED);
+
+      // Second write throws SessionNotAliveError (session is now DETACHED)
+      assert.throws(() => session.write("b"), SessionNotAliveError);
+      assert.strictEqual(exitCount, 1); // exit not called again
+    });
+
+    it("handles stdin error event by transitioning to DETACHED", () => {
+      let exitCalled = false;
+      const session = new Session("stdin-error", tmuxSessionName("stdin-error"), {
+        onExit: () => { exitCalled = true; },
+      });
+
+      // Stub _spawn so attachControlMode uses our mock proc
+      const mockProc = new MockControlProc();
+      session._spawn = () => mockProc;
+      session.attachControlMode(80, 24);
+
+      assert.strictEqual(session.state, Session.STATE_ATTACHED);
+
+      // Simulate an EPIPE error on stdin — exercises the real handler
+      // registered by attachControlMode, not a hand-wired copy
+      mockProc.stdin.simulateError(new Error("write EPIPE"));
+
+      assert.strictEqual(session.state, Session.STATE_DETACHED);
+      assert.strictEqual(session.alive, false);
+      assert.strictEqual(exitCalled, true);
+    });
+
+    it("ignores stdin error from superseded control process", () => {
+      let exitCalled = false;
+      const session = new Session("stdin-stale", tmuxSessionName("stdin-stale"), {
+        onExit: () => { exitCalled = true; },
+      });
+
+      // First attach — registers stdin error handler on oldProc
+      const oldProc = new MockControlProc();
+      session._spawn = () => oldProc;
+      session.attachControlMode(80, 24);
+
+      // Second attach — supersedes oldProc with newProc
+      const newProc = new MockControlProc();
+      session._spawn = () => newProc;
+      session.attachControlMode(80, 24);
+
+      // Old proc's stdin errors — should be ignored (stale guard)
+      oldProc.stdin.simulateError(new Error("write EPIPE"));
+
+      assert.strictEqual(session.state, Session.STATE_ATTACHED);
+      assert.strictEqual(session.alive, true);
+      assert.strictEqual(exitCalled, false);
+    });
+
+    it("_sendControlCmd returns false when stdin is not writable", () => {
+      const { session, mockProc } = createSimpleTestSession("cmd-return", {
+        onExit: () => {},
+      });
+
+      // Normal write succeeds
+      const ok = session._sendControlCmd("send-keys -H 68 69");
+      assert.strictEqual(ok, true);
+      assert.strictEqual(mockProc.stdin.written.length, 1);
+
+      // Break stdin — next write fails and returns false
+      mockProc.stdin.writable = false;
+      const fail = session._sendControlCmd("send-keys -H 6c 6f");
+      assert.strictEqual(fail, false);
+      assert.strictEqual(mockProc.stdin.written.length, 1); // no new write
+    });
+
+    it("_sendControlCmd returns false when controlProc is null", () => {
+      const { session } = createSimpleTestSession("cmd-null");
+      session.controlProc = null;
+      const result = session._sendControlCmd("anything");
+      assert.strictEqual(result, false);
     });
   });
 });

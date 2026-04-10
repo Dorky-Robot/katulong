@@ -88,7 +88,7 @@ class MockReadable {
 
 class MockProc {
   constructor() {
-    this.stdin = { write() {}, end() {}, writable: true };
+    this.stdin = { write() {}, end() {}, writable: true, on() {} };
     this.stdout = new MockReadable();
     this._closeHandlers = [];
     this._errorHandlers = [];
