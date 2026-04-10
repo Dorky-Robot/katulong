@@ -2176,7 +2176,14 @@
       }
 
       const overlay = document.getElementById("disconnect-overlay");
-      if (overlay) overlay.classList.toggle("visible", connState.status === "disconnected");
+      if (overlay) {
+        const showOverlay = connState.status === "disconnected" || connState.status === "connecting";
+        overlay.classList.toggle("visible", showOverlay);
+        const reconnLabel = overlay.querySelector(".reconnecting-label");
+        const disconnLabel = overlay.querySelector(".disconnect-label");
+        if (reconnLabel) reconnLabel.style.display = connState.status === "connecting" ? "" : "none";
+        if (disconnLabel) disconnLabel.style.display = connState.status === "disconnected" ? "" : "none";
+      }
 
       if (typeof joystickManager !== "undefined" && joystickManager) {
         joystickManager.setConnected(connState.status === "ready");

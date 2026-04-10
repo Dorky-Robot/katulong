@@ -690,6 +690,14 @@
     #connection-indicator.connected { background: var(--success); }
     #connection-indicator.relay { background: var(--warning, #f9e2af); }
     #connection-indicator.direct { background: var(--success); }
+    @keyframes connection-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    #connection-indicator.connecting {
+      background: var(--warning, #f9e2af);
+      animation: connection-pulse 1.5s ease-in-out infinite;
+    }
 
     /* Disconnect overlay — dims terminal and shows status when not attached */
     #disconnect-overlay {
@@ -700,7 +708,8 @@
       transition: opacity var(--transition-normal) ease;
     }
     #disconnect-overlay.visible { display: grid; }
-    #disconnect-overlay .disconnect-label {
+    #disconnect-overlay .disconnect-label,
+    #disconnect-overlay .reconnecting-label {
       font-size: var(--text-sm); color: var(--text-muted);
       background: var(--bg-surface); padding: 0.375rem 0.75rem;
       border-radius: var(--radius-sm); border: 1px solid var(--border);
@@ -893,6 +902,10 @@
     .island-connection-dot.connected { background: var(--success); }
     .island-connection-dot.relay { background: var(--warning, #f9e2af); }
     .island-connection-dot.direct { background: var(--success); }
+    .island-connection-dot.connecting::before {
+      background: var(--warning, #f9e2af);
+      animation: connection-pulse 1.5s ease-in-out infinite;
+    }
 
     /* Phone: compact key island to save vertical space */
     @media (max-width: 600px) {
@@ -1277,6 +1290,10 @@
     .sidebar-connection-dot.connected { background: var(--success); }
     .sidebar-connection-dot.relay { background: var(--warning, #f9e2af); }
     .sidebar-connection-dot.direct { background: var(--success); }
+    .sidebar-connection-dot.connecting {
+      background: var(--warning, #f9e2af);
+      animation: connection-pulse 1.5s ease-in-out infinite;
+    }
     /* Instance label — shows window.location.hostname verbatim so two
        katulong instances on different tunnels are visually distinct
        without any server-side config. Lives on its own row beneath the
@@ -2241,7 +2258,7 @@
     <div id="sidebar-backdrop"></div>
     <div id="main-stage">
       <div id="terminal-container">
-        <div id="disconnect-overlay"><span class="disconnect-label">Disconnected</span></div>
+        <div id="disconnect-overlay"><span class="disconnect-label">Disconnected</span><span class="reconnecting-label" style="display:none">Reconnecting…</span></div>
       </div>
       <nav id="shortcut-bar" role="toolbar" aria-label="Shortcut bar"></nav>
       <div id="helm-view"></div>
