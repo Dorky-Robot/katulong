@@ -372,7 +372,7 @@ const server = createServer(handleRequest);
 
 // --- WebSocket ---
 
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 
 server.on("upgrade", createUpgradeHandler({
   wss,
