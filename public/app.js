@@ -2057,18 +2057,37 @@
     }
 
     /**
-     * Attempt WebRTC DataChannel upgrade after successful WS attach.
-     * If RTCPeerConnection is not available (e.g., older browser), this is a no-op.
-     * On success, transport layer switches to DataChannel atomically.
-     * On failure, stays on WebSocket — no user-visible impact.
+     * WebRTC upgrade with periodic retry.
+     *
+     * After attach/switch, tries to upgrade WS → DataChannel. If ICE fails
+     * (common through tunnels where server IPs aren't routable), retries on
+     * an exponential backoff schedule. Stops retrying once upgraded or when
+     * the WS connection itself drops.
      */
+    const RTC_RETRY_INITIAL = 30_000;  // 30s after first failure
+    const RTC_RETRY_MAX     = 300_000; // cap at 5 min
+    const RTC_RETRY_FACTOR  = 2;
+    let rtcRetryTimer = null;
+    let rtcRetryDelay = RTC_RETRY_INITIAL;
+    let rtcConsecutiveFailures = 0;
+    const RTC_MAX_CONSECUTIVE = 3; // after 3 failures in a row, stop until network changes
+
+    function clearRtcRetry() {
+      if (rtcRetryTimer !== null) {
+        clearTimeout(rtcRetryTimer);
+        rtcRetryTimer = null;
+      }
+      rtcRetryDelay = RTC_RETRY_INITIAL;
+      rtcConsecutiveFailures = 0;
+    }
+
     function initiateWebRTC() {
       if (typeof RTCPeerConnection === "undefined") return;
+      if (rtcConsecutiveFailures >= RTC_MAX_CONSECUTIVE) return; // give up until network changes
       if (rtcPeer) { rtcPeer.close(); rtcPeer = null; }
 
       rtcPeer = createWebRTCPeer({
         sendSignaling: (msg) => {
-          // Signaling always goes over WebSocket (DC doesn't exist yet)
           const ws = cm.transport?.ws;
           if (ws?.readyState === 1) ws.send(JSON.stringify(msg));
         },
@@ -2076,13 +2095,17 @@
           const transport = cm.transport;
           if (transport) {
             transport.upgradeToDataChannel(dc);
-            // Notify connection store of transport change
-            console.log("[WebRTC] Upgraded to DataChannel (P2P)");
+            cm.transportChanged("datachannel");
+            clearRtcRetry();
           }
         },
         onStateChange: (s) => {
           if (s === "failed" || s === "closed") {
-            console.log("[WebRTC] Fell back to WebSocket");
+            cm.transportChanged("websocket");
+            rtcConsecutiveFailures++;
+            if (rtcConsecutiveFailures < RTC_MAX_CONSECUTIVE) {
+              scheduleRtcRetry();
+            }
           }
         },
       });
@@ -2090,15 +2113,36 @@
       rtcPeer.connect();
     }
 
+    function scheduleRtcRetry() {
+      clearTimeout(rtcRetryTimer);
+      rtcRetryTimer = setTimeout(() => {
+        rtcRetryTimer = null;
+        const { status, transport } = cm.getState();
+        if (status === "ready" && transport !== "datachannel") {
+          initiateWebRTC();
+        }
+        rtcRetryDelay = Math.min(rtcRetryDelay * RTC_RETRY_FACTOR, RTC_RETRY_MAX);
+      }, rtcRetryDelay);
+    }
+
+    // Reset WebRTC retry on network change — conditions may have improved
+    if (typeof navigator.connection !== "undefined") {
+      navigator.connection.addEventListener("change", () => {
+        clearRtcRetry();
+        const { status, transport } = cm.getState();
+        if (status === "ready" && transport !== "datachannel") initiateWebRTC();
+      });
+    }
+
     /** Handle parsed WS messages — dispatches to pure handlers, then executes effects. */
     function handleWsMessage(msg) {
       // WebRTC signaling — handle before regular dispatch
-      if (msg.type === "rtc-answer" && rtcPeer) {
-        rtcPeer.handleAnswer(msg.sdp);
+      if (msg.type === "rtc-answer") {
+        if (rtcPeer) rtcPeer.handleAnswer(msg.sdp);
         return;
       }
-      if (msg.type === "rtc-ice-candidate" && rtcPeer) {
-        rtcPeer.handleCandidate(msg.candidate);
+      if (msg.type === "rtc-ice-candidate") {
+        if (rtcPeer) rtcPeer.handleCandidate(msg.candidate);
         return;
       }
 
@@ -2154,25 +2198,78 @@
 
     // Connection indicator subscriber — replaces updateConnectionIndicator function.
     // Reacts to connection store state changes and updates all indicator dots.
+    let connTooltip = document.getElementById("connection-tooltip");
+    if (!connTooltip) {
+      connTooltip = document.createElement("div");
+      connTooltip.id = "connection-tooltip";
+      document.body.appendChild(connTooltip);
+    }
+    const dotIds = ["sidebar-connection-dot", "joystick-connection-dot"];
+    let connTooltipText = "Disconnected";
+
+    // Wire hover listeners to all connection dots. Uses event delegation
+    // pattern: dots that don't exist yet (e.g. connection-indicator created
+    // by shortcut-bar.js) get wired when the subscriber first finds them.
+    const wiredDots = new Set();
+    function showTooltipAt(dot) {
+      const r = dot.getBoundingClientRect();
+      connTooltip.textContent = connTooltipText;
+      connTooltip.style.left = `${r.left + r.width / 2}px`;
+      connTooltip.style.top = `${r.top - 4}px`;
+      connTooltip.style.transform = "translate(-50%, -100%)";
+      connTooltip.classList.add("visible");
+    }
+    function hideTooltip() {
+      connTooltip.classList.remove("visible");
+    }
+    function wireDotTooltip(dot) {
+      if (wiredDots.has(dot)) return;
+      wiredDots.add(dot);
+      // Desktop hover
+      dot.addEventListener("mouseenter", () => showTooltipAt(dot));
+      dot.addEventListener("mouseleave", hideTooltip);
+      // Touch: tap to toggle, tap elsewhere to dismiss
+      dot.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (connTooltip.classList.contains("visible")) {
+          hideTooltip();
+        } else {
+          showTooltipAt(dot);
+        }
+      });
+    }
+    // Dismiss tooltip on any outside tap
+    document.addEventListener("click", hideTooltip);
+    // Wire any dots that exist now
+    for (const id of dotIds) {
+      const dot = document.getElementById(id);
+      if (dot) wireDotTooltip(dot);
+    }
+
     cm.subscribe((connState) => {
-      const dotIds = ["sidebar-connection-dot", "connection-indicator", "island-connection-dot"];
       let cssClass = "";
-      let title = "Disconnected";
+      connTooltipText = "Disconnected";
 
       if (connState.status === "connecting") {
         cssClass = "connecting";
-        title = "Connecting...";
+        connTooltipText = "Connecting\u2026";
       } else if (connState.status === "ready") {
         cssClass = connState.transport === "datachannel" ? "direct" : "relay";
-        title = connState.transport === "datachannel" ? "Direct (P2P)" : "Relay (WebSocket)";
+        connTooltipText = connState.transport === "datachannel" ? "Direct (P2P)" : "Relay (WebSocket)";
       }
 
       for (const id of dotIds) {
         const dot = document.getElementById(id);
         if (!dot) continue;
+        wireDotTooltip(dot);
         dot.classList.remove("connected", "relay", "direct", "connecting");
         if (cssClass) dot.classList.add(cssClass);
-        dot.title = title;
+        dot.removeAttribute("title");
+      }
+
+      // Update tooltip text live if it's currently visible
+      if (connTooltip.classList.contains("visible")) {
+        connTooltip.textContent = connTooltipText;
       }
 
       const overlay = document.getElementById("disconnect-overlay");
@@ -2185,9 +2282,7 @@
         if (disconnLabel) disconnLabel.style.display = connState.status === "disconnected" ? "" : "none";
       }
 
-      if (typeof joystickManager !== "undefined" && joystickManager) {
-        joystickManager.setConnected(connState.status === "ready");
-      }
+      // joystick dot is now updated via dotIds subscriber above
     });
 
     // Disconnect handler subscriber — clears pull state and captures scroll position
@@ -2198,7 +2293,8 @@
         const term = getTerm();
         state.scroll.userScrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
         pulls.clear();
-        // Clean up WebRTC peer on disconnect
+        // Clean up WebRTC peer and retry timer on disconnect
+        clearRtcRetry();
         if (rtcPeer) { rtcPeer.close(); rtcPeer = null; }
       }
     });

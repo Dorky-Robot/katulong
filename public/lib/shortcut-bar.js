@@ -1016,12 +1016,6 @@ export function createShortcutBar(options = {}) {
     container.innerHTML = "";
     document.getElementById("key-island")?.remove();
 
-    // Connection indicator (hidden by default)
-    const connDot = document.createElement("span");
-    connDot.id = "connection-indicator";
-    connDot.style.display = "none";
-    container.appendChild(connDot);
-
     container.style.display = "";
 
     // Platform class — set once, never changes (platform is const)

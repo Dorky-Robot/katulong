@@ -206,12 +206,12 @@ describe("createWebRTCSignaling", () => {
       // Simulate the RTCPeerConnection generating a local ICE candidate
       const pc = signaling._getPeerConnection("client-1");
       assert.ok(pc.onicecandidate, "onicecandidate should be wired up");
-      pc.onicecandidate({ candidate: { candidate: "server-ice", sdpMid: "0" } });
+      pc.onicecandidate({ candidate: { candidate: "server-ice", sdpMid: "0", sdpMLineIndex: 0 } });
 
       const iceMsgs = sentMessages.filter((m) => m.msg.type === "rtc-ice-candidate");
       assert.equal(iceMsgs.length, 1);
       assert.equal(iceMsgs[0].clientId, "client-1");
-      assert.deepEqual(iceMsgs[0].msg.candidate, { candidate: "server-ice", sdpMid: "0" });
+      assert.deepEqual(iceMsgs[0].msg.candidate, { candidate: "server-ice", sdpMid: "0", sdpMLineIndex: 0 });
     });
 
     it("ignores null candidate events (end-of-candidates signal)", async () => {

@@ -21,9 +21,12 @@
  * @param {(type: string) => void} [opts.onStateChange] — called with 'connecting', 'connected', 'failed', 'closed'
  * @returns {object} Peer API
  */
+const ICE_TIMEOUT_MS = 15_000; // 15s — if DC isn't open by then, ICE can't connect
+
 export function createWebRTCPeer({ sendSignaling, onDataChannel, onStateChange }) {
   let pc = null;
   let dc = null;
+  let iceTimer = null;
   let state = "idle"; // idle | connecting | connected | failed | closed
 
   function setState(s) {
@@ -36,19 +39,21 @@ export function createWebRTCPeer({ sendSignaling, onDataChannel, onStateChange }
    * Creates PeerConnection + DataChannel, generates offer, sends via signaling.
    */
   async function connect() {
-    if (typeof RTCPeerConnection === "undefined") return; // WebRTC not available
+    if (typeof RTCPeerConnection === "undefined") return;
     if (pc) close(); // Clean up previous attempt
 
     try {
       setState("connecting");
 
-      pc = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-      });
+      // No STUN servers — LAN-only host candidates to avoid leaking real
+      // IP to external STUN servers. Through tunnels, WebRTC won't connect
+      // and we fall back to WebSocket gracefully. See dfa68b1.
+      pc = new RTCPeerConnection();
 
       dc = pc.createDataChannel("katulong", { ordered: true });
 
       dc.onopen = () => {
+        if (iceTimer) { clearTimeout(iceTimer); iceTimer = null; }
         setState("connected");
         onDataChannel(dc);
       };
@@ -76,6 +81,12 @@ export function createWebRTCPeer({ sendSignaling, onDataChannel, onStateChange }
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       sendSignaling({ type: "rtc-offer", sdp: offer.sdp });
+
+      // Timeout: if DC doesn't open in time, ICE can't connect
+      iceTimer = setTimeout(() => {
+        iceTimer = null;
+        if (state === "connecting") setState("failed");
+      }, ICE_TIMEOUT_MS);
     } catch {
       setState("failed");
     }
@@ -109,6 +120,7 @@ export function createWebRTCPeer({ sendSignaling, onDataChannel, onStateChange }
    * Close the peer connection and DataChannel.
    */
   function close() {
+    if (iceTimer) { clearTimeout(iceTimer); iceTimer = null; }
     if (dc) { try { dc.close(); } catch {} dc = null; }
     if (pc) { try { pc.close(); } catch {} pc = null; }
     setState("closed");

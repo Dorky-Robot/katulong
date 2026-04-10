@@ -38,9 +38,10 @@ export function createJoystickManager(options = {}) {
       joystick.appendChild(actionBtn("gear", "Settings", _onSettingsClick));
     }
 
-    // Connection dot
+    // Connection dot — ID lets the connection subscriber in app.js target it
     dotEl = document.createElement("div");
     dotEl.className = "joystick-dot";
+    dotEl.id = "joystick-connection-dot";
     joystick.appendChild(dotEl);
   }
 

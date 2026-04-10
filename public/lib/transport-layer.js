@@ -30,6 +30,7 @@ export function createTransportLayer(ws) {
   let dc = null;
   let activeTransport = "websocket";
   let messageHandler = null;
+  let transportChangeHandler = null;
 
   // Wire WS onmessage to forward data messages when WS is the active transport
   function wsMessageForwarder(ev) {
@@ -49,12 +50,14 @@ export function createTransportLayer(ws) {
       if (activeTransport === "datachannel") {
         activeTransport = "websocket";
         dc = null;
+        if (transportChangeHandler) transportChangeHandler("websocket");
       }
     };
     channel.onerror = () => {
       if (activeTransport === "datachannel") {
         activeTransport = "websocket";
         dc = null;
+        if (transportChangeHandler) transportChangeHandler("websocket");
       }
     };
   }
@@ -131,6 +134,10 @@ export function createTransportLayer(ws) {
 
     get onmessage() {
       return messageHandler;
+    },
+
+    set ontransportchange(handler) {
+      transportChangeHandler = handler;
     },
 
     /**

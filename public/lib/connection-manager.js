@@ -200,6 +200,7 @@ export function createConnectionManager({
       // Create transport layer wrapping this WebSocket
       transport = createTransportLayer(ws);
       transport.onmessage = safeCallback(handleMessage);
+      transport.ontransportchange = (t) => connectionStore.transportChanged(t);
 
       // Transition store to ready
       connectionStore.ready(transport.transportType);
@@ -335,6 +336,7 @@ export function createConnectionManager({
     getState,
     init,
     dispose,
+    transportChanged: (t) => connectionStore.transportChanged(t),
     get transport() {
       return transport;
     },
