@@ -391,23 +391,6 @@
     }
 
     /**
-     * Dispatcher for reconstructing tiles from serialized state (carousel
-     * restore). Accepts the legacy `"dashboard"` type for forward-compat
-     * with state saved before the rename.
-     */
-    function restoreTile(type, options = {}) {
-      if (type === "terminal") return terminalTileFactory(options);
-      if (type === "cluster" || type === "dashboard") return clusterTileFactory(options);
-      if (type === "file-browser") return fileBrowserTileFactory(options);
-      throw new Error(`Unknown tile type: "${type}"`);
-    }
-
-    /** Create a terminal tile for a session, using the session name as tile ID. */
-    function makeTerminalTile(sessionName) {
-      return { id: sessionName, tile: terminalTileFactory({ sessionName }) };
-    }
-
-    /**
      * Create a terminal cluster: a single card holding a 2x2 grid of new
      * tmux sessions, each its own PTY. Spawns sessions in parallel; on
      * partial failure, deletes the successfully created ones so the server
@@ -459,16 +442,9 @@
     }
 
     // --- Card Carousel (iPad/tablet) ---
-    // Tile types that opt out of carousel persistence. Keep in lockstep
-    // with `persistable: false` on the tile prototype — the carousel's
-    // save() path filters on the instance flag, but restore() only has
-    // the serialized type string to work with, so the type-side
-    // opt-out lives here at the host. Empty for now; Tier 2 replaces
-    // this with a polymorphic capability snapshot.
-    const NON_PERSISTABLE_TILE_TYPES = new Set();
     const carousel = createCardCarousel({
       container: document.getElementById("terminal-container"),
-      isTypePersistable: (type) => !NON_PERSISTABLE_TILE_TYPES.has(type),
+      isTypePersistable: isPersistable,
       createTileContext: (tileId, _tile) => ({
         tileId,
         sendWs(msg) {
@@ -518,27 +494,11 @@
     //
     // Subscribes to ui-store state changes and translates them into
     // carousel commands (activate, addCard, removeCard, focusCard,
-    // reorderCards). This replaces the imperative add/remove/focus calls
-    // that were scattered across routeToSession, restoreTile, and the
-    // boot sequence.
+    // reorderCards). All tile lifecycle now flows through one subscription.
     const tileHost = createTileHost({
       store: uiStore,
       carousel,
       getRenderer,
-      buildCtx: (tileId, _tile) => ({
-        tileId,
-        sendWs(msg) {
-          const ws = state.connection.ws;
-          if (ws?.readyState === 1) ws.send(JSON.stringify(msg));
-        },
-        onWsMessage(_type, _handler) { return () => {}; },
-        setTitle(_title) {
-          // No-op: the renderer's setTitle dispatches UPDATE_PROPS to
-          // ui-store, which triggers <tile-tab-bar> re-render via its
-          // own subscription. No manual bar.render() needed.
-        },
-        setIcon(_icon) {},
-      }),
       onFocusChange: (tileId, tileType) => {
         // Legacy shortcut bar — <tile-tab-bar> updates via store subscription
         if (shortcutBarInstance) shortcutBarInstance.setActiveTab(tileId);
@@ -660,21 +620,6 @@
         }
       }
       carousel.fitAll();
-    }
-
-    /** Compute the insertion index that places a new card immediately right
-     *  of the currently focused one (Chrome-style "new tab right of active").
-     *
-     *  Reads from `carousel.getCards()` when the carousel is active — that is
-     *  the visible order the user sees, and it can drift from `windowTabSet`
-     *  after drag-reorders or isolated removals. Falls back to the tab set
-     *  during empty-state boot, before the carousel has been activated.
-     *
-     *  Returns `undefined` (→ append to end) when there is no active anchor. */
-    function insertAtRightOfActive() {
-      const order = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-      const idx = order.indexOf(state.session.name);
-      return idx >= 0 ? idx + 1 : undefined;
     }
 
     /** Route a session through ui-store — adds the tile if absent, then
