@@ -401,6 +401,33 @@ describe("Session", () => {
 
       assert.strictEqual(mockProc.stdin.written.length, 3);
     });
+
+    it("chunks large input to avoid tmux yacc overflow", () => {
+      const { session, mockProc } = createSimpleTestSession("test");
+
+      // 12KB paste — exceeds tmux's ~9997 hex-argument yacc limit
+      const largeInput = "A".repeat(12000);
+      session.write(largeInput);
+
+      // 12000 bytes / 4096 chunk = 3 send-keys commands
+      assert.strictEqual(mockProc.stdin.written.length, 3);
+      for (const cmd of mockProc.stdin.written) {
+        assert.ok(cmd.startsWith("send-keys -H "));
+        // Each hex pair is "XX " (3 chars), count pairs by splitting on space
+        const hexPart = cmd.replace("send-keys -H ", "").trim();
+        const pairCount = hexPart.split(" ").length;
+        assert.ok(pairCount <= 4096, `chunk has ${pairCount} pairs, expected <= 4096`);
+      }
+    });
+
+    it("sends small input as a single command", () => {
+      const { session, mockProc } = createSimpleTestSession("test");
+
+      session.write("hello");
+
+      assert.strictEqual(mockProc.stdin.written.length, 1);
+      assert.ok(mockProc.stdin.written[0].startsWith("send-keys -H "));
+    });
   });
 
   describe("resize", () => {
