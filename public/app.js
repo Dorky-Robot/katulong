@@ -1016,17 +1016,16 @@
     }
 
     function moveTab(direction) {
-      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
+      const tabs = uiStore.getState().order;
       if (tabs.length <= 1) return;
       const idx = tabs.indexOf(state.session.name);
       if (idx === -1) return;
       const newIdx = idx + direction;
       if (newIdx < 0 || newIdx >= tabs.length) return; // don't wrap
-      // Swap in the tab array
       const reordered = [...tabs];
       [reordered[idx], reordered[newIdx]] = [reordered[newIdx], reordered[idx]];
-      windowTabSet.reorderTabs(reordered);
-      if (carousel.isActive()) carousel.reorderCards(reordered);
+      // Route through ui-store — tile-host drives carousel.reorderCards
+      uiStore.reorder(reordered);
     }
 
     // Positional tab jump — Option+1..9 → tabs 1..9, Option+0 → tab 10.
@@ -1081,24 +1080,16 @@
     function removeFocusedSessionFromUI() {
       const name = state.session.name;
       if (!name) return { name: null, hasNext: false };
-      // Capture currentId BEFORE switchSession — otherwise getFocusedCard()
-      // would return the neighbor we just moved to and we'd remove the
-      // wrong card from the carousel.
       const currentId = carousel.isActive() ? (carousel.getFocusedCard() || name) : name;
-      const next = pickRightNeighbor(name);
-      if (next) switchSession(next);
-      if (carousel.isActive()) {
-        carousel.removeCard(currentId);
-      } else {
-        windowTabSet.removeTab(name);
-        wsConnection.sendUnsubscribe(name);
-      }
-      terminalPool.dispose(name);
-      if (!next && shortcutBarInstance) {
+      const hasNext = !!pickRightNeighbor(name);
+      // Route through ui-store — tile-host's reconcile handles carousel
+      // removal, unmount, and onTileRemoved (WS cleanup, pool dispose).
+      uiStore.removeTile(currentId);
+      if (!hasNext && shortcutBarInstance) {
         const addBtn = document.querySelector(".ipad-add-btn, .tab-add-btn");
         shortcutBarInstance.showAddMenu(addBtn);
       }
-      return { name, hasNext: !!next };
+      return { name, hasNext };
     }
 
     function closeCurrentSession() {
@@ -1465,6 +1456,17 @@
         if (shortcutBarInstance) shortcutBarInstance.renameTabEl(oldName, newName);
         windowTabSet.renameTab(oldName, newName);
         invalidateSessions(sessionStore, newName);
+        // Keep ui-store in sync: rename = remove old tile + add new tile
+        // at the same position. This matches the tile-tab-bar rename path.
+        const st = uiStore.getState();
+        const oldTile = st.tiles[oldName];
+        if (oldTile) {
+          uiStore.removeTile(oldName);
+          uiStore.addTile(
+            { id: newName, type: oldTile.type, props: { ...oldTile.props, sessionName: newName } },
+            { focus: true },
+          );
+        }
         if (state.session.name === oldName) {
           state.update('session.name', newName);
           setDocTitle(newName);
@@ -1512,12 +1514,11 @@
       uiStore,
     });
 
-    // Sync carousel card order when tabs are reordered via the shortcut bar
+    // Sync ui-store order when tabs are reordered via the legacy shortcut bar.
+    // Routes through ui-store so tile-host drives carousel.reorderCards.
     if (windowTabSet) {
       windowTabSet.subscribe(() => {
-        if (carousel.isActive()) {
-          carousel.reorderCards(windowTabSet.getTabs());
-        }
+        uiStore.reorder(windowTabSet.getTabs());
       });
     }
 
@@ -2196,7 +2197,8 @@
       let initial = loadFromStorage();
 
       // Legacy migration: if ui-store has nothing but the old carousel
-      // localStorage has tiles, migrate them.
+      // localStorage has tiles, migrate them. After migration, clear the
+      // old key so two persistence layers don't drift out of sync.
       if (!initial || Object.keys(initial.tiles).length === 0) {
         const carouselState = carousel.restore();
         if (carouselState?.tiles?.length) {
@@ -2217,6 +2219,8 @@
             order,
             focusedId: carouselState.focused || order[0] || null,
           };
+          // Migration complete — clear old key
+          try { localStorage.removeItem("katulong-carousel"); } catch {}
         }
       }
 

@@ -136,7 +136,6 @@ export function createCardCarousel({
         // works but looks like a bug.
         const persistedIds = new Set(serialized.map(s => s.id));
         const persistedFocus = persistedIds.has(focusedId) ? focusedId : null;
-        console.log("[carousel.save] " + JSON.stringify(serialized.map(s => ({id: s.id, type: s.type}))) + " focus=" + persistedFocus);
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
           cards: serialized,
           focused: persistedFocus,
@@ -167,8 +166,6 @@ export function createCardCarousel({
   // Capture the pre-boot snapshot immediately at construction, before any
   // activate()/addCard() call can fire save() and clobber it.
   initialStoredState = parseStoredState();
-  console.log("[carousel.construct] initialStoredState=" + JSON.stringify(initialStoredState?.cards?.map(c => ({id: c?.id, type: c?.type})) || null) + " rawLS=" + (localStorage.getItem(STORAGE_KEY) || "null").slice(0, 300));
-
   function restore() {
     // Use the snapshot captured at construction, not the live localStorage —
     // see comment on `initialStoredState`. Falls back to parseStoredState()
@@ -219,9 +216,7 @@ export function createCardCarousel({
     // manually clear their storage to stop seeing a phantom file
     // browser on every reload. Idempotent — runs every restore, drops
     // zero entries once the storage is clean.
-    console.log("[carousel.restore] raw " + JSON.stringify(rawCards.map(c => ({id: c?.id, type: c?.type}))));
     const tiles = rawCards.filter(c => isTypePersistable(c?.type));
-    console.log("[carousel.restore] after typefilter " + JSON.stringify(tiles.map(c => ({id: c?.id, type: c?.type}))));
     const focused = tiles.some(c => (typeof c === "string" ? c : c?.id) === state.focused)
       ? state.focused
       : null;
