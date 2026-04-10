@@ -2,7 +2,7 @@
  * file-browser-tile: unit tests
  *
  * Asserts the tile's public contract: serialize/restore round-trip and
- * that mount() drives createFileBrowserComponent + loadRoot with the
+ * that mount() drives createFileBrowserComponent + nav.loadRoot with the
  * constructor cwd. Uses mock.module to stub the file-browser component
  * and store modules — no DOM, no fetch.
  */
@@ -26,15 +26,25 @@ const createComponentCalls = [];
 
 await mock.module(storeUrl, {
   namedExports: {
-    createFileBrowserStore: () => ({ __store: true }),
-    loadRoot: (store, path) => { loadRootCalls.push({ store, path }); },
+    createFileBrowserStore: () => ({
+      getState: () => ({ columns: [], clipboard: null, showHidden: false }),
+      subscribe: () => () => {},
+      dispatch: () => {},
+    }),
+    createNavController: (store) => ({
+      loadRoot: (path) => { loadRootCalls.push({ store, path }); },
+      selectItem: mock.fn(),
+      refreshAll: mock.fn(),
+      goBack: mock.fn(),
+    }),
+    getDeepestPath: (state) => state.columns?.length > 0 ? state.columns[state.columns.length - 1].path : "/",
   },
 });
 
 await mock.module(componentUrl, {
   namedExports: {
-    createFileBrowserComponent: (store, opts) => {
-      createComponentCalls.push({ store, opts });
+    createFileBrowserComponent: (store, nav, opts) => {
+      createComponentCalls.push({ store, nav, opts });
       return {
         mount: (el) => { componentMountCalls.push(el); },
         unmount: mock.fn(),
@@ -101,7 +111,7 @@ describe("file-browser-tile", () => {
     assert.doesNotThrow(() => opts.onClose());
   });
 
-  it("mount creates the component and loadRoots the constructor cwd", () => {
+  it("mount creates the component and calls nav.loadRoot with the constructor cwd", () => {
     loadRootCalls.length = 0;
     createComponentCalls.length = 0;
     componentMountCalls.length = 0;
@@ -113,5 +123,18 @@ describe("file-browser-tile", () => {
     assert.equal(componentMountCalls.length, 1);
     assert.equal(loadRootCalls.length, 1);
     assert.equal(loadRootCalls[0].path, "/tmp/x");
+  });
+
+  it("mount passes nav controller to component", () => {
+    createComponentCalls.length = 0;
+    const factory = createFileBrowserTileFactory();
+    const tile = factory({ cwd: "/tmp/y", sessionName: "s" });
+    tile.mount(makeEl());
+    const { nav } = createComponentCalls[createComponentCalls.length - 1];
+    assert.ok(nav, "nav controller passed to component");
+    assert.equal(typeof nav.loadRoot, "function");
+    assert.equal(typeof nav.selectItem, "function");
+    assert.equal(typeof nav.refreshAll, "function");
+    assert.equal(typeof nav.goBack, "function");
   });
 });

@@ -1,39 +1,60 @@
 /**
  * File Browser Component — Miller Columns
  *
- * Finder column-view: each directory drills into the next column to the right.
- * Single tap/click on a folder opens it. Single tap/click on a file selects it.
- * Double-click on a file downloads it.
+ * Thin orchestrator that composes extracted modules:
+ *   - file-browser-toolbar.js  — toolbar factory (nav, breadcrumb, actions)
+ *   - file-browser-columns.js  — pure column rendering
+ *   - file-browser-keyboard.js — keyboard handler factory
+ *   - file-browser-actions.js  — file operations (rename, delete, etc.)
+ *   - file-browser-dnd.js      — drag-and-drop
+ *   - file-browser-context-menu.js — right-click menu
+ *
+ * The component subscribes to the store and delegates rendering to
+ * pure functions. It owns the DOM structure (.fb-root) but not the
+ * rendering logic for any individual piece.
+ *
+ * See docs/file-browser-refactor.md for the design rationale.
  */
 
-import { selectItem, goBack, refreshAll, getDeepestPath, loadRoot, filterHidden } from "/lib/file-browser/file-browser-store.js";
-import { getFileIcon } from "/lib/file-browser/file-browser-types.js";
+import { api } from "/lib/api-client.js";
+import { getDeepestPath, filterHidden } from "/lib/file-browser/file-browser-store.js";
+import { renderColumns } from "/lib/file-browser/file-browser-columns.js";
+import { createToolbar } from "/lib/file-browser/file-browser-toolbar.js";
+import { createKeyboardHandler } from "/lib/file-browser/file-browser-keyboard.js";
 import { createContextMenu } from "/lib/file-browser/file-browser-context-menu.js";
 import { createFileBrowserActions } from "/lib/file-browser/file-browser-actions.js";
 import { initColumnDnD } from "/lib/file-browser/file-browser-dnd.js";
+import { createFileWatcher } from "/lib/file-browser/file-browser-watcher.js";
 
-export function createFileBrowserComponent(store, options = {}) {
+/**
+ * @param {object} store — file-browser store instance
+ * @param {object} nav — navigation controller (from createNavController)
+ * @param {object} [options]
+ * @param {function} [options.onClose] — called when user clicks the X button
+ */
+export function createFileBrowserComponent(store, nav, options = {}) {
   const { onClose } = options;
-  let container = null;
-  let unsubscribe = null;
+  let root = null;
   let columnsEl = null;
+  let statusEl = null;
+  let toolbar = null;
+  let unsubscribe = null;
+  let watcher = null;
 
-  const actions = createFileBrowserActions(store);
+  const actions = createFileBrowserActions(store, nav);
+  const keyboardHandler = createKeyboardHandler(nav, store);
   const contextMenu = createContextMenu({
-    onAction: (action, entryName, selection) => {
-      if (!container) return;
+    onAction: (action, entryName) => {
+      if (!root) return;
       const state = store.getState();
       const names = entryName ? [entryName] : [];
-      const activeCol = state.columns.length > 0 ? state.columns[state.columns.length - 1] : null;
-      const currentPath = activeCol ? activeCol.path : "/";
 
       switch (action) {
         case "open":
           if (entryName) {
-            // Find which column has this entry
             for (let i = state.columns.length - 1; i >= 0; i--) {
               if (state.columns[i].entries.some(e => e.name === entryName)) {
-                selectItem(store, i, entryName);
+                nav.selectItem(i, entryName);
                 break;
               }
             }
@@ -43,7 +64,7 @@ export function createFileBrowserComponent(store, options = {}) {
           if (entryName) actions.downloadFile(entryName);
           break;
         case "rename":
-          if (entryName) actions.startRename(container, entryName);
+          if (entryName) actions.startRename(root, entryName);
           break;
         case "copy":
           actions.copyItems(names);
@@ -58,82 +79,63 @@ export function createFileBrowserComponent(store, options = {}) {
           actions.deleteItems(names);
           break;
         case "new-folder":
-          actions.newFolder(container);
+          actions.newFolder(root);
           break;
         case "upload":
-          actions.uploadFiles(container);
+          actions.uploadFiles(root);
           break;
       }
     },
   });
 
   function mount(el) {
-    // The component owns a child element (.fb-root), not the parent
-    // element passed in. Previously mount() stamped `container.className
-    // = "file-browser"` on its host, forcing file-browser-tile.js to
-    // wrap it in an extra <div> so tile-chrome's `.tile-content` flex
-    // rules wouldn't get clobbered. Tier 1 T1b fixes that: we create
-    // and append our own root div here, and the tile mounts the
-    // component directly on its content element.
-    const root = document.createElement("div");
+    root = document.createElement("div");
     root.className = "fb-root";
     el.appendChild(root);
-    container = root;
 
-    container.innerHTML = `
-      <div class="fb-toolbar">
-        <div class="fb-toolbar-nav">
-          <button class="fb-btn fb-back-btn" aria-label="Go back">
-            <i class="ph ph-caret-left"></i>
-          </button>
-          <button class="fb-btn fb-forward-btn" aria-label="Go forward">
-            <i class="ph ph-caret-right"></i>
-          </button>
-        </div>
-        <div class="fb-breadcrumb" aria-label="Path breadcrumb"></div>
-        <div class="fb-toolbar-actions">
-          <button class="fb-btn fb-hidden-btn${store.getState().showHidden ? " fb-active" : ""}" aria-label="Toggle hidden files">
-            <i class="ph ph-eye${store.getState().showHidden ? "" : "-slash"}"></i>
-          </button>
-          <button class="fb-btn fb-refresh-btn" aria-label="Refresh">
-            <i class="ph ph-arrow-clockwise"></i>
-          </button>
-          <button class="fb-btn fb-close-btn" aria-label="Close file browser">
-            <i class="ph ph-x"></i>
-          </button>
-        </div>
-      </div>
-      <div class="fb-columns" tabindex="0"></div>
-      <div class="fb-status"></div>
-    `;
-
-    const backBtn = container.querySelector(".fb-back-btn");
-    const fwdBtn = container.querySelector(".fb-forward-btn");
-    const closeBtn = container.querySelector(".fb-close-btn");
-    const refreshBtn = container.querySelector(".fb-refresh-btn");
-    columnsEl = container.querySelector(".fb-columns");
-
-    const hiddenBtn = container.querySelector(".fb-hidden-btn");
-    hiddenBtn.addEventListener("click", () => store.dispatch({ type: "TOGGLE_HIDDEN" }));
-
-    backBtn.addEventListener("click", () => goBack(store));
-    fwdBtn.addEventListener("click", () => {
-      // Navigate into selected folder
-      const state = store.getState();
-      const lastCol = state.columns[state.columns.length - 1];
-      if (lastCol?.selected) {
-        selectItem(store, state.columns.length - 1, lastCol.selected);
-      }
+    // Toolbar
+    toolbar = createToolbar({
+      onBack: () => nav.goBack(),
+      onForward: () => {
+        const state = store.getState();
+        const lastCol = state.columns[state.columns.length - 1];
+        if (lastCol?.selected) {
+          nav.selectItem(state.columns.length - 1, lastCol.selected);
+        }
+      },
+      onToggleHidden: () => store.dispatch({ type: "TOGGLE_HIDDEN" }),
+      onClose,
+      onBreadcrumbNav: (path) => nav.loadRoot(path),
     });
-    if (closeBtn && onClose) closeBtn.addEventListener("click", onClose);
-    refreshBtn.addEventListener("click", () => refreshAll(store));
+    root.appendChild(toolbar.el);
 
-    // Event delegation for all column interactions (click, dblclick, contextmenu)
+    // Live filesystem watcher — replaces manual refresh button
+    watcher = createFileWatcher(nav, store);
+
+    // Columns container
+    columnsEl = document.createElement("div");
+    columnsEl.className = "fb-columns";
+    columnsEl.tabIndex = 0;
+    root.appendChild(columnsEl);
+
+    // Status bar
+    statusEl = document.createElement("div");
+    statusEl.className = "fb-status";
+    root.appendChild(statusEl);
+
+    // Event delegation on columns
     columnsEl.addEventListener("click", (e) => {
+      // "Grant Access" button in permission error columns
+      const grantBtn = e.target.closest(".fb-grant-access-btn");
+      if (grantBtn) {
+        api.post("/api/files/open-privacy-settings", {});
+        return;
+      }
+
       const row = e.target.closest(".fb-miller-row");
       if (!row) return;
       const colIndex = parseInt(row.dataset.col, 10);
-      selectItem(store, colIndex, row.dataset.name);
+      nav.selectItem(colIndex, row.dataset.name);
     });
 
     columnsEl.addEventListener("dblclick", (e) => {
@@ -150,257 +152,55 @@ export function createFileBrowserComponent(store, options = {}) {
     columnsEl.addEventListener("contextmenu", (e) => {
       const row = e.target.closest(".fb-miller-row");
       const entryName = row?.dataset.name || null;
-      const menuState = {
+      contextMenu.show(e, {
         selection: entryName ? [entryName] : [],
         clipboard: store.getState().clipboard,
-      };
-      contextMenu.show(e, menuState);
+      });
     });
 
-    // Keyboard navigation on the columns container
-    columnsEl.addEventListener("keydown", (e) => handleKeyDown(e));
+    columnsEl.addEventListener("keydown", keyboardHandler);
 
-    // All drag-and-drop (external upload + internal move/copy)
-    initColumnDnD(columnsEl, store);
+    initColumnDnD(columnsEl, store, nav);
 
-    unsubscribe = store.subscribe(() => render());
+    unsubscribe = store.subscribe(() => {
+      render();
+      watcher.sync();
+    });
     render();
   }
 
-  function handleKeyDown(e) {
-    const state = store.getState();
-    if (state.columns.length === 0) return;
-
-    // Find the "active" column (last column with a selection, or the last column)
-    let activeColIdx = state.columns.length - 1;
-    for (let i = state.columns.length - 1; i >= 0; i--) {
-      if (state.columns[i].selected !== null) {
-        activeColIdx = i;
-        break;
-      }
-    }
-    const col = state.columns[activeColIdx];
-    if (!col) return;
-
-    const entries = filterHidden(col.entries, state.showHidden);
-    const selectedName = col.selected;
-    const names = entries.map(en => en.name);
-    const currentIdx = selectedName ? names.indexOf(selectedName) : -1;
-
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      const next = Math.min(currentIdx + 1, names.length - 1);
-      if (next >= 0) selectItem(store, activeColIdx, names[next]);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      const prev = currentIdx <= 0 ? 0 : currentIdx - 1;
-      if (names.length > 0) selectItem(store, activeColIdx, names[prev]);
-    } else if (e.key === "ArrowRight") {
-      e.preventDefault();
-      // Drill into selected folder
-      if (selectedName) {
-        const entry = entries.find(en => en.name === selectedName);
-        if (entry?.type === "directory" && state.columns[activeColIdx + 1]) {
-          // Focus the next column — select its first visible item
-          const nextCol = state.columns[activeColIdx + 1];
-          const nextVisible = filterHidden(nextCol.entries, state.showHidden);
-          if (nextVisible.length > 0) {
-            selectItem(store, activeColIdx + 1, nextVisible[0].name);
-          }
-        }
-      }
-    } else if (e.key === "ArrowLeft") {
-      e.preventDefault();
-      // Go up to parent column
-      if (activeColIdx > 0) {
-        // The parent column already has a selection; just focus it by
-        // re-selecting to trim children
-        const parentCol = state.columns[activeColIdx - 1];
-        if (parentCol.selected) {
-          store.dispatch({ type: "CLEAR_SELECTION", columnIndex: activeColIdx - 1 });
-          store.dispatch({ type: "SELECT_ITEM", columnIndex: activeColIdx - 1, name: parentCol.selected });
-        }
-      }
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (selectedName) {
-        const entry = entries.find(en => en.name === selectedName);
-        if (entry?.type === "file") {
-          const filePath = col.path + "/" + selectedName;
-          window.open(`/api/files/download?path=${encodeURIComponent(filePath)}`, "_blank");
-        }
-      }
-    } else if (e.key === "Backspace") {
-      e.preventDefault();
-      goBack(store);
-    }
-  }
-
   function render() {
-    if (!container || !columnsEl) return;
+    if (!root || !columnsEl) return;
     const state = store.getState();
 
-    // Update hidden toggle button
-    const hiddenBtn = container.querySelector(".fb-hidden-btn");
-    if (hiddenBtn) {
-      hiddenBtn.classList.toggle("fb-active", state.showHidden);
-      const icon = hiddenBtn.querySelector("i");
-      icon.className = state.showHidden ? "ph ph-eye" : "ph ph-eye-slash";
-    }
-
-    // Back/forward button states
-    const backBtn = container.querySelector(".fb-back-btn");
-    const fwdBtn = container.querySelector(".fb-forward-btn");
-    backBtn.disabled = state.columns.length <= 1;
-    // Forward enabled if last column has a selected directory
-    const lastCol = state.columns[state.columns.length - 1];
-    const lastSelected = lastCol?.selected;
-    const lastEntry = lastSelected && lastCol?.entries.find(e => e.name === lastSelected);
-    fwdBtn.disabled = !lastEntry || lastEntry.type !== "directory";
-
-    // Breadcrumb
-    renderBreadcrumb(state);
-
-    // Render columns
-    renderColumns(state);
+    toolbar.update(state);
+    renderColumns(columnsEl, state.columns, state.showHidden);
 
     // Status bar
-    const status = container.querySelector(".fb-status");
     const deepest = getDeepestPath(state);
-    const lastColData = state.columns[state.columns.length - 1];
-    const visibleCount = lastColData ? filterHidden(lastColData.entries, state.showHidden).length : 0;
-    status.textContent = `${deepest}  —  ${visibleCount} item${visibleCount !== 1 ? "s" : ""}`;
-  }
-
-  let prevColumnCount = 0;
-
-  function renderColumns(state) {
-    const { columns } = state;
-
-    // Ensure correct number of column elements
-    while (columnsEl.children.length > columns.length) {
-      columnsEl.removeChild(columnsEl.lastElementChild);
-    }
-    while (columnsEl.children.length < columns.length) {
-      const colEl = document.createElement("div");
-      colEl.className = "fb-miller-col";
-      columnsEl.appendChild(colEl);
-    }
-
-    // Update each column
-    for (let i = 0; i < columns.length; i++) {
-      const colEl = columnsEl.children[i];
-      colEl.dataset.path = columns[i].path;
-      colEl.dataset.index = i;
-      renderSingleColumn(colEl, columns[i], i);
-    }
-
-    // Auto-scroll horizontally so the newly opened column is visible.
-    // Why rAF + direct scrollLeft instead of scrollIntoView: the last column
-    // has `flex: 1` (so a single-column browser fills the pane). When content
-    // overflows, scrollIntoView({inline:"end"}) considers the last column
-    // already "in view" because its right edge is flush with the container —
-    // nothing scrolls. Writing scrollLeft = scrollWidth after layout settles
-    // pins the deepest column to the right edge regardless of flex sizing.
-    // Runs on every render (not just count-change) so that drilling deeper
-    // via keyboard, or refreshing into a pre-selected deep path, also scrolls.
-    if (columns.length > 0) {
-      requestAnimationFrame(() => {
-        if (columnsEl) columnsEl.scrollLeft = columnsEl.scrollWidth;
-      });
-    }
-    prevColumnCount = columns.length;
-  }
-
-  function renderSingleColumn(colEl, col, colIndex) {
-    if (col.loading) {
-      colEl.innerHTML = '<div class="fb-miller-loading"><span class="fb-loading-spinner"></span></div>';
-      return;
-    }
-    if (col.error) {
-      colEl.innerHTML = `<div class="fb-miller-empty fb-error">${escapeHtml(col.error)}</div>`;
-      return;
-    }
-
-    const { showHidden } = store.getState();
-    const visibleEntries = filterHidden(col.entries, showHidden);
-
-    if (visibleEntries.length === 0) {
-      colEl.innerHTML = '<div class="fb-miller-empty">Empty</div>';
-      return;
-    }
-
-    const html = visibleEntries.map(entry => {
-      const selected = col.selected === entry.name;
-      const isDir = entry.type === "directory";
-      return `<div class="fb-miller-row${selected ? " fb-miller-selected" : ""}" data-name="${escapeAttr(entry.name)}" data-type="${entry.type}" data-col="${colIndex}" draggable="true">
-        <span class="fb-miller-icon">${getFileIcon(entry)}</span>
-        <span class="fb-miller-name">${escapeHtml(entry.name)}</span>
-        ${isDir ? '<span class="fb-miller-chevron"><i class="ph ph-caret-right"></i></span>' : ''}
-      </div>`;
-    }).join("");
-
-    colEl.innerHTML = html;
-
-    // Scroll selected row into view
-    if (col.selected) {
-      const selectedRow = colEl.querySelector(`.fb-miller-row[data-name="${CSS.escape(col.selected)}"]`);
-      if (selectedRow) selectedRow.scrollIntoView({ block: "nearest" });
-    }
-  }
-
-  function renderBreadcrumb(state) {
-    const breadcrumb = container.querySelector(".fb-breadcrumb");
-    const deepest = getDeepestPath(state);
-    if (!deepest) {
-      breadcrumb.innerHTML = "";
-      return;
-    }
-
-    const parts = deepest.split("/").filter(Boolean);
-    let html = `<span class="fb-crumb" data-path="/" data-depth="0">/</span>`;
-    let accumulated = "";
-    for (let i = 0; i < parts.length; i++) {
-      accumulated += "/" + parts[i];
-      html += `<span class="fb-crumb-sep">/</span><span class="fb-crumb" data-path="${escapeAttr(accumulated)}" data-depth="${i + 1}">${escapeHtml(parts[i])}</span>`;
-    }
-    breadcrumb.innerHTML = html;
-
-    breadcrumb.querySelectorAll(".fb-crumb").forEach(crumb => {
-      crumb.addEventListener("click", () => {
-        // Navigate to this depth by loading it as root
-        loadRoot(store, crumb.dataset.path);
-      });
-    });
+    const lastCol = state.columns[state.columns.length - 1];
+    const visibleCount = lastCol ? filterHidden(lastCol.entries, state.showHidden).length : 0;
+    statusEl.textContent = `${deepest}  —  ${visibleCount} item${visibleCount !== 1 ? "s" : ""}`;
   }
 
   function unmount() {
+    if (watcher) watcher.stop();
+    watcher = null;
     if (unsubscribe) unsubscribe();
     unsubscribe = null;
     contextMenu.close();
-    // Remove the .fb-root child we appended in mount(). The parent
-    // element belongs to the caller (tile-chrome) — we must not
-    // touch its className or its other children.
-    if (container && container.parentElement) {
-      container.parentElement.removeChild(container);
+    if (root && root.parentElement) {
+      root.parentElement.removeChild(root);
     }
-    container = null;
+    root = null;
     columnsEl = null;
+    statusEl = null;
+    toolbar = null;
   }
-
-  function getContainer() { return container; }
 
   function focus() {
     if (columnsEl) columnsEl.focus();
   }
 
-  return { mount, unmount, getContainer, focus, render };
-}
-
-function escapeHtml(str) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-function escapeAttr(str) {
-  return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return { mount, unmount, focus, render };
 }
