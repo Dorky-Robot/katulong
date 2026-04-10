@@ -10,8 +10,10 @@
  * This test pins the behavior so that Phase 1.2 (consolidate status
  * polling into a single SessionStatusWatcher) does not regress it.
  *
- * The test uses mock timers + a mock fetch + mock carousel, not real
- * tmux or real network.
+ * The test uses mock timers + a mock fetch + a mock ctx.faceStack, not
+ * real tmux or real network. As of Tier 1 T1a the terminal tile no
+ * longer reaches into `deps.carousel` — it drives the flip through the
+ * container-provided `ctx.faceStack` affordance.
  */
 
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
@@ -84,13 +86,12 @@ function createMockTerminalPool() {
   };
 }
 
-function createMockCarousel() {
-  const flipped = new Set();
+function createMockFaceStack() {
+  let showing = false;
   return {
-    flipCard: mock.fn((name, _isFlipped) => { flipped.add(name); }),
-    isFlipped: (name) => flipped.has(name),
-    setBackTile: mock.fn(),
-    _flipped: flipped,
+    showSecondary: mock.fn((show) => { showing = !!show; }),
+    isShowingSecondary: () => showing,
+    setSecondary: mock.fn(),
   };
 }
 
@@ -115,7 +116,7 @@ function makeFetchScript(statuses) {
 describe('terminal-tile auto-flip on idle', () => {
   let createTerminalTileFactory;
   let terminalPool;
-  let carousel;
+  let faceStack;
   let originalFetch;
   let timers;
 
@@ -123,7 +124,7 @@ describe('terminal-tile auto-flip on idle', () => {
     setupGlobals();
     createTerminalTileFactory = await importTerminalTile();
     terminalPool = createMockTerminalPool();
-    carousel = createMockCarousel();
+    faceStack = createMockFaceStack();
     originalFetch = globalThis.fetch;
     timers = mock.timers;
     timers.enable({ apis: ['setInterval', 'setTimeout'] });
@@ -143,11 +144,11 @@ describe('terminal-tile auto-flip on idle', () => {
       { alive: true, hasChildProcesses: false, childCount: 0 },
     ]);
 
-    const factory = createTerminalTileFactory({ terminalPool, carousel });
+    const factory = createTerminalTileFactory({ terminalPool });
     const tile = factory({ sessionName: "dev" });
     const container = createMockElement("div");
 
-    tile.mount(container, { flip: () => {} });
+    tile.mount(container, { flip: () => {}, faceStack });
 
     // Tick the 5s status poll interval to trigger first poll (active)
     timers.tick(5000);
@@ -163,11 +164,10 @@ describe('terminal-tile auto-flip on idle', () => {
     await flush();
 
     assert.ok(
-      carousel.flipCard.mock.callCount() >= 1,
-      `expected flipCard to be called at least once after idle transition, got ${carousel.flipCard.mock.callCount()}`,
+      faceStack.showSecondary.mock.callCount() >= 1,
+      `expected showSecondary to be called at least once after idle transition, got ${faceStack.showSecondary.mock.callCount()}`,
     );
-    assert.strictEqual(carousel.flipCard.mock.calls[0].arguments[0], "dev");
-    assert.strictEqual(carousel.flipCard.mock.calls[0].arguments[1], true);
+    assert.strictEqual(faceStack.showSecondary.mock.calls[0].arguments[0], true);
   });
 
   it('does not flip when the tile has been unmounted before debounce fires', async () => {
@@ -177,11 +177,11 @@ describe('terminal-tile auto-flip on idle', () => {
       { alive: true, hasChildProcesses: false, childCount: 0 },
     ]);
 
-    const factory = createTerminalTileFactory({ terminalPool, carousel });
+    const factory = createTerminalTileFactory({ terminalPool });
     const tile = factory({ sessionName: "dev" });
     const container = createMockElement("div");
 
-    tile.mount(container, { flip: () => {} });
+    tile.mount(container, { flip: () => {}, faceStack });
     timers.tick(5000);
     await flush();
     timers.tick(5000);
@@ -194,9 +194,9 @@ describe('terminal-tile auto-flip on idle', () => {
     await flush();
 
     assert.strictEqual(
-      carousel.flipCard.mock.callCount(),
+      faceStack.showSecondary.mock.callCount(),
       0,
-      'destroyed tile must not call carousel.flipCard',
+      'destroyed tile must not call faceStack.showSecondary',
     );
   });
 
@@ -206,11 +206,11 @@ describe('terminal-tile auto-flip on idle', () => {
       { alive: true, hasChildProcesses: true, childCount: 2 },
     ]);
 
-    const factory = createTerminalTileFactory({ terminalPool, carousel });
+    const factory = createTerminalTileFactory({ terminalPool });
     const tile = factory({ sessionName: "dev" });
     const container = createMockElement("div");
 
-    tile.mount(container, { flip: () => {} });
+    tile.mount(container, { flip: () => {}, faceStack });
     timers.tick(5000);
     await flush();
     timers.tick(5000);
@@ -218,6 +218,6 @@ describe('terminal-tile auto-flip on idle', () => {
     timers.tick(2000);
     await flush();
 
-    assert.strictEqual(carousel.flipCard.mock.callCount(), 0);
+    assert.strictEqual(faceStack.showSecondary.mock.callCount(), 0);
   });
 });

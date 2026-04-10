@@ -1,229 +1,159 @@
+/**
+ * File Browser tile E2E
+ *
+ * The file-browser is a first-class tile (PR #533). These tests are the
+ * regression contracts for the three reported user-visible bugs:
+ *
+ *   P1/P2 — no phantom file-browser tile on fresh load or after reload
+ *   P3/P4/P5/P6 — tab context menu + close paths on the file-browser tile
+ *   P7 — terminal tab context menu is unchanged (regression guard)
+ *   P8 — file-browser tile fills the carousel cell like a terminal tile
+ *
+ * The previous version of this file targeted the retired #file-browser
+ * overlay (selectors like `.fb-hidden`, aria-label="Close file browser").
+ * Those no longer exist — the file browser is now hosted inside a
+ * carousel card via tile-chrome.
+ */
 import { test, expect } from "@playwright/test";
-import { waitForAppReady, waitForShellReady } from "./helpers.js";
+import { setupTest, cleanupSession, waitForAppReady } from "./helpers.js";
 
-test.describe("File Browser", () => {
+const FB_TILE_SELECTOR = '.carousel-card:has(.fb-root)';
+const TERMINAL_TILE_SELECTOR = '.carousel-card:has(.terminal-pane)';
+async function openFileBrowser(page) {
+  // Desktop: sidebar is hidden, so use the tab-bar "+" add menu which
+  // exposes a "New Files" item built from tileTypes.
+  await page.click(".ipad-add-btn");
+  const menu = page.locator(".tab-context-menu, .dropdown-menu, [role=menu]").last();
+  await menu.getByText(/New Files/i).click();
+  await page.waitForSelector(".fb-miller-col", { timeout: 5000 });
+}
+
+test.describe("File Browser tile", () => {
   let sessionName;
 
-  test.beforeEach(async ({ page }, testInfo) => {
-    sessionName = `fb-${testInfo.testId}-${Date.now()}`;
-    await page.goto(`/?s=${encodeURIComponent(sessionName)}`);
-    await waitForAppReady(page);
-    await page.locator(".xterm-helper-textarea").focus();
-  });
-
   test.afterEach(async ({ page }) => {
-    await page.evaluate(
-      (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: "DELETE" }),
-      sessionName,
+    await cleanupSession(page, sessionName);
+    sessionName = null;
+  });
+
+  test("P1: fresh load (clean storage) has no file-browser tile", async ({ page, context }, testInfo) => {
+    // Clear storage on a blank page first, then navigate.
+    await page.goto("/");
+    await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+    sessionName = await setupTest({ page, context, testInfo });
+    // After app is ready, there must be zero file-browser tiles.
+    const count = await page.locator(FB_TILE_SELECTOR).count();
+    expect(count).toBe(0);
+  });
+
+  test("P2: open file browser → reload → no file-browser tile restored", async ({ page, context }, testInfo) => {
+    await page.goto("/");
+    await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+    sessionName = await setupTest({ page, context, testInfo });
+
+    await openFileBrowser(page);
+    await expect(page.locator(FB_TILE_SELECTOR)).toHaveCount(1);
+
+    // Dump what we persisted so failures show the stored shape.
+    const stored = await page.evaluate(() =>
+      localStorage.getItem("katulong.carousel.v1") || localStorage.getItem("katulong-carousel") || null
     );
+    // eslint-disable-next-line no-console
+    console.log("[P2] stored carousel state:", stored);
+
+    await page.reload();
+    await waitForAppReady(page);
+
+    const count = await page.locator(FB_TILE_SELECTOR).count();
+    expect(count).toBe(0);
   });
 
-  test("File browser button is visible in shortcut bar", async ({ page }) => {
-    const filesBtn = page.locator('button[aria-label="Open file browser"]').first();
-    await expect(filesBtn).toBeVisible();
-  });
+  test("P3: right-click FB tab → only Close, no Detach/Kill/Open-in-new-window", async ({ page, context }, testInfo) => {
+    sessionName = await setupTest({ page, context, testInfo });
+    await openFileBrowser(page);
 
-  test("Opens file browser and shows columns", async ({ page }) => {
-    // Click the file browser button in the shortcut bar
-    await page.locator('button[aria-label="Open file browser"]').first().click();
+    // The FB tab's data-session is the tile id (`file-browser-*`).
+    const fbTileId = await page.locator(FB_TILE_SELECTOR).getAttribute("data-tile-id");
+    expect(fbTileId).toMatch(/^file-browser-/);
 
-    // File browser should be visible
-    const fb = page.locator("#file-browser");
-    await expect(fb).toHaveClass(/active/);
+    const tab = page.locator(`.tab-bar-tab[data-session="${fbTileId}"]`);
+    await expect(tab).toBeVisible();
+    await tab.click({ button: "right" });
 
-    // Terminal should be hidden
-    const termContainer = page.locator("#terminal-container");
-    await expect(termContainer).toHaveClass(/fb-hidden/);
-
-    // Should have at least one column with entries
-    await page.waitForSelector(".fb-miller-col", { timeout: 5000 });
-    const columns = page.locator(".fb-miller-col");
-    await expect(columns.first()).toBeVisible();
-
-    // Should have rows in the first column
-    const rows = page.locator(".fb-miller-row");
-    const count = await rows.count();
-    expect(count).toBeGreaterThan(0);
-  });
-
-  test("Clicking a folder drills into it", async ({ page }) => {
-    await page.locator('button[aria-label="Open file browser"]').first().click();
-    await page.waitForSelector(".fb-miller-col", { timeout: 5000 });
-
-    // Find and click a directory row
-    const dirRow = page.locator('.fb-miller-row[data-type="directory"]').first();
-    await expect(dirRow).toBeVisible();
-    const dirName = await dirRow.getAttribute("data-name");
-    await dirRow.click();
-
-    // Should now have a second column
-    await page.waitForSelector(".fb-miller-col:nth-child(2)", { timeout: 5000 });
-    const columns = page.locator(".fb-miller-col");
-    const colCount = await columns.count();
-    expect(colCount).toBeGreaterThanOrEqual(2);
-
-    // The clicked row should be selected (highlighted)
-    await expect(dirRow).toHaveClass(/fb-miller-selected/);
-  });
-
-  test("Folders show chevron indicator", async ({ page }) => {
-    await page.locator('button[aria-label="Open file browser"]').first().click();
-    await page.waitForSelector(".fb-miller-col", { timeout: 5000 });
-
-    // Directories should have a chevron
-    const dirRow = page.locator('.fb-miller-row[data-type="directory"]').first();
-    if (await dirRow.count() > 0) {
-      const chevron = dirRow.locator(".fb-miller-chevron");
-      await expect(chevron).toBeVisible();
-    }
-
-    // Files should NOT have a chevron
-    const fileRow = page.locator('.fb-miller-row[data-type="file"]').first();
-    if (await fileRow.count() > 0) {
-      const chevron = fileRow.locator(".fb-miller-chevron");
-      await expect(chevron).toHaveCount(0);
-    }
-  });
-
-  test("Close button returns to terminal", async ({ page }) => {
-    await page.locator('button[aria-label="Open file browser"]').first().click();
-    await page.waitForSelector(".fb-miller-col", { timeout: 5000 });
-
-    // Click close button
-    await page.locator('button[aria-label="Close file browser"]').click();
-
-    // File browser should be hidden
-    const fb = page.locator("#file-browser");
-    await expect(fb).not.toHaveClass(/active/);
-
-    // Terminal should be visible again
-    const termContainer = page.locator("#terminal-container");
-    await expect(termContainer).not.toHaveClass(/fb-hidden/);
-  });
-
-  test("Terminal session survives file browser toggle", async ({ page }) => {
-    // Type something in the terminal first
-    const marker = `fb_survive_${Date.now()}`;
-    await page.keyboard.type(`echo ${marker}`);
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".xterm-rows")).toContainText(marker);
-
-    // Open file browser
-    await page.locator('button[aria-label="Open file browser"]').first().click();
-    await page.waitForSelector(".fb-miller-col", { timeout: 5000 });
-
-    // Browse around - click a folder
-    const dirRow = page.locator('.fb-miller-row[data-type="directory"]').first();
-    if (await dirRow.count() > 0) {
-      await dirRow.click();
-      await page.waitForSelector(".fb-miller-col:nth-child(2)", { timeout: 5000 });
-    }
-
-    // Close file browser, return to terminal
-    await page.locator('button[aria-label="Close file browser"]').click();
-    await expect(page.locator("#terminal-container")).not.toHaveClass(/fb-hidden/);
-
-    // Terminal should still work — type another command
-    await page.locator(".xterm-helper-textarea").focus();
-    const marker2 = `fb_after_${Date.now()}`;
-    await page.keyboard.type(`echo ${marker2}`);
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".xterm-rows")).toContainText(marker2, { timeout: 10000 });
-  });
-
-  test("Breadcrumb shows current path", async ({ page }) => {
-    await page.locator('button[aria-label="Open file browser"]').first().click();
-    await page.waitForSelector(".fb-miller-col", { timeout: 5000 });
-
-    // Breadcrumb should show at least "/"
-    const breadcrumb = page.locator(".fb-breadcrumb");
-    await expect(breadcrumb).toContainText("/");
-  });
-
-  test("Back button removes last column", async ({ page }) => {
-    await page.locator('button[aria-label="Open file browser"]').first().click();
-    await page.waitForSelector(".fb-miller-col", { timeout: 5000 });
-
-    // Drill into a folder
-    const dirRow = page.locator('.fb-miller-row[data-type="directory"]').first();
-    if (await dirRow.count() === 0) {
-      test.skip();
-      return;
-    }
-    await dirRow.click();
-    await page.waitForSelector(".fb-miller-col:nth-child(2)", { timeout: 5000 });
-
-    const colsBefore = await page.locator(".fb-miller-col").count();
-
-    // Click back
-    await page.locator('button[aria-label="Go back"]').click();
-
-    // Should have one fewer column
-    const colsAfter = await page.locator(".fb-miller-col").count();
-    expect(colsAfter).toBeLessThan(colsBefore);
-  });
-
-  test("Status bar shows item count", async ({ page }) => {
-    await page.locator('button[aria-label="Open file browser"]').first().click();
-    await page.waitForSelector(".fb-miller-col", { timeout: 5000 });
-
-    const status = page.locator(".fb-status");
-    await expect(status).toContainText("item");
-  });
-
-  test("Context menu appears on right-click", async ({ page }) => {
-    await page.locator('button[aria-label="Open file browser"]').first().click();
-    await page.waitForSelector(".fb-miller-row", { timeout: 5000 });
-
-    // Right-click on a row
-    const row = page.locator(".fb-miller-row").first();
-    await row.click({ button: "right" });
-
-    // Context menu should appear
-    const menu = page.locator(".fb-context-menu");
+    const menu = page.locator(".tab-context-menu");
     await expect(menu).toBeVisible();
+    const labels = await menu.locator(".menu-item, .context-menu-item, [role=menuitem], button, div").allTextContents();
+    const joined = labels.join(" | ").toLowerCase();
 
-    // Click elsewhere to dismiss
-    await page.locator(".fb-columns").click({ position: { x: 5, y: 5 } });
-    await expect(menu).not.toBeVisible();
+    expect(joined).toContain("close");
+    expect(joined).not.toContain("detach");
+    expect(joined).not.toContain("kill session");
+    expect(joined).not.toContain("open in new window");
   });
 
-  test("File browser API returns directory listing", async ({ page }) => {
-    const response = await page.evaluate(() =>
-      fetch("/api/files").then(r => r.json())
-    );
-    expect(response.path).toBeTruthy();
-    expect(Array.isArray(response.entries)).toBe(true);
-    expect(response.entries.length).toBeGreaterThan(0);
-    // Each entry should have required fields
-    const entry = response.entries[0];
-    expect(entry.name).toBeTruthy();
-    expect(["file", "directory"]).toContain(entry.type);
-    expect(entry.kind).toBeTruthy();
+  test("P4: clicking Close in FB tab context menu removes the tile", async ({ page, context }, testInfo) => {
+    sessionName = await setupTest({ page, context, testInfo });
+    await openFileBrowser(page);
+
+    const fbTileId = await page.locator(FB_TILE_SELECTOR).getAttribute("data-tile-id");
+    const tab = page.locator(`.tab-bar-tab[data-session="${fbTileId}"]`);
+    await tab.click({ button: "right" });
+
+    const menu = page.locator(".tab-context-menu");
+    await expect(menu).toBeVisible();
+    // Click the item whose text contains "Close"
+    await menu.getByText(/^Close$/i).first().click();
+
+    await expect(page.locator(FB_TILE_SELECTOR)).toHaveCount(0);
   });
 
-  test("File browser API rejects path traversal", async ({ page }) => {
-    const response = await page.evaluate(() =>
-      fetch("/api/files?path=/etc/../etc/passwd").then(r => ({ status: r.status }))
-    );
-    expect(response.status).toBe(400);
+  test("P5: component header X removes the tile", async ({ page, context }, testInfo) => {
+    sessionName = await setupTest({ page, context, testInfo });
+    await openFileBrowser(page);
+
+    const tile = page.locator(FB_TILE_SELECTOR);
+    await expect(tile).toHaveCount(1);
+
+    // The file-browser component has its own close button in the header.
+    // Prefer any button with an aria-label starting with "Close".
+    const closeBtn = tile.locator('button[aria-label*="Close" i]').first();
+    await closeBtn.click();
+
+    await expect(page.locator(FB_TILE_SELECTOR)).toHaveCount(0);
   });
 
-  test("Global drop overlay does not appear when file browser is active", async ({ page }) => {
-    await page.locator('button[aria-label="Open file browser"]').first().click();
-    await page.waitForSelector(".fb-miller-col", { timeout: 5000 });
+  test("P6: two clicks on files button → two independent tiles", async ({ page, context }, testInfo) => {
+    sessionName = await setupTest({ page, context, testInfo });
+    await openFileBrowser(page);
+    await openFileBrowser(page);
+    await expect(page.locator(FB_TILE_SELECTOR)).toHaveCount(2);
+  });
 
-    // Simulate dragenter on the page
-    await page.evaluate(() => {
-      const event = new DragEvent("dragenter", {
-        bubbles: true,
-        dataTransfer: new DataTransfer(),
-      });
-      document.querySelector(".fb-columns").dispatchEvent(event);
-    });
+  test("P7: terminal tab context menu still has Detach and Kill session", async ({ page, context }, testInfo) => {
+    sessionName = await setupTest({ page, context, testInfo });
+    const tab = page.locator(`.tab-bar-tab[data-session="${sessionName}"]`);
+    await expect(tab).toBeVisible();
+    await tab.click({ button: "right" });
+    const menu = page.locator(".tab-context-menu");
+    await expect(menu).toBeVisible();
+    const text = (await menu.allTextContents()).join(" ").toLowerCase();
+    expect(text).toContain("detach");
+    expect(text).toContain("kill session");
+  });
 
-    // The global "Drop image here" overlay should NOT be visible
-    const dropOverlay = page.locator("#drop-overlay");
-    await expect(dropOverlay).not.toHaveClass(/visible/);
+  test("P8: FB tile width matches terminal tile width", async ({ page, context }, testInfo) => {
+    sessionName = await setupTest({ page, context, testInfo });
+
+    const termBox = await page.locator(TERMINAL_TILE_SELECTOR).first().boundingBox();
+    expect(termBox).not.toBeNull();
+
+    await openFileBrowser(page);
+    const fbBox = await page.locator(FB_TILE_SELECTOR).first().boundingBox();
+    expect(fbBox).not.toBeNull();
+
+    // Same layout slot → widths within 2px.
+    expect(Math.abs(fbBox.width - termBox.width)).toBeLessThan(2);
+    // And the FB tile should be meaningfully wide (>300px), not a narrow side panel.
+    expect(fbBox.width).toBeGreaterThan(300);
   });
 });

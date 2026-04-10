@@ -14,7 +14,7 @@
  * existing tile-chrome primitive.
  */
 
-import { createFileBrowserStore, loadRoot } from "../file-browser/file-browser-store.js";
+import { createFileBrowserStore, loadRoot, getDeepestPath } from "../file-browser/file-browser-store.js";
 import { createFileBrowserComponent } from "../file-browser/file-browser-component.js";
 
 /**
@@ -29,6 +29,7 @@ export function createFileBrowserTileFactory(_deps = {}) {
     let container = null;
     let mounted = false;
     let component = null;
+    let unsubscribeStore = null;
     // Each tile has its own store — mirroring per-tile independence of
     // terminal tiles. Sharing one global store across multiple browser
     // tiles would couple their navigation state and break serialize().
@@ -37,31 +38,53 @@ export function createFileBrowserTileFactory(_deps = {}) {
     const tile = {
       type: "file-browser",
 
+      // File-browser tiles persist across reload. Earlier (commit b86275c)
+      // they were marked non-persistable out of a concern that resurrecting
+      // them would produce "empty phantom" tiles — but that was only true
+      // before serialize() captured `cwd`. With cwd in the snapshot and
+      // restoreTile() in app.js rebuilding the factory at that cwd, the
+      // restored tile lands in the same directory the user left it.
+      persistable: true,
+
       get sessionName() { return sessionName; },
       get cwd() { return currentCwd; },
 
-      mount(el, _ctx) {
+      mount(el, ctx) {
         container = el;
-        // Wrap in an inner div because createFileBrowserComponent's
-        // mount() overwrites container.className = "file-browser",
-        // which would clobber tile-chrome's `.tile-content` flex rules
-        // if given the raw contentEl directly.
-        const inner = document.createElement("div");
-        inner.style.cssText = "flex:1; min-height:0; display:flex;";
-        el.appendChild(inner);
+        // Mount the component directly onto the tile-chrome content
+        // element. Previously a wrapper <div> existed to protect
+        // tile-chrome's `.tile-content` flex rules from
+        // createFileBrowserComponent clobbering `container.className =
+        // "file-browser"`. Tier 1 T1b fixed the component to own a
+        // `.fb-root` child, so the wrapper is no longer needed.
         component = createFileBrowserComponent(store, {
-          // Overlay had an onClose that called toggleFileBrowser. As a
-          // tile there is no overlay to close — the carousel handles
-          // tile removal via its close button.
-          onClose: () => {},
+          // The file-browser component draws its own X button in its
+          // header. When hosted as a tile, that X must remove this
+          // tile from its container. Route through ctx.requestClose
+          // (carousel-provided) so onCardDismissed fires and the
+          // tab set / subscriptions stay consistent. Falls back to a
+          // no-op if the container does not supply requestClose (e.g.
+          // a future non-carousel host) so the tile never throws.
+          onClose: () => { ctx?.requestClose?.(); },
         });
-        component.mount(inner);
+        component.mount(el);
         loadRoot(store, currentCwd);
+        // Track the deepest navigated path as the tile's "current" path
+        // so the tab label follows the user's folder navigation. Notify
+        // the host (carousel/tab bar) via ctx.setTitle whenever it moves.
+        unsubscribeStore = store.subscribe(() => {
+          const deepest = getDeepestPath(store.getState());
+          if (deepest && deepest !== currentCwd) {
+            currentCwd = deepest;
+            ctx?.setTitle?.(tile.getTitle());
+          }
+        });
         mounted = true;
       },
 
       unmount() {
         if (!mounted) return;
+        if (unsubscribeStore) { unsubscribeStore(); unsubscribeStore = null; }
         component?.unmount?.();
         component = null;
         if (container) container.innerHTML = "";
@@ -82,8 +105,9 @@ export function createFileBrowserTileFactory(_deps = {}) {
       },
 
       getTitle() {
-        if (!currentCwd || currentCwd === "/") return "Files";
-        const segments = currentCwd.split("/").filter(Boolean);
+        const cwd = typeof currentCwd === "string" ? currentCwd : "";
+        if (!cwd || cwd === "/") return "Files";
+        const segments = cwd.split("/").filter(Boolean);
         return segments.length > 0 ? segments[segments.length - 1] : "Files";
       },
 

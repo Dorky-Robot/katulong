@@ -17,6 +17,7 @@ import { renderKeyIsland } from "/lib/key-island.js";
 import { renderDesktopTabs } from "/lib/shortcut-bar-desktop.js";
 import { renderIPadBar } from "/lib/shortcut-bar-ipad.js";
 import { renderPhoneBar } from "/lib/shortcut-bar-phone.js";
+import "/lib/tile-tab-bar.js"; // registers <tile-tab-bar> custom element
 
 const DRAG_OUT_THRESHOLD = 60; // px below bar to trigger tear-off (desktop)
 const DRAG_DEAD_ZONE = 5; // px before drag starts
@@ -54,6 +55,7 @@ export function createShortcutBar(options = {}) {
     sessionStore,
     windowTabSet,
     carousel,
+    uiStore,
   } = options;
 
   let currentSessionName = "";
@@ -269,37 +271,65 @@ export function createShortcutBar(options = {}) {
 
   /**
    * Show right-click context menu on a tab
+   *
+   * Note: in carousel mode, `sessionName` here is actually the tile ID,
+   * which for terminal tiles happens to equal the session name but for
+   * file-browser / cluster / future tile kinds does not. The tab bar
+   * still treats every tab uniformly, so we branch on the tile's `type`
+   * (looked up via the carousel) to decide which actions are meaningful.
+   * Tier 2 will replace this with a polymorphic onLayoutChange snapshot
+   * from the carousel; until then this is the surgical fix that keeps
+   * file-browser tiles closable without regressing terminal tiles.
    */
   function showTabContextMenu(e, sessionName) {
     e.preventDefault();
     const tab = e.currentTarget;
+    const tile = carousel?.getTile?.(sessionName);
+    const isTerminalLike = !tile || tile.type === "terminal" || tile.type === "cluster";
     const items = [
       {
         icon: "pencil-simple",
         label: "Rename",
         action: () => startTabRename(tab, sessionName)
       },
-      {
+    ];
+    if (isTerminalLike) {
+      items.push({
         icon: "eject",
         label: "Detach",
         action: () => detachTab(sessionName)
-      },
-      {
+      });
+      items.push({
         icon: "x-circle",
         label: "Kill session",
         danger: true,
         action: () => killTab(sessionName)
-      },
-      { divider: true },
-      {
+      });
+    } else {
+      // Non-terminal tiles (file browser, etc.) have no tmux session to
+      // detach from or kill. Close is the only meaningful destructive
+      // action — route it through closeTab so the carousel removes the
+      // card and onCardDismissed fires normally. Hitting the REST
+      // /sessions/:id endpoints with a tile ID would 404 and leave the
+      // tile stuck on screen (this was the original bug).
+      items.push({
+        icon: "x-circle",
+        label: "Close",
+        danger: true,
+        action: () => closeTab(sessionName)
+      });
+    }
+    if (isTerminalLike) {
+      items.push({ divider: true });
+      items.push({
         icon: "arrow-square-out",
         label: "Open in new window",
         action: () => {
           openInNewWindow(sessionName);
           closeTab(sessionName);
         }
-      }
-    ];
+      });
+    }
     showMenu(items, tab);
   }
 
@@ -499,7 +529,16 @@ export function createShortcutBar(options = {}) {
       if (drag?.isTouch) return; // touch owns the gesture
 
       if (!started) {
-        if (name !== currentSessionName) {
+        // Compare against the carousel's focused tile id, not
+        // currentSessionName. When a non-terminal tile (e.g. file
+        // browser) is focused, currentSessionName still holds the
+        // backing terminal session, so clicking the terminal tab while
+        // the file browser is focused would short-circuit here and
+        // never switch. The carousel's focused card is the real
+        // "what's front-and-center" answer.
+        const focusedCardId = carousel?.isActive?.() ? carousel.getFocusedCard?.() : null;
+        const currentId = focusedCardId || currentSessionName;
+        if (name !== currentId) {
           if (onTabClick) onTabClick(name);
         }
         return;
@@ -726,6 +765,16 @@ export function createShortcutBar(options = {}) {
       if (windowTabSet) {
         windowTabSet.reorderTabs(names);
       }
+      // Also reorder the carousel directly. windowTabSet.reorderTabs filters
+      // out ids it doesn't persist (e.g. file-browser tiles are session-scoped
+      // — see commit b86275c), so the subscribe() bridge would drop them from
+      // the order it forwards to carousel.reorderCards, which then re-appends
+      // missing ids at the end — exactly the "snaps back" symptom. Reordering
+      // the carousel here with the full names array keeps non-persisted tiles
+      // in their dragged position. Matches the moveTab() pattern in app.js.
+      if (carousel?.isActive?.()) {
+        carousel.reorderCards(names);
+      }
     }
 
     // drag is null now — flush any deferred render
@@ -743,13 +792,15 @@ export function createShortcutBar(options = {}) {
     tab.setAttribute("aria-label", `Session: ${s.name}`);
 
     const iconEl = document.createElement("i");
-    iconEl.className = `ph ph-${iconForSession(s.name)}`;
+    // Non-terminal tiles provide their own icon via getSessionList shim.
+    iconEl.className = `ph ph-${s.icon || iconForSession(s.name)}`;
     tab.appendChild(iconEl);
 
     const nameSpan = document.createElement("span");
     nameSpan.className = "tab-label";
-    nameSpan.textContent = s.name;
-    nameSpan.dataset.fullName = s.name;
+    const displayLabel = s.label || s.name;
+    nameSpan.textContent = displayLabel;
+    nameSpan.dataset.fullName = displayLabel;
     tab.appendChild(nameSpan);
 
     // Double-click to rename
@@ -801,7 +852,35 @@ export function createShortcutBar(options = {}) {
     // Carousel is the source of truth for visual order when active
     const tabNames = carousel?.isActive() ? carousel.getCards() : windowTabSet.getTabs();
     const sessionMap = new Map(allSessions.map(s => [s.name, s]));
-    return tabNames.map(n => sessionMap.get(n) || { name: n }).filter(Boolean);
+    return tabNames.map(n => {
+      const existing = sessionMap.get(n);
+      if (existing) return existing;
+      // Non-terminal tile (e.g. file-browser): synthesize a session-like
+      // entry from the tile's own getTitle/getIcon. The tab bar doesn't
+      // know about tile types; branding a tile-specific label/icon via
+      // this shim keeps the unified tab render path working without
+      // teaching it the tile taxonomy.
+      const tile = carousel?.getTile?.(n);
+      if (tile) {
+        let label = n;
+        try {
+          if (typeof tile.getTitle === "function") {
+            const t = tile.getTitle();
+            if (t) label = t;
+          }
+        } catch (_) { /* tile getTitle threw — fall through to id */ }
+        return {
+          name: n,
+          label,
+          icon: typeof tile.getIcon === "function" ? tile.getIcon() : null,
+          tileType: tile.type || null,
+        };
+      }
+      // No tile registered — best-effort friendly label for known id
+      // prefixes so stale tab entries don't show raw tile ids.
+      if (n.startsWith("file-browser-")) return { name: n, label: "Files", icon: "folder" };
+      return { name: n };
+    }).filter(Boolean);
   }
 
   function _renderIPadBar(sessionName, sessions) {
@@ -951,13 +1030,23 @@ export function createShortcutBar(options = {}) {
     container.classList.add("bar-ipad");
     document.body.dataset.platform = platform;
 
-    // Unified tab bar — all platforms use the same renderer
-    // with the card carousel layout.
-    const sessions = getSessionList();
-    _renderIPadBar(sessionName, sessions);
-
-    // Adaptive tab truncation — fit tabs to available width
-    requestAnimationFrame(() => fitTabLabels());
+    // ── Tab strip ──────────────────────────────────────────────────
+    // When ui-store is wired, mount the declarative <tile-tab-bar> web
+    // component. It self-manages from the store — no getSessionList()
+    // shim, no activeId derivation, no fitTabLabels() call. One element,
+    // one source of truth.
+    //
+    // Legacy path (no uiStore): imperative iPad bar renderer.
+    if (uiStore) {
+      const tabBar = document.createElement("tile-tab-bar");
+      tabBar.store = uiStore;
+      container.appendChild(tabBar);
+    } else {
+      const sessions = getSessionList();
+      const activeId = carousel?.isActive?.() ? (carousel.getFocusedCard?.() || sessionName) : sessionName;
+      _renderIPadBar(activeId, sessions);
+      requestAnimationFrame(() => fitTabLabels());
+    }
 
     // Tool row — pinned keys + utility buttons, docked inside the bar
     renderKeyIsland({
@@ -1067,6 +1156,7 @@ export function createShortcutBar(options = {}) {
     renameTabEl,
     beginRename,
     showAddMenu,
+    showMenuFromHost: showMenu,
     setPortProxyEnabled(enabled) {
       portProxyEnabled = enabled;
       const btn = document.getElementById("bar-portfwd-btn");

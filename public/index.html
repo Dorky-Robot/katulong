@@ -2101,10 +2101,11 @@
 
     /* --- File Browser --- */
     /* Formerly a fullscreen overlay (#file-browser); now hosted as a
-       file-browser tile. The component's internal styles (.file-browser
-       and descendants) remain — they target whatever container the
-       tile's mount(el) passes in. */
-    .file-browser { display: flex; flex-direction: column; height: 100%; width: 100%; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: var(--text-sm); }
+       file-browser tile. The component owns a `.fb-root` child (created
+       in createFileBrowserComponent.mount) rather than stamping
+       `.file-browser` on its parent — that class collision is what
+       forced the extra wrapper div that T1b deleted. */
+    .fb-root { display: flex; flex-direction: column; height: 100%; width: 100%; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: var(--text-sm); }
     .fb-toolbar { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg-surface); }
     .fb-toolbar-nav { display: flex; gap: 2px; }
     .fb-toolbar-actions { display: flex; gap: var(--space-xs); align-items: center; margin-left: auto; }

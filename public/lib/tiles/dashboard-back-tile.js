@@ -3,11 +3,10 @@
  *
  * Back-face tile for terminal cards. Shows agent status, run duration,
  * task assignment, process info, quick actions, and a compact event
- * timeline. Designed to be mounted via carousel.setBackTile().
- *
- * Usage:
- *   const back = createDashboardBackTile({ sessionName: "katulong--dev" });
- *   carousel.setBackTile(tileId, back);
+ * timeline. Mounted as the secondary face via ctx.faceStack.setSecondary()
+ * from terminal-tile.js. (Pre-Tier-1 it was mounted via
+ * carousel.setBackTile — that API no longer exists on the public
+ * carousel surface; the container exposes `ctx.faceStack` instead.)
  */
 
 import { api } from "../api-client.js";

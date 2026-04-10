@@ -68,9 +68,17 @@ export function createFileBrowserComponent(store, options = {}) {
   });
 
   function mount(el) {
-    container = el;
-    container.innerHTML = "";
-    container.className = "file-browser";
+    // The component owns a child element (.fb-root), not the parent
+    // element passed in. Previously mount() stamped `container.className
+    // = "file-browser"` on its host, forcing file-browser-tile.js to
+    // wrap it in an extra <div> so tile-chrome's `.tile-content` flex
+    // rules wouldn't get clobbered. Tier 1 T1b fixes that: we create
+    // and append our own root div here, and the tile mounts the
+    // component directly on its content element.
+    const root = document.createElement("div");
+    root.className = "fb-root";
+    el.appendChild(root);
+    container = root;
 
     container.innerHTML = `
       <div class="fb-toolbar">
@@ -287,12 +295,19 @@ export function createFileBrowserComponent(store, options = {}) {
       renderSingleColumn(colEl, columns[i], i);
     }
 
-    // Auto-scroll to the rightmost column when a new column was added
-    if (columns.length > prevColumnCount && columns.length > 0) {
-      const lastColEl = columnsEl.lastElementChild;
-      if (lastColEl) {
-        lastColEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "end" });
-      }
+    // Auto-scroll horizontally so the newly opened column is visible.
+    // Why rAF + direct scrollLeft instead of scrollIntoView: the last column
+    // has `flex: 1` (so a single-column browser fills the pane). When content
+    // overflows, scrollIntoView({inline:"end"}) considers the last column
+    // already "in view" because its right edge is flush with the container —
+    // nothing scrolls. Writing scrollLeft = scrollWidth after layout settles
+    // pins the deepest column to the right edge regardless of flex sizing.
+    // Runs on every render (not just count-change) so that drilling deeper
+    // via keyboard, or refreshing into a pre-selected deep path, also scrolls.
+    if (columns.length > 0) {
+      requestAnimationFrame(() => {
+        if (columnsEl) columnsEl.scrollLeft = columnsEl.scrollWidth;
+      });
     }
     prevColumnCount = columns.length;
   }
@@ -363,6 +378,12 @@ export function createFileBrowserComponent(store, options = {}) {
     if (unsubscribe) unsubscribe();
     unsubscribe = null;
     contextMenu.close();
+    // Remove the .fb-root child we appended in mount(). The parent
+    // element belongs to the caller (tile-chrome) — we must not
+    // touch its className or its other children.
+    if (container && container.parentElement) {
+      container.parentElement.removeChild(container);
+    }
     container = null;
     columnsEl = null;
   }

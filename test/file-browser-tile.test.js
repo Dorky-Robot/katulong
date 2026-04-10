@@ -78,6 +78,29 @@ describe("file-browser-tile", () => {
     assert.equal(restored.getIcon(), "folder");
   });
 
+  it("component onClose routes through ctx.requestClose", () => {
+    createComponentCalls.length = 0;
+    const factory = createFileBrowserTileFactory();
+    const tile = factory({ cwd: "/tmp/x", sessionName: "s" });
+    const requestClose = mock.fn();
+    tile.mount(makeEl(), { requestClose });
+    // Grab the onClose the tile wired into the component and invoke it.
+    const { opts } = createComponentCalls[createComponentCalls.length - 1];
+    assert.equal(typeof opts.onClose, "function");
+    opts.onClose();
+    assert.equal(requestClose.mock.callCount(), 1);
+  });
+
+  it("component onClose is a no-op when ctx has no requestClose", () => {
+    createComponentCalls.length = 0;
+    const factory = createFileBrowserTileFactory();
+    const tile = factory({ cwd: "/tmp/x", sessionName: "s" });
+    tile.mount(makeEl(), {}); // no requestClose
+    const { opts } = createComponentCalls[createComponentCalls.length - 1];
+    // Must not throw — falls back to a no-op when host doesn't supply it.
+    assert.doesNotThrow(() => opts.onClose());
+  });
+
   it("mount creates the component and loadRoots the constructor cwd", () => {
     loadRootCalls.length = 0;
     createComponentCalls.length = 0;

@@ -11,7 +11,7 @@ import { api } from "/lib/api-client.js";
 const initialState = {
   columns: [],         // [{ path, entries, selected, loading, error }]
   clipboard: null,     // { action: "copy"|"cut", items: [...paths] }
-  showHidden: localStorage.getItem("katulong-fb-show-hidden") !== "0",
+  showHidden: localStorage.getItem("katulong-fb-show-hidden") === "1",
 };
 
 const handlers = {
