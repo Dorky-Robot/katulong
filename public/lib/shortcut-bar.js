@@ -17,6 +17,7 @@ import { renderKeyIsland } from "/lib/key-island.js";
 import { renderDesktopTabs } from "/lib/shortcut-bar-desktop.js";
 import { renderIPadBar } from "/lib/shortcut-bar-ipad.js";
 import { renderPhoneBar } from "/lib/shortcut-bar-phone.js";
+import "/lib/tile-tab-bar.js"; // registers <tile-tab-bar> custom element
 
 const DRAG_OUT_THRESHOLD = 60; // px below bar to trigger tear-off (desktop)
 const DRAG_DEAD_ZONE = 5; // px before drag starts
@@ -54,6 +55,7 @@ export function createShortcutBar(options = {}) {
     sessionStore,
     windowTabSet,
     carousel,
+    uiStore,
   } = options;
 
   let currentSessionName = "";
@@ -1028,20 +1030,23 @@ export function createShortcutBar(options = {}) {
     container.classList.add("bar-ipad");
     document.body.dataset.platform = platform;
 
-    // Unified tab bar — all platforms use the same renderer
-    // with the card carousel layout.
-    const sessions = getSessionList();
-    // When the carousel is active, the highlighted tab must track the
-    // carousel's focused card id — which may be a non-terminal tile id
-    // like `file-browser-xxx`. Callers pass `state.session.name` (the
-    // terminal) for the active name, which would otherwise light up the
-    // wrong tab whenever a file browser is front-and-center.
-    const activeId = carousel?.isActive?.() ? (carousel.getFocusedCard?.() || sessionName) : sessionName;
-    console.log("[bar.render] sessionName=" + sessionName + " carouselActive=" + carousel?.isActive?.() + " focusedCard=" + carousel?.getFocusedCard?.() + " activeId=" + activeId);
-    _renderIPadBar(activeId, sessions);
-
-    // Adaptive tab truncation — fit tabs to available width
-    requestAnimationFrame(() => fitTabLabels());
+    // ── Tab strip ──────────────────────────────────────────────────
+    // When ui-store is wired, mount the declarative <tile-tab-bar> web
+    // component. It self-manages from the store — no getSessionList()
+    // shim, no activeId derivation, no fitTabLabels() call. One element,
+    // one source of truth.
+    //
+    // Legacy path (no uiStore): imperative iPad bar renderer.
+    if (uiStore) {
+      const tabBar = document.createElement("tile-tab-bar");
+      tabBar.store = uiStore;
+      container.appendChild(tabBar);
+    } else {
+      const sessions = getSessionList();
+      const activeId = carousel?.isActive?.() ? (carousel.getFocusedCard?.() || sessionName) : sessionName;
+      _renderIPadBar(activeId, sessions);
+      requestAnimationFrame(() => fitTabLabels());
+    }
 
     // Tool row — pinned keys + utility buttons, docked inside the bar
     renderKeyIsland({
@@ -1151,6 +1156,7 @@ export function createShortcutBar(options = {}) {
     renameTabEl,
     beginRename,
     showAddMenu,
+    showMenuFromHost: showMenu,
     setPortProxyEnabled(enabled) {
       portProxyEnabled = enabled;
       const btn = document.getElementById("bar-portfwd-btn");

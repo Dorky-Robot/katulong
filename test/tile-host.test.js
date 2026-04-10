@@ -1,0 +1,406 @@
+import { describe, it, beforeEach } from "node:test";
+import assert from "node:assert";
+
+// tile-host has zero imports now (getRenderer is injected), so the
+// file:// URL import works without a custom Node loader.
+const { createTileHost } = await import(
+  new URL("../public/lib/tile-host.js", import.meta.url).href
+);
+
+// ── Minimal store ──────────────────────────────────────────────────────
+// Just enough to drive tile-host: getState, subscribe, dispatch.
+function createTestStore(initial = { tiles: {}, order: [], focusedId: null }) {
+  let state = { ...initial };
+  const subs = new Set();
+
+  function notify() { subs.forEach(fn => fn(state)); }
+
+  return {
+    getState: () => state,
+    subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
+    dispatch(action) { /* not used by tile-host */ },
+    // Test helpers — mutate state and notify subscribers
+    setState(next) { state = next; notify(); },
+    addTile(id, type, props, focus) {
+      state = {
+        ...state,
+        tiles: { ...state.tiles, [id]: { id, type, props } },
+        order: [...state.order, id],
+        focusedId: focus ? id : state.focusedId,
+      };
+      notify();
+    },
+    removeTile(id) {
+      const { [id]: _, ...rest } = state.tiles;
+      state = {
+        ...state,
+        tiles: rest,
+        order: state.order.filter(x => x !== id),
+        focusedId: state.focusedId === id ? (state.order.filter(x => x !== id)[0] || null) : state.focusedId,
+      };
+      notify();
+    },
+    focusTile(id) {
+      state = { ...state, focusedId: id };
+      notify();
+    },
+    reorder(order) {
+      state = { ...state, order };
+      notify();
+    },
+  };
+}
+
+// ── Fake renderer ──────────────────────────────────────────────────────
+function createFakeRenderer() {
+  const mounts = [];
+  return {
+    mounts,
+    getRenderer(type) {
+      if (type !== "terminal") return null;
+      return {
+        type: "terminal",
+        describe(props) {
+          return { title: props.sessionName || "terminal", icon: "t", persistable: true };
+        },
+        mount(_el, { id, props }) {
+          const entry = { id, mounted: true };
+          mounts.push(entry);
+          return {
+            unmount() { entry.mounted = false; },
+            focus() {},
+            blur() {},
+            resize() {},
+            tile: { sessionName: props.sessionName || id },
+          };
+        },
+      };
+    },
+  };
+}
+
+// ── Mock carousel ──────────────────────────────────────────────────────
+function createMockCarousel() {
+  let active = false;
+  let cards = [];
+  let focusedId = null;
+  const log = [];
+
+  return {
+    log,
+    isActive: () => active,
+    getCards: () => [...cards],
+    getFocusedCard: () => focusedId,
+
+    activate(tiles, focused) {
+      log.push({ op: "activate", ids: tiles.map(t => t.id), focused });
+      active = true;
+      cards = tiles.map(t => t.id);
+      focusedId = focused || cards[0] || null;
+      for (const { tile } of tiles) tile.mount({}, {});
+    },
+
+    addCard(id, tile, position) {
+      log.push({ op: "addCard", id, position });
+      if (!active) return;
+      if (cards.includes(id)) return;
+      if (typeof position === "number") cards.splice(position, 0, id);
+      else cards.push(id);
+      tile.mount({}, {});
+    },
+
+    removeCard(id) {
+      log.push({ op: "removeCard", id });
+      cards = cards.filter(c => c !== id);
+      if (focusedId === id) focusedId = cards[0] || null;
+    },
+
+    focusCard(id) {
+      log.push({ op: "focusCard", id });
+      focusedId = id;
+    },
+
+    reorderCards(order) {
+      log.push({ op: "reorderCards", order: [...order] });
+      cards = [...order];
+    },
+  };
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────
+
+describe("tile-host", () => {
+  let store, carousel, renderer, host;
+
+  beforeEach(() => {
+    store = createTestStore();
+    carousel = createMockCarousel();
+    renderer = createFakeRenderer();
+  });
+
+  function createHost(opts = {}) {
+    host = createTileHost({
+      store,
+      carousel,
+      getRenderer: renderer.getRenderer,
+      onFocusChange: opts.onFocusChange || (() => {}),
+    });
+    return host;
+  }
+
+  // ── BUG: refresh — store pre-populated before init ─────────────────
+  describe("init with pre-populated store (refresh path)", () => {
+    it("activates carousel with all tiles from store", () => {
+      store.setState({
+        tiles: {
+          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
+          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+        },
+        order: ["s1", "s2"],
+        focusedId: "s1",
+      });
+
+      createHost();
+      host.init();
+
+      const op = carousel.log.find(l => l.op === "activate");
+      assert.ok(op, "carousel.activate must be called");
+      assert.deepStrictEqual(op.ids, ["s1", "s2"]);
+      assert.strictEqual(op.focused, "s1");
+    });
+
+    it("mounts every tile via the renderer", () => {
+      store.setState({
+        tiles: {
+          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
+        },
+        order: ["s1"],
+        focusedId: "s1",
+      });
+
+      createHost();
+      host.init();
+
+      assert.strictEqual(renderer.mounts.length, 1);
+      assert.strictEqual(renderer.mounts[0].id, "s1");
+      assert.strictEqual(renderer.mounts[0].mounted, true);
+    });
+  });
+
+  // ── BUG: add tile from empty — tab shows but tile doesn't ──────────
+  describe("add tile to empty store after init", () => {
+    it("activates carousel when first tile is added", () => {
+      createHost();
+      host.init();
+
+      assert.strictEqual(carousel.isActive(), false);
+      assert.strictEqual(carousel.log.length, 0);
+
+      store.addTile("s1", "terminal", { sessionName: "s1" }, true);
+
+      const op = carousel.log.find(l => l.op === "activate");
+      assert.ok(op, "carousel.activate must fire on first tile add");
+      assert.deepStrictEqual(op.ids, ["s1"]);
+      assert.strictEqual(renderer.mounts.length, 1);
+    });
+
+    it("uses addCard for subsequent tiles", () => {
+      createHost();
+      host.init();
+
+      store.addTile("s1", "terminal", { sessionName: "s1" }, true);
+      store.addTile("s2", "terminal", { sessionName: "s2" }, true);
+
+      const addOps = carousel.log.filter(l => l.op === "addCard");
+      assert.strictEqual(addOps.length, 1, "second tile should use addCard");
+      assert.strictEqual(addOps[0].id, "s2");
+      assert.strictEqual(renderer.mounts.length, 2);
+    });
+
+    it("inserts new tile at the correct position from state.order", () => {
+      // Simulate afterFocus: store already has [s1, s2], focus on s1.
+      // A new tile 'fb' is inserted at index 1 (right of s1).
+      createHost();
+      host.init();
+
+      store.addTile("s1", "terminal", { sessionName: "s1" }, true);
+      store.addTile("s2", "terminal", { sessionName: "s2" }, false);
+
+      // Now insert fb between s1 and s2 (afterFocus on s1)
+      const s = store.getState();
+      store.setState({
+        ...s,
+        tiles: { ...s.tiles, fb: { id: "fb", type: "terminal", props: { sessionName: "fb" } } },
+        order: ["s1", "fb", "s2"],
+        focusedId: "fb",
+      });
+
+      const addOps = carousel.log.filter(l => l.op === "addCard");
+      const fbOp = addOps.find(l => l.id === "fb");
+      assert.ok(fbOp, "addCard must be called for fb");
+      assert.strictEqual(fbOp.position, 1, "fb must be inserted at index 1 (right of s1)");
+
+      // Carousel order should reflect the store order
+      assert.deepStrictEqual(carousel.getCards(), ["s1", "fb", "s2"]);
+    });
+  });
+
+  // ── Remove ─────────────────────────────────────────────────────────
+  describe("remove tile", () => {
+    it("calls carousel.removeCard", () => {
+      store.setState({
+        tiles: {
+          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
+          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+        },
+        order: ["s1", "s2"],
+        focusedId: "s1",
+      });
+
+      createHost();
+      host.init();
+
+      store.removeTile("s2");
+
+      const op = carousel.log.find(l => l.op === "removeCard");
+      assert.ok(op, "carousel.removeCard must be called");
+      assert.strictEqual(op.id, "s2");
+    });
+
+    it("unmounts the renderer handle", () => {
+      store.setState({
+        tiles: {
+          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
+        },
+        order: ["s1"],
+        focusedId: "s1",
+      });
+
+      createHost();
+      host.init();
+
+      assert.strictEqual(renderer.mounts[0].mounted, true);
+
+      store.removeTile("s1");
+      // removeCard is called — the carousel is responsible for
+      // calling adapter.unmount(), which the real carousel does.
+      // Our mock doesn't, but the handle tracking should clear.
+      assert.strictEqual(host.getHandle("s1"), null);
+    });
+  });
+
+  // ── Focus ──────────────────────────────────────────────────────────
+  describe("focus change", () => {
+    it("calls carousel.focusCard", () => {
+      store.setState({
+        tiles: {
+          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
+          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+        },
+        order: ["s1", "s2"],
+        focusedId: "s1",
+      });
+
+      createHost();
+      host.init();
+
+      store.focusTile("s2");
+
+      const ops = carousel.log.filter(l => l.op === "focusCard");
+      const last = ops[ops.length - 1];
+      assert.ok(last);
+      assert.strictEqual(last.id, "s2");
+    });
+
+    it("fires onFocusChange with tile type", () => {
+      const changes = [];
+      store.setState({
+        tiles: {
+          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
+          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+        },
+        order: ["s1", "s2"],
+        focusedId: "s1",
+      });
+
+      createHost({ onFocusChange: (id, type) => changes.push({ id, type }) });
+      host.init();
+
+      // init fires for initial focus (prev null → s1)
+      assert.strictEqual(changes.length, 1);
+      assert.strictEqual(changes[0].id, "s1");
+
+      store.focusTile("s2");
+      assert.strictEqual(changes.length, 2);
+      assert.deepStrictEqual(changes[1], { id: "s2", type: "terminal" });
+    });
+  });
+
+  // ── Reorder ────────────────────────────────────────────────────────
+  describe("reorder", () => {
+    it("calls carousel.reorderCards", () => {
+      store.setState({
+        tiles: {
+          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
+          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+        },
+        order: ["s1", "s2"],
+        focusedId: "s1",
+      });
+
+      createHost();
+      host.init();
+
+      store.reorder(["s2", "s1"]);
+
+      const ops = carousel.log.filter(l => l.op === "reorderCards");
+      assert.ok(ops.length > 0);
+      assert.deepStrictEqual(ops[ops.length - 1].order, ["s2", "s1"]);
+    });
+  });
+
+  // ── Destroy ────────────────────────────────────────────────────────
+  describe("destroy", () => {
+    it("stops reacting to store changes", () => {
+      createHost();
+      host.init();
+
+      store.addTile("s1", "terminal", { sessionName: "s1" }, true);
+      const before = carousel.log.length;
+
+      host.destroy();
+
+      store.addTile("s2", "terminal", { sessionName: "s2" }, true);
+      assert.strictEqual(carousel.log.length, before, "no carousel calls after destroy");
+    });
+  });
+
+  // ── Re-entrancy guard ──────────────────────────────────────────────
+  describe("re-entrancy", () => {
+    it("does not double-mount when onFocusChange triggers a dispatch", () => {
+      // Simulate what happens when a renderer dispatches UPDATE_PROPS
+      // from inside the focus callback — the store fires subscribers
+      // synchronously, which would re-enter reconcile without the guard.
+      createHost({
+        onFocusChange: (id) => {
+          const s = store.getState();
+          if (s.tiles[id]) {
+            // Mutate state from inside the callback
+            store.setState({
+              ...s,
+              tiles: {
+                ...s.tiles,
+                [id]: { ...s.tiles[id], props: { ...s.tiles[id].props, touched: true } },
+              },
+            });
+          }
+        },
+      });
+      host.init();
+
+      store.addTile("s1", "terminal", { sessionName: "s1" }, true);
+
+      assert.strictEqual(renderer.mounts.length, 1, "exactly one mount, not two");
+    });
+  });
+});
