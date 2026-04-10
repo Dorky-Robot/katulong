@@ -981,22 +981,19 @@ describe("Session", () => {
 
     it("handles stdin error event by transitioning to DETACHED", () => {
       let exitCalled = false;
-      const { session, mockProc } = createSimpleTestSession("stdin-error", {
+      const session = new Session("stdin-error", tmuxSessionName("stdin-error"), {
         onExit: () => { exitCalled = true; },
       });
 
+      // Stub _spawn so attachControlMode uses our mock proc
+      const mockProc = new MockControlProc();
+      session._spawn = () => mockProc;
+      session.attachControlMode(80, 24);
+
       assert.strictEqual(session.state, Session.STATE_ATTACHED);
 
-      // Wire up the stdin error handler the same way attachControlMode does
-      mockProc.stdin.on("error", (err) => {
-        if (session.controlProc !== mockProc) return;
-        if (session.state === Session.STATE_ATTACHED) {
-          session.state = Session.STATE_DETACHED;
-          if (session._onExit) session._onExit(session.name, 1);
-        }
-      });
-
-      // Simulate an EPIPE error on stdin
+      // Simulate an EPIPE error on stdin — exercises the real handler
+      // registered by attachControlMode, not a hand-wired copy
       mockProc.stdin.simulateError(new Error("write EPIPE"));
 
       assert.strictEqual(session.state, Session.STATE_DETACHED);
@@ -1006,22 +1003,19 @@ describe("Session", () => {
 
     it("ignores stdin error from superseded control process", () => {
       let exitCalled = false;
-      const { session, mockProc: oldProc } = createSimpleTestSession("stdin-stale", {
+      const session = new Session("stdin-stale", tmuxSessionName("stdin-stale"), {
         onExit: () => { exitCalled = true; },
       });
 
-      // Wire up stdin error handler for old proc
-      oldProc.stdin.on("error", (err) => {
-        if (session.controlProc !== oldProc) return; // stale guard
-        if (session.state === Session.STATE_ATTACHED) {
-          session.state = Session.STATE_DETACHED;
-          if (session._onExit) session._onExit(session.name, 1);
-        }
-      });
+      // First attach — registers stdin error handler on oldProc
+      const oldProc = new MockControlProc();
+      session._spawn = () => oldProc;
+      session.attachControlMode(80, 24);
 
-      // Simulate reattach: new proc replaces old
+      // Second attach — supersedes oldProc with newProc
       const newProc = new MockControlProc();
-      session.controlProc = newProc;
+      session._spawn = () => newProc;
+      session.attachControlMode(80, 24);
 
       // Old proc's stdin errors — should be ignored (stale guard)
       oldProc.stdin.simulateError(new Error("write EPIPE"));
