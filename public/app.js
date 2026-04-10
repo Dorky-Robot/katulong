@@ -1405,8 +1405,6 @@
       onNewSessionClick: createNewSession,
       tileTypes: [
         { type: "terminal",     name: "Terminal", icon: "terminal-window" },
-        { type: "cluster",      name: "Cluster",  icon: "squares-four" },
-        { type: "file-browser", name: "Files",    icon: "folder" },
       ],
       onCreateTile: (type) => {
         if (type === "terminal") {
