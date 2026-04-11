@@ -15,6 +15,27 @@ import { DEFAULT_COLS } from "/lib/terminal-config.js";
 
 const MAX_POOL_SIZE = 5;
 
+// Experiment: render the WebGL drawing buffer in Display P3 when the
+// display supports it. sRGB theme hex values get displayed against P3
+// primaries, so saturated colors "pop" the way they do in native GPU
+// terminals (Warp, iTerm2 on Metal). Monkey-patches getContext once at
+// module load so we don't have to reach into WebglAddon internals.
+(function enableWideGamutWebGL() {
+  if (typeof window === "undefined") return;
+  if (!window.matchMedia?.("(color-gamut: p3)").matches) return;
+  if (!("WebGL2RenderingContext" in window)) return;
+  if (!("drawingBufferColorSpace" in WebGL2RenderingContext.prototype)) return;
+
+  const orig = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+    const ctx = orig.call(this, type, attrs);
+    if (type === "webgl2" && ctx) {
+      try { ctx.drawingBufferColorSpace = "display-p3"; } catch {}
+    }
+    return ctx;
+  };
+})();
+
 /** Load WebGL renderer with automatic fallback to DOM on failure. */
 function loadWebGL(term) {
   try {
