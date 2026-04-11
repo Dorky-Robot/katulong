@@ -204,7 +204,7 @@ Extracted from `file-browser-component.js` lines 83-108, 240-260,
 
 ```js
 export function createToolbar({
-  onBack, onForward, onToggleHidden, onClose, onBreadcrumbNav
+  onBack, onForward, onRefresh, onToggleHidden, onClose, onBreadcrumbNav
 }) {
   const el = document.createElement("div");
   el.className = "fb-toolbar";
@@ -231,9 +231,9 @@ unnecessary churn.
 Extracted from `file-browser-component.js` lines 170-237.
 
 ```js
-export function createKeyboardHandler(nav, store) {
+export function createKeyboardHandler(nav, getState) {
   return function handleKeyDown(e) {
-    const state = store.getState();
+    const state = getState();
     // Arrow keys → selectItem / goBack
     // Enter → download file
     // Backspace → goBack
@@ -262,7 +262,7 @@ export function createFileBrowserComponent(store, nav, options = {}) {
     toolbar = createToolbar({
       onBack: nav.goBack,
       onForward: () => { /* forward logic */ },
-
+      onRefresh: nav.refreshAll,
       onToggleHidden: () => store.dispatch({ type: "TOGGLE_HIDDEN" }),
       onClose: options.onClose,
       onBreadcrumbNav: (path) => nav.loadRoot(path),
