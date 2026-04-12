@@ -13,6 +13,7 @@
 
 import { api } from "/lib/api-client.js";
 import { marked } from "/vendor/marked/marked.esm.js";
+import DOMPurify from "/vendor/dompurify/purify.es.mjs";
 
 /** Map file extension to a CSS class for syntax-appropriate styling. */
 function extToLang(ext) {
@@ -102,7 +103,7 @@ export function createDocumentTileFactory(_deps = {}) {
             .then((data) => {
               if (!mounted) return;
               if (renderAsMarkdown) {
-                contentEl.innerHTML = marked.parse(data.content);
+                contentEl.innerHTML = DOMPurify.sanitize(marked.parse(data.content));
               } else {
                 contentEl.textContent = data.content;
               }
@@ -114,7 +115,7 @@ export function createDocumentTileFactory(_deps = {}) {
             });
         } else if (content != null) {
           if (renderAsMarkdown) {
-            contentEl.innerHTML = marked.parse(content);
+            contentEl.innerHTML = DOMPurify.sanitize(marked.parse(content));
           } else {
             contentEl.textContent = content;
           }
