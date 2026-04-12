@@ -8,6 +8,7 @@
 
 import { Terminal } from "/vendor/xterm/xterm.esm.js";
 import { registerWrappedLinkProvider } from "/lib/wrapped-link-provider.js";
+import { registerFileLinkProvider } from "/lib/file-link-provider.js";
 import { SearchAddon } from "/vendor/xterm/addon-search.esm.js";
 import { ClipboardAddon } from "/vendor/xterm/addon-clipboard.esm.js";
 import { WebglAddon } from "/vendor/xterm/addon-webgl.esm.js";
@@ -143,7 +144,7 @@ function scaleToFit(term, container) {
  * @param {function} opts.onTerminalCreated - Called after a new terminal is created: (sessionName, entry) => void
  * @returns {object} Pool API
  */
-export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreated, onResize }) {
+export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreated, onResize, onFileLinkClick }) {
   // sessionName -> { term, fit, searchAddon, container, lastUsed }
   const pool = new Map();
   let activeSession = null;
@@ -182,6 +183,7 @@ export function createTerminalPool({ parentEl, terminalOptions, onTerminalCreate
     const searchAddon = new SearchAddon();
 
     registerWrappedLinkProvider(term);
+    if (onFileLinkClick) registerFileLinkProvider(term, onFileLinkClick);
     term.loadAddon(searchAddon);
     term.loadAddon(new ClipboardAddon());
 
