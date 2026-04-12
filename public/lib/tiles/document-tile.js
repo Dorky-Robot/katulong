@@ -72,7 +72,7 @@ export function createDocumentTileFactory(_deps = {}) {
 
       get filePath() { return filePath || null; },
 
-      mount(el, _ctx) {
+      mount(el, ctx) {
         container = el;
         mounted = true;
 
@@ -81,7 +81,19 @@ export function createDocumentTileFactory(_deps = {}) {
 
         const header = document.createElement("div");
         header.className = "doc-tile-header";
-        header.textContent = filePath || title || "";
+
+        const headerTitle = document.createElement("span");
+        headerTitle.className = "doc-tile-header-title";
+        headerTitle.textContent = filePath || title || "";
+        header.appendChild(headerTitle);
+
+        const closeBtn = document.createElement("button");
+        closeBtn.className = "fb-btn fb-close-btn";
+        closeBtn.setAttribute("aria-label", "Close document");
+        closeBtn.innerHTML = '<i class="ph ph-x"></i>';
+        closeBtn.addEventListener("click", () => ctx?.requestClose?.());
+        header.appendChild(closeBtn);
+
         root.appendChild(header);
 
         let contentEl;
