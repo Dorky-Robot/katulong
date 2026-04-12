@@ -1607,7 +1607,7 @@
       onSend: rawSend,
       toast: showToast,
       sessionName: sessionName || state.session.name,
-      getWebSocket: () => cm.transport?.ws
+      sendFn: (msg) => cm.send(msg)
     });
 
     // --- Upload button (file picker) ---
@@ -1625,7 +1625,7 @@
           onSend: rawSend,
           toast: showToast,
           sessionName: state.session.name,
-          getWebSocket: () => cm.transport?.ws,
+          sendFn: (msg) => cm.send(msg),
         });
       }
       _uploadInput.value = ""; // reset so same file can be re-selected
@@ -1653,7 +1653,7 @@
           return;
         }
         // Upload in parallel, paste via single server request
-        uploadImagesToTerminalFn(imageFiles, { onSend: rawSend, toast: showToast, sessionName: state.session.name, getWebSocket: () => cm.transport?.ws });
+        uploadImagesToTerminalFn(imageFiles, { onSend: rawSend, toast: showToast, sessionName: state.session.name, sendFn: (msg) => cm.send(msg) });
       }
     });
 
