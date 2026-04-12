@@ -176,18 +176,15 @@ function getCsrfToken() {
 }
 
 /**
- * Send data to a specific session via WebSocket input message.
+ * Send data to a specific session via the connection manager.
  * Uses explicit session field so the server routes to the correct
  * session even if the user switched tabs since the paste started.
  * Falls back to onSend (which uses the input sender's current session).
  */
-function _sendToSession(data, sessionName, getWebSocket, onSend) {
-  if (sessionName && getWebSocket) {
-    const ws = getWebSocket();
-    if (ws && ws.readyState === 1) {
-      ws.send(JSON.stringify({ type: "input", data, session: sessionName }));
-      return;
-    }
+function _sendToSession(data, sessionName, sendFn, onSend) {
+  if (sessionName && sendFn) {
+    sendFn(JSON.stringify({ type: "input", data, session: sessionName }));
+    return;
   }
   if (onSend) onSend(data);
 }
@@ -199,7 +196,7 @@ function _sendToSession(data, sessionName, getWebSocket, onSend) {
  * to the PTY for each image sequentially — no per-file round-trips.
  */
 export async function uploadImagesToTerminal(files, options = {}) {
-  const { onSend, toast = showToast, sessionName, getWebSocket } = options;
+  const { onSend, toast = showToast, sessionName, sendFn } = options;
   const tracker = getTracker();
   const entries = [];
 
@@ -230,9 +227,9 @@ export async function uploadImagesToTerminal(files, options = {}) {
     // bridge). Send Ctrl+V with explicit session to avoid tab-switch race.
     const { id, data } = successEntries[0];
     if (data.clipboard === true) {
-      _sendToSession("\x16", sessionName, getWebSocket, onSend);
+      _sendToSession("\x16", sessionName, sendFn, onSend);
     } else if (data.fsPath) {
-      _sendToSession(data.fsPath + " ", sessionName, getWebSocket, onSend);
+      _sendToSession(data.fsPath + " ", sessionName, sendFn, onSend);
     }
     tracker.complete(id, true);
     return;
