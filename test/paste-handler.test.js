@@ -41,8 +41,8 @@ function createPasteHandlerForTest(options = {}) {
       _blocked = true;
       _capturedSession = getSession ? getSession() : null;
       e.stopImmediatePropagation();
-      e.preventDefault();
-      _fallbackTimer = setTimeout(() => handleClipboardFallback(), 200);
+      // No preventDefault — it suppresses the native paste event on WebKit
+      _fallbackTimer = setTimeout(() => handleClipboardFallback(), 300);
     }
   }
 
@@ -257,12 +257,12 @@ describe("paste-handler", () => {
 
       const keyEvent = createKeydownEvent("v", { meta: true });
       handler.handleKeydown(keyEvent);
-      assert.equal(keyEvent.preventDefault.mock.callCount(), 1);
+      assert.equal(keyEvent.stopImmediatePropagation.mock.callCount(), 1);
 
       navigator.clipboard.read = mock.fn(async () => { throw new Error("not supported"); });
       navigator.clipboard.readText = mock.fn(async () => "clipboard text");
 
-      await new Promise(r => setTimeout(r, 250));
+      await new Promise(r => setTimeout(r, 350));
 
       assert.equal(onTextPaste.mock.callCount(), 1);
       assert.equal(onTextPaste.mock.calls[0].arguments[0], "clipboard text");
@@ -277,7 +277,7 @@ describe("paste-handler", () => {
       navigator.clipboard.read = mock.fn(async () => { throw new Error("denied"); });
       navigator.clipboard.readText = mock.fn(async () => "text from readText");
 
-      await new Promise(r => setTimeout(r, 250));
+      await new Promise(r => setTimeout(r, 350));
 
       assert.equal(onTextPaste.mock.callCount(), 1);
       assert.equal(onTextPaste.mock.calls[0].arguments[0], "text from readText");
@@ -294,7 +294,7 @@ describe("paste-handler", () => {
       navigator.clipboard.read = mock.fn(async () => { throw new Error("denied"); });
       navigator.clipboard.readText = mock.fn(async () => { throw new Error("denied"); });
 
-      await new Promise(r => setTimeout(r, 250));
+      await new Promise(r => setTimeout(r, 350));
 
       assert.equal(syntheticPaste.mock.callCount(), 1, "should trigger synthetic paste as last resort");
     });
@@ -308,7 +308,7 @@ describe("paste-handler", () => {
         target: { tagName: "TEXTAREA", classList: { contains: () => false } },
       });
       handler.handleKeydown(keyEvent);
-      assert.equal(keyEvent.preventDefault.mock.callCount(), 0);
+      assert.equal(keyEvent.stopImmediatePropagation.mock.callCount(), 0);
     });
 
     it("DOES intercept Cmd+V in xterm helper textarea", () => {
@@ -318,14 +318,16 @@ describe("paste-handler", () => {
         target: { tagName: "TEXTAREA", classList: { contains: (c) => c === "xterm-helper-textarea" } },
       });
       handler.handleKeydown(keyEvent);
-      assert.equal(keyEvent.preventDefault.mock.callCount(), 1);
+      assert.equal(keyEvent.stopImmediatePropagation.mock.callCount(), 1);
+      // No preventDefault — it suppresses the native paste event on WebKit
+      assert.equal(keyEvent.preventDefault.mock.callCount(), 0);
     });
 
     it("does not intercept Alt+V", () => {
       const handler = createPasteHandlerForTest({ getSession: () => "sess" });
       const keyEvent = createKeydownEvent("v", { meta: true, alt: true });
       handler.handleKeydown(keyEvent);
-      assert.equal(keyEvent.preventDefault.mock.callCount(), 0);
+      assert.equal(keyEvent.stopImmediatePropagation.mock.callCount(), 0);
     });
   });
 
@@ -341,7 +343,7 @@ describe("paste-handler", () => {
 
       navigator.clipboard.readText = mock.fn(async () => "from fallback");
 
-      await new Promise(r => setTimeout(r, 250));
+      await new Promise(r => setTimeout(r, 350));
 
       // Should only have the paste event's text, not the fallback
       assert.equal(onTextPaste.mock.callCount(), 1);

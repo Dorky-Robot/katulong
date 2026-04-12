@@ -1664,7 +1664,9 @@
 
     const pasteHandler = createPasteHandler({
       getSession: () => state.session.name,
-      onImage: (file, sessionName) => uploadImageToTerminal(file, sessionName),
+      onImage: (file, sessionName) => uploadImageToTerminal(file, {
+        onSend: rawSend, sessionName, getWebSocket: () => state.connection.ws,
+      }),
       // Use xterm.js paste() so text is wrapped in bracketed paste
       // markers (\x1b[200~…\x1b[201~) when the app has enabled it.
       // Without this, multiline pastes arrive without brackets and
