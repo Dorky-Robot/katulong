@@ -15,6 +15,7 @@ import { terminalRenderer } from "./terminal.js";
 import { fileBrowserRenderer } from "./file-browser.js";
 import { documentRenderer } from "./document.js";
 import { clusterRenderer } from "./cluster.js";
+import { feedRenderer } from "./feed.js";
 
 const renderers = new Map();
 
@@ -46,6 +47,7 @@ export function initRenderers({ terminalPool, createTerminalTile, uiStore }) {
   fileBrowserRenderer.init({ uiStore });
   documentRenderer.init({});
   clusterRenderer.init({ createTerminalTile });
+  feedRenderer.init({});
 }
 
 // Register built-in renderers
@@ -53,3 +55,4 @@ registerRenderer(terminalRenderer);
 registerRenderer(fileBrowserRenderer);
 registerRenderer(documentRenderer);
 registerRenderer(clusterRenderer);
+registerRenderer(feedRenderer);
