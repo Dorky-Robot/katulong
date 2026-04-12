@@ -9,7 +9,8 @@
  * Lifecycle:
  *   1. Opens blank with an inline topic picker (fetched from /api/topics)
  *   2. User picks a topic → tile starts streaming via SSE
- *   3. Rendering strategy chosen by topic meta.type:
+ *   3. Rendering strategy chosen by topic meta.type (closed enumeration —
+ *      not an extension point; new strategies require an in-tree PR):
  *      - "progress" — checklist with keyed step updates + status bullets
  *      - default    — chronological event log with timestamps
  *
@@ -170,6 +171,7 @@ export const feedRenderer = {
 
     // ── Streaming view ──────────────────────────────────────────
     function startStreaming(topic, meta) {
+      if (es) { es.close(); es = null; }
       root.innerHTML = "";
       const topicMeta = meta || {};
 

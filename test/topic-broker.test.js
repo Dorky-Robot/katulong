@@ -407,6 +407,13 @@ describe("Topic Broker", () => {
       assert.equal(env.message, "persisted");
       assert.equal(env.seq, 1);
     });
+
+    it("rejects path-traversal topic names", () => {
+      const broker = makeBroker();
+      assert.throws(() => broker.publish("../escape", "bad"), /escapes pubsub directory/);
+      assert.throws(() => broker.publish("legit/../../escape", "bad"), /escapes pubsub directory/);
+      assert.throws(() => broker.publish("../../../etc/passwd", "bad"), /escapes pubsub directory/);
+    });
   });
 
   describe("topic metadata", () => {
