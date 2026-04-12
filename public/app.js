@@ -1988,7 +1988,11 @@
           clearFocusedSessionUI();
         }
       },
+      carouselRename: (e) => {
+        if (carousel.isActive()) carousel.renameCard(e.oldName, e.newName);
+      },
       poolRename: (e) => terminalPool.rename(e.oldName, e.newName),
+      notepadRename: (e) => notepad.rename(e.oldName, e.newName),
       tabRename: (e) => windowTabSet.renameTab(e.oldName, e.newName),
       resizeSync: () => {
         // Another client resized the shared PTY. Recalculate our own
