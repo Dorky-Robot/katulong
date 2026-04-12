@@ -407,5 +407,93 @@ describe("Topic Broker", () => {
       assert.equal(env.message, "persisted");
       assert.equal(env.seq, 1);
     });
+
+    it("rejects path-traversal topic names", () => {
+      const broker = makeBroker();
+      assert.throws(() => broker.publish("../escape", "bad"), /escapes pubsub directory/);
+      assert.throws(() => broker.publish("legit/../../escape", "bad"), /escapes pubsub directory/);
+      assert.throws(() => broker.publish("../../../etc/passwd", "bad"), /escapes pubsub directory/);
+    });
+  });
+
+  describe("topic metadata", () => {
+    it("getMeta returns empty object for topic without metadata", () => {
+      const broker = makeBroker();
+      broker.publish("t", "msg");
+      assert.deepEqual(broker.getMeta("t"), {});
+    });
+
+    it("setMeta persists metadata to meta.json", () => {
+      const broker = makeBroker();
+      broker.publish("t", "msg"); // ensure topic dir exists
+      broker.setMeta("t", { type: "progress", label: "Build" });
+
+      const metaPath = join(pubsubDir, "t", "meta.json");
+      assert.ok(existsSync(metaPath));
+      const stored = JSON.parse(readFileSync(metaPath, "utf8"));
+      assert.equal(stored.type, "progress");
+      assert.equal(stored.label, "Build");
+    });
+
+    it("getMeta reads persisted metadata", () => {
+      const broker = makeBroker();
+      broker.publish("t", "msg");
+      broker.setMeta("t", { type: "log" });
+      assert.deepEqual(broker.getMeta("t"), { type: "log" });
+    });
+
+    it("setMeta merges with existing metadata", () => {
+      const broker = makeBroker();
+      broker.publish("t", "msg");
+      broker.setMeta("t", { type: "progress" });
+      broker.setMeta("t", { label: "CI Pipeline" });
+
+      const meta = broker.getMeta("t");
+      assert.equal(meta.type, "progress");
+      assert.equal(meta.label, "CI Pipeline");
+    });
+
+    it("setMeta creates topic directory if it does not exist", () => {
+      const broker = makeBroker();
+      broker.setMeta("new/topic", { type: "log" });
+      assert.deepEqual(broker.getMeta("new/topic"), { type: "log" });
+    });
+
+    it("setMeta ignores null or non-object", () => {
+      const broker = makeBroker();
+      broker.publish("t", "msg");
+      broker.setMeta("t", null);
+      assert.deepEqual(broker.getMeta("t"), {});
+      broker.setMeta("t", "string");
+      assert.deepEqual(broker.getMeta("t"), {});
+    });
+
+    it("listTopics includes metadata", () => {
+      const broker = makeBroker();
+      broker.publish("a", "msg");
+      broker.setMeta("a", { type: "progress" });
+      broker.publish("b", "msg");
+
+      const topics = broker.listTopics();
+      const a = topics.find(t => t.name === "a");
+      const b = topics.find(t => t.name === "b");
+
+      assert.deepEqual(a.meta, { type: "progress" });
+      assert.deepEqual(b.meta, {});
+    });
+
+    it("metadata survives broker restart", () => {
+      const broker1 = makeBroker();
+      broker1.publish("t", "msg");
+      broker1.setMeta("t", { type: "progress", label: "Build" });
+
+      // Simulate restart
+      const broker2 = makeBroker();
+      assert.deepEqual(broker2.getMeta("t"), { type: "progress", label: "Build" });
+
+      const topics = broker2.listTopics();
+      const t = topics.find(x => x.name === "t");
+      assert.deepEqual(t.meta, { type: "progress", label: "Build" });
+    });
   });
 });

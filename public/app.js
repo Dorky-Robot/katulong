@@ -1413,7 +1413,7 @@
       onNewSessionClick: createNewSession,
       tileTypes: [
         { type: "terminal",     name: "Terminal", icon: "terminal-window" },
-        { type: "progress",     name: "Progress", icon: "list-checks" },
+        { type: "feed",          name: "Feed",     icon: "rss" },
       ],
       onCreateTile: (type) => {
         if (type === "terminal") {
@@ -1422,13 +1422,8 @@
           createNewCluster();
         } else if (type === "file-browser") {
           openFileBrowserTile();
-        } else if (type === "progress") {
-          const topic = prompt("Topic to subscribe to (e.g. _build/my-branch):");
-          if (!topic) return;
-          uiStore.addTile({
-            type: "progress",
-            props: { topic, title: topic.split("/").pop() || topic },
-          });
+        } else if (type === "feed") {
+          openFeedTile();
         }
       },
       onTabClick: (name) => {
@@ -1758,6 +1753,15 @@
         { focus: true, insertAt: "afterFocus" },
       );
       cm.connect();
+      if (isOverlayViewport()) setOverlaySidebar(false);
+    }
+
+    function openFeedTile() {
+      const tileId = `feed-${Date.now().toString(36)}`;
+      uiStore.addTile(
+        { id: tileId, type: "feed", props: {} },
+        { focus: true, insertAt: "afterFocus" },
+      );
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
