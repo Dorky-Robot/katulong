@@ -175,6 +175,8 @@
       },
       onFileLinkClick: async (_event, filePath) => {
         if (!_uiStoreRef) return;
+        // Defense-in-depth: reject paths with traversal segments
+        if (filePath.split("/").some(seg => seg === "..")) return;
         // Resolve relative paths against the active session's CWD
         let resolved = filePath;
         if (!filePath.startsWith("/")) {
@@ -182,7 +184,7 @@
           if (sessionName) {
             try {
               const data = await api.get(`/sessions/cwd/${encodeURIComponent(sessionName)}`);
-              if (data.cwd) resolved = data.cwd + "/" + filePath;
+              if (data.cwd && data.cwd.startsWith("/")) resolved = data.cwd + "/" + filePath;
             } catch { /* fall through with relative path */ }
           }
         }
