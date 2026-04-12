@@ -1387,6 +1387,7 @@
       onNewSessionClick: createNewSession,
       tileTypes: [
         { type: "terminal",     name: "Terminal", icon: "terminal-window" },
+        { type: "feed",          name: "Feed",     icon: "rss" },
       ],
       onCreateTile: (type) => {
         if (type === "terminal") {
@@ -1395,6 +1396,8 @@
           createNewCluster();
         } else if (type === "file-browser") {
           openFileBrowserTile();
+        } else if (type === "feed") {
+          openFeedTile();
         }
       },
       onTabClick: (name) => {
@@ -1724,6 +1727,15 @@
         { focus: true, insertAt: "afterFocus" },
       );
       cm.connect();
+      if (isOverlayViewport()) setOverlaySidebar(false);
+    }
+
+    function openFeedTile() {
+      const tileId = `feed-${Date.now().toString(36)}`;
+      uiStore.addTile(
+        { id: tileId, type: "feed", props: {} },
+        { focus: true, insertAt: "afterFocus" },
+      );
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
