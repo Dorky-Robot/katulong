@@ -2166,6 +2166,32 @@
       .fb-miller-col { min-width: 200px; width: 220px; }
     }
 
+    /* --- Document Tile --- */
+    .doc-tile-root { display: flex; flex-direction: column; height: 100%; width: 100%; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: var(--text-sm); }
+    .doc-tile-header { padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg-surface); color: var(--text-secondary); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .doc-tile-content { flex: 1; overflow: auto; margin: 0; padding: var(--space-sm); white-space: pre-wrap; word-wrap: break-word; tab-size: 2; line-height: 1.5; outline: none; }
+    .doc-tile-content:focus { outline: none; }
+    .doc-tile-error { color: var(--text-error, #f66); }
+    /* Markdown rendering */
+    .doc-tile-markdown { font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, sans-serif); white-space: normal; line-height: 1.6; }
+    .doc-tile-markdown h1 { font-size: 1.6em; font-weight: 700; margin: 0.8em 0 0.4em; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
+    .doc-tile-markdown h2 { font-size: 1.3em; font-weight: 600; margin: 0.7em 0 0.3em; border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
+    .doc-tile-markdown h3 { font-size: 1.1em; font-weight: 600; margin: 0.6em 0 0.3em; }
+    .doc-tile-markdown p { margin: 0.5em 0; }
+    .doc-tile-markdown pre { background: var(--bg-surface); padding: var(--space-sm); border-radius: 4px; overflow-x: auto; font-family: var(--font-mono); font-size: 0.9em; }
+    .doc-tile-markdown code { font-family: var(--font-mono); font-size: 0.9em; background: var(--bg-surface); padding: 0.15em 0.3em; border-radius: 3px; }
+    .doc-tile-markdown pre code { background: none; padding: 0; }
+    .doc-tile-markdown a { color: var(--accent, #58a6ff); text-decoration: none; }
+    .doc-tile-markdown a:hover { text-decoration: underline; }
+    .doc-tile-markdown ul, .doc-tile-markdown ol { padding-left: 1.5em; margin: 0.5em 0; }
+    .doc-tile-markdown li { margin: 0.2em 0; }
+    .doc-tile-markdown blockquote { border-left: 3px solid var(--border); padding-left: var(--space-sm); margin: 0.5em 0; color: var(--text-secondary); }
+    .doc-tile-markdown hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
+    .doc-tile-markdown table { border-collapse: collapse; margin: 0.5em 0; }
+    .doc-tile-markdown th, .doc-tile-markdown td { border: 1px solid var(--border); padding: 0.3em 0.6em; }
+    .doc-tile-markdown th { background: var(--bg-surface); font-weight: 600; }
+    .doc-tile-markdown img { max-width: 100%; }
+
     /* --- Helm View --- */
     #helm-view { display: none; flex: 1; min-height: 0; overflow: hidden; flex-direction: column; }
     #helm-view.active { display: flex; }

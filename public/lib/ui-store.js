@@ -69,7 +69,7 @@ export const RESET        = "ui/RESET";
 function reducer(state = EMPTY_STATE, action) {
   switch (action.type) {
     case ADD_TILE: {
-      const { tile, focus = false, insertAt = "end" } = action;
+      const { tile, focus = false, insertAt = "end", insertAfter } = action;
       if (!tile || !tile.id || !tile.type) return state;
       if (state.tiles[tile.id]) {
         // Already present — optionally focus, but don't duplicate.
@@ -77,8 +77,12 @@ function reducer(state = EMPTY_STATE, action) {
       }
       const newTile = { id: tile.id, type: tile.type, props: { ...(tile.props || {}) } };
       let newTiles;
-      if (insertAt === "afterFocus" && state.focusedId) {
-        const insertX = state.tiles[state.focusedId].x + 1;
+      // Determine the anchor tile for positional insertion:
+      //   insertAfter: <id>  — explicit tile to insert after (preferred)
+      //   insertAt: "afterFocus" — insert after the currently focused tile
+      const anchorId = insertAfter || (insertAt === "afterFocus" ? state.focusedId : null);
+      if (anchorId && state.tiles[anchorId]) {
+        const insertX = state.tiles[anchorId].x + 1;
         newTile.x = insertX;
         // Shift tiles at or past the insertion point to make room
         newTiles = {};
@@ -204,14 +208,16 @@ export function normalize(raw) {
 
 // ─── Persistence ─────────────────────────────────────────────────────
 /**
- * Serialize state for localStorage. Accepts an `isPersistable(type)`
+ * Serialize state for localStorage. Accepts an `isPersistable(type, props)`
  * predicate supplied by the host so this module never needs to know
- * about renderer internals.
+ * about renderer internals. Props are forwarded for instance-level
+ * persistence decisions (e.g. file-backed document tiles persist,
+ * content-backed ones don't).
  */
 export function serialize(state, isPersistable = () => true) {
   const tiles = {};
   for (const [id, t] of Object.entries(state.tiles)) {
-    if (isPersistable(t.type)) tiles[id] = t;
+    if (isPersistable(t.type, t.props || {})) tiles[id] = t;
   }
   // Derive order from the persisted tiles' x coordinates. The order
   // field is redundant (x is authoritative) but included for backward
