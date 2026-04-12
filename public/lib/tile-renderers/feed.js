@@ -146,6 +146,7 @@ export const feedRenderer = {
               item.appendChild(info);
 
               item.addEventListener("click", () => {
+                if (!mounted) return;
                 if (dispatch) {
                   dispatch({ type: "ui/UPDATE_PROPS", id, patch: { topic: t.name, title: t.name, meta: t.meta || {} } });
                 }
