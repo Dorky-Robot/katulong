@@ -181,6 +181,7 @@ export const feedRenderer = {
       header.className = "feed-tile-header";
 
       const headerTitle = document.createElement("span");
+      headerTitle.className = "feed-tile-header-title";
       headerTitle.textContent = topic;
       header.appendChild(headerTitle);
 
