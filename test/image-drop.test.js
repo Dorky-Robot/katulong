@@ -462,6 +462,61 @@ describe("uploadImageToTerminal", () => {
     assert.equal(sent[0], "/uploads/photo.png ");
   });
 
+  it("routes Ctrl+V to the correct session via sendFn when sessionName is provided", async () => {
+    globalThis.fetch = mock.fn(async () => ({
+      ok: true,
+      json: async () => ({ clipboard: true, fsPath: "/uploads/photo.png" }),
+    }));
+
+    const { uploadImageToTerminal } = await import("../public/lib/image-upload.js");
+
+    const wsMsgs = [];
+    const file = fakeFile("photo.png", "image/png");
+
+    uploadImageToTerminal(file, {
+      onSend: () => { throw new Error("onSend should not be called when sendFn is provided"); },
+      toast: () => {},
+      sessionName: "my-session",
+      sendFn: (msg) => wsMsgs.push(msg),
+    });
+    await new Promise(r => setTimeout(r, 50));
+
+    // sendFn should receive a JSON string with the session name as a string
+    assert.equal(wsMsgs.length, 1);
+    const parsed = JSON.parse(wsMsgs[0]);
+    assert.equal(parsed.type, "input");
+    assert.equal(parsed.data, "\x16");
+    assert.equal(parsed.session, "my-session");
+    assert.equal(typeof parsed.session, "string", "session must be a string, not an object");
+  });
+
+  it("routes fsPath to the correct session via sendFn when clipboard is false", async () => {
+    globalThis.fetch = mock.fn(async () => ({
+      ok: true,
+      json: async () => ({ clipboard: false, fsPath: "/uploads/photo.png" }),
+    }));
+
+    const { uploadImageToTerminal } = await import("../public/lib/image-upload.js");
+
+    const wsMsgs = [];
+    const file = fakeFile("photo.png", "image/png");
+
+    uploadImageToTerminal(file, {
+      onSend: () => { throw new Error("onSend should not be called when sendFn is provided"); },
+      toast: () => {},
+      sessionName: "my-session",
+      sendFn: (msg) => wsMsgs.push(msg),
+    });
+    await new Promise(r => setTimeout(r, 50));
+
+    assert.equal(wsMsgs.length, 1);
+    const parsed = JSON.parse(wsMsgs[0]);
+    assert.equal(parsed.type, "input");
+    assert.equal(parsed.data, "/uploads/photo.png ");
+    assert.equal(parsed.session, "my-session");
+    assert.equal(typeof parsed.session, "string");
+  });
+
   it("sends correct headers and body in the upload request", async () => {
     globalThis.fetch = mock.fn(async () => ({
       ok: true,
