@@ -332,17 +332,18 @@
     });
     const fileBrowserTileFactory = createFileBrowserTileFactory();
 
-    // ── Renderer registry + UI store ──────────────────────────────────
+    // ── UI store + Renderer registry ──────────────────────────────────
+    // Create ui-store first — the file-browser renderer needs it to open
+    // document tiles adjacent to the browser tile on single-click.
+    const uiStore = createUiStore({ isPersistable });
+
     // Initialize the renderer registry with shared deps. This must happen
     // before any tile mount — renderers wrap the existing tile factories.
     initRenderers({
       terminalPool,
       createTerminalTile: (opts) => terminalTileFactory(opts),
+      uiStore,
     });
-
-    // Single source of truth for tile UI state. Replaces the three-way
-    // carousel + windowTabSet + sessionStore synchronization.
-    const uiStore = createUiStore({ isPersistable });
 
     /** Derive renderer capabilities for a tile descriptor.
      *  Returns {} for unknown tiles so callers can safely destructure. */

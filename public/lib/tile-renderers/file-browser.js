@@ -10,12 +10,14 @@
 import { createFileBrowserTileFactory } from "../tiles/file-browser-tile.js";
 
 let factory = null;
+let _uiStore = null;
 
 export const fileBrowserRenderer = {
   type: "file-browser",
 
-  init(_deps) {
-    factory = createFileBrowserTileFactory(_deps);
+  init(deps) {
+    factory = createFileBrowserTileFactory(deps);
+    _uiStore = deps.uiStore || null;
   },
 
   describe(props) {
@@ -38,14 +40,53 @@ export const fileBrowserRenderer = {
 
   mount(el, { id, props, dispatch, ctx }) {
     if (!factory) throw new Error("fileBrowserRenderer.init() not called");
-    const tile = factory({ cwd: props.cwd || "", sessionName: props.sessionName });
+
+    // --- File open: open a document tile adjacent to this browser ---
+    function onFileOpen(filePath) {
+      if (!_uiStore) return;
+      const state = _uiStore.getState();
+
+      // Swap semantics: if the tile immediately to the right is already
+      // a document tile, remove it first so we get one preview pane, not
+      // an accumulating stack.
+      const thisTile = state.tiles[id];
+      if (thisTile) {
+        const rightX = thisTile.x + 1;
+        for (const [tid, t] of Object.entries(state.tiles)) {
+          if (t.x === rightX && t.type === "document") {
+            _uiStore.removeTile(tid);
+            break;
+          }
+        }
+      }
+
+      // Single dispatch — insertAfter places the doc tile right of
+      // this browser tile. focus:true sets focusedId in the store;
+      // tile-host reacts and tells the carousel to scroll to it.
+      const docId = `doc-${Date.now().toString(36)}`;
+      _uiStore.addTile(
+        { id: docId, type: "document", props: { filePath } },
+        { focus: true, insertAfter: id },
+      );
+    }
+
+    // --- File download: open download URL in new tab ---
+    function onFileDownload(filePath) {
+      window.open(`/api/files/download?path=${encodeURIComponent(filePath)}`, "_blank");
+    }
+
+    const tile = factory({
+      cwd: props.cwd || "",
+      sessionName: props.sessionName,
+      onFileOpen,
+      onFileDownload,
+    });
+
     tile.mount(el, {
       ...ctx,
       // Intercept setTitle — translate into ui-store dispatch so the
       // tab bar picks it up reactively instead of imperatively.
       setTitle(_title) {
-        // The fb tile calls setTitle with the folder name, but we want
-        // the full cwd in props so describe() can derive the title.
         dispatch({ type: "ui/UPDATE_PROPS", id, patch: { cwd: tile.cwd } });
       },
       setIcon(icon) {

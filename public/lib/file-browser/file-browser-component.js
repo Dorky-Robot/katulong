@@ -33,7 +33,7 @@ import { createFileWatcher } from "/lib/file-browser/file-browser-watcher.js";
  * @param {function} [options.onClose] — called when user clicks the X button
  */
 export function createFileBrowserComponent(store, nav, options = {}) {
-  const { onClose } = options;
+  const { onClose, onFileOpen, onFileDownload } = options;
   let root = null;
   let columnsEl = null;
   let statusEl = null;
@@ -123,7 +123,11 @@ export function createFileBrowserComponent(store, nav, options = {}) {
     statusEl.className = "fb-status";
     root.appendChild(statusEl);
 
-    // Event delegation on columns
+    // Event delegation on columns — single click navigates directories
+    // and opens file viewer; double click (second click within 300ms on
+    // same file) triggers download instead.
+    let lastFileClick = { path: null, time: 0 };
+
     columnsEl.addEventListener("click", (e) => {
       // "Grant Access" button in permission error columns
       const grantBtn = e.target.closest(".fb-grant-access-btn");
@@ -135,18 +139,39 @@ export function createFileBrowserComponent(store, nav, options = {}) {
       const row = e.target.closest(".fb-miller-row");
       if (!row) return;
       const colIndex = parseInt(row.dataset.col, 10);
-      nav.selectItem(colIndex, row.dataset.name);
-    });
+      const name = row.dataset.name;
 
-    columnsEl.addEventListener("dblclick", (e) => {
-      const row = e.target.closest(".fb-miller-row");
-      if (!row || row.dataset.type !== "file") return;
-      const colIndex = parseInt(row.dataset.col, 10);
-      const state = store.getState();
-      const col = state.columns[colIndex];
-      if (!col) return;
-      const filePath = col.path + "/" + row.dataset.name;
-      window.open(`/api/files/download?path=${encodeURIComponent(filePath)}`, "_blank");
+      if (row.dataset.type === "file") {
+        const state = store.getState();
+        const col = state.columns[colIndex];
+        if (!col) return;
+        const filePath = col.path + "/" + name;
+        const now = Date.now();
+
+        // Double-click detection: second click on same file within 300ms
+        if (lastFileClick.path === filePath && (now - lastFileClick.time) < 300) {
+          lastFileClick = { path: null, time: 0 };
+          if (onFileDownload) {
+            onFileDownload(filePath);
+          } else {
+            window.open(`/api/files/download?path=${encodeURIComponent(filePath)}`, "_blank");
+          }
+          return;
+        }
+
+        lastFileClick = { path: filePath, time: now };
+        if (onFileOpen) {
+          // Stop propagation so the click doesn't bubble to the carousel
+          // card wrapper, which would see focusedId !== this card (because
+          // onFileOpen just shifted focus to the new doc tile) and steal
+          // focus back to the file browser.
+          e.stopPropagation();
+          onFileOpen(filePath);
+        }
+        return;
+      }
+
+      nav.selectItem(colIndex, name);
     });
 
     columnsEl.addEventListener("contextmenu", (e) => {

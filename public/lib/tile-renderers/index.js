@@ -13,6 +13,7 @@
 
 import { terminalRenderer } from "./terminal.js";
 import { fileBrowserRenderer } from "./file-browser.js";
+import { documentRenderer } from "./document.js";
 import { clusterRenderer } from "./cluster.js";
 
 const renderers = new Map();
@@ -26,24 +27,29 @@ export function getRenderer(type) {
   return renderers.get(type) || null;
 }
 
-/** Does this tile type persist across reloads? */
-export function isPersistable(type) {
+/**
+ * Does this tile instance persist across reloads?
+ *
+ * Accepts optional props for instance-level decisions — the document
+ * tile is persistable when file-backed but not when content-backed.
+ * Renderers that don't vary by instance ignore the props argument.
+ */
+export function isPersistable(type, props = {}) {
   const r = renderers.get(type);
   if (!r) return false;
-  // Ask the renderer with empty props — persistable is type-level, not
-  // instance-level (a terminal is always persistable regardless of which
-  // session it wraps).
-  return r.describe({}).persistable === true;
+  return r.describe(props).persistable === true;
 }
 
 /** Initialize all built-in renderers with their deps. */
-export function initRenderers({ terminalPool, createTerminalTile }) {
+export function initRenderers({ terminalPool, createTerminalTile, uiStore }) {
   terminalRenderer.init({ terminalPool });
-  fileBrowserRenderer.init({});
+  fileBrowserRenderer.init({ uiStore });
+  documentRenderer.init({});
   clusterRenderer.init({ createTerminalTile });
 }
 
 // Register built-in renderers
 registerRenderer(terminalRenderer);
 registerRenderer(fileBrowserRenderer);
+registerRenderer(documentRenderer);
 registerRenderer(clusterRenderer);

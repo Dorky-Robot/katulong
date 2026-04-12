@@ -24,7 +24,7 @@ import { createFileBrowserComponent } from "../file-browser/file-browser-compone
  * @returns {(options: { cwd?: string, sessionName?: string }) => TilePrototype}
  */
 export function createFileBrowserTileFactory(_deps = {}) {
-  return function createFileBrowserTile({ cwd = "", sessionName = null } = {}) {
+  return function createFileBrowserTile({ cwd = "", sessionName = null, onFileOpen = null, onFileDownload = null } = {}) {
     let currentCwd = cwd;
     let container = null;
     let mounted = false;
@@ -63,6 +63,8 @@ export function createFileBrowserTileFactory(_deps = {}) {
           // no-op if the container does not supply requestClose (e.g.
           // a future non-carousel host) so the tile never throws.
           onClose: () => { ctx?.requestClose?.(); },
+          onFileOpen,
+          onFileDownload,
         });
         component.mount(el);
         nav.loadRoot(currentCwd);
