@@ -92,6 +92,15 @@ export function renderKeyIsland(opts) {
   function showInlineInput() {
     if (inputRow) return;
 
+    // Defensive: if a previous renderKeyIsland() call left a stale
+    // .bar-input-row in the DOM (it's a sibling of #key-island, not a child,
+    // so it survives the tool-row removal at the top of renderKeyIsland),
+    // this closure's `inputRow` would be null and we'd end up with TWO
+    // "type..." boxes. Clear any orphans before creating a new one.
+    if (parentEl) {
+      parentEl.querySelectorAll(".bar-input-row").forEach((el) => el.remove());
+    }
+
     inputRow = document.createElement("div");
     inputRow.className = "bar-input-row";
 
