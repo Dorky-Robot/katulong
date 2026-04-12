@@ -164,10 +164,33 @@
     // --- Terminal pool ---
     // One xterm.js Terminal per managed session, visibility-toggled on switch.
 
+    // Late-bound ref — uiStore is created after the pool, but file link
+    // clicks only happen after full boot, so the ref is always populated.
+    let _uiStoreRef = null;
+
     const terminalPool = createTerminalPool({
       parentEl: document.getElementById("terminal-container"),
       onResize: (sessionName, cols, rows) => {
         cm.send(JSON.stringify({ type: "resize", session: sessionName, cols, rows }));
+      },
+      onFileLinkClick: async (_event, filePath) => {
+        if (!_uiStoreRef) return;
+        // Resolve relative paths against the active session's CWD
+        let resolved = filePath;
+        if (!filePath.startsWith("/")) {
+          const sessionName = state.session.name;
+          if (sessionName) {
+            try {
+              const data = await api.get(`/sessions/cwd/${encodeURIComponent(sessionName)}`);
+              if (data.cwd) resolved = data.cwd + "/" + filePath;
+            } catch { /* fall through with relative path */ }
+          }
+        }
+        const docId = `doc-${Date.now().toString(36)}`;
+        _uiStoreRef.addTile(
+          { id: docId, type: "document", props: { filePath: resolved } },
+          { focus: true, insertAt: "afterFocus" },
+        );
       },
       terminalOptions: {
         cols: DEFAULT_COLS,
@@ -336,6 +359,7 @@
     // Create ui-store first — the file-browser renderer needs it to open
     // document tiles adjacent to the browser tile on single-click.
     const uiStore = createUiStore({ isPersistable });
+    _uiStoreRef = uiStore;
 
     // Initialize the renderer registry with shared deps. This must happen
     // before any tile mount — renderers wrap the existing tile factories.
@@ -1387,6 +1411,7 @@
       onNewSessionClick: createNewSession,
       tileTypes: [
         { type: "terminal",     name: "Terminal", icon: "terminal-window" },
+        { type: "progress",     name: "Progress", icon: "list-checks" },
       ],
       onCreateTile: (type) => {
         if (type === "terminal") {
@@ -1395,6 +1420,13 @@
           createNewCluster();
         } else if (type === "file-browser") {
           openFileBrowserTile();
+        } else if (type === "progress") {
+          const topic = prompt("Topic to subscribe to (e.g. _build/my-branch):");
+          if (!topic) return;
+          uiStore.addTile({
+            type: "progress",
+            props: { topic, title: topic.split("/").pop() || topic },
+          });
         }
       },
       onTabClick: (name) => {
