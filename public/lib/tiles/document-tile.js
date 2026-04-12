@@ -91,7 +91,7 @@ export function createDocumentTileFactory(_deps = {}) {
         closeBtn.className = "fb-btn fb-close-btn";
         closeBtn.setAttribute("aria-label", "Close document");
         closeBtn.innerHTML = '<i class="ph ph-x"></i>';
-        closeBtn.addEventListener("click", () => ctx.requestClose());
+        closeBtn.addEventListener("click", () => ctx?.requestClose?.());
         header.appendChild(closeBtn);
 
         root.appendChild(header);
