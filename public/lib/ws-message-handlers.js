@@ -120,8 +120,12 @@ export const wsMessageHandlers = {
     return {
       stateUpdates: { 'session.name': msg.name },
       effects: [
+        { type: 'carouselRename', oldName: ctx.currentSessionName, newName: msg.name },
         { type: 'poolRename', oldName: ctx.currentSessionName, newName: msg.name },
+        { type: 'notepadRename', oldName: ctx.currentSessionName, newName: msg.name },
+        { type: 'shortcutBarRename', oldName: ctx.currentSessionName, newName: msg.name },
         { type: 'tabRename', oldName: ctx.currentSessionName, newName: msg.name },
+        { type: 'invalidateSessions', name: msg.name },
         { type: 'updateSessionUI', name: msg.name },
       ],
     };
