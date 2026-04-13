@@ -1651,6 +1651,24 @@
       margin-bottom: 1rem;
       line-height: 1.4;
     }
+    .claude-hooks-snippet {
+      position: relative;
+      background: var(--surface-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.75rem;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+    }
+    .claude-hooks-copy {
+      position: absolute; top: 0.5rem; right: 0.5rem;
+      background: none; border: none; color: var(--text-muted);
+      cursor: pointer; padding: 0.25rem; border-radius: var(--radius-sm);
+      font-size: 1rem; line-height: 1;
+    }
+    .claude-hooks-copy:hover { color: var(--text); background: var(--border); }
+    .claude-hooks-copy.copied { color: var(--accent); }
     .tokens-list {
       max-height: 300px;
       overflow-y: auto;
@@ -2583,6 +2601,23 @@
             <button class="settings-pair-btn" id="settings-create-token">
               <i class="ph ph-plus"></i> Generate New Token
             </button>
+
+            <h4 style="margin-top: var(--space-xl); font-size: 0.875rem; color: var(--text-muted);">Claude Code Hooks</h4>
+            <p class="tab-description" style="margin-top: 0;">
+              Stream Claude Code activity (tool use, responses, subagents) to
+              Katulong's feed tiles. Add this to your Claude Code settings:
+            </p>
+            <div class="claude-hooks-snippet" id="claude-hooks-snippet">
+              <pre style="margin: 0; white-space: pre-wrap; word-break: break-all; font-size: 0.7rem; line-height: 1.6;"></pre>
+              <button class="claude-hooks-copy" id="claude-hooks-copy" title="Copy to clipboard">
+                <i class="ph ph-copy"></i>
+              </button>
+            </div>
+            <p class="tab-description" style="margin-top: 0.5rem;">
+              Paste into <code>~/.claude/settings.local.json</code> (global) or
+              <code>.claude/settings.local.json</code> (project).
+              Or run: <code>katulong setup claude-hooks</code>
+            </p>
           </div>
 
           <!-- API tab content -->
