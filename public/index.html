@@ -2287,42 +2287,6 @@
     .status-done { color: var(--text-success, #3fb950); }
     .status-error { color: var(--text-error, #f66); }
 
-    /* --- Helm View --- */
-    #helm-view { display: none; flex: 1; min-height: 0; overflow: hidden; flex-direction: column; }
-    #helm-view.active { display: flex; }
-    #terminal-container.helm-hidden { display: none !important; }
-    .helm-toolbar { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg-surface); }
-    .helm-toolbar-info { display: flex; align-items: center; gap: var(--space-xs); flex: 1; min-width: 0; }
-    .helm-agent-badge { font-size: var(--text-xs); font-weight: var(--font-medium); color: var(--accent-active); background: color-mix(in srgb, var(--accent-active) 15%, transparent); padding: 2px 8px; border-radius: var(--radius-sm); text-transform: uppercase; letter-spacing: 0.05em; }
-    .helm-status { font-size: var(--text-xs); color: var(--text-muted); }
-    .helm-toolbar-actions { display: flex; gap: var(--space-xs); align-items: center; margin-left: auto; }
-    .helm-btn { width: var(--height-btn-sm); height: var(--height-btn-sm); border: none; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: color var(--transition-fast) ease, background var(--transition-fast) ease; }
-    .helm-btn:hover:not(:disabled) { color: var(--text); background: var(--accent); }
-    .helm-btn.active { color: var(--accent-active); }
-    .helm-messages { flex: 1; overflow-y: auto; padding: var(--space-sm); display: flex; flex-direction: column; gap: var(--space-sm); }
-    .helm-msg { padding: var(--space-sm); border-radius: var(--radius); max-width: 85%; font-size: var(--text-sm); line-height: 1.5; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); }
-    .helm-msg.agent { background: var(--bg-surface); border: 1px solid var(--border); align-self: flex-start; }
-    .helm-msg.user { background: color-mix(in srgb, var(--accent-active) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent-active) 25%, transparent); align-self: flex-end; }
-    .helm-msg.system { color: var(--text-muted); font-size: var(--text-xs); align-self: center; font-style: italic; }
-    .helm-msg.tool { background: var(--bg-surface); border: 1px solid var(--border); align-self: flex-start; font-size: var(--text-xs); }
-    .helm-tool-header { display: flex; align-items: center; gap: var(--space-xs); }
-    .helm-msg .helm-tool-name { color: var(--accent-active); font-weight: var(--font-medium); }
-    .helm-tool-input { margin: 4px 0 0; opacity: 0.8; font-size: 0.85em; overflow-x: auto; white-space: pre-wrap; max-height: 8rem; overflow-y: auto; }
-    .helm-tool-result { margin: 4px 0 0; opacity: 0.6; font-size: 0.8em; overflow-x: auto; white-space: pre-wrap; max-height: 12rem; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 4px; }
-    .helm-input-area { display: flex; gap: var(--space-xs); padding: var(--space-sm); border-top: 1px solid var(--border); background: var(--bg-surface); flex-shrink: 0; }
-    .helm-input { flex: 1; padding: var(--space-xs) var(--space-sm); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text); font-size: var(--text-sm); font-family: var(--font-mono); outline: none; resize: none; min-height: 2.5rem; max-height: 8rem; }
-    .helm-input:focus { border-color: var(--accent-active); }
-    .helm-input:disabled { opacity: var(--opacity-disabled); }
-    .helm-send-btn { padding: var(--space-xs) var(--space-sm); border: none; border-radius: var(--radius-sm); background: var(--accent-active); color: var(--bg); font-size: var(--text-sm); font-weight: var(--font-medium); cursor: pointer; flex-shrink: 0; align-self: flex-end; }
-    .helm-send-btn:hover { opacity: 0.85; }
-    .helm-send-btn:disabled { opacity: var(--opacity-disabled); cursor: default; }
-    .helm-waiting { display: flex; align-items: center; gap: var(--space-xs); color: var(--text-muted); font-size: var(--text-xs); padding: var(--space-xs) 0; }
-    .helm-dot-pulse { display: inline-flex; gap: 3px; }
-    .helm-dot-pulse span { width: 4px; height: 4px; border-radius: 50%; background: var(--text-muted); animation: helm-pulse 1.4s infinite ease-in-out both; }
-    .helm-dot-pulse span:nth-child(2) { animation-delay: 0.16s; }
-    .helm-dot-pulse span:nth-child(3) { animation-delay: 0.32s; }
-    @keyframes helm-pulse { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
-
     /* --- Localhost Browser Tile --- */
     .lb-tile-root { display: flex; flex-direction: column; height: 100%; width: 100%; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: var(--text-sm); }
     .lb-tile-toolbar { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg-surface); }
@@ -2377,8 +2341,6 @@
         <div id="disconnect-overlay"><span class="disconnect-label">Disconnected</span><span class="reconnecting-label" style="display:none">Reconnecting…</span></div>
       </div>
       <nav id="shortcut-bar" role="toolbar" aria-label="Shortcut bar"></nav>
-      <div id="helm-view"></div>
-
       <div id="plugin-panels"></div>
     </div>
   </div>

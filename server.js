@@ -30,7 +30,6 @@ import { createAppRoutes } from "./lib/routes/app-routes.js";
 import { createFileBrowserRoutes } from "./lib/file-browser.js";
 import { createPortProxyRoutes, proxyWebSocket } from "./lib/port-proxy.js";
 import { createWebSocketManager } from "./lib/ws-manager.js";
-import { createHelmSessionManager } from "./lib/helm-session-manager.js";
 import { createTopicBroker } from "./lib/topic-broker.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 import { loadPlugins } from "./lib/plugin-loader.js";
@@ -221,9 +220,6 @@ const pruneTimer = setInterval(async () => {
 }, PRUNE_INTERVAL_MS);
 pruneTimer.unref();
 
-// --- Helm session manager (agentic browser mode) ---
-const helmSessionManager = createHelmSessionManager({ bridge });
-
 // --- HTTP routes (assembled from lib/routes/) ---
 
 const { auth, csrf } = createMiddleware({ isAuthenticated, json });
@@ -238,7 +234,7 @@ const { pluginRoutes, pluginWsHandlers, shutdownPlugins } = await loadPlugins({
 });
 
 // --- WebSocket manager ---
-const wsManager = createWebSocketManager({ bridge, sessionManager, helmSessionManager, pluginWsHandlers });
+const wsManager = createWebSocketManager({ bridge, sessionManager, pluginWsHandlers });
 const { wsClients, broadcastToAll, closeAllWebSockets } = wsManager;
 
 // --- Graceful shutdown (late-bound; created once `server` and `wss` exist below) ---
@@ -262,7 +258,7 @@ const routes = [
   }),
   ...createAppRoutes({
     json, parseJSON, isAuthenticated, sessionManager,
-    helmSessionManager, bridge,
+    bridge,
     configManager,
     __dirname, DATA_DIR, APP_VERSION,
     getDraining,
@@ -378,7 +374,6 @@ server.on("upgrade", createUpgradeHandler({
   isAuthenticated,
   isTrustedProxy,
   loadState,
-  helmSessionManager,
   configManager,
   proxyWebSocket,
   wsManager,
@@ -430,7 +425,6 @@ shutdown = createServerShutdown({
   broadcastToAll,
   closeAllWebSockets,
   sessionManager,
-  helmSessionManager,
   shutdownPlugins,
   drainTimeoutMs: DRAIN_TIMEOUT_MS,
   pidPath: SERVER_PID_PATH,

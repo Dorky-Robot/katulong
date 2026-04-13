@@ -216,40 +216,6 @@ export const wsMessageHandlers = {
     };
   },
 
-  // --- Helm mode events ---
-
-  'helm-mode-changed'(msg, ctx) {
-    return {
-      stateUpdates: {},
-      effects: [{
-        type: 'helmModeChanged', session: msg.session, active: msg.active,
-        agent: msg.agent, prompt: msg.prompt, cwd: msg.cwd,
-        result: msg.result, error: msg.error,
-      }],
-    };
-  },
-
-  'helm-event'(msg, ctx) {
-    return {
-      stateUpdates: {},
-      effects: [{ type: 'helmEvent', session: msg.session, event: msg.event }],
-    };
-  },
-
-  'helm-turn-complete'(msg, ctx) {
-    return {
-      stateUpdates: {},
-      effects: [{ type: 'helmTurnComplete', session: msg.session }],
-    };
-  },
-
-  'helm-waiting-for-input'(msg, ctx) {
-    return {
-      stateUpdates: {},
-      effects: [{ type: 'helmWaitingForInput', session: msg.session }],
-    };
-  },
-
   'tab-icon-changed'(msg, ctx) {
     return {
       stateUpdates: {},
