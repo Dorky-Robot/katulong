@@ -146,15 +146,15 @@ describe("GET /api/files/image", () => {
     assert.equal(res.headers["Content-Type"], "image/gif");
   });
 
-  it("serves an SVG file with correct content-type", async () => {
+  it("rejects SVG files (XSS risk — SVGs can contain executable JavaScript)", async () => {
     const route = findRoute(routes, "GET", "/api/files/image");
     const req = createMockReq("GET", `/api/files/image?path=${encodeURIComponent(join(testDir, "icon.svg"))}`);
     const res = createMockRes();
     await route.handler(req, res);
-    await new Promise(resolve => res.on("finish", resolve));
 
-    assert.equal(res.status, 200);
-    assert.equal(res.headers["Content-Type"], "image/svg+xml");
+    assert.equal(res.status, 415);
+    const data = res.json();
+    assert.ok(data.error.includes("image format"));
   });
 
   it("returns 415 for non-image file extension", async () => {

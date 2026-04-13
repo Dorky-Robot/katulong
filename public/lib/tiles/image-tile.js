@@ -11,8 +11,10 @@
  * Only file-backed (given a filePath). Persistable — re-fetches on restore.
  */
 
+// Keep in sync with MIME map in lib/file-browser.js GET /api/files/image
+// SVG intentionally excluded — contains executable JavaScript (XSS risk)
 const IMAGE_EXTS = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp",
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp",
 ]);
 
 export function isImagePath(filePath) {
@@ -169,17 +171,17 @@ export function createImageTileFactory(_deps) {
           loadingEl.className = "img-tile-error";
 
           const artEl = document.createElement("div");
-          artEl.className = "doc-tile-error-art";
+          artEl.className = "img-tile-error-art";
           artEl.textContent = "(x_x)";
           loadingEl.appendChild(artEl);
 
           const msgEl = document.createElement("div");
-          msgEl.className = "doc-tile-error-msg";
+          msgEl.className = "img-tile-error-msg";
           msgEl.textContent = "Failed to load image";
           loadingEl.appendChild(msgEl);
 
           const pathEl = document.createElement("div");
-          pathEl.className = "doc-tile-error-path";
+          pathEl.className = "img-tile-error-path";
           pathEl.textContent = filePath;
           loadingEl.appendChild(pathEl);
         });
@@ -262,6 +264,7 @@ export function createImageTileFactory(_deps) {
       unmount() {
         if (!mounted) return;
         mounted = false;
+        if (imgEl) imgEl.src = ""; // cancel in-flight fetch
         if (root && root.parentElement) root.parentElement.removeChild(root);
         root = null;
         imgEl = null;
