@@ -46,8 +46,8 @@
     import { createUiStore, loadFromStorage, EMPTY_STATE } from "/lib/ui-store.js";
     import { initRenderers, isPersistable, getRenderer } from "/lib/tile-renderers/index.js";
     import { createTileHost } from "/lib/tile-host.js";
-    import { getFocusedSession, getTileSession } from "/lib/selectors.js";
-    import { navigateTab as _navigateTab, moveTab as _moveTab, jumpToTab as _jumpToTab } from "/lib/navigation.js";
+    import { getFocusedSession } from "/lib/selectors.js";
+    import { navigateTab as computeNavigateTab, moveTab as computeMoveTab, jumpToTab as computeJumpToTab } from "/lib/navigation.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -147,9 +147,8 @@
     // --- Terminal pool ---
     // One xterm.js Terminal per managed session, visibility-toggled on switch.
 
-    // Late-bound ref — uiStore is created after the pool, but file link
-    // clicks only happen after full boot, so the ref is always populated.
-    let _uiStoreRef = null;
+    // _uiStore is also used by onFileLinkClick below — both closures
+    // share the same late-bound ref, assigned when createUiStore() runs.
 
     const terminalPool = createTerminalPool({
       parentEl: document.getElementById("terminal-container"),
@@ -157,7 +156,7 @@
         cm.send(JSON.stringify({ type: "resize", session: sessionName, cols, rows }));
       },
       onFileLinkClick: async (_event, filePath) => {
-        if (!_uiStoreRef) return;
+        if (!_uiStore) return;
         // Defense-in-depth: reject paths with traversal segments
         if (filePath.split("/").some(seg => seg === "..")) return;
         // Resolve relative paths against the active session's CWD
@@ -172,7 +171,7 @@
           }
         }
         const docId = `doc-${Date.now().toString(36)}`;
-        _uiStoreRef.addTile(
+        _uiStore.addTile(
           { id: docId, type: "document", props: { filePath: resolved } },
           { focus: true, insertAt: "afterFocus" },
         );
@@ -345,7 +344,6 @@
     // document tiles adjacent to the browser tile on single-click.
     const uiStore = createUiStore({ isPersistable });
     _uiStore = uiStore;
-    _uiStoreRef = uiStore;
 
     // Initialize the renderer registry with shared deps. This must happen
     // before any tile mount — renderers wrap the existing tile factories.
@@ -982,21 +980,20 @@
 
     // --- Keyboard shortcuts (Cmd+Shift+[/], Cmd+?) ---
 
-    // Navigation functions are pure (state → action). Dispatch the
-    // returned action; tile-host's onFocusChange handles WS bookkeeping.
+    // Navigation helpers: pure function → dispatch.
+    // tile-host's onFocusChange handles WS bookkeeping after dispatch.
     function navigateTab(direction) {
-      const action = _navigateTab(uiStore.getState(), direction);
+      const action = computeNavigateTab(uiStore.getState(), direction);
       if (action) uiStore.dispatch(action);
     }
 
     function moveTab(direction) {
-      const action = _moveTab(uiStore.getState(), direction);
+      const action = computeMoveTab(uiStore.getState(), direction);
       if (action) uiStore.dispatch(action);
     }
 
-    // Positional tab jump — Option+1..9 → tabs 1..9, Option+0 → tab 10.
     function jumpToTab(position) {
-      const action = _jumpToTab(uiStore.getState(), position);
+      const action = computeJumpToTab(uiStore.getState(), position);
       if (action) uiStore.dispatch(action);
     }
 
@@ -1982,6 +1979,19 @@
         if (shortcutBarInstance) shortcutBarInstance.renameTabEl(e.oldName, e.newName);
       },
       tabRename: (e) => windowTabSet.renameTab(e.oldName, e.newName),
+      // Update ui-store tile so getActiveSessionName() returns the new name.
+      // Mirrors the onTabRenamed path (shortcut-bar initiated rename).
+      uiStoreRename: (e) => {
+        const st = uiStore.getState();
+        const oldTile = st.tiles[e.oldName];
+        if (!oldTile) return;
+        const wasFocused = st.focusedId === e.oldName;
+        uiStore.removeTile(e.oldName);
+        uiStore.addTile(
+          { id: e.newName, type: oldTile.type, props: { ...oldTile.props, sessionName: e.newName } },
+          { focus: wasFocused },
+        );
+      },
       resizeSync: () => {
         // Another client resized the shared PTY. Recalculate our own
         // dimensions via fitActiveTerminal (font + rows from THIS viewport).

@@ -125,6 +125,7 @@ export const wsMessageHandlers = {
         { type: 'notepadRename', oldName: ctx.currentSessionName, newName: msg.name },
         { type: 'shortcutBarRename', oldName: ctx.currentSessionName, newName: msg.name },
         { type: 'tabRename', oldName: ctx.currentSessionName, newName: msg.name },
+        { type: 'uiStoreRename', oldName: ctx.currentSessionName, newName: msg.name },
         { type: 'invalidateSessions', name: msg.name },
         { type: 'updateSessionUI', name: msg.name },
       ],
