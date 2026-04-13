@@ -71,7 +71,7 @@ export function renderPhoneBar(opts) {
     { icon: "terminal-window", label: "Terminal", click: onTerminalClick },
     { icon: "note-pencil", label: "Notes", click: onNotepadClick },
     { icon: "folder-open", label: "Files", click: onFilesClick },
-    { icon: "plug", label: "Port Forward", click: onPortForwardClick, id: "bar-portfwd-btn", hidden: !portProxyEnabled },
+    { icon: "globe-simple", label: "Browser", click: onPortForwardClick, id: "bar-portfwd-btn", hidden: !portProxyEnabled },
     ...(pluginButtons || []).map(p => ({ icon: p.icon, label: p.label, click: p.click })),
     { icon: "gear", label: "Settings", click: onSettingsClick },
   ];

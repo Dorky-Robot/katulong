@@ -2,7 +2,7 @@
  * Shortcut Bar / Tab Bar Renderer
  *
  * Desktop (fine pointer): browser-like session tabs with close, drag-reorder,
- *   drag-out-to-new-window, plus utility buttons (files, port-forward, settings).
+ *   drag-out-to-new-window, plus utility buttons (files, browser, settings).
  * Mobile/tablet (coarse/no pointer): session button, Esc/Tab shortcuts, keyboard toggle.
  *
  * Device detection uses pointer capability rather than viewport width so that
