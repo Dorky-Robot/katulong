@@ -282,10 +282,11 @@ export const feedRenderer = {
           }
 
           // Prune stale topic names that no longer exist on the server
+          let pruned = false;
           for (const name of selected) {
-            if (!knownTopics.has(name)) selected.delete(name);
+            if (!knownTopics.has(name)) { selected.delete(name); pruned = true; }
           }
-          if (dispatch) {
+          if (pruned && dispatch) {
             dispatch({ type: "ui/UPDATE_PROPS", id, patch: { checked: [...selected] } });
           }
           updateToolbar();
