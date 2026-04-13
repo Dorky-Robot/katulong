@@ -72,7 +72,7 @@ export const feedRenderer = {
     return {
       title: props.title || props.topic || "Feed",
       icon: "rss",
-      persistable: !!props.topic, // only persist once a topic is chosen
+      persistable: true,
       session: null,
       updatesUrl: false,
       renameable: false,
@@ -102,8 +102,14 @@ export const feedRenderer = {
 
     // ── Topic picker (inline) ───────────────────────────────────
     function showTopicPicker() {
+      if (es) { es.close(); es = null; }
       root.innerHTML = "";
       const selected = new Set();
+
+      // Clear persisted topic so we're back to picker state
+      if (dispatch) {
+        dispatch({ type: "ui/UPDATE_PROPS", id, patch: { topic: null, title: "Feed", meta: {} } });
+      }
 
       const picker = document.createElement("div");
       picker.className = "feed-tile-picker";
@@ -125,6 +131,16 @@ export const feedRenderer = {
       deleteBtn.className = "feed-tile-picker-delete-btn";
       deleteBtn.textContent = "Delete";
       toolbar.appendChild(deleteBtn);
+
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "feed-tile-picker-close-btn";
+      closeBtn.innerHTML = '<i class="ph ph-x"></i>';
+      closeBtn.title = "Close";
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        ctx?.requestClose?.();
+      });
+      header.appendChild(closeBtn);
 
       picker.appendChild(header);
 
@@ -235,6 +251,13 @@ export const feedRenderer = {
       const header = document.createElement("div");
       header.className = "feed-tile-header";
 
+      const backBtn = document.createElement("button");
+      backBtn.className = "feed-tile-back-btn";
+      backBtn.innerHTML = '<i class="ph ph-arrow-left"></i>';
+      backBtn.title = "Back to topics";
+      backBtn.addEventListener("click", () => { if (mounted) showTopicPicker(); });
+      header.appendChild(backBtn);
+
       const headerTitle = document.createElement("span");
       headerTitle.className = "feed-tile-header-title";
       headerTitle.textContent = topic;
@@ -246,6 +269,13 @@ export const feedRenderer = {
         badge.textContent = topicMeta.type;
         header.appendChild(badge);
       }
+
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "feed-tile-close-btn";
+      closeBtn.innerHTML = '<i class="ph ph-x"></i>';
+      closeBtn.title = "Close";
+      closeBtn.addEventListener("click", () => ctx?.requestClose?.());
+      header.appendChild(closeBtn);
 
       root.appendChild(header);
 

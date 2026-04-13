@@ -98,14 +98,9 @@ describe("feedRenderer", () => {
       assert.equal(d.title, "My Feed");
     });
 
-    it("is not persistable without a topic", () => {
-      const d = feedRenderer.describe({});
-      assert.equal(d.persistable, false);
-    });
-
-    it("is persistable with a topic", () => {
-      const d = feedRenderer.describe({ topic: "some/topic" });
-      assert.equal(d.persistable, true);
+    it("is always persistable", () => {
+      assert.equal(feedRenderer.describe({}).persistable, true);
+      assert.equal(feedRenderer.describe({ topic: "some/topic" }).persistable, true);
     });
   });
 
@@ -167,7 +162,7 @@ describe("feedRenderer", () => {
       assert.ok(eventSources[0].url.includes("fromSeq=0"));
     });
 
-    it("renders header with topic name", () => {
+    it("renders header with back button, topic name, and close button", () => {
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -179,7 +174,10 @@ describe("feedRenderer", () => {
       const root = el.children[0];
       const header = root.children[0];
       assert.equal(header.className, "feed-tile-header");
-      assert.equal(header.children[0].textContent, "my/topic");
+      // [backBtn, title, closeBtn]
+      assert.equal(header.children[0].className, "feed-tile-back-btn");
+      assert.equal(header.children[1].textContent, "my/topic");
+      assert.equal(header.children[2].className, "feed-tile-close-btn");
     });
 
     it("renders badge when meta.type is set", () => {
@@ -193,10 +191,10 @@ describe("feedRenderer", () => {
 
       const root = el.children[0];
       const header = root.children[0];
-      // Second child should be the badge
-      assert.equal(header.children.length, 2);
-      assert.equal(header.children[1].className, "feed-tile-badge");
-      assert.equal(header.children[1].textContent, "progress");
+      // [backBtn, title, badge, closeBtn]
+      assert.equal(header.children.length, 4);
+      assert.equal(header.children[2].className, "feed-tile-badge");
+      assert.equal(header.children[2].textContent, "progress");
     });
 
     it("does not render badge when no meta.type", () => {
@@ -210,7 +208,8 @@ describe("feedRenderer", () => {
 
       const root = el.children[0];
       const header = root.children[0];
-      assert.equal(header.children.length, 1); // just the title span
+      // [backBtn, title, closeBtn] — no badge
+      assert.equal(header.children.length, 3);
     });
 
     it("processes SSE events via onmessage", () => {
