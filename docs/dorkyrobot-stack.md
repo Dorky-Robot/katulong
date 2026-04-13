@@ -201,7 +201,7 @@ hooks:
 | SubagentStop | `crew/{project}/{role}/agent-done` | Mark task review |
 | TaskCompleted | (direct CLI call) | Move task on board |
 | Stop | `crew/{project}/{role}/session-idle` | Show idle in TUI |
-| Session exit | `sessions/{name}/output` (event: exit) | Mark role-session offline |
+| Session exit | poll `GET /sessions/{name}/status` | Mark role-session offline |
 
 ## sipag — Design
 

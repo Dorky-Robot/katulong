@@ -104,7 +104,7 @@ The topic broker wraps this in an envelope:
 
 Convention: `_build/{branch-name}` for implementation work,
 `_agent/{session-name}` for ad-hoc agent tasks. The `_` prefix
-signals system topics (same convention as `_notify`).
+signals system topics (underscore prefix convention).
 
 ## Progress tile renderer
 
