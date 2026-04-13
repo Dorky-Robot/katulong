@@ -936,8 +936,10 @@
       }
       /* Tab row floats over the terminal tile on phone so the terminal
          gets the full viewport height instead of sharing it with tabs. */
-      #shortcut-bar.bar-ipad { overflow: visible; }
-      #shortcut-bar.bar-ipad .bar-tab-row {
+      #shortcut-bar.bar-ipad,
+      #shortcut-bar.bar-phone { overflow: visible; }
+      #shortcut-bar.bar-ipad .bar-tab-row,
+      #shortcut-bar.bar-phone .bar-tab-row {
         position: absolute;
         bottom: 100%;
         left: 0; right: 0;
@@ -952,7 +954,8 @@
     /* Carousel mode: hide sidebar, tab bar at bottom */
     #sidebar { display: none !important; }
     #sidebar-backdrop { display: none !important; }
-    #shortcut-bar.bar-ipad {
+    #shortcut-bar.bar-ipad,
+    #shortcut-bar.bar-phone {
       order: 1; /* after terminal = bottom */
       border-bottom: none;
       border-top: 1px solid var(--border);
@@ -964,12 +967,14 @@
       gap: 0;
     }
     /* Tabs: taller for touch, shrink to fit */
-    #shortcut-bar.bar-ipad .tab-bar-tab {
+    #shortcut-bar.bar-ipad .tab-bar-tab,
+    #shortcut-bar.bar-phone .tab-bar-tab {
       flex: 1 1 0; min-width: 3rem; max-width: 12rem;
       height: 2.5rem; padding: 0 var(--space-md);
     }
     /* + button: inline in the tab row */
-    #shortcut-bar.bar-ipad { position: relative; }
+    #shortcut-bar.bar-ipad,
+    #shortcut-bar.bar-phone { position: relative; }
     .ipad-add-btn {
       flex-shrink: 0;
       width: 2.5rem; height: 2.5rem;
