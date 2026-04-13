@@ -224,6 +224,76 @@ describe("GET /api/files/download", () => {
   });
 });
 
+// --- Write file ---
+
+describe("POST /api/files/write", () => {
+  it("writes content to an existing file", async () => {
+    const route = findRoute(routes, "POST", "/api/files/write");
+    const filePath = join(testDir, "hello.txt");
+    const req = createMockReq("POST", "/api/files/write", { path: filePath, content: "new content" });
+    const res = createMockRes();
+    await route.handler(req, res);
+    assert.equal(res.status, 200);
+    const result = res.json();
+    assert.equal(result.ok, true);
+    assert.ok(result.path); // returns resolved path
+    const { readFileSync } = await import("node:fs");
+    assert.equal(readFileSync(filePath, "utf-8"), "new content");
+    // Restore original for other tests
+    writeFileSync(filePath, "Hello World");
+  });
+
+  it("returns 400 without path", async () => {
+    const route = findRoute(routes, "POST", "/api/files/write");
+    const req = createMockReq("POST", "/api/files/write", { content: "test" });
+    const res = createMockRes();
+    await route.handler(req, res);
+    assert.equal(res.status, 400);
+  });
+
+  it("returns 400 without content", async () => {
+    const route = findRoute(routes, "POST", "/api/files/write");
+    const req = createMockReq("POST", "/api/files/write", { path: "/tmp/test.txt" });
+    const res = createMockRes();
+    await route.handler(req, res);
+    assert.equal(res.status, 400);
+  });
+
+  it("returns 404 for nonexistent file", async () => {
+    const route = findRoute(routes, "POST", "/api/files/write");
+    const req = createMockReq("POST", "/api/files/write", { path: join(testDir, "nope.txt"), content: "x" });
+    const res = createMockRes();
+    await route.handler(req, res);
+    assert.equal(res.status, 404);
+  });
+
+  it("returns 400 for directory", async () => {
+    const route = findRoute(routes, "POST", "/api/files/write");
+    const req = createMockReq("POST", "/api/files/write", { path: testDir, content: "x" });
+    const res = createMockRes();
+    await route.handler(req, res);
+    assert.equal(res.status, 400);
+  });
+
+  it("rejects path traversal", async () => {
+    const route = findRoute(routes, "POST", "/api/files/write");
+    const req = createMockReq("POST", "/api/files/write", { path: testDir + "/../../etc/passwd", content: "x" });
+    const res = createMockRes();
+    await route.handler(req, res);
+    // safePath rejects ".." with 400
+    assert.equal(res.status, 400);
+  });
+
+  it("rejects symlinks", async () => {
+    const route = findRoute(routes, "POST", "/api/files/write");
+    const req = createMockReq("POST", "/api/files/write", { path: join(testDir, "link.txt"), content: "x" });
+    const res = createMockRes();
+    await route.handler(req, res);
+    assert.equal(res.status, 400);
+    assert.ok(res.json().error.includes("symlink"));
+  });
+});
+
 // --- Mkdir ---
 
 describe("POST /api/files/mkdir", () => {

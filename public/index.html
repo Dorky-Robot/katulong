@@ -2176,6 +2176,12 @@
     .doc-tile-header-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .doc-tile-content { flex: 1; overflow: auto; margin: 0; padding: var(--space-sm); white-space: pre-wrap; word-wrap: break-word; tab-size: 2; line-height: 1.5; outline: none; }
     .doc-tile-content:focus { outline: none; }
+    .doc-tile-editor { flex: 1; overflow: hidden; }
+    .doc-tile-editor .cm-editor { height: 100%; }
+    .doc-tile-status { font-size: var(--text-xs); white-space: nowrap; }
+    .doc-tile-status-dirty { color: var(--warning); }
+    .doc-tile-status-ok { color: var(--success); }
+    .doc-tile-status-err { color: var(--danger); }
     .doc-tile-error { color: var(--text-error, #f66); }
     /* Markdown rendering */
     .doc-tile-markdown { font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, sans-serif); white-space: normal; line-height: 1.6; }
