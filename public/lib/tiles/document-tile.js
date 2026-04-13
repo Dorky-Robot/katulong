@@ -174,7 +174,9 @@ function renderErrorPage(parentEl, err, filePath, onRetry) {
   page.appendChild(actions);
   parentEl.appendChild(page);
 
-  return stopAnim;
+  // Return a stable wrapper so callers always stop the *current* interval,
+  // even after the shuffle button has reassigned the inner `stopAnim`.
+  return () => stopAnim();
 }
 
 /** Icon name based on file extension. */
@@ -526,12 +528,14 @@ export function createDocumentTileFactory(_deps = {}) {
             };
             loadFile();
           } else {
-            setupEditor(initialContent).catch((err) => {
-              if (!mounted) return;
-              stopErrorAnim = renderErrorPage(editorContainer, err, filePath || "inline content", () => {
-                setupEditor(initialContent);
+            const loadInline = () => {
+              if (stopErrorAnim) { stopErrorAnim(); stopErrorAnim = null; }
+              setupEditor(initialContent).catch((err) => {
+                if (!mounted) return;
+                stopErrorAnim = renderErrorPage(editorContainer, err, filePath || "inline content", loadInline);
               });
-            });
+            };
+            loadInline();
           }
         }
       },
