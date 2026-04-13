@@ -194,36 +194,22 @@ export function createSettingsHandlers(options = {}) {
     }
   }
 
-  /** Initialize Claude Code hooks snippet + copy button. */
+  /** Initialize Claude Code hooks copy button. */
   function initClaudeHooksSnippet() {
-    const snippet = document.getElementById("claude-hooks-snippet");
-    if (!snippet) return;
-    const pre = snippet.querySelector("pre");
     const copyBtn = document.getElementById("claude-hooks-copy");
+    if (!copyBtn) return;
 
-    const hookConfig = {
-      hooks: {
-        PostToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "katulong relay-hook" }] }],
-        Stop: [{ matcher: "", hooks: [{ type: "command", command: "katulong relay-hook" }] }],
-        SubagentStart: [{ matcher: "", hooks: [{ type: "command", command: "katulong relay-hook" }] }],
-        SubagentStop: [{ matcher: "", hooks: [{ type: "command", command: "katulong relay-hook" }] }],
-      },
-    };
-    pre.textContent = JSON.stringify(hookConfig, null, 2);
-
-    if (copyBtn) {
-      copyBtn.addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(JSON.stringify(hookConfig, null, 2));
-          copyBtn.classList.add("copied");
-          copyBtn.querySelector("i").className = "ph ph-check";
-          setTimeout(() => {
-            copyBtn.classList.remove("copied");
-            copyBtn.querySelector("i").className = "ph ph-copy";
-          }, 2000);
-        } catch { /* clipboard may be unavailable */ }
-      });
-    }
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText("katulong setup claude-hooks");
+        copyBtn.classList.add("copied");
+        copyBtn.querySelector("i").className = "ph ph-check";
+        setTimeout(() => {
+          copyBtn.classList.remove("copied");
+          copyBtn.querySelector("i").className = "ph ph-copy";
+        }, 2000);
+      } catch { /* clipboard may be unavailable */ }
+    });
   }
 
   async function init() {
