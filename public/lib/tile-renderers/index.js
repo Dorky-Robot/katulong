@@ -17,6 +17,7 @@ import { documentRenderer } from "./document.js";
 import { clusterRenderer } from "./cluster.js";
 import { feedRenderer } from "./feed.js";
 import { localhostBrowserRenderer } from "./localhost-browser.js";
+import { progressRenderer } from "./progress.js";
 
 const renderers = new Map();
 
@@ -50,6 +51,7 @@ export function initRenderers({ terminalPool, createTerminalTile, uiStore }) {
   clusterRenderer.init({ createTerminalTile });
   feedRenderer.init({});
   localhostBrowserRenderer.init({});
+  progressRenderer.init({});
 }
 
 // Register built-in renderers
@@ -59,3 +61,4 @@ registerRenderer(documentRenderer);
 registerRenderer(clusterRenderer);
 registerRenderer(feedRenderer);
 registerRenderer(localhostBrowserRenderer);
+registerRenderer(progressRenderer);
