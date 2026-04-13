@@ -42,15 +42,19 @@ export function decideAppKey(ev, ctx = {}) {
   // Must be Option alone, not Cmd+Option or Ctrl+Option.
   if (!ev.altKey || ev.metaKey || ev.ctrlKey) return NO_ACTION();
 
-  // Suppressed inside text inputs.
-  if (ctx.isTextInput) return NO_ACTION();
+  // Navigation shortcuts (moveTab, navigateTab, jumpToTab) work even
+  // inside text inputs — they're structural tile management, not text
+  // editing. This ensures they work from any tile type (browser tile
+  // port input, document tile editor, etc.) without each tile needing
+  // to forward them.
 
   // Shift variants — must check before non-shift so Option+Shift+W doesn't
   // get caught by the Option+W branch.
   if (ev.shiftKey) {
     if (ev.code === "BracketLeft") return { action: "moveTab", args: -1, preventDefault: true };
     if (ev.code === "BracketRight") return { action: "moveTab", args: 1, preventDefault: true };
-    if (ev.code === "KeyW") return { action: "killSession", args: null, preventDefault: true };
+    // killSession suppressed inside text inputs (Shift+W could be typing)
+    if (!ctx.isTextInput && ev.code === "KeyW") return { action: "killSession", args: null, preventDefault: true };
     return NO_ACTION();
   }
 
@@ -62,6 +66,14 @@ export function decideAppKey(ev, ctx = {}) {
     return { action: "jumpToTab", args: d === 0 ? 10 : d, preventDefault: true };
   }
 
+  // Navigation (Option+[ / ]) works in text inputs; the rest is suppressed.
+  if (ev.code === "BracketLeft") return { action: "navigateTab", args: -1, preventDefault: true };
+  if (ev.code === "BracketRight") return { action: "navigateTab", args: 1, preventDefault: true };
+
+  // Remaining session-management shortcuts are suppressed inside text inputs
+  // so they don't hijack typing in rename inputs, settings panels, etc.
+  if (ctx.isTextInput) return NO_ACTION();
+
   switch (ev.code) {
     case "KeyT": return { action: "newSession", args: null, preventDefault: true };
     case "KeyW": return { action: "closeSession", args: null, preventDefault: true };
@@ -72,8 +84,6 @@ export function decideAppKey(ev, ctx = {}) {
     // revert-line. Users who rely on revert-line can still invoke it via
     // `Ctrl+_` or the readline bind `Ctrl+X u`.
     case "KeyR": return { action: "renameSession", args: null, preventDefault: true };
-    case "BracketLeft": return { action: "navigateTab", args: -1, preventDefault: true };
-    case "BracketRight": return { action: "navigateTab", args: 1, preventDefault: true };
   }
 
   return NO_ACTION();

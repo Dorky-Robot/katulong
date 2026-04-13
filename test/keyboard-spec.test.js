@@ -316,9 +316,8 @@ describe("decideAppKey — Option jump-to-tab", () => {
 });
 
 describe("decideAppKey — text input guard", () => {
-  // Option shortcuts must NOT fire while the user is typing into an input,
-  // textarea, or contenteditable. Otherwise Option+R re-enters the rename
-  // flow while the rename input is already focused, etc.
+  // Session-management shortcuts (new, close, rename) must NOT fire while
+  // the user is typing into an input/textarea/contenteditable.
   it("Option+T inside input → no action", () => {
     const r = decideAppKey(ev({ code: "KeyT", key: "t", altKey: true }), { isTextInput: true });
     assert.equal(r.action, null);
@@ -329,9 +328,46 @@ describe("decideAppKey — text input guard", () => {
     assert.equal(r.action, null);
   });
 
+  it("Option+Shift+W inside input → no action (kill suppressed)", () => {
+    const r = decideAppKey(ev({ code: "KeyW", key: "W", altKey: true, shiftKey: true }), { isTextInput: true });
+    assert.equal(r.action, null);
+  });
+
   it("Cmd+/ inside input → still fires (help is global)", () => {
     const r = decideAppKey(ev({ key: "/", metaKey: true }), { isTextInput: true });
     assert.equal(r.action, "toggleHelp");
+  });
+
+  // Navigation shortcuts (moveTab, navigateTab, jumpToTab) work even
+  // inside text inputs — they're structural tile management, not text editing.
+  it("Option+Shift+[ inside input → moveTab (navigation works in text inputs)", () => {
+    const r = decideAppKey(ev({ code: "BracketLeft", altKey: true, shiftKey: true }), { isTextInput: true });
+    assert.equal(r.action, "moveTab");
+    assert.equal(r.args, -1);
+  });
+
+  it("Option+Shift+] inside input → moveTab (navigation works in text inputs)", () => {
+    const r = decideAppKey(ev({ code: "BracketRight", altKey: true, shiftKey: true }), { isTextInput: true });
+    assert.equal(r.action, "moveTab");
+    assert.equal(r.args, 1);
+  });
+
+  it("Option+[ inside input → navigateTab", () => {
+    const r = decideAppKey(ev({ code: "BracketLeft", altKey: true }), { isTextInput: true });
+    assert.equal(r.action, "navigateTab");
+    assert.equal(r.args, -1);
+  });
+
+  it("Option+] inside input → navigateTab", () => {
+    const r = decideAppKey(ev({ code: "BracketRight", altKey: true }), { isTextInput: true });
+    assert.equal(r.action, "navigateTab");
+    assert.equal(r.args, 1);
+  });
+
+  it("Option+1 inside input → jumpToTab", () => {
+    const r = decideAppKey(ev({ code: "Digit1", altKey: true }), { isTextInput: true });
+    assert.equal(r.action, "jumpToTab");
+    assert.equal(r.args, 1);
   });
 });
 

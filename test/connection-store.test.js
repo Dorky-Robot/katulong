@@ -7,6 +7,7 @@ import {
   READY,
   TRANSPORT_CHANGED,
   DISCONNECTED,
+  SET_SCROLLED_UP,
   reducer,
   createConnectionStore,
 } from "../public/lib/connection-store.js";
@@ -171,6 +172,40 @@ describe("connection-store reducer", () => {
     const result = reducer(state, { type: "conn/NONEXISTENT" });
     assert.equal(result, state);
   });
+
+  // ── scrolledUpBeforeDisconnect ─────────────────────────────────
+
+  it("EMPTY_STATE has scrolledUpBeforeDisconnect: false", () => {
+    assert.equal(EMPTY_STATE.scrolledUpBeforeDisconnect, false);
+  });
+
+  it("SET_SCROLLED_UP sets scrolledUpBeforeDisconnect", () => {
+    const state = reducer(EMPTY_STATE, { type: SET_SCROLLED_UP, value: true });
+    assert.equal(state.scrolledUpBeforeDisconnect, true);
+  });
+
+  it("SET_SCROLLED_UP is idempotent for same value", () => {
+    const state = reducer(EMPTY_STATE, { type: SET_SCROLLED_UP, value: false });
+    assert.strictEqual(state, EMPTY_STATE);
+  });
+
+  it("SET_SCROLLED_UP preserves other fields", () => {
+    const ready = { status: "ready", transport: "websocket", scrolledUpBeforeDisconnect: false };
+    const state = reducer(ready, { type: SET_SCROLLED_UP, value: true });
+    assert.equal(state.status, "ready");
+    assert.equal(state.transport, "websocket");
+    assert.equal(state.scrolledUpBeforeDisconnect, true);
+  });
+
+  it("transitions preserve scrolledUpBeforeDisconnect", () => {
+    let state = { ...EMPTY_STATE, scrolledUpBeforeDisconnect: true };
+    state = reducer(state, { type: CONNECTING });
+    assert.equal(state.scrolledUpBeforeDisconnect, true);
+    state = reducer(state, { type: READY, transport: "websocket" });
+    assert.equal(state.scrolledUpBeforeDisconnect, true);
+    state = reducer(state, { type: DISCONNECTED });
+    assert.equal(state.scrolledUpBeforeDisconnect, true);
+  });
 });
 
 // ─── Store integration tests ────────────────────────────────────────
@@ -245,6 +280,13 @@ describe("createConnectionStore", () => {
     store.ready("websocket");
     store.disconnected();
     assert.deepStrictEqual(store.getState(), EMPTY_STATE);
+  });
+
+  it("convenience: setScrolledUp(true/false)", () => {
+    store.setScrolledUp(true);
+    assert.equal(store.getState().scrolledUpBeforeDisconnect, true);
+    store.setScrolledUp(false);
+    assert.equal(store.getState().scrolledUpBeforeDisconnect, false);
   });
 
   it("full lifecycle: disconnect → connect → ready → transport change → disconnect", () => {

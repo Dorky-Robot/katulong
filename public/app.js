@@ -29,7 +29,6 @@
     import { decideAppKey, isTextInputTarget } from "/lib/app-keyboard.js";
     import { createInputSender } from "/lib/input-sender.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
-    import { createHelmComponent } from "/lib/helm/helm-component.js";
     import { createConnectionManager } from "/lib/connection-manager.js";
     import { wsMessageHandlers } from "/lib/ws-message-handlers.js";
     import { createPullManager } from "/lib/pull-manager.js";
@@ -48,6 +47,8 @@
     import { createTileHost } from "/lib/tile-host.js";
     import { getFocusedSession } from "/lib/selectors.js";
     import { navigateTab as computeNavigateTab, moveTab as computeMoveTab, jumpToTab as computeJumpToTab } from "/lib/navigation.js";
+    import { createIconStore } from "/lib/icon-store.js";
+    import { createReconcilerStore } from "/lib/reconciler-store.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -83,8 +84,7 @@
     // URL ?s= hint — used only for boot, not as ongoing state.
     const explicitSession = new URLSearchParams(location.search).get("s");
 
-    // Transient scroll state — will move to connection-store in a follow-up PR.
-    let scrolledUpBeforeDisconnect = false;
+    // scrolledUpBeforeDisconnect now lives in connectionStore (cm).
 
     // Derive the active session name from ui-store + renderer registry.
     // Replaces the old mutable `state.session.name` — the source of truth
@@ -100,9 +100,8 @@
     const getInstanceIcon = () => "terminal-window";
 
     // --- Per-session tab icon overrides ---
-    // sessionName -> Phosphor icon name (set via OSC 7337 from terminal processes)
-    const sessionIcons = new Map();
-    const getSessionIcon = (name) => sessionIcons.get(name) || null;
+    const iconStore = createIconStore();
+    const getSessionIcon = (name) => iconStore.getIcon(name);
 
     // --- Shortcuts state management (reactive store) ---
     const shortcutsStore = createShortcutsStore();
@@ -283,9 +282,9 @@
           const iconName = match[1];
           const currentName = entry.sessionName;
           if (iconName) {
-            sessionIcons.set(currentName, iconName);
+            iconStore.setIcon(currentName, iconName);
           } else {
-            sessionIcons.delete(currentName);
+            iconStore.removeIcon(currentName);
           }
           // Re-render tabs to show the new icon
           if (shortcutBarInstance) shortcutBarInstance.render(getActiveSessionName());
@@ -942,13 +941,6 @@
     function activateSession(name) {
       // Close alternative views — switching sessions returns to terminal
       if (notepad.isActive()) notepad.hide();
-      // If the target session has an active helm session, show helm view; otherwise terminal
-      if (helmActiveSessions.has(name)) {
-        showHelmView();
-        helmComponent?.showSession(name);
-      } else if (helmViewEl?.classList.contains("active")) {
-        hideHelmView();
-      }
 
       // Ensure session is in this window's tab set
       if (!windowTabSet.hasTab(name)) {
@@ -1095,7 +1087,7 @@
       jumpToTab: (n) => jumpToTab(n),
     };
 
-    document.addEventListener("keydown", (ev) => {
+    function handleAppKeydown(ev) {
       // Escape closes the keyboard help overlay. Other modals own their
       // own Escape handling via ModalRegistry.
       if (ev.key === "Escape" && kbHelpOverlay?.classList.contains("visible")) {
@@ -1118,7 +1110,35 @@
 
       if (decision.preventDefault) ev.preventDefault();
       handler(decision.args);
-    }, true); // Capture phase to intercept before browser defaults
+    }
+
+    document.addEventListener("keydown", handleAppKeydown, true);
+
+    // Iframe focus recapture — when an iframe inside a tile steals focus,
+    // keyboard events stop reaching the document. Detect this via window
+    // blur (fires when focus moves into an iframe), then install a
+    // transient pointerdown listener on the iframe's parent container.
+    // Any Alt-key press while window is blurred is invisible to us, so
+    // instead we recapture focus on the next user interaction outside
+    // the iframe (pointer up anywhere on the document). This is enough
+    // because navigation shortcuts require the modifier key which users
+    // press outside the iframe context. For immediate recapture, we also
+    // listen for mousemove on the document — as soon as the pointer
+    // leaves the iframe, focus returns to the parent window.
+    let iframeFocused = false;
+    window.addEventListener("blur", () => {
+      // Check if focus went to an iframe inside our app
+      if (document.activeElement?.tagName === "IFRAME") {
+        iframeFocused = true;
+      }
+    });
+    window.addEventListener("focus", () => { iframeFocused = false; });
+    document.addEventListener("mousemove", () => {
+      if (iframeFocused) {
+        iframeFocused = false;
+        window.focus();
+      }
+    }, { passive: true });
 
     // --- Settings ---
 
@@ -1559,9 +1579,9 @@
       if (!sessions) return;
       for (const s of sessions) {
         if (s.icon) {
-          sessionIcons.set(s.name, s.icon);
+          iconStore.setIcon(s.name, s.icon);
         } else {
-          sessionIcons.delete(s.name);
+          iconStore.removeIcon(s.name);
         }
       }
     });
@@ -1657,7 +1677,6 @@
 
     function returnToTerminal() {
       if (notepad.isActive()) notepad.hide();
-      if (helmViewEl?.classList.contains("active")) hideHelmView();
       getTerm()?.focus();
     }
 
@@ -1763,80 +1782,6 @@
       } else {
         notepad.show(getActiveSessionName());
       }
-    }
-
-    // --- Helm Mode ---
-
-    const helmViewEl = document.getElementById("helm-view");
-    let helmMounted = false;
-    let helmComponent = null;
-    // Track which sessions are in helm mode (per-session, not global)
-    const helmActiveSessions = new Set();
-
-    function ensureHelmMounted() {
-      if (helmMounted) return;
-      helmComponent = createHelmComponent({
-        onSendMessage: (session, content) => {
-          cm.send(JSON.stringify({ type: "helm-input", session, content }));
-        },
-        onAbort: (session) => {
-          cm.send(JSON.stringify({ type: "helm-abort", session }));
-        },
-        onToggleTerminal: () => toggleHelmView(),
-      });
-      helmComponent.mount(helmViewEl);
-      helmMounted = true;
-    }
-
-    function showHelmView() {
-      ensureHelmMounted();
-      termContainer.classList.add("helm-hidden");
-      helmViewEl.classList.add("active");
-      helmComponent.showSession(getActiveSessionName());
-      helmComponent.focus();
-    }
-
-    function hideHelmView() {
-      helmViewEl.classList.remove("active");
-      termContainer.classList.remove("helm-hidden");
-      getTerm()?.focus();
-    }
-
-    function toggleHelmView() {
-      if (helmViewEl.classList.contains("active")) {
-        hideHelmView();
-      } else if (helmActiveSessions.has(getActiveSessionName())) {
-        showHelmView();
-      }
-    }
-
-    function onHelmModeChanged(effect) {
-      const activeSession = getActiveSessionName();
-      if (effect.active) {
-        helmActiveSessions.add(effect.session);
-        ensureHelmMounted();
-        helmComponent.helmStarted(effect.session, {
-          agent: effect.agent,
-          prompt: effect.prompt,
-          cwd: effect.cwd,
-        });
-        // Auto-switch to helm view if this is the active session
-        if (effect.session === activeSession) {
-          showHelmView();
-        }
-      } else {
-        helmActiveSessions.delete(effect.session);
-        helmComponent?.helmEnded(effect.session, {
-          result: effect.result,
-          error: effect.error,
-        });
-        // If viewing helm for this session and it ended, switch back to terminal
-        if (effect.session === activeSession && helmViewEl.classList.contains("active")) {
-          hideHelmView();
-        }
-      }
-      // Re-render the tab bar to show/hide helm indicator
-      renderBar(activeSession);
     }
 
     // --- Connection Manager ---
@@ -1998,15 +1943,11 @@
         fitActiveTerminal();
       },
       fastReconnect: () => cm.reconnectNow(),
-      helmModeChanged: (e) => onHelmModeChanged(e),
-      helmEvent: (e) => helmComponent?.helmEvent(e.session, e.event),
-      helmTurnComplete: (e) => helmComponent?.helmTurnComplete(e.session),
-      helmWaitingForInput: (e) => helmComponent?.helmWaitingForInput(e.session),
       tabIconChanged: (e) => {
         if (e.icon) {
-          sessionIcons.set(e.session, e.icon);
+          iconStore.setIcon(e.session, e.icon);
         } else {
-          sessionIcons.delete(e.session);
+          iconStore.removeIcon(e.session);
         }
         if (shortcutBarInstance) shortcutBarInstance.render(getActiveSessionName());
       },
@@ -2162,14 +2103,14 @@
 
       const { stateUpdates, effects } = handler(msg, {
         currentSessionName: getActiveSessionName(),
-        scroll: { userScrolledUpBeforeDisconnect: scrolledUpBeforeDisconnect },
+        scroll: { userScrolledUpBeforeDisconnect: cm.getState().scrolledUpBeforeDisconnect },
       });
 
       // Apply state updates — session.name updates are now no-ops (derived
       // from uiStore.focusedId). Only scroll state is still mutable here.
       if (stateUpdates) {
         if ('scroll.userScrolledUpBeforeDisconnect' in stateUpdates) {
-          scrolledUpBeforeDisconnect = stateUpdates['scroll.userScrolledUpBeforeDisconnect'];
+          cm.setScrolledUp(stateUpdates['scroll.userScrolledUpBeforeDisconnect']);
         }
       }
 
@@ -2299,7 +2240,7 @@
     cm.subscribe((connState) => {
       if (connState.status === "disconnected") {
         const term = getTerm();
-        scrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
+        cm.setScrolledUp(term ? !isAtBottom(term) : false);
         pulls.clear();
         // Clean up WebRTC peer and retry timer on disconnect
         clearRtcRetry();
@@ -2340,9 +2281,7 @@
     // container, not a session, so serverSet never knows about it. The
     // cluster's own slots own their sub-session lifecycle.
     const RECONCILE_PRUNE_THRESHOLD = 2;
-    let reconcilePruneConfirmations = 0;
-    let lastDeadKey = "";
-    let bootReconcileDone = false;
+    const reconcilerStore = createReconcilerStore();
 
     function removeDeadSession(name) {
       // Remove from ui-store if it's a session-backed tile
@@ -2413,30 +2352,24 @@
         // temporarily absent. The exemption must fire exactly once on
         // the first settled server response, regardless of whether
         // anything needed pruning on that pass.
-        bootReconcileDone = true;
-        reconcilePruneConfirmations = 0;
-        lastDeadKey = "";
+        reconcilerStore.markBootDone();
+        reconcilerStore.reset();
         return;
       }
 
-      // Stable key over the dead set. Reset counter if the dead set changed
-      // since the previous pass — different victims must each accumulate
-      // their own confirmations.
+      // Stable key over the dead set. The store resets the counter
+      // internally when the dead set changes.
       const deadKey = JSON.stringify([...dead].sort());
-      if (deadKey !== lastDeadKey) {
-        reconcilePruneConfirmations = 0;
-        lastDeadKey = deadKey;
-      }
+      reconcilerStore.confirm(deadKey);
 
-      reconcilePruneConfirmations++;
       // Boot-pass exemption: bypass the 2-consecutive-pass threshold on
       // the very first reconcile after page load. See the long comment
       // above RECONCILE_PRUNE_THRESHOLD for why this is safe.
-      const bootBypass = !bootReconcileDone;
-      bootReconcileDone = true;
-      if (!bootBypass && reconcilePruneConfirmations < RECONCILE_PRUNE_THRESHOLD) return;
-      reconcilePruneConfirmations = 0;
-      lastDeadKey = "";
+      const rState = reconcilerStore.getState();
+      const bootBypass = !rState.bootDone;
+      reconcilerStore.markBootDone();
+      if (!bootBypass && rState.confirmations < RECONCILE_PRUNE_THRESHOLD) return;
+      reconcilerStore.reset();
 
       const wasFocusedDead = dead.has(uiStore.getState().focusedId);
       for (const name of dead) {
