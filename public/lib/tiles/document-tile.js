@@ -16,6 +16,169 @@ import { api } from "/lib/api-client.js";
 import { marked } from "/vendor/marked/marked.esm.js";
 import DOMPurify from "/vendor/dompurify/purify.es.mjs";
 
+/* ---------- cute animated error pages ---------- */
+
+// Each entry has `frames` (array of ASCII art strings cycled on a timer)
+// and `ms` (frame duration). Omit `ms` to use the default (400ms).
+
+const NOT_FOUND_PAGES = [
+  { frames: ["(o_O)", "(O_o)", "(o_O)", "(O_o)", "(o_o)", "(o_o)"], ms: 500,
+    msg: "This file is playing hide and seek. It's winning." },
+  { frames: ["(;-;)", "(;_;)", "(; ;)", "(;_;)"], ms: 600,
+    msg: "File not found. It was here a second ago, I swear." },
+  { frames: ["\\(o.o)/", "\\(o.o)>", "\\(o.o)/", "<(o.o)/"], ms: 350,
+    msg: "Gone. Poof. Like it was never here." },
+  { frames: ["(-_-)", "(-_-)", "(-_-)", "(- -)", "(-_-)", "(-_-)"], ms: 800,
+    msg: "The file has left the building." },
+  { frames: ["(x_x)", "(x_x)", "(X_X)", "(x_x)"], ms: 900,
+    msg: "This file exists only in the realm of imagination." },
+  { frames: ["(?.?)", "(?_?)", "(?.?)", "(?-?)"], ms: 700,
+    msg: "Are you sure that's the right path?" },
+  { frames: ["(@_@)", "(@.@)", "(@_@)", "(@-@)"], ms: 500,
+    msg: "Looked everywhere. Under the couch, behind the fridge. Nope." },
+  { frames: ["(~_~)", "(~.~)", "(~_~)", "(~-~)", "(~_~)", "(- -)"], ms: 800,
+    msg: "File's on vacation. Did not leave a forwarding address." },
+  { frames: ["(>.<)", "(>_<)", "(>.<)", "(>.<)", "(>.>)"], ms: 600,
+    msg: "So close, yet so 404." },
+  { frames: ["(._.)", "(._. )", "( ._.)", "(._.)", "(._.)", "(-_-)"], ms: 500,
+    msg: "This path leads nowhere. Philosophically and literally." },
+];
+
+const ERROR_PAGES = {
+  403: [
+    { frames: ["(#_#)", "(#.#)", "(#_#)", "(#-#)"], ms: 600,
+      msg: "Permission denied. This file has boundaries." },
+    { frames: ["(o_o)b", "(o_o)d", "(o_o)b", "(o_o)d"], ms: 500,
+      msg: "You shall not read! (Access denied.)" },
+  ],
+  413: [
+    { frames: ["(O_O)", "(O O)", "(O_O)", "(O_O)", "(O_O)", "(o_o)"], ms: 700,
+      msg: "This file is too chonky to display inline." },
+  ],
+  415: [
+    { frames: ["[bin]", "[BIN]", "[bin]", "[b1n]", "[bin]"], ms: 400,
+      msg: "Binary file. All zeroes and ones, no letters." },
+  ],
+};
+
+const GENERIC_FRAMES = ["(x_x)", "(x_x)", "(X_X)", "(x_x)", "(x_x)", "(+_+)"];
+
+function parseStatusCode(errMsg) {
+  const m = errMsg.match(/\((\d{3})\)\s*$/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+function pickRandom(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+/**
+ * Start an ASCII animation loop on an element.
+ * Returns a cleanup function that stops the interval.
+ */
+function animateArt(el, frames, ms) {
+  if (!frames || frames.length <= 1) return () => {};
+  let i = 0;
+  const id = setInterval(() => {
+    i = (i + 1) % frames.length;
+    el.textContent = frames[i];
+  }, ms || 400);
+  return () => clearInterval(id);
+}
+
+/**
+ * Render a styled error page inside `parentEl` with a retry button.
+ * @param {HTMLElement} parentEl - container to fill
+ * @param {Error} err - the fetch error
+ * @param {string} filePath - path that failed
+ * @param {() => void} onRetry - called when retry is clicked
+ * @returns {() => void} cleanup function to stop animations
+ */
+function renderErrorPage(parentEl, err, filePath, onRetry) {
+  const status = parseStatusCode(err.message);
+  const pool = status === 404 ? NOT_FOUND_PAGES
+    : ERROR_PAGES[status] ? ERROR_PAGES[status]
+    : null;
+
+  parentEl.textContent = "";
+  parentEl.classList.add("doc-tile-error");
+
+  const page = document.createElement("div");
+  page.className = "doc-tile-error-page";
+
+  let stopAnim = () => {};
+
+  let current = pool ? pickRandom(pool) : null;
+
+  if (pool) {
+    const codeEl = document.createElement("div");
+    codeEl.className = "doc-tile-error-code";
+    codeEl.textContent = String(status);
+    page.appendChild(codeEl);
+
+    const artEl = document.createElement("div");
+    artEl.className = "doc-tile-error-art";
+    artEl.textContent = current.frames[0];
+    stopAnim = animateArt(artEl, current.frames, current.ms);
+    page.appendChild(artEl);
+
+    const msgEl = document.createElement("div");
+    msgEl.className = "doc-tile-error-msg";
+    msgEl.textContent = current.msg;
+    page.appendChild(msgEl);
+
+    // cycle button (only if more than one option)
+    if (pool.length > 1) {
+      const shuffleBtn = document.createElement("button");
+      shuffleBtn.className = "doc-tile-error-shuffle";
+      shuffleBtn.textContent = "another one";
+      shuffleBtn.addEventListener("click", () => {
+        let next;
+        do { next = pickRandom(pool); } while (next === current && pool.length > 1);
+        current = next;
+        stopAnim();
+        artEl.textContent = next.frames[0];
+        stopAnim = animateArt(artEl, next.frames, next.ms);
+        msgEl.textContent = next.msg;
+      });
+      page.appendChild(shuffleBtn);
+    }
+  } else {
+    // generic error
+    const artEl = document.createElement("div");
+    artEl.className = "doc-tile-error-art";
+    artEl.textContent = GENERIC_FRAMES[0];
+    stopAnim = animateArt(artEl, GENERIC_FRAMES, 800);
+    page.appendChild(artEl);
+
+    const msgEl = document.createElement("div");
+    msgEl.className = "doc-tile-error-msg";
+    msgEl.textContent = err.message;
+    page.appendChild(msgEl);
+  }
+
+  const pathEl = document.createElement("div");
+  pathEl.className = "doc-tile-error-path";
+  pathEl.textContent = filePath;
+  page.appendChild(pathEl);
+
+  const actions = document.createElement("div");
+  actions.className = "doc-tile-error-actions";
+
+  const retryBtn = document.createElement("button");
+  retryBtn.className = "doc-tile-error-btn";
+  retryBtn.textContent = "Retry";
+  retryBtn.addEventListener("click", () => { stopAnim(); onRetry(); });
+  actions.appendChild(retryBtn);
+
+  page.appendChild(actions);
+  parentEl.appendChild(page);
+
+  // Return a stable wrapper so callers always stop the *current* interval,
+  // even after the shuffle button has reassigned the inner `stopAnim`.
+  return () => stopAnim();
+}
+
 /** Icon name based on file extension. */
 function extToIcon(ext) {
   if ([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"].includes(ext)) return "code";
@@ -176,6 +339,7 @@ export function createDocumentTileFactory(_deps = {}) {
     let saving = false;
     let statusEl = null;
     let originalContent = "";
+    let stopErrorAnim = null;
 
     const isFileBacked = !!filePath;
     const ext = filePath
@@ -253,17 +417,22 @@ export function createDocumentTileFactory(_deps = {}) {
           el.appendChild(root);
 
           if (isFileBacked) {
-            contentEl.textContent = "Loading…";
-            api.get(`/api/files/read?path=${encodeURIComponent(filePath)}`)
-              .then((data) => {
-                if (!mounted) return;
-                contentEl.innerHTML = DOMPurify.sanitize(marked.parse(data.content));
-              })
-              .catch((err) => {
-                if (!mounted) return;
-                contentEl.textContent = `Error: ${err.message}`;
-                contentEl.classList.add("doc-tile-error");
-              });
+            const loadMarkdown = () => {
+              if (stopErrorAnim) { stopErrorAnim(); stopErrorAnim = null; }
+              contentEl.textContent = "Loading…";
+              contentEl.classList.remove("doc-tile-error");
+              contentEl.innerHTML = "";
+              api.get(`/api/files/read?path=${encodeURIComponent(filePath)}`)
+                .then((data) => {
+                  if (!mounted) return;
+                  contentEl.innerHTML = DOMPurify.sanitize(marked.parse(data.content));
+                })
+                .catch((err) => {
+                  if (!mounted) return;
+                  stopErrorAnim = renderErrorPage(contentEl, err, filePath, loadMarkdown);
+                });
+            };
+            loadMarkdown();
           } else if (content != null) {
             contentEl.innerHTML = DOMPurify.sanitize(marked.parse(content));
           }
@@ -275,13 +444,6 @@ export function createDocumentTileFactory(_deps = {}) {
           el.appendChild(root);
 
           const initialContent = content ?? "";
-
-          // Show loading placeholder while CM loads
-          if (isFileBacked) {
-            editorContainer.textContent = "Loading…";
-            editorContainer.style.padding = "var(--space-sm)";
-            editorContainer.style.color = "var(--text-dim)";
-          }
 
           const setupEditor = async (text) => {
             if (!mounted) return;
@@ -346,28 +508,42 @@ export function createDocumentTileFactory(_deps = {}) {
           };
 
           if (isFileBacked) {
-            api.get(`/api/files/read?path=${encodeURIComponent(filePath)}`)
-              .then((data) => {
-                if (!mounted) return;
-                setupEditor(data.content);
-              })
-              .catch((err) => {
-                if (!mounted) return;
-                editorContainer.textContent = `Error: ${err.message}`;
-                editorContainer.classList.add("doc-tile-error");
-              });
+            const loadFile = () => {
+              if (stopErrorAnim) { stopErrorAnim(); stopErrorAnim = null; }
+              editorContainer.textContent = "Loading…";
+              editorContainer.style.padding = "var(--space-sm)";
+              editorContainer.style.color = "var(--text-dim)";
+              editorContainer.classList.remove("doc-tile-error");
+              api.get(`/api/files/read?path=${encodeURIComponent(filePath)}`)
+                .then((data) => {
+                  if (!mounted) return;
+                  setupEditor(data.content);
+                })
+                .catch((err) => {
+                  if (!mounted) return;
+                  editorContainer.style.padding = "";
+                  editorContainer.style.color = "";
+                  stopErrorAnim = renderErrorPage(editorContainer, err, filePath, loadFile);
+                });
+            };
+            loadFile();
           } else {
-            setupEditor(initialContent).catch((err) => {
-              if (!mounted) return;
-              editorContainer.textContent = `Error: ${err.message}`;
-              editorContainer.classList.add("doc-tile-error");
-            });
+            const loadInline = () => {
+              if (stopErrorAnim) { stopErrorAnim(); stopErrorAnim = null; }
+              editorContainer.classList.remove("doc-tile-error");
+              setupEditor(initialContent).catch((err) => {
+                if (!mounted) return;
+                stopErrorAnim = renderErrorPage(editorContainer, err, filePath || "inline content", loadInline);
+              });
+            };
+            loadInline();
           }
         }
       },
 
       unmount() {
         if (!mounted) return;
+        if (stopErrorAnim) { stopErrorAnim(); stopErrorAnim = null; }
         if (editorView) {
           editorView.destroy();
           editorView = null;
