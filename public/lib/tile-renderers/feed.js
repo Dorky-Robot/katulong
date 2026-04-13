@@ -114,9 +114,11 @@ export const feedRenderer = {
     function showTopicPicker() {
       if (es) { es.close(); es = null; }
       root.innerHTML = "";
-      const selected = new Set();
 
-      // Clear persisted topic so we're back to picker state
+      // Restore checked state from persisted props
+      const selected = new Set(props.checked || []);
+
+      // Clear persisted topic so we're back to picker state (keep checked)
       if (dispatch) {
         dispatch({ type: "ui/UPDATE_PROPS", id, patch: { topic: null, title: "Feed", meta: {} } });
       }
@@ -184,6 +186,10 @@ export const feedRenderer = {
             });
           } catch { /* continue with others */ }
         }
+        // Clear deleted topics from persisted checked state
+        if (dispatch) {
+          dispatch({ type: "ui/UPDATE_PROPS", id, patch: { checked: [] } });
+        }
         showTopicPicker();
       }
 
@@ -210,10 +216,19 @@ export const feedRenderer = {
         cb.type = "checkbox";
         cb.className = "feed-tile-picker-cb";
         cb.addEventListener("click", (e) => e.stopPropagation());
+        // Restore checked state from persisted selection
+        if (selected.has(t.name)) {
+          cb.checked = true;
+          item.classList.add("selected");
+        }
         cb.addEventListener("change", () => {
           if (cb.checked) selected.add(t.name); else selected.delete(t.name);
           item.classList.toggle("selected", cb.checked);
           updateToolbar();
+          // Persist checked state to tile props
+          if (dispatch) {
+            dispatch({ type: "ui/UPDATE_PROPS", id, patch: { checked: [...selected] } });
+          }
         });
         item.appendChild(cb);
 
@@ -265,6 +280,16 @@ export const feedRenderer = {
             emptyEl.textContent = "No topics yet. Publish events to create one.";
             listArea.appendChild(emptyEl);
           }
+
+          // Prune stale topic names that no longer exist on the server
+          let pruned = false;
+          for (const name of selected) {
+            if (!knownTopics.has(name)) { selected.delete(name); pruned = true; }
+          }
+          if (pruned && dispatch) {
+            dispatch({ type: "ui/UPDATE_PROPS", id, patch: { checked: [...selected] } });
+          }
+          updateToolbar();
         });
     }
 
