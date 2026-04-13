@@ -95,11 +95,11 @@ test.describe("Sidebar & Tab Bar", () => {
       await expect(addBtn).toBeVisible();
     });
 
-    test("floating island shows utility buttons (terminal, files, port-forward, settings)", async ({ page }, testInfo) => {
+    test("floating island shows utility buttons (terminal, files, browser, settings)", async ({ page }, testInfo) => {
       await page.goto("/");
       await waitForAppReady(page);
 
-      // Desktop: 4 utility buttons (terminal, files, port-forward, settings)
+      // Desktop: 4 utility buttons (terminal, files, browser, settings)
       // Tablet: adds Esc, Tab, keyboard, dictation = 8 total
       const expected = testInfo.project.name === "tablet" ? 8 : 4;
       await expect(page.locator("#key-island .key-island-btn")).toHaveCount(expected);

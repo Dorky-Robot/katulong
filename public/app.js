@@ -35,7 +35,7 @@
     import { createPullManager } from "/lib/pull-manager.js";
     import { screenFingerprint } from "/lib/screen-fingerprint.js";
     import { createWebRTCPeer } from "/lib/webrtc-peer.js";
-    import { createPortForwardComponent } from "/lib/port-forward/port-forward-component.js";
+
     import { createNotepad } from "/lib/notepad.js";
     import { createCardCarousel } from "/lib/card-carousel.js";
     import { createPinchGesture } from "/lib/pinch-gesture.js";
@@ -960,7 +960,6 @@
 
     function activateSession(name) {
       // Close alternative views — switching sessions returns to terminal
-      if (portForwardEl?.classList.contains("active")) closePortForward();
       if (notepad.isActive()) notepad.hide();
       // If the target session has an active helm session, show helm view; otherwise terminal
       if (helmActiveSessions.has(name)) {
@@ -1179,10 +1178,6 @@
         const btn = document.getElementById("sidebar-portfwd-btn");
         if (btn) btn.style.display = enabled ? "" : "none";
         if (shortcutBarInstance) shortcutBarInstance.setPortProxyEnabled(enabled);
-        if (!enabled && portForwardEl.classList.contains("active")) {
-          closePortForward();
-          getTerm()?.focus();
-        }
       }
     });
     settingsHandlers.init();
@@ -1414,6 +1409,7 @@
       tileTypes: [
         { type: "terminal",     name: "Terminal", icon: "terminal-window" },
         { type: "feed",          name: "Feed",     icon: "rss" },
+        { type: "localhost-browser", name: "Browser", icon: "globe-simple" },
       ],
       onCreateTile: (type) => {
         if (type === "terminal") {
@@ -1424,6 +1420,8 @@
           openFileBrowserTile();
         } else if (type === "feed") {
           openFeedTile();
+        } else if (type === "localhost-browser") {
+          openLocalhostBrowserTile();
         }
       },
       onTabClick: (name) => {
@@ -1485,7 +1483,7 @@
       },
       onTerminalClick: () => returnToTerminal(),
       onFilesClick: () => openFileBrowserTile(),
-      onPortForwardClick: () => togglePortForward(),
+      onPortForwardClick: () => openLocalhostBrowserTile(),
       onSettingsClick: () => modals.open('settings'),
       onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
       onDictationClick: () => openDictationModal(),
@@ -1714,17 +1712,9 @@
     // public/lib/tiles/file-browser-tile.js.
 
     function returnToTerminal() {
-      if (portForwardEl?.classList.contains("active")) closePortForward();
       if (notepad.isActive()) notepad.hide();
       if (helmViewEl?.classList.contains("active")) hideHelmView();
       getTerm()?.focus();
-    }
-
-    function closePortForward() {
-      portForwardEl.classList.remove("active");
-      termContainer.classList.remove("pf-hidden");
-      bar.style.display = "";
-      if (joystickEl) joystickEl.style.display = "";
     }
 
     /** Create a new file-browser tile at the active session's cwd.
@@ -1765,31 +1755,14 @@
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
-    // --- Port Forward ---
+    // --- Localhost Browser (tile) ---
 
-    const portForwardEl = document.getElementById("port-forward");
-    let portForwardMounted = false;
-    let portForwardComponent = null;
-
-    function togglePortForward() {
-      const isActive = portForwardEl.classList.contains("active");
-      if (isActive) {
-        closePortForward();
-        getTerm()?.focus();
-      } else {
-        if (!portForwardMounted) {
-          portForwardComponent = createPortForwardComponent({
-            onClose: () => togglePortForward(),
-          });
-          portForwardComponent.mount(portForwardEl);
-          portForwardMounted = true;
-        }
-        termContainer.classList.add("pf-hidden");
-        portForwardEl.classList.add("active");
-        bar.style.display = "none";
-        if (joystickEl) joystickEl.style.display = "none";
-        portForwardComponent.focus();
-      }
+    function openLocalhostBrowserTile() {
+      const tileId = `lb-${Date.now().toString(36)}`;
+      uiStore.addTile(
+        { id: tileId, type: "localhost-browser", props: {} },
+        { focus: true, insertAt: "afterFocus" },
+      );
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
@@ -1800,7 +1773,7 @@
 
     const sidebarPortfwdBtn = document.getElementById("sidebar-portfwd-btn");
     if (sidebarPortfwdBtn) {
-      sidebarPortfwdBtn.addEventListener("click", togglePortForward);
+      sidebarPortfwdBtn.addEventListener("click", openLocalhostBrowserTile);
     }
 
     const sidebarSettingsBtn = document.getElementById("sidebar-settings-btn");
@@ -1847,7 +1820,6 @@
 
     function showHelmView() {
       ensureHelmMounted();
-      if (portForwardEl?.classList.contains("active")) closePortForward();
       termContainer.classList.add("helm-hidden");
       helmViewEl.classList.add("active");
       helmComponent.showSession(state.session.name);
