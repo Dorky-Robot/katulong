@@ -1,14 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  EMPTY_STATE,
-  SET_ICON,
-  REMOVE_ICON,
-  RENAME,
-  CLEAR,
-  createIconStore,
-} from "../public/lib/icon-store.js";
+import { createIconStore } from "../public/lib/icon-store.js";
 
 describe("icon-store reducer", () => {
   it("SET_ICON adds an icon", () => {

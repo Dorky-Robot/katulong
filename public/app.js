@@ -84,7 +84,8 @@
     // URL ?s= hint — used only for boot, not as ongoing state.
     const explicitSession = new URLSearchParams(location.search).get("s");
 
-    // scrolledUpBeforeDisconnect now lives in connectionStore (cm).
+    // scrolledUpBeforeDisconnect now lives in the connection store
+    // (accessed via cm.setScrolledUp / cm.getState().scrolledUpBeforeDisconnect).
 
     // Derive the active session name from ui-store + renderer registry.
     // Replaces the old mutable `state.session.name` — the source of truth
@@ -1418,6 +1419,7 @@
         if (carousel.isActive()) carousel.renameCard(oldName, newName);
         terminalPool.rename(oldName, newName);
         notepad.rename(oldName, newName);
+        iconStore.rename(oldName, newName);
         // Update the tab element in-place BEFORE triggering store updates
         // to prevent a full re-render that causes the tab to visually jump.
         if (shortcutBarInstance) shortcutBarInstance.renameTabEl(oldName, newName);

@@ -26,7 +26,7 @@ export const CONFIRM     = "reconciler/CONFIRM";
 export const RESET       = "reconciler/RESET";
 export const BOOT_DONE   = "reconciler/BOOT_DONE";
 
-function reducer(state, action) {
+function reducer(state = EMPTY_STATE, action) {
   switch (action.type) {
     case CONFIRM: {
       // If dead set changed, reset counter and record new key

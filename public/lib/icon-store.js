@@ -16,9 +16,8 @@ export const EMPTY_STATE = Object.freeze({ icons: Object.freeze({}) });
 export const SET_ICON    = "icon/SET";
 export const REMOVE_ICON = "icon/REMOVE";
 export const RENAME      = "icon/RENAME";
-export const CLEAR       = "icon/CLEAR";
 
-function reducer(state, action) {
+function reducer(state = EMPTY_STATE, action) {
   switch (action.type) {
     case SET_ICON: {
       if (state.icons[action.session] === action.icon) return state;
@@ -34,8 +33,6 @@ function reducer(state, action) {
       const { [action.oldName]: icon, ...rest } = state.icons;
       return { icons: { ...rest, [action.newName]: icon } };
     }
-    case CLEAR:
-      return EMPTY_STATE;
     default:
       return state;
   }
