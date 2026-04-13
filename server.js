@@ -269,7 +269,7 @@ const routes = [
     shortcutsPath: join(DATA_DIR, "shortcuts.json"),
     auth, csrf,
     topicBroker: createTopicBroker(),
-    getExternalUrl: () => _lastExternalUrl,
+    getExternalUrl: () => configManager.getPublicUrl() || _lastExternalUrl,
   }),
   ...createFileBrowserRoutes({ json, parseJSON, auth, csrf }),
   ...createPortProxyRoutes({ auth, PORT, configManager }),

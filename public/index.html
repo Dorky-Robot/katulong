@@ -2578,6 +2578,15 @@
 
           <!-- Remote tab content -->
           <div class="settings-tab-content" id="settings-tab-remote">
+            <div class="settings-row" style="flex-direction: column; align-items: stretch; gap: var(--space-xs);">
+              <span class="settings-label">Public URL</span>
+              <input type="url" id="public-url-input" class="palette-hex-input" style="width: 100%; box-sizing: border-box;"
+                     placeholder="https://myhost.example.com" spellcheck="false" autocomplete="off" />
+            </div>
+            <p class="tab-description" style="margin-top: 0;">
+              Your tunnel URL for remote access. Used by CLI tools and pub/sub.
+            </p>
+
             <div class="settings-row">
               <span class="settings-label">Port Proxy</span>
               <label class="toggle-switch">
