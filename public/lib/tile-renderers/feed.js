@@ -114,9 +114,11 @@ export const feedRenderer = {
     function showTopicPicker() {
       if (es) { es.close(); es = null; }
       root.innerHTML = "";
-      const selected = new Set();
 
-      // Clear persisted topic so we're back to picker state
+      // Restore checked state from persisted props
+      const selected = new Set(props.checked || []);
+
+      // Clear persisted topic so we're back to picker state (keep checked)
       if (dispatch) {
         dispatch({ type: "ui/UPDATE_PROPS", id, patch: { topic: null, title: "Feed", meta: {} } });
       }
@@ -184,6 +186,11 @@ export const feedRenderer = {
             });
           } catch { /* continue with others */ }
         }
+        // Clear deleted topics from persisted checked state
+        if (dispatch) {
+          props.checked = [];
+          dispatch({ type: "ui/UPDATE_PROPS", id, patch: { checked: [] } });
+        }
         showTopicPicker();
       }
 
@@ -210,10 +217,20 @@ export const feedRenderer = {
         cb.type = "checkbox";
         cb.className = "feed-tile-picker-cb";
         cb.addEventListener("click", (e) => e.stopPropagation());
+        // Restore checked state from persisted selection
+        if (selected.has(t.name)) {
+          cb.checked = true;
+          item.classList.add("selected");
+        }
         cb.addEventListener("change", () => {
           if (cb.checked) selected.add(t.name); else selected.delete(t.name);
           item.classList.toggle("selected", cb.checked);
           updateToolbar();
+          // Persist checked state to tile props
+          if (dispatch) {
+            props.checked = [...selected];
+            dispatch({ type: "ui/UPDATE_PROPS", id, patch: { checked: [...selected] } });
+          }
         });
         item.appendChild(cb);
 
@@ -259,6 +276,7 @@ export const feedRenderer = {
 
           if (topics.length > 0) {
             for (const t of topics) createTopicItem(t);
+            updateToolbar();
           } else {
             emptyEl = document.createElement("div");
             emptyEl.className = "feed-tile-picker-empty";
