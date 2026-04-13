@@ -530,6 +530,7 @@ export function createDocumentTileFactory(_deps = {}) {
           } else {
             const loadInline = () => {
               if (stopErrorAnim) { stopErrorAnim(); stopErrorAnim = null; }
+              editorContainer.classList.remove("doc-tile-error");
               setupEditor(initialContent).catch((err) => {
                 if (!mounted) return;
                 stopErrorAnim = renderErrorPage(editorContainer, err, filePath || "inline content", loadInline);
