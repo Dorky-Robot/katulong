@@ -103,14 +103,30 @@ export const feedRenderer = {
     // ── Topic picker (inline) ───────────────────────────────────
     function showTopicPicker() {
       root.innerHTML = "";
+      const selected = new Set();
 
       const picker = document.createElement("div");
       picker.className = "feed-tile-picker";
 
-      const title = document.createElement("div");
-      title.className = "feed-tile-picker-title";
-      title.textContent = "Subscribe to a topic";
-      picker.appendChild(title);
+      // Header row with title + toolbar
+      const header = document.createElement("div");
+      header.className = "feed-tile-picker-title";
+
+      const titleText = document.createElement("span");
+      titleText.textContent = "Subscribe to a topic";
+      header.appendChild(titleText);
+
+      const toolbar = document.createElement("span");
+      toolbar.className = "feed-tile-picker-toolbar";
+      toolbar.style.display = "none";
+      header.appendChild(toolbar);
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "feed-tile-picker-delete-btn";
+      deleteBtn.textContent = "Delete";
+      toolbar.appendChild(deleteBtn);
+
+      picker.appendChild(header);
 
       const listArea = document.createElement("div");
       listArea.className = "feed-tile-picker-list";
@@ -118,6 +134,34 @@ export const feedRenderer = {
       picker.appendChild(listArea);
 
       root.appendChild(picker);
+
+      function updateToolbar() {
+        const count = selected.size;
+        toolbar.style.display = count > 0 ? "" : "none";
+        deleteBtn.textContent = count === 1 ? "Delete" : `Delete (${count})`;
+      }
+
+      async function deleteSelected() {
+        deleteBtn.disabled = true;
+        deleteBtn.textContent = "Deleting\u2026";
+        const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
+        const headers = { "Content-Type": "application/json" };
+        if (csrf) headers["x-csrf-token"] = csrf;
+
+        for (const topic of selected) {
+          try {
+            await fetch(`/api/topics/${encodeURIComponent(topic)}`, {
+              method: "DELETE", credentials: "same-origin", redirect: "error", headers,
+            });
+          } catch { /* continue with others */ }
+        }
+        showTopicPicker();
+      }
+
+      deleteBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteSelected();
+      });
 
       // Fetch topics and populate
       fetch("/api/topics", { credentials: "same-origin", redirect: "error" })
@@ -129,8 +173,19 @@ export const feedRenderer = {
 
           if (topics.length > 0) {
             for (const t of topics) {
-              const item = document.createElement("button");
+              const item = document.createElement("div");
               item.className = "feed-tile-picker-item";
+
+              const cb = document.createElement("input");
+              cb.type = "checkbox";
+              cb.className = "feed-tile-picker-cb";
+              cb.addEventListener("click", (e) => e.stopPropagation());
+              cb.addEventListener("change", () => {
+                if (cb.checked) selected.add(t.name); else selected.delete(t.name);
+                item.classList.toggle("selected", cb.checked);
+                updateToolbar();
+              });
+              item.appendChild(cb);
 
               const name = document.createElement("span");
               name.className = "feed-tile-picker-name";

@@ -13,6 +13,8 @@ class FakeElement {
     this.dataset = {};
     this.tabIndex = -1;
     this._listeners = {};
+    this.style = {};
+    this.classList = { toggle() {}, add() {}, remove() {} };
     this.innerHTML = "";
     this.scrollHeight = 0;
     this.scrollTop = 0;
@@ -131,8 +133,9 @@ describe("feedRenderer", () => {
 
       // Title should say "Subscribe to a topic"
       assert.ok(picker.children.length >= 1);
-      assert.equal(picker.children[0].className, "feed-tile-picker-title");
-      assert.equal(picker.children[0].textContent, "Subscribe to a topic");
+      const titleEl = picker.children[0];
+      assert.equal(titleEl.className, "feed-tile-picker-title");
+      assert.equal(titleEl.children[0].textContent, "Subscribe to a topic");
 
       // List area with loading text
       const listArea = picker.children[1];
