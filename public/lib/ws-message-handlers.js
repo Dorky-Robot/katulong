@@ -10,7 +10,6 @@ export const wsMessageHandlers = {
   attached(msg, ctx) {
     return {
       stateUpdates: {
-        'session.name': msg.session,
         'scroll.userScrolledUpBeforeDisconnect': false,
       },
       effects: [
@@ -26,9 +25,7 @@ export const wsMessageHandlers = {
 
   switched(msg, ctx) {
     return {
-      stateUpdates: {
-        'session.name': msg.session,
-      },
+      stateUpdates: {},
       effects: [
         // No terminalReset — the terminal pool keeps each session's xterm
         // intact with its content. No snapshot replay either — the pull
@@ -118,7 +115,7 @@ export const wsMessageHandlers = {
 
   'session-renamed'(msg, ctx) {
     return {
-      stateUpdates: { 'session.name': msg.name },
+      stateUpdates: {},
       effects: [
         { type: 'carouselRename', oldName: ctx.currentSessionName, newName: msg.name },
         { type: 'poolRename', oldName: ctx.currentSessionName, newName: msg.name },
@@ -155,11 +152,10 @@ export const wsMessageHandlers = {
   },
 
   'topic-new'(msg, ctx) {
-    // Dispatch DOM event so feed tile pickers can update live
-    window.dispatchEvent(new CustomEvent('katulong:topic-new', {
-      detail: { topic: msg.topic, meta: msg.meta },
-    }));
-    return { stateUpdates: {}, effects: [] };
+    return {
+      stateUpdates: {},
+      effects: [{ type: 'dispatchTopicNew', topic: msg.topic, meta: msg.meta }],
+    };
   },
 
   'device-auth-request'(msg, ctx) {

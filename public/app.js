@@ -49,6 +49,7 @@
     import { navigateTab as computeNavigateTab, moveTab as computeMoveTab, jumpToTab as computeJumpToTab } from "/lib/navigation.js";
     import { createIconStore } from "/lib/icon-store.js";
     import { createReconcilerStore } from "/lib/reconciler-store.js";
+    import { escapeHtml, escapeAttr } from "/lib/utils.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -1296,12 +1297,12 @@
           const keys = await api.get("/api/api-keys");
           if (!keys.length) { listEl.innerHTML = '<p class="tokens-loading">No API keys yet.</p>'; return; }
           listEl.innerHTML = keys.map(k => `
-            <div class="token-item" data-id="${k.id}">
+            <div class="token-item" data-id="${escapeAttr(k.id)}">
               <div class="token-item-info">
-                <span class="token-item-name">${k.name}</span>
-                <span class="token-item-meta">${k.prefix}... · ${k.lastUsedAt ? "used " + new Date(k.lastUsedAt).toLocaleDateString() : "never used"}</span>
+                <span class="token-item-name">${escapeHtml(k.name)}</span>
+                <span class="token-item-meta">${escapeHtml(k.prefix)}... · ${k.lastUsedAt ? "used " + new Date(k.lastUsedAt).toLocaleDateString() : "never used"}</span>
               </div>
-              <button class="token-item-revoke" data-id="${k.id}">Revoke</button>
+              <button class="token-item-revoke" data-id="${escapeAttr(k.id)}">Revoke</button>
             </div>
           `).join("");
           listEl.querySelectorAll(".token-item-revoke").forEach(btn => {
@@ -1312,9 +1313,6 @@
             });
           });
         } catch { if (listEl) listEl.innerHTML = '<p class="tokens-loading">Failed to load.</p>'; }
-      }
-
-      async function loadBaseUrl() {
       }
 
       if (createBtn && form) {
@@ -1328,8 +1326,8 @@
             form.style.display = "none"; createBtn.style.display = ""; nameInput.value = "";
             const el = document.createElement("div");
             el.className = "token-item token-item-new";
-            el.innerHTML = '<div class="token-item-info"><span class="token-item-name">' + data.name + '</span>'
-              + '<code style="display:block;margin-top:0.25rem;font-size:0.75rem;word-break:break-all;color:var(--success);cursor:pointer;">' + data.key + '</code>'
+            el.innerHTML = '<div class="token-item-info"><span class="token-item-name">' + escapeHtml(data.name) + '</span>'
+              + '<code style="display:block;margin-top:0.25rem;font-size:0.75rem;word-break:break-all;color:var(--success);cursor:pointer;">' + escapeHtml(data.key) + '</code>'
               + '<span class="token-item-meta">Click key to copy. It won\'t be shown again.</span></div>';
             el.querySelector("code").addEventListener("click", () => navigator.clipboard.writeText(data.key).then(() => showToast("Copied!")));
             listEl.prepend(el);
@@ -1339,7 +1337,7 @@
       }
 
       document.querySelectorAll(".settings-tab").forEach(tab => {
-        tab.addEventListener("click", () => { if (tab.dataset.tab === "api") { loadApiKeys(); loadBaseUrl(); } });
+        tab.addEventListener("click", () => { if (tab.dataset.tab === "api") { loadApiKeys(); } });
       });
     }
 
@@ -1956,6 +1954,11 @@
       openTab: (e) => {
         windowTabSet.addTab(e.session);
         switchSession(e.session);
+      },
+      dispatchTopicNew: (e) => {
+        window.dispatchEvent(new CustomEvent('katulong:topic-new', {
+          detail: { topic: e.topic, meta: e.meta },
+        }));
       },
       showNotification: (e) => {
         const t = e.title || "Katulong";
