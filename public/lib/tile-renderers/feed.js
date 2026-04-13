@@ -188,7 +188,6 @@ export const feedRenderer = {
         }
         // Clear deleted topics from persisted checked state
         if (dispatch) {
-          props.checked = [];
           dispatch({ type: "ui/UPDATE_PROPS", id, patch: { checked: [] } });
         }
         showTopicPicker();
@@ -228,7 +227,6 @@ export const feedRenderer = {
           updateToolbar();
           // Persist checked state to tile props
           if (dispatch) {
-            props.checked = [...selected];
             dispatch({ type: "ui/UPDATE_PROPS", id, patch: { checked: [...selected] } });
           }
         });
@@ -276,13 +274,21 @@ export const feedRenderer = {
 
           if (topics.length > 0) {
             for (const t of topics) createTopicItem(t);
-            updateToolbar();
           } else {
             emptyEl = document.createElement("div");
             emptyEl.className = "feed-tile-picker-empty";
             emptyEl.textContent = "No topics yet. Publish events to create one.";
             listArea.appendChild(emptyEl);
           }
+
+          // Prune stale topic names that no longer exist on the server
+          for (const name of selected) {
+            if (!knownTopics.has(name)) selected.delete(name);
+          }
+          if (dispatch) {
+            dispatch({ type: "ui/UPDATE_PROPS", id, patch: { checked: [...selected] } });
+          }
+          updateToolbar();
         });
     }
 
