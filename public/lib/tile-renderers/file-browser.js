@@ -8,6 +8,7 @@
  */
 
 import { createFileBrowserTileFactory } from "../tiles/file-browser-tile.js";
+import { isImagePath } from "../tiles/image-tile.js";
 
 let factory = null;
 let _uiStore = null;
@@ -41,31 +42,34 @@ export const fileBrowserRenderer = {
   mount(el, { id, props, dispatch, ctx }) {
     if (!factory) throw new Error("fileBrowserRenderer.init() not called");
 
-    // --- File open: open a document tile adjacent to this browser ---
+    // --- File open: open a document or image tile adjacent to this browser ---
     function onFileOpen(filePath) {
       if (!_uiStore) return;
       const state = _uiStore.getState();
 
+      const isImage = isImagePath(filePath);
+      const previewType = isImage ? "image" : "document";
+
       // Swap semantics: if the tile immediately to the right is already
-      // a document tile, remove it first so we get one preview pane, not
-      // an accumulating stack.
+      // a preview tile (document or image), remove it first so we get
+      // one preview pane, not an accumulating stack.
       const thisTile = state.tiles[id];
       if (thisTile) {
         const rightX = thisTile.x + 1;
         for (const [tid, t] of Object.entries(state.tiles)) {
-          if (t.x === rightX && t.type === "document") {
+          if (t.x === rightX && (t.type === "document" || t.type === "image")) {
             _uiStore.removeTile(tid);
             break;
           }
         }
       }
 
-      // Single dispatch — insertAfter places the doc tile right of
+      // Single dispatch — insertAfter places the tile right of
       // this browser tile. focus:true sets focusedId in the store;
       // tile-host reacts and tells the carousel to scroll to it.
-      const docId = `doc-${Date.now().toString(36)}`;
+      const tileId = `${isImage ? "img" : "doc"}-${Date.now().toString(36)}`;
       _uiStore.addTile(
-        { id: docId, type: "document", props: { filePath } },
+        { id: tileId, type: previewType, props: { filePath } },
         { focus: true, insertAfter: id },
       );
     }
