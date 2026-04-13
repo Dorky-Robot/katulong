@@ -341,6 +341,7 @@ export function createConnectionManager({
     init,
     dispose,
     transportChanged: (t) => connectionStore.transportChanged(t),
+    setScrolledUp: (value) => connectionStore.setScrolledUp(value),
     get transport() {
       return transport;
     },
