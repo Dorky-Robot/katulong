@@ -103,22 +103,26 @@ Target extraction from `tool_input`:
 
 ## Hook configuration
 
-Users configure Claude Code to POST events to katulong:
+Configure Claude Code to relay events via the `katulong relay-hook`
+command. This resolves the server URL dynamically from
+`~/.katulong/server.json` (localhost) or `~/.katulong/remote.json`
+(tunnel URL + API key), so hooks work regardless of which port
+katulong is running on:
 
 ```json
 {
   "hooks": {
     "UserPromptSubmit": [{
       "matcher": "",
-      "hooks": [{ "type": "http", "url": "http://localhost:3001/api/claude-events" }]
+      "hooks": [{ "type": "command", "command": "katulong relay-hook" }]
     }],
     "PostToolUse": [{
       "matcher": "*",
-      "hooks": [{ "type": "http", "url": "http://localhost:3001/api/claude-events" }]
+      "hooks": [{ "type": "command", "command": "katulong relay-hook" }]
     }],
     "Stop": [{
       "matcher": "",
-      "hooks": [{ "type": "http", "url": "http://localhost:3001/api/claude-events" }]
+      "hooks": [{ "type": "command", "command": "katulong relay-hook" }]
     }]
   }
 }
@@ -126,6 +130,11 @@ Users configure Claude Code to POST events to katulong:
 
 This goes in `~/.claude/settings.local.json` (global) or
 `.claude/settings.local.json` (project-level).
+
+**Do not hardcode `http://localhost:<port>` in hook URLs.** The port
+changes between instances (dev, staging, production) and between
+restarts when using dynamic ports. The `relay-hook` command reads the
+actual port from `server.json` at invocation time.
 
 ## Security
 
@@ -144,7 +153,6 @@ This goes in `~/.claude/settings.local.json` (global) or
 
 ## Future
 
-- `katulong setup claude-hooks` CLI command to automate hook config
 - Auto-discovery of claude topics in the feed tile picker
 - Human-friendly topic names (from Claude's `--name` flag)
 - Rich HTML conduit — the feed tile becomes a two-way channel
