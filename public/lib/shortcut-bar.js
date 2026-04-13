@@ -1020,7 +1020,7 @@ export function createShortcutBar(options = {}) {
 
     // Platform class — set once, never changes (platform is const)
     container.classList.remove("bar-desktop", "bar-ipad", "bar-phone");
-    container.classList.add(`bar-${platform}`);
+    container.classList.add("bar-ipad");
     document.body.dataset.platform = platform;
 
     // ── Tab strip ──────────────────────────────────────────────────
