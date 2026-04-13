@@ -1,8 +1,11 @@
 /**
- * Tests for tab order sync — carousel as source of truth
+ * Tests for tab order sync — ui-store as source of truth
  *
  * Verifies:
- * - navigateTab logic uses carousel order when carousel is active
+ * - navigateTab uses uiStore order and focusedId (pure function)
+ * - navigateTab works for non-terminal tiles (feed, file-browser)
+ * - moveTab reorders tiles in ui-store order
+ * - jumpToTab jumps to specific positions
  * - Tab bar session list uses carousel order when carousel is active
  * - windowTabSet syncs to carousel order after restore
  * - Drag reorder through windowTabSet syncs carousel via subscriber
@@ -33,6 +36,7 @@ globalThis.BroadcastChannel = class {
 };
 
 const { createWindowTabSet } = await import("../public/lib/window-tab-set.js");
+const { navigateTab, moveTab, jumpToTab } = await import("../public/lib/navigation.js");
 
 function makeTabSet(initialTabs = []) {
   stores.session = {};
@@ -51,16 +55,13 @@ function mockCarousel(cards, active = true) {
   };
 }
 
-/**
- * Extracted navigateTab logic — mirrors app.js implementation.
- * Uses carousel order when active, falls back to windowTabSet.
- */
-function navigateTab(direction, carousel, windowTabSet, currentSession) {
-  const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-  if (tabs.length <= 1) return null;
-  const idx = tabs.indexOf(currentSession);
-  if (idx === -1) return null;
-  return tabs[(idx + direction + tabs.length) % tabs.length];
+/** Build a minimal uiState for navigation tests */
+function mockUiState(order, focusedId) {
+  const tiles = {};
+  for (const id of order) {
+    tiles[id] = { id, type: "terminal", props: {} };
+  }
+  return { order, focusedId, tiles };
 }
 
 /**
@@ -73,62 +74,120 @@ function getSessionList(carousel, windowTabSet, allSessions) {
   return tabNames.map(n => sessionMap.get(n) || { name: n }).filter(Boolean);
 }
 
-describe("navigateTab with carousel as source of truth", () => {
+describe("navigateTab — pure function using uiStore state", () => {
   beforeEach(() => {
     stores.session = {};
     stores.local = {};
   });
 
-  it("uses carousel order when carousel is active", () => {
-    const carousel = mockCarousel(["c", "a", "b"]);
-    const ts = makeTabSet(["a", "b", "c"]);
-
-    // From "a", next (+1) should go to "b" in carousel order [c, a, b]
-    const next = navigateTab(+1, carousel, ts, "a");
-    assert.equal(next, "b");
+  it("navigates to next tile by focusedId", () => {
+    const state = mockUiState(["c", "a", "b"], "a");
+    const action = navigateTab(state, +1);
+    assert.equal(action.id, "b");
   });
 
-  it("uses carousel order for previous tab", () => {
-    const carousel = mockCarousel(["c", "a", "b"]);
-    const ts = makeTabSet(["a", "b", "c"]);
-
-    // From "a", prev (-1) should go to "c" in carousel order [c, a, b]
-    const prev = navigateTab(-1, carousel, ts, "a");
-    assert.equal(prev, "c");
+  it("navigates to previous tile by focusedId", () => {
+    const state = mockUiState(["c", "a", "b"], "a");
+    const action = navigateTab(state, -1);
+    assert.equal(action.id, "c");
   });
 
-  it("wraps around at end of carousel", () => {
-    const carousel = mockCarousel(["c", "a", "b"]);
-    const ts = makeTabSet(["a", "b", "c"]);
-
-    // From "b" (last in carousel), next (+1) should wrap to "c"
-    const next = navigateTab(+1, carousel, ts, "b");
-    assert.equal(next, "c");
+  it("wraps around at end of order", () => {
+    const state = mockUiState(["c", "a", "b"], "b");
+    const action = navigateTab(state, +1);
+    assert.equal(action.id, "c");
   });
 
-  it("falls back to windowTabSet when carousel is inactive", () => {
-    const carousel = mockCarousel(["c", "a", "b"], false);
-    const ts = makeTabSet(["a", "b", "c"]);
-
-    // From "a", next (+1) should go to "b" in tab set order [a, b, c]
-    const next = navigateTab(+1, carousel, ts, "a");
-    assert.equal(next, "b");
+  it("wraps around at start of order", () => {
+    const state = mockUiState(["c", "a", "b"], "c");
+    const action = navigateTab(state, -1);
+    assert.equal(action.id, "b");
   });
 
-  it("returns null when current session is not in list", () => {
-    const carousel = mockCarousel(["a", "b"]);
-    const ts = makeTabSet(["a", "b"]);
-
-    const next = navigateTab(+1, carousel, ts, "unknown");
-    assert.equal(next, null);
+  it("returns null when focusedId is not in order", () => {
+    const state = mockUiState(["a", "b"], "unknown");
+    const action = navigateTab(state, +1);
+    assert.equal(action, null);
   });
 
-  it("returns null when only one tab", () => {
-    const carousel = mockCarousel(["a"]);
-    const ts = makeTabSet(["a"]);
+  it("returns null when only one tile", () => {
+    const state = mockUiState(["a"], "a");
+    const action = navigateTab(state, +1);
+    assert.equal(action, null);
+  });
 
-    const next = navigateTab(+1, carousel, ts, "a");
-    assert.equal(next, null);
+  it("works with non-terminal tile IDs (feed, file-browser)", () => {
+    // This is the key bug fix — tile IDs like "feed-abc123" are used
+    // as focusedId, not session names. Old code would fail here because
+    // state.session.name would hold a terminal session name, not the
+    // feed tile's ID.
+    const state = mockUiState(["session-1", "feed-abc123", "session-2"], "feed-abc123");
+    const action = navigateTab(state, +1);
+    assert.equal(action.id, "session-2");
+  });
+
+  it("navigates backward from non-terminal tile", () => {
+    const state = mockUiState(["session-1", "feed-abc123", "session-2"], "feed-abc123");
+    const action = navigateTab(state, -1);
+    assert.equal(action.id, "session-1");
+  });
+
+  it("wraps from non-terminal tile at end", () => {
+    const state = mockUiState(["session-1", "feed-abc123"], "feed-abc123");
+    const action = navigateTab(state, +1);
+    assert.equal(action.id, "session-1");
+  });
+});
+
+describe("moveTab — pure function using uiStore state", () => {
+  it("swaps focused tile with its right neighbor", () => {
+    const state = mockUiState(["a", "b", "c"], "b");
+    const action = moveTab(state, +1);
+    assert.deepEqual(action.order, ["a", "c", "b"]);
+  });
+
+  it("swaps focused tile with its left neighbor", () => {
+    const state = mockUiState(["a", "b", "c"], "b");
+    const action = moveTab(state, -1);
+    assert.deepEqual(action.order, ["b", "a", "c"]);
+  });
+
+  it("returns null at left edge (no wrap)", () => {
+    const state = mockUiState(["a", "b", "c"], "a");
+    const action = moveTab(state, -1);
+    assert.equal(action, null);
+  });
+
+  it("returns null at right edge (no wrap)", () => {
+    const state = mockUiState(["a", "b", "c"], "c");
+    const action = moveTab(state, +1);
+    assert.equal(action, null);
+  });
+});
+
+describe("jumpToTab — pure function using uiStore state", () => {
+  it("jumps to position 1 (first tile)", () => {
+    const state = mockUiState(["a", "b", "c"], "c");
+    const action = jumpToTab(state, 1);
+    assert.equal(action.id, "a");
+  });
+
+  it("jumps to position 3 (third tile)", () => {
+    const state = mockUiState(["a", "b", "c"], "a");
+    const action = jumpToTab(state, 3);
+    assert.equal(action.id, "c");
+  });
+
+  it("returns null when already at target position", () => {
+    const state = mockUiState(["a", "b", "c"], "a");
+    const action = jumpToTab(state, 1);
+    assert.equal(action, null);
+  });
+
+  it("returns null for out-of-range position", () => {
+    const state = mockUiState(["a", "b"], "a");
+    const action = jumpToTab(state, 5);
+    assert.equal(action, null);
   });
 });
 
@@ -182,7 +241,6 @@ describe("windowTabSet syncs to carousel order after restore", () => {
     const ts = makeTabSet(["a", "b", "c"]);
     assert.deepEqual(ts.getTabs(), ["a", "b", "c"]);
 
-    // Simulate carousel restoring with different order
     const carouselOrder = ["c", "a", "b"];
     ts.reorderTabs(carouselOrder);
 
@@ -192,10 +250,8 @@ describe("windowTabSet syncs to carousel order after restore", () => {
   it("reorderTabs drops tabs not in windowTabSet", () => {
     const ts = makeTabSet(["a", "b"]);
 
-    // Carousel has an extra card that windowTabSet doesn't know about
     ts.reorderTabs(["b", "unknown", "a"]);
 
-    // "unknown" is filtered out (not in ts.tabs)
     assert.deepEqual(ts.getTabs(), ["b", "a"]);
   });
 
@@ -219,7 +275,6 @@ describe("drag reorder syncs carousel via windowTabSet subscriber", () => {
     const ts = makeTabSet(["a", "b", "c"]);
     let carouselCards = ["a", "b", "c"];
 
-    // Simulate the app.js subscriber that syncs carousel from windowTabSet
     ts.subscribe(() => {
       const newOrder = ts.getTabs().filter(id => carouselCards.includes(id));
       for (const id of carouselCards) {
@@ -228,10 +283,8 @@ describe("drag reorder syncs carousel via windowTabSet subscriber", () => {
       carouselCards = newOrder;
     });
 
-    // Simulate drag reorder: move "c" to position 0
     ts.reorderTabs(["c", "a", "b"]);
 
-    // Both should now agree
     assert.deepEqual(ts.getTabs(), ["c", "a", "b"]);
     assert.deepEqual(carouselCards, ["c", "a", "b"]);
   });
