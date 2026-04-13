@@ -49,7 +49,7 @@
     import { navigateTab as computeNavigateTab, moveTab as computeMoveTab, jumpToTab as computeJumpToTab } from "/lib/navigation.js";
     import { createIconStore } from "/lib/icon-store.js";
     import { createReconcilerStore } from "/lib/reconciler-store.js";
-    import { escapeHtml } from "/lib/utils.js";
+    import { escapeHtml, escapeAttr } from "/lib/utils.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -1297,12 +1297,12 @@
           const keys = await api.get("/api/api-keys");
           if (!keys.length) { listEl.innerHTML = '<p class="tokens-loading">No API keys yet.</p>'; return; }
           listEl.innerHTML = keys.map(k => `
-            <div class="token-item" data-id="${escapeHtml(k.id)}">
+            <div class="token-item" data-id="${escapeAttr(k.id)}">
               <div class="token-item-info">
                 <span class="token-item-name">${escapeHtml(k.name)}</span>
                 <span class="token-item-meta">${escapeHtml(k.prefix)}... · ${k.lastUsedAt ? "used " + new Date(k.lastUsedAt).toLocaleDateString() : "never used"}</span>
               </div>
-              <button class="token-item-revoke" data-id="${escapeHtml(k.id)}">Revoke</button>
+              <button class="token-item-revoke" data-id="${escapeAttr(k.id)}">Revoke</button>
             </div>
           `).join("");
           listEl.querySelectorAll(".token-item-revoke").forEach(btn => {
@@ -1313,9 +1313,6 @@
             });
           });
         } catch { if (listEl) listEl.innerHTML = '<p class="tokens-loading">Failed to load.</p>'; }
-      }
-
-      async function loadBaseUrl() {
       }
 
       if (createBtn && form) {
@@ -1340,7 +1337,7 @@
       }
 
       document.querySelectorAll(".settings-tab").forEach(tab => {
-        tab.addEventListener("click", () => { if (tab.dataset.tab === "api") { loadApiKeys(); loadBaseUrl(); } });
+        tab.addEventListener("click", () => { if (tab.dataset.tab === "api") { loadApiKeys(); } });
       });
     }
 
