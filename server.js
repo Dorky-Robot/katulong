@@ -269,7 +269,7 @@ const routes = [
     shortcutsPath: join(DATA_DIR, "shortcuts.json"),
     auth, csrf,
     topicBroker: createTopicBroker(),
-    getExternalUrl: () => _lastExternalUrl,
+    getExternalUrl: () => configManager.getPublicUrl(),
   }),
   ...createFileBrowserRoutes({ json, parseJSON, auth, csrf }),
   ...createPortProxyRoutes({ auth, PORT, configManager }),
@@ -287,16 +287,15 @@ function matchRoute(method, pathname) {
   return null;
 }
 
-// Track the last-seen external URL (from tunnel/remote connections)
-let _lastExternalUrl = null;
-
 async function handleRequest(req, res) {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
 
-  // Capture external URL from non-localhost requests
-  if (!isLocalRequest(req) && req.headers.host) {
+  // Auto-detect external URL from tunnel traffic and persist to config.
+  // Only writes if publicUrl is not already set (user override wins).
+  if (!isLocalRequest(req) && req.headers.host && !configManager.getPublicUrl()) {
     const proto = isHttpsConnection(req) ? "https" : "http";
-    _lastExternalUrl = `${proto}://${req.headers.host}`;
+    const detected = `${proto}://${req.headers.host}`;
+    configManager.setPublicUrl(detected).catch(() => {});
   }
 
   // Apply security headers to every response

@@ -13,6 +13,8 @@ class FakeElement {
     this.dataset = {};
     this.tabIndex = -1;
     this._listeners = {};
+    this.style = {};
+    this.classList = { toggle() {}, add() {}, remove() {} };
     this.innerHTML = "";
     this.scrollHeight = 0;
     this.scrollTop = 0;
@@ -96,14 +98,9 @@ describe("feedRenderer", () => {
       assert.equal(d.title, "My Feed");
     });
 
-    it("is not persistable without a topic", () => {
-      const d = feedRenderer.describe({});
-      assert.equal(d.persistable, false);
-    });
-
-    it("is persistable with a topic", () => {
-      const d = feedRenderer.describe({ topic: "some/topic" });
-      assert.equal(d.persistable, true);
+    it("is always persistable", () => {
+      assert.equal(feedRenderer.describe({}).persistable, true);
+      assert.equal(feedRenderer.describe({ topic: "some/topic" }).persistable, true);
     });
   });
 
@@ -131,8 +128,9 @@ describe("feedRenderer", () => {
 
       // Title should say "Subscribe to a topic"
       assert.ok(picker.children.length >= 1);
-      assert.equal(picker.children[0].className, "feed-tile-picker-title");
-      assert.equal(picker.children[0].textContent, "Subscribe to a topic");
+      const titleEl = picker.children[0];
+      assert.equal(titleEl.className, "feed-tile-picker-title");
+      assert.equal(titleEl.children[0].textContent, "Subscribe to a topic");
 
       // List area with loading text
       const listArea = picker.children[1];
@@ -164,7 +162,7 @@ describe("feedRenderer", () => {
       assert.ok(eventSources[0].url.includes("fromSeq=0"));
     });
 
-    it("renders header with topic name", () => {
+    it("renders header with back button, topic name, and close button", () => {
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -176,10 +174,13 @@ describe("feedRenderer", () => {
       const root = el.children[0];
       const header = root.children[0];
       assert.equal(header.className, "feed-tile-header");
-      assert.equal(header.children[0].textContent, "my/topic");
+      // [backBtn, title, closeBtn]
+      assert.equal(header.children[0].className, "feed-tile-back-btn");
+      assert.equal(header.children[1].textContent, "my/topic");
+      assert.equal(header.children[2].className, "feed-tile-close-btn");
     });
 
-    it("renders badge when meta.type is set", () => {
+    it("header has back button, title, and close button", () => {
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -190,24 +191,11 @@ describe("feedRenderer", () => {
 
       const root = el.children[0];
       const header = root.children[0];
-      // Second child should be the badge
-      assert.equal(header.children.length, 2);
-      assert.equal(header.children[1].className, "feed-tile-badge");
-      assert.equal(header.children[1].textContent, "progress");
-    });
-
-    it("does not render badge when no meta.type", () => {
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: { topic: "t", meta: {} },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      const root = el.children[0];
-      const header = root.children[0];
-      assert.equal(header.children.length, 1); // just the title span
+      // [backBtn, title, closeBtn]
+      assert.equal(header.children.length, 3);
+      assert.equal(header.children[0].className, "feed-tile-back-btn");
+      assert.equal(header.children[1].textContent, "t");
+      assert.equal(header.children[2].className, "feed-tile-close-btn");
     });
 
     it("processes SSE events via onmessage", () => {

@@ -194,6 +194,55 @@ export function createSettingsHandlers(options = {}) {
     }
   }
 
+  /** Initialize public URL input. */
+  function initPublicUrl(config) {
+    const input = document.getElementById("public-url-input");
+    if (!input) return;
+
+    // Show current origin as placeholder so the user sees what's auto-detected
+    const isLocalhost = location.hostname === "localhost" ||
+                        location.hostname === "127.0.0.1" ||
+                        location.hostname === "::1";
+    if (!isLocalhost) {
+      input.placeholder = location.origin;
+    }
+    input.value = config?.publicUrl || "";
+
+    const save = async () => {
+      const val = input.value.trim();
+      try {
+        await api.put("/api/config/public-url", { publicUrl: val });
+        input.classList.remove("invalid");
+      } catch {
+        input.classList.add("invalid");
+      }
+    };
+
+    input.addEventListener("change", save);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); save(); }
+    });
+    input.addEventListener("input", () => input.classList.remove("invalid"));
+  }
+
+  /** Initialize Claude Code hooks copy button. */
+  function initClaudeHooksSnippet() {
+    const copyBtn = document.getElementById("claude-hooks-copy");
+    if (!copyBtn) return;
+
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText("katulong setup claude-hooks");
+        copyBtn.classList.add("copied");
+        copyBtn.querySelector("i").className = "ph ph-check";
+        setTimeout(() => {
+          copyBtn.classList.remove("copied");
+          copyBtn.querySelector("i").className = "ph ph-copy";
+        }, 2000);
+      } catch { /* clipboard may be unavailable */ }
+    });
+  }
+
   async function init() {
     let config = null;
     try {
@@ -202,6 +251,7 @@ export function createSettingsHandlers(options = {}) {
     } catch (error) {
       console.error("Failed to load config:", error);
     }
+    initPublicUrl(config);
     initPortProxyToggle(config);
     initPalettePicker();
     initPolarityToggle();
@@ -209,6 +259,7 @@ export function createSettingsHandlers(options = {}) {
     syncPaletteControls();
     initLogout();
     initVersion();
+    initClaudeHooksSnippet();
   }
 
   return {

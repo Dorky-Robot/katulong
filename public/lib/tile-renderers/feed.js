@@ -24,6 +24,15 @@ function renderProgressItem(row, msg) {
   const status = msg.status || "info";
   row.className = `feed-tile-item feed-status-${status}`;
 
+  // Assistant text renders as a standalone narrative block
+  if (status === "text") {
+    const text = document.createElement("span");
+    text.className = "feed-tile-step feed-tile-assistant-text";
+    text.textContent = msg.step || "";
+    row.appendChild(text);
+    return;
+  }
+
   const bullet = document.createElement("span");
   bullet.className = "feed-tile-bullet";
   bullet.textContent = status === "done" ? "\u25CF"
@@ -72,7 +81,7 @@ export const feedRenderer = {
     return {
       title: props.title || props.topic || "Feed",
       icon: "rss",
-      persistable: !!props.topic, // only persist once a topic is chosen
+      persistable: true,
       session: null,
       updatesUrl: false,
       renameable: false,
@@ -83,6 +92,7 @@ export const feedRenderer = {
   mount(el, { id, props, dispatch, ctx }) {
     let mounted = true;
     let es = null;
+    const cleanups = [];
 
     const root = document.createElement("div");
     root.className = "feed-tile-root";
@@ -102,24 +112,144 @@ export const feedRenderer = {
 
     // ── Topic picker (inline) ───────────────────────────────────
     function showTopicPicker() {
+      if (es) { es.close(); es = null; }
       root.innerHTML = "";
+      const selected = new Set();
+
+      // Clear persisted topic so we're back to picker state
+      if (dispatch) {
+        dispatch({ type: "ui/UPDATE_PROPS", id, patch: { topic: null, title: "Feed", meta: {} } });
+      }
 
       const picker = document.createElement("div");
       picker.className = "feed-tile-picker";
 
-      const title = document.createElement("div");
-      title.className = "feed-tile-picker-title";
-      title.textContent = "Subscribe to a topic";
-      picker.appendChild(title);
+      // Header row with title + toolbar
+      const header = document.createElement("div");
+      header.className = "feed-tile-picker-title";
+
+      const titleText = document.createElement("span");
+      titleText.textContent = "Subscribe to a topic";
+      header.appendChild(titleText);
+
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "feed-tile-picker-close-btn";
+      closeBtn.innerHTML = '<i class="ph ph-x"></i>';
+      closeBtn.title = "Close";
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        ctx?.requestClose?.();
+      });
+      header.appendChild(closeBtn);
+
+      picker.appendChild(header);
 
       const listArea = document.createElement("div");
       listArea.className = "feed-tile-picker-list";
       listArea.textContent = "Loading topics\u2026";
       picker.appendChild(listArea);
 
+      // Bottom action bar — visible only when items are checked
+      const actionBar = document.createElement("div");
+      actionBar.className = "feed-tile-picker-actionbar";
+      actionBar.style.display = "none";
+      picker.appendChild(actionBar);
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "feed-tile-picker-delete-btn";
+      deleteBtn.innerHTML = '<i class="ph ph-trash"></i> Delete';
+      actionBar.appendChild(deleteBtn);
+
       root.appendChild(picker);
 
-      // Fetch topics and populate
+      function updateToolbar() {
+        const count = selected.size;
+        actionBar.style.display = count > 0 ? "" : "none";
+        deleteBtn.innerHTML = count === 1
+          ? '<i class="ph ph-trash"></i> Delete'
+          : `<i class="ph ph-trash"></i> Delete ${count}`;
+      }
+
+      async function deleteSelected() {
+        deleteBtn.disabled = true;
+        deleteBtn.textContent = "Deleting\u2026";
+        const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
+        const headers = { "Content-Type": "application/json" };
+        if (csrf) headers["x-csrf-token"] = csrf;
+
+        for (const topic of selected) {
+          try {
+            await fetch(`/api/topics/${encodeURIComponent(topic)}`, {
+              method: "DELETE", credentials: "same-origin", redirect: "error", headers,
+            });
+          } catch { /* continue with others */ }
+        }
+        showTopicPicker();
+      }
+
+      deleteBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteSelected();
+      });
+
+      // Track known topic names so we don't add duplicates on live updates
+      const knownTopics = new Set();
+      let emptyEl = null;
+
+      function createTopicItem(t) {
+        if (knownTopics.has(t.name)) return;
+        knownTopics.add(t.name);
+
+        // Remove "no topics" placeholder if present
+        if (emptyEl) { emptyEl.remove(); emptyEl = null; }
+
+        const item = document.createElement("div");
+        item.className = "feed-tile-picker-item";
+
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.className = "feed-tile-picker-cb";
+        cb.addEventListener("click", (e) => e.stopPropagation());
+        cb.addEventListener("change", () => {
+          if (cb.checked) selected.add(t.name); else selected.delete(t.name);
+          item.classList.toggle("selected", cb.checked);
+          updateToolbar();
+        });
+        item.appendChild(cb);
+
+        const name = document.createElement("span");
+        name.className = "feed-tile-picker-name";
+        name.textContent = t.name;
+        item.appendChild(name);
+
+        const info = document.createElement("span");
+        info.className = "feed-tile-picker-info";
+        const parts = [];
+        if (t.meta && t.meta.type) parts.push(t.meta.type);
+        parts.push(`${t.messages || 0} msgs`);
+        info.textContent = parts.join(" \u00b7 ");
+        item.appendChild(info);
+
+        item.addEventListener("click", () => {
+          if (!mounted) return;
+          if (dispatch) {
+            dispatch({ type: "ui/UPDATE_PROPS", id, patch: { topic: t.name, title: t.name, meta: t.meta || {} } });
+          }
+          startStreaming(t.name, t.meta || {});
+        });
+
+        listArea.appendChild(item);
+      }
+
+      // Listen for new topics via WebSocket
+      function onTopicNew(e) {
+        if (!mounted) return;
+        createTopicItem({ name: e.detail.topic, meta: e.detail.meta, messages: 0 });
+      }
+      window.addEventListener("katulong:topic-new", onTopicNew);
+      cleanups.push(() => window.removeEventListener("katulong:topic-new", onTopicNew));
+
+      // Fetch existing topics
       fetch("/api/topics", { credentials: "same-origin", redirect: "error" })
         .then(r => r.ok ? r.json() : [])
         .catch(() => [])
@@ -128,45 +258,13 @@ export const feedRenderer = {
           listArea.textContent = "";
 
           if (topics.length > 0) {
-            for (const t of topics) {
-              const item = document.createElement("button");
-              item.className = "feed-tile-picker-item";
-
-              const name = document.createElement("span");
-              name.className = "feed-tile-picker-name";
-              name.textContent = t.name;
-              item.appendChild(name);
-
-              const info = document.createElement("span");
-              info.className = "feed-tile-picker-info";
-              const parts = [];
-              if (t.meta && t.meta.type) parts.push(t.meta.type);
-              parts.push(`${t.messages || 0} msgs`);
-              info.textContent = parts.join(" \u00b7 ");
-              item.appendChild(info);
-
-              item.addEventListener("click", () => {
-                if (!mounted) return;
-                if (dispatch) {
-                  dispatch({ type: "ui/UPDATE_PROPS", id, patch: { topic: t.name, title: t.name, meta: t.meta || {} } });
-                }
-                startStreaming(t.name, t.meta || {});
-              });
-
-              listArea.appendChild(item);
-            }
+            for (const t of topics) createTopicItem(t);
           } else {
-            const empty = document.createElement("div");
-            empty.className = "feed-tile-picker-empty";
-            empty.textContent = "No topics yet. Publish events to create one.";
-            listArea.appendChild(empty);
+            emptyEl = document.createElement("div");
+            emptyEl.className = "feed-tile-picker-empty";
+            emptyEl.textContent = "No topics yet. Publish events to create one.";
+            listArea.appendChild(emptyEl);
           }
-
-          const refreshBtn = document.createElement("button");
-          refreshBtn.className = "feed-tile-picker-refresh";
-          refreshBtn.textContent = "Refresh";
-          refreshBtn.addEventListener("click", () => { if (mounted) showTopicPicker(); });
-          listArea.appendChild(refreshBtn);
         });
     }
 
@@ -180,17 +278,24 @@ export const feedRenderer = {
       const header = document.createElement("div");
       header.className = "feed-tile-header";
 
+      const backBtn = document.createElement("button");
+      backBtn.className = "feed-tile-back-btn";
+      backBtn.innerHTML = '<i class="ph ph-arrow-left"></i>';
+      backBtn.title = "Back to topics";
+      backBtn.addEventListener("click", () => { if (mounted) showTopicPicker(); });
+      header.appendChild(backBtn);
+
       const headerTitle = document.createElement("span");
       headerTitle.className = "feed-tile-header-title";
       headerTitle.textContent = topic;
       header.appendChild(headerTitle);
 
-      if (topicMeta.type) {
-        const badge = document.createElement("span");
-        badge.className = "feed-tile-badge";
-        badge.textContent = topicMeta.type;
-        header.appendChild(badge);
-      }
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "feed-tile-close-btn";
+      closeBtn.innerHTML = '<i class="ph ph-x"></i>';
+      closeBtn.title = "Close";
+      closeBtn.addEventListener("click", () => ctx?.requestClose?.());
+      header.appendChild(closeBtn);
 
       root.appendChild(header);
 
@@ -243,6 +348,7 @@ export const feedRenderer = {
       unmount() {
         mounted = false;
         if (es) es.close();
+        for (const fn of cleanups) fn();
         el.innerHTML = "";
       },
       focus() {

@@ -100,7 +100,7 @@ async function main() {
   }
 
   // Hidden internal commands (not shown in help)
-  const INTERNAL_COMMANDS = ["_finish-upgrade"];
+  const INTERNAL_COMMANDS = ["_finish-upgrade", "relay-hook"];
 
   // Dispatch to command handler
   if (!COMMANDS[command] && !INTERNAL_COMMANDS.includes(command)) {

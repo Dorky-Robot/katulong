@@ -153,6 +153,14 @@ export const wsMessageHandlers = {
     };
   },
 
+  'topic-new'(msg, ctx) {
+    // Dispatch DOM event so feed tile pickers can update live
+    window.dispatchEvent(new CustomEvent('katulong:topic-new', {
+      detail: { topic: msg.topic, meta: msg.meta },
+    }));
+    return { stateUpdates: {}, effects: [] };
+  },
+
   'device-auth-request'(msg, ctx) {
     return {
       stateUpdates: {},

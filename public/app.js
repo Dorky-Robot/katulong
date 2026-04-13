@@ -767,11 +767,12 @@
     });
     joystickManager.init();
 
-    // Wire Files + Upload + Settings into the joystick floating buttons
+    // Wire Files + Upload + Settings + Feed into the joystick floating buttons
     joystickManager.setActions({
       onFilesClick: () => openFileBrowserTile(),
       onUploadClick: () => triggerImageUpload(),
       onSettingsClick: () => modals.open('settings'),
+      onFeedClick: () => openClaudeFeedTile(),
     });
 
     // Joystick (floating action buttons) is always visible — same
@@ -1310,7 +1311,6 @@
       const submitBtn = document.getElementById("apikey-form-submit");
       const cancelBtn = document.getElementById("apikey-form-cancel");
       const listEl = document.getElementById("apikeys-list");
-      const baseUrlEl = document.getElementById("api-base-url");
 
       async function loadApiKeys() {
         if (!listEl) return;
@@ -1337,11 +1337,6 @@
       }
 
       async function loadBaseUrl() {
-        if (!baseUrlEl) return;
-        try {
-          const { url } = await api.get("/api/external-url");
-          baseUrlEl.innerHTML = url ? "Base URL: <code>" + url + "</code>" : "Create API keys for external access.";
-        } catch { baseUrlEl.textContent = "Create API keys for external access."; }
       }
 
       if (createBtn && form) {
@@ -1752,6 +1747,32 @@
         { id: tileId, type: "feed", props: {} },
         { focus: true, insertAt: "afterFocus" },
       );
+      if (isOverlayViewport()) setOverlaySidebar(false);
+    }
+
+    /** Open a feed tile for the Claude session running in the current terminal. */
+    async function openClaudeFeedTile() {
+      const sessionName = state.session.name;
+      try {
+        const topics = await api.get("/api/topics");
+        // Find the most recent Claude topic matching this terminal session
+        const match = topics
+          .filter(t => t.name.startsWith("claude/") && t.meta?.sessionName === sessionName)
+          .sort((a, b) => (b.messages || 0) - (a.messages || 0))[0];
+
+        if (match) {
+          const tileId = `feed-${Date.now().toString(36)}`;
+          uiStore.addTile(
+            { id: tileId, type: "feed", props: { topic: match.name, title: match.name, meta: match.meta || {} } },
+            { focus: true, insertAt: "afterFocus" },
+          );
+        } else {
+          // No Claude topic found — open blank feed picker
+          openFeedTile();
+        }
+      } catch {
+        openFeedTile();
+      }
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
