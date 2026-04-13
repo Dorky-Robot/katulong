@@ -16,19 +16,6 @@ import { api } from "/lib/api-client.js";
 import { marked } from "/vendor/marked/marked.esm.js";
 import DOMPurify from "/vendor/dompurify/purify.es.mjs";
 
-/** Extensions that get a CodeMirror language mode. */
-const LANG_EXTS = new Set([
-  ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx",
-  ".json", ".jsonc",
-  ".py", ".rb", ".go", ".rs",
-  ".sh", ".bash", ".zsh",
-  ".html", ".css", ".xml",
-  ".yaml", ".yml", ".toml",
-  ".sql", ".graphql",
-  ".env", ".ini", ".cfg",
-  ".txt", ".log", ".md",
-]);
-
 /** Icon name based on file extension. */
 function extToIcon(ext) {
   if ([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"].includes(ext)) return "code";
@@ -44,12 +31,6 @@ function isMarkdown(ext, format) {
   return format === "markdown" || ext === ".md";
 }
 
-/** Whether this extension should use CodeMirror instead of markdown render. */
-function useCodeMirror(ext, format) {
-  if (isMarkdown(ext, format)) return false;
-  return true; // all non-markdown files get the editor
-}
-
 /**
  * Lazy-load CodeMirror bundle. Cached after first import.
  * @returns {Promise<object>} The CM6 exports
@@ -57,7 +38,8 @@ function useCodeMirror(ext, format) {
 let _cmPromise = null;
 function loadCodeMirror() {
   if (!_cmPromise) {
-    _cmPromise = import("/vendor/codemirror/codemirror.esm.js");
+    _cmPromise = import("/vendor/codemirror/codemirror.esm.js")
+      .catch((err) => { _cmPromise = null; return Promise.reject(err); });
   }
   return _cmPromise;
 }
@@ -83,8 +65,7 @@ function langExtension(cm, ext) {
   };
   const factory = map[ext];
   if (!factory) return [];
-  const result = typeof factory === "function" ? factory() : factory();
-  return [result];
+  return [factory()];
 }
 
 /**
@@ -204,7 +185,6 @@ export function createDocumentTileFactory(_deps = {}) {
       ? (filePath.split("/").filter(Boolean).pop() || "file")
       : (title || "document");
     const renderAsMarkdown = isMarkdown(ext, format);
-    const useCM = useCodeMirror(ext, format);
 
     function updateStatus(text, className) {
       if (!statusEl) return;
@@ -377,7 +357,11 @@ export function createDocumentTileFactory(_deps = {}) {
                 editorContainer.classList.add("doc-tile-error");
               });
           } else {
-            setupEditor(initialContent);
+            setupEditor(initialContent).catch((err) => {
+              if (!mounted) return;
+              editorContainer.textContent = `Error: ${err.message}`;
+              editorContainer.classList.add("doc-tile-error");
+            });
           }
         }
       },

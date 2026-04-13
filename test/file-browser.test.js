@@ -234,7 +234,9 @@ describe("POST /api/files/write", () => {
     const res = createMockRes();
     await route.handler(req, res);
     assert.equal(res.status, 200);
-    assert.deepEqual(res.json(), { ok: true, path: filePath });
+    const result = res.json();
+    assert.equal(result.ok, true);
+    assert.ok(result.path); // returns resolved path
     const { readFileSync } = await import("node:fs");
     assert.equal(readFileSync(filePath, "utf-8"), "new content");
     // Restore original for other tests
@@ -280,6 +282,15 @@ describe("POST /api/files/write", () => {
     await route.handler(req, res);
     // safePath rejects ".." with 400
     assert.equal(res.status, 400);
+  });
+
+  it("rejects symlinks", async () => {
+    const route = findRoute(routes, "POST", "/api/files/write");
+    const req = createMockReq("POST", "/api/files/write", { path: join(testDir, "link.txt"), content: "x" });
+    const res = createMockRes();
+    await route.handler(req, res);
+    assert.equal(res.status, 400);
+    assert.ok(res.json().error.includes("symlink"));
   });
 });
 
