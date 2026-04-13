@@ -19,6 +19,12 @@ describe("transformClaudeEvent", () => {
     assert.equal(transformClaudeEvent({ session_id: SESSION_ID }), null);
   });
 
+  it("returns null for non-UUID session_id", () => {
+    assert.equal(transformClaudeEvent({ session_id: "../evil", hook_event_name: "Stop" }), null);
+    assert.equal(transformClaudeEvent({ session_id: "not-a-uuid", hook_event_name: "Stop" }), null);
+    assert.equal(transformClaudeEvent({ session_id: 12345, hook_event_name: "Stop" }), null);
+  });
+
   it("transforms PostToolUse with file-based tool", () => {
     const result = transformClaudeEvent({
       session_id: SESSION_ID,
@@ -71,6 +77,17 @@ describe("transformClaudeEvent", () => {
     });
 
     assert.equal(result.message.step, "Grep function\\s+\\w+");
+  });
+
+  it("transforms PostToolUse with Glob tool", () => {
+    const result = transformClaudeEvent({
+      session_id: SESSION_ID,
+      hook_event_name: "PostToolUse",
+      tool_name: "Glob",
+      tool_input: { pattern: "**/*.test.js" },
+    });
+
+    assert.equal(result.message.step, "Glob **/*.test.js");
   });
 
   it("transforms PostToolUse with Agent tool", () => {

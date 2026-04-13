@@ -71,6 +71,8 @@ Discovered through live testing against Claude Code v2.1.104:
 | `Stop`            | `last_assistant_message` (string)                   |
 | `SubagentStart`   | `description`, `agent_type`                         |
 | `SubagentStop`    | `description`, `agent_type`                         |
+| `SessionStart`    | `cwd`                                               |
+| `SessionEnd`      | (none beyond common fields)                         |
 
 All payloads include: `session_id`, `hook_event_name`,
 `transcript_path`, `cwd`, `permission_mode`.
@@ -90,6 +92,8 @@ raw payloads into feed-tile-friendly messages:
 | `Stop`            | `Claude responded`              | `done`     |
 | `SubagentStart`   | `Subagent: {description}`       | `active`   |
 | `SubagentStop`    | `Subagent: {description}`       | `done`     |
+| `SessionStart`    | `Session started`               | `info`     |
+| `SessionEnd`      | `Session ended`                 | `info`     |
 
 Target extraction from `tool_input`:
 - Edit/Read/Write: file basename
