@@ -46,6 +46,8 @@
     import { createUiStore, loadFromStorage, EMPTY_STATE } from "/lib/ui-store.js";
     import { initRenderers, isPersistable, getRenderer } from "/lib/tile-renderers/index.js";
     import { createTileHost } from "/lib/tile-host.js";
+    import { getFocusedSession } from "/lib/selectors.js";
+    import { navigateTab as computeNavigateTab, moveTab as computeMoveTab, jumpToTab as computeJumpToTab } from "/lib/navigation.js";
 
     // --- Modal Manager ---
     const modals = new ModalRegistry();
@@ -78,40 +80,21 @@
 
     // --- State ---
 
-    // --- Centralized application state (at edge) ---
+    // URL ?s= hint — used only for boot, not as ongoing state.
     const explicitSession = new URLSearchParams(location.search).get("s");
-    const createAppState = () => {
-      const initialSessionName = explicitSession || null;
 
-      return {
-        session: {
-          name: initialSessionName,
-          shortcuts: []
-        },
-        scroll: {
-          userScrolledUpBeforeDisconnect: false
-        },
-        // Controlled state updates
-        update(path, value) {
-          const keys = path.split('.');
-          let obj = this;
-          for (let i = 0; i < keys.length - 1; i++) {
-            obj = obj[keys[i]];
-          }
-          obj[keys[keys.length - 1]] = value;
-          return this;
-        },
-        // Batch updates
-        updateMany(updates) {
-          Object.entries(updates).forEach(([path, value]) => {
-            this.update(path, value);
-          });
-          return this;
-        }
-      };
+    // Transient scroll state — will move to connection-store in a follow-up PR.
+    let scrolledUpBeforeDisconnect = false;
+
+    // Derive the active session name from ui-store + renderer registry.
+    // Replaces the old mutable `state.session.name` — the source of truth
+    // is now uiStore.focusedId, and the session name is a derived value.
+    // Late-bound: _uiStore is assigned when createUiStore() runs below.
+    let _uiStore = null;
+    const getActiveSessionName = () => {
+      if (!_uiStore) return null;
+      return getFocusedSession(_uiStore.getState(), getRenderer);
     };
-
-    const state = createAppState();
 
     let shortcutBarInstance = null;
     const getInstanceIcon = () => "terminal-window";
@@ -159,14 +142,13 @@
       document.title = INSTANCE_HOST ? `${base} · ${INSTANCE_HOST}` : base;
     };
 
-    setDocTitle(state.session.name);
+    setDocTitle(explicitSession);
 
     // --- Terminal pool ---
     // One xterm.js Terminal per managed session, visibility-toggled on switch.
 
-    // Late-bound ref — uiStore is created after the pool, but file link
-    // clicks only happen after full boot, so the ref is always populated.
-    let _uiStoreRef = null;
+    // _uiStore is also used by onFileLinkClick below — both closures
+    // share the same late-bound ref, assigned when createUiStore() runs.
 
     const terminalPool = createTerminalPool({
       parentEl: document.getElementById("terminal-container"),
@@ -174,13 +156,13 @@
         cm.send(JSON.stringify({ type: "resize", session: sessionName, cols, rows }));
       },
       onFileLinkClick: async (_event, filePath) => {
-        if (!_uiStoreRef) return;
+        if (!_uiStore) return;
         // Defense-in-depth: reject paths with traversal segments
         if (filePath.split("/").some(seg => seg === "..")) return;
         // Resolve relative paths against the active session's CWD
         let resolved = filePath;
         if (!filePath.startsWith("/")) {
-          const sessionName = state.session.name;
+          const sessionName = getActiveSessionName();
           if (sessionName) {
             try {
               const data = await api.get(`/sessions/cwd/${encodeURIComponent(sessionName)}`);
@@ -189,7 +171,7 @@
           }
         }
         const docId = `doc-${Date.now().toString(36)}`;
-        _uiStoreRef.addTile(
+        _uiStore.addTile(
           { id: docId, type: "document", props: { filePath: resolved } },
           { focus: true, insertAt: "afterFocus" },
         );
@@ -306,7 +288,7 @@
             sessionIcons.delete(currentName);
           }
           // Re-render tabs to show the new icon
-          if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
+          if (shortcutBarInstance) shortcutBarInstance.render(getActiveSessionName());
           // Notify server so other clients see the change
           cm.send(JSON.stringify({ type: "set-tab-icon", session: currentName, icon: iconName || null }));
           return true; // handled
@@ -361,7 +343,7 @@
     // Create ui-store first — the file-browser renderer needs it to open
     // document tiles adjacent to the browser tile on single-click.
     const uiStore = createUiStore({ isPersistable });
-    _uiStoreRef = uiStore;
+    _uiStore = uiStore;
 
     // Initialize the renderer registry with shared deps. This must happen
     // before any tile mount — renderers wrap the existing tile factories.
@@ -448,7 +430,7 @@
           // Re-render the shortcut bar so tile-provided labels (file
           // browser tracks its cwd, future tiles may have dynamic titles)
           // flow into tab labels via getSessionList()/tile.getTitle().
-          if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
+          if (shortcutBarInstance) shortcutBarInstance.render(getActiveSessionName());
         },
         setIcon(_icon) {
           // Future: update tab icon dynamically
@@ -469,7 +451,6 @@
         // each tile, handling WS unsubscribe generically.
         uiStore.reset(EMPTY_STATE);
         cm.disconnect();
-        state.update('session.name', null);
         setDocTitle(null);
         const url = new URL(window.location);
         url.searchParams.delete("s");
@@ -502,7 +483,6 @@
         document.body.dataset.focusedNeedsWs = desc.session ? "1" : "0";
 
         if (desc.session) {
-          state.update("session.name", desc.session);
           setDocTitle(desc.session);
 
           const connReady = cm.getState().status === "ready";
@@ -531,7 +511,7 @@
           cm.send(JSON.stringify({ type: "unsubscribe", session: sessionName }));
         }
         // Legacy shortcut bar re-render
-        if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
+        if (shortcutBarInstance) shortcutBarInstance.render(getActiveSessionName());
       },
     });
 
@@ -738,7 +718,7 @@
     // Create buffered input sender
     const inputSender = createInputSender({
       sendFn: (payload) => cm.send(payload),
-      getSession: () => state.session.name,
+      getSession: () => getActiveSessionName(),
       onInput: () => {},
     });
 
@@ -753,7 +733,7 @@
     // When no explicit ?s= param, activation is deferred until we
     // resolve which session to attach to (or none).
     if (explicitSession) {
-      terminalPool.activate(state.session.name);
+      terminalPool.activate(explicitSession);
     }
 
     // --- Layout ---
@@ -837,9 +817,9 @@
 
     // --- Session manager (render takes data) ---
 
-    const sessionStore = createSessionStore(state.session.name);
+    const sessionStore = createSessionStore(explicitSession);
     const windowTabSet = createWindowTabSet({
-      getCurrentSession: () => state.session.name,
+      getCurrentSession: () => getActiveSessionName(),
       // When another browser window kills a session, tear it down fully in
       // this window: carousel card, pooled terminal, WS unsubscribe. Without
       // this, reorderCards only reorders — it re-appends missing ids — so
@@ -854,7 +834,7 @@
     // session in the gap between page load and the first /sessions response.
     // The TTL ensures a stale ?s= URL bookmark eventually becomes prunable.
     if (explicitSession) {
-      windowTabSet.addTab(state.session.name);
+      windowTabSet.addTab(explicitSession);
     }
 
     // Create session list component
@@ -880,7 +860,7 @@
       !window.matchMedia("(pointer: coarse) and (min-width: 768px)").matches;
 
     function loadSidebarData() {
-      invalidateSessions(sessionStore, state.session.name);
+      invalidateSessions(sessionStore, getActiveSessionName());
     }
 
     function setOverlaySidebar(open) {
@@ -934,7 +914,7 @@
     async function createNewSession() {
       try {
         const name = `session-${Date.now().toString(36)}`;
-        const data = await api.post("/sessions", { name, copyFrom: state.session.name });
+        const data = await api.post("/sessions", { name, copyFrom: getActiveSessionName() });
         if (sidebar?.classList.contains("collapsed")) {
           setSidebarCollapsed(false);
         }
@@ -982,7 +962,7 @@
     }
 
     function switchSession(name) {
-      if (name === state.session.name) return;
+      if (name === getActiveSessionName()) return;
       const url = new URL(window.location);
       url.searchParams.set("s", name);
       history.pushState(null, "", url);
@@ -993,57 +973,34 @@
     window.addEventListener("popstate", () => {
       const name = new URLSearchParams(location.search).get("s");
       if (!name) return; // bare URL without ?s= — stay on current session
-      if (name !== state.session.name) activateSession(name);
+      if (name !== getActiveSessionName()) activateSession(name);
     });
 
     const openSessionManager = () => toggleSidebar();
 
     // --- Keyboard shortcuts (Cmd+Shift+[/], Cmd+?) ---
 
+    // Navigation helpers: pure function → dispatch.
+    // tile-host's onFocusChange handles WS bookkeeping after dispatch.
     function navigateTab(direction) {
-      // Use carousel order (source of truth) when active, fall back to tab set
-      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-      if (tabs.length <= 1) return;
-      const idx = tabs.indexOf(state.session.name);
-      if (idx === -1) return;
-      switchSession(tabs[(idx + direction + tabs.length) % tabs.length]);
+      const action = computeNavigateTab(uiStore.getState(), direction);
+      if (action) uiStore.dispatch(action);
     }
 
     function moveTab(direction) {
-      const tabs = uiStore.getState().order;
-      if (tabs.length <= 1) return;
-      const idx = tabs.indexOf(state.session.name);
-      if (idx === -1) return;
-      const newIdx = idx + direction;
-      if (newIdx < 0 || newIdx >= tabs.length) return; // don't wrap
-      const reordered = [...tabs];
-      [reordered[idx], reordered[newIdx]] = [reordered[newIdx], reordered[idx]];
-      // Route through ui-store — tile-host drives carousel.reorderCards
-      uiStore.reorder(reordered);
+      const action = computeMoveTab(uiStore.getState(), direction);
+      if (action) uiStore.dispatch(action);
     }
 
-    // Positional tab jump — Option+1..9 → tabs 1..9, Option+0 → tab 10.
-    // Silently no-ops if the target index doesn't exist (e.g., Option+7 with
-    // only 4 tabs open). Pure positional; deliberately does NOT implement the
-    // Chrome "Cmd+9 = last tab" trick, because we also expose Option+0 as
-    // "tab 10" — mixing "last" and "10th" would be inconsistent.
     function jumpToTab(position) {
-      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-      const idx = position - 1;
-      if (idx < 0 || idx >= tabs.length) return;
-      const name = tabs[idx];
-      if (name === state.session.name) return;
-      if (carousel.isActive()) {
-        routeToSession(name);
-      } else {
-        switchSession(name);
-      }
+      const action = computeJumpToTab(uiStore.getState(), position);
+      if (action) uiStore.dispatch(action);
     }
 
     function renameCurrentSession() {
-      const name = state.session.name;
-      if (!name || !shortcutBarInstance) return;
-      shortcutBarInstance.beginRename(name);
+      const focusedId = uiStore.getState().focusedId;
+      if (!focusedId || !shortcutBarInstance) return;
+      shortcutBarInstance.beginRename(focusedId);
     }
 
     /**
@@ -1072,18 +1029,18 @@
     }
 
     function removeFocusedSessionFromUI() {
-      const name = state.session.name;
-      if (!name) return { name: null, hasNext: false };
-      const currentId = carousel.isActive() ? (carousel.getFocusedCard() || name) : name;
-      const hasNext = !!pickRightNeighbor(name);
+      const focusedId = uiStore.getState().focusedId;
+      if (!focusedId) return { id: null, sessionName: null, hasNext: false };
+      const sessionName = getActiveSessionName();
+      const hasNext = !!pickRightNeighbor(focusedId);
       // Route through ui-store — tile-host's reconcile handles carousel
       // removal, unmount, and onTileRemoved (WS cleanup, pool dispose).
-      uiStore.removeTile(currentId);
+      uiStore.removeTile(focusedId);
       if (!hasNext && shortcutBarInstance) {
         const addBtn = document.querySelector(".ipad-add-btn, .tab-add-btn");
         shortcutBarInstance.showAddMenu(addBtn);
       }
-      return { name, hasNext };
+      return { id: focusedId, sessionName, hasNext };
     }
 
     function closeCurrentSession() {
@@ -1091,11 +1048,11 @@
     }
 
     async function killCurrentSession() {
-      const { name } = removeFocusedSessionFromUI();
-      if (!name) return;
+      const { sessionName } = removeFocusedSessionFromUI();
+      if (!sessionName) return;
       // Kill on server (best-effort — may fail if disconnected)
       try {
-        await api.delete(`/sessions/${encodeURIComponent(name)}`);
+        await api.delete(`/sessions/${encodeURIComponent(sessionName)}`);
       } catch { /* disconnected or already dead — that's fine */ }
     }
 
@@ -1457,13 +1414,9 @@
             { focus: true },
           );
         }
-        if (state.session.name === oldName) {
-          state.update('session.name', newName);
-          setDocTitle(newName);
-          const url = new URL(window.location);
-          url.searchParams.set("s", newName);
-          history.replaceState(null, "", url);
-        }
+        // URL and doc title are updated reactively by the ui-store
+        // subscription (URL sync) and onFocusChange callback.
+        setDocTitle(newName);
       },
       onAdoptSession: async (name) => {
         windowTabSet.addTab(name);
@@ -1480,13 +1433,12 @@
       onFilesClick: () => openFileBrowserTile(),
       onPortForwardClick: () => openLocalhostBrowserTile(),
       onSettingsClick: () => modals.open('settings'),
-      onShortcutsClick: () => openShortcutsPopup(state.session.shortcuts),
+      onShortcutsClick: () => openShortcutsPopup(shortcutsStore.getState()),
       onDictationClick: () => openDictationModal(),
       onAllTabsClosed: () => {
         // Hide all terminal panes, disconnect WS, clear state
         terminalPool.forEach((name) => terminalPool.dispose(name));
         cm.disconnect();
-        state.update('session.name', null);
         setDocTitle(null);
         const url = new URL(window.location);
         url.searchParams.delete("s");
@@ -1538,8 +1490,8 @@
         { id: newName, type: tile.type, props: { ...tile.props, sessionName: newName } },
         { focus: uiState.focusedId === id },
       );
-      if (state.session.name === oldName) {
-        state.update("session.name", newName);
+      // Doc title updates reactively via onFocusChange
+      if (getActiveSessionName() === oldName || uiStore.getState().focusedId === id) {
         setDocTitle(newName);
       }
     });
@@ -1596,7 +1548,7 @@
 
     // Re-render bar if pointer capability changes (e.g., external mouse connected)
     window.matchMedia("(pointer: fine)").addEventListener("change", () => {
-      shortcutBarInstance.render(state.session.name);
+      shortcutBarInstance.render(getActiveSessionName());
     });
 
     const renderBar = (name) => shortcutBarInstance.render(name);
@@ -1615,12 +1567,9 @@
     });
 
     // Subscribe to shortcuts changes to re-render bar
-    shortcutsStore.subscribe((shortcuts) => {
-      // Update legacy state object (for backward compatibility)
-      state.update('session.shortcuts', shortcuts);
-
+    shortcutsStore.subscribe(() => {
       // Re-render bar when shortcuts change
-      renderBar(state.session.name);
+      renderBar(getActiveSessionName());
     });
 
 
@@ -1629,7 +1578,7 @@
     const uploadImageToTerminal = (file, sessionName) => uploadImageToTerminalFn(file, {
       onSend: rawSend,
       toast: showToast,
-      sessionName: sessionName || state.session.name,
+      sessionName: sessionName || getActiveSessionName(),
       sendFn: (msg) => cm.send(msg)
     });
 
@@ -1647,7 +1596,7 @@
         uploadImagesToTerminalFn(files, {
           onSend: rawSend,
           toast: showToast,
-          sessionName: state.session.name,
+          sessionName: getActiveSessionName(),
           sendFn: (msg) => cm.send(msg),
         });
       }
@@ -1676,7 +1625,7 @@
           return;
         }
         // Upload in parallel, paste via single server request
-        uploadImagesToTerminalFn(imageFiles, { onSend: rawSend, toast: showToast, sessionName: state.session.name, sendFn: (msg) => cm.send(msg) });
+        uploadImagesToTerminalFn(imageFiles, { onSend: rawSend, toast: showToast, sessionName: getActiveSessionName(), sendFn: (msg) => cm.send(msg) });
       }
     });
 
@@ -1685,7 +1634,7 @@
     // --- Global paste ---
 
     const pasteHandler = createPasteHandler({
-      getSession: () => state.session.name,
+      getSession: () => getActiveSessionName(),
       onImage: uploadImageToTerminal,
       // Use xterm.js paste() so text is wrapped in bracketed paste
       // markers (\x1b[200~…\x1b[201~) when the app has enabled it.
@@ -1721,7 +1670,7 @@
      *  previous "focus existing" shortcut was removed because it
      *  conflicts with the multi-instance file-browser UX. */
     async function openFileBrowserTile() {
-      const sessionName = state.session.name;
+      const sessionName = getActiveSessionName();
       let cwd = "";
       if (sessionName) {
         try {
@@ -1752,7 +1701,7 @@
 
     /** Open a feed tile for the Claude session running in the current terminal. */
     async function openClaudeFeedTile() {
-      const sessionName = state.session.name;
+      const sessionName = getActiveSessionName();
       try {
         const topics = await api.get("/api/topics");
         // Find the most recent Claude topic matching this terminal session
@@ -1812,7 +1761,7 @@
       if (notepad.isActive()) {
         notepad.hide();
       } else {
-        notepad.show(state.session.name);
+        notepad.show(getActiveSessionName());
       }
     }
 
@@ -1843,7 +1792,7 @@
       ensureHelmMounted();
       termContainer.classList.add("helm-hidden");
       helmViewEl.classList.add("active");
-      helmComponent.showSession(state.session.name);
+      helmComponent.showSession(getActiveSessionName());
       helmComponent.focus();
     }
 
@@ -1856,12 +1805,13 @@
     function toggleHelmView() {
       if (helmViewEl.classList.contains("active")) {
         hideHelmView();
-      } else if (helmActiveSessions.has(state.session.name)) {
+      } else if (helmActiveSessions.has(getActiveSessionName())) {
         showHelmView();
       }
     }
 
     function onHelmModeChanged(effect) {
+      const activeSession = getActiveSessionName();
       if (effect.active) {
         helmActiveSessions.add(effect.session);
         ensureHelmMounted();
@@ -1871,7 +1821,7 @@
           cwd: effect.cwd,
         });
         // Auto-switch to helm view if this is the active session
-        if (effect.session === state.session.name) {
+        if (effect.session === activeSession) {
           showHelmView();
         }
       } else {
@@ -1881,12 +1831,12 @@
           error: effect.error,
         });
         // If viewing helm for this session and it ended, switch back to terminal
-        if (effect.session === state.session.name && helmViewEl.classList.contains("active")) {
+        if (effect.session === activeSession && helmViewEl.classList.contains("active")) {
           hideHelmView();
         }
       }
       // Re-render the tab bar to show/hide helm indicator
-      renderBar(state.session.name);
+      renderBar(activeSession);
     }
 
     // --- Connection Manager ---
@@ -2010,7 +1960,7 @@
       },
       sessionRemoved: (e) => {
         const name = e.name;
-        const wasFocused = state.session.name === name;
+        const wasFocused = uiStore.getState().focusedId === name;
         const next = wasFocused ? pickRightNeighbor(name) : null;
         removeDeadSession(name);
         if (!wasFocused) return;
@@ -2029,6 +1979,19 @@
         if (shortcutBarInstance) shortcutBarInstance.renameTabEl(e.oldName, e.newName);
       },
       tabRename: (e) => windowTabSet.renameTab(e.oldName, e.newName),
+      // Update ui-store tile so getActiveSessionName() returns the new name.
+      // Mirrors the onTabRenamed path (shortcut-bar initiated rename).
+      uiStoreRename: (e) => {
+        const st = uiStore.getState();
+        const oldTile = st.tiles[e.oldName];
+        if (!oldTile) return;
+        const wasFocused = st.focusedId === e.oldName;
+        uiStore.removeTile(e.oldName);
+        uiStore.addTile(
+          { id: e.newName, type: oldTile.type, props: { ...oldTile.props, sessionName: e.newName } },
+          { focus: wasFocused },
+        );
+      },
       resizeSync: () => {
         // Another client resized the shared PTY. Recalculate our own
         // dimensions via fitActiveTerminal (font + rows from THIS viewport).
@@ -2045,7 +2008,7 @@
         } else {
           sessionIcons.delete(e.session);
         }
-        if (shortcutBarInstance) shortcutBarInstance.render(state.session.name);
+        if (shortcutBarInstance) shortcutBarInstance.render(getActiveSessionName());
       },
       openTab: (e) => {
         windowTabSet.addTab(e.session);
@@ -2198,19 +2161,15 @@
       if (!handler) return;
 
       const { stateUpdates, effects } = handler(msg, {
-        currentSessionName: state.session.name,
-        scroll: state.scroll,
+        currentSessionName: getActiveSessionName(),
+        scroll: { userScrolledUpBeforeDisconnect: scrolledUpBeforeDisconnect },
       });
 
-      // Apply state updates — filter out connection.* keys since connection
-      // state is now managed by the connection store, not the app state object.
-      if (stateUpdates && Object.keys(stateUpdates).length > 0) {
-        const filtered = {};
-        for (const [key, value] of Object.entries(stateUpdates)) {
-          if (!key.startsWith("connection.")) filtered[key] = value;
-        }
-        if (Object.keys(filtered).length > 0) {
-          state.updateMany(filtered);
+      // Apply state updates — session.name updates are now no-ops (derived
+      // from uiStore.focusedId). Only scroll state is still mutable here.
+      if (stateUpdates) {
+        if ('scroll.userScrolledUpBeforeDisconnect' in stateUpdates) {
+          scrolledUpBeforeDisconnect = stateUpdates['scroll.userScrolledUpBeforeDisconnect'];
         }
       }
 
@@ -2225,7 +2184,7 @@
 
     /** When transport is ready, send the attach message. */
     function handleTransportReady(transport) {
-      const sessionName = state.session.name;
+      const sessionName = getActiveSessionName();
       if (sessionName) {
         const term = getTerm();
         cm.send(JSON.stringify({
@@ -2239,7 +2198,7 @@
 
     // Create connection manager (replaces createWebSocketConnection + createNetworkMonitor)
     const cm = createConnectionManager({
-      getSessionName: () => state.session.name,
+      getSessionName: () => getActiveSessionName(),
       onMessage: handleWsMessage,
       onTransportReady: handleTransportReady,
     });
@@ -2340,7 +2299,7 @@
     cm.subscribe((connState) => {
       if (connState.status === "disconnected") {
         const term = getTerm();
-        state.scroll.userScrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
+        scrolledUpBeforeDisconnect = term ? !isAtBottom(term) : false;
         pulls.clear();
         // Clean up WebRTC peer and retry timer on disconnect
         clearRtcRetry();
@@ -2403,7 +2362,6 @@
      *  removal path (onSessionRemoved) and the reconciler call this. */
     function clearFocusedSessionUI() {
       cm.disconnect();
-      state.update('session.name', null);
       setDocTitle(null);
       const url = new URL(window.location);
       url.searchParams.delete("s");
@@ -2480,7 +2438,7 @@
       reconcilePruneConfirmations = 0;
       lastDeadKey = "";
 
-      const wasFocusedDead = dead.has(state.session.name);
+      const wasFocusedDead = dead.has(uiStore.getState().focusedId);
       for (const name of dead) {
         removeDeadSession(name);
       }
@@ -2589,16 +2547,16 @@
     function bootFromState(bootState) {
       if (Object.keys(bootState.tiles).length === 0) return;
 
-      // Set active session for WS bookkeeping — capability-driven
+      // Set doc title from the focused tile's session (if any)
       const focused = bootState.tiles[bootState.focusedId];
       const desc = describeTile(focused);
       if (desc.session) {
-        state.update("session.name", desc.session);
         setDocTitle(desc.session);
       }
 
       // Single dispatch — tile-host is already subscribed (init'd
       // unconditionally above) and will pick up the state change.
+      // getActiveSessionName() will derive session from focusedId after this.
       uiStore.reset(bootState);
       cm.connect();
     }
@@ -2610,7 +2568,7 @@
     // With an empty store, reconcile is a no-op; once tiles arrive
     // (via RESET or ADD_TILE), the subscription picks them up.
     tileHost.init();
-    renderBar(state.session.name || "");
+    renderBar(getActiveSessionName() || "");
 
     if (!explicitSession && !wasEmptyState) {
       // No URL hint — check for persisted tiles first, then fall back to
@@ -2624,7 +2582,7 @@
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           return r.json();
         }).then(sessions => {
-          if (cm.getState().status !== "disconnected" || state.session.name !== null) return;
+          if (cm.getState().status !== "disconnected" || uiStore.getState().focusedId !== null) return;
           if (sessions.length > 0 && sessions[0].name) {
             const name = sessions[0].name;
             bootState.tiles[name] = { id: name, type: "terminal", props: { sessionName: name } };
