@@ -10,10 +10,7 @@
  * Persistence: only once a port is connected.
  */
 
-function escapeAttr(str) {
-  return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
-            .replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
+import { escapeAttr } from "../utils.js";
 
 export const localhostBrowserRenderer = {
   type: "localhost-browser",
@@ -34,6 +31,7 @@ export const localhostBrowserRenderer = {
   },
 
   mount(el, { id, props, dispatch, ctx }) {
+    let mounted = true;
     let currentPort = props.port || "";
     let iframe = null;
 
@@ -76,6 +74,7 @@ export const localhostBrowserRenderer = {
 
     // --- Handlers ---
     function connect() {
+      if (!mounted) return;
       const port = portInput.value.trim();
       if (!port || !/^\d+$/.test(port)) return;
       const num = parseInt(port, 10);
@@ -93,8 +92,6 @@ export const localhostBrowserRenderer = {
 
       refreshBtn.disabled = false;
       openBtn.disabled = false;
-
-      showPlaceholder(false);
     }
 
     function showPlaceholder(show) {
@@ -120,7 +117,7 @@ export const localhostBrowserRenderer = {
       if (iframe) iframe.src = iframe.src;
     });
     openBtn.addEventListener("click", () => {
-      if (currentPort) window.open(`/_proxy/${currentPort}/`, "_blank");
+      if (currentPort) window.open(`/_proxy/${currentPort}/`, "_blank", "noopener,noreferrer");
     });
 
     // Auto-connect if restored with a port
@@ -132,8 +129,8 @@ export const localhostBrowserRenderer = {
 
     // --- Handle ---
     return {
-      unmount() { el.innerHTML = ""; },
-      focus() { if (portInput && !currentPort) portInput.focus(); },
+      unmount() { mounted = false; el.innerHTML = ""; },
+      focus() { if (!currentPort) portInput.focus(); },
       blur() {},
       resize() {},
       getSessions() { return []; },
