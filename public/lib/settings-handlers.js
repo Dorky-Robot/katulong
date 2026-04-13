@@ -199,6 +199,13 @@ export function createSettingsHandlers(options = {}) {
     const input = document.getElementById("public-url-input");
     if (!input) return;
 
+    // Show current origin as placeholder so the user sees what's auto-detected
+    const isLocalhost = location.hostname === "localhost" ||
+                        location.hostname === "127.0.0.1" ||
+                        location.hostname === "::1";
+    if (!isLocalhost) {
+      input.placeholder = location.origin;
+    }
     input.value = config?.publicUrl || "";
 
     const save = async () => {

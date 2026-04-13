@@ -2232,6 +2232,7 @@
     .feed-tile-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-xs); padding: var(--space-xs) 0; min-width: 0; }
     .feed-tile-bullet { flex-shrink: 0; width: 1.2em; text-align: center; }
     .feed-tile-step { font-weight: 500; min-width: 0; overflow-wrap: break-word; }
+    .feed-tile-assistant-text { font-weight: 400; color: var(--text); font-style: italic; }
     .feed-tile-detail { width: 100%; padding-left: 1.6em; color: var(--text-secondary); font-size: var(--text-xs); overflow-wrap: break-word; }
     .feed-status-pending .feed-tile-bullet { color: var(--text-secondary); }
     .feed-status-active .feed-tile-bullet { color: var(--accent, #58a6ff); animation: feed-pulse 1.5s ease-in-out infinite; }
@@ -2247,9 +2248,9 @@
     .feed-tile-picker { display: flex; flex-direction: column; height: 100%; padding: var(--space-md); gap: var(--space-sm); color: var(--text); }
     .feed-tile-picker-title { display: flex; align-items: center; justify-content: space-between; font-size: var(--text-sm); font-weight: 600; color: var(--text); padding-bottom: var(--space-xs); border-bottom: 1px solid var(--border); }
     .feed-tile-picker-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; color: var(--text); font-size: var(--text-sm); }
-    .feed-tile-picker-toolbar { display: flex; gap: var(--space-xs); }
-    .feed-tile-picker-delete-btn { padding: 2px var(--space-sm); border: 1px solid var(--border); background: transparent; color: var(--text-secondary); border-radius: var(--radius-sm, 6px); cursor: pointer; font-size: var(--text-xs); }
-    .feed-tile-picker-delete-btn:hover { background: rgba(255,80,80,0.15); color: #f66; border-color: #f66; }
+    .feed-tile-picker-actionbar { display: flex; justify-content: flex-end; padding-top: var(--space-xs); border-top: 1px solid var(--border); }
+    .feed-tile-picker-delete-btn { display: inline-flex; align-items: center; gap: 4px; padding: var(--space-xs) var(--space-sm); border: none; background: transparent; color: var(--text-secondary); border-radius: var(--radius-sm, 6px); cursor: pointer; font-size: var(--text-xs); }
+    .feed-tile-picker-delete-btn:hover { background: rgba(255,80,80,0.15); color: #f66; }
     .feed-tile-picker-delete-btn:disabled { opacity: 0.5; cursor: default; }
     .feed-tile-picker-close-btn { background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 2px; font-size: 0.85rem; line-height: 1; border-radius: var(--radius-sm, 4px); margin-left: auto; }
     .feed-tile-picker-close-btn:hover { color: var(--text); background: var(--bg-hover, rgba(255,255,255,0.1)); }
@@ -2260,8 +2261,6 @@
     .feed-tile-picker-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
     .feed-tile-picker-info { flex-shrink: 0; font-size: var(--text-xs); color: var(--text-secondary); }
     .feed-tile-picker-empty { padding: var(--space-lg) var(--space-sm); text-align: center; color: var(--text-secondary); font-size: var(--text-sm); }
-    .feed-tile-picker-refresh { align-self: center; margin-top: var(--space-sm); padding: var(--space-xs) var(--space-md); border: 1px solid var(--border); background: transparent; color: var(--text); border-radius: var(--radius-sm, 6px); cursor: pointer; font-size: var(--text-sm); }
-    .feed-tile-picker-refresh:hover { background: var(--bg-hover, rgba(255,255,255,0.12)); }
 
     /* --- Progress Tile --- */
     .progress-tile-root { display: flex; flex-direction: column; height: 100%; width: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font-sans, -apple-system, sans-serif); font-size: var(--text-sm); }
@@ -2578,15 +2577,6 @@
 
           <!-- Remote tab content -->
           <div class="settings-tab-content" id="settings-tab-remote">
-            <div class="settings-row" style="flex-direction: column; align-items: stretch; gap: var(--space-xs);">
-              <span class="settings-label">Public URL</span>
-              <input type="url" id="public-url-input" class="palette-hex-input" style="width: 100%; box-sizing: border-box;"
-                     placeholder="https://myhost.example.com" spellcheck="false" autocomplete="off" />
-            </div>
-            <p class="tab-description" style="margin-top: 0;">
-              Your tunnel URL for remote access. Used by CLI tools and pub/sub.
-            </p>
-
             <div class="settings-row">
               <span class="settings-label">Port Proxy</span>
               <label class="toggle-switch">
@@ -2636,7 +2626,15 @@
 
           <!-- API tab content -->
           <div class="settings-tab-content" id="settings-tab-api">
-            <p class="tab-description" id="api-base-url"></p>
+            <div class="settings-row" style="flex-direction: column; align-items: stretch; gap: var(--space-xs);">
+              <span class="settings-label">Self-Access URL</span>
+              <input type="url" id="public-url-input" class="palette-hex-input" style="width: 100%; box-sizing: border-box;"
+                     placeholder="not detected yet" spellcheck="false" autocomplete="off" />
+            </div>
+            <p class="tab-description" style="margin-top: 0;">
+              Auto-detected from tunnel traffic. Override if the detected URL is wrong.
+            </p>
+
 
             <div class="token-create-form" id="apikey-create-form" style="display: none;">
               <div class="token-form-header"><h4>Generate new API key</h4></div>

@@ -180,7 +180,7 @@ describe("feedRenderer", () => {
       assert.equal(header.children[2].className, "feed-tile-close-btn");
     });
 
-    it("renders badge when meta.type is set", () => {
+    it("header has back button, title, and close button", () => {
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -191,25 +191,11 @@ describe("feedRenderer", () => {
 
       const root = el.children[0];
       const header = root.children[0];
-      // [backBtn, title, badge, closeBtn]
-      assert.equal(header.children.length, 4);
-      assert.equal(header.children[2].className, "feed-tile-badge");
-      assert.equal(header.children[2].textContent, "progress");
-    });
-
-    it("does not render badge when no meta.type", () => {
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: { topic: "t", meta: {} },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      const root = el.children[0];
-      const header = root.children[0];
-      // [backBtn, title, closeBtn] — no badge
+      // [backBtn, title, closeBtn]
       assert.equal(header.children.length, 3);
+      assert.equal(header.children[0].className, "feed-tile-back-btn");
+      assert.equal(header.children[1].textContent, "t");
+      assert.equal(header.children[2].className, "feed-tile-close-btn");
     });
 
     it("processes SSE events via onmessage", () => {

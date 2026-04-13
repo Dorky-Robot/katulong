@@ -12,6 +12,7 @@ export function createJoystickManager(options = {}) {
   let _onFilesClick = null;
   let _onUploadClick = null;
   let _onSettingsClick = null;
+  let _onFeedClick = null;
   let dotEl = null;
 
   function buildButtons() {
@@ -34,6 +35,9 @@ export function createJoystickManager(options = {}) {
     if (_onFilesClick) {
       joystick.appendChild(actionBtn("folder-open", "Files", _onFilesClick));
     }
+    if (_onFeedClick) {
+      joystick.appendChild(actionBtn("rss", "Claude feed", _onFeedClick));
+    }
     if (_onSettingsClick) {
       joystick.appendChild(actionBtn("gear", "Settings", _onSettingsClick));
     }
@@ -50,10 +54,11 @@ export function createJoystickManager(options = {}) {
       // No gesture handling needed — just buttons
     },
 
-    setActions({ onFilesClick, onUploadClick, onSettingsClick }) {
+    setActions({ onFilesClick, onUploadClick, onSettingsClick, onFeedClick }) {
       _onFilesClick = onFilesClick;
       _onUploadClick = onUploadClick;
       _onSettingsClick = onSettingsClick;
+      _onFeedClick = onFeedClick;
       buildButtons();
     },
 
