@@ -43,9 +43,12 @@
     import { createFileBrowserTileFactory } from "/lib/tiles/file-browser-tile.js";
     import { dispatchNotification } from "/lib/notify.js";
     import { createUiStore, loadFromStorage, EMPTY_STATE } from "/lib/ui-store.js";
+    import { buildBootState } from "/lib/boot-state.js";
+    import { createAddHandler, generateSessionName, generateClusterId } from "/lib/add-target.js";
+    import { reducePinch, diffPinchState, INITIAL_PINCH_STATE } from "/lib/pinch-levels.js";
     import { initRenderers, isPersistable, getRenderer } from "/lib/tile-renderers/index.js";
     import { createTileHost } from "/lib/tile-host.js";
-    import { getFocusedSession } from "/lib/selectors.js";
+    import { getFocusedSession, selectClusterView } from "/lib/selectors.js";
     import { navigateTab as computeNavigateTab, moveTab as computeMoveTab, jumpToTab as computeJumpToTab } from "/lib/navigation.js";
     import { createIconStore } from "/lib/icon-store.js";
     import { createReconcilerStore } from "/lib/reconciler-store.js";
@@ -537,26 +540,26 @@
       document.body.dataset.focusedNeedsWs = desc.session ? "1" : "0";
     });
 
-    // ── Pinch-to-expose gesture ──────────────────────────────────────
+    // ── Pinch-to-zoom gesture ────────────────────────────────────────
     //
-    // Step 1 of the tile-clusters design: pinch is the zoom verb.
-    // Pinch-out morphs the carousel into exposé (all tiles visible at
-    // once); pinch-in returns to carousel. Once Level 2 (cluster
-    // overview) exists this same gesture will carry through to it —
-    // the commit thresholds below are intentionally conservative so
-    // they can be re-framed as "level change" without rewriting.
+    // Pinch is the zoom verb across the tile-clusters design. The pure
+    // state machine lives in /lib/pinch-levels.js (FP4) — this wiring
+    // reads the current level/mode from module-local state, asks the
+    // reducer for the next state, and applies side effects via diffs.
     //
-    // Commit thresholds: we only switch mode on gesture end, and only
-    // if the final scale crossed ~15%. Mid-gesture we do NOT live-morph
-    // — that would require interpolating transforms per frame while
-    // dodging the running CSS transition, which in turn means reading
-    // offsetWidth mid-animation (the exact trap called out in
-    // positionCards's cachedCardW comment). A discrete commit-on-end
-    // is simpler, passes tests, and still feels gestural because the
-    // subsequent CSS transition is fast (350ms). Live interpolation
-    // can be layered on later without changing this contract.
-    const pinchCommitOut = 1.15; // >= this at end => carousel -> expose
-    const pinchCommitIn  = 0.87; // <= this at end => expose -> carousel
+    // Today only Level 1 exists (carousel ↔ expose). The reducer also
+    // models Level 1 expose → Level 2 expose, but we CLAMP transitions
+    // to level 1 here until MC3 adds the Level-2 renderer. The clamp
+    // is a single if-statement so MC3 removes it cleanly.
+    //
+    // Commit-on-end rationale: we only switch mode on gesture end (not
+    // mid-gesture). Live-morphing requires interpolating transforms per
+    // frame while dodging the running CSS transition — which means
+    // reading offsetWidth mid-animation (the exact trap in positionCards's
+    // cachedCardW comment). Discrete commit-on-end is simpler, passes
+    // tests, and feels gestural because the subsequent CSS transition
+    // is fast (350ms).
+    let pinchState = INITIAL_PINCH_STATE;
     const pinchTarget = document.getElementById("terminal-container");
     if (pinchTarget) {
       const pinch = createPinchGesture({
@@ -564,25 +567,37 @@
         onPinch: ({ scale, phase }) => {
           if (!carousel.isActive()) return;
           if (phase !== "end") return;
-          const cur = carousel.getMode();
-          if (cur === "carousel" && scale >= pinchCommitOut) {
-            carousel.setMode("expose");
-          } else if (cur === "expose" && scale <= pinchCommitIn) {
-            carousel.setMode("carousel");
-          }
+          let next = reducePinch(pinchState, { scale });
+          // Clamp to level 1 until MC3 lands. Remove this when Level 2
+          // renderer exists; the reducer already handles the transition.
+          if (next.level === 2) next = { level: 1, mode: next.mode };
+          const diff = diffPinchState(pinchState, next);
+          pinchState = next;
+          if (!diff) return;
+          if (diff.modeChanged) carousel.setMode(next.mode);
         },
       });
       pinch.attach();
     }
 
-    /** Subscribe all carousel tiles to WS output via getSessions().
+    /** Subscribe all tiles in a cluster to WS output via getSessions().
      *  ALL tiles need subscriptions — including the focused one — because
      *  carousel swipe doesn't send `switch` (no server round-trip). Without
      *  a subscription, data-available notifications are dropped and the
-     *  terminal appears stuck. */
-    function syncCarouselSubscriptions() {
-      if (!carousel.isActive()) return;
-      for (const tileId of carousel.getCards()) {
+     *  terminal appears stuck.
+     *
+     *  Cluster-scoped (FP5): iterates a cluster's tile order from
+     *  ui-store rather than the visible carousel's card list. This keeps
+     *  subscription routing correct when MC3 introduces multiple carousels
+     *  (Level 2) — each cluster's tiles are subscribed independently of
+     *  whichever carousel is visually on screen.
+     *
+     *  @param {string} [clusterId] — defaults to the active cluster. */
+    function syncCarouselSubscriptions(clusterId) {
+      const state = uiStore.getState();
+      const view = selectClusterView(state, clusterId || state.activeClusterId);
+      if (view.order.length === 0) return;
+      for (const tileId of view.order) {
         const handle = tileHost.getHandle(tileId);
         if (!handle) continue;
         // getSessions() returns all WS session names this tile manages:
@@ -596,7 +611,7 @@
           cm.send(JSON.stringify(subMsg));
         }
       }
-      carousel.fitAll();
+      if (carousel.isActive()) carousel.fitAll();
     }
 
     /** Route a session through ui-store — adds the tile if absent, then
@@ -914,7 +929,7 @@
     // --- New session creation (shared by sidebar + and shortcut bar +) ---
     async function createNewSession() {
       try {
-        const name = `session-${Date.now().toString(36)}`;
+        const name = generateSessionName();
         const data = await api.post("/sessions", { name, copyFrom: getActiveSessionName() });
         if (sidebar?.classList.contains("collapsed")) {
           setSidebarCollapsed(false);
@@ -929,8 +944,22 @@
       }
     }
 
+    // FP3 — + button routing. Pure decision in /lib/add-target.js; this
+    // factory wires it to the two side-effects (create terminal tile /
+    // create empty cluster). Level is hardcoded to 1 until MC3 introduces
+    // Level 2; at that point only getLevel() changes.
+    const handleAdd = createAddHandler({
+      getLevel: () => 1,
+      getState: () => {
+        const st = uiStore.getState();
+        return { activeClusterId: st.activeClusterId, focusedId: st.focusedId };
+      },
+      onAddTile: () => createNewSession(),
+      onAddCluster: () => uiStore.addCluster({ id: generateClusterId() }, { switchTo: true }),
+    });
+
     if (sidebarAddBtn) {
-      sidebarAddBtn.addEventListener("click", createNewSession);
+      sidebarAddBtn.addEventListener("click", handleAdd);
     }
 
     // Load session data: always on desktop (for tab bar), or when sidebar is expanded
@@ -1002,21 +1031,16 @@
      * remove the card/tab, dispose the pooled terminal, and show the add
      * menu if nothing's left. Returns whether a neighbor was activated, so
      * callers can branch on "last tab closed".
-     *
-     * For clusters, the focused card id is NOT the session name (the
-     * cluster's sessionName getter aliases its first sub-tile). Use the
-     * carousel's actual focused id when active so indexOf finds the
-     * current card and we pick the correct right-neighbor — otherwise
-     * idx falls to -1 and `next` collapses to tabs[0] (the first tile).
      */
-    // Pick the right neighbor of `id` in the current tab/carousel order,
+    // Pick the right neighbor of `id` in the current cluster's tile order,
     // falling back to the previous tile if `id` is the last one. Returns
     // null if there is no neighbor (single tile, or id not found). Shared
     // by the explicit close path (Option+W) and the reactive session-
     // removed path so both land focus on the same tile.
     function pickRightNeighbor(id) {
-      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-      const currentId = carousel.isActive() ? (carousel.getFocusedCard() || id) : id;
+      const state = uiStore.getState();
+      const tabs = state.order;
+      const currentId = state.focusedId || id;
       const idx = tabs.indexOf(currentId);
       if (tabs.length <= 1 || idx === -1) return null;
       return tabs[idx === tabs.length - 1 ? idx - 1 : idx + 1];
@@ -2414,72 +2438,21 @@
     const wasEmptyState = sessionStorage.getItem("katulong-empty-state");
     if (wasEmptyState) sessionStorage.removeItem("katulong-empty-state");
 
-    /** Build boot state from localStorage + URL hint + legacy migration. */
-    function buildBootState() {
-      // Start from persisted ui-store state
-      let initial = loadFromStorage();
-
-      // Legacy migration: if ui-store has nothing but the old carousel
-      // localStorage has tiles, migrate them. After migration, clear the
-      // old key so two persistence layers don't drift out of sync.
-      if (!initial || Object.keys(initial.tiles).length === 0) {
-        const carouselState = carousel.restore();
-        if (carouselState?.tiles?.length) {
-          const tiles = {};
-          const order = [];
-          for (const t of carouselState.tiles) {
-            const type = t.type === "dashboard" ? "cluster" : t.type;
-            if (!getRenderer(type)) continue;
-            tiles[t.id] = { id: t.id, type, props: { ...t } };
-            delete tiles[t.id].props.id;
-            delete tiles[t.id].props.type;
-            delete tiles[t.id].props.cardWidth;
-            order.push(t.id);
-          }
-          initial = {
-            version: 1,
-            tiles,
-            order,
-            focusedId: carouselState.focused || order[0] || null,
-          };
-          // Migration complete — clear old key
-          try { localStorage.removeItem("katulong-carousel"); } catch {}
-        }
+    /** Gather boot-state deps from the window, delegate to the pure
+     *  buildBootState() composer, and clear the legacy carousel key if
+     *  migration fired. */
+    function gatherBootState() {
+      const { state, migratedLegacy } = buildBootState({
+        persisted: loadFromStorage(),
+        legacyCarousel: carousel.restore(),
+        urlSession: explicitSession,
+        tabSetSessions: windowTabSet ? windowTabSet.getTabs() : [],
+        getRenderer,
+      });
+      if (migratedLegacy) {
+        try { localStorage.removeItem("katulong-carousel"); } catch {}
       }
-
-      if (!initial) initial = { version: 1, tiles: {}, order: [], focusedId: null };
-
-      // Merge ?s= URL hint. Only override focusedId when the URL
-      // introduced a NEW session — otherwise, the persisted focusedId
-      // wins. ?s= only tracks terminals, so it goes stale when the user
-      // focuses a non-terminal tile (file browser). Overriding
-      // unconditionally would lose that focus on every refresh.
-      if (explicitSession) {
-        if (!initial.tiles[explicitSession]) {
-          initial.tiles[explicitSession] = {
-            id: explicitSession,
-            type: "terminal",
-            props: { sessionName: explicitSession },
-          };
-          initial.order.push(explicitSession);
-          initial.focusedId = explicitSession;
-        }
-      }
-
-      // Merge windowTabSet sessions (legacy — ensures tabs from other windows
-      // appear even if they weren't in the persisted ui-store yet)
-      if (windowTabSet) {
-        for (const tab of windowTabSet.getTabs()) {
-          if (!initial.tiles[tab]) {
-            initial.tiles[tab] = {
-              id: tab, type: "terminal", props: { sessionName: tab },
-            };
-            initial.order.push(tab);
-          }
-        }
-      }
-
-      return initial;
+      return state;
     }
 
     function bootFromState(bootState) {
@@ -2511,11 +2484,13 @@
     if (!explicitSession && !wasEmptyState) {
       // No URL hint — check for persisted tiles first, then fall back to
       // fetching /sessions to find an existing session.
-      const bootState = buildBootState();
+      const bootState = gatherBootState();
       if (Object.keys(bootState.tiles).length > 0) {
         bootFromState(bootState);
       } else {
-        // No persisted tiles — ask the server for existing sessions
+        // No persisted tiles — ask the server for existing sessions.
+        // tileHost is already subscribed, so we dispatch via addTile +
+        // connect rather than rebuilding a boot state from scratch.
         fetch("/sessions").then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           return r.json();
@@ -2523,10 +2498,12 @@
           if (cm.getState().status !== "disconnected" || uiStore.getState().focusedId !== null) return;
           if (sessions.length > 0 && sessions[0].name) {
             const name = sessions[0].name;
-            bootState.tiles[name] = { id: name, type: "terminal", props: { sessionName: name } };
-            bootState.order.push(name);
-            bootState.focusedId = name;
-            bootFromState(bootState);
+            uiStore.addTile(
+              { id: name, type: "terminal", props: { sessionName: name } },
+              { focus: true },
+            );
+            setDocTitle(name);
+            cm.connect();
           }
         }).catch(err => {
           console.warn("Failed to fetch sessions on load:", err);
@@ -2534,7 +2511,7 @@
       }
     } else if (!wasEmptyState) {
       // Explicit ?s= — build and boot immediately
-      bootFromState(buildBootState());
+      bootFromState(gatherBootState());
     }
     // If wasEmptyState, stay empty — user explicitly closed all tabs.
 

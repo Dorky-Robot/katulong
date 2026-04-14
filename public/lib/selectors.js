@@ -28,3 +28,35 @@ export function getFocusedSession(uiState, getRenderer) {
   if (!renderer) return null;
   return renderer.describe(tile.props).session || null;
 }
+
+/**
+ * Cluster-scoped view of ui-store state.
+ *
+ * Returns a `{ tiles, order, focusedId }` triple filtered to a single
+ * cluster. Used by tile-host and WS-subscription code so each cluster
+ * can drive its own carousel and bookkeep its own session subscriptions
+ * independently.
+ *
+ * Pure: no dependency on renderer registry, no mutation of input. Given
+ * an unknown or missing cluster id, returns an empty view.
+ *
+ * @param {object} uiState
+ * @param {string} clusterId
+ * @returns {{ tiles: object, order: string[], focusedId: string|null }}
+ */
+export function selectClusterView(uiState, clusterId) {
+  if (!uiState?.clusters?.[clusterId]) {
+    return { tiles: {}, order: [], focusedId: null };
+  }
+  const tiles = {};
+  const arr = [];
+  for (const t of Object.values(uiState.tiles)) {
+    if (t.clusterId !== clusterId) continue;
+    tiles[t.id] = t;
+    arr.push(t);
+  }
+  arr.sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
+  const order = arr.map(t => t.id);
+  const focusedId = uiState.focusedIdByCluster?.[clusterId] ?? null;
+  return { tiles, order, focusedId };
+}

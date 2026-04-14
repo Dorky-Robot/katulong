@@ -105,6 +105,26 @@ Discussed but explicitly deferred until pinch + Level 1/2 are working:
 
 Everything after Step 1 follows the **Tier 1 / Tier 2 / Tier 3** plan in "Architectural decisions" below — a refactor lands *before* the new features so columns, file-browser-as-tile, and Level 2 build on a clean substrate instead of bolting onto the flat-array model.
 
+### FP pre-req for multi-cluster (2026-04-13)
+
+Before the multi-cluster substrate lands, the imperative chunks of `app.js` that multi-cluster will touch get converted into the established reducer/factory/effect-descriptor pattern (campaign history: `28f5538`, `29d6ec6`, `9868545`, `d9357ba`). Rationale: imperative state plus a new cluster layer produces hard-to-debug bugs; the conversion pays itself back in debuggability.
+
+**Scope is the critical path only.** WebRTC retry, iframe focus, connection-indicator tooltip, settings handlers, and other still-imperative chunks are orthogonal and stay deferred.
+
+Pre-req checklist (convert before multi-cluster strips):
+- [x] **FP1 — Carousel persistence reducer** (`33aa3be`). v2 ui-store shape `{ version, activeClusterId, clusters, tiles (with clusterId), focusedIdByCluster }`; extracted `buildBootState()` to a pure module with legacy v1→v2 migration. *Medium.*
+- [x] **FP2 — Cluster activation cleanup** (`509da16`). Removed last imperative `carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs()` branch in `pickRightNeighbor`; reads ui-store `state.order`/`focusedId` directly. (SWITCH_CLUSTER action landed in FP1; cluster-switch *effect* designed alongside MC3 when there's a caller.) *Small.*
+- [x] **FP3 — `+` button routing factory** (`668a450`). New `public/lib/add-target.js`: pure `decideAddTarget({level, activeClusterId, focusedId})` + `createAddHandler` factory + id generators. Sidebar-+ rewired through factory; level-2 path wired to `uiStore.addCluster` so MC3 only swaps `getLevel()`. 12 pure tests. *Small.*
+- [x] **FP4 — Pinch level reducer** (`3cb0138`). New `public/lib/pinch-levels.js`: pure `reducePinch(state, {scale})` for the full L1↔L2 state machine + `diffPinchState` for minimal side effects. App.js wiring threads `pinchState` through the reducer; L2 transitions clamped until MC3. 17 pure tests. *Medium.*
+- [x] **FP5 — Carousel↔cluster isolation** (`d39a96b`). New `selectClusterView(state, clusterId)` selector; tile-host accepts optional `getClusterId` (defaults to active cluster) and reconciles via the scoped view; `syncCarouselSubscriptions(clusterId?)` iterates ui-store order instead of carousel cards. 12 new selector tests. *Medium.*
+
+Then the multi-cluster work itself (each line below is a separate PR on top of the pre-req):
+- [ ] **MC1 — T2a columns data shape** (single-slot initially; a future v3 bump).
+- [ ] **MC2 — T2b layout-change snapshot** (shortcut-bar consumes snapshot, stops importing carousel directly).
+- [ ] **MC3 — Level 2 cluster strips** (vertical stack of horizontal carousel strips, pinch-out from Level 1, uniform mode, `+` at Level 2, tap/pinch-in to return).
+
+Explicitly deferred from this round: T1a (flip extraction), T1b (file-browser polish), T2c (face-stack-of-N), drag-to-stack, deck-of-cards in exposé, columns with >1 tile, Level 3 spatial canvas.
+
 ## Architectural decisions (from /consult, 2026-04-09)
 
 The /consult agent revealed the file browser is *already* a tile (PR #533). The real structural problems are in the **container** (`card-carousel.js`), not the content. Recorded decisions:
