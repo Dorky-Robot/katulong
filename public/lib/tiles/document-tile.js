@@ -350,6 +350,7 @@ export function createDocumentTileFactory(_deps = {}) {
     let watcher = null;
     let conflictBarEl = null;
     let pendingDiskContent = null;
+    let headerEl = null;
 
     const isFileBacked = !!filePath;
     const ext = filePath
@@ -391,12 +392,12 @@ export function createDocumentTileFactory(_deps = {}) {
       }
     }
 
-    function showConflict(diskContent, rootEl, headerEl) {
+    function showConflict(diskContent) {
       // Always refresh the cached disk content so Revert applies the newest
       // version — the disk can change repeatedly while the banner is up.
       pendingDiskContent = diskContent;
       if (conflictBarEl) return;
-      if (!rootEl || !headerEl) return;
+      if (!headerEl) return;
 
       conflictBarEl = document.createElement("div");
       conflictBarEl.className = "doc-tile-conflict";
@@ -421,7 +422,7 @@ export function createDocumentTileFactory(_deps = {}) {
       overwrite.type = "button";
       overwrite.className = "doc-tile-conflict-btn doc-tile-conflict-btn-primary";
       overwrite.textContent = "Overwrite";
-      overwrite.addEventListener("click", () => { saveFile(); });
+      overwrite.addEventListener("click", saveFile);
       conflictBarEl.appendChild(overwrite);
 
       headerEl.insertAdjacentElement("afterend", conflictBarEl);
@@ -461,6 +462,7 @@ export function createDocumentTileFactory(_deps = {}) {
 
         const header = document.createElement("div");
         header.className = "doc-tile-header";
+        headerEl = header;
 
         const headerTitle = document.createElement("span");
         headerTitle.className = "doc-tile-header-title";
@@ -609,6 +611,9 @@ export function createDocumentTileFactory(_deps = {}) {
               api.get(`/api/files/read?path=${encodeURIComponent(filePath)}`)
                 .then((data) => {
                   if (!mounted || !editorView) return;
+                  // Guard against a malformed/empty response so we never
+                  // dispatch `undefined` into CodeMirror.
+                  if (typeof data?.content !== "string") return;
                   const currentDoc = editorView.state.doc.toString();
                   if (data.content === currentDoc) {
                     originalContent = data.content;
@@ -617,7 +622,7 @@ export function createDocumentTileFactory(_deps = {}) {
                   if (!dirty) {
                     applyDiskToEditor(data.content);
                   } else {
-                    showConflict(data.content, root, header);
+                    showConflict(data.content);
                   }
                 })
                 .catch(() => { /* transient read failure — wait for next event */ });
@@ -672,6 +677,7 @@ export function createDocumentTileFactory(_deps = {}) {
         }
         if (container) container.innerHTML = "";
         container = null;
+        headerEl = null;
         mounted = false;
         dirty = false;
         statusEl = null;
