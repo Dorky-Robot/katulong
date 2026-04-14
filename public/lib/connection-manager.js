@@ -22,6 +22,7 @@ const BACKOFF_INITIAL    = 1000;
 const BACKOFF_MAX        = 10000;
 const BACKOFF_FACTOR     = 2;
 const BACKGROUND_THRESHOLD = 5000; // 5s — after this long in background, force reconnect
+const WAKE_PROBE_TIMEOUT   = 2000; // 2s — probe deadline on focus/pageshow (laptop wake)
 
 /**
  * Create a connection manager.
@@ -50,6 +51,7 @@ export function createConnectionManager({
   let backoffDelay      = BACKOFF_INITIAL;
   let backgroundedAt    = null;
   let disposed          = false;
+  let wakeProbeTimer    = null;
 
   // DOM listeners stored for cleanup
   const domListeners    = [];
@@ -153,6 +155,11 @@ export function createConnectionManager({
     const { status } = connectionStore.getState();
     if (status === "disconnected") return;
 
+    if (wakeProbeTimer !== null) {
+      clearTimeout(wakeProbeTimer);
+      wakeProbeTimer = null;
+    }
+
     stopHeartbeat();
 
     if (transport) {
@@ -169,6 +176,45 @@ export function createConnectionManager({
     }, backoffDelay);
 
     backoffDelay = Math.min(backoffDelay * BACKOFF_FACTOR, BACKOFF_MAX);
+  }
+
+  /**
+   * Probe the connection after a wake event (focus, pageshow). If the
+   * socket is already closed, reconnect immediately. If it still looks
+   * open, send a ping and force a reconnect if no pong arrives within
+   * WAKE_PROBE_TIMEOUT — much faster than the normal 8s heartbeat.
+   */
+  function wakeProbe() {
+    // Drop any probe from a prior wake event — focus + pageshow +
+    // visibilitychange can all fire in the same turn on laptop wake, and
+    // we only want one active probe at a time.
+    if (wakeProbeTimer !== null) {
+      clearTimeout(wakeProbeTimer);
+      wakeProbeTimer = null;
+    }
+
+    if (!transport || transport.readyState !== 1) {
+      reconnectNow();
+      return;
+    }
+
+    const probeEpoch = epoch;
+    const pingResult = heartbeat.sendPing(heartbeatState, Date.now());
+    processEffects(pingResult);
+    // sendPing is idempotent — if the scheduled heartbeat had already
+    // flipped the machine to "waiting", sentAt belongs to that earlier
+    // ping, and we must not tear down a connection that might still
+    // answer it within the normal 8s window.
+    const probeSentAt = heartbeatState.sentAt;
+
+    wakeProbeTimer = setTimeout(() => {
+      wakeProbeTimer = null;
+      if (disposed) return;
+      if (epoch !== probeEpoch) return;
+      if (heartbeatState.status !== "waiting") return;
+      if (heartbeatState.sentAt !== probeSentAt) return;
+      handleDisconnect();
+    }, WAKE_PROBE_TIMEOUT);
   }
 
   // ─── Public API ─────────────────────────────────────────────────
@@ -243,6 +289,11 @@ export function createConnectionManager({
       reconnectTimer = null;
     }
 
+    if (wakeProbeTimer !== null) {
+      clearTimeout(wakeProbeTimer);
+      wakeProbeTimer = null;
+    }
+
     stopHeartbeat();
 
     if (transport) {
@@ -297,6 +348,19 @@ export function createConnectionManager({
       if (!disposed) reconnectNow();
     });
 
+    // Laptop wake / tab refocus — visibilitychange doesn't always fire on
+    // macOS lid-close, and even when it does the 8s heartbeat timeout is
+    // slow enough to look like a hang. `focus` and `pageshow` give us extra
+    // wake signals; wakeProbe() reconnects fast if the socket is dead and
+    // applies a tighter 2s deadline if it looks alive.
+    addDomListener(window, "focus", () => {
+      if (!disposed) wakeProbe();
+    });
+
+    addDomListener(window, "pageshow", () => {
+      if (!disposed) wakeProbe();
+    });
+
     addDomListener(document, "visibilitychange", () => {
       if (disposed) return;
 
@@ -307,13 +371,14 @@ export function createConnectionManager({
         backgroundedAt = null;
 
         if (elapsed > BACKGROUND_THRESHOLD) {
-          // Extended background — connection is likely stale, force reconnect
-          disconnect();
-          connect();
+          // Extended background — connection is likely stale, force reconnect.
+          // reconnectNow() (vs. disconnect+connect) also resets backoffDelay,
+          // so a laptop waking into a previously failing reconnect cycle
+          // doesn't inherit the stale 8–10s backoff.
+          reconnectNow();
         } else {
-          // Brief background — probe with an immediate heartbeat ping
-          const result = heartbeat.sendPing(heartbeatState, Date.now());
-          processEffects(result);
+          // Brief background — same fast probe as focus/pageshow.
+          wakeProbe();
         }
       }
     });
