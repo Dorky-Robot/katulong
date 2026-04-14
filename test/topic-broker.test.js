@@ -496,4 +496,51 @@ describe("Topic Broker", () => {
       assert.deepEqual(t.meta, { type: "progress", label: "Build" });
     });
   });
+
+  describe("getTopicStats", () => {
+    it("returns zero counts for an unknown topic", () => {
+      const broker = makeBroker();
+      const stats = broker.getTopicStats("nope");
+      assert.equal(stats.seq, 0);
+      assert.equal(stats.total, 0);
+      assert.deepEqual(stats.byStatus, {});
+    });
+
+    it("groups JSON-string messages by status field", () => {
+      const broker = makeBroker();
+      broker.publish("claude/x", JSON.stringify({ step: "a", status: "done" }));
+      broker.publish("claude/x", JSON.stringify({ step: "b", status: "done" }));
+      broker.publish("claude/x", JSON.stringify({ step: "c", status: "narrative" }));
+
+      const stats = broker.getTopicStats("claude/x");
+      assert.equal(stats.seq, 3);
+      assert.equal(stats.total, 3);
+      assert.deepEqual(stats.byStatus, { done: 2, narrative: 1 });
+    });
+
+    it("buckets non-JSON or status-less messages as _unparsed", () => {
+      const broker = makeBroker();
+      broker.publish("raw", "not json at all");
+      broker.publish("raw", JSON.stringify({ step: "x" })); // no status
+      broker.publish("raw", JSON.stringify({ status: "done" }));
+
+      const stats = broker.getTopicStats("raw");
+      assert.equal(stats.total, 3);
+      assert.equal(stats.byStatus._unparsed, 2);
+      assert.equal(stats.byStatus.done, 1);
+    });
+
+    it("includes rotated log entries", () => {
+      const broker = makeBroker();
+      // Seed many small messages to trigger rotation on event-sized topic
+      // (100KB cap). ~1000 bytes per message * 200 should roll over.
+      const big = "x".repeat(900);
+      for (let i = 0; i < 200; i++) {
+        broker.publish("rollover", JSON.stringify({ status: "done", pad: big }));
+      }
+      const stats = broker.getTopicStats("rollover");
+      assert.equal(stats.total, 200);
+      assert.equal(stats.byStatus.done, 200);
+    });
+  });
 });
