@@ -1,100 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 
-const { normalize, serialize, EMPTY_STATE } = await import(
+const { normalize, serialize, EMPTY_STATE, createUiStore } = await import(
   new URL("../public/lib/ui-store.js", import.meta.url).href
 );
 
-// ── normalize ───────────────────────────────────────────────────────
-
-describe("normalize", () => {
-  it("returns EMPTY_STATE for null/undefined", () => {
-    assert.deepStrictEqual(normalize(null), EMPTY_STATE);
-    assert.deepStrictEqual(normalize(undefined), EMPTY_STATE);
-    assert.deepStrictEqual(normalize(42), EMPTY_STATE);
-  });
-
-  it("assigns x from order array when tiles lack x (migration)", () => {
-    const raw = {
-      version: 1,
-      tiles: {
-        a: { id: "a", type: "terminal", props: {} },
-        b: { id: "b", type: "terminal", props: {} },
-        c: { id: "c", type: "terminal", props: {} },
-      },
-      order: ["b", "a", "c"],
-      focusedId: "a",
-    };
-    const result = normalize(raw);
-    assert.strictEqual(result.tiles.b.x, 0);
-    assert.strictEqual(result.tiles.a.x, 1);
-    assert.strictEqual(result.tiles.c.x, 2);
-    assert.deepStrictEqual(result.order, ["b", "a", "c"]);
-    assert.strictEqual(result.focusedId, "a");
-  });
-
-  it("preserves x when tiles already have it", () => {
-    const raw = {
-      version: 1,
-      tiles: {
-        a: { id: "a", type: "terminal", props: {}, x: 5 },
-        b: { id: "b", type: "terminal", props: {}, x: 2 },
-      },
-      focusedId: "a",
-    };
-    const result = normalize(raw);
-    assert.strictEqual(result.tiles.a.x, 5);
-    assert.strictEqual(result.tiles.b.x, 2);
-    assert.deepStrictEqual(result.order, ["b", "a"]);
-  });
-
-  it("backfills missing tiles not in order array (corrupt save)", () => {
-    const raw = {
-      version: 1,
-      tiles: {
-        a: { id: "a", type: "terminal", props: {} },
-        b: { id: "b", type: "terminal", props: {} },
-        orphan: { id: "orphan", type: "terminal", props: {} },
-      },
-      order: ["a", "b"], // orphan missing from order
-      focusedId: "a",
-    };
-    const result = normalize(raw);
-    assert.strictEqual(result.tiles.a.x, 0);
-    assert.strictEqual(result.tiles.b.x, 1);
-    assert.strictEqual(result.tiles.orphan.x, 2);
-    assert.deepStrictEqual(result.order, ["a", "b", "orphan"]);
-  });
-
-  it("defaults focusedId to first tile when missing", () => {
-    const raw = {
-      tiles: { z: { id: "z", type: "terminal", props: {}, x: 0 } },
-    };
-    const result = normalize(raw);
-    assert.strictEqual(result.focusedId, "z");
-  });
-
-  it("rejects tiles with invalid type", () => {
-    const raw = {
-      tiles: {
-        good: { id: "good", type: "terminal", props: {} },
-        bad: { id: "bad", props: {} }, // no type
-      },
-      order: ["good", "bad"],
-    };
-    const result = normalize(raw);
-    assert.ok(result.tiles.good);
-    assert.ok(!result.tiles.bad);
-    assert.deepStrictEqual(result.order, ["good"]);
-  });
-});
-
-// ── reducer (via createUiStore) ─────────────────────────────────────
-
-// createUiStore calls normalize on initialState and wraps the reducer.
-// We test through it to exercise the real dispatch path.
-
-// Stub localStorage — ui-store calls saveToStorage on every change
+// Stub localStorage — ui-store calls saveToStorage on every change.
 const _storage = {};
 globalThis.localStorage = {
   getItem: (k) => _storage[k] ?? null,
@@ -102,62 +13,179 @@ globalThis.localStorage = {
   removeItem: (k) => { delete _storage[k]; },
 };
 
-const { createUiStore } = await import(
-  new URL("../public/lib/ui-store.js", import.meta.url).href
-);
-
 function makeStore(initial) {
   return createUiStore({ initialState: initial });
 }
 
+// ── normalize (v3 shape + migrations) ────────────────────────────────
+
+describe("normalize", () => {
+  it("returns EMPTY_STATE for null/undefined/non-object", () => {
+    assert.deepStrictEqual(normalize(null), EMPTY_STATE);
+    assert.deepStrictEqual(normalize(undefined), EMPTY_STATE);
+    assert.deepStrictEqual(normalize(42), EMPTY_STATE);
+  });
+
+  it("passes v3 through, dropping empty columns", () => {
+    const v3 = {
+      version: 3,
+      clusters: [[
+        [{ id: "a", type: "terminal", props: {} }],
+        [], // should be pruned
+        [{ id: "b", type: "terminal", props: {} }],
+      ]],
+      activeClusterIdx: 0,
+      focusedTileIdByCluster: ["a"],
+    };
+    const s = normalize(v3);
+    assert.strictEqual(s.version, 3);
+    assert.strictEqual(s.clusters.length, 1);
+    assert.strictEqual(s.clusters[0].length, 2);
+    assert.deepStrictEqual(s.order, ["a", "b"]);
+  });
+
+  it("strips unknown fields on v3 tiles (keeps only id/type/props)", () => {
+    const v3 = {
+      version: 3,
+      clusters: [[[{ id: "a", type: "terminal", props: {}, x: 99, clusterId: "legacy" }]]],
+      activeClusterIdx: 0,
+      focusedTileIdByCluster: ["a"],
+    };
+    const s = normalize(v3);
+    const t = s.clusters[0][0][0];
+    assert.deepStrictEqual(Object.keys(t).sort(), ["id", "props", "type"]);
+  });
+
+  it("clamps out-of-range activeClusterIdx", () => {
+    const s = normalize({
+      version: 3,
+      clusters: [[[{ id: "a", type: "terminal", props: {} }]]],
+      activeClusterIdx: 99,
+      focusedTileIdByCluster: ["a"],
+    });
+    assert.strictEqual(s.activeClusterIdx, 0);
+  });
+
+  it("picks head of first column when focused id is missing/invalid", () => {
+    const s = normalize({
+      version: 3,
+      clusters: [[[{ id: "a", type: "terminal", props: {} }]]],
+      activeClusterIdx: 0,
+      focusedTileIdByCluster: ["ghost"],
+    });
+    assert.strictEqual(s.focusedId, "a");
+  });
+
+  it("rejects tiles without a valid type (but keeps neighbors)", () => {
+    const s = normalize({
+      version: 3,
+      clusters: [[
+        [{ id: "good", type: "terminal", props: {} }],
+        [{ id: "bad", props: {} }], // no type — whole column drops
+      ]],
+      activeClusterIdx: 0,
+      focusedTileIdByCluster: ["good"],
+    });
+    assert.deepStrictEqual(s.order, ["good"]);
+  });
+
+  it("dedups duplicate tile ids across columns", () => {
+    const s = normalize({
+      version: 3,
+      clusters: [[
+        [{ id: "dup", type: "terminal", props: {} }],
+        [{ id: "dup", type: "terminal", props: {} }],
+      ]],
+      activeClusterIdx: 0,
+      focusedTileIdByCluster: ["dup"],
+    });
+    assert.deepStrictEqual(s.order, ["dup"]);
+    assert.strictEqual(s.clusters[0].length, 1);
+  });
+
+  it("rejects reserved ids that would poison the derived tile map prototype", () => {
+    const s = normalize({
+      version: 3,
+      clusters: [[
+        [{ id: "__proto__", type: "terminal", props: {} }],
+        [{ id: "ok", type: "terminal", props: {} }],
+      ]],
+      activeClusterIdx: 0,
+      focusedTileIdByCluster: ["__proto__"],
+    });
+    assert.deepStrictEqual(s.order, ["ok"]);
+    // If the reserved id had been accepted, `tiles.__proto__` would be the
+    // tile object; untouched, it remains the native prototype.
+    assert.strictEqual(Object.getPrototypeOf(s.tiles), Object.prototype);
+    assert.strictEqual(s.clusters[0].length, 1);
+  });
+});
+
+// ── ADD_TILE ─────────────────────────────────────────────────────────
+
 describe("ADD_TILE", () => {
-  it("assigns x = 0 to the first tile", () => {
+  it("adds the first tile as a single-slot column", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "terminal", props: {} });
     const s = store.getState();
-    assert.strictEqual(s.tiles.a.x, 0);
     assert.deepStrictEqual(s.order, ["a"]);
+    assert.strictEqual(s.clusters[0].length, 1);
+    assert.strictEqual(s.clusters[0][0][0].id, "a");
+    assert.ok(s.tiles.a);
   });
 
-  it("appends at end by default (x = nextX)", () => {
+  it("appends a new column at the end by default", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "terminal", props: {} });
     store.addTile({ id: "b", type: "terminal", props: {} });
     store.addTile({ id: "c", type: "terminal", props: {} });
     const s = store.getState();
-    assert.strictEqual(s.tiles.a.x, 0);
-    assert.strictEqual(s.tiles.b.x, 1);
-    assert.strictEqual(s.tiles.c.x, 2);
     assert.deepStrictEqual(s.order, ["a", "b", "c"]);
+    assert.strictEqual(s.clusters[0].length, 3);
   });
 
-  it("inserts afterFocus — shifts tiles to the right", () => {
+  it("inserts afterFocus — new column immediately after focused tile's", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "terminal", props: {} }, { focus: true });
     store.addTile({ id: "b", type: "terminal", props: {} });
-    // Focus is on "a" (x=0). Insert "mid" after focus.
     store.addTile({ id: "mid", type: "terminal", props: {} }, { insertAt: "afterFocus" });
     const s = store.getState();
-    assert.strictEqual(s.tiles.a.x, 0);
-    assert.strictEqual(s.tiles.mid.x, 1);
-    assert.strictEqual(s.tiles.b.x, 2); // shifted from 1 → 2
     assert.deepStrictEqual(s.order, ["a", "mid", "b"]);
   });
 
-  it("does not duplicate — optionally focuses existing tile", () => {
+  it("inserts after an explicit tile id via insertAfter", () => {
+    const store = makeStore();
+    store.addTile({ id: "a", type: "terminal", props: {} });
+    store.addTile({ id: "b", type: "terminal", props: {} });
+    store.addTile({ id: "c", type: "terminal", props: {} });
+    store.addTile({ id: "mid", type: "terminal", props: {} }, { insertAfter: "a" });
+    assert.deepStrictEqual(store.getState().order, ["a", "mid", "b", "c"]);
+  });
+
+  it("does not duplicate existing ids — can shift focus", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "terminal", props: {} });
     store.addTile({ id: "b", type: "terminal", props: {} }, { focus: true });
-    // Try to add "a" again with focus
     store.addTile({ id: "a", type: "terminal", props: {} }, { focus: true });
     const s = store.getState();
-    assert.strictEqual(Object.keys(s.tiles).length, 2);
+    assert.strictEqual(s.clusters[0].length, 2);
     assert.strictEqual(s.focusedId, "a");
+  });
+
+  it("rejects invalid tile payloads", () => {
+    const store = makeStore();
+    const before = store.getState();
+    store.addTile(null);
+    store.addTile({});
+    store.addTile({ id: "x" });
+    assert.strictEqual(store.getState(), before);
   });
 });
 
+// ── REMOVE_TILE ──────────────────────────────────────────────────────
+
 describe("REMOVE_TILE", () => {
-  it("removes tile and derives new order", () => {
+  it("removes the tile and prunes its now-empty column", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "terminal", props: {} });
     store.addTile({ id: "b", type: "terminal", props: {} });
@@ -166,6 +194,7 @@ describe("REMOVE_TILE", () => {
     const s = store.getState();
     assert.ok(!s.tiles.b);
     assert.deepStrictEqual(s.order, ["a", "c"]);
+    assert.strictEqual(s.clusters[0].length, 2);
   });
 
   it("focuses right neighbor when removing focused tile", () => {
@@ -173,12 +202,11 @@ describe("REMOVE_TILE", () => {
     store.addTile({ id: "a", type: "terminal", props: {} });
     store.addTile({ id: "b", type: "terminal", props: {} }, { focus: true });
     store.addTile({ id: "c", type: "terminal", props: {} });
-    // b is focused, remove it — should focus c (right neighbor)
     store.removeTile("b");
     assert.strictEqual(store.getState().focusedId, "c");
   });
 
-  it("focuses left neighbor when removing last tile", () => {
+  it("focuses left neighbor when removing the last tile", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "terminal", props: {} });
     store.addTile({ id: "b", type: "terminal", props: {} });
@@ -204,18 +232,16 @@ describe("REMOVE_TILE", () => {
   });
 });
 
+// ── REORDER ──────────────────────────────────────────────────────────
+
 describe("REORDER", () => {
-  it("reassigns x coordinates to match new order", () => {
+  it("reorders columns by head-tile id", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "terminal", props: {} });
     store.addTile({ id: "b", type: "terminal", props: {} });
     store.addTile({ id: "c", type: "terminal", props: {} });
     store.reorder(["c", "a", "b"]);
-    const s = store.getState();
-    assert.strictEqual(s.tiles.c.x, 0);
-    assert.strictEqual(s.tiles.a.x, 1);
-    assert.strictEqual(s.tiles.b.x, 2);
-    assert.deepStrictEqual(s.order, ["c", "a", "b"]);
+    assert.deepStrictEqual(store.getState().order, ["c", "a", "b"]);
   });
 
   it("no-ops when order is unchanged", () => {
@@ -227,18 +253,13 @@ describe("REORDER", () => {
     assert.strictEqual(store.getState(), before);
   });
 
-  it("appends missing tiles at the end", () => {
+  it("appends missing columns at the end in their original order", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "terminal", props: {} });
     store.addTile({ id: "b", type: "terminal", props: {} });
     store.addTile({ id: "c", type: "terminal", props: {} });
-    // Only specify a,c — b should be appended
     store.reorder(["a", "c"]);
-    const s = store.getState();
-    assert.deepStrictEqual(s.order, ["a", "c", "b"]);
-    assert.strictEqual(s.tiles.a.x, 0);
-    assert.strictEqual(s.tiles.c.x, 1);
-    assert.strictEqual(s.tiles.b.x, 2);
+    assert.deepStrictEqual(store.getState().order, ["a", "c", "b"]);
   });
 
   it("drops unknown ids", () => {
@@ -248,6 +269,8 @@ describe("REORDER", () => {
     assert.deepStrictEqual(store.getState().order, ["a"]);
   });
 });
+
+// ── FOCUS_TILE ───────────────────────────────────────────────────────
 
 describe("FOCUS_TILE", () => {
   it("changes focusedId", () => {
@@ -273,17 +296,25 @@ describe("FOCUS_TILE", () => {
     store.focusTile("ghost");
     assert.strictEqual(store.getState(), before);
   });
+
+  it("clears focus when passed null", () => {
+    const store = makeStore();
+    store.addTile({ id: "a", type: "terminal", props: {} }, { focus: true });
+    store.focusTile(null);
+    assert.strictEqual(store.getState().focusedId, null);
+  });
 });
 
+// ── UPDATE_PROPS ─────────────────────────────────────────────────────
+
 describe("UPDATE_PROPS", () => {
-  it("shallow-merges patch into props, preserves x", () => {
+  it("shallow-merges patch into props", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "terminal", props: { sessionName: "s1" } });
     store.updateProps("a", { title: "hello" });
     const t = store.getState().tiles.a;
     assert.strictEqual(t.props.sessionName, "s1");
     assert.strictEqual(t.props.title, "hello");
-    assert.strictEqual(t.x, 0); // x preserved
   });
 
   it("no-ops when patch values are identical", () => {
@@ -293,158 +324,167 @@ describe("UPDATE_PROPS", () => {
     store.updateProps("a", { sessionName: "s1" });
     assert.strictEqual(store.getState(), before);
   });
+
+  it("keeps the tile's position across updates", () => {
+    const store = makeStore();
+    store.addTile({ id: "a", type: "terminal", props: {} });
+    store.addTile({ id: "b", type: "terminal", props: {} });
+    store.addTile({ id: "c", type: "terminal", props: {} });
+    store.updateProps("b", { title: "renamed" });
+    assert.deepStrictEqual(store.getState().order, ["a", "b", "c"]);
+  });
 });
 
+// ── RESET ────────────────────────────────────────────────────────────
+
 describe("RESET", () => {
-  it("normalizes the provided state (backfills x from order)", () => {
+  it("replaces state via normalize", () => {
     const store = makeStore();
     store.reset({
-      tiles: {
-        x: { id: "x", type: "terminal", props: {} },
-        y: { id: "y", type: "terminal", props: {} },
-      },
-      order: ["y", "x"],
-      focusedId: "y",
+      version: 3,
+      clusters: [[
+        [{ id: "x", type: "terminal", props: {} }],
+        [{ id: "y", type: "terminal", props: {} }],
+      ]],
+      activeClusterIdx: 0,
+      focusedTileIdByCluster: ["y"],
     });
     const s = store.getState();
-    assert.strictEqual(s.tiles.y.x, 0);
-    assert.strictEqual(s.tiles.x.x, 1);
-    assert.deepStrictEqual(s.order, ["y", "x"]);
+    assert.deepStrictEqual(s.order, ["x", "y"]);
     assert.strictEqual(s.focusedId, "y");
   });
 
-  it("preserves x when tiles already have it", () => {
+  it("accepts legacy v1 shape and migrates to v3", () => {
     const store = makeStore();
     store.reset({
+      version: 1,
       tiles: {
-        a: { id: "a", type: "terminal", props: {}, x: 10 },
-        b: { id: "b", type: "terminal", props: {}, x: 3 },
+        a: { id: "a", type: "terminal", props: {} },
+        b: { id: "b", type: "terminal", props: {} },
       },
+      order: ["b", "a"],
       focusedId: "b",
     });
     const s = store.getState();
-    assert.strictEqual(s.tiles.a.x, 10);
-    assert.strictEqual(s.tiles.b.x, 3);
+    assert.strictEqual(s.version, 3);
     assert.deepStrictEqual(s.order, ["b", "a"]);
+    assert.strictEqual(s.focusedId, "b");
   });
 });
 
+// ── serialize ────────────────────────────────────────────────────────
+
 describe("serialize", () => {
-  it("includes x + clusterId on tiles; drops derived order/focusedId", () => {
+  it("emits a clean v3 shape (no derived fields, tiles are dumb)", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "terminal", props: {} });
     store.addTile({ id: "b", type: "terminal", props: {} });
     const out = serialize(store.getState());
-    assert.strictEqual(out.tiles.a.x, 0);
-    assert.strictEqual(out.tiles.b.x, 1);
-    assert.strictEqual(out.tiles.a.clusterId, "default");
-    assert.strictEqual(out.tiles.b.clusterId, "default");
+    assert.strictEqual(out.version, 3);
+    assert.strictEqual(out.activeClusterIdx, 0);
+    assert.ok(Array.isArray(out.clusters));
+    assert.deepStrictEqual(out.clusters[0].map(col => col[0].id), ["a", "b"]);
+    assert.strictEqual(out.tiles, undefined);
     assert.strictEqual(out.order, undefined);
     assert.strictEqual(out.focusedId, undefined);
-    assert.strictEqual(out.activeClusterId, "default");
-    assert.ok(out.clusters.default);
-    assert.ok("focusedIdByCluster" in out);
+    // Tiles carry only {id, type, props} — no clusterId/x/y.
+    assert.deepStrictEqual(Object.keys(out.clusters[0][0][0]).sort(), ["id", "props", "type"]);
   });
 
-  it("filters non-persistable tiles", () => {
+  it("filters non-persistable tiles and prunes empty columns", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "terminal", props: {} });
     store.addTile({ id: "b", type: "ephemeral", props: {} });
     const out = serialize(store.getState(), (type) => type === "terminal");
-    assert.ok(out.tiles.a);
-    assert.ok(!out.tiles.b);
+    assert.strictEqual(out.clusters[0].length, 1);
+    assert.strictEqual(out.clusters[0][0][0].id, "a");
   });
 
-  it("clears focusedIdByCluster entries that point to filtered tiles", () => {
+  it("nulls out focused entries that point to filtered tiles", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "ephemeral", props: {} }, { focus: true });
     const out = serialize(store.getState(), (type) => type === "terminal");
-    assert.strictEqual(out.focusedIdByCluster.default, null);
+    assert.strictEqual(out.focusedTileIdByCluster[0], null);
   });
 });
 
 // ── clusters ─────────────────────────────────────────────────────────
 
 describe("clusters: initial state", () => {
-  it("has a default cluster and active=default", () => {
+  it("has exactly one empty cluster with active index 0", () => {
     const store = makeStore();
     const s = store.getState();
-    assert.strictEqual(s.activeClusterId, "default");
-    assert.ok(s.clusters.default);
-    assert.deepStrictEqual(Object.keys(s.focusedIdByCluster), ["default"]);
+    assert.strictEqual(s.activeClusterIdx, 0);
+    assert.strictEqual(s.clusters.length, 1);
+    assert.deepStrictEqual(s.clusters[0], []);
+    assert.deepStrictEqual(s.focusedTileIdByCluster, [null]);
   });
 
-  it("new tiles are assigned clusterId = activeClusterId", () => {
+  it("ADD_TILE targets the active cluster by default", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "terminal", props: {} });
-    assert.strictEqual(store.getState().tiles.a.clusterId, "default");
+    assert.strictEqual(store.getState().clusters[0][0][0].id, "a");
   });
 });
 
 describe("ADD_CLUSTER", () => {
-  it("adds a cluster and initializes its focusedIdByCluster slot", () => {
+  it("appends an empty cluster and a null focus slot in parallel", () => {
     const store = makeStore();
-    store.addCluster({ id: "work" });
+    store.addCluster();
     const s = store.getState();
-    assert.ok(s.clusters.work);
-    assert.strictEqual(s.focusedIdByCluster.work, null);
-    // active is still default
-    assert.strictEqual(s.activeClusterId, "default");
+    assert.strictEqual(s.clusters.length, 2);
+    assert.deepStrictEqual(s.clusters[1], []);
+    assert.strictEqual(s.focusedTileIdByCluster[1], null);
+    assert.strictEqual(s.activeClusterIdx, 0); // unchanged
   });
 
   it("can switch to the new cluster on creation", () => {
     const store = makeStore();
-    store.addCluster({ id: "work", name: "Work" }, { switchTo: true });
+    store.addCluster({ switchTo: true });
+    assert.strictEqual(store.getState().activeClusterIdx, 1);
+  });
+
+  it("can insert at an explicit position, shifting the active index", () => {
+    const store = makeStore();
+    store.addCluster(); // now [0, 1]
+    store.switchCluster(1); // active = 1
+    store.addCluster({ position: 0 }); // inserts before the active
     const s = store.getState();
-    assert.strictEqual(s.activeClusterId, "work");
-    assert.strictEqual(s.clusters.work.name, "Work");
-  });
-
-  it("no-ops when cluster id already exists", () => {
-    const store = makeStore();
-    const before = store.getState();
-    store.addCluster({ id: "default" });
-    assert.strictEqual(store.getState(), before);
-  });
-
-  it("rejects cluster without an id", () => {
-    const store = makeStore();
-    const before = store.getState();
-    store.addCluster({});
-    assert.strictEqual(store.getState(), before);
+    assert.strictEqual(s.clusters.length, 3);
+    assert.strictEqual(s.activeClusterIdx, 2); // shifted from 1 to 2
   });
 });
 
 describe("SWITCH_CLUSTER", () => {
-  it("updates activeClusterId and re-derives order/focusedId", () => {
+  it("updates activeClusterIdx and re-derives order/focusedId", () => {
     const store = makeStore();
     store.addTile({ id: "a", type: "terminal", props: {} }, { focus: true });
-    store.addCluster({ id: "work" });
-    store.switchCluster("work");
+    store.addCluster();
+    store.switchCluster(1);
     store.addTile({ id: "b", type: "terminal", props: {} }, { focus: true });
     const s = store.getState();
-    assert.strictEqual(s.activeClusterId, "work");
+    assert.strictEqual(s.activeClusterIdx, 1);
     assert.deepStrictEqual(s.order, ["b"]);
     assert.strictEqual(s.focusedId, "b");
 
-    // Switch back — default's state is remembered
-    store.switchCluster("default");
+    // Switch back — cluster 0's state is remembered.
+    store.switchCluster(0);
     const d = store.getState();
     assert.deepStrictEqual(d.order, ["a"]);
     assert.strictEqual(d.focusedId, "a");
   });
 
-  it("no-ops for unknown cluster", () => {
+  it("no-ops for out-of-range index", () => {
     const store = makeStore();
     const before = store.getState();
-    store.switchCluster("ghost");
+    store.switchCluster(99);
     assert.strictEqual(store.getState(), before);
   });
 
   it("no-ops when already active", () => {
     const store = makeStore();
     const before = store.getState();
-    store.switchCluster("default");
+    store.switchCluster(0);
     assert.strictEqual(store.getState(), before);
   });
 });
@@ -452,110 +492,92 @@ describe("SWITCH_CLUSTER", () => {
 describe("REMOVE_CLUSTER", () => {
   it("removes the cluster and all its tiles", () => {
     const store = makeStore();
-    store.addCluster({ id: "work" }, { switchTo: true });
-    store.addTile({ id: "a", type: "terminal", props: {} });
-    store.addTile({ id: "b", type: "terminal", props: {} });
-    store.switchCluster("default");
-    store.removeCluster("work");
+    store.addCluster({ switchTo: true });
+    store.addTile({ id: "w1", type: "terminal", props: {} });
+    store.addTile({ id: "w2", type: "terminal", props: {} });
+    store.switchCluster(0);
+    store.removeCluster(1);
     const s = store.getState();
-    assert.ok(!s.clusters.work);
-    assert.ok(!s.tiles.a);
-    assert.ok(!s.tiles.b);
-    assert.ok(!s.focusedIdByCluster.work);
+    assert.strictEqual(s.clusters.length, 1);
+    assert.ok(!s.tiles.w1);
+    assert.ok(!s.tiles.w2);
   });
 
   it("refuses to remove the last cluster", () => {
     const store = makeStore();
     const before = store.getState();
-    store.removeCluster("default");
+    store.removeCluster(0);
     assert.strictEqual(store.getState(), before);
   });
 
-  it("falls back to first remaining cluster when removing active", () => {
+  it("clamps activeClusterIdx when removing the active cluster", () => {
     const store = makeStore();
-    store.addCluster({ id: "work" }, { switchTo: true });
-    store.removeCluster("work");
-    const s = store.getState();
-    assert.strictEqual(s.activeClusterId, "default");
+    store.addCluster({ switchTo: true }); // active = 1
+    store.removeCluster(1);
+    assert.strictEqual(store.getState().activeClusterIdx, 0);
+  });
+
+  it("shifts activeClusterIdx down when removing a lower-indexed cluster", () => {
+    const store = makeStore();
+    store.addCluster({ switchTo: true }); // active = 1
+    store.removeCluster(0);
+    assert.strictEqual(store.getState().activeClusterIdx, 0);
+    assert.strictEqual(store.getState().clusters.length, 1);
   });
 });
 
 describe("cluster-scoped actions", () => {
   it("FOCUS_TILE rejects a tile in a non-active cluster", () => {
     const store = makeStore();
-    store.addCluster({ id: "work" });
-    store.addTile({ id: "a", type: "terminal", props: {} }, { clusterId: "work" });
-    // active is still default; focusing "a" (in work) should no-op
+    store.addCluster();
+    store.addTile({ id: "w1", type: "terminal", props: {} }, { clusterIdx: 1 });
     const before = store.getState();
-    store.focusTile("a");
+    store.focusTile("w1");
     assert.strictEqual(store.getState(), before);
   });
 
-  it("ADD_TILE can target a specific cluster via clusterId option", () => {
+  it("ADD_TILE can target a specific cluster via clusterIdx option", () => {
     const store = makeStore();
-    store.addCluster({ id: "work" });
-    store.addTile({ id: "a", type: "terminal", props: {} }, { clusterId: "work" });
+    store.addCluster();
+    store.addTile({ id: "w1", type: "terminal", props: {} }, { clusterIdx: 1 });
     const s = store.getState();
-    assert.strictEqual(s.tiles.a.clusterId, "work");
-    // active cluster order is empty since "a" lives in "work"
+    // Active cluster (0) is empty; w1 lives in cluster 1.
     assert.deepStrictEqual(s.order, []);
+    assert.strictEqual(s.clusters[1][0][0].id, "w1");
   });
 
-  it("REORDER only touches tiles in the target cluster", () => {
+  it("REORDER only touches columns in the target cluster", () => {
     const store = makeStore();
-    store.addCluster({ id: "work" });
-    store.addTile({ id: "a", type: "terminal", props: {} }); // default
-    store.addTile({ id: "b", type: "terminal", props: {} }); // default
-    store.addTile({ id: "w1", type: "terminal", props: {} }, { clusterId: "work" });
-    store.addTile({ id: "w2", type: "terminal", props: {} }, { clusterId: "work" });
-    store.reorder(["b", "a"]); // default cluster
+    store.addCluster();
+    store.addTile({ id: "a", type: "terminal", props: {} }); // cluster 0
+    store.addTile({ id: "b", type: "terminal", props: {} }); // cluster 0
+    store.addTile({ id: "w1", type: "terminal", props: {} }, { clusterIdx: 1 });
+    store.addTile({ id: "w2", type: "terminal", props: {} }, { clusterIdx: 1 });
+    store.reorder(["b", "a"]); // cluster 0
     const s = store.getState();
     assert.deepStrictEqual(s.order, ["b", "a"]);
-    // work tiles keep their original order
-    assert.strictEqual(s.tiles.w1.x, 0);
-    assert.strictEqual(s.tiles.w2.x, 1);
+    assert.deepStrictEqual(s.clusters[1].map(c => c[0].id), ["w1", "w2"]);
   });
 
   it("REMOVE_TILE re-focuses within the removed tile's own cluster", () => {
     const store = makeStore();
-    store.addCluster({ id: "work" });
+    store.addCluster();
     store.addTile({ id: "a", type: "terminal", props: {} }, { focus: true });
-    store.addTile({ id: "w1", type: "terminal", props: {} }, { clusterId: "work" });
-    store.addTile({ id: "w2", type: "terminal", props: {} }, { clusterId: "work" });
-    // Focus the first work-tile by switching and focusing.
-    store.switchCluster("work");
+    store.addTile({ id: "w1", type: "terminal", props: {} }, { clusterIdx: 1 });
+    store.addTile({ id: "w2", type: "terminal", props: {} }, { clusterIdx: 1 });
+    store.switchCluster(1);
     store.focusTile("w1");
-    store.switchCluster("default");
-    // Now remove w1 while default is active — focus within work should
-    // fall back to w2 (the neighbor).
+    store.switchCluster(0);
     store.removeTile("w1");
-    assert.strictEqual(store.getState().focusedIdByCluster.work, "w2");
-    // Default's focus unchanged.
-    assert.strictEqual(store.getState().focusedIdByCluster.default, "a");
+    assert.strictEqual(store.getState().focusedTileIdByCluster[1], "w2");
+    assert.strictEqual(store.getState().focusedTileIdByCluster[0], "a");
   });
 });
 
-describe("v1 → v2 migration via normalize", () => {
-  it("wraps v1 tiles into the default cluster", () => {
-    const v1 = {
-      version: 1,
-      tiles: {
-        a: { id: "a", type: "terminal", props: {}, x: 0 },
-        b: { id: "b", type: "terminal", props: {}, x: 1 },
-      },
-      focusedId: "b",
-    };
-    const v2 = normalize(v1);
-    assert.strictEqual(v2.version, 2);
-    assert.strictEqual(v2.activeClusterId, "default");
-    assert.strictEqual(v2.tiles.a.clusterId, "default");
-    assert.strictEqual(v2.tiles.b.clusterId, "default");
-    assert.strictEqual(v2.focusedIdByCluster.default, "b");
-    assert.strictEqual(v2.focusedId, "b");
-    assert.deepStrictEqual(v2.order, ["a", "b"]);
-  });
+// ── Migrations ───────────────────────────────────────────────────────
 
-  it("migrates v1 tiles lacking x using the order hint", () => {
+describe("v1 → v3 migration via normalize", () => {
+  it("wraps v1 tiles into single-slot columns in the v1 order", () => {
     const v1 = {
       version: 1,
       tiles: {
@@ -565,10 +587,58 @@ describe("v1 → v2 migration via normalize", () => {
       order: ["b", "a"],
       focusedId: "b",
     };
-    const v2 = normalize(v1);
-    assert.strictEqual(v2.tiles.b.x, 0);
-    assert.strictEqual(v2.tiles.a.x, 1);
-    assert.deepStrictEqual(v2.order, ["b", "a"]);
+    const v3 = normalize(v1);
+    assert.strictEqual(v3.version, 3);
+    assert.strictEqual(v3.activeClusterIdx, 0);
+    assert.deepStrictEqual(v3.order, ["b", "a"]);
+    assert.strictEqual(v3.focusedId, "b");
+    assert.strictEqual(v3.clusters[0].length, 2);
+  });
+
+  it("backfills missing tiles not in order array (corrupt save)", () => {
+    const v1 = {
+      version: 1,
+      tiles: {
+        a: { id: "a", type: "terminal", props: {} },
+        b: { id: "b", type: "terminal", props: {} },
+        orphan: { id: "orphan", type: "terminal", props: {} },
+      },
+      order: ["a", "b"],
+    };
+    const v3 = normalize(v1);
+    assert.deepStrictEqual(v3.order, ["a", "b", "orphan"]);
+  });
+});
+
+describe("v2 → v3 migration via normalize", () => {
+  it("promotes v2 clusters to v3 3D array, preserving x order as columns", () => {
+    const v2 = {
+      version: 2,
+      activeClusterId: "default",
+      clusters: {
+        default: { id: "default" },
+        work: { id: "work", name: "Work" },
+      },
+      tiles: {
+        a: { id: "a", type: "terminal", props: {}, clusterId: "default", x: 0 },
+        b: { id: "b", type: "terminal", props: {}, clusterId: "default", x: 1 },
+        w1: { id: "w1", type: "terminal", props: {}, clusterId: "work", x: 0 },
+      },
+      focusedIdByCluster: { default: "b", work: "w1" },
+    };
+    const v3 = normalize(v2);
+    assert.strictEqual(v3.version, 3);
+    // Active cluster lands at index 0 in the v3 output.
+    assert.strictEqual(v3.activeClusterIdx, 0);
+    assert.deepStrictEqual(v3.order, ["a", "b"]);
+    assert.strictEqual(v3.focusedId, "b");
+    assert.strictEqual(v3.clusters.length, 2);
+    // Each v2 tile becomes its own single-slot column.
+    assert.deepStrictEqual(v3.clusters[0].map(c => c[0].id), ["a", "b"]);
+    assert.deepStrictEqual(v3.clusters[1].map(c => c[0].id), ["w1"]);
+    // Tiles are dumb: no clusterId or x fields survive.
+    const t = v3.clusters[0][0][0];
+    assert.deepStrictEqual(Object.keys(t).sort(), ["id", "props", "type"]);
   });
 });
 
@@ -582,26 +652,5 @@ describe("round-trip: serialize → normalize", () => {
     const restored = normalize(serialized);
     assert.deepStrictEqual(restored.order, store.getState().order);
     assert.strictEqual(restored.focusedId, store.getState().focusedId);
-    for (const id of restored.order) {
-      assert.strictEqual(restored.tiles[id].x, store.getState().tiles[id].x);
-    }
-  });
-
-  it("old format (no x) round-trips through normalize correctly", () => {
-    // Simulate what loadFromStorage returns for pre-coordinate persistence
-    const oldFormat = {
-      version: 1,
-      tiles: {
-        s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
-        s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
-      },
-      order: ["s2", "s1"],
-      focusedId: "s2",
-    };
-    const restored = normalize(oldFormat);
-    assert.deepStrictEqual(restored.order, ["s2", "s1"]);
-    assert.strictEqual(restored.tiles.s2.x, 0);
-    assert.strictEqual(restored.tiles.s1.x, 1);
-    assert.strictEqual(restored.focusedId, "s2");
   });
 });

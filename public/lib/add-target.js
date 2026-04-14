@@ -16,7 +16,7 @@
  */
 
 /**
- * @typedef {{ kind: "tile", clusterId: string, insertAfter: string | null }} TileTarget
+ * @typedef {{ kind: "tile", clusterIdx: number, insertAfter: string | null }} TileTarget
  * @typedef {{ kind: "cluster" }} ClusterTarget
  * @typedef {TileTarget | ClusterTarget} AddTarget
  */
@@ -25,16 +25,16 @@
  * Decide what the + button should produce, given zoom level and state.
  *
  * @param {object} ctx
- * @param {number} ctx.level           Current zoom level (1 = focused, 2 = overview).
- * @param {string} ctx.activeClusterId Id of the currently-active cluster.
+ * @param {number} ctx.level            Current zoom level (1 = focused, 2 = overview).
+ * @param {number} ctx.activeClusterIdx Index of the currently-active cluster.
  * @param {string|null} [ctx.focusedId] Focused tile id, if any.
  * @returns {AddTarget}
  */
-export function decideAddTarget({ level, activeClusterId, focusedId = null }) {
+export function decideAddTarget({ level, activeClusterIdx, focusedId = null }) {
   if (level >= 2) return { kind: "cluster" };
   return {
     kind: "tile",
-    clusterId: activeClusterId,
+    clusterIdx: activeClusterIdx,
     insertAfter: focusedId,
   };
 }
@@ -50,16 +50,6 @@ export function generateSessionName(now = Date.now) {
 }
 
 /**
- * Unique cluster id. Same shape as generateSessionName so future
- * migration code can recognize "generated" ids vs. hand-named ones.
- *
- * @param {() => number} [now]
- */
-export function generateClusterId(now = Date.now) {
-  return `cluster-${now().toString(36)}`;
-}
-
-/**
  * Factory for a unified + handler. Both Level 1 and Level 2 add-buttons
  * call the returned function with no args; it reads fresh state, asks
  * `decideAddTarget` what to do, and dispatches to the right effect.
@@ -70,17 +60,17 @@ export function generateClusterId(now = Date.now) {
  *
  * @param {object} deps
  * @param {() => number} deps.getLevel
- * @param {() => { activeClusterId: string, focusedId: string|null }} deps.getState
+ * @param {() => { activeClusterIdx: number, focusedId: string|null }} deps.getState
  * @param {(target: TileTarget) => any} deps.onAddTile
  * @param {(target: ClusterTarget) => any} deps.onAddCluster
  * @returns {() => any} handleAdd
  */
 export function createAddHandler({ getLevel, getState, onAddTile, onAddCluster }) {
   return function handleAdd() {
-    const { activeClusterId, focusedId } = getState();
+    const { activeClusterIdx, focusedId } = getState();
     const target = decideAddTarget({
       level: getLevel(),
-      activeClusterId,
+      activeClusterIdx,
       focusedId,
     });
     if (target.kind === "cluster") return onAddCluster(target);

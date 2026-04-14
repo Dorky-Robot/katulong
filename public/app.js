@@ -44,7 +44,7 @@
     import { dispatchNotification } from "/lib/notify.js";
     import { createUiStore, loadFromStorage, EMPTY_STATE } from "/lib/ui-store.js";
     import { buildBootState } from "/lib/boot-state.js";
-    import { createAddHandler, generateSessionName, generateClusterId } from "/lib/add-target.js";
+    import { createAddHandler, generateSessionName } from "/lib/add-target.js";
     import { reducePinch, diffPinchState, INITIAL_PINCH_STATE } from "/lib/pinch-levels.js";
     import { initRenderers, isPersistable, getRenderer } from "/lib/tile-renderers/index.js";
     import { createTileHost } from "/lib/tile-host.js";
@@ -592,10 +592,13 @@
      *  (Level 2) — each cluster's tiles are subscribed independently of
      *  whichever carousel is visually on screen.
      *
-     *  @param {string} [clusterId] — defaults to the active cluster. */
-    function syncCarouselSubscriptions(clusterId) {
+     *  @param {number} [clusterIdx] — defaults to the active cluster. */
+    function syncCarouselSubscriptions(clusterIdx) {
       const state = uiStore.getState();
-      const view = selectClusterView(state, clusterId || state.activeClusterId);
+      const view = selectClusterView(
+        state,
+        typeof clusterIdx === "number" ? clusterIdx : state.activeClusterIdx,
+      );
       if (view.order.length === 0) return;
       for (const tileId of view.order) {
         const handle = tileHost.getHandle(tileId);
@@ -952,10 +955,10 @@
       getLevel: () => 1,
       getState: () => {
         const st = uiStore.getState();
-        return { activeClusterId: st.activeClusterId, focusedId: st.focusedId };
+        return { activeClusterIdx: st.activeClusterIdx, focusedId: st.focusedId };
       },
       onAddTile: () => createNewSession(),
-      onAddCluster: () => uiStore.addCluster({ id: generateClusterId() }, { switchTo: true }),
+      onAddCluster: () => uiStore.addCluster({ switchTo: true }),
     });
 
     if (sidebarAddBtn) {

@@ -4,7 +4,6 @@ import assert from "node:assert";
 const {
   decideAddTarget,
   generateSessionName,
-  generateClusterId,
   createAddHandler,
 } = await import(
   new URL("../public/lib/add-target.js", import.meta.url).href
@@ -12,17 +11,17 @@ const {
 
 describe("decideAddTarget — level 1 (focused)", () => {
   it("produces a tile target in the active cluster after the focused tile", () => {
-    const t = decideAddTarget({ level: 1, activeClusterId: "c1", focusedId: "t7" });
-    assert.deepStrictEqual(t, { kind: "tile", clusterId: "c1", insertAfter: "t7" });
+    const t = decideAddTarget({ level: 1, activeClusterIdx: 0, focusedId: "t7" });
+    assert.deepStrictEqual(t, { kind: "tile", clusterIdx: 0, insertAfter: "t7" });
   });
 
   it("produces a tile target with insertAfter=null when nothing is focused", () => {
-    const t = decideAddTarget({ level: 1, activeClusterId: "c1", focusedId: null });
-    assert.deepStrictEqual(t, { kind: "tile", clusterId: "c1", insertAfter: null });
+    const t = decideAddTarget({ level: 1, activeClusterIdx: 2, focusedId: null });
+    assert.deepStrictEqual(t, { kind: "tile", clusterIdx: 2, insertAfter: null });
   });
 
   it("defaults focusedId to null when omitted", () => {
-    const t = decideAddTarget({ level: 1, activeClusterId: "c1" });
+    const t = decideAddTarget({ level: 1, activeClusterIdx: 0 });
     assert.strictEqual(t.insertAfter, null);
   });
 });
@@ -30,32 +29,27 @@ describe("decideAddTarget — level 1 (focused)", () => {
 describe("decideAddTarget — level 2 (overview)", () => {
   it("produces a cluster target regardless of focused tile", () => {
     assert.deepStrictEqual(
-      decideAddTarget({ level: 2, activeClusterId: "c1", focusedId: "t7" }),
+      decideAddTarget({ level: 2, activeClusterIdx: 0, focusedId: "t7" }),
       { kind: "cluster" },
     );
     assert.deepStrictEqual(
-      decideAddTarget({ level: 2, activeClusterId: "c1", focusedId: null }),
+      decideAddTarget({ level: 2, activeClusterIdx: 0, focusedId: null }),
       { kind: "cluster" },
     );
   });
 
   it("treats future Level 3+ as cluster target (safe default until L3 is designed)", () => {
     assert.deepStrictEqual(
-      decideAddTarget({ level: 3, activeClusterId: "c1" }),
+      decideAddTarget({ level: 3, activeClusterIdx: 0 }),
       { kind: "cluster" },
     );
   });
 });
 
-describe("generateSessionName / generateClusterId", () => {
+describe("generateSessionName", () => {
   it("produces a `session-` prefix with base36-encoded clock", () => {
     const name = generateSessionName(() => 0);
     assert.strictEqual(name, "session-0");
-  });
-
-  it("produces a `cluster-` prefix with base36-encoded clock", () => {
-    const id = generateClusterId(() => 0);
-    assert.strictEqual(id, "cluster-0");
   });
 
   it("defaults to Date.now when no clock is injected", () => {
@@ -69,13 +63,13 @@ describe("createAddHandler — dispatch", () => {
     const calls = [];
     const handle = createAddHandler({
       getLevel: () => 1,
-      getState: () => ({ activeClusterId: "c1", focusedId: "t7" }),
+      getState: () => ({ activeClusterIdx: 0, focusedId: "t7" }),
       onAddTile: (t) => { calls.push(["tile", t]); },
       onAddCluster: (t) => { calls.push(["cluster", t]); },
     });
     handle();
     assert.deepStrictEqual(calls, [
-      ["tile", { kind: "tile", clusterId: "c1", insertAfter: "t7" }],
+      ["tile", { kind: "tile", clusterIdx: 0, insertAfter: "t7" }],
     ]);
   });
 
@@ -83,7 +77,7 @@ describe("createAddHandler — dispatch", () => {
     const calls = [];
     const handle = createAddHandler({
       getLevel: () => 2,
-      getState: () => ({ activeClusterId: "c1", focusedId: "t7" }),
+      getState: () => ({ activeClusterIdx: 1, focusedId: "t7" }),
       onAddTile: (t) => { calls.push(["tile", t]); },
       onAddCluster: (t) => { calls.push(["cluster", t]); },
     });
@@ -94,29 +88,33 @@ describe("createAddHandler — dispatch", () => {
   it("reads fresh state at every call, not at factory creation time", () => {
     let level = 1;
     let focusedId = "t1";
+    let activeClusterIdx = 0;
     const tileCalls = [];
     const clusterCalls = [];
     const handle = createAddHandler({
       getLevel: () => level,
-      getState: () => ({ activeClusterId: "c1", focusedId }),
+      getState: () => ({ activeClusterIdx, focusedId }),
       onAddTile: (t) => { tileCalls.push(t); },
       onAddCluster: (t) => { clusterCalls.push(t); },
     });
     handle();
     focusedId = "t2";
+    activeClusterIdx = 1;
     handle();
     level = 2;
     handle();
     assert.strictEqual(tileCalls.length, 2);
     assert.strictEqual(tileCalls[0].insertAfter, "t1");
+    assert.strictEqual(tileCalls[0].clusterIdx, 0);
     assert.strictEqual(tileCalls[1].insertAfter, "t2");
+    assert.strictEqual(tileCalls[1].clusterIdx, 1);
     assert.strictEqual(clusterCalls.length, 1);
   });
 
   it("returns the effect's return value (so async callers can await)", async () => {
     const handle = createAddHandler({
       getLevel: () => 1,
-      getState: () => ({ activeClusterId: "c1", focusedId: null }),
+      getState: () => ({ activeClusterIdx: 0, focusedId: null }),
       onAddTile: async () => "tile-result",
       onAddCluster: async () => "cluster-result",
     });

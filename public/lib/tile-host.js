@@ -11,7 +11,7 @@
  * All tile lifecycle now flows through one subscription.
  *
  * Cluster isolation (FP5): each tile-host is scoped to a single cluster.
- * Reads go through `selectClusterView(state, clusterId)` so tile-host
+ * Reads go through `selectClusterView(state, clusterIdx)` so tile-host
  * only sees its cluster's tiles. A future MC3 Level-2 renderer can mount
  * one tile-host per cluster strip; today there's one tile-host bound to
  * the active cluster.
@@ -28,14 +28,14 @@ import { selectClusterView } from "./selectors.js";
  * @param {object} opts.store — ui-store instance (getState, subscribe, dispatch)
  * @param {object} opts.carousel — card-carousel instance
  * @param {function} opts.getRenderer — (type) → renderer object (from tile-renderers registry)
- * @param {function} [opts.getClusterId] — () → clusterId this host is scoped to.
- *   Defaults to reading `activeClusterId` from the store on every reconcile, so
+ * @param {function} [opts.getClusterIdx] — () → cluster index this host is scoped to.
+ *   Defaults to reading `activeClusterIdx` from the store on every reconcile, so
  *   today's single-cluster app behaves exactly like before.
  * @param {function} [opts.onFocusChange] — called after carousel focus settles,
  *   with (tileId, tileType). App.js uses this for WS subscription switching.
  */
-export function createTileHost({ store, carousel, getRenderer, getClusterId, onFocusChange, onTileRemoved }) {
-  const resolveClusterId = getClusterId || (() => store.getState().activeClusterId);
+export function createTileHost({ store, carousel, getRenderer, getClusterIdx, onFocusChange, onTileRemoved }) {
+  const resolveClusterIdx = getClusterIdx || (() => store.getState().activeClusterIdx);
   // Map<tileId, { unmount, focus, blur, resize, tile }>
   const handles = new Map();
   let prevState = null;
@@ -61,7 +61,7 @@ export function createTileHost({ store, carousel, getRenderer, getClusterId, onF
     // Scope to this host's cluster — every tile-host sees only its own
     // cluster's tiles. Today there's one tile-host bound to the active
     // cluster; MC3 can mount one per strip.
-    const view = selectClusterView(state, resolveClusterId());
+    const view = selectClusterView(state, resolveClusterIdx());
     const prev = prevState || { tiles: {}, order: [], focusedId: null };
     prevState = view;
 
