@@ -45,6 +45,7 @@
     import { createUiStore, loadFromStorage, EMPTY_STATE } from "/lib/ui-store.js";
     import { buildBootState } from "/lib/boot-state.js";
     import { createAddHandler, generateSessionName, generateClusterId } from "/lib/add-target.js";
+    import { reducePinch, diffPinchState, INITIAL_PINCH_STATE } from "/lib/pinch-levels.js";
     import { initRenderers, isPersistable, getRenderer } from "/lib/tile-renderers/index.js";
     import { createTileHost } from "/lib/tile-host.js";
     import { getFocusedSession } from "/lib/selectors.js";
@@ -539,26 +540,26 @@
       document.body.dataset.focusedNeedsWs = desc.session ? "1" : "0";
     });
 
-    // ── Pinch-to-expose gesture ──────────────────────────────────────
+    // ── Pinch-to-zoom gesture ────────────────────────────────────────
     //
-    // Step 1 of the tile-clusters design: pinch is the zoom verb.
-    // Pinch-out morphs the carousel into exposé (all tiles visible at
-    // once); pinch-in returns to carousel. Once Level 2 (cluster
-    // overview) exists this same gesture will carry through to it —
-    // the commit thresholds below are intentionally conservative so
-    // they can be re-framed as "level change" without rewriting.
+    // Pinch is the zoom verb across the tile-clusters design. The pure
+    // state machine lives in /lib/pinch-levels.js (FP4) — this wiring
+    // reads the current level/mode from module-local state, asks the
+    // reducer for the next state, and applies side effects via diffs.
     //
-    // Commit thresholds: we only switch mode on gesture end, and only
-    // if the final scale crossed ~15%. Mid-gesture we do NOT live-morph
-    // — that would require interpolating transforms per frame while
-    // dodging the running CSS transition, which in turn means reading
-    // offsetWidth mid-animation (the exact trap called out in
-    // positionCards's cachedCardW comment). A discrete commit-on-end
-    // is simpler, passes tests, and still feels gestural because the
-    // subsequent CSS transition is fast (350ms). Live interpolation
-    // can be layered on later without changing this contract.
-    const pinchCommitOut = 1.15; // >= this at end => carousel -> expose
-    const pinchCommitIn  = 0.87; // <= this at end => expose -> carousel
+    // Today only Level 1 exists (carousel ↔ expose). The reducer also
+    // models Level 1 expose → Level 2 expose, but we CLAMP transitions
+    // to level 1 here until MC3 adds the Level-2 renderer. The clamp
+    // is a single if-statement so MC3 removes it cleanly.
+    //
+    // Commit-on-end rationale: we only switch mode on gesture end (not
+    // mid-gesture). Live-morphing requires interpolating transforms per
+    // frame while dodging the running CSS transition — which means
+    // reading offsetWidth mid-animation (the exact trap in positionCards's
+    // cachedCardW comment). Discrete commit-on-end is simpler, passes
+    // tests, and feels gestural because the subsequent CSS transition
+    // is fast (350ms).
+    let pinchState = INITIAL_PINCH_STATE;
     const pinchTarget = document.getElementById("terminal-container");
     if (pinchTarget) {
       const pinch = createPinchGesture({
@@ -566,12 +567,14 @@
         onPinch: ({ scale, phase }) => {
           if (!carousel.isActive()) return;
           if (phase !== "end") return;
-          const cur = carousel.getMode();
-          if (cur === "carousel" && scale >= pinchCommitOut) {
-            carousel.setMode("expose");
-          } else if (cur === "expose" && scale <= pinchCommitIn) {
-            carousel.setMode("carousel");
-          }
+          let next = reducePinch(pinchState, { scale });
+          // Clamp to level 1 until MC3 lands. Remove this when Level 2
+          // renderer exists; the reducer already handles the transition.
+          if (next.level === 2) next = { level: 1, mode: next.mode };
+          const diff = diffPinchState(pinchState, next);
+          pinchState = next;
+          if (!diff) return;
+          if (diff.modeChanged) carousel.setMode(next.mode);
         },
       });
       pinch.attach();
