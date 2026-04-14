@@ -1,12 +1,11 @@
 /**
  * Selectors — pure functions that derive values from store state.
  *
- * These replace the mutable `state.session.name` pattern. Instead of
- * storing the "current session" as a side-effected variable, we derive
- * it on-demand from the ui-store's focusedId and the renderer registry.
+ * v3: clusters are stored as a 3D array `Tile[][][]` where position IS
+ * location. These selectors project views out of that shape for consumers
+ * that want map-access, a flat order, or the 2D per-cluster column view.
  *
- * Every function here is pure: (state, ...deps) => value.
- * No side effects, no mutations, no subscriptions.
+ * Every function here is pure: `(state, ...deps) => value`.
  */
 
 /**
@@ -14,8 +13,7 @@
  *
  * Only terminal and cluster tiles have a session — feed, file-browser,
  * localhost-browser, and progress tiles return null. Callers that need
- * to send WS messages (attach, switch, resize, subscribe) should use
- * this selector and guard against null.
+ * to send WS messages should use this selector and guard against null.
  *
  * @param {object} uiState — from uiStore.getState()
  * @param {function} getRenderer — from tile-renderers/index.js
@@ -33,30 +31,100 @@ export function getFocusedSession(uiState, getRenderer) {
  * Cluster-scoped view of ui-store state.
  *
  * Returns a `{ tiles, order, focusedId }` triple filtered to a single
- * cluster. Used by tile-host and WS-subscription code so each cluster
- * can drive its own carousel and bookkeep its own session subscriptions
- * independently.
+ * cluster, column-major top→bottom. Used by tile-host and WS-subscription
+ * code so each cluster can drive its own carousel and bookkeep its own
+ * session subscriptions independently.
  *
  * Pure: no dependency on renderer registry, no mutation of input. Given
- * an unknown or missing cluster id, returns an empty view.
+ * an out-of-range cluster index, returns an empty view.
  *
  * @param {object} uiState
- * @param {string} clusterId
+ * @param {number} clusterIdx
  * @returns {{ tiles: object, order: string[], focusedId: string|null }}
  */
-export function selectClusterView(uiState, clusterId) {
-  if (!uiState?.clusters?.[clusterId]) {
-    return { tiles: {}, order: [], focusedId: null };
-  }
+export function selectClusterView(uiState, clusterIdx) {
+  const cluster = uiState?.clusters?.[clusterIdx];
+  if (!cluster) return { tiles: {}, order: [], focusedId: null };
+
   const tiles = {};
-  const arr = [];
-  for (const t of Object.values(uiState.tiles)) {
-    if (t.clusterId !== clusterId) continue;
-    tiles[t.id] = t;
-    arr.push(t);
+  const order = [];
+  for (const column of cluster) {
+    for (const tile of column) {
+      tiles[tile.id] = tile;
+      order.push(tile.id);
+    }
   }
-  arr.sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
-  const order = arr.map(t => t.id);
-  const focusedId = uiState.focusedIdByCluster?.[clusterId] ?? null;
+  const focusedId = uiState.focusedTileIdByCluster?.[clusterIdx] ?? null;
   return { tiles, order, focusedId };
+}
+
+/**
+ * 2D column view of a cluster, for Level-2 rendering and future drag-to-stack.
+ *
+ * Each column is identified by its head tile id (there is no separate
+ * "column id" entity — columns don't persist identity beyond their tiles).
+ * In MC1 single-slot, every column has length 1 so `id === tileIds[0]`.
+ *
+ * @param {object} uiState
+ * @param {number} clusterIdx
+ * @returns {{ id: string, tileIds: string[] }[]}
+ */
+export function selectColumns(uiState, clusterIdx) {
+  const cluster = uiState?.clusters?.[clusterIdx];
+  if (!cluster) return [];
+  return cluster.map((column) => ({
+    id: column[0].id,
+    tileIds: column.map(t => t.id),
+  }));
+}
+
+/**
+ * Build an O(1) tile-id → path locator for the whole workspace.
+ *
+ * With tiles stored positionally in a 3D array, finding a tile by id
+ * requires a traversal. This selector memoizes the index per state
+ * reference via WeakMap so repeated lookups (e.g., from WS message
+ * handlers, focus moves) are free.
+ *
+ * @param {object} uiState
+ * @returns {{
+ *   get: (id: string) => { c: number, col: number, row: number, tile: object } | null,
+ *   has: (id: string) => boolean,
+ *   ids: () => string[],
+ *   size: () => number,
+ * }}
+ */
+const _locatorCache = new WeakMap();
+const EMPTY_LOCATOR = Object.freeze({
+  get: () => null,
+  has: () => false,
+  ids: () => [],
+  size: () => 0,
+});
+
+export function tileLocator(uiState) {
+  if (!uiState || !Array.isArray(uiState.clusters)) return EMPTY_LOCATOR;
+  const cached = _locatorCache.get(uiState);
+  if (cached) return cached;
+
+  const index = new Map();
+  for (let c = 0; c < uiState.clusters.length; c++) {
+    const cluster = uiState.clusters[c];
+    for (let col = 0; col < cluster.length; col++) {
+      const column = cluster[col];
+      for (let row = 0; row < column.length; row++) {
+        const tile = column[row];
+        index.set(tile.id, { c, col, row, tile });
+      }
+    }
+  }
+
+  const locator = {
+    get: (id) => index.get(id) || null,
+    has: (id) => index.has(id),
+    ids: () => [...index.keys()],
+    size: () => index.size,
+  };
+  _locatorCache.set(uiState, locator);
+  return locator;
 }

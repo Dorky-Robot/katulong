@@ -1,96 +1,124 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 
-const { selectClusterView, getFocusedSession } = await import(
+const { selectClusterView, selectColumns, tileLocator, getFocusedSession } = await import(
   new URL("../public/lib/selectors.js", import.meta.url).href
 );
 
-function makeState(overrides = {}) {
+// ── Helpers ────────────────────────────────────────────────────────────
+// Build a v3 state directly (no need to go through reducers for selector
+// tests). `withDerived` is inlined here to keep selector tests independent
+// of ui-store internals.
+function v3State({ clusters, activeClusterIdx = 0, focusedTileIdByCluster }) {
+  const tiles = {};
+  for (const cluster of clusters) {
+    for (const column of cluster) {
+      for (const tile of column) tiles[tile.id] = tile;
+    }
+  }
+  const active = clusters[activeClusterIdx] || [];
+  const order = [];
+  for (const column of active) for (const tile of column) order.push(tile.id);
   return {
-    version: 2,
-    activeClusterId: "default",
-    clusters: { default: { id: "default" }, work: { id: "work" } },
-    tiles: {
-      a: { id: "a", type: "terminal", props: {}, x: 0, clusterId: "default" },
-      b: { id: "b", type: "terminal", props: {}, x: 1, clusterId: "default" },
-      w1: { id: "w1", type: "terminal", props: {}, x: 0, clusterId: "work" },
-    },
-    focusedIdByCluster: { default: "b", work: "w1" },
-    ...overrides,
+    version: 3,
+    clusters,
+    activeClusterIdx,
+    focusedTileIdByCluster,
+    tiles,
+    order,
+    focusedId: focusedTileIdByCluster[activeClusterIdx] ?? null,
   };
+}
+
+function tile(id, extraProps = {}) {
+  return { id, type: "terminal", props: { sessionName: id, ...extraProps } };
 }
 
 describe("selectClusterView — basics", () => {
   it("returns tiles and order filtered to the cluster", () => {
-    const view = selectClusterView(makeState(), "default");
+    const state = v3State({
+      clusters: [
+        [[tile("a")], [tile("b")]],
+        [[tile("w1")]],
+      ],
+      focusedTileIdByCluster: ["b", "w1"],
+    });
+    const view = selectClusterView(state, 0);
     assert.deepStrictEqual(Object.keys(view.tiles).sort(), ["a", "b"]);
     assert.deepStrictEqual(view.order, ["a", "b"]);
     assert.strictEqual(view.focusedId, "b");
   });
 
   it("returns a different view for a different cluster", () => {
-    const view = selectClusterView(makeState(), "work");
+    const state = v3State({
+      clusters: [
+        [[tile("a")], [tile("b")]],
+        [[tile("w1")]],
+      ],
+      focusedTileIdByCluster: ["b", "w1"],
+    });
+    const view = selectClusterView(state, 1);
     assert.deepStrictEqual(Object.keys(view.tiles), ["w1"]);
     assert.deepStrictEqual(view.order, ["w1"]);
     assert.strictEqual(view.focusedId, "w1");
   });
 
-  it("orders tiles by x, not by insertion", () => {
-    const state = makeState({
-      tiles: {
-        t2: { id: "t2", type: "terminal", props: {}, x: 2, clusterId: "default" },
-        t0: { id: "t0", type: "terminal", props: {}, x: 0, clusterId: "default" },
-        t1: { id: "t1", type: "terminal", props: {}, x: 1, clusterId: "default" },
-      },
-      focusedIdByCluster: { default: "t0" },
+  it("orders tiles column-major top→bottom within multi-row columns", () => {
+    const state = v3State({
+      clusters: [[
+        [tile("c0r0"), tile("c0r1")],
+        [tile("c1r0")],
+        [tile("c2r0"), tile("c2r1"), tile("c2r2")],
+      ]],
+      focusedTileIdByCluster: ["c0r0"],
     });
-    assert.deepStrictEqual(selectClusterView(state, "default").order, ["t0", "t1", "t2"]);
-  });
-
-  it("treats missing x as 0 (sort-stable fallback)", () => {
-    const state = makeState({
-      tiles: {
-        b: { id: "b", type: "terminal", props: {}, x: 5, clusterId: "default" },
-        a: { id: "a", type: "terminal", props: {}, clusterId: "default" },
-      },
-      focusedIdByCluster: { default: "a" },
-    });
-    // `a` has no x (treated as 0), comes before `b` (x=5)
-    assert.deepStrictEqual(selectClusterView(state, "default").order, ["a", "b"]);
+    assert.deepStrictEqual(
+      selectClusterView(state, 0).order,
+      ["c0r0", "c0r1", "c1r0", "c2r0", "c2r1", "c2r2"],
+    );
   });
 });
 
 describe("selectClusterView — edge cases", () => {
-  it("returns empty view for unknown cluster id", () => {
+  it("returns empty view for out-of-range cluster index", () => {
+    const state = v3State({
+      clusters: [[[tile("a")]]],
+      focusedTileIdByCluster: ["a"],
+    });
     assert.deepStrictEqual(
-      selectClusterView(makeState(), "nonexistent"),
+      selectClusterView(state, 5),
       { tiles: {}, order: [], focusedId: null },
     );
   });
 
   it("returns empty view when cluster exists but has no tiles", () => {
-    const state = makeState({
-      clusters: { default: { id: "default" }, empty: { id: "empty" } },
-      focusedIdByCluster: { default: "b", empty: null },
+    const state = v3State({
+      clusters: [[[tile("a")]], []],
+      focusedTileIdByCluster: ["a", null],
     });
     assert.deepStrictEqual(
-      selectClusterView(state, "empty"),
+      selectClusterView(state, 1),
       { tiles: {}, order: [], focusedId: null },
     );
   });
 
-  it("handles missing focusedIdByCluster entry as null", () => {
-    const state = makeState({ focusedIdByCluster: { default: null, work: "w1" } });
-    assert.strictEqual(selectClusterView(state, "default").focusedId, null);
+  it("handles missing focusedTileIdByCluster entry as null", () => {
+    const state = {
+      version: 3,
+      clusters: [[[tile("a")]]],
+      activeClusterIdx: 0,
+      focusedTileIdByCluster: [],
+    };
+    assert.strictEqual(selectClusterView(state, 0).focusedId, null);
   });
 
   it("handles null/undefined state gracefully", () => {
     assert.deepStrictEqual(
-      selectClusterView(null, "default"),
+      selectClusterView(null, 0),
       { tiles: {}, order: [], focusedId: null },
     );
     assert.deepStrictEqual(
-      selectClusterView(undefined, "default"),
+      selectClusterView(undefined, 0),
       { tiles: {}, order: [], focusedId: null },
     );
   });
@@ -98,32 +126,153 @@ describe("selectClusterView — edge cases", () => {
 
 describe("selectClusterView — purity", () => {
   it("does not mutate the input state", () => {
-    const state = makeState();
+    const state = v3State({
+      clusters: [[[tile("a")], [tile("b")]]],
+      focusedTileIdByCluster: ["b"],
+    });
     const snap = JSON.parse(JSON.stringify(state));
-    selectClusterView(state, "default");
+    selectClusterView(state, 0);
     assert.deepStrictEqual(state, snap);
   });
 
   it("returns a fresh tiles object, not a reference into state", () => {
-    const state = makeState();
-    const view = selectClusterView(state, "default");
+    const state = v3State({
+      clusters: [[[tile("a")]]],
+      focusedTileIdByCluster: ["a"],
+    });
+    const view = selectClusterView(state, 0);
     assert.notStrictEqual(view.tiles, state.tiles);
+  });
+});
+
+describe("selectColumns", () => {
+  it("returns one entry per column, each keyed by its head tile id", () => {
+    const state = v3State({
+      clusters: [[
+        [tile("c0head"), tile("c0row1")],
+        [tile("c1only")],
+      ]],
+      focusedTileIdByCluster: ["c0head"],
+    });
+    assert.deepStrictEqual(selectColumns(state, 0), [
+      { id: "c0head", tileIds: ["c0head", "c0row1"] },
+      { id: "c1only", tileIds: ["c1only"] },
+    ]);
+  });
+
+  it("returns [] for out-of-range cluster index", () => {
+    const state = v3State({
+      clusters: [[[tile("a")]]],
+      focusedTileIdByCluster: ["a"],
+    });
+    assert.deepStrictEqual(selectColumns(state, 3), []);
+  });
+
+  it("returns [] for null/undefined state", () => {
+    assert.deepStrictEqual(selectColumns(null, 0), []);
+    assert.deepStrictEqual(selectColumns(undefined, 0), []);
+  });
+});
+
+describe("tileLocator", () => {
+  it("resolves tile ids to {c, col, row, tile} paths", () => {
+    const state = v3State({
+      clusters: [
+        [[tile("a")], [tile("b"), tile("c")]],
+        [[tile("w1")]],
+      ],
+      focusedTileIdByCluster: ["a", "w1"],
+    });
+    const loc = tileLocator(state);
+    assert.deepStrictEqual(
+      { ...loc.get("a"), tile: undefined },
+      { c: 0, col: 0, row: 0, tile: undefined },
+    );
+    assert.strictEqual(loc.get("a").tile.id, "a");
+    assert.deepStrictEqual(
+      { ...loc.get("c"), tile: undefined },
+      { c: 0, col: 1, row: 1, tile: undefined },
+    );
+    assert.deepStrictEqual(
+      { ...loc.get("w1"), tile: undefined },
+      { c: 1, col: 0, row: 0, tile: undefined },
+    );
+  });
+
+  it("returns null for unknown ids", () => {
+    const state = v3State({
+      clusters: [[[tile("a")]]],
+      focusedTileIdByCluster: ["a"],
+    });
+    const loc = tileLocator(state);
+    assert.strictEqual(loc.get("nope"), null);
+    assert.strictEqual(loc.has("nope"), false);
+    assert.strictEqual(loc.has("a"), true);
+  });
+
+  it("memoizes per state reference (same state → same locator)", () => {
+    const state = v3State({
+      clusters: [[[tile("a")]]],
+      focusedTileIdByCluster: ["a"],
+    });
+    assert.strictEqual(tileLocator(state), tileLocator(state));
+  });
+
+  it("rebuilds for a new state reference", () => {
+    const s1 = v3State({
+      clusters: [[[tile("a")]]],
+      focusedTileIdByCluster: ["a"],
+    });
+    const s2 = v3State({
+      clusters: [[[tile("a")], [tile("b")]]],
+      focusedTileIdByCluster: ["a"],
+    });
+    const l1 = tileLocator(s1);
+    const l2 = tileLocator(s2);
+    assert.notStrictEqual(l1, l2);
+    assert.strictEqual(l1.has("b"), false);
+    assert.strictEqual(l2.has("b"), true);
+  });
+
+  it("ids() and size() reflect the whole workspace", () => {
+    const state = v3State({
+      clusters: [
+        [[tile("a")], [tile("b")]],
+        [[tile("w1")]],
+      ],
+      focusedTileIdByCluster: ["a", "w1"],
+    });
+    const loc = tileLocator(state);
+    assert.deepStrictEqual(loc.ids().sort(), ["a", "b", "w1"]);
+    assert.strictEqual(loc.size(), 3);
+  });
+
+  it("returns an empty locator for null/undefined state", () => {
+    const loc = tileLocator(null);
+    assert.strictEqual(loc.get("x"), null);
+    assert.strictEqual(loc.has("x"), false);
+    assert.strictEqual(loc.size(), 0);
+    assert.deepStrictEqual(loc.ids(), []);
   });
 });
 
 describe("getFocusedSession — unchanged", () => {
   it("returns renderer-declared session for the focused tile", () => {
-    const state = makeState();
-    state.focusedId = "b"; // derived field (tile-host path still reads top-level)
+    const state = v3State({
+      clusters: [[[tile("a")], [tile("b")]]],
+      focusedTileIdByCluster: ["b"],
+    });
     const getRenderer = () => ({
-      describe: (props) => ({ session: props.sessionName || "b" }),
+      describe: (props) => ({ session: props.sessionName }),
     });
     assert.strictEqual(getFocusedSession(state, getRenderer), "b");
   });
 
   it("returns null when renderer has no session", () => {
-    const state = makeState();
-    state.focusedId = "b";
+    const state = v3State({
+      clusters: [[[tile("a")]]],
+      focusedTileIdByCluster: ["a"],
+    });
     const getRenderer = () => ({ describe: () => ({}) });
     assert.strictEqual(getFocusedSession(state, getRenderer), null);
   });

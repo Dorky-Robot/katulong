@@ -1,35 +1,35 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert";
 
-// tile-host has zero imports now (getRenderer is injected), so the
-// file:// URL import works without a custom Node loader.
 const { createTileHost } = await import(
   new URL("../public/lib/tile-host.js", import.meta.url).href
 );
 
-// ── Minimal store ──────────────────────────────────────────────────────
-// Uses the v2 multi-cluster shape tile-host now expects. `selectClusterView`
-// filters by clusterId; the test store keeps everything in a single
-// "default" cluster and derives legacy `order`/`focusedId` fields for tests
-// that assert on them.
-const DEFAULT_CLUSTER = "default";
+// ── Minimal v3-shape store ──────────────────────────────────────────────
+// tile-host reads via `selectClusterView`, which expects the v3 3D shape.
+// This store keeps a single cluster and maintains derived `tiles`/`order`/
+// `focusedId` fields for consumers that peek at top-level state.
 
 function withDerived(state) {
-  const tilesForCluster = Object.values(state.tiles)
-    .filter(t => t.clusterId === state.activeClusterId)
-    .sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
-  const order = tilesForCluster.map(t => t.id);
-  const focusedId = state.focusedIdByCluster[state.activeClusterId] ?? null;
-  return { ...state, order, focusedId };
+  const tiles = {};
+  for (const cluster of state.clusters) {
+    for (const column of cluster) {
+      for (const tile of column) tiles[tile.id] = tile;
+    }
+  }
+  const active = state.clusters[state.activeClusterIdx] || [];
+  const order = [];
+  for (const column of active) for (const tile of column) order.push(tile.id);
+  const focusedId = state.focusedTileIdByCluster[state.activeClusterIdx] ?? null;
+  return { ...state, tiles, order, focusedId };
 }
 
 function emptyState() {
   return withDerived({
-    version: 2,
-    activeClusterId: DEFAULT_CLUSTER,
-    clusters: { [DEFAULT_CLUSTER]: { id: DEFAULT_CLUSTER } },
-    tiles: {},
-    focusedIdByCluster: { [DEFAULT_CLUSTER]: null },
+    version: 3,
+    clusters: [[]],
+    activeClusterIdx: 0,
+    focusedTileIdByCluster: [null],
   });
 }
 
@@ -39,96 +39,108 @@ function createTestStore(initial = emptyState()) {
 
   function notify() { subs.forEach(fn => fn(state)); }
 
+  // Build a v3 state from legacy {tiles, order, focusedId} test input.
+  // Each tile becomes a single-slot column, preserving `order`.
+  function fromFlat({ tiles = {}, order, focusedId = null }) {
+    const orderArr = order || Object.keys(tiles);
+    const cluster = [];
+    const seen = new Set();
+    for (const id of orderArr) {
+      if (seen.has(id) || !tiles[id]) continue;
+      seen.add(id);
+      const t = tiles[id];
+      cluster.push([{ id, type: t.type, props: t.props || {} }]);
+    }
+    for (const [id, t] of Object.entries(tiles)) {
+      if (seen.has(id) || !t) continue;
+      seen.add(id);
+      cluster.push([{ id, type: t.type, props: t.props || {} }]);
+    }
+    return withDerived({
+      version: 3,
+      clusters: [cluster],
+      activeClusterIdx: 0,
+      focusedTileIdByCluster: [focusedId],
+    });
+  }
+
   return {
     getState: () => state,
     subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
-    dispatch(action) { /* not used by tile-host */ },
+    dispatch(_action) { /* not used by tile-host */ },
     setState(next) {
-      // Test-side convenience: accept both the v2 shape and the pre-v2 flat
-      // shape (`{tiles, order, focusedId}`) the original tests use. Flat
-      // input gets wrapped into the default cluster with x-positions taken
-      // from the order array.
+      // Accept either v3 ({clusters, ...}) or flat ({tiles, order, focusedId}).
       if (next.clusters) {
-        // Normalize tiles that are missing clusterId/x. If the caller
-        // provided an `order` array, use it for x positions so legacy-style
-        // "spread state, set order" inserts still work.
-        const normalizedTiles = {};
-        const orderArr = next.order;
-        Object.entries(next.tiles || {}).forEach(([id, t]) => {
-          const idxInOrder = orderArr ? orderArr.indexOf(id) : -1;
-          // If the caller supplied an `order` array, trust it as the
-          // source of truth for x positions — overrides any existing
-          // x on the tile (the whole point of passing `order`).
-          const xFromOrder = idxInOrder >= 0 ? idxInOrder : undefined;
-          normalizedTiles[id] = {
-            ...t,
-            id: t.id ?? id,
-            clusterId: t.clusterId ?? DEFAULT_CLUSTER,
-            x: xFromOrder ?? t.x ?? 0,
-          };
-        });
-        const focusedIdByCluster = next.focusedIdByCluster
-          ? next.focusedIdByCluster
-          : { ...state.focusedIdByCluster, [DEFAULT_CLUSTER]: next.focusedId ?? null };
-        state = withDerived({ ...next, tiles: normalizedTiles, focusedIdByCluster });
-      } else {
-        const tiles = {};
-        const orderArr = next.order || Object.keys(next.tiles || {});
-        orderArr.forEach((id, x) => {
-          const t = next.tiles?.[id];
-          if (t) tiles[id] = { id, type: t.type, props: t.props || {}, x, clusterId: DEFAULT_CLUSTER };
-        });
         state = withDerived({
-          version: 2,
-          activeClusterId: DEFAULT_CLUSTER,
-          clusters: { [DEFAULT_CLUSTER]: { id: DEFAULT_CLUSTER } },
-          tiles,
-          focusedIdByCluster: { [DEFAULT_CLUSTER]: next.focusedId ?? null },
+          version: 3,
+          activeClusterIdx: 0,
+          focusedTileIdByCluster: [null],
+          ...next,
         });
+      } else {
+        state = fromFlat(next);
       }
       notify();
     },
     addTile(id, type, props, focus) {
-      const nextX = Object.values(state.tiles)
-        .filter(t => t.clusterId === DEFAULT_CLUSTER)
-        .reduce((m, t) => Math.max(m, (t.x ?? -1) + 1), 0);
+      const cluster = state.clusters[0].slice();
+      cluster.push([{ id, type, props }]);
+      const focusedTileIdByCluster = focus
+        ? [id]
+        : state.focusedTileIdByCluster.slice();
       state = withDerived({
         ...state,
-        tiles: {
-          ...state.tiles,
-          [id]: { id, type, props, x: nextX, clusterId: DEFAULT_CLUSTER },
-        },
-        focusedIdByCluster: focus
-          ? { ...state.focusedIdByCluster, [DEFAULT_CLUSTER]: id }
-          : state.focusedIdByCluster,
+        clusters: [cluster],
+        focusedTileIdByCluster,
       });
       notify();
     },
     removeTile(id) {
-      const { [id]: _removed, ...rest } = state.tiles;
-      const focusedIdByCluster = { ...state.focusedIdByCluster };
-      if (focusedIdByCluster[DEFAULT_CLUSTER] === id) {
-        const remaining = Object.values(rest)
-          .filter(t => t.clusterId === DEFAULT_CLUSTER)
-          .sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
-        focusedIdByCluster[DEFAULT_CLUSTER] = remaining[0]?.id || null;
+      const cluster = state.clusters[0];
+      const orderPrev = [];
+      for (const col of cluster) for (const t of col) orderPrev.push(t.id);
+      const removedIdx = orderPrev.indexOf(id);
+      const newCluster = [];
+      for (const col of cluster) {
+        const filtered = col.filter(t => t.id !== id);
+        if (filtered.length > 0) newCluster.push(filtered);
       }
-      state = withDerived({ ...state, tiles: rest, focusedIdByCluster });
+      const nextOrder = [];
+      for (const col of newCluster) for (const t of col) nextOrder.push(t.id);
+      const focusedTileIdByCluster = state.focusedTileIdByCluster.slice();
+      if (focusedTileIdByCluster[0] === id) {
+        focusedTileIdByCluster[0] =
+          nextOrder[removedIdx] || nextOrder[removedIdx - 1] || null;
+      }
+      state = withDerived({
+        ...state,
+        clusters: [newCluster],
+        focusedTileIdByCluster,
+      });
       notify();
     },
     focusTile(id) {
       state = withDerived({
         ...state,
-        focusedIdByCluster: { ...state.focusedIdByCluster, [DEFAULT_CLUSTER]: id },
+        focusedTileIdByCluster: [id],
       });
       notify();
     },
     reorder(order) {
-      const tiles = { ...state.tiles };
-      order.forEach((id, x) => {
-        if (tiles[id]) tiles[id] = { ...tiles[id], x };
-      });
-      state = withDerived({ ...state, tiles });
+      const cluster = state.clusters[0];
+      const byHead = new Map();
+      for (const col of cluster) byHead.set(col[0].id, col);
+      const seen = new Set();
+      const newCluster = [];
+      for (const id of order) {
+        if (seen.has(id)) continue;
+        const col = byHead.get(id);
+        if (col) { newCluster.push(col); seen.add(id); }
+      }
+      for (const col of cluster) {
+        if (!seen.has(col[0].id)) { newCluster.push(col); seen.add(col[0].id); }
+      }
+      state = withDerived({ ...state, clusters: [newCluster] });
       notify();
     },
   };
@@ -232,6 +244,7 @@ describe("tile-host", () => {
       carousel,
       getRenderer: renderer.getRenderer,
       onFocusChange: opts.onFocusChange || (() => {}),
+      onTileRemoved: opts.onTileRemoved,
     });
     return host;
   }
@@ -241,8 +254,8 @@ describe("tile-host", () => {
     it("activates carousel with all tiles from store", () => {
       store.setState({
         tiles: {
-          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
-          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+          s1: { type: "terminal", props: { sessionName: "s1" } },
+          s2: { type: "terminal", props: { sessionName: "s2" } },
         },
         order: ["s1", "s2"],
         focusedId: "s1",
@@ -260,7 +273,7 @@ describe("tile-host", () => {
     it("mounts every tile via the renderer", () => {
       store.setState({
         tiles: {
-          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
+          s1: { type: "terminal", props: { sessionName: "s1" } },
         },
         order: ["s1"],
         focusedId: "s1",
@@ -314,11 +327,12 @@ describe("tile-host", () => {
       store.addTile("s1", "terminal", { sessionName: "s1" }, true);
       store.addTile("s2", "terminal", { sessionName: "s2" }, false);
 
-      // Now insert fb between s1 and s2 (afterFocus on s1)
-      const s = store.getState();
       store.setState({
-        ...s,
-        tiles: { ...s.tiles, fb: { id: "fb", type: "terminal", props: { sessionName: "fb" } } },
+        tiles: {
+          s1: { type: "terminal", props: { sessionName: "s1" } },
+          fb: { type: "terminal", props: { sessionName: "fb" } },
+          s2: { type: "terminal", props: { sessionName: "s2" } },
+        },
         order: ["s1", "fb", "s2"],
         focusedId: "fb",
       });
@@ -328,7 +342,6 @@ describe("tile-host", () => {
       assert.ok(fbOp, "addCard must be called for fb");
       assert.strictEqual(fbOp.position, 1, "fb must be inserted at index 1 (right of s1)");
 
-      // Carousel order should reflect the store order
       assert.deepStrictEqual(carousel.getCards(), ["s1", "fb", "s2"]);
     });
   });
@@ -338,8 +351,8 @@ describe("tile-host", () => {
     it("calls carousel.removeCard", () => {
       store.setState({
         tiles: {
-          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
-          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+          s1: { type: "terminal", props: { sessionName: "s1" } },
+          s2: { type: "terminal", props: { sessionName: "s2" } },
         },
         order: ["s1", "s2"],
         focusedId: "s1",
@@ -358,7 +371,7 @@ describe("tile-host", () => {
     it("unmounts the renderer handle", () => {
       store.setState({
         tiles: {
-          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
+          s1: { type: "terminal", props: { sessionName: "s1" } },
         },
         order: ["s1"],
         focusedId: "s1",
@@ -370,9 +383,6 @@ describe("tile-host", () => {
       assert.strictEqual(renderer.mounts[0].mounted, true);
 
       store.removeTile("s1");
-      // removeCard is called — the carousel is responsible for
-      // calling adapter.unmount(), which the real carousel does.
-      // Our mock doesn't, but the handle tracking should clear.
       assert.strictEqual(host.getHandle("s1"), null);
     });
   });
@@ -382,8 +392,8 @@ describe("tile-host", () => {
     it("calls carousel.focusCard", () => {
       store.setState({
         tiles: {
-          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
-          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+          s1: { type: "terminal", props: { sessionName: "s1" } },
+          s2: { type: "terminal", props: { sessionName: "s2" } },
         },
         order: ["s1", "s2"],
         focusedId: "s1",
@@ -404,8 +414,8 @@ describe("tile-host", () => {
       const changes = [];
       store.setState({
         tiles: {
-          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
-          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+          s1: { type: "terminal", props: { sessionName: "s1" } },
+          s2: { type: "terminal", props: { sessionName: "s2" } },
         },
         order: ["s1", "s2"],
         focusedId: "s1",
@@ -429,8 +439,8 @@ describe("tile-host", () => {
     it("calls carousel.reorderCards", () => {
       store.setState({
         tiles: {
-          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
-          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+          s1: { type: "terminal", props: { sessionName: "s1" } },
+          s2: { type: "terminal", props: { sessionName: "s2" } },
         },
         order: ["s1", "s2"],
         focusedId: "s1",
@@ -466,21 +476,22 @@ describe("tile-host", () => {
   // ── Re-entrancy guard ──────────────────────────────────────────────
   describe("re-entrancy", () => {
     it("does not double-mount when onFocusChange triggers a dispatch", () => {
-      // Simulate what happens when a renderer dispatches UPDATE_PROPS
-      // from inside the focus callback — the store fires subscribers
-      // synchronously, which would re-enter reconcile without the guard.
       createHost({
         onFocusChange: (id) => {
           const s = store.getState();
           if (s.tiles[id]) {
-            // Mutate state from inside the callback
-            store.setState({
-              ...s,
-              tiles: {
-                ...s.tiles,
-                [id]: { ...s.tiles[id], props: { ...s.tiles[id].props, touched: true } },
-              },
-            });
+            // Mutate state from inside the callback via flat setState
+            const tiles = {};
+            for (const tid of s.order) {
+              const existing = s.tiles[tid];
+              tiles[tid] = {
+                type: existing.type,
+                props: tid === id
+                  ? { ...existing.props, touched: true }
+                  : existing.props,
+              };
+            }
+            store.setState({ tiles, order: s.order, focusedId: s.focusedId });
           }
         },
       });
@@ -498,18 +509,14 @@ describe("tile-host", () => {
       const removed = [];
       store.setState({
         tiles: {
-          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
-          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+          s1: { type: "terminal", props: { sessionName: "s1" } },
+          s2: { type: "terminal", props: { sessionName: "s2" } },
         },
         order: ["s1", "s2"],
         focusedId: "s1",
       });
 
-      host = createTileHost({
-        store,
-        carousel,
-        getRenderer: renderer.getRenderer,
-        onFocusChange: () => {},
+      createHost({
         onTileRemoved: (id, handle) => removed.push({ id, sessions: handle.getSessions?.() }),
       });
       host.init();
@@ -525,18 +532,14 @@ describe("tile-host", () => {
       const removed = [];
       store.setState({
         tiles: {
-          s1: { id: "s1", type: "terminal", props: { sessionName: "s1" } },
-          s2: { id: "s2", type: "terminal", props: { sessionName: "s2" } },
+          s1: { type: "terminal", props: { sessionName: "s1" } },
+          s2: { type: "terminal", props: { sessionName: "s2" } },
         },
         order: ["s1", "s2"],
         focusedId: "s1",
       });
 
-      host = createTileHost({
-        store,
-        carousel,
-        getRenderer: renderer.getRenderer,
-        onFocusChange: () => {},
+      createHost({
         onTileRemoved: (id, handle) => removed.push({ id, sessions: handle.getSessions?.() }),
       });
       host.init();
