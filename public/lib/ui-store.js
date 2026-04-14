@@ -61,6 +61,11 @@ export const EMPTY_STATE = Object.freeze({
  * Rebuild `tiles`, `order`, `focusedId` from the 3D source-of-truth.
  * Called after every reducer step. O(N) across all tiles in all clusters.
  */
+// Reserved tile ids that would poison the derived `tiles` map prototype
+// if used as plain-object keys. Rejected at the boundary (normalize + ADD_TILE)
+// so no later consumer needs to guard against them.
+const RESERVED_IDS = new Set(["__proto__", "constructor", "prototype"]);
+
 function withDerived(state) {
   const tiles = {};
   for (const cluster of state.clusters) {
@@ -128,8 +133,8 @@ function removeTileAt(clusters, { c, col, row }) {
       next.splice(col, 1);
       return next;
     }
-    return replaceColumn(cluster, col, (col2) => {
-      const next = col2.slice();
+    return replaceColumn(cluster, col, (column) => {
+      const next = column.slice();
       next.splice(row, 1);
       return next;
     });
@@ -169,14 +174,20 @@ function reducer(state = EMPTY_STATE, action) {
     case ADD_TILE: {
       const { tile, focus = false, insertAt = "end", insertAfter } = action;
       if (!tile || !tile.id || !tile.type) return state;
+      if (RESERVED_IDS.has(tile.id)) return state;
 
       // Already present? Optionally shift focus and short-circuit — same
       // contract as v2, so callers that re-fire ADD_TILE as "focus this"
-      // keep working.
+      // keep working. Cross-cluster focus-via-ADD_TILE is a no-op: callers
+      // must switchCluster first. Without this, focusedTileIdByCluster
+      // would update in the background cluster but `state.focusedId`
+      // (the derived active-cluster field) would silently disagree.
       if (state.tiles[tile.id]) {
         if (!focus) return state;
         const existing = findPath(state.clusters, tile.id);
         if (!existing) return state;
+        if (existing.c !== state.activeClusterIdx) return state;
+        if (state.focusedTileIdByCluster[existing.c] === tile.id) return state;
         const focusedTileIdByCluster = state.focusedTileIdByCluster.slice();
         focusedTileIdByCluster[existing.c] = tile.id;
         return withDerived({ ...state, focusedTileIdByCluster });
@@ -429,6 +440,7 @@ function normalizeV3(raw) {
       const cleanColumn = [];
       for (const tile of column) {
         if (!tile || typeof tile.id !== "string" || typeof tile.type !== "string") continue;
+        if (RESERVED_IDS.has(tile.id)) continue;
         if (seenIds.has(tile.id)) continue;
         seenIds.add(tile.id);
         cleanColumn.push({ id: tile.id, type: tile.type, props: { ...(tile.props || {}) } });
@@ -441,11 +453,11 @@ function normalizeV3(raw) {
 
   const focusedTileIdByCluster = [];
   for (let c = 0; c < clusters.length; c++) {
-    const raw_f = Array.isArray(raw.focusedTileIdByCluster)
+    const rawFocusedId = Array.isArray(raw.focusedTileIdByCluster)
       ? raw.focusedTileIdByCluster[c]
       : null;
-    const inCluster = raw_f && clusters[c].some(col => col.some(t => t.id === raw_f));
-    focusedTileIdByCluster.push(inCluster ? raw_f : (clusters[c][0]?.[0]?.id ?? null));
+    const inCluster = rawFocusedId && clusters[c].some(col => col.some(t => t.id === rawFocusedId));
+    focusedTileIdByCluster.push(inCluster ? rawFocusedId : (clusters[c][0]?.[0]?.id ?? null));
   }
 
   let activeClusterIdx = typeof raw.activeClusterIdx === "number" ? raw.activeClusterIdx : 0;
@@ -484,15 +496,16 @@ function migrateV2(raw) {
       .sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
     const cleaned = [];
     for (const t of tiles) {
+      if (RESERVED_IDS.has(t.id)) continue;
       if (seenIds.has(t.id)) continue;
       seenIds.add(t.id);
       cleaned.push([{ id: t.id, type: t.type, props: { ...(t.props || {}) } }]);
     }
     clusters.push(cleaned);
 
-    const raw_f = raw.focusedIdByCluster?.[cid];
-    const inCluster = raw_f && cleaned.some(col => col[0].id === raw_f);
-    focusedTileIdByCluster.push(inCluster ? raw_f : (cleaned[0]?.[0]?.id ?? null));
+    const rawFocusedId = raw.focusedIdByCluster?.[cid];
+    const inCluster = rawFocusedId && cleaned.some(col => col[0].id === rawFocusedId);
+    focusedTileIdByCluster.push(inCluster ? rawFocusedId : (cleaned[0]?.[0]?.id ?? null));
   }
 
   const activeClusterIdx = Math.max(0, clusterIds.indexOf(raw.activeClusterId));
@@ -515,12 +528,14 @@ function migrateV1(raw) {
   for (const id of order) {
     const t = raw.tiles[id];
     if (!t || typeof t.type !== "string") continue;
+    if (RESERVED_IDS.has(id)) continue;
     if (seenIds.has(id)) continue;
     seenIds.add(id);
     cluster.push([{ id, type: t.type, props: { ...(t.props || {}) } }]);
   }
   // Include tiles that weren't in raw.order.
   for (const [id, t] of Object.entries(raw.tiles)) {
+    if (RESERVED_IDS.has(id)) continue;
     if (seenIds.has(id)) continue;
     if (!t || typeof t.type !== "string") continue;
     cluster.push([{ id, type: t.type, props: { ...(t.props || {}) } }]);
@@ -620,7 +635,7 @@ export function createUiStore({ initialState = EMPTY_STATE, isPersistable = () =
     focusTile:     (id)              => store.dispatch({ type: FOCUS_TILE, id }),
     updateProps:   (id, patch)       => store.dispatch({ type: UPDATE_PROPS, id, patch }),
     reset:         (state)           => store.dispatch({ type: RESET, state }),
-    addCluster:    (cluster = {}, opts = {}) => store.dispatch({ type: ADD_CLUSTER, cluster, ...opts }),
+    addCluster:    (opts = {})       => store.dispatch({ type: ADD_CLUSTER, ...opts }),
     removeCluster: (clusterIdx)      => store.dispatch({ type: REMOVE_CLUSTER, clusterIdx }),
     switchCluster: (clusterIdx)      => store.dispatch({ type: SWITCH_CLUSTER, clusterIdx }),
   };

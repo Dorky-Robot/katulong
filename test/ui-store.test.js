@@ -102,6 +102,23 @@ describe("normalize", () => {
     assert.deepStrictEqual(s.order, ["dup"]);
     assert.strictEqual(s.clusters[0].length, 1);
   });
+
+  it("rejects reserved ids that would poison the derived tile map prototype", () => {
+    const s = normalize({
+      version: 3,
+      clusters: [[
+        [{ id: "__proto__", type: "terminal", props: {} }],
+        [{ id: "ok", type: "terminal", props: {} }],
+      ]],
+      activeClusterIdx: 0,
+      focusedTileIdByCluster: ["__proto__"],
+    });
+    assert.deepStrictEqual(s.order, ["ok"]);
+    // If the reserved id had been accepted, `tiles.__proto__` would be the
+    // tile object; untouched, it remains the native prototype.
+    assert.strictEqual(Object.getPrototypeOf(s.tiles), Object.prototype);
+    assert.strictEqual(s.clusters[0].length, 1);
+  });
 });
 
 // ── ADD_TILE ─────────────────────────────────────────────────────────
@@ -423,7 +440,7 @@ describe("ADD_CLUSTER", () => {
 
   it("can switch to the new cluster on creation", () => {
     const store = makeStore();
-    store.addCluster({}, { switchTo: true });
+    store.addCluster({ switchTo: true });
     assert.strictEqual(store.getState().activeClusterIdx, 1);
   });
 
@@ -431,7 +448,7 @@ describe("ADD_CLUSTER", () => {
     const store = makeStore();
     store.addCluster(); // now [0, 1]
     store.switchCluster(1); // active = 1
-    store.addCluster({}, { position: 0 }); // inserts before the active
+    store.addCluster({ position: 0 }); // inserts before the active
     const s = store.getState();
     assert.strictEqual(s.clusters.length, 3);
     assert.strictEqual(s.activeClusterIdx, 2); // shifted from 1 to 2
@@ -475,7 +492,7 @@ describe("SWITCH_CLUSTER", () => {
 describe("REMOVE_CLUSTER", () => {
   it("removes the cluster and all its tiles", () => {
     const store = makeStore();
-    store.addCluster({}, { switchTo: true });
+    store.addCluster({ switchTo: true });
     store.addTile({ id: "w1", type: "terminal", props: {} });
     store.addTile({ id: "w2", type: "terminal", props: {} });
     store.switchCluster(0);
@@ -495,14 +512,14 @@ describe("REMOVE_CLUSTER", () => {
 
   it("clamps activeClusterIdx when removing the active cluster", () => {
     const store = makeStore();
-    store.addCluster({}, { switchTo: true }); // active = 1
+    store.addCluster({ switchTo: true }); // active = 1
     store.removeCluster(1);
     assert.strictEqual(store.getState().activeClusterIdx, 0);
   });
 
   it("shifts activeClusterIdx down when removing a lower-indexed cluster", () => {
     const store = makeStore();
-    store.addCluster({}, { switchTo: true }); // active = 1
+    store.addCluster({ switchTo: true }); // active = 1
     store.removeCluster(0);
     assert.strictEqual(store.getState().activeClusterIdx, 0);
     assert.strictEqual(store.getState().clusters.length, 1);

@@ -958,7 +958,7 @@
         return { activeClusterIdx: st.activeClusterIdx, focusedId: st.focusedId };
       },
       onAddTile: () => createNewSession(),
-      onAddCluster: () => uiStore.addCluster({}, { switchTo: true }),
+      onAddCluster: () => uiStore.addCluster({ switchTo: true }),
     });
 
     if (sidebarAddBtn) {
