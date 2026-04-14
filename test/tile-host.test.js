@@ -8,9 +8,33 @@ const { createTileHost } = await import(
 );
 
 // ── Minimal store ──────────────────────────────────────────────────────
-// Just enough to drive tile-host: getState, subscribe, dispatch.
-function createTestStore(initial = { tiles: {}, order: [], focusedId: null }) {
-  let state = { ...initial };
+// Uses the v2 multi-cluster shape tile-host now expects. `selectClusterView`
+// filters by clusterId; the test store keeps everything in a single
+// "default" cluster and derives legacy `order`/`focusedId` fields for tests
+// that assert on them.
+const DEFAULT_CLUSTER = "default";
+
+function withDerived(state) {
+  const tilesForCluster = Object.values(state.tiles)
+    .filter(t => t.clusterId === state.activeClusterId)
+    .sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
+  const order = tilesForCluster.map(t => t.id);
+  const focusedId = state.focusedIdByCluster[state.activeClusterId] ?? null;
+  return { ...state, order, focusedId };
+}
+
+function emptyState() {
+  return withDerived({
+    version: 2,
+    activeClusterId: DEFAULT_CLUSTER,
+    clusters: { [DEFAULT_CLUSTER]: { id: DEFAULT_CLUSTER } },
+    tiles: {},
+    focusedIdByCluster: { [DEFAULT_CLUSTER]: null },
+  });
+}
+
+function createTestStore(initial = emptyState()) {
+  let state = initial;
   const subs = new Set();
 
   function notify() { subs.forEach(fn => fn(state)); }
@@ -19,33 +43,92 @@ function createTestStore(initial = { tiles: {}, order: [], focusedId: null }) {
     getState: () => state,
     subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
     dispatch(action) { /* not used by tile-host */ },
-    // Test helpers — mutate state and notify subscribers
-    setState(next) { state = next; notify(); },
+    setState(next) {
+      // Test-side convenience: accept both the v2 shape and the pre-v2 flat
+      // shape (`{tiles, order, focusedId}`) the original tests use. Flat
+      // input gets wrapped into the default cluster with x-positions taken
+      // from the order array.
+      if (next.clusters) {
+        // Normalize tiles that are missing clusterId/x. If the caller
+        // provided an `order` array, use it for x positions so legacy-style
+        // "spread state, set order" inserts still work.
+        const normalizedTiles = {};
+        const orderArr = next.order;
+        Object.entries(next.tiles || {}).forEach(([id, t]) => {
+          const idxInOrder = orderArr ? orderArr.indexOf(id) : -1;
+          // If the caller supplied an `order` array, trust it as the
+          // source of truth for x positions — overrides any existing
+          // x on the tile (the whole point of passing `order`).
+          const xFromOrder = idxInOrder >= 0 ? idxInOrder : undefined;
+          normalizedTiles[id] = {
+            ...t,
+            id: t.id ?? id,
+            clusterId: t.clusterId ?? DEFAULT_CLUSTER,
+            x: xFromOrder ?? t.x ?? 0,
+          };
+        });
+        const focusedIdByCluster = next.focusedIdByCluster
+          ? next.focusedIdByCluster
+          : { ...state.focusedIdByCluster, [DEFAULT_CLUSTER]: next.focusedId ?? null };
+        state = withDerived({ ...next, tiles: normalizedTiles, focusedIdByCluster });
+      } else {
+        const tiles = {};
+        const orderArr = next.order || Object.keys(next.tiles || {});
+        orderArr.forEach((id, x) => {
+          const t = next.tiles?.[id];
+          if (t) tiles[id] = { id, type: t.type, props: t.props || {}, x, clusterId: DEFAULT_CLUSTER };
+        });
+        state = withDerived({
+          version: 2,
+          activeClusterId: DEFAULT_CLUSTER,
+          clusters: { [DEFAULT_CLUSTER]: { id: DEFAULT_CLUSTER } },
+          tiles,
+          focusedIdByCluster: { [DEFAULT_CLUSTER]: next.focusedId ?? null },
+        });
+      }
+      notify();
+    },
     addTile(id, type, props, focus) {
-      state = {
+      const nextX = Object.values(state.tiles)
+        .filter(t => t.clusterId === DEFAULT_CLUSTER)
+        .reduce((m, t) => Math.max(m, (t.x ?? -1) + 1), 0);
+      state = withDerived({
         ...state,
-        tiles: { ...state.tiles, [id]: { id, type, props } },
-        order: [...state.order, id],
-        focusedId: focus ? id : state.focusedId,
-      };
+        tiles: {
+          ...state.tiles,
+          [id]: { id, type, props, x: nextX, clusterId: DEFAULT_CLUSTER },
+        },
+        focusedIdByCluster: focus
+          ? { ...state.focusedIdByCluster, [DEFAULT_CLUSTER]: id }
+          : state.focusedIdByCluster,
+      });
       notify();
     },
     removeTile(id) {
-      const { [id]: _, ...rest } = state.tiles;
-      state = {
-        ...state,
-        tiles: rest,
-        order: state.order.filter(x => x !== id),
-        focusedId: state.focusedId === id ? (state.order.filter(x => x !== id)[0] || null) : state.focusedId,
-      };
+      const { [id]: _removed, ...rest } = state.tiles;
+      const focusedIdByCluster = { ...state.focusedIdByCluster };
+      if (focusedIdByCluster[DEFAULT_CLUSTER] === id) {
+        const remaining = Object.values(rest)
+          .filter(t => t.clusterId === DEFAULT_CLUSTER)
+          .sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
+        focusedIdByCluster[DEFAULT_CLUSTER] = remaining[0]?.id || null;
+      }
+      state = withDerived({ ...state, tiles: rest, focusedIdByCluster });
       notify();
     },
     focusTile(id) {
-      state = { ...state, focusedId: id };
+      state = withDerived({
+        ...state,
+        focusedIdByCluster: { ...state.focusedIdByCluster, [DEFAULT_CLUSTER]: id },
+      });
       notify();
     },
     reorder(order) {
-      state = { ...state, order };
+      const tiles = { ...state.tiles };
+      order.forEach((id, x) => {
+        if (tiles[id]) tiles[id] = { ...tiles[id], x };
+      });
+      state = withDerived({ ...state, tiles });
       notify();
     },
   };

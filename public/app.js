@@ -48,7 +48,7 @@
     import { reducePinch, diffPinchState, INITIAL_PINCH_STATE } from "/lib/pinch-levels.js";
     import { initRenderers, isPersistable, getRenderer } from "/lib/tile-renderers/index.js";
     import { createTileHost } from "/lib/tile-host.js";
-    import { getFocusedSession } from "/lib/selectors.js";
+    import { getFocusedSession, selectClusterView } from "/lib/selectors.js";
     import { navigateTab as computeNavigateTab, moveTab as computeMoveTab, jumpToTab as computeJumpToTab } from "/lib/navigation.js";
     import { createIconStore } from "/lib/icon-store.js";
     import { createReconcilerStore } from "/lib/reconciler-store.js";
@@ -580,14 +580,24 @@
       pinch.attach();
     }
 
-    /** Subscribe all carousel tiles to WS output via getSessions().
+    /** Subscribe all tiles in a cluster to WS output via getSessions().
      *  ALL tiles need subscriptions — including the focused one — because
      *  carousel swipe doesn't send `switch` (no server round-trip). Without
      *  a subscription, data-available notifications are dropped and the
-     *  terminal appears stuck. */
-    function syncCarouselSubscriptions() {
-      if (!carousel.isActive()) return;
-      for (const tileId of carousel.getCards()) {
+     *  terminal appears stuck.
+     *
+     *  Cluster-scoped (FP5): iterates a cluster's tile order from
+     *  ui-store rather than the visible carousel's card list. This keeps
+     *  subscription routing correct when MC3 introduces multiple carousels
+     *  (Level 2) — each cluster's tiles are subscribed independently of
+     *  whichever carousel is visually on screen.
+     *
+     *  @param {string} [clusterId] — defaults to the active cluster. */
+    function syncCarouselSubscriptions(clusterId) {
+      const state = uiStore.getState();
+      const view = selectClusterView(state, clusterId || state.activeClusterId);
+      if (view.order.length === 0) return;
+      for (const tileId of view.order) {
         const handle = tileHost.getHandle(tileId);
         if (!handle) continue;
         // getSessions() returns all WS session names this tile manages:
@@ -601,7 +611,7 @@
           cm.send(JSON.stringify(subMsg));
         }
       }
-      carousel.fitAll();
+      if (carousel.isActive()) carousel.fitAll();
     }
 
     /** Route a session through ui-store — adds the tile if absent, then

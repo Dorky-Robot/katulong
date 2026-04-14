@@ -10,8 +10,16 @@
  * calls scattered across app.js, shortcut-bar.js, and the restore path.
  * All tile lifecycle now flows through one subscription.
  *
+ * Cluster isolation (FP5): each tile-host is scoped to a single cluster.
+ * Reads go through `selectClusterView(state, clusterId)` so tile-host
+ * only sees its cluster's tiles. A future MC3 Level-2 renderer can mount
+ * one tile-host per cluster strip; today there's one tile-host bound to
+ * the active cluster.
+ *
  * Design: docs/tile-state-rewrite.md, Step 3.
  */
+
+import { selectClusterView } from "./selectors.js";
 
 /**
  * Create a tile host.
@@ -20,10 +28,14 @@
  * @param {object} opts.store — ui-store instance (getState, subscribe, dispatch)
  * @param {object} opts.carousel — card-carousel instance
  * @param {function} opts.getRenderer — (type) → renderer object (from tile-renderers registry)
+ * @param {function} [opts.getClusterId] — () → clusterId this host is scoped to.
+ *   Defaults to reading `activeClusterId` from the store on every reconcile, so
+ *   today's single-cluster app behaves exactly like before.
  * @param {function} [opts.onFocusChange] — called after carousel focus settles,
  *   with (tileId, tileType). App.js uses this for WS subscription switching.
  */
-export function createTileHost({ store, carousel, getRenderer, onFocusChange, onTileRemoved }) {
+export function createTileHost({ store, carousel, getRenderer, getClusterId, onFocusChange, onTileRemoved }) {
+  const resolveClusterId = getClusterId || (() => store.getState().activeClusterId);
   // Map<tileId, { unmount, focus, blur, resize, tile }>
   const handles = new Map();
   let prevState = null;
@@ -46,12 +58,16 @@ export function createTileHost({ store, carousel, getRenderer, onFocusChange, on
   }
 
   function _reconcile(state) {
+    // Scope to this host's cluster — every tile-host sees only its own
+    // cluster's tiles. Today there's one tile-host bound to the active
+    // cluster; MC3 can mount one per strip.
+    const view = selectClusterView(state, resolveClusterId());
     const prev = prevState || { tiles: {}, order: [], focusedId: null };
-    prevState = state;
+    prevState = view;
 
     // ── Diff tiles ─────────────────────────────────────────────────
     const prevIds = new Set(Object.keys(prev.tiles));
-    const nextIds = new Set(Object.keys(state.tiles));
+    const nextIds = new Set(Object.keys(view.tiles));
 
     // Removed tiles
     for (const id of prevIds) {
@@ -71,7 +87,7 @@ export function createTileHost({ store, carousel, getRenderer, onFocusChange, on
 
     // Added tiles — must activate carousel first if it's not active
     const added = [];
-    for (const id of state.order) {
+    for (const id of view.order) {
       if (!prevIds.has(id) && nextIds.has(id)) {
         added.push(id);
       }
@@ -79,8 +95,8 @@ export function createTileHost({ store, carousel, getRenderer, onFocusChange, on
 
     if (added.length > 0 && !carousel.isActive()) {
       // First tiles ever — activate the carousel with all current tiles
-      const tilesToActivate = state.order.map(id => {
-        const tileDesc = state.tiles[id];
+      const tilesToActivate = view.order.map(id => {
+        const tileDesc = view.tiles[id];
         const renderer = getRenderer(tileDesc.type);
         if (!renderer) return null;
         // Create a thin tile adapter that carousel can mount
@@ -88,7 +104,7 @@ export function createTileHost({ store, carousel, getRenderer, onFocusChange, on
         return { id, tile: adapter };
       }).filter(Boolean);
 
-      carousel.activate(tilesToActivate, state.focusedId);
+      carousel.activate(tilesToActivate, view.focusedId);
 
       // Stash handles from the adapters that carousel just mounted
       for (const { id, tile: adapter } of tilesToActivate) {
@@ -97,12 +113,12 @@ export function createTileHost({ store, carousel, getRenderer, onFocusChange, on
     } else {
       // Carousel already active — add new tiles individually
       for (const id of added) {
-        const tileDesc = state.tiles[id];
+        const tileDesc = view.tiles[id];
         const renderer = getRenderer(tileDesc.type);
         if (!renderer) continue;
         const adapter = _createAdapter(id, tileDesc, renderer, store.dispatch);
         // Insert at the correct position in the carousel
-        const position = state.order.indexOf(id);
+        const position = view.order.indexOf(id);
         carousel.addCard(id, adapter, position >= 0 ? position : undefined);
         if (adapter._handle) handles.set(id, adapter._handle);
       }
@@ -113,20 +129,20 @@ export function createTileHost({ store, carousel, getRenderer, onFocusChange, on
     // activate (activate already sets the order).
     if (added.length === 0 || carousel.isActive()) {
       const currentCards = carousel.getCards();
-      if (!arraysEqual(currentCards, state.order)) {
-        carousel.reorderCards(state.order);
+      if (!arraysEqual(currentCards, view.order)) {
+        carousel.reorderCards(view.order);
       }
     }
 
     // ── Focus ──────────────────────────────────────────────────────
-    if (state.focusedId && state.focusedId !== carousel.getFocusedCard()) {
-      carousel.focusCard(state.focusedId);
+    if (view.focusedId && view.focusedId !== carousel.getFocusedCard()) {
+      carousel.focusCard(view.focusedId);
     }
 
     // Notify app.js of focus change so it can do WS bookkeeping
-    if (state.focusedId !== prev.focusedId && onFocusChange) {
-      const tile = state.tiles[state.focusedId];
-      onFocusChange(state.focusedId, tile?.type || null);
+    if (view.focusedId !== prev.focusedId && onFocusChange) {
+      const tile = view.tiles[view.focusedId];
+      onFocusChange(view.focusedId, tile?.type || null);
     }
   }
 
