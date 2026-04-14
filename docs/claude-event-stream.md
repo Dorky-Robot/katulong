@@ -1,5 +1,33 @@
 # Claude Event Stream — Live Agent Activity via Hooks
 
+> **⚠️ This document is mid-rewrite (as of 2026-04-14).**
+>
+> The architecture described below — "thin translator publishes every
+> transformed hook event to the topic broker" — has been superseded by a
+> **thin-event** model on the `worktree-feed-narrative` branch. In the new
+> model, the Claude transcript JSONL on disk is the source of truth, and
+> the pub/sub carries only *synthesized* output (narrative chunks,
+> completion / attention cards, session summaries) produced by a narrative
+> processor. Raw tool-call detail is fetched on demand from the transcript.
+>
+> Sections that are stale under the new model:
+> - Principle #3 ("thin translator") — the `/api/claude-events` handler no
+>   longer publishes; it ingests into the narrative processor, which owns
+>   all publishing *and* topic creation (lazy — topics only appear once
+>   something meaningful is synthesized, so `/clear` / `/resume` / empty
+>   sessions no longer clutter the picker).
+> - "Translation rules" table — those `step` / `status` mappings still
+>   exist inside `lib/claude-event-transform.js`, but they are no longer
+>   surfaced on the topic. They're only used as input to the narrative
+>   processor's Ollama prompt.
+> - "What stays as-is" → feed tile — the renderer code is unchanged, but
+>   Claude topics now carry only `narrative` / `completion` / `attention`
+>   / `summary` statuses.
+>
+> This doc will be fully rewritten once the follow-on pieces land:
+> narrative processor reading transcript slices directly, and a
+> `GET /api/claude-transcript/:session_id` endpoint for on-demand detail.
+
 ## The problem we're solving
 
 Claude Code sessions running inside katulong terminals are opaque.

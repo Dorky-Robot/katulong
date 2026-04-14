@@ -1,6 +1,9 @@
-import { describe, it } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { transformClaudeEvent } from "../lib/claude-event-transform.js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { transformClaudeEvent, readTranscriptEntries } from "../lib/claude-event-transform.js";
 
 describe("transformClaudeEvent", () => {
   const SESSION_ID = "6bc4b919-90f6-484d-937d-d78e11aa1aa2";
@@ -204,10 +207,10 @@ describe("transformClaudeEvent", () => {
   it("handles unknown event types as generic log entries", () => {
     const result = transformClaudeEvent({
       session_id: SESSION_ID,
-      hook_event_name: "PreToolUse",
+      hook_event_name: "SomeFutureHookEvent",
     });
 
-    assert.equal(result.message.step, "PreToolUse");
+    assert.equal(result.message.step, "SomeFutureHookEvent");
     assert.equal(result.message.status, "info");
   });
 
@@ -267,5 +270,141 @@ describe("transformClaudeEvent", () => {
     });
 
     assert.equal(result.message.detail, "");
+  });
+});
+
+describe("readTranscriptEntries", () => {
+  let tmpDir;
+  before(() => { tmpDir = mkdtempSync(join(tmpdir(), "transcript-test-")); });
+  after(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  function writeTranscript(name, lines) {
+    const path = join(tmpDir, name);
+    writeFileSync(path, lines.map(l => typeof l === "string" ? l : JSON.stringify(l)).join("\n"));
+    return path;
+  }
+
+  it("returns empty result for missing path", () => {
+    const result = readTranscriptEntries(null);
+    assert.deepEqual(result, { entries: [], nextCursor: 0 });
+  });
+
+  it("returns empty result when file does not exist", () => {
+    const result = readTranscriptEntries(join(tmpDir, "does-not-exist.jsonl"));
+    assert.deepEqual(result, { entries: [], nextCursor: 0 });
+  });
+
+  it("normalizes an assistant text + tool_use turn into one entry", () => {
+    const path = writeTranscript("assistant.jsonl", [
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Looking at the auth module." },
+            { type: "tool_use", name: "Read", input: { file_path: "/src/auth.js", offset: 42 } },
+          ],
+        },
+      },
+    ]);
+    const { entries, nextCursor } = readTranscriptEntries(path);
+    assert.equal(nextCursor, 1);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].role, "assistant");
+    assert.equal(entries[0].text, "Looking at the auth module.");
+    assert.deepEqual(entries[0].tools, [
+      { name: "Read", input: { file_path: "/src/auth.js", offset: 42 } },
+    ]);
+  });
+
+  it("normalizes a user string-content entry", () => {
+    const path = writeTranscript("user.jsonl", [
+      { type: "user", message: { role: "user", content: "Fix the login bug." } },
+    ]);
+    const { entries } = readTranscriptEntries(path);
+    assert.equal(entries.length, 1);
+    assert.deepEqual(entries[0], { role: "user", text: "Fix the login bug." });
+  });
+
+  it("distinguishes user text from tool_result user entries", () => {
+    const path = writeTranscript("mixed.jsonl", [
+      { type: "user", message: { role: "user", content: [{ type: "text", text: "Please fix it." }] } },
+      { type: "user", message: { role: "user", content: [{ type: "tool_result", content: "exit status 0" }] } },
+    ]);
+    const { entries } = readTranscriptEntries(path);
+    assert.equal(entries.length, 2);
+    assert.equal(entries[0].role, "user");
+    assert.equal(entries[1].role, "tool_result");
+    assert.equal(entries[1].text, "exit status 0");
+  });
+
+  it("skips metadata entries with no message", () => {
+    const path = writeTranscript("meta.jsonl", [
+      { type: "summary", operation: "compact", timestamp: "t", sessionId: "s", content: "summary text" },
+      { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "hi" }] } },
+    ]);
+    const { entries, nextCursor } = readTranscriptEntries(path);
+    assert.equal(nextCursor, 2, "cursor advances past skipped lines");
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].text, "hi");
+  });
+
+  it("advances cursor past blank trailing lines", () => {
+    const path = writeTranscript("trailing.jsonl", [
+      { type: "user", message: { role: "user", content: "a" } },
+      "",
+      "",
+    ]);
+    const { nextCursor } = readTranscriptEntries(path);
+    assert.equal(nextCursor, 1);
+  });
+
+  it("returns only the slice after fromLine", () => {
+    const path = writeTranscript("slice.jsonl", [
+      { type: "user", message: { role: "user", content: "first" } },
+      { type: "user", message: { role: "user", content: "second" } },
+      { type: "user", message: { role: "user", content: "third" } },
+    ]);
+    const { entries, nextCursor } = readTranscriptEntries(path, 1);
+    assert.equal(nextCursor, 3);
+    assert.deepEqual(entries.map(e => e.text), ["second", "third"]);
+  });
+
+  it("returns empty entries when cursor is already at end", () => {
+    const path = writeTranscript("end.jsonl", [
+      { type: "user", message: { role: "user", content: "only" } },
+    ]);
+    const { entries, nextCursor } = readTranscriptEntries(path, 5);
+    assert.deepEqual(entries, []);
+    assert.equal(nextCursor, 1);
+  });
+
+  it("skips malformed JSON lines without throwing", () => {
+    const path = writeTranscript("bad.jsonl", [
+      "not json",
+      { type: "user", message: { role: "user", content: "ok" } },
+    ]);
+    const { entries, nextCursor } = readTranscriptEntries(path);
+    assert.equal(nextCursor, 2);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].text, "ok");
+  });
+
+  it("truncates long assistant text", () => {
+    const longText = "x".repeat(2000);
+    const path = writeTranscript("long.jsonl", [
+      { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: longText }] } },
+    ]);
+    const { entries } = readTranscriptEntries(path);
+    assert.ok(entries[0].text.length <= 1000);
+    assert.ok(entries[0].text.endsWith("\u2026"));
+  });
+
+  it("skips assistant entries with only thinking blocks", () => {
+    const path = writeTranscript("think.jsonl", [
+      { type: "assistant", message: { role: "assistant", content: [{ type: "thinking", thinking: "deep thoughts" }] } },
+    ]);
+    const { entries } = readTranscriptEntries(path);
+    assert.equal(entries.length, 0);
   });
 });
