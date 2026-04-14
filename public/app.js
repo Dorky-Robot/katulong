@@ -1003,21 +1003,16 @@
      * remove the card/tab, dispose the pooled terminal, and show the add
      * menu if nothing's left. Returns whether a neighbor was activated, so
      * callers can branch on "last tab closed".
-     *
-     * For clusters, the focused card id is NOT the session name (the
-     * cluster's sessionName getter aliases its first sub-tile). Use the
-     * carousel's actual focused id when active so indexOf finds the
-     * current card and we pick the correct right-neighbor — otherwise
-     * idx falls to -1 and `next` collapses to tabs[0] (the first tile).
      */
-    // Pick the right neighbor of `id` in the current tab/carousel order,
+    // Pick the right neighbor of `id` in the current cluster's tile order,
     // falling back to the previous tile if `id` is the last one. Returns
     // null if there is no neighbor (single tile, or id not found). Shared
     // by the explicit close path (Option+W) and the reactive session-
     // removed path so both land focus on the same tile.
     function pickRightNeighbor(id) {
-      const tabs = carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-      const currentId = carousel.isActive() ? (carousel.getFocusedCard() || id) : id;
+      const state = uiStore.getState();
+      const tabs = state.order;
+      const currentId = state.focusedId || id;
       const idx = tabs.indexOf(currentId);
       if (tabs.length <= 1 || idx === -1) return null;
       return tabs[idx === tabs.length - 1 ? idx - 1 : idx + 1];
