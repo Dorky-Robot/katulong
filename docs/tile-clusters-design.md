@@ -305,11 +305,28 @@ Pre-req checklist (convert before multi-cluster strips):
 
 Then the multi-cluster work itself (each line below is a separate PR on top of the pre-req):
 - [x] **MC1 — T2a columns data shape** (shipped as PR #580 — v3 3D `clusters[c][col][row]` array, position IS identity).
-- [ ] **MC2 — T2b layout-change snapshot** (shortcut-bar consumes snapshot, stops importing carousel directly).
 - [x] **Exposé removal** (`53b63d4`, PR #583). Deleted `setMode`/`getMode`/`positionExpose`/`computeExposeCells` from `card-carousel.js`, the pinch-wiring block from `app.js`, and `public/lib/pinch-levels.js` + its 17 tests. `pinch-gesture.js` kept for MC3 to re-attach. *Small.*
-- [ ] **MC3 — Level 2 cluster strips** (vertical stack of horizontal carousel strips, pinch-out from Level 1, tilted-deck rendering per Spatial model, `+` at Level 2, tap/pinch-in to return). Needs per-column focused-row state; deck rendering primitive extracted for reuse.
 
-Explicitly deferred from this round: T1a (flip extraction), T1b (file-browser polish), T2c (face-stack-of-N, now only used by L2 decks), drag-to-stack, columns with >1 tile, Level 3 spatial canvas.
+### MC1b–MC1e — alignment-debt stabilization pass (2026-04-14)
+
+MC1 landed the 3D state shape, but callers from the Step-1 / pre-FP era still reach into `card-carousel` imperatively instead of projecting from `uiStore`. Before MC3 layers L2 decks on top, the substrate is stabilized through a series of small, independently-landable refactors. Each pass is scoped to a single concern so heavy-flux reviews stay tractable and agents working in parallel don't stomp each other.
+
+Rationale for splitting vs. one big "MC1b": **carousel API shrinkage can only happen once the last reader stops calling it.** That creates a natural sequence (fix bugs → decouple consumers one-at-a-time → delete dead exports → optional persistence migration). Each pass also carries doc-sync for any lines it touches — no separate doc-only PR.
+
+Originally MC2 was scoped as a "layout-change snapshot" emitted from carousel that shortcut-bar would cache. That framing is wrong under the FP1–FP5 model: a snapshot cache in shortcut-bar would be a second source of truth next to `uiStore`. Correct framing — shortcut-bar is a projection of `uiStore`, same pattern `tile-host.js` already uses. "MC2" is therefore dissolved into MC1c/MC1d below.
+
+- [ ] **MC1b — File-browser v2 coordinate fix.** `public/lib/tile-renderers/file-browser.js:58,60` reads `thisTile.x + 1` and matches `t.x === rightX` to find the preview tile to swap. The `.x` field doesn't exist in v3 (position IS identity — use `clusters[c][col][row]` indices). Today the lookup silently fails and a fresh preview tile is created on every file open instead of swapping. No test covers this path. Fix: use `selectColumns(state, clusterIdx)` to locate the column adjacent to the file-browser's column; keep the swap semantics. Add `test/file-browser-renderer.test.js` covering open-file-twice → single preview tile. *Independent — ships first because it fixes a live regression and depends on nothing.* *Small.*
+
+- [ ] **MC1c — shortcut-bar as `uiStore` projection.** Drop the `carousel` import from `public/lib/shortcut-bar.js`; take `uiStore` as a dep; subscribe via `uiStore.subscribe(listener)` (same pattern `tile-host.js` uses). Mapping of current carousel reads → store projections: `carousel.getCards()` → `selectClusterView(state, c).order`; `carousel.getTile(id)` → `state.tiles[id]` (or `tileLocator`); `carousel.getFocusedCard()` → `selectClusterView(state, c).focusedId`; `carousel.isActive()` → derived `order.length > 0` (or hoist to `selectHasActiveCluster`). Mutations: `carousel.reorderCards(order)` → dispatch `REORDER_TILES`; `carousel.removeCard(id)` → dispatch `REMOVE_TILE`. Verify these actions exist in `ui-store.js`; add any missing (with tests) as part of this pass. Rebuild-on-state-change replaces event-driven imperative updates. Delete any carousel exports that *only* shortcut-bar consumed. *Template pass — MC1d mirrors this pattern for app.js.* *Medium.*
+
+- [ ] **MC1d — app.js as `uiStore` projection + final carousel shrinkage.** Same reframe as MC1c for any state reads `public/app.js` still does against carousel. Carousel calls from app.js stay only for imperative DOM commands (`activate`, `deactivate`). After this lands, delete the remaining dead exports from `card-carousel.js` — carousel's contract becomes: receives commands, emits nothing, exposes no state reads. *Sequenced after MC1c so the same PR that ends the last reader also ends the dead exports.* *Medium.*
+
+- [ ] **MC1e — Persistence to `uiStore`** *(optional, deferrable past MC3).* Move `save`/`restore` out of `card-carousel.js` into the ui-store layer. `MAX_PERSISTED_CARDS = 50` becomes a per-cluster cap (falls out naturally once each cluster's tiles are persisted from `clusters[c]`). Bumps localStorage schema (v3 → v4) with a migration. Flagged optional because it changes storage format and should not stack on top of in-flight refactors — ship after MC1d stabilizes, or after MC3 if schedule demands. *Medium (the migration is the risk, not the code).*
+
+Then the feature work:
+- [ ] **MC3 — Level 2 cluster strips** (vertical stack of horizontal carousel strips, pinch-out from Level 1, tilted-deck rendering per Spatial model, `+` at Level 2, tap/pinch-in to return). Needs per-column focused-row state (schema design during MC1c/d); deck rendering primitive extracted for reuse; re-wires `pinch-gesture.js` to the L1↔L2 toggle.
+
+Explicitly deferred from this round: T1a (flip extraction) — *shipped via `ctx.faceStack`, see "Architectural decisions" §1 below*; T1b (file-browser polish beyond the MC1b bug-fix); T2c (face-stack-of-N, now only used by L2 decks); drag-to-stack; columns with >1 tile; Level 3 spatial canvas.
 
 ## Architectural decisions (from /consult, 2026-04-09)
 
