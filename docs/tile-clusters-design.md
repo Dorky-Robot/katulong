@@ -9,6 +9,192 @@ Living design doc for the tile-cluster / virtual-desktop UX. Captured from a bra
 - **The `+` button on the tile bar creates a new terminal in the current cluster.** No "New Cluster" option there. Cluster create/manage lives in the zoomed-out view.
 - The carousel-of-tiles UI we have today is *one view mode of one cluster*. Everything below extends from there.
 
+## Spatial model
+
+A cluster is a **2D grid of tiles**, not a 1D carousel. Today's UI happens
+to be 1D because every column has exactly one tile; the grid is the real
+shape, and Level 2 is the view that makes that shape visible.
+
+### A cluster is a 2D tile grid
+
+```
+Today (1 row, N columns — the existing carousel):
+
+         ┌────┐ ┌────┐ ┌────┐ ┌────┐
+         │ A  │ │ B  │ │ C  │ │ D  │
+         └────┘ └────┘ └────┘ └────┘
+
+Tomorrow (N rows per column, each column scrolls independently).
+Every column has a "focused row" tile that is what you see when
+that column is centered in the viewport. Other rows exist above
+and below and come into view on Option+↑/↓:
+
+                ┌────┐                         ┌────┐
+                │ F  │                         │ G  │    ← rows above focus
+                └────┘                         └────┘
+         ┌────┐ ┌────┐ ┌────┐ ┌────┐
+         │ A  │ │ B  │ │ C  │ │ D  │                    ← focused row
+         └────┘ └────┘ └────┘ └────┘
+                ┌────┐        ┌────┐
+                │ H  │        │ I  │                    ← rows below focus
+                └────┘        └────┘
+                ┌────┐
+                │ J  │
+                └────┘
+```
+
+Position IS identity (see MC1 / v3 state shape). A tile at `clusters[c][col][row]`
+has no `x`/`y` fields — its coordinates are where it lives in the array.
+
+### Navigation pans the viewport across the grid
+
+**Horizontal pan** (Level 1 today): moves between columns.
+
+```
+     viewport                         viewport
+    ┌─────────┐                      ┌─────────┐
+    │ ┌──┐ ┌──│┐  ┌──┐ ┌──┐          │┌──┐ ┌──┐│ ┌──┐
+    │ │ A│ │ B││  │ C│ │ D│   →      ││ B│ │ C││ │ D│
+    │ └──┘ └──│┘  └──┘ └──┘          │└──┘ └──┘│ └──┘
+    └─────────┘                      └─────────┘
+       A focused                        B focused
+```
+
+**Vertical pan** (MC tier): moves between rows within a column. Each
+column scrolls independently — the viewport stays put and the column
+slides under it, bringing a new row-tile into the focused slot. Tiles
+do not cycle; they just scroll out of view. Sibling columns are
+unaffected (column A below stays where it is when column B scrolls).
+
+```
+    before                           after Option+↓ (on column B)
+
+              ┌────┐                           ┌────┐
+              │ F  │                           │ F  │  ← above, unchanged
+              └────┘                           └────┘
+                                               ┌────┐
+                                               │ B  │  ← scrolled above viewport
+                                               └────┘
+    ╒═══════════════════╕            ╒═══════════════════╕
+    │ ┌────┐   ┌────┐   │            │ ┌────┐   ┌────┐   │
+    │ │ A  │   │ B  │   │ viewport   │ │ A  │   │ H  │   │ viewport
+    │ └────┘   └────┘   │            │ └────┘   └────┘   │
+    ╘═══════════════════╛            ╘═══════════════════╛
+              ┌────┐                           ┌────┐
+              │ H  │                           │ J  │
+              └────┘                           └────┘
+              ┌────┐
+              │ J  │
+              └────┘
+```
+
+Column A has one tile so it can't scroll. Column B scrolled up by one
+row: F (which was above) stays above, B (the previously focused tile)
+is now above the viewport, H slides into the focused slot, J remains
+below. Option+↑ reverses the motion.
+
+### Level 2 compresses Y so multiple clusters fit vertically
+
+At Level 2 we collapse each column's tiles into a **deck of cards** so
+the cluster reduces to a single row. The deck is a Level-2 render
+trick, not a working mode — you can't edit or type into a deck; it's a
+view of the column's contents.
+
+**The deck preserves the column's Y arrangement, exactly.** If a
+column reads [F, B, H, J] from top to bottom with B in the focused
+row, every tile keeps its original Y offset from the focus: F stays
+above B, H and J stay below. The focused tile is the anchor — not
+pulled to the front, not flattened into a stack.
+
+**What compresses is Z, not Y.** The column tilts forward around a
+horizontal axis at the focus, so distance-from-focus along Y becomes
+distance-from-focus along Z. Tiles below the focus swing down-and-
+forward (closer to the viewer); tiles above recede up-and-back.
+
+**The viewpoint is axonometric** (orthographic, angled — not head-on).
+That tilt is what makes every card visible at once: you see the full
+column tipped toward you, not a single face-on rectangle hiding the
+rest. Pinch-in is the inverse — the column rotates back upright into
+the 2D grid, with the same row focused.
+
+```
+ Column B at Level 1                 Column B as Level 2 deck
+ (F, B, H, J top-to-bottom;          (column tilted forward, viewed
+  B in the focused row)               axonometrically — Y preserved,
+                                      Z added from the tilt)
+
+     ┌────┐                                 ┌────┐
+     │ F  │                                 │ F  │        ← above focus:
+     └────┘                                 └────┘          up-and-back
+     ┌────┐                                ┌────┐
+     │ B  │ ← focus                        │ B  │ ← focus (anchor, z=0
+     └────┘                                └────┘           on the focus axis)
+     ┌────┐                               ┌────┐
+     │ H  │                               │ H  │
+     └────┘                               └────┘
+     ┌────┐                              ┌────┐
+     │ J  │                              │ J  │          ← far below focus:
+     └────┘                              └────┘            down-and-forward
+                                                           (closest to viewer)
+```
+
+The leftward shift per row in the deck indicates Z progression: the
+further a tile sat from the focus in the column, the further it swings
+in Z under the tilt. Above-focus tiles recede (up and back); below-
+focus tiles advance (down and toward the viewer). A single-tile column
+is a deck of one — no tilt needed, it's just the tile itself.
+
+Tilting columns this way is what makes it possible to show *multiple*
+clusters at once as a vertical stack of horizontal strips:
+
+Level 1 — one cluster, 2D grid visible (focused row marked). Only
+column B has tiles outside the focused row (F above, H and J below);
+columns A, C, D are single-tile:
+
+```
+                ┌────┐
+                │ F  │
+                └────┘
+         ┌────┐ ┌────┐ ┌────┐ ┌────┐
+         │ A  │ │ B  │ │ C  │ │ D  │   ← focused row
+         └────┘ └────┘ └────┘ └────┘
+                ┌────┐
+                │ H  │
+                └────┘
+                ┌────┐
+                │ J  │
+                └────┘
+```
+
+Pinch out → Level 2. The 2D grid of every cluster collapses into a row
+of decks, and all clusters stack vertically:
+
+```
+  ╔═ cluster 0 (the one shown above) ═════════════════════╗
+  ║            [F]                                        ║   ← F up-and-back
+  ║   [A]     [B] ← focus   [C]   [D]                     ║   ← focus row
+  ║          [H]                                          ║
+  ║         [J]                                           ║   ← J down-forward
+  ╚═══════════════════════════════════════════════════════╝
+  ╔═ cluster 1 ═══════════════════════════════════════════╗
+  ║   [M]    [N]    [O]                                   ║
+  ╚═══════════════════════════════════════════════════════╝
+  ╔═ cluster 2 ═══════════════════════════════════════════╗
+  ║   [P]    [Q]    [R]    [S]    [T]                     ║
+  ╚═══════════════════════════════════════════════════════╝
+```
+
+Column B's deck keeps F above the focus row and H/J below it — the
+Y-arrangement of the original column. The small leftward shift per row
+reads as Z: F is farther back, J is farther forward, B sits at the
+anchor. Single-tile columns (A, C, D, M, N, …) have no tilt — they're
+just the tile itself at the focused row.
+
+**Why "compress Y, don't compress X":** a horizontal strip of clusters
+that each spread vertically would be unreadable — you'd lose the
+cluster-strip metaphor. Compressing Y into decks keeps every cluster
+shaped like a row, so rows stack cleanly.
+
 ## Zoom levels
 
 There are (at least) two zoom levels, navigated by **pinch**:
