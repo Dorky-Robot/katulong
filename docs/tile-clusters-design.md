@@ -112,11 +112,11 @@ Before the multi-cluster substrate lands, the imperative chunks of `app.js` that
 **Scope is the critical path only.** WebRTC retry, iframe focus, connection-indicator tooltip, settings handlers, and other still-imperative chunks are orthogonal and stay deferred.
 
 Pre-req checklist (convert before multi-cluster strips):
-- [x] **FP1 — Carousel persistence reducer** (`app.js:2417–2483`). Extend `ui-store` shape to `{ version: 2, activeClusterId, clusters, tiles (with clusterId), focusedIdByCluster }`; extract `buildBootState()` as a pure function; legacy v1→v2 migration wraps existing tiles into a default cluster. Unblocks every downstream chunk. *Medium.*
-- [ ] **FP2 — Cluster activation action** (`app.js:442–449, 954–964`). Replace `carousel.isActive() ? carousel.getFocusedCard() : id` branching with a `uiStore` cluster-switch action + effect. *Small.*
-- [ ] **FP3 — `+` button routing factory** (`app.js:1490–1493, 911–934`). Pure `decideAddTileTarget()` + factory wrapping `tab-add` and sidebar add handlers so Level 2 can reuse them for cluster creation. *Small.*
-- [ ] **FP4 — Pinch level reducer** (`app.js:542–576`). Binary `carousel.setMode()` becomes a mode stack `{ level, mode }` with pinch thresholds as transition rules. *Medium.*
-- [ ] **FP5 — Carousel↔cluster isolation** (`app.js:463–517, 578–599`). Parameterize tile-host and `syncCarouselSubscriptions()` by cluster context so WS subscription routing is cluster-aware. *Medium.*
+- [x] **FP1 — Carousel persistence reducer** (`33aa3be`). v2 ui-store shape `{ version, activeClusterId, clusters, tiles (with clusterId), focusedIdByCluster }`; extracted `buildBootState()` to a pure module with legacy v1→v2 migration. *Medium.*
+- [x] **FP2 — Cluster activation cleanup** (`509da16`). Removed last imperative `carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs()` branch in `pickRightNeighbor`; reads ui-store `state.order`/`focusedId` directly. (SWITCH_CLUSTER action landed in FP1; cluster-switch *effect* designed alongside MC3 when there's a caller.) *Small.*
+- [x] **FP3 — `+` button routing factory** (`668a450`). New `public/lib/add-target.js`: pure `decideAddTarget({level, activeClusterId, focusedId})` + `createAddHandler` factory + id generators. Sidebar-+ rewired through factory; level-2 path wired to `uiStore.addCluster` so MC3 only swaps `getLevel()`. 12 pure tests. *Small.*
+- [x] **FP4 — Pinch level reducer** (`3cb0138`). New `public/lib/pinch-levels.js`: pure `reducePinch(state, {scale})` for the full L1↔L2 state machine + `diffPinchState` for minimal side effects. App.js wiring threads `pinchState` through the reducer; L2 transitions clamped until MC3. 17 pure tests. *Medium.*
+- [x] **FP5 — Carousel↔cluster isolation** (`d39a96b`). New `selectClusterView(state, clusterId)` selector; tile-host accepts optional `getClusterId` (defaults to active cluster) and reconciles via the scoped view; `syncCarouselSubscriptions(clusterId?)` iterates ui-store order instead of carousel cards. 12 new selector tests. *Medium.*
 
 Then the multi-cluster work itself (each line below is a separate PR on top of the pre-req):
 - [ ] **MC1 — T2a columns data shape** (single-slot initially; a future v3 bump).
