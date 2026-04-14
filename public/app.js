@@ -37,7 +37,6 @@
 
     import { createNotepad } from "/lib/notepad.js";
     import { createCardCarousel } from "/lib/card-carousel.js";
-    import { createPinchGesture } from "/lib/pinch-gesture.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
     import { createClusterTileFactory } from "/lib/tiles/cluster-tile.js";
     import { createFileBrowserTileFactory } from "/lib/tiles/file-browser-tile.js";
@@ -45,7 +44,6 @@
     import { createUiStore, loadFromStorage, EMPTY_STATE } from "/lib/ui-store.js";
     import { buildBootState } from "/lib/boot-state.js";
     import { createAddHandler, generateSessionName } from "/lib/add-target.js";
-    import { reducePinch, diffPinchState, INITIAL_PINCH_STATE } from "/lib/pinch-levels.js";
     import { initRenderers, isPersistable, getRenderer } from "/lib/tile-renderers/index.js";
     import { createTileHost } from "/lib/tile-host.js";
     import { getFocusedSession, selectClusterView } from "/lib/selectors.js";
@@ -539,46 +537,6 @@
       // Keep body data attribute in sync for CSS-driven overlay hiding.
       document.body.dataset.focusedNeedsWs = desc.session ? "1" : "0";
     });
-
-    // ── Pinch-to-zoom gesture ────────────────────────────────────────
-    //
-    // Pinch is the zoom verb across the tile-clusters design. The pure
-    // state machine lives in /lib/pinch-levels.js (FP4) — this wiring
-    // reads the current level/mode from module-local state, asks the
-    // reducer for the next state, and applies side effects via diffs.
-    //
-    // Today only Level 1 exists (carousel ↔ expose). The reducer also
-    // models Level 1 expose → Level 2 expose, but we CLAMP transitions
-    // to level 1 here until MC3 adds the Level-2 renderer. The clamp
-    // is a single if-statement so MC3 removes it cleanly.
-    //
-    // Commit-on-end rationale: we only switch mode on gesture end (not
-    // mid-gesture). Live-morphing requires interpolating transforms per
-    // frame while dodging the running CSS transition — which means
-    // reading offsetWidth mid-animation (the exact trap in positionCards's
-    // cachedCardW comment). Discrete commit-on-end is simpler, passes
-    // tests, and feels gestural because the subsequent CSS transition
-    // is fast (350ms).
-    let pinchState = INITIAL_PINCH_STATE;
-    const pinchTarget = document.getElementById("terminal-container");
-    if (pinchTarget) {
-      const pinch = createPinchGesture({
-        target: pinchTarget,
-        onPinch: ({ scale, phase }) => {
-          if (!carousel.isActive()) return;
-          if (phase !== "end") return;
-          let next = reducePinch(pinchState, { scale });
-          // Clamp to level 1 until MC3 lands. Remove this when Level 2
-          // renderer exists; the reducer already handles the transition.
-          if (next.level === 2) next = { level: 1, mode: next.mode };
-          const diff = diffPinchState(pinchState, next);
-          pinchState = next;
-          if (!diff) return;
-          if (diff.modeChanged) carousel.setMode(next.mode);
-        },
-      });
-      pinch.attach();
-    }
 
     /** Subscribe all tiles in a cluster to WS output via getSessions().
      *  ALL tiles need subscriptions — including the focused one — because

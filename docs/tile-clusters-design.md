@@ -9,35 +9,214 @@ Living design doc for the tile-cluster / virtual-desktop UX. Captured from a bra
 - **The `+` button on the tile bar creates a new terminal in the current cluster.** No "New Cluster" option there. Cluster create/manage lives in the zoomed-out view.
 - The carousel-of-tiles UI we have today is *one view mode of one cluster*. Everything below extends from there.
 
+## Spatial model
+
+A cluster is a **2D grid of tiles**, not a 1D carousel. Today's UI happens
+to be 1D because every column has exactly one tile; the grid is the real
+shape, and Level 2 is the view that makes that shape visible.
+
+### A cluster is a 2D tile grid
+
+```
+Today (1 row, N columns — the existing carousel):
+
+         ┌────┐ ┌────┐ ┌────┐ ┌────┐
+         │ A  │ │ B  │ │ C  │ │ D  │
+         └────┘ └────┘ └────┘ └────┘
+
+Tomorrow (N rows per column, each column scrolls independently).
+Every column has a "focused row" tile that is what you see when
+that column is centered in the viewport. Other rows exist above
+and below and come into view on Option+↑/↓:
+
+                ┌────┐                         ┌────┐
+                │ F  │                         │ G  │    ← rows above focus
+                └────┘                         └────┘
+         ┌────┐ ┌────┐ ┌────┐ ┌────┐
+         │ A  │ │ B  │ │ C  │ │ D  │                    ← focused row
+         └────┘ └────┘ └────┘ └────┘
+                ┌────┐        ┌────┐
+                │ H  │        │ I  │                    ← rows below focus
+                └────┘        └────┘
+                ┌────┐
+                │ J  │
+                └────┘
+```
+
+Position IS identity (see MC1 / v3 state shape). A tile at `clusters[c][col][row]`
+has no `x`/`y` fields — its coordinates are where it lives in the array.
+
+### Navigation pans the viewport across the grid
+
+**Horizontal pan** (Level 1 today): moves between columns.
+
+```
+     viewport                         viewport
+    ┌─────────┐                      ┌─────────┐
+    │ ┌──┐ ┌──│┐  ┌──┐ ┌──┐          │┌──┐ ┌──┐│ ┌──┐
+    │ │ A│ │ B││  │ C│ │ D│   →      ││ B│ │ C││ │ D│
+    │ └──┘ └──│┘  └──┘ └──┘          │└──┘ └──┘│ └──┘
+    └─────────┘                      └─────────┘
+       A focused                        B focused
+```
+
+**Vertical pan** (MC tier): moves between rows within a column. Each
+column scrolls independently — the viewport stays put and the column
+slides under it, bringing a new row-tile into the focused slot. Tiles
+do not cycle; they just scroll out of view. Sibling columns are
+unaffected (column A below stays where it is when column B scrolls).
+
+```
+    before                           after Option+↓ (on column B)
+
+              ┌────┐                           ┌────┐
+              │ F  │                           │ F  │  ← above, unchanged
+              └────┘                           └────┘
+                                               ┌────┐
+                                               │ B  │  ← scrolled above viewport
+                                               └────┘
+    ╒═══════════════════╕            ╒═══════════════════╕
+    │ ┌────┐   ┌────┐   │            │ ┌────┐   ┌────┐   │
+    │ │ A  │   │ B  │   │ viewport   │ │ A  │   │ H  │   │ viewport
+    │ └────┘   └────┘   │            │ └────┘   └────┘   │
+    ╘═══════════════════╛            ╘═══════════════════╛
+              ┌────┐                           ┌────┐
+              │ H  │                           │ J  │
+              └────┘                           └────┘
+              ┌────┐
+              │ J  │
+              └────┘
+```
+
+Column A has one tile so it can't scroll. Column B scrolled up by one
+row: F (which was above) stays above, B (the previously focused tile)
+is now above the viewport, H slides into the focused slot, J remains
+below. Option+↑ reverses the motion.
+
+### Level 2 compresses Y so multiple clusters fit vertically
+
+At Level 2 we collapse each column's tiles into a **deck of cards** so
+the cluster reduces to a single row. The deck is a Level-2 render
+trick, not a working mode — you can't edit or type into a deck; it's a
+view of the column's contents.
+
+**The deck preserves the column's Y arrangement, exactly.** If a
+column reads [F, B, H, J] from top to bottom with B in the focused
+row, every tile keeps its original Y offset from the focus: F stays
+above B, H and J stay below. The focused tile is the anchor — not
+pulled to the front, not flattened into a stack.
+
+**What compresses is Z, not Y.** The column tilts forward around a
+horizontal axis at the focus, so distance-from-focus along Y becomes
+distance-from-focus along Z. Tiles below the focus swing down-and-
+forward (closer to the viewer); tiles above recede up-and-back.
+
+**The viewpoint is axonometric** (orthographic, angled — not head-on).
+That tilt is what makes every card visible at once: you see the full
+column tipped toward you, not a single face-on rectangle hiding the
+rest. Pinch-in is the inverse — the column rotates back upright into
+the 2D grid, with the same row focused.
+
+```
+ Column B at Level 1                 Column B as Level 2 deck
+ (F, B, H, J top-to-bottom;          (column tilted forward, viewed
+  B in the focused row)               axonometrically — Y preserved,
+                                      Z added from the tilt)
+
+     ┌────┐                                 ┌────┐
+     │ F  │                                 │ F  │        ← above focus:
+     └────┘                                 └────┘          up-and-back
+     ┌────┐                                ┌────┐
+     │ B  │ ← focus                        │ B  │ ← focus (anchor, z=0
+     └────┘                                └────┘           on the focus axis)
+     ┌────┐                               ┌────┐
+     │ H  │                               │ H  │
+     └────┘                               └────┘
+     ┌────┐                              ┌────┐
+     │ J  │                              │ J  │          ← far below focus:
+     └────┘                              └────┘            down-and-forward
+                                                           (closest to viewer)
+```
+
+The leftward shift per row in the deck indicates Z progression: the
+further a tile sat from the focus in the column, the further it swings
+in Z under the tilt. Above-focus tiles recede (up and back); below-
+focus tiles advance (down and toward the viewer). A single-tile column
+is a deck of one — no tilt needed, it's just the tile itself.
+
+Tilting columns this way is what makes it possible to show *multiple*
+clusters at once as a vertical stack of horizontal strips:
+
+Level 1 — one cluster, 2D grid visible (focused row marked). Only
+column B has tiles outside the focused row (F above, H and J below);
+columns A, C, D are single-tile:
+
+```
+                ┌────┐
+                │ F  │
+                └────┘
+         ┌────┐ ┌────┐ ┌────┐ ┌────┐
+         │ A  │ │ B  │ │ C  │ │ D  │   ← focused row
+         └────┘ └────┘ └────┘ └────┘
+                ┌────┐
+                │ H  │
+                └────┘
+                ┌────┐
+                │ J  │
+                └────┘
+```
+
+Pinch out → Level 2. The 2D grid of every cluster collapses into a row
+of decks, and all clusters stack vertically:
+
+```
+  ╔═ cluster 0 (the one shown above) ═════════════════════╗
+  ║            [F]                                        ║   ← F up-and-back
+  ║   [A]     [B] ← focus   [C]   [D]                     ║   ← focus row
+  ║          [H]                                          ║
+  ║         [J]                                           ║   ← J down-forward
+  ╚═══════════════════════════════════════════════════════╝
+  ╔═ cluster 1 ═══════════════════════════════════════════╗
+  ║   [M]    [N]    [O]                                   ║
+  ╚═══════════════════════════════════════════════════════╝
+  ╔═ cluster 2 ═══════════════════════════════════════════╗
+  ║   [P]    [Q]    [R]    [S]    [T]                     ║
+  ╚═══════════════════════════════════════════════════════╝
+```
+
+Column B's deck keeps F above the focus row and H/J below it — the
+Y-arrangement of the original column. The small leftward shift per row
+reads as Z: F is farther back, J is farther forward, B sits at the
+anchor. Single-tile columns (A, C, D, M, N, …) have no tilt — they're
+just the tile itself at the focused row.
+
+**Why "compress Y, don't compress X":** a horizontal strip of clusters
+that each spread vertically would be unreadable — you'd lose the
+cluster-strip metaphor. Compressing Y into decks keeps every cluster
+shaped like a row, so rows stack cleanly.
+
 ## Zoom levels
 
-There are (at least) two zoom levels, navigated by **pinch**:
+There are two zoom levels, navigated by **pinch**. There is no per-cluster
+"view mode" — L1 is always the carousel; L2 is always the tilted-deck
+strips.
 
-### Level 1 — Focused (current default)
-Single cluster fills the screen, in one of its view modes (carousel or exposé).
+### Level 1 — Focused carousel (current default)
+Single cluster fills the screen, rendered as a 1D horizontal axis of
+**columns** (see "Columns" below). One column is focused; neighbors
+peek. Multi-row columns scroll vertically within the focus slot
+(Option+↑/↓). This is the existing behavior, generalized by the
+Spatial-model rules above.
 
 ### Level 2 — Cluster overview
-Pinch out from Level 1. You see **all clusters as a vertical stack of horizontal strips**. Think: multiple stacked copies of <https://auto-replicating-draggable-carousel.webflow.io/>, each strip scrollable horizontally and independently.
+Pinch out from Level 1. You see **all clusters as a vertical stack of horizontal strips**. Think: multiple stacked copies of <https://auto-replicating-draggable-carousel.webflow.io/>, each strip scrollable horizontally and independently. Each column in a strip renders as a tilted deck per the Spatial-model rules.
 
-- **Uniform mode**: every strip renders in the *same* mode as the one you pinched out from. If you were in carousel, all strips are mini-carousels. If you were in exposé, all strips are mini-exposés. Not heterogeneous.
 - **Vertical scroll** moves between cluster strips.
 - **`+` button** at this level creates a new cluster. Position TBD.
 - **Tap a cluster (or pinch in)** to zoom back into Level 1 on that cluster.
 
 ### Level 3 — Spatial canvas (parked)
 Maybe a freeform 2D canvas like the Cosmic / Stage Manager screenshots — clusters placed at xy positions, pan-and-zoom. Iterate on this once Level 2 is alive. **Not in scope yet.**
-
-## Level 1 view modes
-
-A cluster has two view modes:
-
-### Carousel
-1D horizontal axis of **columns** (see "Columns" below). One column is focused; neighbors peek. Existing behavior, generalized.
-
-### Exposé
-All tiles in the cluster visible at once via the existing tiling/packing algorithm — but **packed more tightly than the macOS reference**. Tiles use the cluster's tiling algorithm to land at non-overlapping positions.
-
-**Mode switch is animated**, not a teardown/rebuild. Same DOM elements morph from carousel layout to exposé layout. Implementation technique: FLIP (First-Last-Invert-Play) — measure old positions, change layout, measure new, transform-back-then-transition. The user-visible behavior is "macOS Exposé morph", FLIP is just the web technique.
 
 ## Columns (vertical stacking within a carousel slot)
 
@@ -63,17 +242,17 @@ Carousel x-slots are not "one tile fills the viewport." Each x-slot is a **colum
 - **Option+←/→** for column navigation (add for symmetry if not already present).
 - Focus snap = scroll the column so the active tile is in view.
 
-### Exposé treatment of stacked columns
-- Stacked columns become **deck-of-cards** in z-space. Each column = one card pile in the 2D pack, slightly fanned so you can see depth.
-- Tap a deck → fans out → tap a card → returns to Level 1 carousel with that column focused and that tile active. (Two-step, more spatial. Pending confirmation.)
-
-### Level 2 thumbnail of stacked columns
-Same deck-of-cards metaphor, miniaturized. A column with 3 tiles renders as a tiny card stack in the mini-strip, not as 3 stacked rectangles. Honest about structure, visually quiet.
+### Level 2 rendering of stacked columns
+At Level 2 every column — whether it has one tile or many — renders
+per the Spatial-model rules: the column tilts forward around its
+focused row, and above/below-focus tiles stagger in Y and Z under the
+axonometric view. A 1-tile column is a deck of one (no tilt). No
+separate "thumbnail" or "deck of cards in exposé" treatment — there
+is only the L2 tilted-column render.
 
 ## Pinch gesture
 
-- **Pinch is the zoom verb.** Pinch out = zoom out (Level 1 → Level 2). Pinch in = zoom in.
-- Pinch is **not** the carousel↔exposé switch. That's a different verb (TBD: button, gesture, or keyboard).
+- **Pinch is the zoom verb.** Pinch out = zoom out (Level 1 → Level 2). Pinch in = zoom in. Pinch has no other meaning — there is no mode-switch verb to share it with.
 - **Trackpad pinch on desktop** arrives as `wheel` events with `ctrlKey` set. Support both touch and trackpad from day one so dev iteration is possible on the Mac mini.
 - Greenfield in the codebase as far as we know — verify before implementing. If greenfield, raw pointer events with two-pointer tracking, no gesture lib.
 
@@ -86,7 +265,7 @@ Same deck-of-cards metaphor, miniaturized. A column with 3 tiles renders as a ti
 - **cwd inheritance**: the new file browser opens at the spawning terminal's current working directory.
 - **Repeat click**: each click on a terminal's folder button creates a **new** file browser tile. No reuse-if-exists.
 - **Lifetime**: once created, a file browser tile is independent of its spawning terminal. Closing the terminal does not close the file browser.
-- **Sized like a tile**, not a sidebar. Participates in carousel scroll, exposé pack, column resize, drag-to-stack, and Level 2 thumbnails like any terminal tile.
+- **Sized like a tile**, not a sidebar. Participates in carousel scroll, column resize, drag-to-stack, and the L2 tilted-deck render like any terminal tile.
 - **Component root-class collision**: `file-browser-component.js` currently clobbers its container's className, forcing `file-browser-tile.js` to wrap it in an extra `<div>`. Fix the component so it owns a child (e.g. `.fb-root`) rather than stamping on its parent's class.
 
 Note: the `#sidebar` element in `index.html` is the **session-list launcher**, *not* the file browser — do not conflate it with this work.
@@ -95,13 +274,19 @@ Note: the `#sidebar` element in `index.html` is the **session-list launcher**, *
 
 Discussed but explicitly deferred until pinch + Level 1/2 are working:
 
-- **Multi-touch**: two-finger swipe between clusters, three-finger gestures, long-press-drag to rearrange in exposé.
+- **Multi-touch**: two-finger swipe between clusters, three-finger gestures, long-press-drag to rearrange tiles at Level 2.
 - **Gyro**: ambient parallax, peek at neighbors, tilt-to-switch.
 - **Camera tracking**: face-tracking like the felixflor.es experiment. Aesthetic / "feels alive", or load-bearing (look-away-to-blur for shoulder-surfing protection). Permission/battery/privacy cost is real — treat as separate experiment.
 
 ## Build order
 
-**Step 1 (landed, `edf8c88`)** — Pinch + Level 1 carousel↔exposé morph. Pinch gesture plumbing (touch + trackpad `wheel`+`ctrlKey`), mode switch via same-DOM transform morph, no tmux resize in exposé. Columns are still 1-tile-each at this stage.
+**Step 1 (landed, `edf8c88`) — exposé morph removed in `53b63d4`.**
+Originally landed pinch gesture plumbing (touch + trackpad `wheel`+`ctrlKey`)
+*plus* a carousel↔exposé morph via same-DOM FLIP. Exposé was cut from
+scope — L1 is carousel-only, L2 is the overview — and the morph code
+was removed alongside FP4's pinch reducer. The pinch-gesture plumbing
+(`public/lib/pinch-gesture.js`) stayed, waiting for MC3 to re-attach it
+to an L1↔L2 toggle.
 
 Everything after Step 1 follows the **Tier 1 / Tier 2 / Tier 3** plan in "Architectural decisions" below — a refactor lands *before* the new features so columns, file-browser-as-tile, and Level 2 build on a clean substrate instead of bolting onto the flat-array model.
 
@@ -115,15 +300,16 @@ Pre-req checklist (convert before multi-cluster strips):
 - [x] **FP1 — Carousel persistence reducer** (`33aa3be`). v2 ui-store shape `{ version, activeClusterId, clusters, tiles (with clusterId), focusedIdByCluster }`; extracted `buildBootState()` to a pure module with legacy v1→v2 migration. *Medium.*
 - [x] **FP2 — Cluster activation cleanup** (`509da16`). Removed last imperative `carousel.isActive() ? carousel.getCards() : windowTabSet.getTabs()` branch in `pickRightNeighbor`; reads ui-store `state.order`/`focusedId` directly. (SWITCH_CLUSTER action landed in FP1; cluster-switch *effect* designed alongside MC3 when there's a caller.) *Small.*
 - [x] **FP3 — `+` button routing factory** (`668a450`). New `public/lib/add-target.js`: pure `decideAddTarget({level, activeClusterId, focusedId})` + `createAddHandler` factory + id generators. Sidebar-+ rewired through factory; level-2 path wired to `uiStore.addCluster` so MC3 only swaps `getLevel()`. 12 pure tests. *Small.*
-- [x] **FP4 — Pinch level reducer** (`3cb0138`). New `public/lib/pinch-levels.js`: pure `reducePinch(state, {scale})` for the full L1↔L2 state machine + `diffPinchState` for minimal side effects. App.js wiring threads `pinchState` through the reducer; L2 transitions clamped until MC3. 17 pure tests. *Medium.*
+- [x] **FP4 — Pinch level reducer** (`3cb0138`, *reverted as part of exposé removal*). Originally shipped `public/lib/pinch-levels.js` with a pure `reducePinch` for L1-carousel↔L1-expose↔L2. When exposé was dropped from the design, the 3-state reducer collapsed to a simple L1↔L2 toggle that doesn't need a reducer; `pinch-levels.js` and its 17 tests were deleted. MC3 will wire `pinch-gesture.js` directly to a level toggle. *Medium.*
 - [x] **FP5 — Carousel↔cluster isolation** (`d39a96b`). New `selectClusterView(state, clusterId)` selector; tile-host accepts optional `getClusterId` (defaults to active cluster) and reconciles via the scoped view; `syncCarouselSubscriptions(clusterId?)` iterates ui-store order instead of carousel cards. 12 new selector tests. *Medium.*
 
 Then the multi-cluster work itself (each line below is a separate PR on top of the pre-req):
-- [ ] **MC1 — T2a columns data shape** (single-slot initially; a future v3 bump).
+- [x] **MC1 — T2a columns data shape** (shipped as PR #580 — v3 3D `clusters[c][col][row]` array, position IS identity).
 - [ ] **MC2 — T2b layout-change snapshot** (shortcut-bar consumes snapshot, stops importing carousel directly).
-- [ ] **MC3 — Level 2 cluster strips** (vertical stack of horizontal carousel strips, pinch-out from Level 1, uniform mode, `+` at Level 2, tap/pinch-in to return).
+- [x] **Exposé removal** (`53b63d4`, PR #583). Deleted `setMode`/`getMode`/`positionExpose`/`computeExposeCells` from `card-carousel.js`, the pinch-wiring block from `app.js`, and `public/lib/pinch-levels.js` + its 17 tests. `pinch-gesture.js` kept for MC3 to re-attach. *Small.*
+- [ ] **MC3 — Level 2 cluster strips** (vertical stack of horizontal carousel strips, pinch-out from Level 1, tilted-deck rendering per Spatial model, `+` at Level 2, tap/pinch-in to return). Needs per-column focused-row state; deck rendering primitive extracted for reuse.
 
-Explicitly deferred from this round: T1a (flip extraction), T1b (file-browser polish), T2c (face-stack-of-N), drag-to-stack, deck-of-cards in exposé, columns with >1 tile, Level 3 spatial canvas.
+Explicitly deferred from this round: T1a (flip extraction), T1b (file-browser polish), T2c (face-stack-of-N, now only used by L2 decks), drag-to-stack, columns with >1 tile, Level 3 spatial canvas.
 
 ## Architectural decisions (from /consult, 2026-04-09)
 
@@ -145,7 +331,7 @@ The original Step 1.5 / 1.6 order is replaced with a three-tier plan that lands 
 - **Tier 2 (large, 2–4 days, one PR):**
   - **T2a** — `cards: string[]` → `columns: Array<Column>` with single-slot columns initially. Pure data-shape change, behavior identical, persistence migrates legacy.
   - **T2b** — carousel emits `onLayoutChange` snapshot; shortcut-bar consumes it, stops importing carousel directly. Kills the dual-source-of-truth nerve that bit `4285396`/`48b48b2`.
-  - **T2c** — face-stack of N; current 2-face flip becomes the n=2 case. Same primitive supports the deck-of-cards in exposé.
+  - **T2c** — face-stack of N; current 2-face flip becomes the n=2 case. Same primitive supports the L2 tilted-deck render.
 - **Tier 3 — features on top of the new substrate:**
   - Step 1.5 (columns / drag-to-stack)
   - Step 1.6 polish (the few remaining file-browser-as-tile bits not covered by T1b)
@@ -153,22 +339,21 @@ The original Step 1.5 / 1.6 order is replaced with a three-tier plan that lands 
 
 ## Open questions / decisions to revisit
 
-- Carousel↔exposé switch verb (since pinch is reserved for zoom levels). Button? Keyboard? Different gesture?
 - Level 2 `+` button placement.
 - Drag-to-stack collision zones — confirm center=stack / edges=insert-column model with a real prototype.
-- Exposé deck interaction — single-tap-to-jump vs fan-out-then-pick.
+- Level 2 deck interaction — single-tap on a deck: zoom in to L1 at that cluster with that column's focused row selected? Tap on a specific card in the tilted deck: same as tapping the deck, or focus-that-card-specifically?
 - Level 3 form factor.
 
 ## Anti-patterns (do not do)
 
-- Tearing down and recreating tile DOM elements when switching modes. Same elements must morph.
+- Tearing down and recreating tile DOM elements when transitioning between Level 1 and Level 2. Same elements must morph under the axonometric transform.
 - Per-client xterm.js replay at different dimensions. Cursor-positioned TUI output cannot be reflowed. (See `CLAUDE.md` "Multi-device terminal dimensions".)
 - macOS Terminal.app-style vertical splits that shrink siblings to uselessness.
 - Adding "New Cluster" to the per-tile `+` menu. Cluster management lives at Level 2.
 - Bundling pinch animation and column stacking into the same implementation pass.
+- Adding a second view mode ("exposé", "grid view", etc.) to Level 1. L1 is the carousel; L2 is the tilted-deck overview; that's the whole set.
 
 ## Reference material
 
 - Webflow draggable carousel that matches Level 2 strip behavior: <https://auto-replicating-draggable-carousel.webflow.io/>
-- macOS Mission Control / Exposé as the reference for the Level 1 morph visual.
 - macOS virtual-desktops strip as the reference for the Level 2 mental model (though our Level 2 is a *vertical* stack of cluster strips, not a horizontal strip of desktop thumbnails).
