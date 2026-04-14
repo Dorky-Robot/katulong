@@ -53,6 +53,12 @@ class Katulong < Formula
         katulong start
 
       If the service is installed, brew upgrade restarts it automatically.
+
+      Upgrading from a pre-v0.56 build? The pub/sub directory may contain
+      stale topics left behind by retired releases (high-volume PTY output
+      streams, and pre-thin-event Claude session logs). Run:
+        katulong topics purge             # preview (dry-run, default)
+        katulong topics purge --yes       # delete the previewed topics
     EOS
   end
 
