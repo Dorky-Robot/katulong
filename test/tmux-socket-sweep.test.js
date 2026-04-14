@@ -21,7 +21,7 @@ import { join } from "node:path";
 import {
   sweepOrphanTmuxSockets,
   tmuxSocketDir,
-} from "./helpers/tmux-socket-sweep.js";
+} from "../lib/tmux-socket-sweep.js";
 
 const PREFIX = "katulong-test-sweeptst-";
 

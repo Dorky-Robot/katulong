@@ -31,6 +31,7 @@ const COMMANDS = {
   notes: "Read per-session notepad content (read, list)",
   setup: "One-time setup (self-access for kubos and agents)",
   service: "Manage macOS LaunchAgent (install, uninstall, restart, status)",
+  "tmux-sweep": "Reap orphaned katulong-test-<pid> tmux sockets",
 };
 
 function showHelp() {

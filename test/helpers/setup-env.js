@@ -39,7 +39,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { sweepOrphanTmuxSockets } from "./tmux-socket-sweep.js";
+import { sweepOrphanTmuxSockets } from "../../lib/tmux-socket-sweep.js";
 
 if (!process.env.KATULONG_DATA_DIR) {
   const dir = mkdtempSync(join(tmpdir(), "katulong-test-"));
