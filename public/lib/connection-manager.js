@@ -22,6 +22,7 @@ const BACKOFF_INITIAL    = 1000;
 const BACKOFF_MAX        = 10000;
 const BACKOFF_FACTOR     = 2;
 const BACKGROUND_THRESHOLD = 5000; // 5s — after this long in background, force reconnect
+const WAKE_PROBE_TIMEOUT   = 2000; // 2s — probe deadline on focus/pageshow (laptop wake)
 
 /**
  * Create a connection manager.
@@ -171,6 +172,31 @@ export function createConnectionManager({
     backoffDelay = Math.min(backoffDelay * BACKOFF_FACTOR, BACKOFF_MAX);
   }
 
+  /**
+   * Probe the connection after a wake event (focus, pageshow). If the
+   * socket is already closed, reconnect immediately. If it still looks
+   * open, send a ping and force a reconnect if no pong arrives within
+   * WAKE_PROBE_TIMEOUT — much faster than the normal 8s heartbeat.
+   */
+  function wakeProbe() {
+    if (!transport || transport.readyState !== 1) {
+      reconnectNow();
+      return;
+    }
+
+    const probeEpoch = epoch;
+    const pingResult = heartbeat.sendPing(heartbeatState, Date.now());
+    processEffects(pingResult);
+
+    setTimeout(() => {
+      if (disposed) return;
+      if (epoch !== probeEpoch) return;
+      if (heartbeatState.status === "waiting") {
+        handleDisconnect();
+      }
+    }, WAKE_PROBE_TIMEOUT);
+  }
+
   // ─── Public API ─────────────────────────────────────────────────
 
   function connect() {
@@ -295,6 +321,19 @@ export function createConnectionManager({
 
     addDomListener(window, "online", () => {
       if (!disposed) reconnectNow();
+    });
+
+    // Laptop wake / tab refocus — visibilitychange doesn't always fire on
+    // macOS lid-close, and even when it does the 8s heartbeat timeout is
+    // slow enough to look like a hang. `focus` and `pageshow` give us extra
+    // wake signals; wakeProbe() reconnects fast if the socket is dead and
+    // applies a tighter 2s deadline if it looks alive.
+    addDomListener(window, "focus", () => {
+      if (!disposed) wakeProbe();
+    });
+
+    addDomListener(window, "pageshow", () => {
+      if (!disposed) wakeProbe();
     });
 
     addDomListener(document, "visibilitychange", () => {
