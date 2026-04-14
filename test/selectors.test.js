@@ -1,7 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 
-const { selectClusterView, selectColumns, tileLocator, getFocusedSession } = await import(
+const {
+  selectClusterView,
+  selectColumns,
+  tileLocator,
+  getFocusedSession,
+  findAdjacentPreviewToSwap,
+} = await import(
   new URL("../public/lib/selectors.js", import.meta.url).href
 );
 
@@ -253,6 +259,80 @@ describe("tileLocator", () => {
     assert.strictEqual(loc.has("x"), false);
     assert.strictEqual(loc.size(), 0);
     assert.deepStrictEqual(loc.ids(), []);
+  });
+});
+
+describe("findAdjacentPreviewToSwap", () => {
+  // Regression guard for MC1b: the v2 code used `.x` coordinates which
+  // don't exist under v3, so the swap never matched and previews
+  // accumulated instead of replacing each other.
+  function fbTile(id, props = {}) {
+    return { id, type: "file-browser", props: { cwd: "/", ...props } };
+  }
+  function docTile(id, filePath = "/a.md") {
+    return { id, type: "document", props: { filePath } };
+  }
+  function imgTile(id, filePath = "/a.png") {
+    return { id, type: "image", props: { filePath } };
+  }
+  function termTile(id) {
+    return { id, type: "terminal", props: { sessionName: id } };
+  }
+
+  it("returns the preview id when a document tile sits in the column to the right", () => {
+    const state = v3State({
+      clusters: [[[fbTile("fb")], [docTile("doc1")], [termTile("t1")]]],
+      focusedTileIdByCluster: ["fb"],
+    });
+    assert.strictEqual(findAdjacentPreviewToSwap(state, "fb"), "doc1");
+  });
+
+  it("returns the preview id when an image tile sits in the column to the right", () => {
+    const state = v3State({
+      clusters: [[[fbTile("fb")], [imgTile("img1")]]],
+      focusedTileIdByCluster: ["fb"],
+    });
+    assert.strictEqual(findAdjacentPreviewToSwap(state, "fb"), "img1");
+  });
+
+  it("returns null when the neighbor is not a preview tile", () => {
+    const state = v3State({
+      clusters: [[[fbTile("fb")], [termTile("t1")]]],
+      focusedTileIdByCluster: ["fb"],
+    });
+    assert.strictEqual(findAdjacentPreviewToSwap(state, "fb"), null);
+  });
+
+  it("returns null when the file-browser is the last column (no neighbor)", () => {
+    const state = v3State({
+      clusters: [[[termTile("t1")], [fbTile("fb")]]],
+      focusedTileIdByCluster: ["fb"],
+    });
+    assert.strictEqual(findAdjacentPreviewToSwap(state, "fb"), null);
+  });
+
+  it("returns null for an id not present in the state", () => {
+    const state = v3State({
+      clusters: [[[fbTile("fb")]]],
+      focusedTileIdByCluster: ["fb"],
+    });
+    assert.strictEqual(findAdjacentPreviewToSwap(state, "missing"), null);
+  });
+
+  it("scopes to the file-browser's own cluster, not neighbors in other clusters", () => {
+    const state = v3State({
+      clusters: [
+        [[fbTile("fb")]],
+        [[docTile("doc1")]],
+      ],
+      focusedTileIdByCluster: ["fb", "doc1"],
+    });
+    assert.strictEqual(findAdjacentPreviewToSwap(state, "fb"), null);
+  });
+
+  it("returns null for null/undefined state", () => {
+    assert.strictEqual(findAdjacentPreviewToSwap(null, "fb"), null);
+    assert.strictEqual(findAdjacentPreviewToSwap(undefined, "fb"), null);
   });
 });
 

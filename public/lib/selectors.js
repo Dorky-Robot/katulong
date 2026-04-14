@@ -128,3 +128,19 @@ export function tileLocator(uiState) {
   _locatorCache.set(uiState, locator);
   return locator;
 }
+
+/**
+ * Find the preview tile (document/image) immediately right of a file-browser,
+ * which should be swapped out before inserting a new preview.
+ *
+ * MC1 is single-slot so `[0]` is the only row; when columns grow this fn
+ * needs to reconsider what "the preview pane" means structurally.
+ */
+export function findAdjacentPreviewToSwap(uiState, browserId) {
+  const path = tileLocator(uiState).get(browserId);
+  if (!path) return null;
+  const neighbor = uiState.clusters[path.c]?.[path.col + 1]?.[0];
+  if (!neighbor) return null;
+  if (neighbor.type !== "document" && neighbor.type !== "image") return null;
+  return neighbor.id;
+}

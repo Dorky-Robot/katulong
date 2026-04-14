@@ -9,28 +9,10 @@
 
 import { createFileBrowserTileFactory } from "../tiles/file-browser-tile.js";
 import { isImagePath } from "../tiles/image-tile.js";
-import { tileLocator } from "../selectors.js";
+import { findAdjacentPreviewToSwap } from "../selectors.js";
 
 let factory = null;
 let _uiStore = null;
-
-/**
- * Find the preview tile (if any) immediately right of a file-browser that
- * should be swapped out before inserting a new preview. Pure — takes state,
- * returns id or null. Exported for tests.
- *
- * Under v3 the neighbor is `clusters[c][col + 1][0]`. MC1 is single-slot so
- * `[0]` is the only row; when columns grow this fn needs to reconsider what
- * "the preview pane" means structurally.
- */
-export function findAdjacentPreviewToSwap(state, browserId) {
-  const path = tileLocator(state).get(browserId);
-  if (!path) return null;
-  const neighborHead = state.clusters[path.c]?.[path.col + 1]?.[0];
-  if (!neighborHead) return null;
-  if (neighborHead.type !== "document" && neighborHead.type !== "image") return null;
-  return neighborHead.id;
-}
 
 export const fileBrowserRenderer = {
   type: "file-browser",
