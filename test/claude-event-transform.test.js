@@ -204,10 +204,10 @@ describe("transformClaudeEvent", () => {
   it("handles unknown event types as generic log entries", () => {
     const result = transformClaudeEvent({
       session_id: SESSION_ID,
-      hook_event_name: "PreToolUse",
+      hook_event_name: "SomeFutureHookEvent",
     });
 
-    assert.equal(result.message.step, "PreToolUse");
+    assert.equal(result.message.step, "SomeFutureHookEvent");
     assert.equal(result.message.status, "info");
   });
 
