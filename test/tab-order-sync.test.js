@@ -47,14 +47,6 @@ function makeTabSet(initialTabs = []) {
   return createWindowTabSet({ getCurrentSession: () => initialTabs[0] || null });
 }
 
-/** Simulate carousel.getCards() — returns a fixed ordered array */
-function mockCarousel(cards, active = true) {
-  return {
-    isActive: () => active,
-    getCards: () => [...cards],
-  };
-}
-
 /** Build a minimal uiState for navigation tests */
 function mockUiState(order, focusedId) {
   const tiles = {};
@@ -62,16 +54,6 @@ function mockUiState(order, focusedId) {
     tiles[id] = { id, type: "terminal", props: {} };
   }
   return { order, focusedId, tiles };
-}
-
-/**
- * Extracted getSessionList logic — mirrors shortcut-bar.js implementation.
- * Uses carousel order when active, falls back to windowTabSet.
- */
-function getSessionList(carousel, windowTabSet, allSessions) {
-  const tabNames = carousel?.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-  const sessionMap = new Map(allSessions.map(s => [s.name, s]));
-  return tabNames.map(n => sessionMap.get(n) || { name: n }).filter(Boolean);
 }
 
 describe("navigateTab — pure function using uiStore state", () => {
@@ -188,46 +170,6 @@ describe("jumpToTab — pure function using uiStore state", () => {
     const state = mockUiState(["a", "b"], "a");
     const action = jumpToTab(state, 5);
     assert.equal(action, null);
-  });
-});
-
-describe("getSessionList with carousel as source of truth", () => {
-  beforeEach(() => {
-    stores.session = {};
-    stores.local = {};
-  });
-
-  it("returns sessions in carousel order when active", () => {
-    const carousel = mockCarousel(["c", "a", "b"]);
-    const ts = makeTabSet(["a", "b", "c"]);
-    const sessions = [{ name: "a" }, { name: "b" }, { name: "c" }];
-
-    const result = getSessionList(carousel, ts, sessions);
-    assert.deepEqual(result.map(s => s.name), ["c", "a", "b"]);
-  });
-
-  it("returns sessions in windowTabSet order when carousel is inactive", () => {
-    const carousel = mockCarousel(["c", "a", "b"], false);
-    const ts = makeTabSet(["a", "b", "c"]);
-    const sessions = [{ name: "a" }, { name: "b" }, { name: "c" }];
-
-    const result = getSessionList(carousel, ts, sessions);
-    assert.deepEqual(result.map(s => s.name), ["a", "b", "c"]);
-  });
-
-  it("preserves session metadata from store", () => {
-    const carousel = mockCarousel(["b", "a"]);
-    const ts = makeTabSet(["a", "b"]);
-    const sessions = [
-      { name: "a", attached: true },
-      { name: "b", attached: false },
-    ];
-
-    const result = getSessionList(carousel, ts, sessions);
-    assert.equal(result[0].name, "b");
-    assert.equal(result[0].attached, false);
-    assert.equal(result[1].name, "a");
-    assert.equal(result[1].attached, true);
   });
 });
 

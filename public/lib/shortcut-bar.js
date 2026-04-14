@@ -1,31 +1,19 @@
 /**
- * Shortcut Bar / Tab Bar Renderer
+ * Shortcut Bar chrome — mounts <tile-tab-bar> + key-island tool row.
  *
- * Desktop (fine pointer): browser-like session tabs with close, drag-reorder,
- *   drag-out-to-new-window, plus utility buttons (files, browser, settings).
- * Mobile/tablet (coarse/no pointer): session button, Esc/Tab shortcuts, keyboard toggle.
- *
- * Device detection uses pointer capability rather than viewport width so that
- * desktop always gets tabs and mobile/tablet always gets the sidebar layout,
- * regardless of window size.
+ * Tab rendering and all tab interactions (click / drag / rename /
+ * context menu) live in <tile-tab-bar>, which subscribes to ui-store
+ * directly. This module owns only the surrounding chrome: the + button
+ * dropdown, the utility tool row, and a generic menu helper for host-
+ * initiated popups (e.g., <tile-tab-bar>'s tab-context-menu events).
  */
 
 import { invalidateSessions } from "/lib/stores.js";
 import { api } from "/lib/api-client.js";
 import { detectPlatform } from "/lib/platform.js";
 import { renderKeyIsland } from "/lib/key-island.js";
-import { renderDesktopTabs } from "/lib/shortcut-bar-desktop.js";
-import { renderIPadBar } from "/lib/shortcut-bar-ipad.js";
-import { renderPhoneBar } from "/lib/shortcut-bar-phone.js";
 import "/lib/tile-tab-bar.js"; // registers <tile-tab-bar> custom element
 
-const DRAG_OUT_THRESHOLD = 60; // px below bar to trigger tear-off (desktop)
-const DRAG_DEAD_ZONE = 5; // px before drag starts
-const LONG_PRESS_MS = 300; // ms before touch becomes drag
-
-/**
- * Create shortcut bar renderer
- */
 export function createShortcutBar(options = {}) {
   const {
     container,
@@ -33,12 +21,10 @@ export function createShortcutBar(options = {}) {
       { label: "Esc", keys: "esc" },
       { label: "Tab", keys: "tab" }
     ],
-    onSessionClick,
     onNewSessionClick,
     onCreateTile,
     tileTypes = [],
     onTabClick,
-    onTabRenamed,
     onAdoptSession,
     onTerminalClick,
     onFilesClick,
@@ -47,38 +33,18 @@ export function createShortcutBar(options = {}) {
     onShortcutsClick,
     onDictationClick,
     onNotepadClick,
-    onAllTabsClosed,
     sendFn,
-    getInstanceIcon,
-    getSessionIcon,
     sessionStore,
     windowTabSet,
-    carousel,
     uiStore,
   } = options;
 
-  let currentSessionName = "";
   let portProxyEnabled = true;
-  let activeMenu = null; // currently open context/dropdown menu
-
-  // Platform is detected once — it doesn't change at runtime
+  let activeMenu = null;
+  let _menuAnchor = null;
   const platform = detectPlatform();
 
-  function safeInstanceIcon() {
-    const raw = getInstanceIcon ? getInstanceIcon() : "terminal-window";
-    return raw.replace(/[^a-z0-9-]/g, "");
-  }
-
-  /** Get the icon for a specific session (per-session override or instance default) */
-  function iconForSession(sessionName) {
-    if (getSessionIcon) {
-      const override = getSessionIcon(sessionName);
-      if (override) return override.replace(/[^a-z0-9-]/g, "");
-    }
-    return safeInstanceIcon();
-  }
-
-  // ── Context menu / dropdown ────────────────────────────────────────
+  // ── Menu plumbing ────────────────────────────────────────────────────
 
   function closeMenu() {
     if (activeMenu) {
@@ -98,8 +64,6 @@ export function createShortcutBar(options = {}) {
       closeMenu();
     }
   }
-
-  let _menuAnchor = null; // Track which element opened the menu
 
   function showMenu(items, anchorEl) {
     closeMenu();
@@ -140,7 +104,6 @@ export function createShortcutBar(options = {}) {
           // Only animate removal if the action wasn't cancelled.
           const cancelled = item.deleteAction(row);
           if (cancelled === false) return;
-          // Slide-out animation after confirmed delete
           row.style.pointerEvents = "none";
           row.style.transition = "opacity 0.2s, max-height 0.2s, padding 0.2s, margin 0.2s";
           row.style.overflow = "hidden";
@@ -173,175 +136,38 @@ export function createShortcutBar(options = {}) {
       const menuRect = menu.getBoundingClientRect();
       const vh = window.visualViewport?.height ?? window.innerHeight;
       let left = rect.left;
-      // Keep menu within viewport horizontally
       if (left + menuRect.width > window.innerWidth - 8) {
         left = window.innerWidth - menuRect.width - 8;
       }
       menu.style.left = Math.max(8, left) + "px";
-      // Open above if not enough space below, anchored at bottom
-      // so the menu grows downward (items slide down, not push up)
       if (rect.bottom + 4 + menuRect.height > vh - 8) {
         menu.style.bottom = (vh - rect.top + 4) + "px";
         menu.style.top = "auto";
       } else {
         menu.style.top = rect.bottom + 4 + "px";
       }
-
       document.addEventListener("click", onDocClickCloseMenu, true);
     });
   }
 
   function deleteUnmanagedSession(name) {
     api.delete(`/tmux-sessions/${encodeURIComponent(name)}`).then(() => {
-      if (sessionStore) invalidateSessions(sessionStore, currentSessionName);
+      if (sessionStore) {
+        const focusedId = uiStore?.getState?.().focusedId ?? null;
+        invalidateSessions(sessionStore, focusedId);
+      }
     }).catch(err => {
       console.error("[Session] Delete failed:", err);
     });
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────
+  // ── + button dropdown ────────────────────────────────────────────────
 
-  /** Open a session in a new window with only that tab in its tab set */
-  function openInNewWindow(name) {
-    const url = `${location.origin}/?s=${encodeURIComponent(name)}`;
-    // Temporarily set sessionStorage so the new window inherits only this tab
-    // (window.open copies the opener's sessionStorage to the new context)
-    const savedTabs = sessionStorage.getItem("katulong-window-tabs");
-    const savedWindowId = sessionStorage.getItem("katulong-window-id");
-    sessionStorage.setItem("katulong-window-tabs", JSON.stringify([name]));
-    sessionStorage.removeItem("katulong-window-id");
-    try {
-      window.open(url, "_blank", "width=900,height=600");
-    } finally {
-      if (savedTabs) sessionStorage.setItem("katulong-window-tabs", savedTabs);
-      else sessionStorage.removeItem("katulong-window-tabs");
-      if (savedWindowId) sessionStorage.setItem("katulong-window-id", savedWindowId);
-    }
-  }
-
-  // ── Tab actions ────────────────────────────────────────────────────
-
-  /** After removing a tab, navigate to the nearest remaining tab or "/" */
-  function navigateAfterRemoval(removedName, priorIndex) {
-    const remaining = windowTabSet ? windowTabSet.getTabs() : [];
-    if (removedName !== currentSessionName) { render(currentSessionName); return; }
-    if (remaining.length > 0) {
-      const idx = typeof priorIndex === "number" ? priorIndex : 0;
-      if (onTabClick) onTabClick(remaining[Math.min(idx, remaining.length - 1)]);
-      return;
-    }
-    // No tabs left — show empty state with + button
-    if (onAllTabsClosed) onAllTabsClosed();
-    render(null);
-  }
-
-  /** Close tab: remove from this window's tab set only (session stays managed on server) */
-  function closeTab(sessionName) {
-    // carousel.removeCard triggers onCardDismissed which handles
-    // windowTabSet.removeTab + wsConnection.sendUnsubscribe.
-    if (carousel?.isActive()) {
-      carousel.removeCard(sessionName);
-    } else {
-      if (windowTabSet) windowTabSet.removeTab(sessionName);
-    }
-  }
-
-  async function detachTab(sessionName) {
-    try {
-      await api.delete(`/sessions/${encodeURIComponent(sessionName)}?action=detach`);
-    } catch (err) {
-      console.error("[Tab] Detach failed:", err);
-      return;
-    }
-    closeTab(sessionName);
-  }
-
-  async function killTab(sessionName) {
-    if (!confirm(`Kill session "${sessionName}"?\n\nThis will terminate the tmux session and all its processes.`)) return;
-    try {
-      await api.delete(`/sessions/${encodeURIComponent(sessionName)}`);
-    } catch (err) {
-      console.error("[Tab] Kill failed:", err);
-      return;
-    }
-    closeTab(sessionName);
-    if (windowTabSet) windowTabSet.onSessionKilled(sessionName);
-  }
-
-  /**
-   * Show right-click context menu on a tab
-   *
-   * Note: in carousel mode, `sessionName` here is actually the tile ID,
-   * which for terminal tiles happens to equal the session name but for
-   * file-browser / cluster / future tile kinds does not. The tab bar
-   * still treats every tab uniformly, so we branch on the tile's `type`
-   * (looked up via the carousel) to decide which actions are meaningful.
-   * Tier 2 will replace this with a polymorphic onLayoutChange snapshot
-   * from the carousel; until then this is the surgical fix that keeps
-   * file-browser tiles closable without regressing terminal tiles.
-   */
-  function showTabContextMenu(e, sessionName) {
-    e.preventDefault();
-    const tab = e.currentTarget;
-    const tile = carousel?.getTile?.(sessionName);
-    const isTerminalLike = !tile || tile.type === "terminal" || tile.type === "cluster";
-    const items = [
-      {
-        icon: "pencil-simple",
-        label: "Rename",
-        action: () => startTabRename(tab, sessionName)
-      },
-    ];
-    if (isTerminalLike) {
-      items.push({
-        icon: "eject",
-        label: "Detach",
-        action: () => detachTab(sessionName)
-      });
-      items.push({
-        icon: "x-circle",
-        label: "Kill session",
-        danger: true,
-        action: () => killTab(sessionName)
-      });
-    } else {
-      // Non-terminal tiles (file browser, etc.) have no tmux session to
-      // detach from or kill. Close is the only meaningful destructive
-      // action — route it through closeTab so the carousel removes the
-      // card and onCardDismissed fires normally. Hitting the REST
-      // /sessions/:id endpoints with a tile ID would 404 and leave the
-      // tile stuck on screen (this was the original bug).
-      items.push({
-        icon: "x-circle",
-        label: "Close",
-        danger: true,
-        action: () => closeTab(sessionName)
-      });
-    }
-    if (isTerminalLike) {
-      items.push({ divider: true });
-      items.push({
-        icon: "arrow-square-out",
-        label: "Open in new window",
-        action: () => {
-          openInNewWindow(sessionName);
-          closeTab(sessionName);
-        }
-      });
-    }
-    showMenu(items, tab);
-  }
-
-  /**
-   * Show + button dropdown: new session + all tmux sessions not open as tabs
-   */
   async function showAddMenu(addBtn) {
-    // Toggle: if menu is already open, just close it
     if (activeMenu) {
       closeMenu();
       return;
     }
-    // Fetch managed sessions and unmanaged tmux sessions in parallel
     let managed = [];
     let unmanaged = [];
     try {
@@ -357,7 +183,6 @@ export function createShortcutBar(options = {}) {
 
     const items = [];
 
-    // Tile types — "New Terminal" replaces "New session"
     if (tileTypes.length > 0) {
       for (const tt of tileTypes) {
         items.push({
@@ -367,7 +192,6 @@ export function createShortcutBar(options = {}) {
         });
       }
     } else {
-      // Fallback: no tile types registered, show classic "New session"
       items.push({
         icon: "plus",
         label: "New session",
@@ -375,9 +199,7 @@ export function createShortcutBar(options = {}) {
       });
     }
 
-    // Managed sessions not open as tabs in this window
     const closedManaged = managed.filter(s => !openTabs.has(s.name));
-    // Unmanaged tmux sessions (not managed by katulong)
     if (closedManaged.length > 0 || unmanaged.length > 0) {
       items.push({ divider: true, label: "Sessions" });
       for (const s of closedManaged) {
@@ -393,8 +215,10 @@ export function createShortcutBar(options = {}) {
             if (!confirm(`Kill session "${s.name}"?\n\nThis will terminate the tmux session and all its processes.`)) return false;
             api.delete(`/sessions/${encodeURIComponent(s.name)}`).then(() => {
               if (windowTabSet) windowTabSet.onSessionKilled(s.name);
-              if (sessionStore) invalidateSessions(sessionStore, currentSessionName);
-              if (s.name === currentSessionName) navigateAfterRemoval(s.name, 0);
+              if (sessionStore) {
+                const focusedId = uiStore?.getState?.().focusedId ?? null;
+                invalidateSessions(sessionStore, focusedId);
+              }
             }).catch(err => console.error("[Session] Kill failed:", err));
           },
         });
@@ -421,594 +245,12 @@ export function createShortcutBar(options = {}) {
     showMenu(items, addBtn);
   }
 
-  // ── Inline tab rename ─────────────────────────────────────────────
-
-  function startTabRename(tab, sessionName) {
-    const label = tab.querySelector(".tab-label");
-    if (!label || tab.querySelector(".tab-rename-input")) return;
-
-    const input = document.createElement("input");
-    input.className = "tab-rename-input";
-    input.value = sessionName;
-    input.setAttribute("aria-label", "Rename session");
-
-    // Select all text for easy replacement
-    label.replaceWith(input);
-    input.focus();
-    input.select();
-
-    let committed = false;
-
-    function commit() {
-      if (committed) return;
-      committed = true;
-
-      const newName = input.value.trim();
-      if (!newName || newName === sessionName) {
-        revert();
-        return;
-      }
-
-      // Optimistically rename the tab in-place BEFORE the API call
-      // to prevent the WS broadcast from triggering a duplicate render.
-      if (onTabRenamed) onTabRenamed(sessionName, newName);
-
-      // Call rename API — server may canonicalize the name
-      api.put(`/sessions/${encodeURIComponent(sessionName)}`, { name: newName })
-        .then((result) => {
-          const canonicalName = result?.name || newName;
-          // If server canonicalized the name, update again
-          if (canonicalName !== newName && onTabRenamed) {
-            onTabRenamed(newName, canonicalName);
-          }
-        })
-        .catch((err) => {
-          console.error("[Tab] Rename failed:", err);
-          // Revert optimistic rename
-          if (onTabRenamed) onTabRenamed(newName, sessionName);
-          render(currentSessionName);
-        });
-    }
-
-    function revert() {
-      committed = true;
-      const span = document.createElement("span");
-      span.className = "tab-label";
-      span.textContent = sessionName;
-      if (input.parentNode) input.replaceWith(span);
-    }
-
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); commit(); }
-      if (e.key === "Escape") { e.preventDefault(); if (!committed) revert(); }
-      e.stopPropagation(); // Don't let keyboard events reach the terminal
-    });
-    // Only commit on blur if input is still connected (not detached by render())
-    input.addEventListener("blur", () => { if (input.isConnected) commit(); });
-    // Prevent mousedown from starting a tab drag
-    input.addEventListener("mousedown", (e) => e.stopPropagation());
-  }
-
-  // ── Chrome-style drag reorder ──────────────────────────────────────
-
-  let drag = null;
-
-  // Track active touch to block synthesized mouse events entirely
-  let touchActive = false;
-
-  function onTabMouseDown(e, tab, name) {
-    if (e.button !== 0 || e.target.closest(".tab-close")) return;
-    // Block synthesized mouse events from touch — they have different
-    // coordinates and cause ghost jitter during drag.
-    if (touchActive || drag) return;
-
-    const startX = e.clientX;
-    const startY = e.clientY;
-    let started = false;
-
-    const onMove = (me) => {
-      if (drag?.isTouch) return; // touch owns the gesture
-      me.preventDefault(); // prevent native selection during drag
-      const dx = me.clientX - startX;
-      const dy = me.clientY - startY;
-
-      if (!started) {
-        if (Math.abs(dx) < DRAG_DEAD_ZONE && Math.abs(dy) < DRAG_DEAD_ZONE) return;
-        started = true;
-        beginDrag(tab, name, startX);
-      }
-
-      updateDrag(me.clientX, me.clientY);
-    };
-
-    const onUp = () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-
-      if (drag?.isTouch) return; // touch owns the gesture
-
-      if (!started) {
-        // Compare against the carousel's focused tile id, not
-        // currentSessionName. When a non-terminal tile (e.g. file
-        // browser) is focused, currentSessionName still holds the
-        // backing terminal session, so clicking the terminal tab while
-        // the file browser is focused would short-circuit here and
-        // never switch. The carousel's focused card is the real
-        // "what's front-and-center" answer.
-        const focusedCardId = carousel?.isActive?.() ? carousel.getFocusedCard?.() : null;
-        const currentId = focusedCardId || currentSessionName;
-        if (name !== currentId) {
-          if (onTabClick) onTabClick(name);
-        }
-        return;
-      }
-
-      endDrag();
-    };
-
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  }
-
-  // Double-tap tracking for tab rename (touch devices)
-  let lastTapTab = null;
-  let lastTapTime = 0;
-  const DOUBLE_TAP_MS = 300;
-
-  function onTabTouchStart(e, tab, name) {
-    if (e.target.closest(".tab-close")) return;
-
-    const initialTouch = e.touches[0];
-    const startX = initialTouch.clientX;
-    const startY = initialTouch.clientY;
-
-    {
-      // Touch: drag on horizontal movement, long press for context menu.
-      // preventDefault on touchstart blocks synthesized mouse events and
-      // native scroll — both of which cause jitter during drag.
-      e.preventDefault();
-      touchActive = true;
-      let started = false;
-      let longPressed = false;
-
-      const longPressTimer = setTimeout(() => {
-        longPressed = true;
-        tab.classList.add("tab-long-press");
-      }, LONG_PRESS_MS);
-
-      const onMove = (te) => {
-        const t = te.touches[0];
-        const dx = t.clientX - startX;
-        const dy = t.clientY - startY;
-        if (!longPressed && (Math.abs(dx) > DRAG_DEAD_ZONE || Math.abs(dy) > DRAG_DEAD_ZONE)) {
-          clearTimeout(longPressTimer);
-        }
-        if (!started) {
-          if (Math.abs(dx) < DRAG_DEAD_ZONE) return;
-          started = true;
-          clearTimeout(longPressTimer);
-          beginDrag(tab, name, startX, true);
-        }
-        te.preventDefault();
-        updateDrag(t.clientX, t.clientY);
-      };
-
-      const onEnd = () => {
-        clearTimeout(longPressTimer);
-        setTimeout(() => { touchActive = false; }, 50);
-        tab.classList.remove("tab-long-press");
-        document.removeEventListener("touchmove", onMove);
-        document.removeEventListener("touchend", onEnd);
-        document.removeEventListener("touchcancel", onEnd);
-        if (started) {
-          endDrag();
-        } else if (longPressed) {
-          showTabContextMenu({ preventDefault() {}, currentTarget: tab }, name);
-        } else {
-          // Tap without drag — check for double-tap to rename
-          const now = Date.now();
-          if (lastTapTab === tab && now - lastTapTime < DOUBLE_TAP_MS) {
-            lastTapTab = null;
-            lastTapTime = 0;
-            startTabRename(tab, name);
-          } else {
-            lastTapTab = tab;
-            lastTapTime = now;
-            if (name !== currentSessionName && onTabClick) onTabClick(name);
-          }
-        }
-      };
-
-      document.addEventListener("touchmove", onMove, { passive: false });
-      document.addEventListener("touchend", onEnd);
-      document.addEventListener("touchcancel", onEnd);
-    }
-  }
-
-  function beginDrag(tab, name, startX, fromTouch) {
-    if (drag) return; // already dragging (e.g. synthesized mouse from touch)
-    const tabs = [...container.querySelectorAll(".tab-bar-tab")];
-    const dragIndex = tabs.indexOf(tab);
-    if (dragIndex === -1) return; // tab removed from DOM between touchstart and drag
-
-    const rects = tabs.map(t => {
-      const r = t.getBoundingClientRect();
-      return { left: r.left, width: r.width, center: r.left + r.width / 2 };
-    });
-
-    const ghost = tab.cloneNode(true);
-    ghost.classList.add("tab-drag-ghost");
-    ghost.style.width = rects[dragIndex].width + "px";
-    ghost.style.height = tab.offsetHeight + "px";
-    // Safari clips cloned nodes that inherit overflow:hidden from the source tab,
-    // even after appending to document.body with position:fixed. Force visible.
-    ghost.style.overflow = "visible";
-    // Position ghost at the tab's current location BEFORE appending to prevent
-    // a flash at (0,0) on the first frame.
-    const tabRect = rects[dragIndex];
-    const tabTop = tab.getBoundingClientRect().top;
-    ghost.style.transform = `translate3d(${tabRect.left}px, ${tabTop}px, 0)`;
-    document.body.appendChild(ghost);
-
-    tab.classList.add("tab-dragging");
-
-    tabs.forEach((t, i) => {
-      if (i !== dragIndex) t.style.transition = "transform 0.2s ease";
-    });
-
-    const grabOffset = startX - rects[dragIndex].left;
-
-    // Cache ghost height and bar rect to avoid forced layout reflows every frame
-    const ghostHeight = ghost.offsetHeight;
-    const barRectCached = container.getBoundingClientRect();
-    drag = {
-      tab, name, ghost, tabs, rects, dragIndex,
-      currentIndex: dragIndex,
-      grabOffset,
-      ghostHeight,
-      barBottom: barRectCached.bottom,
-      barLeft: barRectCached.left,
-      barWidth: barRectCached.width,
-      tornOff: false,
-      isTouch: !!fromTouch,
-    };
-  }
-
-  function updateDrag(cx, cy) {
-    if (!drag) return;
-    const { ghost, tabs, rects, dragIndex, grabOffset, ghostHeight } = drag;
-
-    // Use translate3d for GPU-accelerated positioning (no layout reflows)
-    const gx = cx - grabOffset;
-    const gy = cy - ghostHeight / 2;
-    ghost.style.transform = drag.tornOff
-      ? `translate3d(${gx}px, ${gy}px, 0) scale(1.08)`
-      : `translate3d(${gx}px, ${gy}px, 0)`;
-
-    // Tear-off only for mouse (not touch — touch can't open new windows; Safari blocks popups)
-    if (!drag.isTouch && cy > drag.barBottom + DRAG_OUT_THRESHOLD) {
-      if (!drag.tornOff) {
-        drag.tornOff = true;
-        ghost.classList.add("tab-tear-off");
-        tabs.forEach((t, i) => { if (i !== dragIndex) t.style.transform = ""; });
-      }
-      return;
-    }
-    if (drag.tornOff) {
-      drag.tornOff = false;
-      ghost.classList.remove("tab-tear-off");
-    }
-
-    const dragWidth = rects[dragIndex].width;
-
-    let newIndex = rects.length - 1;
-    for (let i = 0; i < rects.length; i++) {
-      if (cx < rects[i].center) {
-        newIndex = i;
-        break;
-      }
-    }
-    if (newIndex > rects.length - 1) newIndex = rects.length - 1;
-
-    // Only update sibling transforms when the index actually changes —
-    // re-setting the same transform on every frame causes needless work.
-    if (newIndex !== drag.currentIndex) {
-      drag.currentIndex = newIndex;
-
-      for (let i = 0; i < tabs.length; i++) {
-        if (i === dragIndex) continue;
-
-        let shift = 0;
-        if (dragIndex < newIndex) {
-          if (i > dragIndex && i <= newIndex) {
-            shift = -(dragWidth + getGap());
-          }
-        } else if (dragIndex > newIndex) {
-          if (i >= newIndex && i < dragIndex) {
-            shift = dragWidth + getGap();
-          }
-        }
-
-        tabs[i].style.transform = shift ? `translateX(${shift}px)` : "";
-      }
-    }
-  }
-
-  function getGap() {
-    const area = container.querySelector(".tab-scroll-area") || container;
-    return parseFloat(getComputedStyle(area).gap) || 0;
-  }
-
-  /** Clean up all drag state: ghost, stale refs */
-  function cleanupDrag() {
-    if (!drag) return;
-    if (drag.ghost) drag.ghost.remove();
-    if (drag.tab) drag.tab.classList.remove("tab-dragging");
-    if (drag.tabs) drag.tabs.forEach(t => { t.style.transition = ""; t.style.transform = ""; });
-    drag = null;
-  }
-
-  function endDrag() {
-    if (!drag) return;
-    const { name, tabs: dragTabs, dragIndex, currentIndex, tornOff } = drag;
-
-    cleanupDrag();
-
-    if (tornOff) {
-      openInNewWindow(name);
-      closeTab(name);
-    } else if (currentIndex !== dragIndex) {
-      const names = dragTabs.map(t => t.dataset.session);
-      const [moved] = names.splice(dragIndex, 1);
-      names.splice(currentIndex, 0, moved);
-      if (windowTabSet) {
-        windowTabSet.reorderTabs(names);
-      }
-      // Also reorder the carousel directly. windowTabSet.reorderTabs filters
-      // out ids it doesn't persist (e.g. file-browser tiles are session-scoped
-      // — see commit b86275c), so the subscribe() bridge would drop them from
-      // the order it forwards to carousel.reorderCards, which then re-appends
-      // missing ids at the end — exactly the "snaps back" symptom. Reordering
-      // the carousel here with the full names array keeps non-persisted tiles
-      // in their dragged position. Matches the moveTab() pattern in app.js.
-      if (carousel?.isActive?.()) {
-        carousel.reorderCards(names);
-      }
-    }
-
-    // drag is null now — flush any deferred render
-    render(currentSessionName);
-  }
-
-  // ── Render ─────────────────────────────────────────────────────────
-
-  /** Create a single tab button element */
-  function createTabEl(s, isActive, paneClass) {
-    const tab = document.createElement("button");
-    tab.className = "tab-bar-tab" + (isActive ? " active" : "") + (paneClass ? ` ${paneClass}` : "");
-    tab.tabIndex = -1;
-    tab.dataset.session = s.name;
-    tab.setAttribute("aria-label", `Session: ${s.name}`);
-
-    const iconEl = document.createElement("i");
-    // Non-terminal tiles provide their own icon via getSessionList shim.
-    iconEl.className = `ph ph-${s.icon || iconForSession(s.name)}`;
-    tab.appendChild(iconEl);
-
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "tab-label";
-    const displayLabel = s.label || s.name;
-    nameSpan.textContent = displayLabel;
-    nameSpan.dataset.fullName = displayLabel;
-    tab.appendChild(nameSpan);
-
-    // Double-click to rename
-    tab.addEventListener("dblclick", (e) => {
-      e.preventDefault();
-      startTabRename(tab, s.name);
-    });
-
-    // Right-click context menu
-    tab.addEventListener("contextmenu", (e) => {
-      // Suppress context menu during drag (iOS fires contextmenu on long press)
-      if (drag) { e.preventDefault(); return; }
-      showTabContextMenu(e, s.name);
-    });
-
-    // Drag-reorder / click-to-switch
-    tab.addEventListener("mousedown", (e) => onTabMouseDown(e, tab, s.name));
-    tab.addEventListener("touchstart", (e) => onTabTouchStart(e, tab, s.name), { passive: false });
-
-    return tab;
-  }
-
-  function _renderDesktopTabs(sessionName, sessions) {
-    renderDesktopTabs({ container, sessionName, sessions, createTabEl, showAddMenu });
-  }
-
-  function _renderPhoneBar(sessionName) {
-    renderPhoneBar({
-      container,
-      sessionName,
-      sessionIcon: iconForSession(sessionName),
-      onSessionClick,
-      showAddMenu,
-      onTerminalClick,
-      onNotepadClick,
-      onFilesClick,
-      onPortForwardClick,
-      onSettingsClick,
-      portProxyEnabled,
-      pluginButtons: options.pluginButtons,
-    });
-  }
-
-  /** Build the session list from stores (shared by desktop + iPad paths) */
-  function getSessionList() {
-    if (!sessionStore) return [];
-    const allSessions = sessionStore.getState().sessions || [];
-    if (!windowTabSet) return allSessions;
-    // Carousel is the source of truth for visual order when active
-    const tabNames = carousel?.isActive() ? carousel.getCards() : windowTabSet.getTabs();
-    const sessionMap = new Map(allSessions.map(s => [s.name, s]));
-    return tabNames.map(n => {
-      const existing = sessionMap.get(n);
-      if (existing) return existing;
-      // Non-terminal tile (e.g. file-browser): synthesize a session-like
-      // entry from the tile's own getTitle/getIcon. The tab bar doesn't
-      // know about tile types; branding a tile-specific label/icon via
-      // this shim keeps the unified tab render path working without
-      // teaching it the tile taxonomy.
-      const tile = carousel?.getTile?.(n);
-      if (tile) {
-        let label = n;
-        try {
-          if (typeof tile.getTitle === "function") {
-            const t = tile.getTitle();
-            if (t) label = t;
-          }
-        } catch (_) { /* tile getTitle threw — fall through to id */ }
-        return {
-          name: n,
-          label,
-          icon: typeof tile.getIcon === "function" ? tile.getIcon() : null,
-          tileType: tile.type || null,
-        };
-      }
-      // No tile registered — best-effort friendly label for known id
-      // prefixes so stale tab entries don't show raw tile ids.
-      if (n.startsWith("file-browser-")) return { name: n, label: "Files", icon: "folder" };
-      return { name: n };
-    }).filter(Boolean);
-  }
-
-  function _renderIPadBar(sessionName, sessions) {
-    renderIPadBar({ container, sessionName, sessions, createTabEl, showAddMenu });
-  }
-
-  /**
-   * Adaptive tab label truncation with middle-ellipsis.
-   *
-   * Progression as tabs get narrower:
-   *   [icon] name-of-session  →  name-of-session  →  name...sion  →  na...on  →  n…
-   *
-   * Measures available space per tab and truncates labels to fit,
-   * keeping both the start and end of the name visible.
-   */
-  function fitTabLabels() {
-    const tabArea = container.querySelector(".tab-scroll-area");
-    if (!tabArea) return;
-    const tabs = [...tabArea.querySelectorAll(".tab-bar-tab")];
-    if (tabs.length === 0) return;
-
-    const areaWidth = tabArea.clientWidth;
-    const gap = parseFloat(getComputedStyle(tabArea).gap) || 0;
-    const totalGap = gap * (tabs.length - 1);
-    const availPerTab = Math.floor((areaWidth - totalGap) / tabs.length);
-
-    for (const tab of tabs) {
-      const label = tab.querySelector(".tab-label");
-      const icon = tab.querySelector("i.ph");
-      if (!label) continue;
-
-      const fullName = label.dataset.fullName || label.textContent;
-      const padLeft = parseFloat(getComputedStyle(tab).paddingLeft) || 0;
-      const padRight = parseFloat(getComputedStyle(tab).paddingRight) || 0;
-      const iconWidth = icon ? (icon.offsetWidth + 6) : 0; // 6px = gap
-      const chrome = padLeft + padRight;
-
-      // Measure text width using canvas (no reflow)
-      const font = getComputedStyle(label).font;
-      const measure = (text) => {
-        const c = document.createElement("canvas").getContext("2d");
-        c.font = font;
-        return c.measureText(text).width;
-      };
-
-      const fullWidth = measure(fullName);
-      const spaceWithIcon = availPerTab - chrome - iconWidth;
-      const spaceNoIcon = availPerTab - chrome;
-
-      // Phase 1: full name with icon
-      if (fullWidth <= spaceWithIcon) {
-        if (icon) icon.style.display = "";
-        label.textContent = fullName;
-        continue;
-      }
-
-      // Phase 2: full name, no icon
-      if (icon) icon.style.display = "none";
-      if (fullWidth <= spaceNoIcon) {
-        label.textContent = fullName;
-        continue;
-      }
-
-      // Phase 3: middle-ellipsis — keep start and end visible
-      const ellipsis = "…";
-      const ellipsisW = measure(ellipsis);
-      const budget = spaceNoIcon - ellipsisW;
-
-      if (budget <= measure(fullName[0])) {
-        // Phase 5: just first letter
-        label.textContent = fullName[0];
-        continue;
-      }
-
-      // Split budget 60/40 between start and end
-      const startBudget = budget * 0.6;
-      const endBudget = budget * 0.4;
-
-      let startLen = 0;
-      let startW = 0;
-      for (let i = 0; i < fullName.length; i++) {
-        const w = measure(fullName[i]);
-        if (startW + w > startBudget) break;
-        startW += w;
-        startLen = i + 1;
-      }
-
-      let endLen = 0;
-      let endW = 0;
-      for (let i = fullName.length - 1; i >= startLen; i--) {
-        const w = measure(fullName[i]);
-        if (endW + w > endBudget) break;
-        endW += w;
-        endLen++;
-      }
-
-      if (startLen > 0 && endLen > 0) {
-        label.textContent = fullName.slice(0, startLen) + ellipsis + fullName.slice(-endLen);
-      } else if (startLen > 0) {
-        label.textContent = fullName.slice(0, startLen) + ellipsis;
-      } else {
-        label.textContent = fullName[0];
-      }
-    }
-  }
-
-  // Re-fit tabs when the window resizes
-  window.addEventListener("resize", () => {
-    if (container.querySelector(".tab-scroll-area")) fitTabLabels();
-  });
-
-  // ── Render gate ────────────────────────────────────────────────────
-  // All renders flow through this gate. During drag, renders are
-  // deferred (not lost) and replayed when drag ends.
-
-  let needsRender = false;
-
-  function requestRender(sessionName) {
-    currentSessionName = sessionName;
-    if (drag) { needsRender = true; return; }
-    render(sessionName);
-  }
-
-  function render(sessionName) {
+  // ── Render chrome ────────────────────────────────────────────────────
+
+  function render(_sessionName) {
+    // `_sessionName` is no longer read: <tile-tab-bar> subscribes to
+    // ui-store for active state. Signature kept for caller compatibility.
     if (!container) return;
-    currentSessionName = sessionName;
-    needsRender = false;
-
-    cleanupDrag();
 
     const savedInputRow = container.querySelector(".bar-input-row");
     if (savedInputRow) savedInputRow.remove();
@@ -1017,31 +259,14 @@ export function createShortcutBar(options = {}) {
     document.getElementById("key-island")?.remove();
 
     container.style.display = "";
-
-    // Platform class — set once, never changes (platform is const)
     container.classList.remove("bar-desktop", "bar-ipad", "bar-phone");
     container.classList.add("bar-ipad");
     document.body.dataset.platform = platform;
 
-    // ── Tab strip ──────────────────────────────────────────────────
-    // When ui-store is wired, mount the declarative <tile-tab-bar> web
-    // component. It self-manages from the store — no getSessionList()
-    // shim, no activeId derivation, no fitTabLabels() call. One element,
-    // one source of truth.
-    //
-    // Legacy path (no uiStore): imperative iPad bar renderer.
-    if (uiStore) {
-      const tabBar = document.createElement("tile-tab-bar");
-      tabBar.store = uiStore;
-      container.appendChild(tabBar);
-    } else {
-      const sessions = getSessionList();
-      const activeId = carousel?.isActive?.() ? (carousel.getFocusedCard?.() || sessionName) : sessionName;
-      _renderIPadBar(activeId, sessions);
-      requestAnimationFrame(() => fitTabLabels());
-    }
+    const tabBar = document.createElement("tile-tab-bar");
+    tabBar.store = uiStore;
+    container.appendChild(tabBar);
 
-    // Tool row — pinned keys + utility buttons, docked inside the bar
     renderKeyIsland({
       parentEl: container,
       platform,
@@ -1054,11 +279,12 @@ export function createShortcutBar(options = {}) {
       onFilesClick,
       onPortForwardClick,
       onSettingsClick,
+      onTerminalClick,
+      onDictationClick,
       portProxyEnabled,
       pluginButtons: options.pluginButtons,
     });
 
-    // Re-insert preserved inline input row
     if (savedInputRow) {
       const toolRow = container.querySelector("#key-island");
       if (toolRow) {
@@ -1067,88 +293,23 @@ export function createShortcutBar(options = {}) {
         container.appendChild(savedInputRow);
       }
     }
-
   }
 
-  // Store subscribers — coalesce rapid updates into a single render via rAF.
-  // requestRender() handles the drag-deferral check.
-  let _rafId = null;
-  let _renameInProgress = false;
-  function onStoreChange() {
-    if (!currentSessionName) return;
-    if (_renameInProgress) return;
-    if (_rafId) return;
-    _rafId = requestAnimationFrame(() => {
-      _rafId = null;
-      requestRender(currentSessionName);
-    });
-  }
-
-  if (sessionStore) sessionStore.subscribe(onStoreChange);
-  if (windowTabSet) windowTabSet.subscribe(onStoreChange);
-
-  /**
-   * Lightweight active-tab update — just toggles the .active class
-   * without rebuilding the entire bar. Use this for carousel card switches.
-   */
-  function setActiveTab(sessionName) {
-    currentSessionName = sessionName;
-    const tabs = container.querySelectorAll(".tab-bar-tab");
-    for (const tab of tabs) {
-      tab.classList.toggle("active", tab.dataset.session === sessionName);
-    }
-  }
-
-  /**
-   * Lightweight tab rename — replaces a single tab element in-place
-   * without rebuilding the entire bar. Prevents the visual "jump" that
-   * occurs when a full render tears down and rebuilds the DOM.
-   */
-  function renameTabEl(oldName, newName) {
-    const tabArea = container.querySelector(".tab-scroll-area");
-    if (!tabArea) return;
-    const oldTab = tabArea.querySelector(`.tab-bar-tab[data-session="${CSS.escape(oldName)}"]`);
-    if (!oldTab) return;
-
-    const isActive = oldTab.classList.contains("active");
-    const newTab = createTabEl({ name: newName }, isActive);
-    oldTab.replaceWith(newTab);
-
-    if (currentSessionName === oldName) currentSessionName = newName;
-
-    // Suppress the store-triggered full render from windowTabSet.renameTab()
-    // and invalidateSessions(). The rAF clears the flag so later server
-    // responses still trigger a reconciliation render.
-    _renameInProgress = true;
-    requestAnimationFrame(() => {
-      fitTabLabels();
-      _renameInProgress = false;
-    });
-  }
-
-  /**
-   * Public entry point to begin the inline rename flow for a tab by
-   * session name. Used by the Option+R keyboard shortcut in app.js.
-   * Delegates to the private element-based `startTabRename`. No-ops if
-   * the tab element isn't in the DOM (e.g., carousel mode).
-   *
-   * Named `beginRename` rather than `startRename` to keep visual
-   * distance from the private `startTabRename` in the same module.
-   */
+  // Inline rename from a keyboard shortcut: delegates into <tile-tab-bar>.
   function beginRename(sessionName) {
-    const tabArea = container.querySelector(".tab-scroll-area");
-    if (!tabArea) return;
-    const tab = tabArea.querySelector(`.tab-bar-tab[data-session="${CSS.escape(sessionName)}"]`);
-    if (tab) startTabRename(tab, sessionName);
+    const tabBarEl = container?.querySelector("tile-tab-bar");
+    if (!tabBarEl) return;
+    const tabEl = tabBarEl.querySelector(
+      `.tab-bar-tab[data-session="${CSS.escape(sessionName)}"]`,
+    );
+    if (tabEl) tabBarEl._startRename(tabEl, sessionName);
   }
 
   return {
-    render: requestRender,
-    setActiveTab,
-    renameTabEl,
-    beginRename,
+    render,
     showAddMenu,
     showMenuFromHost: showMenu,
+    beginRename,
     setPortProxyEnabled(enabled) {
       portProxyEnabled = enabled;
       const btn = document.getElementById("bar-portfwd-btn");
