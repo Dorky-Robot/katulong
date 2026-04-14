@@ -444,6 +444,15 @@ cmd_start() {
 
   echo "Starting staging '$name' on port $port..."
 
+  # Clear any stale socket file for this stage name before tmux tries to
+  # bind. tmux does not unlink the socket on `kill-server`, so a prior
+  # `stop` of the same name leaves `/tmp/tmux-$UID/stage-<name>` behind,
+  # and a new tmux server starting on that path can get confused by the
+  # dead inode. This is the "pre-clear my own slot" side of the cleanup
+  # contract; the sibling piece is the boot-time sweep in
+  # test/helpers/setup-env.js for the PID-scoped test sockets.
+  rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$tmux_socket"
+
   if [[ ! -d "$REPO_ROOT/node_modules" ]]; then
     echo "  installing deps..."
     (cd "$REPO_ROOT" && npm install --silent)

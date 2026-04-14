@@ -26,13 +26,20 @@
  *    hooks into. The socket name MUST match `/^[A-Za-z0-9_-]+$/`;
  *    `katulong-test-<pid>` satisfies that.
  *
- * Both are cleaned up on process exit.
+ * Socket cleanup: `kill-server` stops the tmux anchor on graceful exit,
+ * but tmux does not unlink the socket file on `kill-server` — so every
+ * exit leaves an orphan behind. Rather than fight this at each
+ * kill-server call site, we rely on a single sweep-at-boot: the next
+ * test process that starts picks up its predecessors' orphans and
+ * reaps them (see `tmux-socket-sweep.js`). This also handles the
+ * SIGKILL / CI-timeout case where `kill-server` never ran at all.
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
+import { sweepOrphanTmuxSockets } from "./tmux-socket-sweep.js";
 
 if (!process.env.KATULONG_DATA_DIR) {
   const dir = mkdtempSync(join(tmpdir(), "katulong-test-"));
@@ -44,6 +51,14 @@ if (!process.env.KATULONG_DATA_DIR) {
 }
 
 if (!process.env.KATULONG_TMUX_SOCKET) {
+  // Reap orphan sockets from prior test runs. Catches both
+  //   (a) graceful exits where `kill-server` ran but did not unlink, and
+  //   (b) hard kills (SIGKILL / CI or pre-push hook timeouts / OOM)
+  //       where the exit handler never ran at all.
+  // Without this, `/tmp/tmux-$UID/` accumulates `katulong-test-*` socket
+  // files indefinitely and eventually destabilizes tmux itself.
+  sweepOrphanTmuxSockets("katulong-test-");
+
   // PID-scoped socket so parallel test files can't collide, and each
   // test file starts with a fresh (empty) tmux server.
   const socketName = `katulong-test-${process.pid}`;
@@ -74,12 +89,11 @@ if (!process.env.KATULONG_TMUX_SOCKET) {
   }
 
   process.on("exit", () => {
-    // Tear down the entire tmux server on our socket. This wipes every
-    // session this test file created (plus the anchor) in one shot —
-    // much faster and more reliable than enumerating known session
-    // names and killing them individually. If tmux never started a
-    // server on this socket (e.g. a unit test that mocked tmux
-    // entirely), the command fails and we ignore it.
+    // Stop the tmux server so the anchor process does not outlive the
+    // test run. The socket file itself is intentionally not unlinked
+    // here — tmux does not unlink on `kill-server` and we rely on the
+    // next test process's boot-time sweep to reap it. See module
+    // header for the rationale.
     try {
       execFileSync("tmux", ["-L", socketName, "kill-server"], {
         stdio: "ignore",

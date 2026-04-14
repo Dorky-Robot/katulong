@@ -24,6 +24,14 @@ fi
 # TMUX_SOCKET in test/e2e/cleanup-test-server.sh — keep all three in sync.
 TMUX_SOCKET="katulong-e2e-${SHARD}"
 
+# Clear any stale socket file for this shard before tmux tries to bind.
+# tmux does not unlink the socket on `kill-server`, so a prior e2e run
+# for this shard leaves `/tmp/tmux-$UID/katulong-e2e-<shard>` behind.
+# Pre-clearing the single slot we own is simpler than a general sweep
+# and scoped to just this shard. The sibling piece for the PID-scoped
+# test sockets is the boot-time sweep in test/helpers/setup-env.js.
+rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$TMUX_SOCKET"
+
 # Run pre-server setup to create fixture auth state
 TEST_SHARD_INDEX=$SHARD node test/e2e/pre-server-setup.js
 
