@@ -16,6 +16,17 @@ class Katulong < Formula
   end
 
   def post_install
+    katulong = bin/"katulong"
+
+    # Best-effort orphan tmux socket cleanup. Dev machines that have
+    # run the test suite accumulate `katulong-test-<pid>` sockets in
+    # /tmp/tmux-$UID/ (one machine hit 16k+), which eventually
+    # destabilizes tmux itself. The sweep is prefix-scoped and only
+    # touches entries whose creator PID is dead, so it's always safe
+    # to run. Failure here must never block the install — we run in
+    # a subshell that always exits 0.
+    system "/bin/sh", "-c", "#{katulong} tmux-sweep --quiet 2>/dev/null || true"
+
     # When `katulong update` is driving the upgrade, it creates a sentinel
     # file and handles the smoke-test-and-swap restart itself.  Skip here
     # so we don't race with that process or hit EPERM on the plist.
@@ -26,7 +37,6 @@ class Katulong < Formula
     end
 
     # Standalone `brew upgrade` (not via `katulong update`): restart normally.
-    katulong = bin/"katulong"
     if (Pathname.new(Dir.home) / "Library/LaunchAgents/com.dorkyrobot.katulong.plist").exist?
       system katulong, "service", "restart"
     else
