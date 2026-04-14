@@ -280,12 +280,13 @@ Discussed but explicitly deferred until pinch + Level 1/2 are working:
 
 ## Build order
 
-**Step 1 (landed, `edf8c88`) — partially obsolete.** Originally landed
-pinch gesture plumbing (touch + trackpad `wheel`+`ctrlKey`) *plus* a
-carousel↔exposé morph via same-DOM FLIP. The exposé mode has since
-been cut from scope — L1 is carousel-only, L2 is the overview. The
-pinch-gesture plumbing is still load-bearing; the exposé morph code
-needs to be removed (tracked as a cleanup step before MC3).
+**Step 1 (landed, `edf8c88`) — exposé morph removed in `53b63d4`.**
+Originally landed pinch gesture plumbing (touch + trackpad `wheel`+`ctrlKey`)
+*plus* a carousel↔exposé morph via same-DOM FLIP. Exposé was cut from
+scope — L1 is carousel-only, L2 is the overview — and the morph code
+was removed alongside FP4's pinch reducer. The pinch-gesture plumbing
+(`public/lib/pinch-gesture.js`) stayed, waiting for MC3 to re-attach it
+to an L1↔L2 toggle.
 
 Everything after Step 1 follows the **Tier 1 / Tier 2 / Tier 3** plan in "Architectural decisions" below — a refactor lands *before* the new features so columns, file-browser-as-tile, and Level 2 build on a clean substrate instead of bolting onto the flat-array model.
 
@@ -305,7 +306,7 @@ Pre-req checklist (convert before multi-cluster strips):
 Then the multi-cluster work itself (each line below is a separate PR on top of the pre-req):
 - [x] **MC1 — T2a columns data shape** (shipped as PR #580 — v3 3D `clusters[c][col][row]` array, position IS identity).
 - [ ] **MC2 — T2b layout-change snapshot** (shortcut-bar consumes snapshot, stops importing carousel directly).
-- [ ] **Exposé removal** (cleanup step before MC3 — delete the carousel↔exposé morph code landed in `edf8c88`, remove mode-switch verb/UI, keep pinch-gesture plumbing and `ctx.faceStack` terminal-tile flip).
+- [x] **Exposé removal** (`53b63d4`, PR #583). Deleted `setMode`/`getMode`/`positionExpose`/`computeExposeCells` from `card-carousel.js`, the pinch-wiring block from `app.js`, and `public/lib/pinch-levels.js` + its 17 tests. `pinch-gesture.js` kept for MC3 to re-attach. *Small.*
 - [ ] **MC3 — Level 2 cluster strips** (vertical stack of horizontal carousel strips, pinch-out from Level 1, tilted-deck rendering per Spatial model, `+` at Level 2, tap/pinch-in to return). Needs per-column focused-row state; deck rendering primitive extracted for reuse.
 
 Explicitly deferred from this round: T1a (flip extraction), T1b (file-browser polish), T2c (face-stack-of-N, now only used by L2 decks), drag-to-stack, columns with >1 tile, Level 3 spatial canvas.
