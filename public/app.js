@@ -44,6 +44,7 @@
     import { dispatchNotification } from "/lib/notify.js";
     import { createUiStore, loadFromStorage, EMPTY_STATE } from "/lib/ui-store.js";
     import { buildBootState } from "/lib/boot-state.js";
+    import { createAddHandler, generateSessionName, generateClusterId } from "/lib/add-target.js";
     import { initRenderers, isPersistable, getRenderer } from "/lib/tile-renderers/index.js";
     import { createTileHost } from "/lib/tile-host.js";
     import { getFocusedSession } from "/lib/selectors.js";
@@ -915,7 +916,7 @@
     // --- New session creation (shared by sidebar + and shortcut bar +) ---
     async function createNewSession() {
       try {
-        const name = `session-${Date.now().toString(36)}`;
+        const name = generateSessionName();
         const data = await api.post("/sessions", { name, copyFrom: getActiveSessionName() });
         if (sidebar?.classList.contains("collapsed")) {
           setSidebarCollapsed(false);
@@ -930,8 +931,22 @@
       }
     }
 
+    // FP3 — + button routing. Pure decision in /lib/add-target.js; this
+    // factory wires it to the two side-effects (create terminal tile /
+    // create empty cluster). Level is hardcoded to 1 until MC3 introduces
+    // Level 2; at that point only getLevel() changes.
+    const handleAdd = createAddHandler({
+      getLevel: () => 1,
+      getState: () => {
+        const st = uiStore.getState();
+        return { activeClusterId: st.activeClusterId, focusedId: st.focusedId };
+      },
+      onAddTile: () => createNewSession(),
+      onAddCluster: () => uiStore.addCluster({ id: generateClusterId() }, { switchTo: true }),
+    });
+
     if (sidebarAddBtn) {
-      sidebarAddBtn.addEventListener("click", createNewSession);
+      sidebarAddBtn.addEventListener("click", handleAdd);
     }
 
     // Load session data: always on desktop (for tab bar), or when sidebar is expanded
