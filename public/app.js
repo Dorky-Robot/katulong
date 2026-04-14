@@ -43,6 +43,7 @@
     import { createFileBrowserTileFactory } from "/lib/tiles/file-browser-tile.js";
     import { dispatchNotification } from "/lib/notify.js";
     import { createUiStore, loadFromStorage, EMPTY_STATE } from "/lib/ui-store.js";
+    import { buildBootState } from "/lib/boot-state.js";
     import { initRenderers, isPersistable, getRenderer } from "/lib/tile-renderers/index.js";
     import { createTileHost } from "/lib/tile-host.js";
     import { getFocusedSession } from "/lib/selectors.js";
@@ -2414,72 +2415,21 @@
     const wasEmptyState = sessionStorage.getItem("katulong-empty-state");
     if (wasEmptyState) sessionStorage.removeItem("katulong-empty-state");
 
-    /** Build boot state from localStorage + URL hint + legacy migration. */
-    function buildBootState() {
-      // Start from persisted ui-store state
-      let initial = loadFromStorage();
-
-      // Legacy migration: if ui-store has nothing but the old carousel
-      // localStorage has tiles, migrate them. After migration, clear the
-      // old key so two persistence layers don't drift out of sync.
-      if (!initial || Object.keys(initial.tiles).length === 0) {
-        const carouselState = carousel.restore();
-        if (carouselState?.tiles?.length) {
-          const tiles = {};
-          const order = [];
-          for (const t of carouselState.tiles) {
-            const type = t.type === "dashboard" ? "cluster" : t.type;
-            if (!getRenderer(type)) continue;
-            tiles[t.id] = { id: t.id, type, props: { ...t } };
-            delete tiles[t.id].props.id;
-            delete tiles[t.id].props.type;
-            delete tiles[t.id].props.cardWidth;
-            order.push(t.id);
-          }
-          initial = {
-            version: 1,
-            tiles,
-            order,
-            focusedId: carouselState.focused || order[0] || null,
-          };
-          // Migration complete — clear old key
-          try { localStorage.removeItem("katulong-carousel"); } catch {}
-        }
+    /** Gather boot-state deps from the window, delegate to the pure
+     *  buildBootState() composer, and clear the legacy carousel key if
+     *  migration fired. */
+    function gatherBootState() {
+      const { state, migratedLegacy } = buildBootState({
+        persisted: loadFromStorage(),
+        legacyCarousel: carousel.restore(),
+        urlSession: explicitSession,
+        tabSetSessions: windowTabSet ? windowTabSet.getTabs() : [],
+        getRenderer,
+      });
+      if (migratedLegacy) {
+        try { localStorage.removeItem("katulong-carousel"); } catch {}
       }
-
-      if (!initial) initial = { version: 1, tiles: {}, order: [], focusedId: null };
-
-      // Merge ?s= URL hint. Only override focusedId when the URL
-      // introduced a NEW session — otherwise, the persisted focusedId
-      // wins. ?s= only tracks terminals, so it goes stale when the user
-      // focuses a non-terminal tile (file browser). Overriding
-      // unconditionally would lose that focus on every refresh.
-      if (explicitSession) {
-        if (!initial.tiles[explicitSession]) {
-          initial.tiles[explicitSession] = {
-            id: explicitSession,
-            type: "terminal",
-            props: { sessionName: explicitSession },
-          };
-          initial.order.push(explicitSession);
-          initial.focusedId = explicitSession;
-        }
-      }
-
-      // Merge windowTabSet sessions (legacy — ensures tabs from other windows
-      // appear even if they weren't in the persisted ui-store yet)
-      if (windowTabSet) {
-        for (const tab of windowTabSet.getTabs()) {
-          if (!initial.tiles[tab]) {
-            initial.tiles[tab] = {
-              id: tab, type: "terminal", props: { sessionName: tab },
-            };
-            initial.order.push(tab);
-          }
-        }
-      }
-
-      return initial;
+      return state;
     }
 
     function bootFromState(bootState) {
@@ -2511,11 +2461,13 @@
     if (!explicitSession && !wasEmptyState) {
       // No URL hint — check for persisted tiles first, then fall back to
       // fetching /sessions to find an existing session.
-      const bootState = buildBootState();
+      const bootState = gatherBootState();
       if (Object.keys(bootState.tiles).length > 0) {
         bootFromState(bootState);
       } else {
-        // No persisted tiles — ask the server for existing sessions
+        // No persisted tiles — ask the server for existing sessions.
+        // tileHost is already subscribed, so we dispatch via addTile +
+        // connect rather than rebuilding a boot state from scratch.
         fetch("/sessions").then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           return r.json();
@@ -2523,10 +2475,12 @@
           if (cm.getState().status !== "disconnected" || uiStore.getState().focusedId !== null) return;
           if (sessions.length > 0 && sessions[0].name) {
             const name = sessions[0].name;
-            bootState.tiles[name] = { id: name, type: "terminal", props: { sessionName: name } };
-            bootState.order.push(name);
-            bootState.focusedId = name;
-            bootFromState(bootState);
+            uiStore.addTile(
+              { id: name, type: "terminal", props: { sessionName: name } },
+              { focus: true },
+            );
+            setDocTitle(name);
+            cm.connect();
           }
         }).catch(err => {
           console.warn("Failed to fetch sessions on load:", err);
@@ -2534,7 +2488,7 @@
       }
     } else if (!wasEmptyState) {
       // Explicit ?s= — build and boot immediately
-      bootFromState(buildBootState());
+      bootFromState(gatherBootState());
     }
     // If wasEmptyState, stay empty — user explicitly closed all tabs.
 

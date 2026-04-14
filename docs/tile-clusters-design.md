@@ -105,6 +105,26 @@ Discussed but explicitly deferred until pinch + Level 1/2 are working:
 
 Everything after Step 1 follows the **Tier 1 / Tier 2 / Tier 3** plan in "Architectural decisions" below — a refactor lands *before* the new features so columns, file-browser-as-tile, and Level 2 build on a clean substrate instead of bolting onto the flat-array model.
 
+### FP pre-req for multi-cluster (2026-04-13)
+
+Before the multi-cluster substrate lands, the imperative chunks of `app.js` that multi-cluster will touch get converted into the established reducer/factory/effect-descriptor pattern (campaign history: `28f5538`, `29d6ec6`, `9868545`, `d9357ba`). Rationale: imperative state plus a new cluster layer produces hard-to-debug bugs; the conversion pays itself back in debuggability.
+
+**Scope is the critical path only.** WebRTC retry, iframe focus, connection-indicator tooltip, settings handlers, and other still-imperative chunks are orthogonal and stay deferred.
+
+Pre-req checklist (convert before multi-cluster strips):
+- [x] **FP1 — Carousel persistence reducer** (`app.js:2417–2483`). Extend `ui-store` shape to `{ version: 2, activeClusterId, clusters, tiles (with clusterId), focusedIdByCluster }`; extract `buildBootState()` as a pure function; legacy v1→v2 migration wraps existing tiles into a default cluster. Unblocks every downstream chunk. *Medium.*
+- [ ] **FP2 — Cluster activation action** (`app.js:442–449, 954–964`). Replace `carousel.isActive() ? carousel.getFocusedCard() : id` branching with a `uiStore` cluster-switch action + effect. *Small.*
+- [ ] **FP3 — `+` button routing factory** (`app.js:1490–1493, 911–934`). Pure `decideAddTileTarget()` + factory wrapping `tab-add` and sidebar add handlers so Level 2 can reuse them for cluster creation. *Small.*
+- [ ] **FP4 — Pinch level reducer** (`app.js:542–576`). Binary `carousel.setMode()` becomes a mode stack `{ level, mode }` with pinch thresholds as transition rules. *Medium.*
+- [ ] **FP5 — Carousel↔cluster isolation** (`app.js:463–517, 578–599`). Parameterize tile-host and `syncCarouselSubscriptions()` by cluster context so WS subscription routing is cluster-aware. *Medium.*
+
+Then the multi-cluster work itself (each line below is a separate PR on top of the pre-req):
+- [ ] **MC1 — T2a columns data shape** (single-slot initially; a future v3 bump).
+- [ ] **MC2 — T2b layout-change snapshot** (shortcut-bar consumes snapshot, stops importing carousel directly).
+- [ ] **MC3 — Level 2 cluster strips** (vertical stack of horizontal carousel strips, pinch-out from Level 1, uniform mode, `+` at Level 2, tap/pinch-in to return).
+
+Explicitly deferred from this round: T1a (flip extraction), T1b (file-browser polish), T2c (face-stack-of-N), drag-to-stack, deck-of-cards in exposé, columns with >1 tile, Level 3 spatial canvas.
+
 ## Architectural decisions (from /consult, 2026-04-09)
 
 The /consult agent revealed the file browser is *already* a tile (PR #533). The real structural problems are in the **container** (`card-carousel.js`), not the content. Recorded decisions:
