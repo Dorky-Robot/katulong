@@ -1,6 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync, rmSync, realpathSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync, rmSync, realpathSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
@@ -412,5 +412,79 @@ describe("POST /api/files/delete", () => {
     const res = createMockRes();
     await route.handler(req, res);
     assert.equal(res.status, 400);
+  });
+});
+
+// --- Live filesystem watch (SSE) ---
+
+function createSSEMock() {
+  const req = new EventEmitter();
+  req.headers = { host: "localhost:3000" };
+  req.socket = { remoteAddress: "127.0.0.1" };
+
+  const chunks = [];
+  const res = {
+    headers: {},
+    writeHead(_status, headers = {}) { Object.assign(this.headers, headers); },
+    write(s) { chunks.push(s); },
+    end() {},
+    on() { return res; },
+  };
+
+  return { req, res, chunks, close: () => req.emit("close") };
+}
+
+describe("GET /api/files/watch (SSE)", () => {
+  it("survives repeated atomic-write replacements of the watched file", async () => {
+    const route = findRoute(routes, "GET", "/api/files/watch");
+
+    const target = join(testDir, "watched.md");
+    writeFileSync(target, "v1");
+
+    const { req, res, chunks, close } = createSSEMock();
+    req.url = `/api/files/watch?paths=${encodeURIComponent(target)}`;
+    const handlerPromise = route.handler(req, res);
+    // Wait for the handler to flush its initial "\n" — that write happens
+    // synchronously after writeHead, before the await stat() and before the
+    // watch() call. Polling for the chunk is more reliable than a fixed
+    // setImmediate yield under concurrent test load.
+    while (chunks.length === 0) await new Promise(r => setTimeout(r, 5));
+    // Then wait one more tick past the await stat() so watch() is installed.
+    await new Promise(r => setTimeout(r, 50));
+
+    // Two atomic writes (write to sibling temp, rename over target). The
+    // first rename may fire an event even with the old inode-bound watch,
+    // but the watch then attaches to the orphaned old inode and the
+    // second rename produces nothing. Watching the parent directory
+    // catches both.
+    function dataCount() {
+      return chunks.filter(c => c.startsWith("data:")).length;
+    }
+    async function waitForCount(n, timeoutMs = 2000) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (dataCount() >= n) return;
+        await new Promise(r => setTimeout(r, 25));
+      }
+    }
+    function atomicReplace(content) {
+      const tmp = target + "." + Math.random().toString(36).slice(2) + ".tmp";
+      writeFileSync(tmp, content);
+      renameSync(tmp, target);
+    }
+
+    atomicReplace("v2");
+    await waitForCount(1);
+    const afterFirst = dataCount();
+
+    atomicReplace("v3");
+    await waitForCount(afterFirst + 1);
+    const afterSecond = dataCount();
+
+    close();
+    await handlerPromise;
+
+    assert.ok(afterFirst >= 1, `first rename produced no SSE event (got ${afterFirst})`);
+    assert.ok(afterSecond > afterFirst, `second rename produced no new SSE event (was ${afterFirst}, now ${afterSecond}) — watch likely lost after first rename`);
   });
 });
