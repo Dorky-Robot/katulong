@@ -247,7 +247,9 @@ Depends on MC1e PR2 (`session.tmuxPane`). Small and isolated.
 - Frontend read at the feed-button call site.
 - Tests: hook with known pane → meta.claude set; hook with unknown
   pane → no-op; Stop event → meta.claude cleared; pane format check
-  rejects malformed `_tmuxPane`.
+  rejects malformed `_tmuxPane`; **pane-reuse defense** — hook whose
+  `_tmuxPane` matches a live session but whose payload session-name
+  does not match `session.tmuxName` is treated as no-op.
 
 ## Deferred to MC1f.5 (requires a second concrete consumer)
 
