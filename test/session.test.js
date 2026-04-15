@@ -1530,3 +1530,124 @@ describe("seedScreen", () => {
     assert.strictEqual(x, 4, "cursor col should be 4 (0-based) for col:5");
   });
 });
+
+// --- meta bucket tests (MC1f) ---
+
+describe("Session.meta", () => {
+  it("initializes meta to {} when no option provided", () => {
+    const session = new Session("test", "test");
+    assert.deepStrictEqual(session.meta, {});
+  });
+
+  it("accepts an initial meta object on construction", () => {
+    const session = new Session("test", "test", {
+      meta: { claude: { uuid: "abc", startedAt: 1 } },
+    });
+    assert.deepStrictEqual(session.meta, { claude: { uuid: "abc", startedAt: 1 } });
+  });
+
+  it("shallow-copies the initial meta so the caller's object is not retained", () => {
+    const initial = { claude: { uuid: "abc" } };
+    const session = new Session("test", "test", { meta: initial });
+    assert.notStrictEqual(session.meta, initial);
+  });
+
+  it("ignores non-object meta (string, array, null)", () => {
+    const s1 = new Session("a", "a", { meta: "not-object" });
+    const s2 = new Session("b", "b", { meta: ["not", "object"] });
+    const s3 = new Session("c", "c", { meta: null });
+    assert.deepStrictEqual(s1.meta, {});
+    assert.deepStrictEqual(s2.meta, {});
+    assert.deepStrictEqual(s3.meta, {});
+  });
+
+  it("toJSON includes the meta bucket", () => {
+    const session = new Session("test", "test", {
+      meta: { claude: { uuid: "abc" } },
+    });
+    const json = session.toJSON();
+    assert.deepStrictEqual(json.meta, { claude: { uuid: "abc" } });
+  });
+
+  describe("setMeta", () => {
+    it("replaces a namespace with the given value", () => {
+      const session = new Session("test", "test");
+      session.setMeta("claude", { uuid: "abc" });
+      assert.deepStrictEqual(session.meta, { claude: { uuid: "abc" } });
+    });
+
+    it("fully replaces an existing namespace (not a deep merge)", () => {
+      const session = new Session("test", "test", {
+        meta: { claude: { uuid: "abc", startedAt: 1 } },
+      });
+      session.setMeta("claude", { uuid: "def" });
+      assert.deepStrictEqual(session.meta, { claude: { uuid: "def" } });
+    });
+
+    it("removes a namespace when value is null", () => {
+      const session = new Session("test", "test", {
+        meta: { claude: { uuid: "abc" }, user: { foo: 1 } },
+      });
+      session.setMeta("claude", null);
+      assert.deepStrictEqual(session.meta, { user: { foo: 1 } });
+    });
+
+    it("removes a namespace when value is undefined", () => {
+      const session = new Session("test", "test", {
+        meta: { claude: { uuid: "abc" } },
+      });
+      session.setMeta("claude", undefined);
+      assert.deepStrictEqual(session.meta, {});
+    });
+
+    it("leaves other namespaces untouched", () => {
+      const session = new Session("test", "test", {
+        meta: { user: { note: "hi" }, system: { v: 1 } },
+      });
+      session.setMeta("claude", { uuid: "abc" });
+      assert.deepStrictEqual(session.meta, {
+        user: { note: "hi" },
+        system: { v: 1 },
+        claude: { uuid: "abc" },
+      });
+    });
+
+    it("throws TypeError on empty or non-string namespace", () => {
+      const session = new Session("test", "test");
+      assert.throws(() => session.setMeta("", { x: 1 }), TypeError);
+      assert.throws(() => session.setMeta(null, { x: 1 }), TypeError);
+      assert.throws(() => session.setMeta(42, { x: 1 }), TypeError);
+    });
+
+    it("throws RangeError when serialized meta exceeds the cap", () => {
+      const session = new Session("test", "test");
+      const big = "x".repeat(5000);
+      assert.throws(() => session.setMeta("huge", { value: big }), RangeError);
+      // meta must remain unchanged when setMeta rejects
+      assert.deepStrictEqual(session.meta, {});
+    });
+
+    it("fires onChange exactly once with the session as argument", () => {
+      const calls = [];
+      const session = new Session("test", "test", {
+        onChange: (s) => calls.push(s),
+      });
+      session.setMeta("claude", { uuid: "abc" });
+      assert.strictEqual(calls.length, 1);
+      assert.strictEqual(calls[0], session);
+    });
+
+    it("does not fire onChange when the setMeta call throws", () => {
+      const calls = [];
+      const session = new Session("test", "test", {
+        onChange: (s) => calls.push(s),
+      });
+      assert.throws(() => session.setMeta("", { x: 1 }), TypeError);
+      assert.throws(
+        () => session.setMeta("huge", { value: "x".repeat(5000) }),
+        RangeError,
+      );
+      assert.strictEqual(calls.length, 0);
+    });
+  });
+});

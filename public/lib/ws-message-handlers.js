@@ -218,4 +218,17 @@ export const wsMessageHandlers = {
       effects: [{ type: 'tabIconChanged', session: msg.session, icon: msg.icon }],
     };
   },
+
+  // Server notifies that a session's stored meta changed (e.g., Claude
+  // SessionStart hook populating meta.claude.uuid). Refresh the cached
+  // session list so feed-button and other consumers see the new meta
+  // without a manual fetch. Use `msg.session` — the push is targeted via
+  // `sendToSession`, but a subscribed client may be viewing a different
+  // session, so `ctx.currentSessionName` is not the right key here.
+  'session-updated'(msg, ctx) {
+    return {
+      stateUpdates: {},
+      effects: [{ type: 'invalidateSessions', name: msg.session }],
+    };
+  },
 };

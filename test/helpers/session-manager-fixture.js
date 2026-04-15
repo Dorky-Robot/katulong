@@ -77,6 +77,17 @@ export class BaseMockSession {
     this._options = options;
     this._childCount = 0;
     this.outputBuffer = { totalBytes: 0, sliceFrom: () => "" };
+    this.meta = (options.meta && typeof options.meta === "object" && !Array.isArray(options.meta))
+      ? { ...options.meta } : {};
+    this._onChange = typeof options.onChange === "function" ? options.onChange : null;
+  }
+
+  setMeta(ns, value) {
+    const next = { ...this.meta };
+    if (value === null || value === undefined) delete next[ns];
+    else next[ns] = value;
+    this.meta = next;
+    if (this._onChange) this._onChange(this);
   }
 
   get alive() { return this.state === BaseMockSession.STATE_ATTACHED; }
@@ -123,6 +134,7 @@ export class BaseMockSession {
       tmuxPane: this.tmuxPane,
       alive: this.alive,
       external: this.external,
+      meta: this.meta,
     };
   }
 }
