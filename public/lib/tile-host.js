@@ -21,6 +21,16 @@
 
 import { selectClusterView } from "./selectors.js";
 
+// Per-tile-type default card widths (px). Applied on first open only —
+// a user-dragged width saved in localStorage always wins.
+const DEFAULT_CARD_WIDTHS = {
+  "file-browser": 420,
+};
+
+function defaultCardWidthForType(type) {
+  return DEFAULT_CARD_WIDTHS[type];
+}
+
 /**
  * Create a tile host.
  *
@@ -101,7 +111,7 @@ export function createTileHost({ store, carousel, getRenderer, getClusterIdx, on
         if (!renderer) return null;
         // Create a thin tile adapter that carousel can mount
         const adapter = _createAdapter(id, tileDesc, renderer, store.dispatch);
-        return { id, tile: adapter };
+        return { id, tile: adapter, defaultWidth: defaultCardWidthForType(tileDesc.type) };
       }).filter(Boolean);
 
       carousel.activate(tilesToActivate, view.focusedId);
@@ -119,7 +129,7 @@ export function createTileHost({ store, carousel, getRenderer, getClusterIdx, on
         const adapter = _createAdapter(id, tileDesc, renderer, store.dispatch);
         // Insert at the correct position in the carousel
         const position = view.order.indexOf(id);
-        carousel.addCard(id, adapter, position >= 0 ? position : undefined);
+        carousel.addCard(id, adapter, position >= 0 ? position : undefined, defaultCardWidthForType(tileDesc.type));
         if (adapter._handle) handles.set(id, adapter._handle);
       }
     }
