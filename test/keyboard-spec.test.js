@@ -231,9 +231,9 @@ describe("decideTerminalKey — REGRESSION: word-back/word-forward removed", () 
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("decideAppKey — Cmd shortcuts", () => {
-  it("Cmd+/ → toggle keyboard help", () => {
+  it("Cmd+/ → open fuzzy picker", () => {
     const r = decideAppKey(ev({ key: "/", metaKey: true }));
-    assert.equal(r.action, "toggleHelp");
+    assert.equal(r.action, "openPicker");
     assert.equal(r.preventDefault, true);
   });
 
@@ -331,11 +331,6 @@ describe("decideAppKey — text input guard", () => {
   it("Option+Shift+W inside input → no action (kill suppressed)", () => {
     const r = decideAppKey(ev({ code: "KeyW", key: "W", altKey: true, shiftKey: true }), { isTextInput: true });
     assert.equal(r.action, null);
-  });
-
-  it("Cmd+/ inside input → still fires (help is global)", () => {
-    const r = decideAppKey(ev({ key: "/", metaKey: true }), { isTextInput: true });
-    assert.equal(r.action, "toggleHelp");
   });
 
   // Navigation shortcuts (moveTab, navigateTab, jumpToTab) work even

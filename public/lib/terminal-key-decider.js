@@ -54,11 +54,9 @@ export function decideTerminalKey(ev, ctx = {}) {
     return pass(false);
   }
 
-  // Cmd+/ — handled by app-level listener. Block xterm on ALL event types
-  // for the same reason Shift+Enter has to: if we only block keydown,
-  // xterm's _keyDownHandled stays false, and _keyPress then reprocesses
-  // the keypress and sends "/" to the PTY. macOS rarely fires keypress
-  // for Cmd+letter, but the consistency makes the contract obvious.
+  // Cmd+/ — must not leak to the PTY. If we only block keydown, xterm's
+  // _keyDownHandled stays false and _keyPress reprocesses the keypress,
+  // sending "/" to the shell. Block all event types for consistency.
   if (ev.metaKey && ev.key === "/") return pass(false);
 
   // Option (Alt) shortcuts.

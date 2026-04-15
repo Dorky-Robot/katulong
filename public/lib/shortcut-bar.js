@@ -254,6 +254,12 @@ export function createShortcutBar(options = {}) {
     const savedInputRow = container.querySelector(".bar-input-row");
     if (savedInputRow) savedInputRow.remove();
 
+    // Command-mode surface (vim-style chord menu) lives in the same
+    // bar slot but is owned by app.js; preserve it across re-renders
+    // so the mode doesn't drop when the bar redraws (e.g. on tab change).
+    const savedCommandSurface = container.querySelector(".command-surface");
+    if (savedCommandSurface) savedCommandSurface.remove();
+
     container.innerHTML = "";
     document.getElementById("key-island")?.remove();
 
@@ -292,6 +298,8 @@ export function createShortcutBar(options = {}) {
         container.appendChild(savedInputRow);
       }
     }
+
+    if (savedCommandSurface) container.appendChild(savedCommandSurface);
   }
 
   // Inline rename from a keyboard shortcut: delegates into <tile-tab-bar>.

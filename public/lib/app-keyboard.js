@@ -20,7 +20,6 @@
  *   preventDefault  — whether the caller should ev.preventDefault()
  *
  * Rules:
- *  - Cmd+/ fires regardless of focus (help is global).
  *  - Option shortcuts are suppressed when ctx.isTextInput is true so they
  *    don't hijack typing inside rename inputs, settings panels, or the
  *    inline textbox. Without this guard, Option+R re-enters rename while
@@ -33,9 +32,11 @@ const NO_ACTION = () => ({ action: null, args: null, preventDefault: false });
 
 export function decideAppKey(ev, ctx = {}) {
   // ── Cmd shortcuts ────────────────────────────────────────────────────
-  // Cmd+/ — keyboard shortcuts help. Plain Cmd+/, no Shift.
+  // Cmd+/ — fuzzy picker over tiles/sessions. Global; fires from any
+  // focus (including text inputs), matching the vibe of Spotlight-style
+  // launchers.
   if (ev.metaKey && ev.key === "/" && !ev.shiftKey) {
-    return { action: "toggleHelp", args: null, preventDefault: true };
+    return { action: "openPicker", args: null, preventDefault: true };
   }
 
   // ── Option (Alt) shortcuts ───────────────────────────────────────────
