@@ -521,7 +521,11 @@
     // and dispatches switchCluster/setLevel. It lives as a sibling to the
     // terminal container under #main-stage; the live terminal DOM stays
     // mounted so we don't tear down xterm.js state when the user zooms out.
-    createClusterStrips({
+    // Captured so future teardown paths (logout, reset) can call destroy().
+    // Not wired to any call site yet — the app is single-page and lives
+    // for the session — but keeping the handle matches createPinchGesture
+    // below and avoids a refactor when teardown becomes real.
+    const clusterStrips = createClusterStrips({
       store: uiStore,
       mountIn: document.getElementById("main-stage"),
       getTileLabel: (tile) => {
@@ -529,6 +533,7 @@
         return desc?.title || tile.props?.sessionName || tile.type || tile.id;
       },
     });
+    void clusterStrips;
 
     // Pinch thresholds: user must scale past these to commit a level
     // change. Chosen by feel — tight enough that a small accidental
@@ -938,8 +943,8 @@
 
     // FP3 — + button routing. Pure decision in /lib/add-target.js; this
     // factory wires it to the two side-effects (create terminal tile /
-    // create empty cluster). Level is hardcoded to 1 until MC3 introduces
-    // Level 2; at that point only getLevel() changes.
+    // create empty cluster). getLevel reads the live zoom level so the
+    // same button produces a tile at L1 and a new cluster at L2.
     const handleAdd = createAddHandler({
       getLevel: () => uiStore.getState().level,
       getState: () => {

@@ -2325,9 +2325,10 @@
     .lb-tile-placeholder p { margin: 0; font-size: var(--text-sm); }
 
     /* --- Cluster strips (Level 2 overview) --- */
-    /* Hide the L1 carousel under the overlay rather than unmounting it —
-       xterm.js panes lose rendering state the moment they're display:none,
-       so we keep them visible-but-covered by a fixed overlay. */
+    /* Hide the L1 carousel and shortcut bar under the overlay rather than
+       unmounting them — xterm.js panes lose rendering state the moment
+       they're display:none, so we keep them visible-but-covered by a
+       fixed overlay. visibility:hidden preserves layout + paint state. */
     :root[data-ui-level="2"] #terminal-container,
     :root[data-ui-level="2"] #shortcut-bar { visibility: hidden; }
     #cluster-strips {

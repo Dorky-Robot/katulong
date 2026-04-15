@@ -245,7 +245,9 @@ describe("cluster-strips — destroy cleanup", () => {
     const handle = createClusterStrips({ store, mountIn });
     handle.destroy();
     assert.strictEqual(handle.element.parentElement, null);
-    assert.strictEqual(document.documentElement.getAttribute("data-ui-level"), null);
+    // destroy() resets data-ui-level to "1" so CSS keyed on the
+    // attribute stays consistent with the carousel's "return to L1" state.
+    assert.strictEqual(document.documentElement.getAttribute("data-ui-level"), "1");
     // Subsequent store changes should not throw or re-render.
     store.setLevel(2);
     assert.strictEqual(handle.element.hidden, true);

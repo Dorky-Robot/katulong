@@ -36,6 +36,9 @@ export function createClusterStrips({ store, mountIn, getTileLabel }) {
   if (!store || !mountIn) {
     throw new Error("createClusterStrips: store and mountIn required");
   }
+  // getTileLabel is intentionally optional — defaultLabel() covers the
+  // common cases (sessionName, title, topic, type). Callers override when
+  // the app has a richer label source (e.g. tile-renderer describe().title).
   const labelFor = typeof getTileLabel === "function" ? getTileLabel : defaultLabel;
 
   const root = document.createElement("div");
@@ -81,32 +84,39 @@ export function createClusterStrips({ store, mountIn, getTileLabel }) {
 
   let lastClusters = null;
   let lastActive = -1;
-  let lastFocused = null;
-  let lastLevel = 1;
+  let lastFocusedByCluster = null;
+  let lastLevel = null;
 
   function render(state) {
     const levelChanged = state.level !== lastLevel;
-    lastLevel = state.level;
+    if (levelChanged) {
+      // Hide the sibling L1 surface so the overlay has the whole stage.
+      // Writing to the document root lets any surface react via CSS
+      // without each needing to subscribe. Guarded on level change so
+      // unrelated state ticks don't touch the root attribute.
+      document.documentElement.setAttribute("data-ui-level", String(state.level));
+      lastLevel = state.level;
+    }
     root.hidden = state.level !== 2;
-    // Hide the sibling L1 surface so the overlay has the whole stage.
-    // We set an attribute on the document root so any surface can react
-    // (shortcut bar, joystick) without each needing to subscribe.
-    document.documentElement.setAttribute("data-ui-level", String(state.level));
     if (root.hidden) return;
 
     // Short-circuit re-renders when the topology the strips depend on
     // hasn't changed. `clusters` is structurally shared by uiStore, so
-    // reference equality is sound.
+    // reference equality is sound. We compare the whole
+    // focusedTileIdByCluster array by reference — uiStore's reducers copy
+    // it on every focus change, so reference equality catches focus
+    // changes in background clusters too (cards have data-focused
+    // highlights even when their cluster isn't active).
     const topologySame =
       state.clusters === lastClusters &&
       state.activeClusterIdx === lastActive &&
-      state.focusedTileIdByCluster[state.activeClusterIdx] === lastFocused &&
+      state.focusedTileIdByCluster === lastFocusedByCluster &&
       !levelChanged;
     if (topologySame) return;
 
     lastClusters = state.clusters;
     lastActive = state.activeClusterIdx;
-    lastFocused = state.focusedTileIdByCluster[state.activeClusterIdx] ?? null;
+    lastFocusedByCluster = state.focusedTileIdByCluster;
 
     stripsEl.textContent = "";
     for (let c = 0; c < state.clusters.length; c++) {
@@ -122,7 +132,10 @@ export function createClusterStrips({ store, mountIn, getTileLabel }) {
     destroy() {
       unsub();
       root.remove();
-      document.documentElement.removeAttribute("data-ui-level");
+      // Reset rather than remove so CSS keyed on [data-ui-level="1"]
+      // (none today; future-proofing) stays consistent with render()'s
+      // "attribute is always present" model.
+      document.documentElement.setAttribute("data-ui-level", "1");
     },
   };
 }

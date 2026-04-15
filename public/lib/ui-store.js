@@ -397,6 +397,10 @@ function reducer(state = EMPTY_STATE, action) {
       const { level } = action;
       if (level !== 1 && level !== 2) return state;
       if (state.level === level) return state;
+      // Deliberately skip withDerived — level is session-only navigation
+      // state that no derived field depends on. Rebuilding tiles/order on
+      // every zoom flip would break structural sharing for subscribers
+      // that only care about topology, producing spurious re-renders.
       return { ...state, level };
     }
 
