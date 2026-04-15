@@ -617,6 +617,107 @@
       overflow: hidden;
     }
 
+    /* --- Command mode (vim-style chord menu) ---
+       When command mode is active, the existing bar contents (tabs,
+       + button, key island) fade out and the .command-surface fades
+       in. They share the same flex slot, so layout doesn't reflow. */
+    .command-surface {
+      display: none;
+      flex: 1 1 0; min-width: 0;
+      align-items: center; gap: var(--space-md);
+      padding: 0 var(--space-sm);
+      font-family: var(--font-mono); font-size: 0.8125rem;
+      color: var(--text-muted);
+      opacity: 0; transition: opacity 150ms ease;
+    }
+    .command-surface-crumb { color: var(--text); font-weight: 500; white-space: nowrap; }
+    .command-surface-pills {
+      display: flex; align-items: center; gap: var(--space-xs);
+      flex: 1 1 auto; min-width: 0; overflow: hidden;
+    }
+    .command-surface-pill {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: var(--radius-sm);
+      background: var(--bg-elevated, rgba(255,255,255,0.04));
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .command-surface-pill kbd {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      padding: 0.05rem 0.35rem;
+      border-radius: 3px;
+      background: var(--bg-surface, rgba(0,0,0,0.25));
+      border: 1px solid var(--border, rgba(255,255,255,0.1));
+      color: var(--text);
+    }
+    .command-surface-pill-label { color: var(--text-muted); font-size: 0.75rem; }
+    .command-surface-exit { margin-left: auto; white-space: nowrap; }
+    :root[data-command-mode="true"] #shortcut-bar > *:not(.command-surface) {
+      opacity: 0; pointer-events: none;
+      transition: opacity 150ms ease;
+    }
+    :root[data-command-mode="true"] #shortcut-bar .command-surface {
+      display: flex; opacity: 1;
+    }
+    /* Default transition on the faded children so re-entry feels symmetric. */
+    #shortcut-bar > * { transition: opacity 150ms ease; }
+
+    /* --- Command picker (fzf-style overlay) --- */
+    .command-picker {
+      position: fixed;
+      top: 15vh; left: 50%;
+      transform: translateX(-50%);
+      width: min(560px, 92vw);
+      max-height: 60vh;
+      display: flex; flex-direction: column;
+      background: var(--bg-surface, #1a1a1a);
+      border: 1px solid var(--border, rgba(255,255,255,0.1));
+      border-radius: var(--radius-md, 8px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+      z-index: 1000;
+      font-family: var(--font-mono);
+    }
+    .command-picker-input {
+      all: unset;
+      padding: 0.75rem 1rem;
+      font: inherit; font-size: 0.95rem;
+      color: var(--text);
+      border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
+    }
+    .command-picker-list {
+      list-style: none; margin: 0; padding: 0.25rem 0;
+      overflow-y: auto;
+      max-height: 48vh;
+    }
+    .command-picker-item {
+      display: flex; align-items: center; gap: 0.75rem;
+      padding: 0.5rem 1rem;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .command-picker-item.selected,
+    .command-picker-item:hover {
+      background: var(--bg-elevated, rgba(255,255,255,0.06));
+    }
+    .command-picker-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .command-picker-kind {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      padding: 0.1rem 0.4rem;
+      border: 1px solid var(--border, rgba(255,255,255,0.1));
+      border-radius: 3px;
+      flex: 0 0 auto;
+    }
+    .command-picker-empty {
+      padding: 1rem;
+      color: var(--text-muted);
+      text-align: center;
+      font-size: 0.875rem;
+    }
+
     /* --- Window Controls Overlay (PWA title bar integration) --- */
     @media (display-mode: window-controls-overlay) {
       #shortcut-bar {

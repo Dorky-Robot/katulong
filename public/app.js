@@ -22,6 +22,10 @@
     import { isAtBottom, scrollToBottom, withPreservedScroll, terminalWriteWithScroll, initScrollTracking, initTouchScroll } from "/lib/scroll-utils.js";
     import { keysToSequence, sendSequence, displayKey, keysLabel, keysString, VALID_KEYS, normalizeKey } from "/lib/key-mapping.js";
     import { createShortcutBar } from "/lib/shortcut-bar.js";
+    import { createCommandMode } from "/lib/command-mode.js";
+    import { createCommandSurface } from "/lib/command-surface.js";
+    import { buildCommandTree } from "/lib/command-tree.js";
+    import { openCommandPicker } from "/lib/command-picker.js";
     import { createWindowTabSet } from "/lib/window-tab-set.js";
     import { createPasteHandler } from "/lib/paste-handler.js";
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
@@ -1123,7 +1127,7 @@
     // and any input/textarea bubble-phase handlers — Option+R must not
     // re-enter the rename flow while a rename input is already focused.
     const appKeyActions = {
-      toggleHelp: () => toggleKeyboardHelp(),
+      openPicker: () => openTilePicker(),
       newSession: () => createNewSession(),
       closeSession: () => closeCurrentSession(),
       killSession: () => killCurrentSession(),
@@ -1608,6 +1612,125 @@
     window.matchMedia("(pointer: fine)").addEventListener("change", () => {
       shortcutBarInstance.render(getActiveSessionName());
     });
+
+    // ── Command mode (vim-style chord menu) ─────────────────────────
+    // Mounts a surface inside #shortcut-bar; CSS fades the tabs/+ out
+    // and the surface in when [data-command-mode="true"]. The chord
+    // tree is pure data (command-tree.js) wired to host actions below.
+    let pickerPending = false;
+    async function openTilePicker() {
+      // Re-entry guard. The single-instance check inside openCommandPicker
+      // only fires once the overlay is mounted — during our awaits below,
+      // a second trigger would race through and leak a ghost picker.
+      if (pickerPending) return;
+      pickerPending = true;
+
+      // Exit command mode so its capture-phase keydown listener doesn't
+      // swallow "t"/"n"/"h" when typed into the picker's input. The mode
+      // and the picker each own a window-level keydown; with both alive,
+      // chord keys never reach the picker's filter.
+      if (commandMode?.isActive()) commandMode.exit();
+
+      // If the user presses Esc during the fetch, honor the cancellation
+      // instead of mounting a picker the user no longer wants. One-shot
+      // capture listener; removed either by Esc or by reaching mount.
+      let cancelled = false;
+      const onEscape = (e) => {
+        if (e.key === "Escape") {
+          cancelled = true;
+          window.removeEventListener("keydown", onEscape, true);
+        }
+      };
+      window.addEventListener("keydown", onEscape, true);
+
+      try {
+      // Snapshot ui-store first so open tiles resolve without a round-trip.
+      const uiState = uiStore.getState();
+      const openTiles = Object.entries(uiState.tiles).map(([id, tile]) => {
+        const desc = describeTile(tile);
+        return {
+          id,
+          label: desc.title || tile.props?.sessionName || id,
+          kind: tile.type,
+          action: "focus",
+        };
+      });
+      const openIds = new Set(openTiles.map((t) => t.id));
+
+      // Fetch server-side session lists in parallel; show what we have
+      // even if one side fails (the other half is still useful).
+      let managed = [];
+      let unmanaged = [];
+      try {
+        const [sessData, tmuxData] = await Promise.all([
+          api.get(`/sessions?_t=${Date.now()}`).catch(() => []),
+          api.get(`/tmux-sessions?_t=${Date.now()}`).catch(() => []),
+        ]);
+        managed = sessData || [];
+        unmanaged = (tmuxData || []).map((s) => typeof s === "string" ? { name: s, attached: false } : s);
+      } catch (err) {
+        console.error("[picker] fetch error:", err);
+      }
+
+      const closedManaged = managed
+        .filter((s) => !openIds.has(s.name))
+        .map((s) => ({ id: s.name, label: s.name, kind: "closed", action: "route" }));
+
+      const tmuxItems = unmanaged
+        .filter((s) => !openIds.has(s.name))
+        .map((s) => ({
+          id: s.name,
+          label: s.name + (s.attached ? " (attached)" : ""),
+          kind: "tmux",
+          action: "adopt",
+        }));
+
+      const items = [...openTiles, ...closedManaged, ...tmuxItems];
+
+      window.removeEventListener("keydown", onEscape, true);
+      if (cancelled) return;
+
+      openCommandPicker({
+        items,
+        placeholder: "Go to tile or session…",
+        onPick: async (item) => {
+          if (item.action === "focus") {
+            uiStore.focusTile(item.id);
+          } else if (item.action === "route") {
+            routeToSession(item.id);
+          } else if (item.action === "adopt") {
+            windowTabSet.addTab(item.id);
+            try {
+              const result = await api.post("/tmux-sessions/adopt", { name: item.id });
+              if (result.name) switchSession(result.name);
+            } catch (err) {
+              console.warn("Adopt failed, switching directly:", err.message);
+              switchSession(item.id);
+            }
+          }
+        },
+      });
+      } finally {
+        window.removeEventListener("keydown", onEscape, true);
+        pickerPending = false;
+      }
+    }
+
+    const commandActions = {
+      closeCurrentTile: () => { closeCurrentSession(); },
+      renameCurrentTile: () => { renameCurrentSession(); },
+      createTile: (type) => {
+        if (type === "terminal") createNewSession();
+        else if (type === "file-browser") openFileBrowserTile();
+        else if (type === "feed") openClaudeFeedTile();
+        else if (type === "localhost-browser") openLocalhostBrowserTile();
+      },
+      showHelp: () => toggleKeyboardHelp(),
+    };
+    const commandTree = buildCommandTree(commandActions);
+    const commandMode = createCommandMode({ tree: commandTree });
+    const commandSurface = createCommandSurface({ mountIn: bar, mode: commandMode });
+    void commandSurface;
 
     const renderBar = (name) => shortcutBarInstance.render(name);
 
