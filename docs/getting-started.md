@@ -7,8 +7,8 @@ Simple installation with Homebrew or npm.
 === "Homebrew (macOS)"
 
     ```bash
-    # Add the tap
-    brew tap dorky-robot/katulong
+    # Add the canonical Dorky-Robot tap
+    brew tap dorky-robot/tap
 
     # Install
     brew install katulong

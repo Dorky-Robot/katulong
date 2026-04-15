@@ -70,7 +70,7 @@ install_deps() {
     brew)
       # macOS — prefer the tap for a managed install
       log "Homebrew detected — installing via tap instead"
-      brew install dorky-robot/katulong/katulong
+      brew install dorky-robot/tap/katulong
       katulong --version || die "Homebrew install succeeded but katulong is not in PATH"
       log "Installed! Run: katulong start"
       exit 0

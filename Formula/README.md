@@ -7,8 +7,8 @@ This directory contains the Homebrew formula for installing Katulong.
 ### Installation
 
 ```bash
-# Add the tap
-brew tap dorky-robot/katulong
+# Add the canonical Dorky-Robot tap (shared across all their projects)
+brew tap dorky-robot/tap
 
 # Install katulong
 brew install katulong
@@ -78,21 +78,19 @@ brew services stop katulong
    brew services list | grep katulong
    ```
 
-### Setting Up the Tap
+### Publishing to the Tap
 
-For the first release, create the tap repository:
+All Dorky-Robot projects publish into a single shared tap at
+https://github.com/Dorky-Robot/homebrew-tap. The `update-tap` job in
+`.github/workflows/release.yml` runs on every `v*` tag push: it
+patches `url` + `sha256` in this repo's `Formula/katulong.rb`, clones
+the tap, drops the formula into `homebrew-tap/Formula/katulong.rb`,
+and pushes. No manual cross-repo work is needed.
 
-```bash
-# Create a new repository: dorky-robot/homebrew-katulong
-# Copy Formula/katulong.rb to the tap repository
-
-cd ../homebrew-katulong
-mkdir -p Formula
-cp ../katulong/Formula/katulong.rb Formula/
-git add Formula/katulong.rb
-git commit -m "Add katulong formula"
-git push origin main
-```
+The tap push requires a `TAP_GITHUB_TOKEN` Actions secret with write
+access to `Dorky-Robot/homebrew-tap`. If the job fails with
+"Invalid username or token", that secret has expired — rotate it and
+rerun the workflow.
 
 ## Formula Details
 

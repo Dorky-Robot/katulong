@@ -84,11 +84,9 @@ Compute the SHA:
 shasum -a 256 "/tmp/katulong-v${NEW_VERSION}.tar.gz"
 ```
 
-## Step 6: Update both formula files
+## Step 6: Update the local formula
 
-### 6a: Local formula (`Formula/katulong.rb`)
-
-Read the file, then update the `url` and `sha256` lines using the Edit tool.
+Read `Formula/katulong.rb`, then update the `url` and `sha256` lines using the Edit tool.
 
 Commit and push:
 
@@ -99,24 +97,20 @@ git commit -m "formula: update to v${NEW_VERSION}"
 git push origin main
 ```
 
-### 6b: Tap formula (`homebrew-katulong/Formula/katulong.rb`)
-
-Read the tap formula file, update `url` and `sha256` with the same values.
-
-Commit and push. **Note**: the tap repo uses `master` as its default branch:
-
-```bash
-cd homebrew-katulong && git pull origin master && git add Formula/katulong.rb && git commit -m "formula: update to v${NEW_VERSION}" && git push origin master
-```
+The GitHub Release workflow syncs the updated formula into the canonical tap
+at https://github.com/Dorky-Robot/homebrew-tap automatically — no manual
+cross-repo push is needed. (The deprecated `Dorky-Robot/homebrew-katulong`
+tap is no longer updated.)
 
 ## Step 7: Brew upgrade
 
 ```bash
 brew update
-brew info katulong --json | jq -r '.[0] | "formula: \(.versions.stable)\ninstalled: \([.installed[].version] | join(","))"'
+brew info dorky-robot/tap/katulong --json | jq -r '.[0] | "formula: \(.versions.stable)\ninstalled: \([.installed[].version] | join(","))"'
 ```
 
-If installed version matches NEW_VERSION, `brew reinstall katulong`. Otherwise `brew upgrade katulong`.
+If installed version matches NEW_VERSION, `brew reinstall dorky-robot/tap/katulong`.
+Otherwise `brew upgrade dorky-robot/tap/katulong`.
 
 ## Step 8: Verify
 
