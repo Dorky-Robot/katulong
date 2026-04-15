@@ -444,27 +444,42 @@ describe("GET /api/files/watch (SSE)", () => {
     const { req, res, chunks, close } = createSSEMock();
     req.url = `/api/files/watch?paths=${encodeURIComponent(target)}`;
     const handlerPromise = route.handler(req, res);
-    // Yield so the handler installs the watcher before we mutate the file.
-    await new Promise(r => setImmediate(r));
+    // Wait for the handler to flush its initial "\n" — that write happens
+    // synchronously after writeHead, before the await stat() and before the
+    // watch() call. Polling for the chunk is more reliable than a fixed
+    // setImmediate yield under concurrent test load.
+    while (chunks.length === 0) await new Promise(r => setTimeout(r, 5));
+    // Then wait one more tick past the await stat() so watch() is installed.
+    await new Promise(r => setTimeout(r, 50));
 
     // Two atomic writes (write to sibling temp, rename over target). The
     // first rename may fire an event even with the old inode-bound watch,
     // but the watch then attaches to the orphaned old inode and the
     // second rename produces nothing. Watching the parent directory
     // catches both.
-    async function atomicReplace(content) {
+    function dataCount() {
+      return chunks.filter(c => c.startsWith("data:")).length;
+    }
+    async function waitForCount(n, timeoutMs = 2000) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (dataCount() >= n) return;
+        await new Promise(r => setTimeout(r, 25));
+      }
+    }
+    function atomicReplace(content) {
       const tmp = target + "." + Math.random().toString(36).slice(2) + ".tmp";
       writeFileSync(tmp, content);
       renameSync(tmp, target);
-      // Wait past server debounce (300ms) + fs event latency.
-      await new Promise(r => setTimeout(r, 500));
     }
 
-    await atomicReplace("v2");
-    const afterFirst = chunks.filter(c => c.startsWith("data:")).length;
+    atomicReplace("v2");
+    await waitForCount(1);
+    const afterFirst = dataCount();
 
-    await atomicReplace("v3");
-    const afterSecond = chunks.filter(c => c.startsWith("data:")).length;
+    atomicReplace("v3");
+    await waitForCount(afterFirst + 1);
+    const afterSecond = dataCount();
 
     close();
     await handlerPromise;
