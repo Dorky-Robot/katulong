@@ -100,11 +100,9 @@
     };
 
     let shortcutBarInstance = null;
-    const getInstanceIcon = () => "terminal-window";
 
     // --- Per-session tab icon overrides ---
     const iconStore = createIconStore();
-    const getSessionIcon = (name) => iconStore.getIcon(name);
 
     // --- Shortcuts state management (reactive store) ---
     const shortcutsStore = createShortcutsStore();
@@ -471,8 +469,7 @@
       carousel,
       getRenderer,
       onFocusChange: (tileId, tileType) => {
-        // Legacy shortcut bar — <tile-tab-bar> updates via store subscription
-        if (shortcutBarInstance) shortcutBarInstance.setActiveTab(tileId);
+        // <tile-tab-bar> updates via store subscription — no direct call needed.
 
         // Capability-driven WS bookkeeping — no type checks
         const desc = getRenderer(tileType)?.describe(
@@ -1360,7 +1357,6 @@
         { label: "Esc", keys: "esc" },
         { label: "Tab", keys: "tab" }
       ],
-      onSessionClick: openSessionManager,
       onNewSessionClick: createNewSession,
       tileTypes: [
         { type: "terminal",     name: "Terminal", icon: "terminal-window" },
@@ -1381,48 +1377,17 @@
         }
       },
       onTabClick: (name) => {
-        if (carousel.isActive()) {
-          // If tile exists in ui-store, just focus it. routeToSession
-          // would create a phantom terminal for non-session tiles.
-          const uiState = uiStore.getState();
-          if (uiState.tiles[name]) {
-            uiStore.focusTile(name);
-          } else {
-            routeToSession(name);
-          }
+        // If tile exists in ui-store, just focus it. routeToSession
+        // would create a phantom terminal for non-session tiles.
+        const uiState = uiStore.getState();
+        if (uiState.tiles[name]) {
+          uiStore.focusTile(name);
         } else {
-          switchSession(name);
+          routeToSession(name);
         }
       },
       onNotepadClick: () => toggleNotepad(),
       get notepad() { return notepad; },
-      onTabRenamed: (oldName, newName) => {
-        // Rename carousel card BEFORE tab set — the tab set's notify()
-        // triggers reorderCards which needs the card ID already updated.
-        if (carousel.isActive()) carousel.renameCard(oldName, newName);
-        terminalPool.rename(oldName, newName);
-        notepad.rename(oldName, newName);
-        iconStore.rename(oldName, newName);
-        // Update the tab element in-place BEFORE triggering store updates
-        // to prevent a full re-render that causes the tab to visually jump.
-        if (shortcutBarInstance) shortcutBarInstance.renameTabEl(oldName, newName);
-        windowTabSet.renameTab(oldName, newName);
-        invalidateSessions(sessionStore, newName);
-        // Keep ui-store in sync: rename = remove old tile + add new tile
-        // at the same position. This matches the tile-tab-bar rename path.
-        const st = uiStore.getState();
-        const oldTile = st.tiles[oldName];
-        if (oldTile) {
-          uiStore.removeTile(oldName);
-          uiStore.addTile(
-            { id: newName, type: oldTile.type, props: { ...oldTile.props, sessionName: newName } },
-            { focus: true },
-          );
-        }
-        // URL and doc title are updated reactively by the ui-store
-        // subscription (URL sync) and onFocusChange callback.
-        setDocTitle(newName);
-      },
       onAdoptSession: async (name) => {
         windowTabSet.addTab(name);
         try {
@@ -1440,23 +1405,11 @@
       onSettingsClick: () => modals.open('settings'),
       onShortcutsClick: () => openShortcutsPopup(shortcutsStore.getState()),
       onDictationClick: () => openDictationModal(),
-      onAllTabsClosed: () => {
-        // Hide all terminal panes, disconnect WS, clear state
-        terminalPool.forEach((name) => terminalPool.dispose(name));
-        cm.disconnect();
-        setDocTitle(null);
-        const url = new URL(window.location);
-        url.searchParams.delete("s");
-        history.replaceState(null, "", url);
-      },
       sendFn: rawSend,
       get term() { return getTerm(); },
       terminalPool,
-      getInstanceIcon,
-      getSessionIcon,
       sessionStore,
       windowTabSet,
-      carousel,
       uiStore,
     });
 
@@ -1477,6 +1430,21 @@
       shortcutBarInstance.showAddMenu(bar.querySelector(".ipad-add-btn") || bar);
     });
 
+    function applyLocalRename(oldName, newName, tile, wasFocused) {
+      if (carousel.isActive()) carousel.renameCard(oldName, newName);
+      terminalPool.rename(oldName, newName);
+      notepad.rename(oldName, newName);
+      iconStore.rename(oldName, newName);
+      windowTabSet.renameTab(oldName, newName);
+      invalidateSessions(sessionStore, newName);
+      uiStore.removeTile(oldName);
+      uiStore.addTile(
+        { id: newName, type: tile.type, props: { ...tile.props, sessionName: newName } },
+        { focus: wasFocused },
+      );
+      if (wasFocused) setDocTitle(newName);
+    }
+
     bar.addEventListener("tab-rename", (e) => {
       const { id, oldName, newName } = e.detail;
       const uiState = uiStore.getState();
@@ -1484,21 +1452,28 @@
       const desc = describeTile(tile);
       if (!desc.renameable || !desc.session) return;
 
-      if (carousel.isActive()) carousel.renameCard(oldName, newName);
-      terminalPool.rename(oldName, newName);
-      notepad.rename(oldName, newName);
-      windowTabSet.renameTab(oldName, newName);
-      invalidateSessions(sessionStore, newName);
-      // Update ui-store: remove old tile, add new one with new id+session
-      uiStore.removeTile(id);
-      uiStore.addTile(
-        { id: newName, type: tile.type, props: { ...tile.props, sessionName: newName } },
-        { focus: uiState.focusedId === id },
-      );
-      // Doc title updates reactively via onFocusChange
-      if (getActiveSessionName() === oldName || uiStore.getState().focusedId === id) {
-        setDocTitle(newName);
-      }
+      const wasFocused = uiState.focusedId === id;
+      // Optimistic local rename before the API call, so the WS broadcast
+      // that echoes the rename becomes a no-op rather than a duplicate render.
+      applyLocalRename(oldName, newName, tile, wasFocused);
+
+      // Persist to the server. If the server canonicalized the name, apply
+      // a second rename pass. On failure, roll back the optimistic update.
+      api.put(`/sessions/${encodeURIComponent(oldName)}`, { name: newName })
+        .then((result) => {
+          const canonical = result?.name || newName;
+          if (canonical !== newName) {
+            const st = uiStore.getState();
+            const current = st.tiles[newName];
+            if (current) applyLocalRename(newName, canonical, current, st.focusedId === newName);
+          }
+        })
+        .catch((err) => {
+          console.error("[Tab] Rename failed:", err);
+          const st = uiStore.getState();
+          const current = st.tiles[newName];
+          if (current) applyLocalRename(newName, oldName, current, st.focusedId === newName);
+        });
     });
 
     bar.addEventListener("tab-context-menu", (e) => {
@@ -1512,7 +1487,7 @@
           const tabEl = bar.querySelector(`.tab-bar-tab[data-session="${CSS.escape(id)}"]`);
           if (tabEl) {
             const tabBarEl = bar.querySelector("tile-tab-bar");
-            tabBarEl?._startRename(tabEl, id);
+            tabBarEl?.startRename(tabEl, id);
           }
         }});
       }
@@ -1905,12 +1880,10 @@
       },
       poolRename: (e) => terminalPool.rename(e.oldName, e.newName),
       notepadRename: (e) => notepad.rename(e.oldName, e.newName),
-      shortcutBarRename: (e) => {
-        if (shortcutBarInstance) shortcutBarInstance.renameTabEl(e.oldName, e.newName);
-      },
+      iconStoreRename: (e) => iconStore.rename(e.oldName, e.newName),
       tabRename: (e) => windowTabSet.renameTab(e.oldName, e.newName),
       // Update ui-store tile so getActiveSessionName() returns the new name.
-      // Mirrors the onTabRenamed path (shortcut-bar initiated rename).
+      // Mirrors the tab-rename event path (shortcut-bar initiated rename).
       uiStoreRename: (e) => {
         const st = uiStore.getState();
         const oldTile = st.tiles[e.oldName];

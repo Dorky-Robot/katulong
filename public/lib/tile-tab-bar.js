@@ -179,7 +179,7 @@ class TileTabBar extends HTMLElement {
     // ── Event handlers ─────────────────────────────────────────────
     el.addEventListener("dblclick", (e) => {
       e.preventDefault();
-      this._startRename(el, tab.id);
+      this.startRename(el, tab.id);
     });
 
     el.addEventListener("contextmenu", (e) => {
@@ -286,7 +286,7 @@ class TileTabBar extends HTMLElement {
         if (this._lastTapId === id && now - this._lastTapTime < DOUBLE_TAP_MS) {
           this._lastTapId = null;
           this._lastTapTime = 0;
-          this._startRename(tab, id);
+          this.startRename(tab, id);
         } else {
           this._lastTapId = id;
           this._lastTapTime = now;
@@ -429,7 +429,11 @@ class TileTabBar extends HTMLElement {
 
   // ── Inline rename ──────────────────────────────────────────────────
 
-  _startRename(tabEl, id) {
+  /**
+   * Start inline rename on a tab. Public entry point for the host chrome
+   * (shortcut-bar's beginRename) — dblclick and context-menu also call this.
+   */
+  startRename(tabEl, id) {
     const label = tabEl.querySelector(".tab-label");
     if (!label) return;
 
