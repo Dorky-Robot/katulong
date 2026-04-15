@@ -1430,6 +1430,21 @@
       shortcutBarInstance.showAddMenu(bar.querySelector(".ipad-add-btn") || bar);
     });
 
+    function applyLocalRename(oldName, newName, tile, wasFocused) {
+      if (carousel.isActive()) carousel.renameCard(oldName, newName);
+      terminalPool.rename(oldName, newName);
+      notepad.rename(oldName, newName);
+      iconStore.rename(oldName, newName);
+      windowTabSet.renameTab(oldName, newName);
+      invalidateSessions(sessionStore, newName);
+      uiStore.removeTile(oldName);
+      uiStore.addTile(
+        { id: newName, type: tile.type, props: { ...tile.props, sessionName: newName } },
+        { focus: wasFocused },
+      );
+      if (wasFocused) setDocTitle(newName);
+    }
+
     bar.addEventListener("tab-rename", (e) => {
       const { id, oldName, newName } = e.detail;
       const uiState = uiStore.getState();
@@ -1437,22 +1452,28 @@
       const desc = describeTile(tile);
       if (!desc.renameable || !desc.session) return;
 
-      if (carousel.isActive()) carousel.renameCard(oldName, newName);
-      terminalPool.rename(oldName, newName);
-      notepad.rename(oldName, newName);
-      iconStore.rename(oldName, newName);
-      windowTabSet.renameTab(oldName, newName);
-      invalidateSessions(sessionStore, newName);
-      // Update ui-store: remove old tile, add new one with new id+session
-      uiStore.removeTile(id);
-      uiStore.addTile(
-        { id: newName, type: tile.type, props: { ...tile.props, sessionName: newName } },
-        { focus: uiState.focusedId === id },
-      );
-      // Doc title updates reactively via onFocusChange
-      if (getActiveSessionName() === oldName || uiStore.getState().focusedId === id) {
-        setDocTitle(newName);
-      }
+      const wasFocused = uiState.focusedId === id;
+      // Optimistic local rename before the API call, so the WS broadcast
+      // that echoes the rename becomes a no-op rather than a duplicate render.
+      applyLocalRename(oldName, newName, tile, wasFocused);
+
+      // Persist to the server. If the server canonicalized the name, apply
+      // a second rename pass. On failure, roll back the optimistic update.
+      api.put(`/sessions/${encodeURIComponent(oldName)}`, { name: newName })
+        .then((result) => {
+          const canonical = result?.name || newName;
+          if (canonical !== newName) {
+            const st = uiStore.getState();
+            const current = st.tiles[newName];
+            if (current) applyLocalRename(newName, canonical, current, st.focusedId === newName);
+          }
+        })
+        .catch((err) => {
+          console.error("[Tab] Rename failed:", err);
+          const st = uiStore.getState();
+          const current = st.tiles[newName];
+          if (current) applyLocalRename(newName, oldName, current, st.focusedId === newName);
+        });
     });
 
     bar.addEventListener("tab-context-menu", (e) => {
@@ -1466,7 +1487,7 @@
           const tabEl = bar.querySelector(`.tab-bar-tab[data-session="${CSS.escape(id)}"]`);
           if (tabEl) {
             const tabBarEl = bar.querySelector("tile-tab-bar");
-            tabBarEl?._startRename(tabEl, id);
+            tabBarEl?.startRename(tabEl, id);
           }
         }});
       }

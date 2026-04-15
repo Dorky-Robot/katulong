@@ -247,9 +247,7 @@ export function createShortcutBar(options = {}) {
 
   // ── Render chrome ────────────────────────────────────────────────────
 
-  function render(_sessionName) {
-    // `_sessionName` is no longer read: <tile-tab-bar> subscribes to
-    // ui-store for active state. Signature kept for caller compatibility.
+  function render() {
     if (!container) return;
 
     const savedInputRow = container.querySelector(".bar-input-row");
@@ -302,7 +300,7 @@ export function createShortcutBar(options = {}) {
     const tabEl = tabBarEl.querySelector(
       `.tab-bar-tab[data-session="${CSS.escape(sessionName)}"]`,
     );
-    if (tabEl) tabBarEl._startRename(tabEl, sessionName);
+    if (tabEl) tabBarEl.startRename(tabEl, sessionName);
   }
 
   return {
