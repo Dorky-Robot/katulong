@@ -1373,7 +1373,7 @@
         } else if (type === "file-browser") {
           openFileBrowserTile();
         } else if (type === "feed") {
-          openFeedTile();
+          openClaudeFeedTile();
         } else if (type === "localhost-browser") {
           openLocalhostBrowserTile();
         }
