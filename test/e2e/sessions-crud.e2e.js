@@ -10,7 +10,6 @@ test.describe("Session CRUD", () => {
     await waitForShellReady(page);
   }
 
-  // Helper: delete a session via API (best-effort cleanup)
   const deleteSession = cleanupSession;
 
   test("Create session via tab bar + dropdown", async ({ page }) => {
