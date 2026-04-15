@@ -91,15 +91,18 @@ export function createPinchGesture({ target, onPinch }) {
   }
 
   function onPointerEndLike(e) {
-    const hadPointer = pointers.delete(e.pointerId);
-    if (!hadPointer) return;
+    if (!pointers.has(e.pointerId)) return;
+    // Capture the last known scale BEFORE removing the pointer — once we
+    // drop below two pointers, distance() returns 0 and the end-phase scale
+    // would degenerate, which would fool the caller's commit threshold.
+    const lastScale = touchActive && touchActivated && touchStartDistance > 0
+      ? distance() / touchStartDistance
+      : 1;
+    pointers.delete(e.pointerId);
     if (touchActive && pointers.size < 2) {
       // Gesture ends the moment we drop below two fingers, even if the
       // other finger is still down.
       if (touchActivated) {
-        const lastScale = touchStartDistance > 0
-          ? distance() / touchStartDistance
-          : 1;
         onPinch({ scale: lastScale, phase: "end" });
       }
       touchActive = false;

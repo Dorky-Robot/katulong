@@ -2324,6 +2324,93 @@
     .lb-tile-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-dim); gap: var(--space-sm); }
     .lb-tile-placeholder p { margin: 0; font-size: var(--text-sm); }
 
+    /* --- Cluster strips (Level 2 overview) --- */
+    /* Hide the L1 carousel and shortcut bar under the overlay rather than
+       unmounting them — xterm.js panes lose rendering state the moment
+       they're display:none, so we keep them visible-but-covered by a
+       fixed overlay. visibility:hidden preserves layout + paint state. */
+    :root[data-ui-level="2"] #terminal-container,
+    :root[data-ui-level="2"] #shortcut-bar { visibility: hidden; }
+    #cluster-strips {
+      position: fixed; inset: 0; z-index: 50;
+      background: var(--bg);
+      display: flex; flex-direction: column;
+      padding: var(--space-md);
+      gap: var(--space-md);
+      overflow-y: auto;
+    }
+    #cluster-strips[hidden] { display: none; }
+    .cs-strips {
+      display: flex; flex-direction: column;
+      gap: var(--space-sm);
+      flex: 1;
+    }
+    .cs-strip {
+      display: flex; flex-direction: column;
+      gap: var(--space-xs);
+      padding: var(--space-sm);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--bg-surface);
+      cursor: pointer;
+      transition: border-color var(--transition-fast) ease;
+    }
+    .cs-strip:hover { border-color: var(--accent-active); }
+    .cs-strip[data-active="true"] {
+      border-color: var(--accent-active);
+      box-shadow: 0 0 0 1px var(--accent-active);
+    }
+    .cs-strip-label {
+      font-size: var(--text-xs);
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+    .cs-strip-row {
+      display: flex; gap: var(--space-xs);
+      overflow-x: auto;
+      padding-bottom: var(--space-xs);
+    }
+    .cs-strip-empty {
+      color: var(--text-dim);
+      font-style: italic;
+      padding: var(--space-sm);
+      font-size: var(--text-sm);
+    }
+    .cs-column {
+      display: flex; flex-direction: column;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+    .cs-card {
+      min-width: 120px; max-width: 180px;
+      padding: var(--space-xs) var(--space-sm);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cs-card[data-focused="true"] {
+      border-color: var(--accent-active);
+      color: var(--accent-active);
+    }
+    .cs-add-cluster {
+      align-self: flex-start;
+      padding: var(--space-xs) var(--space-md);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: var(--text-sm);
+      cursor: pointer;
+    }
+    .cs-add-cluster:hover { color: var(--text); border-color: var(--accent-active); }
+
   </style>
 </head>
 <body>

@@ -10,12 +10,17 @@
  *     clusters:               Tile[][][],           // SOURCE OF TRUTH: [c][col][row]
  *     activeClusterIdx:       number,
  *     focusedTileIdByCluster: (TileId | null)[],    // parallel to clusters
+ *     level:                  1 | 2,                // view zoom; 1 = carousel, 2 = cluster strips
  *
  *     // Derived conveniences (rebuilt by withDerived after every mutation):
  *     tiles:     { [id]: Tile },   // flattened across all clusters
  *     order:     TileId[],         // active cluster, column-major top→bottom
  *     focusedId: TileId | null,    // = focusedTileIdByCluster[activeClusterIdx]
  *   }
+ *
+ * `level` is session state — not persisted. Returning to the app always
+ * opens at L1 on the last active cluster; the "zoomed out" view is a
+ * transient navigation state, not a workspace property.
  *
  * A `Tile` is `{ id, type, props }` — nothing positional. Position in the
  * 3D array IS location. Moving a tile is a splice-remove + splice-insert;
@@ -51,6 +56,7 @@ export const EMPTY_STATE = Object.freeze({
   clusters: Object.freeze([Object.freeze([])]),
   activeClusterIdx: 0,
   focusedTileIdByCluster: Object.freeze([null]),
+  level: 1,
   tiles: Object.freeze({}),
   order: Object.freeze([]),
   focusedId: null,
@@ -167,6 +173,7 @@ export const RESET          = "ui/RESET";
 export const ADD_CLUSTER    = "ui/ADD_CLUSTER";
 export const REMOVE_CLUSTER = "ui/REMOVE_CLUSTER";
 export const SWITCH_CLUSTER = "ui/SWITCH_CLUSTER";
+export const SET_LEVEL      = "ui/SET_LEVEL";
 
 // ─── Reducer ─────────────────────────────────────────────────────────
 function reducer(state = EMPTY_STATE, action) {
@@ -386,6 +393,17 @@ function reducer(state = EMPTY_STATE, action) {
       return withDerived({ ...state, activeClusterIdx: clusterIdx });
     }
 
+    case SET_LEVEL: {
+      const { level } = action;
+      if (level !== 1 && level !== 2) return state;
+      if (state.level === level) return state;
+      // Deliberately skip withDerived — level is session-only navigation
+      // state that no derived field depends on. Rebuilding tiles/order on
+      // every zoom flip would break structural sharing for subscribers
+      // that only care about topology, producing spurious re-renders.
+      return { ...state, level };
+    }
+
     case RESET: {
       const { state: next } = action;
       return normalize(next);
@@ -468,6 +486,7 @@ function normalizeV3(raw) {
     clusters,
     activeClusterIdx,
     focusedTileIdByCluster,
+    level: 1,
     tiles: {},
     order: [],
     focusedId: null,
@@ -515,6 +534,7 @@ function migrateV2(raw) {
     clusters,
     activeClusterIdx,
     focusedTileIdByCluster,
+    level: 1,
     tiles: {},
     order: [],
     focusedId: null,
@@ -551,6 +571,7 @@ function migrateV1(raw) {
     clusters: [cluster],
     activeClusterIdx: 0,
     focusedTileIdByCluster: [focused],
+    level: 1,
     tiles: {},
     order: [],
     focusedId: null,
@@ -638,5 +659,6 @@ export function createUiStore({ initialState = EMPTY_STATE, isPersistable = () =
     addCluster:    (opts = {})       => store.dispatch({ type: ADD_CLUSTER, ...opts }),
     removeCluster: (clusterIdx)      => store.dispatch({ type: REMOVE_CLUSTER, clusterIdx }),
     switchCluster: (clusterIdx)      => store.dispatch({ type: SWITCH_CLUSTER, clusterIdx }),
+    setLevel:      (level)           => store.dispatch({ type: SET_LEVEL, level }),
   };
 }

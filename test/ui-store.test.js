@@ -489,6 +489,61 @@ describe("SWITCH_CLUSTER", () => {
   });
 });
 
+describe("SET_LEVEL", () => {
+  it("defaults to level 1", () => {
+    const store = makeStore();
+    assert.strictEqual(store.getState().level, 1);
+  });
+
+  it("flips to level 2 and back", () => {
+    const store = makeStore();
+    store.setLevel(2);
+    assert.strictEqual(store.getState().level, 2);
+    store.setLevel(1);
+    assert.strictEqual(store.getState().level, 1);
+  });
+
+  it("no-ops for invalid values", () => {
+    const store = makeStore();
+    const before = store.getState();
+    store.setLevel(0);
+    store.setLevel(3);
+    store.setLevel("two");
+    assert.strictEqual(store.getState(), before);
+  });
+
+  it("no-ops when already at target level", () => {
+    const store = makeStore();
+    store.setLevel(2);
+    const mid = store.getState();
+    store.setLevel(2);
+    assert.strictEqual(store.getState(), mid);
+  });
+
+  it("does not touch cluster topology or derived fields", () => {
+    const store = makeStore();
+    store.addTile({ id: "a", type: "terminal", props: {} }, { focus: true });
+    const before = store.getState();
+    store.setLevel(2);
+    const after = store.getState();
+    // Cluster state is shared structurally; only `level` changes.
+    assert.strictEqual(after.clusters, before.clusters);
+    assert.strictEqual(after.activeClusterIdx, before.activeClusterIdx);
+    assert.strictEqual(after.focusedId, before.focusedId);
+    assert.strictEqual(after.order, before.order);
+    assert.strictEqual(after.tiles, before.tiles);
+  });
+
+  it("is not persisted — returning from storage always loads at level 1", () => {
+    const store = makeStore();
+    store.setLevel(2);
+    // Re-normalize the serialized form the way loadFromStorage does.
+    const persisted = serialize(store.getState());
+    const reloaded = normalize(persisted);
+    assert.strictEqual(reloaded.level, 1);
+  });
+});
+
 describe("REMOVE_CLUSTER", () => {
   it("removes the cluster and all its tiles", () => {
     const store = makeStore();

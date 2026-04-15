@@ -44,6 +44,8 @@
     import { createUiStore, loadFromStorage, EMPTY_STATE } from "/lib/ui-store.js";
     import { buildBootState } from "/lib/boot-state.js";
     import { createAddHandler, generateSessionName } from "/lib/add-target.js";
+    import { createPinchGesture } from "/lib/pinch-gesture.js";
+    import { createClusterStrips } from "/lib/cluster-strips.js";
     import { initRenderers, isPersistable, getRenderer } from "/lib/tile-renderers/index.js";
     import { createTileHost } from "/lib/tile-host.js";
     import { getFocusedSession, selectClusterView } from "/lib/selectors.js";
@@ -514,6 +516,43 @@
       },
     });
 
+    // ── Level-2 cluster overview + pinch-to-zoom ────────────────────
+    // The L2 overlay is a projection of uiStore — it reads cluster state
+    // and dispatches switchCluster/setLevel. It lives as a sibling to the
+    // terminal container under #main-stage; the live terminal DOM stays
+    // mounted so we don't tear down xterm.js state when the user zooms out.
+    // Captured so future teardown paths (logout, reset) can call destroy().
+    // Not wired to any call site yet — the app is single-page and lives
+    // for the session — but keeping the handle matches createPinchGesture
+    // below and avoids a refactor when teardown becomes real.
+    const clusterStrips = createClusterStrips({
+      store: uiStore,
+      mountIn: document.getElementById("main-stage"),
+      getTileLabel: (tile) => {
+        const desc = getRenderer(tile.type)?.describe(tile.props || {});
+        return desc?.title || tile.props?.sessionName || tile.type || tile.id;
+      },
+    });
+    void clusterStrips;
+
+    // Pinch thresholds: user must scale past these to commit a level
+    // change. Chosen by feel — tight enough that a small accidental
+    // two-finger scroll doesn't flip levels, loose enough that a
+    // deliberate pinch always lands. The gesture emits on phase=end so
+    // mid-gesture wobble never commits.
+    const PINCH_OUT_COMMIT = 1.15;  // L1 → L2 (zoom out to overview)
+    const PINCH_IN_COMMIT  = 0.85;  // L2 → L1 (zoom into active cluster)
+    const pinch = createPinchGesture({
+      target: document.getElementById("main-stage"),
+      onPinch: ({ scale, phase }) => {
+        if (phase !== "end") return;
+        const level = uiStore.getState().level;
+        if (level === 1 && scale >= PINCH_OUT_COMMIT) uiStore.setLevel(2);
+        else if (level === 2 && scale <= PINCH_IN_COMMIT) uiStore.setLevel(1);
+      },
+    });
+    pinch.attach();
+
     // ── URL sync (reactive subscription) ────────────────────────────
     // Keep ?s= in sync with the focused tile. Terminal tiles write their
     // session name; non-terminal tiles clear ?s= so a stale terminal
@@ -904,10 +943,10 @@
 
     // FP3 — + button routing. Pure decision in /lib/add-target.js; this
     // factory wires it to the two side-effects (create terminal tile /
-    // create empty cluster). Level is hardcoded to 1 until MC3 introduces
-    // Level 2; at that point only getLevel() changes.
+    // create empty cluster). getLevel reads the live zoom level so the
+    // same button produces a tile at L1 and a new cluster at L2.
     const handleAdd = createAddHandler({
-      getLevel: () => 1,
+      getLevel: () => uiStore.getState().level,
       getState: () => {
         const st = uiStore.getState();
         return { activeClusterIdx: st.activeClusterIdx, focusedId: st.focusedId };
