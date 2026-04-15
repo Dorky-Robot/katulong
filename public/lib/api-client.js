@@ -40,3 +40,40 @@ export const api = {
   patch: (url, data) => request("PATCH", url, data),
   delete: (url, data) => request("DELETE", url, data),
 };
+
+// ─── Session id resolver ──────────────────────────────────────────────
+// Callsites still hold friendly names (tile ids, URL params, etc.) but
+// the server's name-keyed routes are being retired. Resolve name → id
+// once and let callers hit /sessions/by-id/:id/*. Cache is in-memory
+// only, and we only cache individual name→id hits — renames invalidate
+// the entry via invalidateSessionIdCache(name). Deletes do the same.
+const sessionIdByName = new Map();
+
+/**
+ * Resolve a session friendly name to its surrogate id.
+ * Throws if the session does not exist.
+ *
+ * @param {string} name
+ * @returns {Promise<string>}
+ */
+export async function resolveSessionId(name) {
+  if (sessionIdByName.has(name)) return sessionIdByName.get(name);
+  const sessions = await api.get("/sessions");
+  if (!Array.isArray(sessions)) throw new Error("Unexpected /sessions response");
+  // Repopulate the whole cache from this fetch so follow-up lookups are free.
+  sessionIdByName.clear();
+  for (const s of sessions) {
+    if (s && typeof s.name === "string" && typeof s.id === "string") {
+      sessionIdByName.set(s.name, s.id);
+    }
+  }
+  const id = sessionIdByName.get(name);
+  if (!id) throw new Error(`Session not found: ${name}`);
+  return id;
+}
+
+/** Drop cache entries — call after rename/delete so stale names don't resolve. */
+export function invalidateSessionIdCache(name) {
+  if (name === undefined) sessionIdByName.clear();
+  else sessionIdByName.delete(name);
+}

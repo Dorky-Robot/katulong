@@ -101,10 +101,16 @@ async function importTerminalTile() {
   return mod.createTerminalTileFactory;
 }
 
-// Poll-response script helper: step through a sequence of statuses
+// Poll-response script helper: step through a sequence of statuses.
+// Requests to `/sessions` (the name→id resolver lookup triggered at
+// mount time) are answered separately so they don't consume a slot in
+// the status script.
 function makeFetchScript(statuses) {
   let i = 0;
-  return mock.fn(async (_url) => {
+  return mock.fn(async (url) => {
+    if (typeof url === "string" && /\/sessions($|\?)/.test(url)) {
+      return { ok: true, json: async () => [{ id: "idDev", name: "dev" }] };
+    }
     const s = statuses[Math.min(i, statuses.length - 1)];
     i++;
     return { ok: true, json: async () => s };
@@ -149,6 +155,10 @@ describe('terminal-tile auto-flip on idle', () => {
     const container = createMockElement("div");
 
     tile.mount(container, { flip: () => {}, faceStack });
+    // mount() resolves the session id asynchronously before creating
+    // the watcher — flush microtasks so the watcher is wired before
+    // we advance mock timers.
+    await flush();
 
     // Tick the 5s status poll interval to trigger first poll (active)
     timers.tick(5000);
@@ -182,6 +192,7 @@ describe('terminal-tile auto-flip on idle', () => {
     const container = createMockElement("div");
 
     tile.mount(container, { flip: () => {}, faceStack });
+    await flush();
     timers.tick(5000);
     await flush();
     timers.tick(5000);
@@ -211,6 +222,7 @@ describe('terminal-tile auto-flip on idle', () => {
     const container = createMockElement("div");
 
     tile.mount(container, { flip: () => {}, faceStack });
+    await flush();
     timers.tick(5000);
     await flush();
     timers.tick(5000);

@@ -6,7 +6,7 @@
       createShortcutsStore, loadShortcuts as reloadShortcuts,
     } from "/lib/stores.js";
     import { createSessionListComponent, updateSnapshot } from "/lib/session-list-component.js";
-    import { api } from "/lib/api-client.js";
+    import { api, resolveSessionId, invalidateSessionIdCache } from "/lib/api-client.js";
     import { createTokenListComponent } from "/lib/token-list-component.js";
     import { createTokenFormManager } from "/lib/token-form.js";
     import { createShortcutsPopup, createShortcutsEditPanel, createAddShortcutModal } from "/lib/shortcuts-components.js";
@@ -396,7 +396,7 @@
         // Partial failure — roll back any sessions we did create so the
         // server isn't left with orphaned tmux sessions that no UI owns.
         await Promise.allSettled(
-          created.map(s => api.delete(`/sessions/${encodeURIComponent(s.name)}`))
+          created.map(s => api.delete(`/sessions/by-id/${encodeURIComponent(s.id)}`))
         );
         const first = failures[0];
         console.error("Failed to create cluster:", first);
@@ -1028,8 +1028,9 @@
       if (!sessionName) return;
       // Kill on server (best-effort — may fail if disconnected)
       try {
-        await api.delete(`/sessions/${encodeURIComponent(sessionName)}`);
-      } catch { /* disconnected or already dead — that's fine */ }
+        const id = await resolveSessionId(sessionName);
+        await api.delete(`/sessions/by-id/${encodeURIComponent(id)}`);
+      } catch { /* disconnected, already dead, or never existed — that's fine */ }
     }
 
     function toggleKeyboardHelp() {
@@ -1459,8 +1460,13 @@
 
       // Persist to the server. If the server canonicalized the name, apply
       // a second rename pass. On failure, roll back the optimistic update.
-      api.put(`/sessions/${encodeURIComponent(oldName)}`, { name: newName })
+      // Rename via the stable id so we don't race our own optimistic update.
+      resolveSessionId(oldName)
+        .then((sid) => api.put(`/sessions/by-id/${encodeURIComponent(sid)}`, { name: newName }))
         .then((result) => {
+          // Rename changes the friendly name → invalidate both keys in the cache
+          invalidateSessionIdCache(oldName);
+          invalidateSessionIdCache(newName);
           const canonical = result?.name || newName;
           if (canonical !== newName) {
             const st = uiStore.getState();
@@ -1492,14 +1498,25 @@
         }});
       }
       if (desc.session) {
-        // Session-backed tiles: detach (keep server session), kill, tear-off
+        // Session-backed tiles: detach (keep server session), kill, tear-off.
+        // `id` is the tile id (== session friendly name today) — resolve to
+        // the stable session id before hitting the server so rename races
+        // don't matter.
         items.push({ icon: "eject", label: "Detach", action: async () => {
-          try { await api.delete(`/sessions/${encodeURIComponent(id)}?action=detach`); } catch (_) {}
+          try {
+            const sid = await resolveSessionId(desc.session);
+            await api.delete(`/sessions/by-id/${encodeURIComponent(sid)}?action=detach`);
+            invalidateSessionIdCache(desc.session);
+          } catch (_) {}
           uiStore.removeTile(id);
         }});
         items.push({ icon: "x-circle", label: "Kill session", danger: true, action: async () => {
           if (!confirm(`Kill session "${id}"?\n\nThis will terminate the tmux session and all its processes.`)) return;
-          try { await api.delete(`/sessions/${encodeURIComponent(id)}`); } catch (_) {}
+          try {
+            const sid = await resolveSessionId(desc.session);
+            await api.delete(`/sessions/by-id/${encodeURIComponent(sid)}`);
+            invalidateSessionIdCache(desc.session);
+          } catch (_) {}
           uiStore.removeTile(id);
           if (windowTabSet) windowTabSet.onSessionKilled(id);
         }});

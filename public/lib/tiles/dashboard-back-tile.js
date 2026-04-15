@@ -45,17 +45,18 @@ function statusLabel(status) {
 
 /**
  * @param {object} options
- * @param {string} options.sessionName — primary session name
+ * @param {string} options.sessionName — primary session name (for display)
+ * @param {string} options.sessionId — stable session id (used for API calls)
  * @param {object} [options.watcher] — optional shared SessionStatusWatcher.
  *   Terminal tile passes its watcher in so the front and back faces share
  *   a single poller instead of running duplicate intervals. When omitted
  *   (e.g. in tests that render the back tile in isolation) the back tile
  *   is inert — no polling, no status updates beyond what's set manually.
  */
-export function createDashboardBackTile({ sessionName, watcher } = {}) {
-  // Mutable: kept in sync with the carousel's tile ID via setSessionName().
-  // The carousel calls this from renameCard() so polling, action APIs,
-  // and rendering all use the current name after a tab rename.
+export function createDashboardBackTile({ sessionName, sessionId, watcher } = {}) {
+  // Mutable display name (updated on rename via setSessionName). API calls
+  // route through `sessionId`, which is stable for the life of the session
+  // and does NOT change on rename.
   let currentSessionName = sessionName;
   let container = null;
   let ctx = null;
@@ -206,7 +207,7 @@ export function createDashboardBackTile({ sessionName, watcher } = {}) {
     switch (action) {
       case "kill":
         try {
-          await api.delete(`/sessions/${encodeURIComponent(currentSessionName)}`);
+          await api.delete(`/sessions/by-id/${encodeURIComponent(sessionId)}`);
           addEvent(`Killed session ${currentSessionName}`);
           updateStatus("exited");
         } catch (err) {
@@ -216,7 +217,7 @@ export function createDashboardBackTile({ sessionName, watcher } = {}) {
 
       case "restart":
         try {
-          await api.delete(`/sessions/${encodeURIComponent(currentSessionName)}`);
+          await api.delete(`/sessions/by-id/${encodeURIComponent(sessionId)}`);
           if (destroyed) return;
           addEvent(`Killed session ${currentSessionName}`);
           // Brief delay then recreate. The destroyed guard must fire on

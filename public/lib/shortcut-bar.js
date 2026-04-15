@@ -213,7 +213,7 @@ export function createShortcutBar(options = {}) {
           },
           deleteAction: () => {
             if (!confirm(`Kill session "${s.name}"?\n\nThis will terminate the tmux session and all its processes.`)) return false;
-            api.delete(`/sessions/${encodeURIComponent(s.name)}`).then(() => {
+            api.delete(`/sessions/by-id/${encodeURIComponent(s.id)}`).then(() => {
               if (windowTabSet) windowTabSet.onSessionKilled(s.name);
               if (sessionStore) {
                 const focusedId = uiStore?.getState?.().focusedId ?? null;
