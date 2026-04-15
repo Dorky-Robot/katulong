@@ -3,7 +3,7 @@
  *
  * Mocks the API client to verify that prune correctly identifies orphaned
  * auto-generated sessions (session-XXXX pattern, alive, no child processes)
- * and kills them via DELETE /sessions/:name.
+ * and kills them via DELETE /sessions/by-id/:id.
  */
 
 import { describe, it, beforeEach, mock } from "node:test";
@@ -16,18 +16,37 @@ const apiClientUrl = new URL("../lib/cli/api-client.js", import.meta.url).href;
 let mockSessions = [];
 let deletedSessions = [];
 
+function synthId(name) {
+  // Deterministic pseudo-id so tests can map id → name when asserting.
+  return `id-${name}`;
+}
+
+// Inject synthetic ids into test fixtures so tests can keep using the
+// plain `{name, alive, hasChildProcesses}` shape — the prune command now
+// looks up `s.id` for the by-id DELETE route.
+function currentSessions() {
+  return mockSessions.map((s) => ({ ...s, id: s.id || synthId(s.name) }));
+}
+
 mock.module(apiClientUrl, {
   namedExports: {
     ensureRunning: () => {},
+    resolveSessionId: async (name) => {
+      const match = currentSessions().find((s) => s.name === name);
+      if (!match) throw new Error(`Session not found: ${name}`);
+      return match.id;
+    },
     api: {
       get: async (path) => {
-        if (path === "/sessions") return mockSessions;
+        if (path === "/sessions") return currentSessions();
         throw new Error(`Unexpected GET ${path}`);
       },
       del: async (path) => {
-        const match = path.match(/^\/sessions\/(.+)$/);
+        const match = path.match(/^\/sessions\/by-id\/(.+)$/);
         if (match) {
-          deletedSessions.push(decodeURIComponent(match[1]));
+          const id = decodeURIComponent(match[1]);
+          const session = currentSessions().find((s) => s.id === id);
+          deletedSessions.push(session ? session.name : id);
           return { ok: true, action: "deleted" };
         }
         throw new Error(`Unexpected DELETE ${path}`);
