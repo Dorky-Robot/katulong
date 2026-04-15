@@ -1601,6 +1601,25 @@
           iconStore.removeIcon(s.name);
         }
       }
+
+      // Reflect the active tile's Claude-presence state onto the joystick
+      // feed button. The monitor loop flips `meta.claude.running` based on
+      // tmux's `pane_current_command`, so this subscription picks up both
+      // the periodic poll and the real-time `session-updated` broadcast.
+      const activeName = getActiveSessionName();
+      const active = activeName ? sessions.find((s) => s.name === activeName) : null;
+      joystickManager.setClaudeRunning(!!active?.meta?.claude?.running);
+    });
+
+    // Active tile changes (e.g. user switches sessions) need an immediate
+    // refresh of the joystick presence indicator — waiting for the next
+    // sessionStore push would leave a stale icon for up to 5s.
+    uiStore.subscribe(() => {
+      const { sessions } = sessionStore.getState();
+      if (!sessions) return;
+      const activeName = getActiveSessionName();
+      const active = activeName ? sessions.find((s) => s.name === activeName) : null;
+      joystickManager.setClaudeRunning(!!active?.meta?.claude?.running);
     });
 
     // Subscribe to shortcuts changes to re-render bar
@@ -1737,43 +1756,51 @@
 
     /** Open a feed tile for the Claude session running in the current terminal.
      *
-     * Primary path: read `session.meta.claude.uuid` populated by the server
-     * hook ingest (MC1f). Fallback: scan topics for a sessionName match —
-     * kept so existing Claude sessions whose SessionStart fired before this
-     * wiring still resolve.
+     * Three-way resolution:
+     *   1. `meta.claude.uuid` present (SessionStart hook fired) → open the
+     *      exact `claude/<uuid>` topic.
+     *   2. `meta.claude.running` present but no uuid → Claude is running in
+     *      the pane but the hook hasn't reported yet. If hooks aren't
+     *      installed, POST to install them so the *next* SessionStart wires
+     *      up automatically. Either way, fall through to the picker.
+     *   3. No Claude signal at all → open the generic picker.
      */
     async function openClaudeFeedTile() {
       const sessionName = getActiveSessionName();
 
-      // No active terminal: the Claude lookup has nothing to key off,
-      // so skip the round trip to /api/topics and open the generic picker.
       if (!sessionName) {
         openFeedTile();
         return;
       }
 
-      try {
-        // Primary: read meta.claude.uuid from the already-cached session
-        // list. The `session-updated` WS push keeps this in sync, so we
-        // don't need a dedicated fetch.
-        const { sessions } = sessionStore.getState();
-        const active = (sessions || []).find(s => s.name === sessionName);
-        const uuid = active?.meta?.claude?.uuid;
-        if (uuid) {
-          const topic = `claude/${uuid}`;
-          const tileId = `feed-${Date.now().toString(36)}`;
-          uiStore.addTile(
-            { id: tileId, type: "feed", props: { topic, title: topic, meta: {} } },
-            { focus: true, insertAt: "afterFocus" },
-          );
-          if (isOverlayViewport()) setOverlaySidebar(false);
-          return;
-        }
+      const { sessions } = sessionStore.getState();
+      const active = (sessions || []).find(s => s.name === sessionName);
+      const claudeMeta = active?.meta?.claude || null;
 
-        // Fallback: scan topics for a sessionName match — resolves Claude
-        // sessions whose SessionStart fired before MC1f was deployed.
-        // Remove once all live Claude sessions have been restarted under
-        // the new hook wiring.
+      // Primary: UUID known → open the specific feed directly.
+      if (claudeMeta?.uuid) {
+        const topic = `claude/${claudeMeta.uuid}`;
+        const tileId = `feed-${Date.now().toString(36)}`;
+        uiStore.addTile(
+          { id: tileId, type: "feed", props: { topic, title: topic, meta: {} } },
+          { focus: true, insertAt: "afterFocus" },
+        );
+        if (isOverlayViewport()) setOverlaySidebar(false);
+        return;
+      }
+
+      // Running but no uuid: auto-install hooks on first encounter so the
+      // next Claude session the user starts wires up without any terminal
+      // plumbing. Silent if already installed; one-shot toast otherwise.
+      if (claudeMeta?.running) {
+        await ensureClaudeHooksInstalled();
+      }
+
+      try {
+        // Legacy fallback: scan topics for a sessionName match. Resolves
+        // Claude sessions that started before MC1f was deployed. Remove
+        // once all live Claude sessions have been restarted under the
+        // new hook wiring.
         const topics = await api.get("/api/topics");
         const match = topics
           .filter(t => t.name.startsWith("claude/") && t.meta?.sessionName === sessionName)
@@ -1791,6 +1818,28 @@
         openFeedTile();
       }
       if (isOverlayViewport()) setOverlaySidebar(false);
+    }
+
+    // Ensure `~/.claude/settings.local.json` has the katulong relay hook
+    // wired. Idempotent on the server side — this client only needs to
+    // care about the first install, so we track a per-tab flag to avoid
+    // retoasting on every click after install.
+    let _claudeHooksToasted = false;
+    async function ensureClaudeHooksInstalled() {
+      try {
+        const status = await api.get("/api/claude-hooks/status");
+        if (status?.installed) return;
+        const result = await api.post("/api/claude-hooks/install", {});
+        if (!_claudeHooksToasted && result?.added?.length) {
+          _claudeHooksToasted = true;
+          showToast("Claude hooks installed. Start a new Claude session for a direct-open feed.");
+        }
+      } catch {
+        // Non-fatal: if install fails the user still gets the topic
+        // picker, and surfacing a red error here would be more noise
+        // than signal. The manual `katulong setup claude-hooks` path
+        // remains available as an escape hatch.
+      }
     }
 
     // --- Localhost Browser (tile) ---

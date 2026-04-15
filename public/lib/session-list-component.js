@@ -285,6 +285,18 @@ export function createSessionListComponent(store, options = {}) {
       handle.innerHTML = '<i class="ph ph-dots-six"></i>';
       card.appendChild(handle);
 
+      // Claude-presence badge — the server's pane monitor flips
+      // meta.claude.running when tmux reports `claude` as the pane's
+      // foreground command, so this lights up on every card whose tile
+      // has Claude actively running.
+      if (s.meta?.claude?.running) {
+        const badge = document.createElement("div");
+        badge.className = "session-card-claude-badge";
+        badge.setAttribute("aria-label", "Claude session running");
+        badge.innerHTML = '<i class="ph ph-sparkle"></i>';
+        card.appendChild(badge);
+      }
+
       // Terminal preview — cached text from xterm buffer
       const preview = document.createElement("div");
       preview.className = "session-card-preview";

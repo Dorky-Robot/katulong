@@ -1159,6 +1159,11 @@
       display: flex; align-items: center; justify-content: center;
     }
     .joystick-action-btn:active { opacity: 1; color: var(--text); }
+    /* Claude-presence variant: the feed button lights up when tmux reports
+       `claude` as the pane's foreground command, so the user can see at a
+       glance that clicking opens a feed for the running Claude session. */
+    .joystick-action-btn--claude { opacity: 0.95; color: var(--accent, #e9b44c); }
+    .joystick-action-btn--claude:active { color: var(--accent, #e9b44c); }
     /* Connection dot at the bottom of the stack */
     .joystick-dot {
       width: 0.625rem; height: 0.625rem; border-radius: 50%;
@@ -1484,6 +1489,19 @@
         color: var(--text-dim); font-size: 0.75rem; opacity: 0.4;
         pointer-events: none; z-index: 1;
       }
+    }
+    /* Claude-presence badge — small glint in the top-right of any session
+       card whose tile currently has claude running. Populated from
+       session.meta.claude.running which the pane monitor keeps live. */
+    .session-card-claude-badge {
+      position: absolute;
+      top: 0.25rem; right: 0.25rem;
+      width: 1rem; height: 1rem;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--accent, #e9b44c);
+      font-size: 0.75rem;
+      pointer-events: none;
+      z-index: 2;
     }
     .session-card-long-press {
       transform: scale(1.03);
