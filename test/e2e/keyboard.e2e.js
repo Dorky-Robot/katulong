@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { waitForAppReady } from "./helpers.js";
+import { waitForAppReady, cleanupSession } from "./helpers.js";
 
 test.describe("Keyboard handling", () => {
   // Serialize to avoid flakiness from concurrent tmux session creation
@@ -30,10 +30,7 @@ test.describe("Keyboard handling", () => {
   });
 
   test.afterEach(async ({ page }) => {
-    await page.evaluate(
-      (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: "DELETE" }),
-      sessionName,
-    );
+    await cleanupSession(page, sessionName);
   });
 
   test("Shift+Enter sends kitty keyboard CSI u sequence", async ({ page }) => {

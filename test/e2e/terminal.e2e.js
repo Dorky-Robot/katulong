@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { waitForAppReady } from './helpers.js';
+import { waitForAppReady, cleanupSession } from './helpers.js';
 
 test.describe("Terminal I/O", () => {
   // Each test uses its own session to avoid cross-test interference
@@ -21,10 +21,7 @@ test.describe("Terminal I/O", () => {
   });
 
   test.afterEach(async ({ page }) => {
-    await page.evaluate(
-      (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: "DELETE" }),
-      sessionName,
-    );
+    await cleanupSession(page, sessionName);
   });
 
   test("Shell prompt is visible after load", async ({ page }) => {

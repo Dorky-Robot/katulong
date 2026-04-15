@@ -1,14 +1,9 @@
 import { test, expect } from "@playwright/test";
-import { waitForShellReady, waitForAppReady } from "./helpers.js";
+import { waitForShellReady, waitForAppReady, cleanupSession } from "./helpers.js";
 
 test.describe("Sidebar & Tab Bar", () => {
   // Helper: delete a session via API (best-effort cleanup)
-  async function deleteSession(page, name) {
-    await page.evaluate(
-      (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: "DELETE" }),
-      name,
-    );
-  }
+  const deleteSession = cleanupSession;
 
   // Helper: check if current viewport uses overlay sidebar (mobile only — tablet gets desktop tabs)
   function isOverlayViewport(testInfo) {

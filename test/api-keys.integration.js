@@ -149,14 +149,14 @@ describe("API Keys Integration", { skip: "flaky under parallel full-suite run; p
     assert.ok(session, "session should exist in list");
     assert.equal(session.icon, "robot", "API-key-created session should have robot icon");
 
-    // Cleanup
-    await req("DELETE", "/sessions/agent-badge");
+    // Cleanup — use the stable id returned from the POST /sessions response
+    await req("DELETE", `/sessions/by-id/${encodeURIComponent(body.id)}`);
   });
 
   it("locally-created session does not get robot icon", async () => {
     // Create a session without API key auth (localhost auto-auth)
-    const { status } = await req("POST", "/sessions", { name: "local-badge" });
-    assert.equal(status, 201);
+    const create = await req("POST", "/sessions", { name: "local-badge" });
+    assert.equal(create.status, 201);
 
     const list = await req("GET", "/sessions");
     const session = list.body.find(s => s.name === "local-badge");
@@ -164,7 +164,7 @@ describe("API Keys Integration", { skip: "flaky under parallel full-suite run; p
     assert.equal(session.icon, null, "locally-created session should not have an icon");
 
     // Cleanup
-    await req("DELETE", "/sessions/local-badge");
+    await req("DELETE", `/sessions/by-id/${encodeURIComponent(create.body.id)}`);
   });
 
   it("API key bypasses CSRF", async () => {
