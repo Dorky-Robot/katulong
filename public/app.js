@@ -1705,24 +1705,30 @@
      */
     async function openClaudeFeedTile() {
       const sessionName = getActiveSessionName();
+
+      // No active terminal: the Claude lookup has nothing to key off,
+      // so skip the round trip to /api/topics and open the generic picker.
+      if (!sessionName) {
+        openFeedTile();
+        return;
+      }
+
       try {
         // Primary: read meta.claude.uuid from the already-cached session
         // list. The `session-updated` WS push keeps this in sync, so we
         // don't need a dedicated fetch.
-        if (sessionName) {
-          const { sessions } = sessionStore.getState();
-          const active = (sessions || []).find(s => s.name === sessionName);
-          const uuid = active?.meta?.claude?.uuid;
-          if (uuid) {
-            const topic = `claude/${uuid}`;
-            const tileId = `feed-${Date.now().toString(36)}`;
-            uiStore.addTile(
-              { id: tileId, type: "feed", props: { topic, title: topic, meta: {} } },
-              { focus: true, insertAt: "afterFocus" },
-            );
-            if (isOverlayViewport()) setOverlaySidebar(false);
-            return;
-          }
+        const { sessions } = sessionStore.getState();
+        const active = (sessions || []).find(s => s.name === sessionName);
+        const uuid = active?.meta?.claude?.uuid;
+        if (uuid) {
+          const topic = `claude/${uuid}`;
+          const tileId = `feed-${Date.now().toString(36)}`;
+          uiStore.addTile(
+            { id: tileId, type: "feed", props: { topic, title: topic, meta: {} } },
+            { focus: true, insertAt: "afterFocus" },
+          );
+          if (isOverlayViewport()) setOverlaySidebar(false);
+          return;
         }
 
         // Fallback: scan topics for a sessionName match — resolves Claude

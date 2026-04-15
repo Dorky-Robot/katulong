@@ -14,12 +14,18 @@ set -euo pipefail
 #   ./scripts/dev-server.sh            # port 3001
 #   PORT=3002 ./scripts/dev-server.sh  # override port
 
-PORT="${PORT:-3001}"
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$REPO_ROOT"
-
 log() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
+err() { printf '\033[1;31m==>\033[0m %s\n' "$*" >&2; }
+
+PORT="${PORT:-3001}"
+if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+  err "PORT must be numeric (got: $PORT)"
+  exit 1
+fi
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
 
 # 1. Unload the LaunchAgent so brew's katulong stops auto-respawning.
 PLIST="$HOME/Library/LaunchAgents/com.dorkyrobot.katulong.plist"
@@ -44,7 +50,7 @@ if [ -n "$occupant" ]; then
 fi
 
 if lsof -ti:"$PORT" >/dev/null 2>&1; then
-  echo "ERROR: port $PORT is still in use" >&2
+  err "port $PORT is still in use"
   lsof -nP -iTCP:"$PORT" >&2 || true
   exit 1
 fi

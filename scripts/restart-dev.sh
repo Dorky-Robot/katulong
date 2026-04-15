@@ -18,8 +18,13 @@ set -euo pipefail
 #   ./scripts/restart-dev.sh            # port 3001
 #   PORT=3002 ./scripts/restart-dev.sh  # override port
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PORT:-3001}"
+if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+  printf '\033[1;31m==>\033[0m PORT must be numeric (got: %s)\n' "$PORT" >&2
+  exit 1
+fi
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOG="$HOME/.katulong/dev-server.log"
 mkdir -p "$(dirname "$LOG")"
 
@@ -36,9 +41,12 @@ if [ "${KATULONG_RESTART_DETACHED:-}" != "1" ]; then
     "$WORKER_PID" "$LOG"
 
   for _ in $(seq 1 30); do
-    if curl -sf "http://localhost:$PORT/health" >/dev/null 2>&1; then
-      version=$(curl -s "http://localhost:$PORT/health" \
-        | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+    # Single fetch: reuse the body for both liveness and version extraction
+    # so we don't print `v` with an empty version if the server flaps between
+    # the liveness probe and the follow-up read.
+    body=$(curl -sf "http://localhost:$PORT/health" 2>/dev/null || true)
+    if [ -n "$body" ]; then
+      version=$(printf '%s' "$body" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
       printf '\033[1;32m==>\033[0m dev server up on :%s (v%s)\n' \
         "$PORT" "$version"
       exit 0
