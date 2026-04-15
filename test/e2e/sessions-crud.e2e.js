@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { waitForShellReady } from './helpers.js';
+import { waitForShellReady, cleanupSession } from './helpers.js';
 
 test.describe("Session CRUD", () => {
   // Helper: create a session by navigating to it (triggers session create/attach)
@@ -10,13 +10,7 @@ test.describe("Session CRUD", () => {
     await waitForShellReady(page);
   }
 
-  // Helper: delete a session via API (best-effort cleanup)
-  async function deleteSession(page, name) {
-    await page.evaluate(
-      (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: "DELETE" }),
-      name,
-    );
-  }
+  const deleteSession = cleanupSession;
 
   test("Create session via tab bar + dropdown", async ({ page }) => {
     await page.goto("/");
@@ -65,10 +59,7 @@ test.describe("Session CRUD", () => {
     await expect(targetTab).not.toBeVisible({ timeout: 10000 });
 
     // Cleanup
-    await page.evaluate(
-      (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: "DELETE" }),
-      name,
-    );
+    await deleteSession(page, name);
   });
 
   test("Reattach detached session via + dropdown", async ({ page }) => {

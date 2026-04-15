@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { waitForAppReady } from './helpers.js';
+import { waitForAppReady, cleanupSession } from './helpers.js';
 
 test.describe("Smoke — critical path", () => {
   // Shell init (zsh/bash profile) can be slow under load — give enough headroom
@@ -17,10 +17,7 @@ test.describe("Smoke — critical path", () => {
   });
 
   test.afterEach(async ({ page }) => {
-    await page.evaluate(
-      (n) => fetch(`/sessions/${encodeURIComponent(n)}`, { method: "DELETE" }),
-      sessionName,
-    );
+    await cleanupSession(page, sessionName);
   });
 
   test("App loads and terminal renders", async ({ page }) => {

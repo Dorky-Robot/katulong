@@ -57,21 +57,22 @@ katulong_api() {
     -H "Content-Type: application/json" "$@"
 }
 
-# Create a session
-katulong_api -X POST "$KATULONG_URL/sessions" -d '{"name":"theme--worker"}'
+# Create a session — capture its stable id for subsequent calls
+SID=$(katulong_api -X POST "$KATULONG_URL/sessions" -d '{"name":"theme--worker"}' \
+  | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).id))")
 
 # Send a command
-katulong_api -X POST "$KATULONG_URL/sessions/theme--worker/exec" \
+katulong_api -X POST "$KATULONG_URL/sessions/by-id/$SID/exec" \
   -d '{"input":"yolo -p \"fix the bug\""}'
 
 # Read output
-katulong_api "$KATULONG_URL/sessions/theme--worker/output?lines=20"
+katulong_api "$KATULONG_URL/sessions/by-id/$SID/output?lines=20"
 
 # List sessions
 katulong_api "$KATULONG_URL/sessions"
 
 # Kill a session
-katulong_api -X DELETE "$KATULONG_URL/sessions/theme--worker"
+katulong_api -X DELETE "$KATULONG_URL/sessions/by-id/$SID"
 
 # Send notification
 katulong_api -X POST "$KATULONG_URL/notify" -d '{"message":"latency: PR ready"}'
@@ -101,12 +102,14 @@ Workers MUST NOT clobber each other's files. Every worker operates in a git work
 git worktree add .worktrees/<theme>-<worker> -b <theme>/<worker>
 
 # 2. Create session + launch Claude in the worktree
-# (use API to create on the HOST katulong so user sees it)
-curl -s -X POST "$HOST_KATULONG/sessions" \
+# (use API to create on the HOST katulong so user sees it; the POST
+# response carries the stable `id` used for every subsequent mutation)
+SID=$(curl -s -X POST "$HOST_KATULONG/sessions" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"theme--worker"}'
+  -d '{"name":"theme--worker"}' \
+  | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).id))")
 
-curl -s -X POST "$HOST_KATULONG/sessions/theme--worker/exec" \
+curl -s -X POST "$HOST_KATULONG/sessions/by-id/$SID/exec" \
   -H 'Content-Type: application/json' \
   -d '{"input":"cd /work/project/.worktrees/theme-worker && yolo -p \"task description\""}'
 ```

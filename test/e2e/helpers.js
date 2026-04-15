@@ -22,15 +22,23 @@ export async function setupTest({ page, context, testInfo }) {
 }
 
 /**
- * Clean up a named session via the DELETE API
+ * Clean up a named session via the DELETE API.
+ *
+ * Resolves the friendly name to its stable surrogate id via GET /sessions,
+ * then DELETEs the by-id route. The name-keyed DELETE was removed in MC1e
+ * PR3c; every mutation now goes through the immutable id.
  */
 export async function cleanupSession(page, sessionName) {
   if (!sessionName) return;
   try {
-    await page.evaluate(
-      (name) => fetch(`/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-      sessionName,
-    );
+    await page.evaluate(async (name) => {
+      const res = await fetch("/sessions");
+      if (!res.ok) return;
+      const list = await res.json();
+      const match = Array.isArray(list) && list.find((s) => s && s.name === name);
+      if (!match || typeof match.id !== "string") return;
+      await fetch(`/sessions/by-id/${encodeURIComponent(match.id)}`, { method: "DELETE" });
+    }, sessionName);
   } catch {
     // page may already be closed
   }

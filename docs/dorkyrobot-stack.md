@@ -433,11 +433,12 @@ What happens when you run `sipag dispatch 42 katulong`:
    → type: kubo, container: katulong, worktree: true, command: yolo
 3. sipag calls katulong API:
    POST /sessions { name: "katulong--dev" }           (find-or-create)
+   → response: { id: "<sid>", name: "katulong--dev" }
 4. sipag calls katulong API:
-   POST /sessions/katulong--dev/exec
+   POST /sessions/by-id/<sid>/exec
    { input: "cd /work/katulong && git worktree add .worktrees/task-42 -b fix/task-42" }
 5. sipag calls katulong API:
-   POST /sessions/katulong--dev/exec
+   POST /sessions/by-id/<sid>/exec
    { input: "cd /work/katulong/.worktrees/task-42 && yolo -p 'Fix task #42: ...'" }
 6. sipag updates task #42 → status: in-progress
 7. sipag subscribes to crew/katulong/dev/agent-done via pub/sub

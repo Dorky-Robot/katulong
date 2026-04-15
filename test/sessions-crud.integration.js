@@ -39,10 +39,11 @@ const SERVER_PATH = join(__dirname, "..", "server.js");
  *
  * Spins up a real server with an isolated data dir, then exercises
  * the session endpoints:
- *   POST   /sessions          — create
- *   GET    /sessions          — list
- *   PUT    /sessions/:name    — rename
- *   DELETE /sessions/:name    — delete
+ *   POST   /sessions              — create
+ *   GET    /sessions              — list
+ *   PUT    /sessions/by-id/:id    — rename
+ *   DELETE /sessions/by-id/:id    — delete
+ *   GET    /sessions/by-id/:id/status — status
  *
  * Tmux state is isolated via KATULONG_TMUX_SOCKET (set per-process in
  * test/helpers/setup-env.js). Each test file runs on its own tmux
@@ -67,6 +68,20 @@ async function request(method, path, body) {
     try { parsed = JSON.parse(text); } catch { parsed = text; }
   }
   return { status: res.status, body: parsed };
+}
+
+// Helper: create a session and return its id. Fails the test if POST
+// doesn't return a 201 with an id — every mutating test needs the id to
+// target the by-id routes.
+async function createAndGetId(name) {
+  const res = await request("POST", "/sessions", { name });
+  assert.equal(res.status, 201, `POST /sessions failed: ${JSON.stringify(res.body)}`);
+  assert.equal(typeof res.body.id, "string", `POST /sessions must return an id`);
+  return res.body.id;
+}
+
+async function deleteById(id) {
+  return request("DELETE", `/sessions/by-id/${encodeURIComponent(id)}`);
 }
 
 describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll under full-suite load; passes in isolation. TODO: investigate" }, () => {
@@ -137,24 +152,23 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
 
   // --- Create ---
 
-  it("POST /sessions creates a new session and returns 201", async () => {
+  it("POST /sessions creates a new session and returns 201 with id", async () => {
     const { status, body } = await request("POST", "/sessions", { name: "test-create" });
     assert.equal(status, 201, `Expected 201 Created, got ${status}: ${JSON.stringify(body)}`);
     assert.equal(body.name, "test-create");
+    assert.equal(typeof body.id, "string");
 
     // Cleanup
-    await request("DELETE", "/sessions/test-create");
+    await deleteById(body.id);
   });
 
   it("POST /sessions returns 409 for duplicate name", async () => {
-    // Setup: ensure session exists
-    await request("POST", "/sessions", { name: "dup-test" });
+    const id = await createAndGetId("dup-test");
 
     const { status } = await request("POST", "/sessions", { name: "dup-test" });
     assert.equal(status, 409);
 
-    // Cleanup
-    await request("DELETE", "/sessions/dup-test");
+    await deleteById(id);
   });
 
   it("POST /sessions returns 400 for empty name", async () => {
@@ -175,15 +189,13 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
     assert.equal(status, 201);
     assert.equal(body.name, "helloworld");
 
-    // Cleanup using the name returned by the server
-    await request("DELETE", `/sessions/${encodeURIComponent(body.name)}`);
+    await deleteById(body.id);
   });
 
   // --- List ---
 
   it("GET /sessions lists created sessions", async () => {
-    // Setup
-    await request("POST", "/sessions", { name: "list-test" });
+    const id = await createAndGetId("list-test");
 
     const { status, body } = await request("GET", "/sessions");
     assert.equal(status, 200);
@@ -191,14 +203,11 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
     const names = body.map((s) => s.name);
     assert.ok(names.includes("list-test"), `Expected list-test in ${JSON.stringify(names)}`);
 
-    // Cleanup
-    await request("DELETE", "/sessions/list-test");
+    await deleteById(id);
   });
 
   it("GET /sessions returns alive and tmuxSession for each session", async () => {
-    // Setup
-    const create = await request("POST", "/sessions", { name: "fields-test" });
-    assert.equal(create.status, 201, `POST failed: ${JSON.stringify(create.body)}`);
+    const id = await createAndGetId("fields-test");
 
     const list = await request("GET", "/sessions");
     const session = list.body.find((s) => s.name === "fields-test");
@@ -209,17 +218,15 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
     assert.equal(typeof session.tmuxSession, "string");
     assert.equal(typeof session.alive, "boolean");
 
-    // Cleanup
-    await request("DELETE", "/sessions/fields-test");
+    await deleteById(id);
   });
 
   // --- Rename ---
 
-  it("PUT /sessions/:name renames a session", async () => {
-    // Setup
-    await request("POST", "/sessions", { name: "rename-src" });
+  it("PUT /sessions/by-id/:id renames a session", async () => {
+    const id = await createAndGetId("rename-src");
 
-    const { status, body } = await request("PUT", "/sessions/rename-src", { name: "rename-dst" });
+    const { status, body } = await request("PUT", `/sessions/by-id/${encodeURIComponent(id)}`, { name: "rename-dst" });
     assert.equal(status, 200);
     assert.equal(body.name, "rename-dst");
 
@@ -229,33 +236,30 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
     assert.ok(names.includes("rename-dst"));
     assert.ok(!names.includes("rename-src"));
 
-    // Cleanup
-    await request("DELETE", "/sessions/rename-dst");
+    await deleteById(id);
   });
 
-  it("PUT /sessions/:name returns 404 for nonexistent session", async () => {
-    const { status } = await request("PUT", "/sessions/nonexistent-xyz", { name: "whatever" });
+  it("PUT /sessions/by-id/:id returns 404 for nonexistent session id", async () => {
+    // Use a well-formed but unknown id (21 chars matching SESSION_ID_PATTERN)
+    const { status } = await request("PUT", "/sessions/by-id/aaaaaaaaaaaaaaaaaaaaa", { name: "whatever" });
     assert.equal(status, 404);
   });
 
-  it("PUT /sessions/:name returns 400 for invalid new name", async () => {
-    // Setup
-    await request("POST", "/sessions", { name: "rename-invalid" });
+  it("PUT /sessions/by-id/:id returns 400 for invalid new name", async () => {
+    const id = await createAndGetId("rename-invalid");
 
-    const { status } = await request("PUT", "/sessions/rename-invalid", { name: "" });
+    const { status } = await request("PUT", `/sessions/by-id/${encodeURIComponent(id)}`, { name: "" });
     assert.equal(status, 400);
 
-    // Cleanup
-    await request("DELETE", "/sessions/rename-invalid");
+    await deleteById(id);
   });
 
   // --- Delete ---
 
-  it("DELETE /sessions/:name deletes a session", async () => {
-    // Setup
-    await request("POST", "/sessions", { name: "delete-test" });
+  it("DELETE /sessions/by-id/:id deletes a session", async () => {
+    const id = await createAndGetId("delete-test");
 
-    const { status, body } = await request("DELETE", "/sessions/delete-test");
+    const { status, body } = await deleteById(id);
     assert.equal(status, 200);
     assert.ok(body.ok);
 
@@ -265,8 +269,8 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
     assert.ok(!names.includes("delete-test"));
   });
 
-  it("DELETE /sessions/:name returns 404 for nonexistent session", async () => {
-    const { status } = await request("DELETE", "/sessions/nonexistent-xyz");
+  it("DELETE /sessions/by-id/:id returns 404 for nonexistent session id", async () => {
+    const { status } = await request("DELETE", "/sessions/by-id/aaaaaaaaaaaaaaaaaaaaa");
     assert.equal(status, 404);
   });
 
@@ -288,8 +292,7 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
   });
 
   it("GET /tmux-sessions excludes managed sessions", async () => {
-    // Create a managed session
-    await request("POST", "/sessions", { name: "managed-excl" });
+    const id = await createAndGetId("managed-excl");
 
     const { body } = await request("GET", "/tmux-sessions");
     // The managed session's tmux name should not appear in unmanaged list
@@ -300,7 +303,7 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
       assert.ok(!unmanagedNames.includes(tmuxName), `Managed tmux session ${tmuxName} should not appear in unmanaged list`);
     }
 
-    await request("DELETE", "/sessions/managed-excl");
+    await deleteById(id);
   });
 
   it("POST /tmux-sessions/adopt adopts an unmanaged tmux session", async () => {
@@ -311,6 +314,7 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
       const { status, body } = await request("POST", "/tmux-sessions/adopt", { name: tmuxName });
       assert.equal(status, 201);
       assert.equal(body.name, tmuxName);
+      assert.equal(typeof body.id, "string", "adopt must return an id");
 
       // Should now appear in managed sessions
       const list = await request("GET", "/sessions");
@@ -322,8 +326,7 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
       const unmanagedNames = unmanaged.body.map(s => typeof s === "string" ? s : s.name);
       assert.ok(!unmanagedNames.includes(tmuxName), `Adopted session should not appear in unmanaged list`);
 
-      // Cleanup
-      await request("DELETE", `/sessions/${encodeURIComponent(tmuxName)}`);
+      await deleteById(body.id);
     } catch (err) {
       tmuxSyncQuiet(["kill-session", "-t", tmuxName]);
       throw err;
@@ -339,15 +342,14 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
   it("POST /tmux-sessions/adopt returns 409 for already-managed session", async () => {
     // POST /sessions creates both a katulong session and an underlying tmux session,
     // so the name is both managed and exists as a tmux session.
-    const setup = await request("POST", "/sessions", { name: "already-managed" });
-    assert.equal(setup.status, 201);
+    const id = await createAndGetId("already-managed");
 
     try {
       const { status, body } = await request("POST", "/tmux-sessions/adopt", { name: "already-managed" });
       assert.equal(status, 409);
       assert.match(body.error, /already managed/i);
     } finally {
-      await request("DELETE", "/sessions/already-managed");
+      await deleteById(id);
     }
   });
 
@@ -386,51 +388,42 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
   });
 
   it("DELETE /tmux-sessions/:name refuses to kill managed sessions", async () => {
-    const setup = await request("POST", "/sessions", { name: "managed-nodelete" });
-    assert.equal(setup.status, 201);
+    const id = await createAndGetId("managed-nodelete");
 
     try {
       const { status, body } = await request("DELETE", `/tmux-sessions/managed-nodelete`);
       assert.equal(status, 400);
       assert.match(body.error, /managed/i);
     } finally {
-      await request("DELETE", "/sessions/managed-nodelete");
+      await deleteById(id);
     }
   });
 
   // --- Session status ---
 
-  it("GET /sessions/:name/status returns status for a live session", async () => {
-    await request("POST", "/sessions", { name: "status-test" });
+  it("GET /sessions/by-id/:id/status returns status for a live session", async () => {
+    const id = await createAndGetId("status-test");
 
-    const { status, body } = await request("GET", "/sessions/status-test/status");
+    const { status, body } = await request("GET", `/sessions/by-id/${encodeURIComponent(id)}/status`);
     assert.equal(status, 200);
     assert.equal(body.name, "status-test");
     assert.equal(typeof body.alive, "boolean");
     assert.equal(typeof body.hasChildProcesses, "boolean");
     assert.equal(typeof body.childCount, "number");
 
-    await request("DELETE", "/sessions/status-test");
+    await deleteById(id);
   });
 
-  it("GET /sessions/:name/status returns 404 for nonexistent session", async () => {
-    const { status } = await request("GET", "/sessions/nonexistent-xyz/status");
+  it("GET /sessions/by-id/:id/status returns 404 for nonexistent session id", async () => {
+    const { status } = await request("GET", "/sessions/by-id/aaaaaaaaaaaaaaaaaaaaa/status");
     assert.equal(status, 404);
   });
 
-  it("GET /sessions/:name/status returns 400 for invalid session name", async () => {
-    const { status } = await request("GET", `/sessions/${encodeURIComponent("\x01\x02")}/status`);
+  it("GET /sessions/by-id/:id/status returns 400 for malformed id", async () => {
+    // Malformed ids (wrong length / wrong charset) are rejected by the
+    // SESSION_ID_PATTERN gate before any session lookup happens.
+    const { status } = await request("GET", `/sessions/by-id/${encodeURIComponent("bad!")}/status`);
     assert.equal(status, 400);
-  });
-
-  it("GET /sessions/:name/status works with URL-encoded names", async () => {
-    await request("POST", "/sessions", { name: "status with spaces" });
-
-    const { status, body } = await request("GET", `/sessions/${encodeURIComponent("status with spaces")}/status`);
-    assert.equal(status, 200);
-    assert.equal(body.name, "status with spaces");
-
-    await request("DELETE", `/sessions/${encodeURIComponent("status with spaces")}`);
   });
 
   // --- Full lifecycle (mirrors what the UI "+ New" button does) ---
@@ -440,6 +433,8 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
     const create = await request("POST", "/sessions", { name: "lifecycle-sess" });
     assert.equal(create.status, 201, "create should return 201");
     assert.equal(create.body.name, "lifecycle-sess");
+    const id = create.body.id;
+    assert.equal(typeof id, "string");
 
     // 2. List (session panel refreshes after create)
     const list1 = await request("GET", "/sessions");
@@ -448,13 +443,14 @@ describe("Sessions CRUD Integration", { skip: "flaky 10s server-startup poll und
       "new session should appear in list",
     );
 
-    // 3. Rename
-    const rename = await request("PUT", "/sessions/lifecycle-sess", { name: "lifecycle-renamed" });
+    // 3. Rename — id is stable across the rename
+    const rename = await request("PUT", `/sessions/by-id/${encodeURIComponent(id)}`, { name: "lifecycle-renamed" });
     assert.equal(rename.status, 200);
     assert.equal(rename.body.name, "lifecycle-renamed");
+    assert.equal(rename.body.id, id, "rename must preserve the id");
 
-    // 4. Delete
-    const del = await request("DELETE", "/sessions/lifecycle-renamed");
+    // 4. Delete via the same id
+    const del = await deleteById(id);
     assert.equal(del.status, 200);
 
     // 5. Verify gone
