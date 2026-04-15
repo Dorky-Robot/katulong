@@ -41,7 +41,7 @@ describe('SessionStatusWatcher', () => {
       { alive: true, hasChildProcesses: true },
       { alive: true, hasChildProcesses: false },
     ]);
-    const watcher = createSessionStatusWatcher({ sessionName: "dev", fetchImpl });
+    const watcher = createSessionStatusWatcher({ sessionId: "idDev", fetchImpl });
     const a = mock.fn();
     const b = mock.fn();
     const c = mock.fn();
@@ -65,7 +65,7 @@ describe('SessionStatusWatcher', () => {
       { alive: true, hasChildProcesses: true },
       { alive: true, hasChildProcesses: false },
     ]);
-    const watcher = createSessionStatusWatcher({ sessionName: "dev", fetchImpl });
+    const watcher = createSessionStatusWatcher({ sessionId: "idDev", fetchImpl });
     const events = [];
     watcher.subscribe(e => events.push(e));
 
@@ -87,7 +87,7 @@ describe('SessionStatusWatcher', () => {
       { alive: true, hasChildProcesses: false },
       { alive: false, hasChildProcesses: false },
     ]);
-    const watcher = createSessionStatusWatcher({ sessionName: "dev", fetchImpl });
+    const watcher = createSessionStatusWatcher({ sessionId: "idDev", fetchImpl });
     const events = [];
     watcher.subscribe(e => events.push(e));
 
@@ -102,7 +102,7 @@ describe('SessionStatusWatcher', () => {
 
   it('stops polling when last subscriber unsubscribes', async () => {
     const fetchImpl = makeFetchScript([{ alive: true, hasChildProcesses: false }]);
-    const watcher = createSessionStatusWatcher({ sessionName: "dev", fetchImpl });
+    const watcher = createSessionStatusWatcher({ sessionId: "idDev", fetchImpl });
     const unsubscribe = watcher.subscribe(() => {});
     timers.tick(5000);
     await flush();
@@ -119,7 +119,7 @@ describe('SessionStatusWatcher', () => {
   it('destroy() prevents any further notifications even if a fetch is in flight', async () => {
     let resolveFetch;
     const fetchImpl = mock.fn(() => new Promise(r => { resolveFetch = r; }));
-    const watcher = createSessionStatusWatcher({ sessionName: "dev", fetchImpl });
+    const watcher = createSessionStatusWatcher({ sessionId: "idDev", fetchImpl });
     const events = [];
     watcher.subscribe(e => events.push(e));
 
@@ -132,28 +132,26 @@ describe('SessionStatusWatcher', () => {
     assert.strictEqual(events.length, 0);
   });
 
-  it('setSessionName updates the URL for subsequent polls', async () => {
+  it('polls the by-id URL for the session id it was created with', async () => {
     const fetchImpl = makeFetchScript([
       { alive: true, hasChildProcesses: false },
       { alive: true, hasChildProcesses: false },
     ]);
-    const watcher = createSessionStatusWatcher({ sessionName: "old", fetchImpl });
+    const watcher = createSessionStatusWatcher({ sessionId: "idOld", fetchImpl });
     watcher.subscribe(() => {});
     timers.tick(5000);
     await flush();
-
-    watcher.setSessionName("new");
     timers.tick(5000);
     await flush();
 
-    assert.strictEqual(fetchImpl.mock.calls[0].arguments[0], "/sessions/old/status");
-    assert.strictEqual(fetchImpl.mock.calls[1].arguments[0], "/sessions/new/status");
+    assert.strictEqual(fetchImpl.mock.calls[0].arguments[0], "/sessions/by-id/idOld/status");
+    assert.strictEqual(fetchImpl.mock.calls[1].arguments[0], "/sessions/by-id/idOld/status");
     watcher.destroy();
   });
 
   it('swallows subscriber errors without blocking other subscribers', async () => {
     const fetchImpl = makeFetchScript([{ alive: true, hasChildProcesses: false }]);
-    const watcher = createSessionStatusWatcher({ sessionName: "dev", fetchImpl });
+    const watcher = createSessionStatusWatcher({ sessionId: "idDev", fetchImpl });
     const bad = mock.fn(() => { throw new Error("boom"); });
     const good = mock.fn();
     watcher.subscribe(bad);
@@ -168,7 +166,7 @@ describe('SessionStatusWatcher', () => {
     const fetchImpl = makeFetchScript([
       { throw: new Error("network down") },
     ]);
-    const watcher = createSessionStatusWatcher({ sessionName: "dev", fetchImpl });
+    const watcher = createSessionStatusWatcher({ sessionId: "idDev", fetchImpl });
     const events = [];
     watcher.subscribe(e => events.push(e));
     timers.tick(5000);

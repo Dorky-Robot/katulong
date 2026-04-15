@@ -12,8 +12,9 @@
  * This module centralizes that polling. The tile that "owns" the
  * session (terminal-tile) creates the watcher at mount time and
  * destroys it at unmount. The back tile subscribes instead of
- * running its own interval. Rename is plumbed through
- * `setSessionName()` so subsequent polls hit the new URL.
+ * running its own interval. Since the watcher polls the by-id route
+ * (`/sessions/by-id/:id/status`), renames don't change the URL — the
+ * surrogate id is stable for the life of the session.
  *
  * The watcher never decides *what* should happen on a transition —
  * subscribers do. The watcher just reports:
@@ -36,22 +37,21 @@
 
 /**
  * @param {object} options
- * @param {string} options.sessionName — session to poll
+ * @param {string} options.sessionId — session id (stable surrogate) to poll
  * @param {number} [options.interval=5000] — poll interval in ms
  * @param {typeof fetch} [options.fetchImpl] — injectable for tests
  * @returns {{
  *   subscribe: (fn: (event) => void) => () => void,
- *   setSessionName: (newName: string) => void,
  *   destroy: () => void,
  *   poll: () => Promise<void>,
+ *   sessionId: string,
  * }}
  */
 export function createSessionStatusWatcher({
-  sessionName,
+  sessionId,
   interval = 5000,
   fetchImpl,
 } = {}) {
-  let currentSessionName = sessionName;
   const doFetch = fetchImpl || ((url) => globalThis.fetch(url));
   const subscribers = new Set();
   let destroyed = false;
@@ -63,7 +63,7 @@ export function createSessionStatusWatcher({
     if (destroyed) return;
     let status = null;
     try {
-      const res = await doFetch(`/sessions/${encodeURIComponent(currentSessionName)}/status`);
+      const res = await doFetch(`/sessions/by-id/${encodeURIComponent(sessionId)}/status`);
       if (destroyed) return;
       if (!res.ok) {
         notify({ status: null, transitions: {}, error: new Error(`HTTP ${res.status}`) });
@@ -118,10 +118,6 @@ export function createSessionStatusWatcher({
       };
     },
 
-    setSessionName(newName) {
-      currentSessionName = newName;
-    },
-
     destroy() {
       destroyed = true;
       stop();
@@ -131,6 +127,6 @@ export function createSessionStatusWatcher({
     /** Manual poll — used by tests and by eager first-poll on mount. */
     poll,
 
-    get sessionName() { return currentSessionName; },
+    get sessionId() { return sessionId; },
   };
 }

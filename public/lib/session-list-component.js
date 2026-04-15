@@ -8,7 +8,7 @@
 
 import { createComponent } from '/lib/component.js';
 import { invalidateSessions } from '/lib/stores.js';
-import { api } from '/lib/api-client.js';
+import { api, invalidateSessionIdCache } from '/lib/api-client.js';
 
 const DIVIDER_CLASS = "session-list-divider";
 const LONG_PRESS_MS = 300;
@@ -324,7 +324,10 @@ export function createSessionListComponent(store, options = {}) {
           return;
         }
         try {
-          await api.put(`/sessions/${encodeURIComponent(originalName)}`, { name: newName });
+          // List render has s.id in scope — rename via the stable id
+          await api.put(`/sessions/by-id/${encodeURIComponent(s.id)}`, { name: newName });
+          invalidateSessionIdCache(originalName);
+          invalidateSessionIdCache(newName);
           invalidateSessions(store, state.currentSession);
         } catch {
           nameInput.value = originalName;
@@ -375,7 +378,8 @@ export function createSessionListComponent(store, options = {}) {
       detachBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         try {
-          await api.delete(`/sessions/${encodeURIComponent(s.name)}?action=detach`);
+          await api.delete(`/sessions/by-id/${encodeURIComponent(s.id)}?action=detach`);
+          invalidateSessionIdCache(s.name);
           if (windowTabSet) windowTabSet.removeTab(s.name);
           switchAfterRemove(s.name);
         } catch (err) {
@@ -396,7 +400,8 @@ export function createSessionListComponent(store, options = {}) {
           : `Delete session "${s.name}"?\n\nThis will kill the tmux session.`;
         if (!confirm(message)) return;
         try {
-          await api.delete(`/sessions/${encodeURIComponent(s.name)}`);
+          await api.delete(`/sessions/by-id/${encodeURIComponent(s.id)}`);
+          invalidateSessionIdCache(s.name);
           if (windowTabSet) windowTabSet.onSessionKilled(s.name);
           switchAfterRemove(s.name);
         } catch (err) {
