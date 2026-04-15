@@ -3,11 +3,13 @@
  *
  * Vertical stack of circular buttons floating in the terminal pane:
  * Files, Settings, and a connection indicator dot at the bottom.
- * Visible on touch devices only.
  *
- * The feed button adapts to Claude presence. When the active tile's session
- * has `meta.claude.running` set by the server's pane monitor, the icon and
- * label swap to signal "this opens a Claude feed for *this* session."
+ * The feed slot is contextual: it only renders when the active tile has a
+ * detected context (e.g. `meta.claude` set by the server's pane monitor or
+ * the SessionStart hook). When no context is active, the slot is hidden
+ * entirely — the button is not greyed out, it simply does not exist.
+ * Callers drive this via `setContext({ icon, label, className, action })`
+ * or `setContext(null)` to hide.
  */
 
 export function createJoystickManager(options = {}) {
@@ -16,8 +18,7 @@ export function createJoystickManager(options = {}) {
   let _onFilesClick = null;
   let _onUploadClick = null;
   let _onSettingsClick = null;
-  let _onFeedClick = null;
-  let _claudeRunning = false;
+  let _context = null;
   let dotEl = null;
 
   function buildButtons() {
@@ -40,11 +41,8 @@ export function createJoystickManager(options = {}) {
     if (_onFilesClick) {
       joystick.appendChild(actionBtn("folder-open", "Files", _onFilesClick));
     }
-    if (_onFeedClick) {
-      const icon = _claudeRunning ? "sparkle" : "rss";
-      const label = _claudeRunning ? "Claude feed" : "Feed";
-      const cls = _claudeRunning ? "joystick-action-btn--claude" : "";
-      joystick.appendChild(actionBtn(icon, label, _onFeedClick, cls));
+    if (_context) {
+      joystick.appendChild(actionBtn(_context.icon, _context.label, _context.action, _context.className || ""));
     }
     if (_onSettingsClick) {
       joystick.appendChild(actionBtn("gear", "Settings", _onSettingsClick));
@@ -57,31 +55,45 @@ export function createJoystickManager(options = {}) {
     joystick.appendChild(dotEl);
   }
 
+  function contextEquals(a, b) {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    return a.icon === b.icon && a.label === b.label && (a.className || "") === (b.className || "");
+  }
+
   return {
     init() {
       // No gesture handling needed — just buttons
     },
 
-    setActions({ onFilesClick, onUploadClick, onSettingsClick, onFeedClick }) {
+    setActions({ onFilesClick, onUploadClick, onSettingsClick }) {
       _onFilesClick = onFilesClick;
       _onUploadClick = onUploadClick;
       _onSettingsClick = onSettingsClick;
-      _onFeedClick = onFeedClick;
       buildButtons();
     },
 
     /**
-     * Update Claude-presence state for the active tile. Idempotent: callers
-     * can invoke this on every `session-updated` broadcast without tearing
-     * down the DOM when the state hasn't actually changed.
+     * Set the contextual slot for the active tile. Pass `null` to hide.
+     * Idempotent: repeated calls with the same visual state skip the DOM
+     * rebuild, so callers can invoke this on every `session-updated`
+     * broadcast without churn.
+     *
+     * Context shape:
+     *   { icon: "sparkle", label: "Claude feed",
+     *     className: "joystick-action-btn--claude", action: () => ... }
      */
-    setClaudeRunning(running) {
-      const next = !!running;
-      if (_claudeRunning === next) return;
-      _claudeRunning = next;
+    setContext(context) {
+      if (contextEquals(_context, context)) {
+        // Action reference may have changed even if visuals match; update it
+        // in place so clicks always invoke the latest closure.
+        if (_context && context) _context.action = context.action;
+        return;
+      }
+      _context = context;
       buildButtons();
     },
 
-    getState: () => ({ mode: 'idle', claudeRunning: _claudeRunning }),
+    getState: () => ({ mode: 'idle', context: _context }),
   };
 }

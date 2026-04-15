@@ -760,13 +760,41 @@
     });
     joystickManager.init();
 
-    // Wire Files + Upload + Settings + Feed into the joystick floating buttons
+    // Wire Files + Upload + Settings into the joystick floating buttons.
+    // The contextual slot (feed/topic icon) is driven separately via
+    // `joystickManager.setContext()` in syncContextualFeedIcon below.
     joystickManager.setActions({
       onFilesClick: () => openFileBrowserTile(),
       onUploadClick: () => triggerImageUpload(),
       onSettingsClick: () => modals.open('settings'),
-      onFeedClick: () => openClaudeFeedTile(),
     });
+
+    // Context detection for the joystick's contextual slot. Each entry maps
+    // a tile signal to a button config. First match wins; no match hides
+    // the button. Adding a new context (e.g. `meta.node`, `meta.git`) is a
+    // single entry — no joystick or subscriber changes required.
+    const TILE_CONTEXTS = [
+      {
+        id: "claude",
+        test: (s) => !!(s?.meta?.claude?.uuid || s?.meta?.claude?.running),
+        icon: "sparkle",
+        label: "Claude feed",
+        className: "joystick-action-btn--claude",
+        action: () => openClaudeFeedTile(),
+      },
+    ];
+
+    function detectTileContext(session) {
+      if (!session) return null;
+      const match = TILE_CONTEXTS.find((c) => c.test(session));
+      if (!match) return null;
+      return {
+        icon: match.icon,
+        label: match.label,
+        className: match.className,
+        action: match.action,
+      };
+    }
 
     // Joystick (floating action buttons) is always visible — same
     // experience on iPad and desktop.
@@ -1590,16 +1618,18 @@
 
     const renderBar = (name) => shortcutBarInstance.render(name);
 
-    // Reflect the active tile's Claude-presence state onto the joystick
-    // feed button. The server flips `meta.claude.running` from tmux's
-    // `pane_current_command` poll, so this fires on both the periodic
-    // `session-updated` broadcast and active-tile switches.
-    function syncClaudePresenceIndicator() {
+    // Reflect the active tile's detected context onto the joystick's
+    // contextual slot. The server flips `meta.claude.running` from tmux's
+    // `pane_current_command` poll and `meta.claude.uuid` from the
+    // SessionStart hook, so this fires on both the periodic
+    // `session-updated` broadcast and active-tile switches. When no
+    // context matches, the button is hidden entirely.
+    function syncContextualFeedIcon() {
       const { sessions } = sessionStore.getState();
       if (!sessions) return;
       const activeName = getActiveSessionName();
       const active = activeName ? sessions.find((s) => s.name === activeName) : null;
-      joystickManager.setClaudeRunning(!!active?.meta?.claude?.running);
+      joystickManager.setContext(detectTileContext(active));
     }
 
     // Sync per-session icons from server session data
@@ -1613,13 +1643,13 @@
           iconStore.removeIcon(s.name);
         }
       }
-      syncClaudePresenceIndicator();
+      syncContextualFeedIcon();
     });
 
     // Active tile changes (e.g. user switches sessions) need an immediate
     // refresh of the joystick presence indicator — waiting for the next
     // sessionStore push would leave a stale icon for up to 5s.
-    uiStore.subscribe(syncClaudePresenceIndicator);
+    uiStore.subscribe(syncContextualFeedIcon);
 
     // Subscribe to shortcuts changes to re-render bar
     shortcutsStore.subscribe(() => {
