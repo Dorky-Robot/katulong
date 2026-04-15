@@ -12,13 +12,13 @@
  * can read the chord they've typed.
  */
 
-const EL_CLASS = "command-surface";
+export const COMMAND_SURFACE_CLASS = "command-surface";
 
 export function createCommandSurface({ mountIn, mode }) {
   if (!mountIn) throw new Error("createCommandSurface: mountIn required");
 
   const el = document.createElement("div");
-  el.className = EL_CLASS;
+  el.className = COMMAND_SURFACE_CLASS;
   el.setAttribute("role", "menu");
   el.setAttribute("aria-label", "Command mode menu");
 
@@ -37,7 +37,6 @@ export function createCommandSurface({ mountIn, mode }) {
   mountIn.appendChild(el);
 
   function keyLabel(child) {
-    if (child.keyRange === "1-9") return "1-9";
     if (child.key === " ") return "␣";
     return child.key;
   }

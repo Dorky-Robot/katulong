@@ -39,6 +39,12 @@ function score(label, query) {
 }
 
 export function openCommandPicker({ items, onPick, placeholder = "Go to…" }) {
+  // Single-instance guard: a second open-while-open would mount a ghost
+  // overlay and leak its capture-phase keydown listener on window (Escape
+  // only closes the topmost picker). Return the existing handle instead.
+  const existing = document.querySelector(`.${EL_CLASS}`);
+  if (existing && existing.__handle) return existing.__handle;
+
   const overlay = document.createElement("div");
   overlay.className = EL_CLASS;
   overlay.setAttribute("role", "dialog");
@@ -109,7 +115,12 @@ export function openCommandPicker({ items, onPick, placeholder = "Go to…" }) {
   function pick(i) {
     const item = filtered[i];
     close();
-    if (item && onPick) onPick(item);
+    if (!item || !onPick) return;
+    // onPick may be async — resolve through a Promise so a synchronous
+    // throw before the first await doesn't become an unhandled rejection.
+    Promise.resolve().then(() => onPick(item)).catch((err) => {
+      console.error("command-picker onPick threw", err);
+    });
   }
 
   function close() {
@@ -152,5 +163,7 @@ export function openCommandPicker({ items, onPick, placeholder = "Go to…" }) {
   render();
   requestAnimationFrame(() => input.focus());
 
-  return { close };
+  const handle = { close };
+  overlay.__handle = handle;  // used by the single-instance guard
+  return handle;
 }

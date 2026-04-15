@@ -14,19 +14,12 @@
  * the tree stays testable in isolation and the app can swap action
  * implementations (e.g. different behavior per cluster) without
  * rewriting the data.
- *
- * Numeric leaves (1..9 for cluster/tile selection) use the special
- * `keyRange` form so the renderer can collapse "1 2 3 4 5 6 7 8 9"
- * into a single "1..N" pill and the dispatcher can map any digit
- * key to the matching action.
  */
 
 /**
  * Build the default chord tree with the host's action registry wired in.
  *
  * @param {object} actions
- * @param {function} actions.jumpToTab             — (position: number, 1-based) => void
- * @param {function} actions.newTab                — () => void
  * @param {function} actions.closeCurrentTile      — () => void
  * @param {function} actions.renameCurrentTile     — () => void
  * @param {function} actions.createTile            — (type: string) => void
@@ -71,14 +64,12 @@ export function buildCommandTree(actions) {
 /**
  * Resolve a keydown against a node's children.
  *
- * Returns the matched child, or null if no match. Handles both the
- * literal `key` form and the `keyRange: "1-9"` form (digit keys).
+ * Returns the matched child, or null if no match.
  */
 export function matchChild(node, keyStr) {
   if (!node?.children) return null;
   for (const child of node.children) {
     if (child.key && child.key === keyStr) return child;
-    if (child.keyRange === "1-9" && /^[1-9]$/.test(keyStr)) return child;
   }
   return null;
 }

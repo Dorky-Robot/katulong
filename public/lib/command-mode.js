@@ -82,9 +82,7 @@ export function createCommandMode({ tree = null } = {}) {
     e.preventDefault();
     e.stopPropagation();
     if (isLeaf(child)) {
-      // Digit keys (1-9) pass the digit into the action so the tree
-      // can collapse ranges into a single leaf.
-      try { child.action(/^[1-9]$/.test(e.key) ? Number(e.key) : undefined); }
+      try { child.action(); }
       catch (err) { console.error("command-mode action threw", err); }
       setActive(false);  // leaf → exit mode
     } else {

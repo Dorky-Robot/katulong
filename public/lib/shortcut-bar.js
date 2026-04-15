@@ -12,6 +12,7 @@ import { invalidateSessions } from "/lib/stores.js";
 import { api, invalidateSessionIdCache } from "/lib/api-client.js";
 import { detectPlatform } from "/lib/platform.js";
 import { renderKeyIsland } from "/lib/key-island.js";
+import { COMMAND_SURFACE_CLASS } from "/lib/command-surface.js";
 import "/lib/tile-tab-bar.js"; // registers <tile-tab-bar> custom element
 
 export function createShortcutBar(options = {}) {
@@ -257,7 +258,7 @@ export function createShortcutBar(options = {}) {
     // Command-mode surface (vim-style chord menu) lives in the same
     // bar slot but is owned by app.js; preserve it across re-renders
     // so the mode doesn't drop when the bar redraws (e.g. on tab change).
-    const savedCommandSurface = container.querySelector(".command-surface");
+    const savedCommandSurface = container.querySelector(`.${COMMAND_SURFACE_CLASS}`);
     if (savedCommandSurface) savedCommandSurface.remove();
 
     container.innerHTML = "";

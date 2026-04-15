@@ -1597,6 +1597,12 @@
     // and the surface in when [data-command-mode="true"]. The chord
     // tree is pure data (command-tree.js) wired to host actions below.
     async function openTilePicker() {
+      // Exit command mode so its capture-phase keydown listener doesn't
+      // swallow "t"/"n"/"h" when typed into the picker's input. The mode
+      // and the picker each own a window-level keydown; with both alive,
+      // chord keys never reach the picker's filter.
+      if (commandMode?.isActive()) commandMode.exit();
+
       // Snapshot ui-store first so open tiles resolve without a round-trip.
       const uiState = uiStore.getState();
       const openTiles = Object.entries(uiState.tiles).map(([id, tile]) => {
