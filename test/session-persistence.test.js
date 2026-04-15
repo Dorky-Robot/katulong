@@ -292,7 +292,7 @@ describe("Session persistence", () => {
     await mgr.createSession("with-meta", 80, 24);
     const session = mgr.getSession("with-meta");
     session.setMeta("user", { note: "hi" });
-    session.setMeta("claude", { sessionUuid: "uuid-live-only" });
+    session.setMeta("claude", { uuid: "uuid-live-only" });
 
     // Wait for debounced save
     await new Promise((r) => setTimeout(r, 200));
@@ -315,7 +315,7 @@ describe("Session persistence", () => {
           tmuxPane: "%1",
           meta: {
             user: { note: "keeps" },
-            claude: { sessionUuid: "should-be-dropped" },
+            claude: { uuid: "should-be-dropped" },
           },
         },
       }),

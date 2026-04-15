@@ -1541,13 +1541,13 @@ describe("Session.meta", () => {
 
   it("accepts an initial meta object on construction", () => {
     const session = new Session("test", "test", {
-      meta: { claude: { sessionUuid: "abc", startedAt: 1 } },
+      meta: { claude: { uuid: "abc", startedAt: 1 } },
     });
-    assert.deepStrictEqual(session.meta, { claude: { sessionUuid: "abc", startedAt: 1 } });
+    assert.deepStrictEqual(session.meta, { claude: { uuid: "abc", startedAt: 1 } });
   });
 
   it("shallow-copies the initial meta so the caller's object is not retained", () => {
-    const initial = { claude: { sessionUuid: "abc" } };
+    const initial = { claude: { uuid: "abc" } };
     const session = new Session("test", "test", { meta: initial });
     assert.notStrictEqual(session.meta, initial);
   });
@@ -1563,30 +1563,30 @@ describe("Session.meta", () => {
 
   it("toJSON includes the meta bucket", () => {
     const session = new Session("test", "test", {
-      meta: { claude: { sessionUuid: "abc" } },
+      meta: { claude: { uuid: "abc" } },
     });
     const json = session.toJSON();
-    assert.deepStrictEqual(json.meta, { claude: { sessionUuid: "abc" } });
+    assert.deepStrictEqual(json.meta, { claude: { uuid: "abc" } });
   });
 
   describe("setMeta", () => {
     it("replaces a namespace with the given value", () => {
       const session = new Session("test", "test");
-      session.setMeta("claude", { sessionUuid: "abc" });
-      assert.deepStrictEqual(session.meta, { claude: { sessionUuid: "abc" } });
+      session.setMeta("claude", { uuid: "abc" });
+      assert.deepStrictEqual(session.meta, { claude: { uuid: "abc" } });
     });
 
     it("fully replaces an existing namespace (not a deep merge)", () => {
       const session = new Session("test", "test", {
-        meta: { claude: { sessionUuid: "abc", startedAt: 1 } },
+        meta: { claude: { uuid: "abc", startedAt: 1 } },
       });
-      session.setMeta("claude", { sessionUuid: "def" });
-      assert.deepStrictEqual(session.meta, { claude: { sessionUuid: "def" } });
+      session.setMeta("claude", { uuid: "def" });
+      assert.deepStrictEqual(session.meta, { claude: { uuid: "def" } });
     });
 
     it("removes a namespace when value is null", () => {
       const session = new Session("test", "test", {
-        meta: { claude: { sessionUuid: "abc" }, user: { foo: 1 } },
+        meta: { claude: { uuid: "abc" }, user: { foo: 1 } },
       });
       session.setMeta("claude", null);
       assert.deepStrictEqual(session.meta, { user: { foo: 1 } });
@@ -1594,7 +1594,7 @@ describe("Session.meta", () => {
 
     it("removes a namespace when value is undefined", () => {
       const session = new Session("test", "test", {
-        meta: { claude: { sessionUuid: "abc" } },
+        meta: { claude: { uuid: "abc" } },
       });
       session.setMeta("claude", undefined);
       assert.deepStrictEqual(session.meta, {});
@@ -1604,11 +1604,11 @@ describe("Session.meta", () => {
       const session = new Session("test", "test", {
         meta: { user: { note: "hi" }, system: { v: 1 } },
       });
-      session.setMeta("claude", { sessionUuid: "abc" });
+      session.setMeta("claude", { uuid: "abc" });
       assert.deepStrictEqual(session.meta, {
         user: { note: "hi" },
         system: { v: 1 },
-        claude: { sessionUuid: "abc" },
+        claude: { uuid: "abc" },
       });
     });
 
@@ -1632,7 +1632,7 @@ describe("Session.meta", () => {
       const session = new Session("test", "test", {
         onChange: (s) => calls.push(s),
       });
-      session.setMeta("claude", { sessionUuid: "abc" });
+      session.setMeta("claude", { uuid: "abc" });
       assert.strictEqual(calls.length, 1);
       assert.strictEqual(calls[0], session);
     });

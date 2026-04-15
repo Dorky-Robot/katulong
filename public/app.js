@@ -1706,28 +1706,37 @@
     async function openClaudeFeedTile() {
       const sessionName = getActiveSessionName();
       try {
-        let topic = null;
-        let meta = null;
-
+        // Primary: read meta.claude.uuid from the already-cached session
+        // list. The `session-updated` WS push keeps this in sync, so we
+        // don't need a dedicated fetch.
         if (sessionName) {
-          const list = await api.get("/sessions");
-          const active = (list.sessions || []).find(s => s.name === sessionName);
+          const { sessions } = sessionStore.getState();
+          const active = (sessions || []).find(s => s.name === sessionName);
           const uuid = active?.meta?.claude?.uuid;
-          if (uuid) topic = `claude/${uuid}`;
+          if (uuid) {
+            const topic = `claude/${uuid}`;
+            const tileId = `feed-${Date.now().toString(36)}`;
+            uiStore.addTile(
+              { id: tileId, type: "feed", props: { topic, title: topic, meta: {} } },
+              { focus: true, insertAt: "afterFocus" },
+            );
+            if (isOverlayViewport()) setOverlaySidebar(false);
+            return;
+          }
         }
 
-        if (!topic) {
-          const topics = await api.get("/api/topics");
-          const match = topics
-            .filter(t => t.name.startsWith("claude/") && t.meta?.sessionName === sessionName)
-            .sort((a, b) => (b.messages || 0) - (a.messages || 0))[0];
-          if (match) { topic = match.name; meta = match.meta || {}; }
-        }
-
-        if (topic) {
+        // Fallback: scan topics for a sessionName match — resolves Claude
+        // sessions whose SessionStart fired before MC1f was deployed.
+        // Remove once all live Claude sessions have been restarted under
+        // the new hook wiring.
+        const topics = await api.get("/api/topics");
+        const match = topics
+          .filter(t => t.name.startsWith("claude/") && t.meta?.sessionName === sessionName)
+          .sort((a, b) => (b.messages || 0) - (a.messages || 0))[0];
+        if (match) {
           const tileId = `feed-${Date.now().toString(36)}`;
           uiStore.addTile(
-            { id: tileId, type: "feed", props: { topic, title: topic, meta: meta || {} } },
+            { id: tileId, type: "feed", props: { topic: match.name, title: match.name, meta: match.meta || {} } },
             { focus: true, insertAt: "afterFocus" },
           );
         } else {
