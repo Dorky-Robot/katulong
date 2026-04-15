@@ -10,12 +10,18 @@ describe("SENSITIVE_ENV_VARS", () => {
   it("contains CLAUDECODE", () => {
     assert.ok(SENSITIVE_ENV_VARS.has("CLAUDECODE"));
   });
+
+  it("contains TMUX, TMUX_PANE, TMUX_TMPDIR", () => {
+    assert.ok(SENSITIVE_ENV_VARS.has("TMUX"));
+    assert.ok(SENSITIVE_ENV_VARS.has("TMUX_PANE"));
+    assert.ok(SENSITIVE_ENV_VARS.has("TMUX_TMPDIR"));
+  });
 });
 
 describe("getSafeEnv", () => {
   // Stash and restore any pre-existing values
   let saved = {};
-  const TEST_VARS = ["SETUP_TOKEN", "CLAUDECODE"];
+  const TEST_VARS = ["SETUP_TOKEN", "CLAUDECODE", "TMUX", "TMUX_PANE", "TMUX_TMPDIR"];
 
   beforeEach(() => {
     saved = {};
@@ -80,5 +86,16 @@ describe("getSafeEnv", () => {
     const env = getSafeEnv();
     assert.ok(!("SETUP_TOKEN" in env));
     assert.ok(!("CLAUDECODE" in env));
+  });
+
+  it("filters TMUX, TMUX_PANE, TMUX_TMPDIR so outer-tmux state does not leak into spawned panes", () => {
+    process.env.TMUX = "/private/tmp/tmux-501/default,11509,1";
+    process.env.TMUX_PANE = "%1";
+    process.env.TMUX_TMPDIR = "/private/tmp";
+
+    const env = getSafeEnv();
+    assert.ok(!("TMUX" in env), "TMUX must not leak (outer tmux server address)");
+    assert.ok(!("TMUX_PANE" in env), "TMUX_PANE must not leak (breaks pane-to-session matching)");
+    assert.ok(!("TMUX_TMPDIR" in env), "TMUX_TMPDIR must not leak");
   });
 });
