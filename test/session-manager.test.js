@@ -64,10 +64,12 @@ describe("session manager", () => {
   });
 
   describe("createSession", () => {
-    it("creates a session and returns its name", async () => {
+    it("creates a session and returns its name and id", async () => {
       const { mgr } = makeManager();
       const result = await mgr.createSession("test1");
-      assert.deepStrictEqual(result, { name: "test1" });
+      assert.strictEqual(result.name, "test1");
+      assert.strictEqual(typeof result.id, "string");
+      assert.strictEqual(result.id.length, 21);
     });
 
     it("rejects duplicate session names", async () => {
@@ -141,18 +143,21 @@ describe("session manager", () => {
   });
 
   describe("renameSession", () => {
-    it("renames a session", async () => {
+    it("renames a session and preserves id", async () => {
       const { mgr, bridge } = makeManager();
-      await mgr.createSession("old");
+      const created = await mgr.createSession("old");
       const result = await mgr.renameSession("old", "new");
-      assert.deepStrictEqual(result, { name: "new" });
+      assert.strictEqual(result.name, "new");
+      assert.strictEqual(result.id, created.id, "rename must preserve id");
       assert.strictEqual(mgr.listSessions().sessions.length, 1);
       assert.strictEqual(mgr.listSessions().sessions[0].name, "new");
+      assert.strictEqual(mgr.listSessions().sessions[0].id, created.id);
 
       const renamed = bridge.messages.find(m => m.type === "session-renamed");
       assert.ok(renamed);
       assert.strictEqual(renamed.session, "old");
       assert.strictEqual(renamed.newName, "new");
+      assert.strictEqual(renamed.id, created.id);
     });
 
     it("rejects rename to existing name", async () => {
