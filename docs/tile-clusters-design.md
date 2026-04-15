@@ -307,7 +307,7 @@ Then the multi-cluster work itself (each line below is a separate PR on top of t
 - [x] **MC1 — T2a columns data shape** (shipped as PR #580 — v3 3D `clusters[c][col][row]` array, position IS identity).
 - [x] **Exposé removal** (`53b63d4`, PR #583). Deleted `setMode`/`getMode`/`positionExpose`/`computeExposeCells` from `card-carousel.js`, the pinch-wiring block from `app.js`, and `public/lib/pinch-levels.js` + its 17 tests. `pinch-gesture.js` kept for MC3 to re-attach. *Small.*
 
-### MC1b–MC1e — alignment-debt stabilization pass (2026-04-14)
+### MC1b–MC1f — alignment-debt stabilization pass (2026-04-14)
 
 MC1 landed the 3D state shape, but callers from the Step-1 / pre-FP era still reach into `card-carousel` imperatively instead of projecting from `uiStore`. Before MC3 layers L2 decks on top, the substrate is stabilized through a series of small, independently-landable refactors. Each pass is scoped to a single concern so heavy-flux reviews stay tractable and agents working in parallel don't stomp each other.
 
@@ -340,6 +340,14 @@ Originally MC2 was scoped as a "layout-change snapshot" emitted from carousel th
   **Sequencing.** Land after MC1d (which removes the last carousel reads from app.js). MC1d is a prerequisite because the rename reducer lives in the ui-store layer that MC1d finishes wiring up. **MC3 is blocked on MC1e**: L2 cluster strips key off sessions, and landing MC3 before MC1e would carry the name-as-key shape into a second layer, turning one contained migration into a two-layer migration. If MC3 schedule pressure demands the relaxation, that must be an explicit decision, not a default.
 
   **Risk.** The migration is the risk, not the code. Load-bearing v3 → v4 rewrite: existing users' localStorage contains name-keyed cluster state; the migration must synthesize `id`s and preserve focus/order. A parallel read path that falls back to the old shape (read-only) through one release helps the rollback story. *Large — the change itself is contained but the schema migration earns the weight.*
+
+- [ ] **MC1f — Session meta bucket.** See `docs/session-meta.md` for the full write-up. Adds `session.meta` — a freeform, namespaced (`claude` / `user` / `system`), size-capped (4 KB) per-session key/value store that survives rename (it hangs off `id`, not `name`). Persisted to `sessions.json` under `meta` alongside `tmuxName`/`id`, minus the `claude` namespace which is reconstructed from live hook events. New routes: `GET/PATCH /sessions/:id/meta`, `DELETE /sessions/:id/meta/:ns[/:key]`, all `auth + csrf`. CLI: `katulong session meta <name> [set|unset] <path>=<value>`; `session list --wide` grows a `CLAUDE` column.
+
+  **First consumer — Claude presence.** Closes the tile → claude feed-button gap documented in `docs/tile-claude-session-link.md` without re-coupling anything to mutable session name. `relay-hook` stamps `_tmuxPane` on the hook payload; server looks up the session by pane (captured on Session in MC1e PR2 — see below), writes `meta.claude = { uuid, since }` on `SessionStart`, clears it on `Stop` / `SessionEnd`. The frontend feed button then reads `session.meta.claude.uuid` directly; no more `sessionName === activeSessionName` fallback. Future consumers can tag their own data (`meta.user.tags`, `meta.system.autoRestart`) without adding new Session fields.
+
+  **Sequencing.** Land after **MC1e PR2** (which adds `tmuxName = kat_<id>` and captures `$TMUX_PANE` on Session). The pane capture is the key MC1f writes through; without it, no hook-ingest handler can answer "which session is this?" from a `SessionStart` event. Split into two PRs: PR1 = `session.meta` plumbing (Session field, persistence, routes, CLI, caps); PR2 = claude hook → `meta.claude` wiring (relay-hook pane stamping, `SessionStart`/`SessionEnd` subscription in `setup.js`, ingest handler writes meta). PR2 is small and isolated once PR1 lands. *Medium — the cap + namespace discipline is the subtlety; the data shape is trivial.*
+
+  **Not in scope.** Query-by-meta endpoint, a meta history log, a `session-meta-updated` WS message, and binary/large-blob storage are all deferred. The first consumer (Claude tile tools) only needs per-session lookup; broader queries come back if a real consumer asks for them.
 
 Then the feature work:
 - [ ] **MC3 — Level 2 cluster strips** (vertical stack of horizontal carousel strips, pinch-out from Level 1, tilted-deck rendering per Spatial model, `+` at Level 2, tap/pinch-in to return). Needs per-column focused-row state (schema design during MC1c/d); deck rendering primitive extracted for reuse; re-wires `pinch-gesture.js` to the L1↔L2 toggle.
