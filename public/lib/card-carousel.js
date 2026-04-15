@@ -44,6 +44,73 @@ function isTilePersistable(tile) {
   return tile?.persistable !== false;
 }
 
+/**
+ * Pure parser for the legacy `katulong-carousel` localStorage blob.
+ * Returns `{ tiles, focused }` or null when storage is missing / malformed.
+ *
+ * Used by app.js boot to migrate pre-ui-store persistence without reaching
+ * into a carousel instance — the MC1d "no state reads" contract. The
+ * instance's `restore()` delegates to this so both paths share one
+ * format-migration implementation.
+ *
+ * @param {object} [opts]
+ * @param {(type: string) => boolean} [opts.isTypePersistable] — drop tiles whose type returns false.
+ * @param {object} [opts.snapshot] — pre-parsed state (from parseStoredState)
+ *   to use in place of reading live localStorage. Preserves the "snapshot at
+ *   carousel-construction" protection for in-instance callers.
+ */
+export function parseLegacyCarouselStorage({ isTypePersistable = () => true, snapshot = null } = {}) {
+  const state = snapshot || parseStoredState();
+  if (!state) return null;
+
+  let rawCards = state.cards;
+  if (rawCards.length > MAX_PERSISTED_CARDS) {
+    const overflow = rawCards.length - MAX_PERSISTED_CARDS;
+    console.warn(
+      `[carousel] restored ${rawCards.length} cards exceeds cap ` +
+      `${MAX_PERSISTED_CARDS}; dropping ${overflow} oldest on load`
+    );
+    const tail = rawCards.slice(-MAX_PERSISTED_CARDS);
+    const focusedEntry = state.focused
+      ? rawCards.find(c => (typeof c === "string" ? c : c?.id) === state.focused)
+      : null;
+    const focusedInTail = focusedEntry
+      ? tail.some(c => (typeof c === "string" ? c : c?.id) === state.focused)
+      : true;
+    rawCards = focusedInTail || !focusedEntry
+      ? tail
+      : [focusedEntry, ...tail.slice(0, -1)];
+  }
+
+  if (typeof rawCards[0] === "string") {
+    return {
+      tiles: rawCards.map(name => ({
+        id: name,
+        type: "terminal",
+        sessionName: name,
+      })),
+      focused: state.focused,
+    };
+  }
+
+  const tiles = rawCards.filter(c => isTypePersistable(c?.type));
+  const focused = tiles.some(c => (typeof c === "string" ? c : c?.id) === state.focused)
+    ? state.focused
+    : null;
+  return { tiles, focused };
+}
+
+function parseStoredState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const state = JSON.parse(raw);
+    if (!state || !Array.isArray(state.cards) || state.cards.length === 0) return null;
+    return state;
+  } catch { /* localStorage unavailable or malformed JSON — treat as absent */ }
+  return null;
+}
+
 export function createCardCarousel({
   container,
   onFocusChange,
@@ -140,81 +207,15 @@ export function createCardCarousel({
     } catch { /* localStorage unavailable */ }
   }
 
-  /**
-   * Parse the raw localStorage blob into a state object, or return null
-   * on absence / malformed JSON / invalid shape. Shared by restore() and
-   * readSavedCardWidths() so the "read + parse + shape-check" preamble
-   * lives in exactly one place.
-   */
-  function parseStoredState() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return null;
-      const state = JSON.parse(raw);
-      if (!state || !Array.isArray(state.cards) || state.cards.length === 0) return null;
-      return state;
-    } catch { /* localStorage unavailable or malformed JSON — treat as absent */ }
-    return null;
-  }
-
   // Capture the pre-boot snapshot immediately at construction, before any
   // activate()/addCard() call can fire save() and clobber it.
   initialStoredState = parseStoredState();
+
   function restore() {
-    // Use the snapshot captured at construction, not the live localStorage —
-    // see comment on `initialStoredState`. Falls back to parseStoredState()
-    // if the snapshot wasn't captured for any reason (defensive).
-    const state = initialStoredState || parseStoredState();
-    if (!state) return null;
-
-    // Truncate on read too. A user upgrading into this cap for the first
-    // time can have a bloated blob from the pre-cap era; without this
-    // trimming we'd re-mount every phantom exactly once before save()
-    // prunes them, triggering the same subscribe/status storm we're
-    // trying to prevent. Keep the tail (most-recent) plus the stored
-    // focused entry if it would otherwise be trimmed away.
-    let rawCards = state.cards;
-    if (rawCards.length > MAX_PERSISTED_CARDS) {
-      const overflow = rawCards.length - MAX_PERSISTED_CARDS;
-      console.warn(
-        `[carousel] restored ${rawCards.length} cards exceeds cap ` +
-        `${MAX_PERSISTED_CARDS}; dropping ${overflow} oldest on load`
-      );
-      const tail = rawCards.slice(-MAX_PERSISTED_CARDS);
-      const focusedEntry = state.focused
-        ? rawCards.find(c => (typeof c === "string" ? c : c?.id) === state.focused)
-        : null;
-      const focusedInTail = focusedEntry
-        ? tail.some(c => (typeof c === "string" ? c : c?.id) === state.focused)
-        : true;
-      rawCards = focusedInTail || !focusedEntry
-        ? tail
-        : [focusedEntry, ...tail.slice(0, -1)];
-    }
-
-    // Detect legacy format (array of session name strings)
-    if (typeof rawCards[0] === "string") {
-      return {
-        tiles: rawCards.map(name => ({
-          id: name,
-          type: "terminal",
-          sessionName: name,
-        })),
-        focused: state.focused,
-      };
-    }
-
-    // Storage migration: drop any entry whose tile type is known to be
-    // non-persistable. A previous (buggy) build wrote file-browser
-    // tiles into localStorage; users on that build shouldn't have to
-    // manually clear their storage to stop seeing a phantom file
-    // browser on every reload. Idempotent — runs every restore, drops
-    // zero entries once the storage is clean.
-    const tiles = rawCards.filter(c => isTypePersistable(c?.type));
-    const focused = tiles.some(c => (typeof c === "string" ? c : c?.id) === state.focused)
-      ? state.focused
-      : null;
-    return { tiles, focused };
+    return parseLegacyCarouselStorage({
+      isTypePersistable,
+      snapshot: initialStoredState,
+    });
   }
 
   /**

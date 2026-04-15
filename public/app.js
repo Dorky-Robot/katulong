@@ -36,7 +36,7 @@
     import { createWebRTCPeer } from "/lib/webrtc-peer.js";
 
     import { createNotepad } from "/lib/notepad.js";
-    import { createCardCarousel } from "/lib/card-carousel.js";
+    import { createCardCarousel, parseLegacyCarouselStorage } from "/lib/card-carousel.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
     import { createClusterTileFactory } from "/lib/tiles/cluster-tile.js";
     import { createFileBrowserTileFactory } from "/lib/tiles/file-browser-tile.js";
@@ -569,7 +569,7 @@
           cm.send(JSON.stringify(subMsg));
         }
       }
-      if (carousel.isActive()) carousel.fitAll();
+      carousel.fitAll();
     }
 
     /** Route a session through ui-store — adds the tile if absent, then
@@ -593,7 +593,7 @@
      *  dimensions actually change — no need to send unconditionally. */
     function fitActiveTerminal() {
       requestAnimationFrame(() => {
-        if (carousel.isActive()) {
+        if (uiStore.getState().focusedId) {
           carousel.fitAll();
           return;
         }
@@ -1431,7 +1431,7 @@
     });
 
     function applyLocalRename(oldName, newName, tile, wasFocused) {
-      if (carousel.isActive()) carousel.renameCard(oldName, newName);
+      carousel.renameCard(oldName, newName);
       terminalPool.rename(oldName, newName);
       notepad.rename(oldName, newName);
       iconStore.rename(oldName, newName);
@@ -1594,10 +1594,10 @@
       shouldIgnore: (_e) => {
         // Don't hijack drops when the active tile handles its own dnd
         // (e.g. file-browser has built-in file upload drag-drop).
-        if (!carousel.isActive()) return false;
-        const focusedId = uiStore.getState().focusedId;
-        const desc = describeTile(uiStore.getState().tiles[focusedId]);
-        return desc.handlesDnd === true;
+        const state = uiStore.getState();
+        const focused = state.tiles[state.focusedId];
+        if (!focused) return false;
+        return describeTile(focused).handlesDnd === true;
       },
       onDrop: async (imageFiles, totalFiles) => {
         if (imageFiles.length === 0) {
@@ -1875,9 +1875,7 @@
           clearFocusedSessionUI();
         }
       },
-      carouselRename: (e) => {
-        if (carousel.isActive()) carousel.renameCard(e.oldName, e.newName);
-      },
+      carouselRename: (e) => carousel.renameCard(e.oldName, e.newName),
       poolRename: (e) => terminalPool.rename(e.oldName, e.newName),
       notepadRename: (e) => notepad.rename(e.oldName, e.newName),
       iconStoreRename: (e) => iconStore.rename(e.oldName, e.newName),
@@ -2368,17 +2366,18 @@
     // separately, then a setTimeout(500) restore that merged persisted tiles
     // with whatever the first activate set up. This collapsed into a single
     // RESET because ui-store IS the persistence layer — loadFromStorage()
-    // returns the same state the old carousel.restore() + merge produced.
+    // returns the same state the old legacy-carousel restore + merge produced.
     const wasEmptyState = sessionStorage.getItem("katulong-empty-state");
     if (wasEmptyState) sessionStorage.removeItem("katulong-empty-state");
 
     /** Gather boot-state deps from the window, delegate to the pure
      *  buildBootState() composer, and clear the legacy carousel key if
-     *  migration fired. */
+     *  migration fired. `parseLegacyCarouselStorage` reads localStorage
+     *  directly — app.js never queries live carousel state. */
     function gatherBootState() {
       const { state, migratedLegacy } = buildBootState({
         persisted: loadFromStorage(),
-        legacyCarousel: carousel.restore(),
+        legacyCarousel: parseLegacyCarouselStorage({ isTypePersistable: isPersistable }),
         urlSession: explicitSession,
         tabSetSessions: windowTabSet ? windowTabSet.getTabs() : [],
         getRenderer,
