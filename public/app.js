@@ -540,15 +540,20 @@
     // two-finger scroll doesn't flip levels, loose enough that a
     // deliberate pinch always lands. The gesture emits on phase=end so
     // mid-gesture wobble never commits.
-    const PINCH_OUT_COMMIT = 1.15;  // L1 → L2 (zoom out to overview)
-    const PINCH_IN_COMMIT  = 0.85;  // L2 → L1 (zoom into active cluster)
+    //
+    // Direction follows the standard "zoom out to see more" convention:
+    // pinch IN (fingers together, scale < 1) zooms out from L1's focused
+    // cluster to the L2 overview; pinch OUT (fingers apart, scale > 1)
+    // zooms back into the active cluster.
+    const PINCH_IN_COMMIT  = 0.85;  // L1 → L2 (zoom out to overview)
+    const PINCH_OUT_COMMIT = 1.15;  // L2 → L1 (zoom into active cluster)
     const pinch = createPinchGesture({
       target: document.getElementById("main-stage"),
       onPinch: ({ scale, phase }) => {
         if (phase !== "end") return;
         const level = uiStore.getState().level;
-        if (level === 1 && scale >= PINCH_OUT_COMMIT) uiStore.setLevel(2);
-        else if (level === 2 && scale <= PINCH_IN_COMMIT) uiStore.setLevel(1);
+        if (level === 1 && scale <= PINCH_IN_COMMIT) uiStore.setLevel(2);
+        else if (level === 2 && scale >= PINCH_OUT_COMMIT) uiStore.setLevel(1);
       },
     });
     pinch.attach();
