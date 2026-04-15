@@ -10,12 +10,19 @@ describe("SENSITIVE_ENV_VARS", () => {
   it("contains CLAUDECODE", () => {
     assert.ok(SENSITIVE_ENV_VARS.has("CLAUDECODE"));
   });
+
+  it("contains TMUX, TMUX_PANE, TMUX_TMPDIR", () => {
+    assert.ok(SENSITIVE_ENV_VARS.has("TMUX"));
+    assert.ok(SENSITIVE_ENV_VARS.has("TMUX_PANE"));
+    assert.ok(SENSITIVE_ENV_VARS.has("TMUX_TMPDIR"));
+  });
 });
 
 describe("getSafeEnv", () => {
-  // Stash and restore any pre-existing values
+  // Stash and restore any pre-existing values. Derived from the Set itself
+  // so adding a new filtered var never requires a parallel edit here.
   let saved = {};
-  const TEST_VARS = ["SETUP_TOKEN", "CLAUDECODE"];
+  const TEST_VARS = [...SENSITIVE_ENV_VARS];
 
   beforeEach(() => {
     saved = {};
@@ -80,5 +87,23 @@ describe("getSafeEnv", () => {
     const env = getSafeEnv();
     assert.ok(!("SETUP_TOKEN" in env));
     assert.ok(!("CLAUDECODE" in env));
+  });
+
+  // Without this filter, outer-tmux values leak into the /bin/sh wrapper
+  // that tmuxNewSession emits and clobber the inner tmux's own
+  // TMUX_PANE assignment — breaking MC1f pane-to-session matching.
+  it("filters TMUX from the returned environment", () => {
+    process.env.TMUX = "/private/tmp/tmux-501/default,11509,1";
+    assert.ok(!("TMUX" in getSafeEnv()));
+  });
+
+  it("filters TMUX_PANE from the returned environment", () => {
+    process.env.TMUX_PANE = "%1";
+    assert.ok(!("TMUX_PANE" in getSafeEnv()));
+  });
+
+  it("filters TMUX_TMPDIR from the returned environment", () => {
+    process.env.TMUX_TMPDIR = "/private/tmp";
+    assert.ok(!("TMUX_TMPDIR" in getSafeEnv()));
   });
 });
