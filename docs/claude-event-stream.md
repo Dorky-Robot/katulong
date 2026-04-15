@@ -24,9 +24,13 @@
 >   Claude topics now carry only `narrative` / `completion` / `attention`
 >   / `summary` statuses.
 >
-> This doc will be fully rewritten once the follow-on pieces land:
-> narrative processor reading transcript slices directly, and a
-> `GET /api/claude-transcript/:session_id` endpoint for on-demand detail.
+> Follow-on pieces have now landed: the narrative processor reads
+> transcript slices directly, and `GET /api/claude-transcript/:session_id`
+> serves on-demand detail (cursor-paginated via `fromLine` / `limit`,
+> returns `{ entries, nextCursor, hasMore }`). The transcript path is
+> stashed on the topic's server-only meta (`transcriptPath`) and stripped
+> from public responses by `publicMeta()` in `lib/routes/app-routes.js`.
+> This doc will be fully rewritten once the UI drill-down wiring lands.
 
 ## The problem we're solving
 

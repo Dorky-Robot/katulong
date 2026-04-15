@@ -286,12 +286,12 @@ describe("readTranscriptEntries", () => {
 
   it("returns empty result for missing path", () => {
     const result = readTranscriptEntries(null);
-    assert.deepEqual(result, { entries: [], nextCursor: 0 });
+    assert.deepEqual(result, { entries: [], nextCursor: 0, hasMore: false });
   });
 
   it("returns empty result when file does not exist", () => {
     const result = readTranscriptEntries(join(tmpDir, "does-not-exist.jsonl"));
-    assert.deepEqual(result, { entries: [], nextCursor: 0 });
+    assert.deepEqual(result, { entries: [], nextCursor: 0, hasMore: false });
   });
 
   it("normalizes an assistant text + tool_use turn into one entry", () => {
@@ -406,5 +406,35 @@ describe("readTranscriptEntries", () => {
     ]);
     const { entries } = readTranscriptEntries(path);
     assert.equal(entries.length, 0);
+  });
+
+  it("respects `limit` and reports hasMore when stopped short", () => {
+    const path = writeTranscript("paged.jsonl", [
+      { type: "user", message: { role: "user", content: "one" } },
+      { type: "user", message: { role: "user", content: "two" } },
+      { type: "user", message: { role: "user", content: "three" } },
+      { type: "user", message: { role: "user", content: "four" } },
+    ]);
+    const page1 = readTranscriptEntries(path, 0, 2);
+    assert.equal(page1.entries.length, 2);
+    assert.equal(page1.nextCursor, 2);
+    assert.equal(page1.hasMore, true);
+    assert.deepEqual(page1.entries.map(e => e.text), ["one", "two"]);
+
+    const page2 = readTranscriptEntries(path, page1.nextCursor, 2);
+    assert.equal(page2.entries.length, 2);
+    assert.equal(page2.nextCursor, 4);
+    assert.equal(page2.hasMore, false);
+    assert.deepEqual(page2.entries.map(e => e.text), ["three", "four"]);
+  });
+
+  it("`hasMore: false` when the limit exactly hits EOF", () => {
+    const path = writeTranscript("exact.jsonl", [
+      { type: "user", message: { role: "user", content: "a" } },
+      { type: "user", message: { role: "user", content: "b" } },
+    ]);
+    const result = readTranscriptEntries(path, 0, 2);
+    assert.equal(result.hasMore, false);
+    assert.equal(result.nextCursor, 2);
   });
 });
