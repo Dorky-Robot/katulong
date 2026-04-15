@@ -257,7 +257,7 @@ const routes = [
     auth, csrf,
   }),
   ...createAppRoutes({
-    json, parseJSON, isAuthenticated, sessionManager,
+    json, parseJSON, readBody, isAuthenticated, sessionManager,
     bridge,
     configManager,
     __dirname, DATA_DIR, APP_VERSION,
