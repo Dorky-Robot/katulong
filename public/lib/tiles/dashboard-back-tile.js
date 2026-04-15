@@ -9,7 +9,7 @@
  * carousel surface; the container exposes `ctx.faceStack` instead.)
  */
 
-import { api } from "../api-client.js";
+import { api, invalidateSessionIdCache } from "../api-client.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -208,6 +208,7 @@ export function createDashboardBackTile({ sessionName, sessionId, watcher } = {}
       case "kill":
         try {
           await api.delete(`/sessions/by-id/${encodeURIComponent(sessionId)}`);
+          invalidateSessionIdCache(currentSessionName);
           addEvent(`Killed session ${currentSessionName}`);
           updateStatus("exited");
         } catch (err) {
@@ -218,6 +219,7 @@ export function createDashboardBackTile({ sessionName, sessionId, watcher } = {}
       case "restart":
         try {
           await api.delete(`/sessions/by-id/${encodeURIComponent(sessionId)}`);
+          invalidateSessionIdCache(currentSessionName);
           if (destroyed) return;
           addEvent(`Killed session ${currentSessionName}`);
           // Brief delay then recreate. The destroyed guard must fire on
@@ -228,6 +230,7 @@ export function createDashboardBackTile({ sessionName, sessionId, watcher } = {}
             if (destroyed) return;
             try {
               await api.post("/sessions", { name: currentSessionName });
+              invalidateSessionIdCache(currentSessionName);
               if (destroyed) return;
               addEvent(`Restarted session ${currentSessionName}`);
               startTime = Date.now();
@@ -250,7 +253,7 @@ export function createDashboardBackTile({ sessionName, sessionId, watcher } = {}
 
       case "copy-output":
         try {
-          const data = await api.get(`/sessions/${encodeURIComponent(currentSessionName)}/buffer?lines=50`);
+          const data = await api.get(`/sessions/by-id/${encodeURIComponent(sessionId)}/output?lines=50`);
           const text = Array.isArray(data) ? data.join("\n") : (data.output || data.buffer || "");
           await navigator.clipboard.writeText(text);
           addEvent("Copied last 50 lines to clipboard");
