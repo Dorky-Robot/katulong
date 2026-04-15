@@ -1596,13 +1596,33 @@
     // Mounts a surface inside #shortcut-bar; CSS fades the tabs/+ out
     // and the surface in when [data-command-mode="true"]. The chord
     // tree is pure data (command-tree.js) wired to host actions below.
+    let pickerPending = false;
     async function openTilePicker() {
+      // Re-entry guard. The single-instance check inside openCommandPicker
+      // only fires once the overlay is mounted — during our awaits below,
+      // a second trigger would race through and leak a ghost picker.
+      if (pickerPending) return;
+      pickerPending = true;
+
       // Exit command mode so its capture-phase keydown listener doesn't
       // swallow "t"/"n"/"h" when typed into the picker's input. The mode
       // and the picker each own a window-level keydown; with both alive,
       // chord keys never reach the picker's filter.
       if (commandMode?.isActive()) commandMode.exit();
 
+      // If the user presses Esc during the fetch, honor the cancellation
+      // instead of mounting a picker the user no longer wants. One-shot
+      // capture listener; removed either by Esc or by reaching mount.
+      let cancelled = false;
+      const onEscape = (e) => {
+        if (e.key === "Escape") {
+          cancelled = true;
+          window.removeEventListener("keydown", onEscape, true);
+        }
+      };
+      window.addEventListener("keydown", onEscape, true);
+
+      try {
       // Snapshot ui-store first so open tiles resolve without a round-trip.
       const uiState = uiStore.getState();
       const openTiles = Object.entries(uiState.tiles).map(([id, tile]) => {
@@ -1646,6 +1666,9 @@
 
       const items = [...openTiles, ...closedManaged, ...tmuxItems];
 
+      window.removeEventListener("keydown", onEscape, true);
+      if (cancelled) return;
+
       openCommandPicker({
         items,
         placeholder: "Go to tile or session…",
@@ -1666,6 +1689,10 @@
           }
         },
       });
+      } finally {
+        window.removeEventListener("keydown", onEscape, true);
+        pickerPending = false;
+      }
     }
 
     const commandActions = {
