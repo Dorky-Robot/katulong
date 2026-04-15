@@ -1696,24 +1696,41 @@
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
-    /** Open a feed tile for the Claude session running in the current terminal. */
+    /** Open a feed tile for the Claude session running in the current terminal.
+     *
+     * Primary path: read `session.meta.claude.uuid` populated by the server
+     * hook ingest (MC1f). Fallback: scan topics for a sessionName match —
+     * kept so existing Claude sessions whose SessionStart fired before this
+     * wiring still resolve.
+     */
     async function openClaudeFeedTile() {
       const sessionName = getActiveSessionName();
       try {
-        const topics = await api.get("/api/topics");
-        // Find the most recent Claude topic matching this terminal session
-        const match = topics
-          .filter(t => t.name.startsWith("claude/") && t.meta?.sessionName === sessionName)
-          .sort((a, b) => (b.messages || 0) - (a.messages || 0))[0];
+        let topic = null;
+        let meta = null;
 
-        if (match) {
+        if (sessionName) {
+          const list = await api.get("/sessions");
+          const active = (list.sessions || []).find(s => s.name === sessionName);
+          const uuid = active?.meta?.claude?.uuid;
+          if (uuid) topic = `claude/${uuid}`;
+        }
+
+        if (!topic) {
+          const topics = await api.get("/api/topics");
+          const match = topics
+            .filter(t => t.name.startsWith("claude/") && t.meta?.sessionName === sessionName)
+            .sort((a, b) => (b.messages || 0) - (a.messages || 0))[0];
+          if (match) { topic = match.name; meta = match.meta || {}; }
+        }
+
+        if (topic) {
           const tileId = `feed-${Date.now().toString(36)}`;
           uiStore.addTile(
-            { id: tileId, type: "feed", props: { topic: match.name, title: match.name, meta: match.meta || {} } },
+            { id: tileId, type: "feed", props: { topic, title: topic, meta: meta || {} } },
             { focus: true, insertAt: "afterFocus" },
           );
         } else {
-          // No Claude topic found — open blank feed picker
           openFeedTile();
         }
       } catch {

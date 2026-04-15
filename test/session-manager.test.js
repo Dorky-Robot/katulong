@@ -233,6 +233,33 @@ describe("session manager", () => {
     });
   });
 
+  describe("getSessionByPane", () => {
+    it("returns the session whose tmuxPane matches", async () => {
+      // The tmux mock in this test file returns "%1" for tmuxGetPaneId
+      // (see the module mock at the top). So every adopted session ends
+      // up with tmuxPane === "%1" — enough to verify lookup semantics.
+      const { mgr } = makeManager();
+      await mgr.createSession("paneful");
+      const session = mgr.getSessionByPane("%1");
+      assert.ok(session);
+      assert.strictEqual(session.name, "paneful");
+    });
+
+    it("returns undefined for unknown pane", async () => {
+      const { mgr } = makeManager();
+      await mgr.createSession("alpha");
+      assert.strictEqual(mgr.getSessionByPane("%999"), undefined);
+    });
+
+    it("returns undefined for malformed pane (not %N)", () => {
+      const { mgr } = makeManager();
+      assert.strictEqual(mgr.getSessionByPane("3"), undefined);
+      assert.strictEqual(mgr.getSessionByPane("%"), undefined);
+      assert.strictEqual(mgr.getSessionByPane(null), undefined);
+      assert.strictEqual(mgr.getSessionByPane(""), undefined);
+    });
+  });
+
   describe("client attach/detach", () => {
     it("attaches a client to a session and returns visible pane snapshot", async () => {
       const { mgr } = makeManager();

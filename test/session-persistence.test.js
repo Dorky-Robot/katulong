@@ -24,12 +24,16 @@ class MockSession {
     this.name = name;
     this.tmuxName = tmuxName;
     this.id = options.id || null;
+    this.tmuxPane = options.tmuxPane || null;
     this._alive = true;
     this._cols = 0;
     this._rows = 0;
     this._resizeCalls = [];
     this.outputBuffer = { totalBytes: 0 };
     this.external = options.external || false;
+    this.meta = (options.meta && typeof options.meta === "object" && !Array.isArray(options.meta))
+      ? { ...options.meta } : {};
+    this._onChange = options.onChange || null;
   }
   get alive() { return this._alive; }
   attachControlMode(/* cols, rows */) { /* Real Session does NOT set _cols here */ }
@@ -40,7 +44,16 @@ class MockSession {
   detach() { this._alive = false; }
   kill() { this._alive = false; tmuxSessions.delete(this.tmuxName); }
   serializeScreen() { return ""; }
-  toJSON() { return { id: this.id, name: this.name, alive: this.alive }; }
+  setMeta(ns, value) {
+    const next = { ...this.meta };
+    if (value === null || value === undefined) delete next[ns];
+    else next[ns] = value;
+    this.meta = next;
+    if (this._onChange) this._onChange(this);
+  }
+  toJSON() {
+    return { id: this.id, name: this.name, alive: this.alive, meta: this.meta };
+  }
 }
 
 mock.module(sessionModuleUrl, {
@@ -267,6 +280,71 @@ describe("Session persistence", () => {
       "Narrow session should NOT be forcibly resized");
     assert.strictEqual(wide._resizeCalls.length, 0,
       "Wide session should NOT be forcibly resized");
+
+    mgr.shutdown();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("persists user/system meta but strips the claude namespace", async () => {
+    const mgr = createSessionManager({
+      bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
+    });
+    await mgr.createSession("with-meta", 80, 24);
+    const session = mgr.getSession("with-meta");
+    session.setMeta("user", { note: "hi" });
+    session.setMeta("claude", { sessionUuid: "uuid-live-only" });
+
+    // Wait for debounced save
+    await new Promise((r) => setTimeout(r, 200));
+
+    const saved = JSON.parse(readFileSync(join(dataDir, "sessions.json"), "utf-8"));
+    assert.deepStrictEqual(saved["with-meta"].meta, { user: { note: "hi" } });
+    assert.strictEqual(saved["with-meta"].meta.claude, undefined);
+
+    mgr.shutdown();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("round-trips persisted meta through restore (minus claude)", async () => {
+    writeFileSync(
+      join(dataDir, "sessions.json"),
+      JSON.stringify({
+        "alpha": {
+          tmuxName: "kat_alpha",
+          id: "aaaaaaaaaaaaaaaaaaaaa",
+          tmuxPane: "%1",
+          meta: {
+            user: { note: "keeps" },
+            claude: { sessionUuid: "should-be-dropped" },
+          },
+        },
+      }),
+    );
+    tmuxSessions.set("kat_alpha", true);
+
+    const mgr = createSessionManager({
+      bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
+    });
+    await mgr.restoreSessions();
+
+    const alpha = mgr.getSession("alpha");
+    assert.ok(alpha, "alpha should be restored");
+    assert.deepStrictEqual(alpha.meta, { user: { note: "keeps" } });
+
+    mgr.shutdown();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("omits the meta field from sessions.json when the bucket is empty", async () => {
+    const mgr = createSessionManager({
+      bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
+    });
+    await mgr.createSession("empty-meta", 80, 24);
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const saved = JSON.parse(readFileSync(join(dataDir, "sessions.json"), "utf-8"));
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(saved["empty-meta"], "meta"), false);
 
     mgr.shutdown();
     rmSync(dataDir, { recursive: true, force: true });
