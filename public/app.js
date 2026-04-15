@@ -762,7 +762,7 @@
 
     // Wire Files + Upload + Settings into the joystick floating buttons.
     // The contextual slot (feed/topic icon) is driven separately via
-    // `joystickManager.setContext()` in syncContextualFeedIcon below.
+    // `joystickManager.setContext()` in syncJoystickContext below.
     joystickManager.setActions({
       onFilesClick: () => openFileBrowserTile(),
       onUploadClick: () => triggerImageUpload(),
@@ -786,14 +786,7 @@
 
     function detectTileContext(session) {
       if (!session) return null;
-      const match = TILE_CONTEXTS.find((c) => c.test(session));
-      if (!match) return null;
-      return {
-        icon: match.icon,
-        label: match.label,
-        className: match.className,
-        action: match.action,
-      };
+      return TILE_CONTEXTS.find((c) => c.test(session)) || null;
     }
 
     // Joystick (floating action buttons) is always visible — same
@@ -1621,10 +1614,11 @@
     // Reflect the active tile's detected context onto the joystick's
     // contextual slot. The server flips `meta.claude.running` from tmux's
     // `pane_current_command` poll and `meta.claude.uuid` from the
-    // SessionStart hook, so this fires on both the periodic
-    // `session-updated` broadcast and active-tile switches. When no
+    // SessionStart hook. Wired below to both sessionStore (server pushes
+    // every ~5s) and uiStore (active-tile switches), so the icon never
+    // lags by more than one broadcast interval or one tap. When no
     // context matches, the button is hidden entirely.
-    function syncContextualFeedIcon() {
+    function syncJoystickContext() {
       const { sessions } = sessionStore.getState();
       if (!sessions) return;
       const activeName = getActiveSessionName();
@@ -1643,13 +1637,13 @@
           iconStore.removeIcon(s.name);
         }
       }
-      syncContextualFeedIcon();
+      syncJoystickContext();
     });
 
     // Active tile changes (e.g. user switches sessions) need an immediate
     // refresh of the joystick presence indicator — waiting for the next
     // sessionStore push would leave a stale icon for up to 5s.
-    uiStore.subscribe(syncContextualFeedIcon);
+    uiStore.subscribe(syncJoystickContext);
 
     // Subscribe to shortcuts changes to re-render bar
     shortcutsStore.subscribe(() => {

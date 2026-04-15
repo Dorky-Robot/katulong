@@ -55,6 +55,11 @@ export function createJoystickManager(options = {}) {
     joystick.appendChild(dotEl);
   }
 
+  // Equality for the "should we skip the DOM rebuild?" check. `action` is
+  // intentionally excluded — a fresh closure with identical visuals is
+  // handled by the in-place action patch in `setContext`. If the context
+  // shape grows new visual fields (e.g. `badge`, `count`), add them here
+  // or they will silently fail to trigger rebuilds.
   function contextEquals(a, b) {
     if (a === b) return true;
     if (!a || !b) return false;
