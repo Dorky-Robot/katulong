@@ -1028,8 +1028,9 @@
       if (!sessionName) return;
       // Kill on server (best-effort — may fail if disconnected)
       try {
-        const id = await resolveSessionId(sessionName);
-        await api.delete(`/sessions/by-id/${encodeURIComponent(id)}`);
+        const sid = await resolveSessionId(sessionName);
+        await api.delete(`/sessions/by-id/${encodeURIComponent(sid)}`);
+        invalidateSessionIdCache(sessionName);
       } catch { /* disconnected, already dead, or never existed — that's fine */ }
     }
 

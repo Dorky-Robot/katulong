@@ -299,9 +299,10 @@ export function createDashboardBackTile({ sessionName, sessionId, watcher } = {}
   return {
     type: "dashboard-back",
 
-    /** Update the session name after a tab rename. Mirrors terminal-tile's
-     *  setSessionName so the dashboard's polling and actions stay aligned
-     *  with the carousel key. */
+    /** Update the displayed session name after a tab rename. API calls
+     *  route through the immutable sessionId, so this only refreshes
+     *  display surfaces — the .db-session-name DOM node and the chrome
+     *  toolbar title. */
     setSessionName(newName) {
       currentSessionName = newName;
       if (rootEl) {
