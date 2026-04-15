@@ -1590,6 +1590,18 @@
 
     const renderBar = (name) => shortcutBarInstance.render(name);
 
+    // Reflect the active tile's Claude-presence state onto the joystick
+    // feed button. The server flips `meta.claude.running` from tmux's
+    // `pane_current_command` poll, so this fires on both the periodic
+    // `session-updated` broadcast and active-tile switches.
+    function syncClaudePresenceIndicator() {
+      const { sessions } = sessionStore.getState();
+      if (!sessions) return;
+      const activeName = getActiveSessionName();
+      const active = activeName ? sessions.find((s) => s.name === activeName) : null;
+      joystickManager.setClaudeRunning(!!active?.meta?.claude?.running);
+    }
+
     // Sync per-session icons from server session data
     sessionStore.subscribe(() => {
       const { sessions } = sessionStore.getState();
@@ -1601,26 +1613,13 @@
           iconStore.removeIcon(s.name);
         }
       }
-
-      // Reflect the active tile's Claude-presence state onto the joystick
-      // feed button. The monitor loop flips `meta.claude.running` based on
-      // tmux's `pane_current_command`, so this subscription picks up both
-      // the periodic poll and the real-time `session-updated` broadcast.
-      const activeName = getActiveSessionName();
-      const active = activeName ? sessions.find((s) => s.name === activeName) : null;
-      joystickManager.setClaudeRunning(!!active?.meta?.claude?.running);
+      syncClaudePresenceIndicator();
     });
 
     // Active tile changes (e.g. user switches sessions) need an immediate
     // refresh of the joystick presence indicator — waiting for the next
     // sessionStore push would leave a stale icon for up to 5s.
-    uiStore.subscribe(() => {
-      const { sessions } = sessionStore.getState();
-      if (!sessions) return;
-      const activeName = getActiveSessionName();
-      const active = activeName ? sessions.find((s) => s.name === activeName) : null;
-      joystickManager.setClaudeRunning(!!active?.meta?.claude?.running);
-    });
+    uiStore.subscribe(syncClaudePresenceIndicator);
 
     // Subscribe to shortcuts changes to re-render bar
     shortcutsStore.subscribe(() => {

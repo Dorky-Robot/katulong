@@ -159,8 +159,30 @@ hook payloads.
    MC1e PR2) and proceeds only if the payload's claimed pane matches
    a live, server-tracked session. Payloads claiming unknown panes are
    a silent no-op.
-4. **On `SessionStart`:** `session.setMeta("claude", { uuid, startedAt: now })`.
-5. **On `Stop` / `SessionEnd`:** `session.setMeta("claude", null)`.
+4. **On `SessionStart`:** merge `{ uuid, startedAt: now }` into
+   `session.meta.claude`, preserving any `running` / `detectedAt`
+   keys the pane monitor already wrote (see "Two writers" below).
+5. **On `Stop` / `SessionEnd`:** drop only the hook-owned keys
+   (`uuid`, `startedAt`). If pane-monitor-owned keys remain the
+   namespace survives with `{ running, detectedAt }`; otherwise
+   `session.meta.claude` is cleared entirely.
+
+### Two writers share `meta.claude` — ownership contract
+
+Since the autodetect feature landed, two independent write paths touch
+the `claude` namespace, each restricted to its own keys:
+
+- **Hooks** (ingest handler in `app-routes.js`) own `uuid` and
+  `startedAt`. Only `SessionStart` / `SessionEnd` mutate these.
+- **Pane monitor** (`lib/session-child-counter.js` 5s poll) owns
+  `running` and `detectedAt`. It flips `running` based on tmux's
+  `pane_current_command` field and never touches `uuid` / `startedAt`.
+
+Both writers use partial-merge semantics: they spread the current
+value, overlay their own keys, and leave everything else intact. This
+means a missed hook (e.g., user hasn't installed hooks yet) still
+produces a `running: true` badge from the monitor, and a dead monitor
+poll still leaves a usable `uuid` for the feed button to resolve.
 
 ### Read path (frontend)
 
