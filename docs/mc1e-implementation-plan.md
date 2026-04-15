@@ -6,21 +6,15 @@ The MC1e doc says "combine persistence move + surrogate id so there is exactly o
 
 Split MC1e into 3 PRs. Each ships independently; each is reviewable in one sitting.
 
-## Decisions to confirm with user before PR1
+## Decisions (confirmed 2026-04-14)
 
-1. **ID format.** Options: `crypto.randomUUID()` (36 chars, already in Node), nanoid (21 chars, need dep), base36 timestamp+counter (short, ordered, no dep). Recommendation: **`crypto.randomUUID()`** — zero deps, universally recognized, collision-resistant. Length isn't a user-visible problem since it lives in data, not UI.
-
-2. **tmuxName derivation.** `kat_<id>` where id is the full UUID (`kat_550e8400-e29b-41d4-a716-446655440000`). tmux accepts this — dots and dashes pass validation. **No sanitization dance.**
-
-3. **Persistence of id across server restart.** Options:
-   - (a) Regenerate on every start — old clients' `?s=<id>` URLs break across restarts.
-   - (b) Persist a tmuxName→id map to disk (`~/.katulong/sessions.json`).
-   - (c) Derive id from tmuxName on adoption (`tmuxName = "kat_<uuid>"` → strip prefix).
-   - Recommendation: **(c) for new sessions, fall back to (a) for adopted-external sessions.** When server adopts a tmux session whose name starts with `kat_`, extract the trailing uuid as id. For foreign tmux sessions (unlikely but possible), synthesize a fresh id. No persistence layer needed; id is encoded in tmuxName.
-
-4. **Migration window.** URL `?s=<name>` → `?s=<id>` redirect lives for how long? Recommendation: **indefinite.** It's a server-side redirect with a O(1) lookup, and removing it breaks every bookmark users have. Cost to maintain is ~10 lines.
-
-5. **WebSocket contract.** `session-renamed` → `session-updated { id, displayName }` per the doc. Only one client version talks to one server version (no protocol backward-compat obligation for WS), so the old message type can be deleted in the same PR that introduces the new one.
+1. **ID format: nanoid.** 21-char url-safe id. Adds `nanoid` dep.
+2. **tmuxName: `kat_<nanoid>`.** No sanitization.
+3. **`?s=` URL param is deleted entirely, not redirected.** It predates tiles and no longer fits the UI model. PR2 removes both query handling and the server-side redirect idea.
+4. **`/sessions/:name` routes deleted on the spot in PR3.** No transition window.
+5. **`renameSession()` helper: TBD during PR3.** Decide when the call-site shape is visible.
+6. **WebSocket contract.** `session-renamed` → `session-updated { id, displayName }`. Old message type deleted in the same PR that introduces the new one — no protocol backward-compat obligation for WS.
+7. **Adoption heuristic.** When adopting an existing `kat_*` tmux session, try to match the suffix against nanoid's alphabet + length; on match, reuse that id. On non-match (pre-PR2 sanitized names, foreign sessions), synthesize a fresh nanoid.
 
 ---
 
@@ -88,8 +82,8 @@ Split MC1e into 3 PRs. Each ships independently; each is reviewable in one sitti
   - Adoption path: existing sessions keep their current tmuxName (may be `kat_<sanitized-name>` from pre-PR2 state). Treat tmuxName as opaque after adoption.
 
 - `lib/routes.js`
-  - Add `/sessions/:id` routes for GET/PUT/DELETE. Resolve via `sessionsById`. Keep `/sessions/:name` routes for backward-compat inside the current release.
-  - `GET /?s=<name>`: if a session matches name, 302 to `?s=<id>`. Otherwise serve index.html as-is (client handles unknown names).
+  - Add `/sessions/:id` routes for GET/PUT/DELETE. Resolve via `sessionsById`. Keep `/sessions/:name` routes for the PR2→PR3 transition; deleted in PR3.
+  - **Delete `?s=` URL param handling entirely.** It predates tiles. No redirect replaces it. `?s=<anything>` is simply ignored after PR2.
 
 - `server.js` WebSocket
   - Outgoing messages: send `{ type: "session-updated", id, displayName }` instead of `session-renamed`. Keep the server accepting legacy outgoing field names for one release if any internal producer still emits them.
@@ -126,7 +120,7 @@ Split MC1e into 3 PRs. Each ships independently; each is reviewable in one sitti
 - `public/lib/notepad.js`, `public/lib/window-tab-set.js`, `public/lib/icon-store.js`, `public/lib/session-store.js` — same pattern.
 - `public/lib/ws-message-handlers.js` — `session-updated` replaces `session-renamed`. One-field update to `uiStore.tiles[id].props.displayName`.
 - `public/app.js` — `applyLocalRename` deleted (or reduced to a single `uiStore` dispatch). `tab-rename` event handler becomes a two-liner: API call + dispatch. `state.session.name` deleted; selectors derive from uiStore.
-- `public/index.html` / URL handling — `?s=<id>` preferred; falls back to server redirect for `?s=<name>`.
+- `public/index.html` / URL handling — remove all `?s=` reading code. Session selection is driven by uiStore/persistence, not URL.
 
 **Tests.**
 - Migration reducer: v3 state with known tile names migrates to v4 with synthesized ids; focus preserved; order preserved.
@@ -143,9 +137,4 @@ Split MC1e into 3 PRs. Each ships independently; each is reviewable in one sitti
 
 MC3 (Level 2 cluster strips) is blocked on PR3, not PR1 or PR2. If MC3 gains schedule pressure, PR1 and PR2 can ship first and MC3 can start against the id-aware server API while PR3 is in flight — but MC3's client-side work must not add new name-keyed stores (otherwise PR3 grows).
 
-## Open questions (need user input)
-
-1. Confirm `crypto.randomUUID()` over nanoid — any preference for shorter ids in logs / URLs?
-2. Is the adoption heuristic (`kat_<uuid>` → extract id, else synthesize) acceptable, or should the server refuse to adopt non-`kat_` sessions?
-3. How long does `/sessions/:name` stick around after PR3? Recommendation: delete immediately (WS has no backward-compat obligation, HTTP likewise since URL redirects handle bookmarks).
-4. Should PR1 include the `renameSession()` helper extraction (the MC1e doc's transitional helper), or is that PR3-only?
+## Resolved decisions — see "Decisions" section above.

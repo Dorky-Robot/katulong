@@ -23,6 +23,7 @@ class MockSession {
   constructor(name, tmuxName, options = {}) {
     this.name = name;
     this.tmuxName = tmuxName;
+    this.id = options.id || null;
     this._alive = true;
     this._cols = 0;
     this._rows = 0;
@@ -39,7 +40,7 @@ class MockSession {
   detach() { this._alive = false; }
   kill() { this._alive = false; tmuxSessions.delete(this.tmuxName); }
   serializeScreen() { return ""; }
-  toJSON() { return { name: this.name, alive: this.alive }; }
+  toJSON() { return { id: this.id, name: this.name, alive: this.alive }; }
 }
 
 mock.module(sessionModuleUrl, {
@@ -106,10 +107,12 @@ describe("Session persistence", () => {
     await mgr1.createSession("dev.server", 80, 24);
     mgr1.shutdown();
 
-    // Verify file was written
+    // Verify file was written — new shape is { tmuxName, id }.
     const saved = JSON.parse(readFileSync(join(dataDir, "sessions.json"), "utf-8"));
-    assert.strictEqual(saved["my session"], "my_session");
-    assert.strictEqual(saved["dev.server"], "dev_server");
+    assert.strictEqual(saved["my session"].tmuxName, "my_session");
+    assert.strictEqual(saved["dev.server"].tmuxName, "dev_server");
+    assert.strictEqual(typeof saved["my session"].id, "string");
+    assert.strictEqual(typeof saved["dev.server"].id, "string");
 
     // tmux sessions still exist (shutdown detaches, doesn't kill)
     // Re-add them to our mock since MockSession.detach doesn't remove from tmuxSessions
@@ -186,8 +189,8 @@ describe("Session persistence", () => {
     await new Promise((r) => setTimeout(r, 200));
 
     const saved = JSON.parse(readFileSync(join(dataDir, "sessions.json"), "utf-8"));
-    assert.strictEqual(saved["first"], "first");
-    assert.strictEqual(saved["second"], "second");
+    assert.strictEqual(saved["first"].tmuxName, "first");
+    assert.strictEqual(saved["second"].tmuxName, "second");
 
     mgr.shutdown();
     rmSync(dataDir, { recursive: true, force: true });
@@ -209,7 +212,7 @@ describe("Session persistence", () => {
     await new Promise((r) => setTimeout(r, 200));
 
     const saved = JSON.parse(readFileSync(join(dataDir, "sessions.json"), "utf-8"));
-    assert.strictEqual(saved["omega"], "omega");
+    assert.strictEqual(saved["omega"].tmuxName, "omega");
     assert.strictEqual(saved["beta"], undefined);
     assert.strictEqual(saved["alpha"], undefined);
 

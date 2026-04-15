@@ -70,6 +70,7 @@ export class BaseMockSession {
   constructor(name, tmuxName, options = {}) {
     this.name = name;
     this.tmuxName = tmuxName;
+    this.id = options.id || null;
     this.state = BaseMockSession.STATE_ATTACHED;
     this.external = options.external || false;
     this._options = options;
@@ -115,7 +116,7 @@ export class BaseMockSession {
   }
 
   toJSON() {
-    return { name: this.name, alive: this.alive, external: this.external };
+    return { id: this.id, name: this.name, alive: this.alive, external: this.external };
   }
 }
 
