@@ -6,7 +6,7 @@ Access your shell from any device — desktop browser, phone, or tablet — over
 *Katulong* (kah-too-LONG) means "helper" in Tagalog — your always-ready terminal assistant.
 
 ```bash
-brew tap dorky-robot/katulong
+brew tap dorky-robot/tap
 brew install katulong
 katulong start
 ```

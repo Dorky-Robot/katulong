@@ -4,8 +4,8 @@ set -euo pipefail
 # Release katulong: bump version, update Formula, tag, and push.
 #
 # The CI release workflow (.github/workflows/release.yml) takes over from
-# the tag push — it creates the GitHub release and updates both tap repos
-# (homebrew-tap, homebrew-katulong) with the correct SHA256.
+# the tag push — it creates the GitHub release and updates the canonical
+# tap repo (Dorky-Robot/homebrew-tap) with the correct SHA256.
 #
 # Usage:
 #   ./scripts/release.sh <patch|minor|major>
@@ -188,8 +188,7 @@ log "Released v${NEW_VERSION}!"
 log ""
 log "CI will now:"
 log "  1. Create GitHub release"
-log "  2. Update homebrew-tap and homebrew-katulong with correct SHA256"
-log "  3. Trigger bottle builds in homebrew-katulong"
+log "  2. Update Dorky-Robot/homebrew-tap with correct SHA256"
 log ""
-log "After bottles are built, users can upgrade with:"
-log "  brew update && brew upgrade katulong"
+log "Once the tap push lands, users can upgrade with:"
+log "  brew update && brew upgrade dorky-robot/tap/katulong"
