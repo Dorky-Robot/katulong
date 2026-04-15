@@ -533,7 +533,7 @@ export function createCardCarousel({
     const savedWidths = readSavedCardWidths();
 
     // Store tile references and create contexts
-    for (const { id, tile, cardWidth } of tiles) {
+    for (const { id, tile, cardWidth, defaultWidth } of tiles) {
       const { wrapper, inner, frontFace, backFace } = createCardWrapper(id);
       const frontChrome = createTileChrome(frontFace);
       const entry = { wrapper, inner, frontFace, backFace, frontChrome, backChrome: null, tile, backTile: null, context: null, flipped: false, resizeHandles: null };
@@ -546,8 +546,8 @@ export function createCardCarousel({
       const handles = attachResizeHandles(id, entry);
       // Restore persisted width: explicit cardWidth (from the saved
       // tiles restore path) wins, else fall back to the per-id width
-      // we just read from localStorage.
-      const effectiveWidth = cardWidth ?? savedWidths.get(id);
+      // we just read from localStorage, else the tile-type default.
+      const effectiveWidth = cardWidth ?? savedWidths.get(id) ?? defaultWidth;
       if (effectiveWidth) handles.restore(effectiveWidth);
     }
 
@@ -606,7 +606,7 @@ export function createCardCarousel({
    *   is driven by the `cards` array order because positionCards() walks that
    *   array to compute translateX — the DOM child order does not matter.
    */
-  function addCard(tileId, tile, position) {
+  function addCard(tileId, tile, position, defaultWidth) {
     if (!active) return;
     if (cards.includes(tileId)) return;
 
@@ -624,7 +624,13 @@ export function createCardCarousel({
     cardEls.set(tileId, entry);
 
     container.appendChild(wrapper);
-    attachResizeHandles(tileId, entry);
+    const handles = attachResizeHandles(tileId, entry);
+    // Fall back to the tile-type default if no saved width exists for
+    // this id. A user-dragged width will already be in localStorage
+    // from a prior session; the default only applies on first open.
+    const savedWidth = readSavedCardWidths().get(tileId);
+    const effectiveWidth = savedWidth ?? defaultWidth;
+    if (effectiveWidth) handles.restore(effectiveWidth);
 
     positionCards(false);
     fitAll();

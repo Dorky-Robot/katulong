@@ -137,7 +137,14 @@ export function createFileBrowserComponent(store, nav, options = {}) {
       }
 
       const row = e.target.closest(".fb-miller-row");
-      if (!row) return;
+      if (!row) {
+        // Click on column whitespace — scroll that column fully into view.
+        const col = e.target.closest(".fb-miller-col");
+        if (col) {
+          col.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+        }
+        return;
+      }
       const colIndex = parseInt(row.dataset.col, 10);
       const name = row.dataset.name;
 
