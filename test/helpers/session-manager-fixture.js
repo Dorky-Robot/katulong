@@ -71,6 +71,7 @@ export class BaseMockSession {
     this.name = name;
     this.tmuxName = tmuxName;
     this.id = options.id || null;
+    this.tmuxPane = options.tmuxPane || null;
     this.state = BaseMockSession.STATE_ATTACHED;
     this.external = options.external || false;
     this._options = options;
@@ -116,7 +117,13 @@ export class BaseMockSession {
   }
 
   toJSON() {
-    return { id: this.id, name: this.name, alive: this.alive, external: this.external };
+    return {
+      id: this.id,
+      name: this.name,
+      tmuxPane: this.tmuxPane,
+      alive: this.alive,
+      external: this.external,
+    };
   }
 }
 
@@ -141,22 +148,7 @@ export async function setupSessionManagerMocks(SessionClass = BaseMockSession) {
 
   mock.module(tmuxModuleUrl, {
     namedExports: {
-      tmuxSessionName: (name) => name.replace(/[.: ]/g, "_"),
-      // tmuxExec must support rename-session because session-manager.test.js
-      // exercises the rename path; other tests pass through harmlessly.
-      tmuxExec: async (args) => {
-        if (args[0] === "rename-session") {
-          const oldName = args[2];
-          const newName = args[3];
-          if (tmuxSessions.has(oldName)) {
-            tmuxSessions.delete(oldName);
-            tmuxSessions.set(newName, true);
-            return { code: 0 };
-          }
-          return { code: 1 };
-        }
-        return { code: 0 };
-      },
+      tmuxExec: async () => ({ code: 0 }),
       tmuxNewSession: async (tmuxName) => { tmuxSessions.set(tmuxName, true); },
       tmuxHasSession: async (tmuxName) => tmuxSessions.has(tmuxName),
       applyTmuxSessionOptions: async () => {},
@@ -170,6 +162,7 @@ export async function setupSessionManagerMocks(SessionClass = BaseMockSession) {
       tmuxKillSession: async (tmuxName) => { tmuxSessions.delete(tmuxName); },
       tmuxListSessionsDetailed: async () => new Map(),
       tmuxSocketArgs: () => [],
+      tmuxGetPaneId: async () => "%1",
     },
   });
 

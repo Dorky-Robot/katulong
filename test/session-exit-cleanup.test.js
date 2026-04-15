@@ -84,7 +84,6 @@ mock.module(sessionModuleUrl, {
 
 mock.module(tmuxModuleUrl, {
   namedExports: {
-    tmuxSessionName: (name) => name.replace(/[.: ]/g, "_"),
     tmuxExec: async () => ({ code: 0 }),
     tmuxNewSession: async (tmuxName) => { tmuxSessions.set(tmuxName, true); },
     tmuxHasSession: async (tmuxName) => tmuxSessions.has(tmuxName),
@@ -99,6 +98,7 @@ mock.module(tmuxModuleUrl, {
     tmuxKillSession: async (tmuxName) => { tmuxSessions.delete(tmuxName); },
     tmuxListSessionsDetailed: async () => new Map(),
     tmuxSocketArgs: () => [],
+    tmuxGetPaneId: async () => "%1",
   },
 });
 

@@ -4,7 +4,7 @@ import { Buffer } from "node:buffer";
 import { Session, SessionNotAliveError } from "../lib/session.js";
 import { RingBuffer } from "../lib/ring-buffer.js";
 import {
-  tmuxSessionName, encodeHexKeys, unescapeTmuxOutputBytes, stripDaResponses,
+  encodeHexKeys, unescapeTmuxOutputBytes, stripDaResponses,
 } from "../lib/tmux.js";
 
 /**
@@ -23,25 +23,6 @@ function unescapeTmuxOutput(s) {
 }
 
 // --- tmux control mode helper tests ---
-
-describe("tmuxSessionName", () => {
-  it("replaces tmux-incompatible characters with underscores", () => {
-    assert.strictEqual(tmuxSessionName("my.session"), "my_session");
-    assert.strictEqual(tmuxSessionName("host:port"), "host_port");
-    assert.strictEqual(tmuxSessionName("a.b:c"), "a_b_c");
-    assert.strictEqual(tmuxSessionName("my session"), "my_session");
-    assert.strictEqual(tmuxSessionName("a.b c:d"), "a_b_c_d");
-    assert.strictEqual(tmuxSessionName("test #1"), "test__1");
-    assert.strictEqual(tmuxSessionName("50%"), "50_");
-  });
-
-  it("preserves other printable ASCII", () => {
-    assert.strictEqual(tmuxSessionName("default"), "default");
-    assert.strictEqual(tmuxSessionName("my-session"), "my-session");
-    assert.strictEqual(tmuxSessionName("test!@$&"), "test!@$&");
-    assert.strictEqual(tmuxSessionName("(prod)"), "(prod)");
-  });
-});
 
 describe("encodeHexKeys", () => {
   it("encodes simple text", () => {
@@ -310,8 +291,7 @@ class MockReadable {
 }
 
 function createSimpleTestSession(name, options = {}) {
-  const tmuxName = tmuxSessionName(name);
-  const session = new Session(name, tmuxName, options);
+  const session = new Session(name, name, options);
   const mockProc = new MockControlProc();
   session.controlProc = mockProc;
   session.state = Session.STATE_ATTACHED;
@@ -766,7 +746,7 @@ describe("Session", () => {
 
       // Now simulate the child closing; kill-session should fire.
       mockProc.simulateClose(0);
-      assert.deepStrictEqual(callLog, ["detach-client", `kill-session:${tmuxSessionName("test")}`],
+      assert.deepStrictEqual(callLog, ["detach-client", "kill-session:test"],
         "kill-session must run only after the close event");
     });
   });
@@ -1008,7 +988,7 @@ describe("Session", () => {
 
     it("handles stdin error event by transitioning to DETACHED", () => {
       let exitCalled = false;
-      const session = new Session("stdin-error", tmuxSessionName("stdin-error"), {
+      const session = new Session("stdin-error", "stdin-error", {
         onExit: () => { exitCalled = true; },
       });
 
@@ -1030,7 +1010,7 @@ describe("Session", () => {
 
     it("ignores stdin error from superseded control process", () => {
       let exitCalled = false;
-      const session = new Session("stdin-stale", tmuxSessionName("stdin-stale"), {
+      const session = new Session("stdin-stale", "stdin-stale", {
         onExit: () => { exitCalled = true; },
       });
 

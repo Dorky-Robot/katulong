@@ -43,7 +43,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 
-import { unescapeTmuxOutputBytes, tmuxSessionName } from "../lib/tmux.js";
+import { unescapeTmuxOutputBytes } from "../lib/tmux.js";
 import { Session } from "../lib/session.js";
 
 // --- Helpers ---
@@ -115,7 +115,7 @@ class MockProc {
 }
 
 function createWiredSession(name) {
-  const session = new Session(name, tmuxSessionName(name));
+  const session = new Session(name, name);
   const proc = new MockProc();
   session.controlProc = proc;
   session.state = Session.STATE_ATTACHED;
@@ -320,7 +320,7 @@ describe("Session tmux output parser — partial octal escape across %output lin
     };
     const session = new Session(
       "reset-test",
-      tmuxSessionName("reset-test"),
+      "reset-test",
       { _spawn: spawnStub },
     );
 
@@ -374,7 +374,7 @@ describe("Session tmux output parser — partial octal escape across %output lin
     let onExitCalls = 0;
     const session = new Session(
       "stale-close-test",
-      tmuxSessionName("stale-close-test"),
+      "stale-close-test",
       { _spawn: spawnStub, onExit: () => { onExitCalls++; } },
     );
 

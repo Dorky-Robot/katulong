@@ -49,20 +49,7 @@ mock.module(sessionModuleUrl, {
 
 mock.module(tmuxModuleUrl, {
   namedExports: {
-    tmuxSessionName: (name) => name.replace(/[.: ]/g, "_"),
-    tmuxExec: async (args) => {
-      if (args[0] === "rename-session") {
-        const oldName = args[2];
-        const newName = args[3];
-        if (tmuxSessions.has(oldName)) {
-          tmuxSessions.delete(oldName);
-          tmuxSessions.set(newName, true);
-          return { code: 0 };
-        }
-        return { code: 1 };
-      }
-      return { code: 0 };
-    },
+    tmuxExec: async () => ({ code: 0 }),
     tmuxNewSession: async (tmuxName) => { tmuxSessions.set(tmuxName, true); },
     tmuxHasSession: async (tmuxName) => tmuxSessions.has(tmuxName),
     applyTmuxSessionOptions: async () => {},
@@ -76,6 +63,7 @@ mock.module(tmuxModuleUrl, {
     tmuxListSessionsDetailed: async () => new Map(),
     getCursorPosition: async () => ({ row: 0, col: 0 }),
     tmuxSocketArgs: () => [],
+    tmuxGetPaneId: async () => "%1",
   },
 });
 
@@ -103,21 +91,22 @@ describe("Session persistence", () => {
     const mgr1 = createSessionManager({
       bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
     });
-    await mgr1.createSession("my session", 80, 24);
-    await mgr1.createSession("dev.server", 80, 24);
+    const a = await mgr1.createSession("my session", 80, 24);
+    const b = await mgr1.createSession("dev.server", 80, 24);
     mgr1.shutdown();
 
-    // Verify file was written — new shape is { tmuxName, id }.
+    // Verify file was written — new shape is { tmuxName, id, tmuxPane }.
+    // tmuxName is `kat_<id>` for new spawns (MC1e PR2).
     const saved = JSON.parse(readFileSync(join(dataDir, "sessions.json"), "utf-8"));
-    assert.strictEqual(saved["my session"].tmuxName, "my_session");
-    assert.strictEqual(saved["dev.server"].tmuxName, "dev_server");
-    assert.strictEqual(typeof saved["my session"].id, "string");
-    assert.strictEqual(typeof saved["dev.server"].id, "string");
+    assert.strictEqual(saved["my session"].tmuxName, `kat_${a.id}`);
+    assert.strictEqual(saved["dev.server"].tmuxName, `kat_${b.id}`);
+    assert.strictEqual(saved["my session"].id, a.id);
+    assert.strictEqual(saved["dev.server"].id, b.id);
 
     // tmux sessions still exist (shutdown detaches, doesn't kill)
     // Re-add them to our mock since MockSession.detach doesn't remove from tmuxSessions
-    tmuxSessions.set("my_session", true);
-    tmuxSessions.set("dev_server", true);
+    tmuxSessions.set(`kat_${a.id}`, true);
+    tmuxSessions.set(`kat_${b.id}`, true);
 
     // Create a new manager and restore
     const mgr2 = createSessionManager({
@@ -182,15 +171,15 @@ describe("Session persistence", () => {
     const mgr = createSessionManager({
       bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
     });
-    await mgr.createSession("first", 80, 24);
-    await mgr.createSession("second", 80, 24);
+    const first = await mgr.createSession("first", 80, 24);
+    const second = await mgr.createSession("second", 80, 24);
 
     // Wait for debounce to fire (100ms + buffer)
     await new Promise((r) => setTimeout(r, 200));
 
     const saved = JSON.parse(readFileSync(join(dataDir, "sessions.json"), "utf-8"));
-    assert.strictEqual(saved["first"].tmuxName, "first");
-    assert.strictEqual(saved["second"].tmuxName, "second");
+    assert.strictEqual(saved["first"].tmuxName, `kat_${first.id}`);
+    assert.strictEqual(saved["second"].tmuxName, `kat_${second.id}`);
 
     mgr.shutdown();
     rmSync(dataDir, { recursive: true, force: true });
@@ -200,19 +189,20 @@ describe("Session persistence", () => {
     const mgr = createSessionManager({
       bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
     });
-    await mgr.createSession("alpha", 80, 24);
+    const alpha = await mgr.createSession("alpha", 80, 24);
     await mgr.createSession("beta", 80, 24);
 
     // Delete one
     mgr.deleteSession("beta");
-    // Rename the other
+    // Rename the other — MC1e PR2: rename only changes the friendly key,
+    // tmuxName stays at kat_<id> (stable).
     await mgr.renameSession("alpha", "omega");
 
     // Wait for debounce
     await new Promise((r) => setTimeout(r, 200));
 
     const saved = JSON.parse(readFileSync(join(dataDir, "sessions.json"), "utf-8"));
-    assert.strictEqual(saved["omega"].tmuxName, "omega");
+    assert.strictEqual(saved["omega"].tmuxName, `kat_${alpha.id}`);
     assert.strictEqual(saved["beta"], undefined);
     assert.strictEqual(saved["alpha"], undefined);
 

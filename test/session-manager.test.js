@@ -72,6 +72,26 @@ describe("session manager", () => {
       assert.strictEqual(result.id.length, 21);
     });
 
+    it("names the underlying tmux session `kat_<id>` (MC1e PR2)", async () => {
+      const { mgr } = makeManager();
+      const result = await mgr.createSession("display name with spaces");
+      const session = mgr.getSession("display name with spaces");
+      assert.strictEqual(session.tmuxName, `kat_${result.id}`,
+        "tmux name must derive from the immutable id, not the display name");
+      assert.ok(tmuxSessions.has(`kat_${result.id}`),
+        "tmux-new-session must be invoked with the kat_<id> name");
+    });
+
+    it("captures the tmux pane id on spawn (MC1e PR2)", async () => {
+      // The fixture's tmuxGetPaneId mock always returns "%1", so any
+      // spawned session should surface that value in listSessions().
+      const { mgr } = makeManager();
+      await mgr.createSession("paned");
+      const listed = mgr.listSessions().sessions[0];
+      assert.strictEqual(listed.tmuxPane, "%1",
+        "Session.toJSON must include the tmuxPane captured at spawn");
+    });
+
     it("rejects duplicate session names", async () => {
       const { mgr } = makeManager();
       await mgr.createSession("dup");
@@ -127,12 +147,12 @@ describe("session manager", () => {
 
     it("detaches a session without killing it", async () => {
       const { mgr } = makeManager();
-      await mgr.createSession("detach-me");
+      const created = await mgr.createSession("detach-me");
       const result = mgr.deleteSession("detach-me", { detachOnly: true });
       assert.deepStrictEqual(result, { ok: true, action: "detached" });
       assert.strictEqual(mgr.listSessions().sessions.length, 0);
-      // tmux session should still exist
-      assert.ok(tmuxSessions.has("detach-me"), "tmux session should remain after detach");
+      // tmux session should still exist (keyed by kat_<id> since MC1e PR2)
+      assert.ok(tmuxSessions.has(`kat_${created.id}`), "tmux session should remain after detach");
     });
 
     it("returns error for nonexistent session", () => {
@@ -172,6 +192,44 @@ describe("session manager", () => {
       const { mgr } = makeManager();
       const result = await mgr.renameSession("nope", "new");
       assert.ok(result.error);
+    });
+
+    it("does NOT rename the underlying tmux session (MC1e PR2)", async () => {
+      // The source of rename-drift bugs was that every rename forked a
+      // second name space (friendly name + tmux name) that slowly
+      // decohered. After PR2, tmuxName is `kat_<id>` and never changes.
+      const { mgr } = makeManager();
+      const created = await mgr.createSession("original");
+      await mgr.renameSession("original", "displayname");
+      const session = mgr.getSession("displayname");
+      assert.strictEqual(session.tmuxName, `kat_${created.id}`,
+        "rename must not touch the tmux session name");
+      assert.ok(tmuxSessions.has(`kat_${created.id}`),
+        "kat_<id> tmux session must still exist after rename");
+    });
+  });
+
+  describe("getSessionById", () => {
+    it("returns the session matching the id", async () => {
+      const { mgr } = makeManager();
+      const { id } = await mgr.createSession("find-me");
+      const session = mgr.getSessionById(id);
+      assert.ok(session, "should find a session");
+      assert.strictEqual(session.name, "find-me");
+      assert.strictEqual(session.id, id);
+    });
+
+    it("returns undefined for unknown id", async () => {
+      const { mgr } = makeManager();
+      await mgr.createSession("present");
+      assert.strictEqual(mgr.getSessionById("bogusid"), undefined);
+    });
+
+    it("returns undefined for falsy inputs", () => {
+      const { mgr } = makeManager();
+      assert.strictEqual(mgr.getSessionById(null), undefined);
+      assert.strictEqual(mgr.getSessionById(""), undefined);
+      assert.strictEqual(mgr.getSessionById(undefined), undefined);
     });
   });
 
@@ -266,12 +324,12 @@ describe("session manager", () => {
   describe("shutdown", () => {
     it("detaches all sessions without killing tmux", async () => {
       const { mgr } = makeManager();
-      await mgr.createSession("a");
-      await mgr.createSession("b");
+      const a = await mgr.createSession("a");
+      const b = await mgr.createSession("b");
       mgr.shutdown();
-      // tmux sessions should still exist
-      assert.ok(tmuxSessions.has("a"));
-      assert.ok(tmuxSessions.has("b"));
+      // tmux sessions should still exist (kat_<id> keys as of MC1e PR2)
+      assert.ok(tmuxSessions.has(`kat_${a.id}`));
+      assert.ok(tmuxSessions.has(`kat_${b.id}`));
     });
   });
 
