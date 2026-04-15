@@ -209,8 +209,8 @@ function createMockCarousel() {
       tile.mount({}, {});
     },
 
-    removeCard(id) {
-      log.push({ op: "removeCard", id });
+    removeCard(id, opts = {}) {
+      log.push({ op: "removeCard", id, silent: opts.silent === true });
       cards = cards.filter(c => c !== id);
       if (focusedId === id) focusedId = cards[0] || null;
     },
@@ -550,6 +550,87 @@ describe("tile-host", () => {
       assert.strictEqual(removed.length, 2, "onTileRemoved fires for each tile");
       const ids = removed.map(r => r.id).sort();
       assert.deepStrictEqual(ids, ["s1", "s2"]);
+    });
+  });
+
+  // ── Cluster switch (regression: don't dispatch removeTile/reset) ──
+  // When the active cluster changes, tile-host's view changes — tiles
+  // from the old cluster vanish from view but remain in state.tiles
+  // (they live in another cluster). Tearing them down through the
+  // carousel's user-dismiss path would fire onCardDismissed → host
+  // dispatches removeTile, and onAllCardsDismissed → host resets the
+  // store to EMPTY_STATE. Both are wrong: the tile and cluster are
+  // still live, just not visible.
+  describe("cluster switch", () => {
+    it("does not call onTileRemoved when tile remains in another cluster", () => {
+      const removed = [];
+      // Cluster 0 has a terminal; cluster 1 is empty. Active = 0.
+      store.setState({
+        clusters: [[[{ id: "s1", type: "terminal", props: { sessionName: "s1" } }]], []],
+        activeClusterIdx: 0,
+        focusedTileIdByCluster: ["s1", null],
+      });
+
+      createHost({
+        onTileRemoved: (id, handle) => removed.push({ id, sessions: handle.getSessions?.() }),
+      });
+      host.init();
+
+      // Switch active cluster to the empty one. The terminal is still
+      // in state.clusters[0] — only the carousel view changes.
+      store.setState({
+        clusters: [[[{ id: "s1", type: "terminal", props: { sessionName: "s1" } }]], []],
+        activeClusterIdx: 1,
+        focusedTileIdByCluster: ["s1", null],
+      });
+
+      assert.strictEqual(removed.length, 0, "onTileRemoved must not fire — tile is still in store");
+    });
+
+    it("uses silent removeCard so the carousel does not call back into the store", () => {
+      store.setState({
+        clusters: [[[{ id: "s1", type: "terminal", props: { sessionName: "s1" } }]], []],
+        activeClusterIdx: 0,
+        focusedTileIdByCluster: ["s1", null],
+      });
+
+      createHost();
+      host.init();
+
+      store.setState({
+        clusters: [[[{ id: "s1", type: "terminal", props: { sessionName: "s1" } }]], []],
+        activeClusterIdx: 1,
+        focusedTileIdByCluster: ["s1", null],
+      });
+
+      const remove = carousel.log.find(l => l.op === "removeCard" && l.id === "s1");
+      assert.ok(remove, "carousel.removeCard must be called for the off-screen tile");
+      assert.strictEqual(remove.silent, true, "removal must be silent (no onCardDismissed/onAllCardsDismissed)");
+    });
+
+    it("still uses non-silent removeCard when tile is genuinely deleted", () => {
+      const removed = [];
+      store.setState({
+        tiles: {
+          s1: { type: "terminal", props: { sessionName: "s1" } },
+          s2: { type: "terminal", props: { sessionName: "s2" } },
+        },
+        order: ["s1", "s2"],
+        focusedId: "s1",
+      });
+
+      createHost({
+        onTileRemoved: (id, handle) => removed.push({ id, sessions: handle.getSessions?.() }),
+      });
+      host.init();
+
+      store.removeTile("s2");
+
+      const remove = carousel.log.find(l => l.op === "removeCard" && l.id === "s2");
+      assert.ok(remove);
+      assert.strictEqual(remove.silent, false, "true removals stay non-silent so the host can fire WS cleanup");
+      assert.strictEqual(removed.length, 1);
+      assert.strictEqual(removed[0].id, "s2");
     });
   });
 });

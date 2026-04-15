@@ -568,8 +568,9 @@ export function createCardCarousel({
     fitAll();
   }
 
-  function deactivate() {
+  function deactivate(opts = {}) {
     if (!active) return;
+    const silent = opts.silent === true;
 
     // Unmount all tiles, destroy chrome, detach resize handles
     for (const [, entry] of cardEls) {
@@ -592,7 +593,7 @@ export function createCardCarousel({
     focusedId = null;
 
     save();
-    if (onAllCardsDismissed) onAllCardsDismissed();
+    if (!silent && onAllCardsDismissed) onAllCardsDismissed();
   }
 
   // ── Card management ────────────────────────────────────────────────
@@ -637,11 +638,23 @@ export function createCardCarousel({
     save();
   }
 
-  function removeCard(tileId) {
+  /**
+   * Remove a card from the carousel.
+   *
+   * @param {string} tileId
+   * @param {object} [opts]
+   * @param {boolean} [opts.silent] When true, suppress onCardDismissed and
+   *   onAllCardsDismissed callbacks. Used by tile-host when a tile leaves
+   *   the visible cluster but still exists in store (cluster switch). The
+   *   default false matches the user-initiated dismiss path: callbacks
+   *   fire so the host can dispatch removeTile / reset.
+   */
+  function removeCard(tileId, opts = {}) {
     if (!active) return;
     const idx = cards.indexOf(tileId);
     if (idx === -1) return;
 
+    const silent = opts.silent === true;
     const entry = cardEls.get(tileId);
 
     const doRemove = () => {
@@ -662,7 +675,7 @@ export function createCardCarousel({
       cardEls.delete(tileId);
       cards.splice(currentIdx, 1);
 
-      if (onCardDismissed) onCardDismissed(tileId);
+      if (!silent && onCardDismissed) onCardDismissed(tileId);
 
       // Shift focus
       if (focusedId === tileId) {
@@ -674,7 +687,7 @@ export function createCardCarousel({
           positionCards(true);
         } else {
           focusedId = null;
-          deactivate();
+          deactivate({ silent });
           return;
         }
       } else {

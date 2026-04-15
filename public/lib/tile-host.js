@@ -79,17 +79,29 @@ export function createTileHost({ store, carousel, getRenderer, getClusterIdx, on
     const prevIds = new Set(Object.keys(prev.tiles));
     const nextIds = new Set(Object.keys(view.tiles));
 
-    // Removed tiles
+    // Removed tiles. Two flavors:
+    //   (a) Tile gone from store entirely (REMOVE_TILE, REMOVE_CLUSTER) —
+    //       fire onTileRemoved so the host can do WS unsubscribe / tab-set
+    //       cleanup, and let carousel.removeCard fire its callbacks (which
+    //       the user-swipe path relies on to drive removeTile back to the
+    //       store; for store-driven removals this is an idempotent no-op
+    //       since the tile is already gone).
+    //   (b) Tile still in state.tiles but no longer in this host's cluster
+    //       view (SWITCH_CLUSTER). The tile is alive — only its DOM mount
+    //       needs teardown. Use silent removal so onCardDismissed and
+    //       onAllCardsDismissed don't fire and dispatch removeTile/reset
+    //       back into the store, which would wipe the inactive cluster.
     for (const id of prevIds) {
       if (!nextIds.has(id)) {
         const handle = handles.get(id);
         if (handle) {
-          // Notify host before teardown so it can do cleanup (WS
-          // unsubscribe, tab-set removal) while the handle is still live.
-          if (onTileRemoved) onTileRemoved(id, handle);
-          // Let carousel handle DOM teardown (wrapper removal, chrome
-          // destroy, resize handles). We just need to tell it.
-          carousel.removeCard(id);
+          const stillInStore = !!state.tiles[id];
+          if (stillInStore) {
+            carousel.removeCard(id, { silent: true });
+          } else {
+            if (onTileRemoved) onTileRemoved(id, handle);
+            carousel.removeCard(id);
+          }
           handles.delete(id);
         }
       }
