@@ -45,12 +45,12 @@ export function isPersistable(type, props = {}) {
 }
 
 /** Initialize all built-in renderers with their deps. */
-export function initRenderers({ terminalPool, createTerminalTile, uiStore }) {
+export function initRenderers({ terminalPool, createTerminalTile, uiStore, getSessionStore }) {
   terminalRenderer.init({ terminalPool });
   fileBrowserRenderer.init({ uiStore });
   documentRenderer.init({});
   clusterRenderer.init({ createTerminalTile });
-  feedRenderer.init({});
+  feedRenderer.init({ getSessionStore });
   localhostBrowserRenderer.init({});
   progressRenderer.init({});
   imageRenderer.init({});

@@ -33,6 +33,54 @@ function renderProgressItem(row, msg) {
     return;
   }
 
+  // Narrative — blog-like markdown update from the Ollama model.
+  // Renders the prose with clickable file pills when present.
+  if (status === "narrative") {
+    const prose = document.createElement("div");
+    prose.className = "feed-tile-narrative";
+    prose.textContent = msg.step || "";
+    row.appendChild(prose);
+
+    if (Array.isArray(msg.files) && msg.files.length > 0) {
+      const fileBar = document.createElement("div");
+      fileBar.className = "feed-tile-files";
+      for (const f of msg.files) {
+        const pill = document.createElement("button");
+        pill.className = "feed-tile-file-pill";
+        const basename = f.path.split("/").pop();
+        pill.textContent = f.line ? `${basename}:${f.line}` : basename;
+        pill.title = f.path;
+        pill.addEventListener("click", (e) => {
+          e.stopPropagation();
+          window.dispatchEvent(new CustomEvent("katulong:open-file", {
+            detail: { path: f.path, line: f.line },
+          }));
+        });
+        fileBar.appendChild(pill);
+      }
+      row.appendChild(fileBar);
+    }
+    return;
+  }
+
+  // Summary — session objective line from the model.
+  if (status === "summary") {
+    const obj = document.createElement("div");
+    obj.className = "feed-tile-summary";
+    obj.textContent = msg.step || "";
+    row.appendChild(obj);
+    return;
+  }
+
+  // Attention — Claude is waiting for user input.
+  if (status === "attention") {
+    const attn = document.createElement("div");
+    attn.className = "feed-tile-attention";
+    attn.textContent = msg.step || "Waiting for input\u2026";
+    row.appendChild(attn);
+    return;
+  }
+
   const bullet = document.createElement("span");
   bullet.className = "feed-tile-bullet";
   bullet.textContent = status === "done" ? "\u25CF"
@@ -72,10 +120,14 @@ function renderLogItem(row, msg, ts) {
 
 // ── Renderer ────────────────────────────────────────────────────────
 
+let _getSessionStore = () => null;
+
 export const feedRenderer = {
   type: "feed",
 
-  init(_deps) {},
+  init({ getSessionStore } = {}) {
+    if (typeof getSessionStore === "function") _getSessionStore = getSessionStore;
+  },
 
   describe(props) {
     return {
@@ -98,11 +150,16 @@ export const feedRenderer = {
     root.className = "feed-tile-root";
     el.appendChild(root);
 
-    // If we already have a topic (e.g. restored from persistence), go
-    // straight to streaming. Otherwise show the inline topic picker.
+    // Route on mount:
+    //   - `topic` present → stream it (normal restore path).
+    //   - `awaitingClaudeForSession` → blank stream view that subscribes to
+    //     the session store and auto-swaps when the new Claude uuid lands.
+    //   - otherwise → topic picker.
     try {
       if (props.topic) {
         startStreaming(props.topic, props.meta || {});
+      } else if (props.awaitingClaudeForSession) {
+        startAwaitingClaude(props.awaitingClaudeForSession, props.awaitingBaseline || null);
       } else {
         showTopicPicker();
       }
@@ -293,6 +350,111 @@ export const feedRenderer = {
         });
     }
 
+    // ── Awaiting Claude view ────────────────────────────────────
+    // Shown when the user clicks the Claude sparkle before the
+    // SessionStart hook has reported a fresh uuid. Renders a blank
+    // stream (header + empty list) and waits for the sessionStore
+    // to surface a uuid that is newer than the click-time baseline,
+    // then swaps to the real streaming view with no UI reshuffle.
+    function startAwaitingClaude(sessionName, baseline) {
+      if (es) { es.close(); es = null; }
+      root.innerHTML = "";
+
+      const header = document.createElement("div");
+      header.className = "feed-tile-header";
+
+      const backBtn = document.createElement("button");
+      backBtn.className = "feed-tile-back-btn";
+      backBtn.innerHTML = '<i class="ph ph-arrow-left"></i>';
+      backBtn.title = "Back to topics";
+      backBtn.addEventListener("click", () => { if (mounted) showTopicPicker(); });
+      header.appendChild(backBtn);
+
+      const headerTitle = document.createElement("span");
+      headerTitle.className = "feed-tile-header-title";
+      headerTitle.textContent = "Claude";
+      header.appendChild(headerTitle);
+
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "feed-tile-close-btn";
+      closeBtn.innerHTML = '<i class="ph ph-x"></i>';
+      closeBtn.title = "Close";
+      closeBtn.addEventListener("click", () => ctx?.requestClose?.());
+      header.appendChild(closeBtn);
+
+      root.appendChild(header);
+
+      const list = document.createElement("div");
+      list.className = "feed-tile-list";
+      list.tabIndex = 0;
+      root.appendChild(list);
+
+      const seenUuid = baseline?.uuid || null;
+      const seenStartedAt = baseline?.startedAt || 0;
+
+      function isFreshUuid(m) {
+        if (!m?.uuid) return false;
+        if (m.uuid !== seenUuid) return true;
+        return (m.startedAt || 0) > seenStartedAt;
+      }
+
+      let swapped = false;
+      function swapToTopic(uuid) {
+        if (swapped) return;
+        swapped = true;
+        const topic = `claude/${uuid}`;
+        const meta = { type: "progress" };
+        if (dispatch) {
+          dispatch({
+            type: "ui/UPDATE_PROPS",
+            id,
+            patch: {
+              topic, title: topic, meta,
+              awaitingClaudeForSession: null, awaitingBaseline: null,
+            },
+          });
+        }
+        startStreaming(topic, meta);
+      }
+
+      // Topic-new listener: broadcast path. The pub/sub bridge publishes
+      // a `katulong:topic-new` CustomEvent whenever a topic is created on
+      // the server — this fires even when session.meta.claude.uuid never
+      // surfaces (e.g. hooks were installed late, or the session store
+      // isn't the authoritative source). Matches any fresh `claude/<uuid>`.
+      function onTopicNew(e) {
+        if (!mounted || swapped) return;
+        const topic = e?.detail?.topic || "";
+        if (!topic.startsWith("claude/")) return;
+        const uuid = topic.slice("claude/".length);
+        if (!uuid || uuid === seenUuid) return;
+        swapToTopic(uuid);
+      }
+      window.addEventListener("katulong:topic-new", onTopicNew);
+      cleanups.push(() => window.removeEventListener("katulong:topic-new", onTopicNew));
+
+      const store = _getSessionStore();
+      if (!store) return; // No store wired — topic-new listener still active.
+
+      function readClaudeMeta() {
+        const { sessions } = store.getState();
+        const s = (sessions || []).find((x) => x.name === sessionName);
+        return s?.meta?.claude || null;
+      }
+
+      // Check once synchronously in case the uuid landed between the
+      // click and mount.
+      const immediate = readClaudeMeta();
+      if (isFreshUuid(immediate)) { swapToTopic(immediate.uuid); return; }
+
+      const unsubscribe = store.subscribe(() => {
+        if (!mounted || swapped) return;
+        const m = readClaudeMeta();
+        if (isFreshUuid(m)) swapToTopic(m.uuid);
+      });
+      cleanups.push(unsubscribe);
+    }
+
     // ── Streaming view ──────────────────────────────────────────
     function startStreaming(topic, meta) {
       if (es) { es.close(); es = null; }
@@ -333,24 +495,76 @@ export const feedRenderer = {
       // State
       const items = new Map();
       let autoKey = 0;
-      const isProgress = topicMeta.type === "progress";
+      const isProgress = topicMeta.type === "progress" || topic.startsWith("claude/");
+
+      // Narrative-first rendering: narrative/summary/attention events are
+      // always visible. Tool-use progress events (active, done, pending,
+      // text, etc.) collapse into expandable <details> groups between
+      // narrative blocks so the feed reads like a blog, not a log.
+      const PROMINENT = new Set(["narrative", "summary", "attention"]);
+      let currentDetails = null; // the open <details> group, if any
+      let detailCount = 0;
+
+      function ensureDetailsGroup() {
+        if (currentDetails) return currentDetails.querySelector(".feed-tile-details-body");
+        currentDetails = document.createElement("details");
+        currentDetails.className = "feed-tile-details-group";
+        const summary = document.createElement("summary");
+        summary.className = "feed-tile-details-summary";
+        summary.textContent = "1 step";
+        currentDetails.appendChild(summary);
+        const body = document.createElement("div");
+        body.className = "feed-tile-details-body";
+        currentDetails.appendChild(body);
+        list.appendChild(currentDetails);
+        detailCount = 0;
+        return body;
+      }
+
+      function updateDetailsSummary() {
+        if (!currentDetails) return;
+        const summary = currentDetails.querySelector("summary");
+        summary.textContent = `${detailCount} step${detailCount === 1 ? "" : "s"}`;
+      }
 
       function handleEvent(envelope) {
         let msg;
         try { msg = JSON.parse(envelope.message); } catch { msg = envelope.message; }
 
+        const status = (typeof msg === "object" && msg.status) || "";
         const key = isProgress && msg.step ? msg.step : `_evt_${autoKey++}`;
-        let row = items.get(key);
 
-        if (!row) {
-          row = document.createElement("div");
-          list.appendChild(row);
-          items.set(key, row);
-        }
+        if (isProgress && PROMINENT.has(status)) {
+          // Close the current details group — next non-prominent events
+          // will start a fresh group after this prominent item.
+          currentDetails = null;
 
-        if (isProgress) {
+          let row = items.get(key);
+          if (!row) {
+            row = document.createElement("div");
+            list.appendChild(row);
+            items.set(key, row);
+          }
+          renderProgressItem(row, msg);
+        } else if (isProgress) {
+          // Non-prominent: tuck into a collapsible group
+          const body = ensureDetailsGroup();
+          let row = items.get(key);
+          if (!row) {
+            row = document.createElement("div");
+            body.appendChild(row);
+            items.set(key, row);
+            detailCount++;
+            updateDetailsSummary();
+          }
           renderProgressItem(row, msg);
         } else {
+          let row = items.get(key);
+          if (!row) {
+            row = document.createElement("div");
+            list.appendChild(row);
+            items.set(key, row);
+          }
           renderLogItem(row, msg, envelope.timestamp);
         }
 
