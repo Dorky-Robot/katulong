@@ -26,6 +26,7 @@
     import { createCommandSurface } from "/lib/command-surface.js";
     import { buildCommandTree } from "/lib/command-tree.js";
     import { openCommandPicker } from "/lib/command-picker.js";
+    import { fetchSessionLists } from "/lib/session-fetch.js";
     import { createWindowTabSet } from "/lib/window-tab-set.js";
     import { createPasteHandler } from "/lib/paste-handler.js";
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
@@ -1657,20 +1658,7 @@
       });
       const openIds = new Set(openTiles.map((t) => t.id));
 
-      // Fetch server-side session lists in parallel; show what we have
-      // even if one side fails (the other half is still useful).
-      let managed = [];
-      let unmanaged = [];
-      try {
-        const [sessData, tmuxData] = await Promise.all([
-          api.get(`/sessions?_t=${Date.now()}`).catch(() => []),
-          api.get(`/tmux-sessions?_t=${Date.now()}`).catch(() => []),
-        ]);
-        managed = sessData || [];
-        unmanaged = (tmuxData || []).map((s) => typeof s === "string" ? { name: s, attached: false } : s);
-      } catch (err) {
-        console.error("[picker] fetch error:", err);
-      }
+      const { managed, unmanaged } = await fetchSessionLists();
 
       const closedManaged = managed
         .filter((s) => !openIds.has(s.name))
@@ -1729,8 +1717,8 @@
     };
     const commandTree = buildCommandTree(commandActions);
     const commandMode = createCommandMode({ tree: commandTree });
-    const commandSurface = createCommandSurface({ mountIn: bar, mode: commandMode });
-    void commandSurface;
+    // Surface subscribes to commandMode internally; no further reference needed.
+    createCommandSurface({ mountIn: bar, mode: commandMode });
 
     const renderBar = (name) => shortcutBarInstance.render(name);
 
