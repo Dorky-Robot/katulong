@@ -34,32 +34,11 @@ function renderProgressItem(row, msg) {
   }
 
   // Narrative — blog-like markdown update from the Ollama model.
-  // Renders the prose with clickable file pills when present.
   if (status === "narrative") {
     const prose = document.createElement("div");
     prose.className = "feed-tile-narrative";
     prose.textContent = msg.step || "";
     row.appendChild(prose);
-
-    if (Array.isArray(msg.files) && msg.files.length > 0) {
-      const fileBar = document.createElement("div");
-      fileBar.className = "feed-tile-files";
-      for (const f of msg.files) {
-        const pill = document.createElement("button");
-        pill.className = "feed-tile-file-pill";
-        const basename = f.path.split("/").pop();
-        pill.textContent = f.line ? `${basename}:${f.line}` : basename;
-        pill.title = f.path;
-        pill.addEventListener("click", (e) => {
-          e.stopPropagation();
-          window.dispatchEvent(new CustomEvent("katulong:open-file", {
-            detail: { path: f.path, line: f.line },
-          }));
-        });
-        fileBar.appendChild(pill);
-      }
-      row.appendChild(fileBar);
-    }
     return;
   }
 
@@ -120,6 +99,8 @@ function renderLogItem(row, msg, ts) {
 
 // ── Renderer ────────────────────────────────────────────────────────
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 let _getSessionStore = () => null;
 
 export const feedRenderer = {
@@ -130,10 +111,15 @@ export const feedRenderer = {
   },
 
   describe(props) {
+    // Awaiting-Claude tiles are transient — a reload without a live click
+    // would restore a blank waiter whose baseline is epoch-zero, which
+    // would then swap to any lingering claude/<uuid> uuid. Drop them on
+    // reload and let the user re-invoke the sparkle.
+    const persistable = !props.awaitingClaudeForSession;
     return {
       title: props.title || props.topic || "Feed",
       icon: "rss",
-      persistable: true,
+      persistable,
       session: null,
       updatesUrl: false,
       renameable: false,
@@ -144,7 +130,16 @@ export const feedRenderer = {
   mount(el, { id, props, dispatch, ctx }) {
     let mounted = true;
     let es = null;
-    const cleanups = [];
+    // View-local cleanups: drained whenever we transition between views
+    // (picker → awaiting → streaming) so stale window listeners don't
+    // accumulate. Each view function calls drainViewCleanups() before
+    // registering its own listeners.
+    let viewCleanups = [];
+    function drainViewCleanups() {
+      const fns = viewCleanups;
+      viewCleanups = [];
+      for (const fn of fns) { try { fn(); } catch { /* ignore */ } }
+    }
 
     const root = document.createElement("div");
     root.className = "feed-tile-root";
@@ -170,6 +165,7 @@ export const feedRenderer = {
     // ── Topic picker (inline) ───────────────────────────────────
     function showTopicPicker() {
       if (es) { es.close(); es = null; }
+      drainViewCleanups();
       root.innerHTML = "";
 
       // Restore checked state from persisted props
@@ -319,7 +315,7 @@ export const feedRenderer = {
         createTopicItem({ name: e.detail.topic, meta: e.detail.meta, messages: 0 });
       }
       window.addEventListener("katulong:topic-new", onTopicNew);
-      cleanups.push(() => window.removeEventListener("katulong:topic-new", onTopicNew));
+      viewCleanups.push(() => window.removeEventListener("katulong:topic-new", onTopicNew));
 
       // Fetch existing topics
       fetch("/api/topics", { credentials: "same-origin", redirect: "error" })
@@ -358,6 +354,7 @@ export const feedRenderer = {
     // then swaps to the real streaming view with no UI reshuffle.
     function startAwaitingClaude(sessionName, baseline) {
       if (es) { es.close(); es = null; }
+      drainViewCleanups();
       root.innerHTML = "";
 
       const header = document.createElement("div");
@@ -427,11 +424,14 @@ export const feedRenderer = {
         const topic = e?.detail?.topic || "";
         if (!topic.startsWith("claude/")) return;
         const uuid = topic.slice("claude/".length);
-        if (!uuid || uuid === seenUuid) return;
+        // Defense-in-depth: the server already gates /sub/ topics via an
+        // allowlist regex, but matching here too keeps client-side pivots
+        // safe regardless of who dispatched the CustomEvent.
+        if (!UUID_RE.test(uuid) || uuid === seenUuid) return;
         swapToTopic(uuid);
       }
       window.addEventListener("katulong:topic-new", onTopicNew);
-      cleanups.push(() => window.removeEventListener("katulong:topic-new", onTopicNew));
+      viewCleanups.push(() => window.removeEventListener("katulong:topic-new", onTopicNew));
 
       const store = _getSessionStore();
       if (!store) return; // No store wired — topic-new listener still active.
@@ -452,12 +452,13 @@ export const feedRenderer = {
         const m = readClaudeMeta();
         if (isFreshUuid(m)) swapToTopic(m.uuid);
       });
-      cleanups.push(unsubscribe);
+      viewCleanups.push(unsubscribe);
     }
 
     // ── Streaming view ──────────────────────────────────────────
     function startStreaming(topic, meta) {
       if (es) { es.close(); es = null; }
+      drainViewCleanups();
       root.innerHTML = "";
       const topicMeta = meta || {};
 
@@ -587,7 +588,7 @@ export const feedRenderer = {
       unmount() {
         mounted = false;
         if (es) es.close();
-        for (const fn of cleanups) fn();
+        drainViewCleanups();
         el.innerHTML = "";
       },
       focus() {

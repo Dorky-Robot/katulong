@@ -122,9 +122,19 @@ describe("feedRenderer", () => {
       assert.equal(d.title, "My Feed");
     });
 
-    it("is always persistable", () => {
+    it("is persistable for normal props", () => {
       assert.equal(feedRenderer.describe({}).persistable, true);
       assert.equal(feedRenderer.describe({ topic: "some/topic" }).persistable, true);
+    });
+
+    it("is NOT persistable while awaiting Claude (transient state)", () => {
+      // Persisting a waiter with baseline { uuid: null, startedAt: 0 } would
+      // swap to any lingering claude/<uuid> on reload. Dropping the tile
+      // instead keeps restores clean.
+      assert.equal(
+        feedRenderer.describe({ awaitingClaudeForSession: "work" }).persistable,
+        false,
+      );
     });
   });
 
@@ -655,6 +665,84 @@ describe("feedRenderer", () => {
 
       globalThis.window.dispatchEvent(new globalThis.CustomEvent("katulong:topic-new", {
         detail: { topic: `claude/${uuid}`, meta: {} },
+      }));
+
+      assert.equal(eventSources.length, 0);
+    });
+
+    it("drops the awaiting topic-new listener when back → picker transitions view", () => {
+      // Regression: the tile used to register listeners into a flat
+      // cleanups[] array drained only on unmount, so clicking "back" from
+      // the awaiting view into the picker left the awaiting-mode
+      // onTopicNew live. A subsequent claude/<uuid> broadcast would then
+      // silently hijack the tile into streaming mode while the user was
+      // browsing the picker. View-local cleanups drain on transition.
+      const store = makeFakeSessionStore([
+        { name: "work", meta: { claude: { running: true } } },
+      ]);
+      feedRenderer.init({ getSessionStore: () => store });
+
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: {
+          topic: null,
+          awaitingClaudeForSession: "work",
+          awaitingBaseline: { uuid: null, startedAt: 0 },
+          meta: {},
+        },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      // Awaiting view is up — one topic-new listener.
+      assert.equal((winListeners["katulong:topic-new"] || []).length, 1);
+
+      // Simulate "back" button click — calls showTopicPicker internally.
+      const root = el.children[0];
+      const headerBackBtn = root.children[0].children[0];
+      assert.equal(headerBackBtn.className, "feed-tile-back-btn");
+      const clickHandlers = headerBackBtn._listeners.click || [];
+      assert.equal(clickHandlers.length, 1);
+      clickHandlers[0]();
+
+      // Picker has exactly one topic-new listener — the awaiting one was
+      // drained, not accumulated.
+      assert.equal((winListeners["katulong:topic-new"] || []).length, 1);
+
+      // Prove the drained listener is actually gone: dispatching a
+      // claude/<uuid> topic-new must NOT pivot the picker to streaming.
+      const uuid = "55555555-5555-5555-5555-555555555555";
+      globalThis.window.dispatchEvent(new globalThis.CustomEvent("katulong:topic-new", {
+        detail: { topic: `claude/${uuid}`, meta: {} },
+      }));
+      assert.equal(eventSources.length, 0, "picker must not auto-swap to stream");
+    });
+
+    it("rejects topic-new payloads whose uuid is not a valid UUID", () => {
+      const store = makeFakeSessionStore([
+        { name: "work", meta: { claude: { running: true } } },
+      ]);
+      feedRenderer.init({ getSessionStore: () => store });
+
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: {
+          topic: null,
+          awaitingClaudeForSession: "work",
+          awaitingBaseline: { uuid: null, startedAt: 0 },
+          meta: {},
+        },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      globalThis.window.dispatchEvent(new globalThis.CustomEvent("katulong:topic-new", {
+        detail: { topic: "claude/../etc/passwd", meta: {} },
+      }));
+      globalThis.window.dispatchEvent(new globalThis.CustomEvent("katulong:topic-new", {
+        detail: { topic: "claude/not-a-uuid", meta: {} },
       }));
 
       assert.equal(eventSources.length, 0);
