@@ -130,13 +130,15 @@ describe("feedRenderer", () => {
       assert.equal(feedRenderer.describe({ topic: "some/topic" }).persistable, true);
     });
 
-    it("is NOT persistable while awaiting Claude (transient state)", () => {
-      // Persisting a waiter with baseline { uuid: null, startedAt: 0 } would
-      // swap to any lingering claude/<uuid> on reload. Dropping the tile
-      // instead keeps restores clean.
+    it("stays persistable while awaiting Claude", () => {
+      // Awaiting tiles persist across reload. The epoch-zero baseline
+      // (uuid: null, startedAt: 0) is a feature, not a bug — it means any
+      // current claude/<uuid> will auto-adopt on restore. A tile opened
+      // for the active Claude session keeps showing that session's feed
+      // after a refresh.
       assert.equal(
         feedRenderer.describe({ awaitingClaude: { session: "work" } }).persistable,
-        false,
+        true,
       );
     });
   });

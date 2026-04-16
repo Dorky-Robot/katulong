@@ -132,15 +132,14 @@ export const feedRenderer = {
   },
 
   describe(props) {
-    // Awaiting-Claude tiles are transient — a reload without a live click
-    // would restore a blank waiter whose baseline is epoch-zero, which
-    // would then swap to any lingering claude/<uuid> uuid. Drop them on
-    // reload and let the user re-invoke the sparkle.
-    const persistable = !props.awaitingClaude;
+    // Awaiting-Claude tiles persist across reload. The epoch-zero baseline
+    // means any current claude/<uuid> auto-adopts on restore — which is
+    // exactly what the user wants: a tile opened for the active Claude
+    // session should keep showing that session's feed after a refresh.
     return {
       title: props.title || props.topic || "Feed",
       icon: "rss",
-      persistable,
+      persistable: true,
       session: null,
       updatesUrl: false,
       renameable: false,
