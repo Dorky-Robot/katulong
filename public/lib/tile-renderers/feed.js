@@ -52,10 +52,10 @@ function renderProgressItem(row, msg) {
 
   // Summary — session objective line from the model.
   if (status === "summary") {
-    const obj = document.createElement("div");
-    obj.className = "feed-tile-summary";
-    obj.textContent = msg.step || "";
-    row.appendChild(obj);
+    const summaryEl = document.createElement("div");
+    summaryEl.className = "feed-tile-summary";
+    summaryEl.textContent = msg.step || "";
+    row.appendChild(summaryEl);
     return;
   }
 
@@ -115,7 +115,9 @@ export const feedRenderer = {
   type: "feed",
 
   init({ getSessionStore } = {}) {
-    if (typeof getSessionStore === "function") _sessionStoreGetter = getSessionStore;
+    _sessionStoreGetter = typeof getSessionStore === "function"
+      ? getSessionStore
+      : () => null;
   },
 
   describe(props) {
@@ -481,41 +483,16 @@ export const feedRenderer = {
       root.innerHTML = "";
       const topicMeta = meta || {};
 
-      // Header
-      const header = document.createElement("div");
-      header.className = "feed-tile-header";
+      root.appendChild(buildStreamHeader(topic));
 
-      const backBtn = document.createElement("button");
-      backBtn.className = "feed-tile-back-btn";
-      backBtn.innerHTML = '<i class="ph ph-arrow-left"></i>';
-      backBtn.title = "Back to topics";
-      backBtn.addEventListener("click", () => { if (mounted) showTopicPicker(); });
-      header.appendChild(backBtn);
-
-      const headerTitle = document.createElement("span");
-      headerTitle.className = "feed-tile-header-title";
-      headerTitle.textContent = topic;
-      header.appendChild(headerTitle);
-
-      const closeBtn = document.createElement("button");
-      closeBtn.className = "feed-tile-close-btn";
-      closeBtn.innerHTML = '<i class="ph ph-x"></i>';
-      closeBtn.title = "Close";
-      closeBtn.addEventListener("click", () => ctx?.requestClose?.());
-      header.appendChild(closeBtn);
-
-      root.appendChild(header);
-
-      // Event list
       const list = document.createElement("div");
       list.className = "feed-tile-list";
       list.tabIndex = 0;
       root.appendChild(list);
 
-      // State
       const items = new Map();
       let autoKey = 0;
-      const isProgress = topicMeta.type === "progress" || topic.startsWith("claude/");
+      const isProgress = topicMeta.type === "progress";
 
       // Narrative-first rendering: narrative/summary/attention events are
       // always visible. Tool-use progress events (active, done, pending,
@@ -531,13 +508,14 @@ export const feedRenderer = {
         currentDetails.className = "feed-tile-details-group";
         const summary = document.createElement("summary");
         summary.className = "feed-tile-details-summary";
-        summary.textContent = "1 step";
         currentDetails.appendChild(summary);
         const body = document.createElement("div");
         body.className = "feed-tile-details-body";
         currentDetails.appendChild(body);
         list.appendChild(currentDetails);
         detailCount = 0;
+        // Caller increments detailCount + calls updateDetailsSummary for
+        // the first item, which sets the visible label.
         return body;
       }
 

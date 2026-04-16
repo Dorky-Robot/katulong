@@ -92,6 +92,9 @@ describe("feedRenderer", () => {
     eventSources.length = 0;
     fetchResult = [];
     for (const k of Object.keys(winListeners)) delete winListeners[k];
+    // Reset module-level session store getter so tests that don't need
+    // a store don't inherit one from a prior test.
+    feedRenderer.init({});
   });
 
   describe("structure", () => {
