@@ -131,15 +131,56 @@ describe("applyClaudeMetaFromHook", () => {
     assert.equal(calls.length, 0);
   });
 
-  it("no-ops for unhandled events (PostToolUse, SubagentStart, etc.)", () => {
+  it("adopts uuid from non-SessionStart events when meta.claude.uuid is missing", () => {
+    // Scenario: hooks were installed after Claude started, so SessionStart
+    // already fired and was lost. The next UserPromptSubmit / PreToolUse /
+    // PostToolUse must still let the server learn the uuid, otherwise the
+    // awaiting-Claude feed tile has no signal to swap on and stays blank
+    // forever while events flow into `claude/<uuid>`.
     const { session, calls } = makeSession();
     const verdict = applyClaudeMetaFromHook({
       hook_event_name: "PostToolUse",
       session_id: "11111111-2222-3333-4444-555555555555",
       _tmuxPane: "%3",
     }, makeManager(session));
+    assert.equal(verdict, "set");
+    assert.equal(calls.length, 1);
+    assert.equal(session.meta.claude.uuid, "11111111-2222-3333-4444-555555555555");
+    assert.equal(typeof session.meta.claude.startedAt, "number");
+  });
+
+  it("does NOT overwrite an existing uuid from non-SessionStart events", () => {
+    // Once we have a uuid (from an earlier SessionStart or first adoption),
+    // subsequent tool-use hooks must not thrash it. Only SessionStart is
+    // allowed to replace a known uuid — that's the explicit new-session
+    // signal.
+    const { session, calls } = makeSession();
+    session.meta.claude = {
+      uuid: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      startedAt: 100,
+    };
+    const verdict = applyClaudeMetaFromHook({
+      hook_event_name: "PostToolUse",
+      session_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      _tmuxPane: "%3",
+    }, makeManager(session));
     assert.equal(verdict, null);
     assert.equal(calls.length, 0);
+    assert.equal(session.meta.claude.uuid, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+  });
+
+  it("adopting uuid preserves detection-owned running/detectedAt", () => {
+    const { session } = makeSession();
+    session.meta.claude = { running: true, detectedAt: 100 };
+    const verdict = applyClaudeMetaFromHook({
+      hook_event_name: "UserPromptSubmit",
+      session_id: "11111111-2222-3333-4444-555555555555",
+      _tmuxPane: "%3",
+    }, makeManager(session));
+    assert.equal(verdict, "set");
+    assert.equal(session.meta.claude.running, true);
+    assert.equal(session.meta.claude.detectedAt, 100);
+    assert.equal(session.meta.claude.uuid, "11111111-2222-3333-4444-555555555555");
   });
 
   it("returns null and logs when setMeta throws", () => {

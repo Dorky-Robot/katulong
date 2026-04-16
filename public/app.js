@@ -358,6 +358,9 @@
       terminalPool,
       createTerminalTile: (opts) => terminalTileFactory(opts),
       uiStore,
+      // Lazy getter — `sessionStore` is initialized further down in this
+      // module. The feed tile only calls this at mount time, long after.
+      getSessionStore: () => sessionStore,
     });
 
     /** Derive renderer capabilities for a tile descriptor.
@@ -1890,16 +1893,18 @@
 
     /** Open a feed tile for the Claude session running in the current terminal.
      *
-     * Three-way resolution:
-     *   1. `meta.claude.uuid` present (SessionStart hook fired) → open the
-     *      exact `claude/<uuid>` topic.
-     *   2. `meta.claude.running` present but no uuid → Claude is running in
-     *      the pane but the hook hasn't reported yet. If hooks aren't
-     *      installed, POST to install them so the *next* SessionStart wires
-     *      up automatically. Either way, fall through to the picker.
-     *   3. No Claude signal at all → open the generic picker.
+     * Resolution order:
+     *   1. `meta.claude.uuid` present → open the exact `claude/<uuid>` topic.
+     *      SessionStart overwrites uuid when a new Claude starts, so we trust
+     *      whatever uuid is currently in meta.
+     *   2. `meta.claude.running` is true but no uuid → open a blank stream
+     *      tile that subscribes to sessionStore and swaps to the real topic
+     *      when the hook lands a uuid. Covers the case where hooks were
+     *      installed after Claude started (SessionStart already fired into
+     *      the void; the server now adopts the uuid on the next hook event).
+     *   3. No Claude signal at all → generic picker.
      */
-    async function openClaudeFeedTile() {
+    function openClaudeFeedTile() {
       const sessionName = getActiveSessionName();
 
       if (!sessionName) {
@@ -1911,46 +1916,44 @@
       const active = (sessions || []).find(s => s.name === sessionName);
       const claudeMeta = active?.meta?.claude || null;
 
-      // Primary: UUID known → open the specific feed directly.
       if (claudeMeta?.uuid) {
         const topic = `claude/${claudeMeta.uuid}`;
         const tileId = `feed-${Date.now().toString(36)}`;
         uiStore.addTile(
-          { id: tileId, type: "feed", props: { topic, title: topic, meta: {} } },
+          { id: tileId, type: "feed", props: { topic, title: topic, meta: { type: "progress" } } },
           { focus: true, insertAt: "afterFocus" },
         );
         if (isOverlayViewport()) setOverlaySidebar(false);
         return;
       }
 
-      // Running but no uuid: auto-install hooks on first encounter so the
-      // next Claude session the user starts wires up without any terminal
-      // plumbing. Silent if already installed; one-shot toast otherwise.
       if (claudeMeta?.running) {
-        await ensureClaudeHooksInstalled();
+        // Fire-and-forget: install hooks if missing so the next hook event
+        // wires up automatically.
+        ensureClaudeHooksInstalled();
+
+        const tileId = `feed-${Date.now().toString(36)}`;
+        uiStore.addTile(
+          {
+            id: tileId,
+            type: "feed",
+            props: {
+              topic: null,
+              title: "Claude",
+              meta: {},
+              awaitingClaude: {
+                session: sessionName,
+                baseline: { uuid: null, startedAt: 0 },
+              },
+            },
+          },
+          { focus: true, insertAt: "afterFocus" },
+        );
+        if (isOverlayViewport()) setOverlaySidebar(false);
+        return;
       }
 
-      try {
-        // Legacy fallback: scan topics for a sessionName match. Resolves
-        // Claude sessions that started before MC1f was deployed. Remove
-        // once all live Claude sessions have been restarted under the
-        // new hook wiring.
-        const topics = await api.get("/api/topics");
-        const match = topics
-          .filter(t => t.name.startsWith("claude/") && t.meta?.sessionName === sessionName)
-          .sort((a, b) => (b.messages || 0) - (a.messages || 0))[0];
-        if (match) {
-          const tileId = `feed-${Date.now().toString(36)}`;
-          uiStore.addTile(
-            { id: tileId, type: "feed", props: { topic: match.name, title: match.name, meta: match.meta || {} } },
-            { focus: true, insertAt: "afterFocus" },
-          );
-        } else {
-          openFeedTile();
-        }
-      } catch {
-        openFeedTile();
-      }
+      openFeedTile();
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
@@ -2183,6 +2186,18 @@
         windowTabSet.addTab(e.session);
         switchSession(e.session);
       },
+      /**
+       * Broadcast that a pub/sub topic was created on the server.
+       *
+       * Consumed by feed tiles — the picker uses it to add live rows,
+       * and awaiting-Claude tiles use it as a second signal path for
+       * swapping to a fresh `claude/<uuid>` stream when the session
+       * store's `meta.claude.uuid` never surfaces (e.g. hooks weren't
+       * installed before Claude started). Any new listener should
+       * verify the topic shape before acting — detail is not validated.
+       *
+       * @param {{ topic: string, meta?: object }} e
+       */
       dispatchTopicNew: (e) => {
         window.dispatchEvent(new CustomEvent('katulong:topic-new', {
           detail: { topic: e.topic, meta: e.meta },

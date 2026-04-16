@@ -28,6 +28,35 @@ describe("isClaudeCommand", () => {
     assert.equal(isClaudeCommand("claudesh"), false);
   });
 
+  it("matches the semver title that Claude Code sets at runtime", () => {
+    // Observed via `tmux list-panes -F '#{pane_current_command}'` on macOS:
+    // Claude Code overwrites its process title with the running version
+    // (e.g. "2.1.107", "2.1.109"). Tmux's pane_current_command reads the
+    // kinfo_proc p_comm / ucomm field on BSD+macOS, which reflects the
+    // current title — not the original exec name — so plain "claude"
+    // never hits for a live Claude Code pane.
+    assert.equal(isClaudeCommand("2.1.107"), true);
+    assert.equal(isClaudeCommand("2.1.108"), true);
+    assert.equal(isClaudeCommand("2.1.109"), true);
+    assert.equal(isClaudeCommand("2.1.110"), true);
+  });
+
+  it("matches semver with prerelease and build metadata", () => {
+    assert.equal(isClaudeCommand("2.2.0-beta.1"), true);
+    assert.equal(isClaudeCommand("3.0.0-rc.2"), true);
+    assert.equal(isClaudeCommand("2.1.109+build.42"), true);
+  });
+
+  it("does not match arbitrary numeric strings", () => {
+    // The semver matcher must not false-positive on pids, ports, IP
+    // fragments, or short version-like strings Claude Code has never set.
+    assert.equal(isClaudeCommand("1"), false);
+    assert.equal(isClaudeCommand("1.0"), false);
+    assert.equal(isClaudeCommand("12345"), false);
+    assert.equal(isClaudeCommand("127.0.0.1"), false);
+    assert.equal(isClaudeCommand("a.b.c"), false);
+  });
+
   it("handles null / empty / non-string", () => {
     assert.equal(isClaudeCommand(null), false);
     assert.equal(isClaudeCommand(undefined), false);

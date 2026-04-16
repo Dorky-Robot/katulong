@@ -35,24 +35,31 @@ export function createJoystickManager(options = {}) {
       return btn;
     }
 
+    // Glass "island" wraps the action buttons and the connection dot as a
+    // single unified surface.
+    const island = document.createElement("div");
+    island.className = "joystick-island";
+
     if (_onUploadClick) {
-      joystick.appendChild(actionBtn("image", "Upload image", _onUploadClick));
+      island.appendChild(actionBtn("image", "Upload image", _onUploadClick));
     }
     if (_onFilesClick) {
-      joystick.appendChild(actionBtn("folder-open", "Files", _onFilesClick));
+      island.appendChild(actionBtn("folder-open", "Files", _onFilesClick));
     }
     if (_context) {
-      joystick.appendChild(actionBtn(_context.icon, _context.label, _context.action, _context.className || ""));
+      island.appendChild(actionBtn(_context.icon, _context.label, _context.action, _context.className || ""));
     }
     if (_onSettingsClick) {
-      joystick.appendChild(actionBtn("gear", "Settings", _onSettingsClick));
+      island.appendChild(actionBtn("gear", "Settings", _onSettingsClick));
     }
 
     // Connection dot — ID lets the connection subscriber in app.js target it
     dotEl = document.createElement("div");
     dotEl.className = "joystick-dot";
     dotEl.id = "joystick-connection-dot";
-    joystick.appendChild(dotEl);
+    island.appendChild(dotEl);
+
+    joystick.appendChild(island);
   }
 
   // Equality for the "should we skip the DOM rebuild?" check. `action` is
