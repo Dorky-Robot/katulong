@@ -7,9 +7,8 @@
  *
  * Rendered state comes from a command-mode subscription: the surface is
  * passive and just draws what the walker is on. Each child of the
- * current node becomes a key pill; keyRange leaves collapse into a
- * single "1-9" pill. The breadcrumb shows how deep we are so the user
- * can read the chord they've typed.
+ * current node becomes a key pill. The breadcrumb shows how deep we
+ * are so the user can read the chord they've typed.
  */
 
 export const COMMAND_SURFACE_CLASS = "command-surface";

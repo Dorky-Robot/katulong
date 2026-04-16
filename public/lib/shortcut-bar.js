@@ -10,6 +10,7 @@
 
 import { invalidateSessions } from "/lib/stores.js";
 import { api, invalidateSessionIdCache } from "/lib/api-client.js";
+import { fetchSessionLists } from "/lib/session-fetch.js";
 import { detectPlatform } from "/lib/platform.js";
 import { renderKeyIsland } from "/lib/key-island.js";
 import { COMMAND_SURFACE_CLASS } from "/lib/command-surface.js";
@@ -169,16 +170,7 @@ export function createShortcutBar(options = {}) {
       closeMenu();
       return;
     }
-    let managed = [];
-    let unmanaged = [];
-    try {
-      const [sessData, tmuxData] = await Promise.all([
-        api.get(`/sessions?_t=${Date.now()}`),
-        api.get(`/tmux-sessions?_t=${Date.now()}`),
-      ]);
-      managed = sessData || [];
-      unmanaged = (tmuxData || []).map(s => typeof s === "string" ? { name: s, attached: false } : s);
-    } catch (err) { console.error("[showAddMenu] fetch error:", err); }
+    const { managed, unmanaged } = await fetchSessionLists();
 
     const openTabs = windowTabSet ? new Set(windowTabSet.getTabs()) : new Set();
 
