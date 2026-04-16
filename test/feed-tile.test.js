@@ -132,7 +132,7 @@ describe("feedRenderer", () => {
       // swap to any lingering claude/<uuid> on reload. Dropping the tile
       // instead keeps restores clean.
       assert.equal(
-        feedRenderer.describe({ awaitingClaudeForSession: "work" }).persistable,
+        feedRenderer.describe({ awaitingClaude: { session: "work" } }).persistable,
         false,
       );
     });
@@ -209,26 +209,9 @@ describe("feedRenderer", () => {
       const header = root.children[0];
       assert.equal(header.className, "feed-tile-header");
       // [backBtn, title, closeBtn]
-      assert.equal(header.children[0].className, "feed-tile-back-btn");
-      assert.equal(header.children[1].textContent, "my/topic");
-      assert.equal(header.children[2].className, "feed-tile-close-btn");
-    });
-
-    it("header has back button, title, and close button", () => {
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: { topic: "t", meta: { type: "progress" } },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      const root = el.children[0];
-      const header = root.children[0];
-      // [backBtn, title, closeBtn]
       assert.equal(header.children.length, 3);
       assert.equal(header.children[0].className, "feed-tile-back-btn");
-      assert.equal(header.children[1].textContent, "t");
+      assert.equal(header.children[1].textContent, "my/topic");
       assert.equal(header.children[2].className, "feed-tile-close-btn");
     });
 
@@ -369,8 +352,10 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          awaitingBaseline: { uuid: null, startedAt: 0 },
+          awaitingClaude: {
+            session: "work",
+            baseline: { uuid: null, startedAt: 0 },
+          },
           meta: {},
         },
         dispatch: () => {},
@@ -405,8 +390,10 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          awaitingBaseline: { uuid: null, startedAt: 0 },
+          awaitingClaude: {
+            session: "work",
+            baseline: { uuid: null, startedAt: 0 },
+          },
           meta: {},
         },
         dispatch: () => {},
@@ -428,8 +415,10 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          awaitingBaseline: { uuid: null, startedAt: 0 },
+          awaitingClaude: {
+            session: "work",
+            baseline: { uuid: null, startedAt: 0 },
+          },
           meta: {},
         },
         dispatch: (a) => dispatched.push(a),
@@ -456,7 +445,7 @@ describe("feedRenderer", () => {
       const patchAction = dispatched.find(a => a.type === "ui/UPDATE_PROPS");
       assert.ok(patchAction, "UPDATE_PROPS should be dispatched");
       assert.equal(patchAction.patch.topic, "claude/11111111-2222-3333-4444-555555555555");
-      assert.equal(patchAction.patch.awaitingClaudeForSession, null);
+      assert.equal(patchAction.patch.awaitingClaude, null);
     });
 
     it("swaps immediately when the uuid is already fresh at mount", () => {
@@ -477,8 +466,10 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          awaitingBaseline: { uuid: null, startedAt: 0 },
+          awaitingClaude: {
+            session: "work",
+            baseline: { uuid: null, startedAt: 0 },
+          },
           meta: {},
         },
         dispatch: () => {},
@@ -501,9 +492,11 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          // Click-time baseline: we already saw this uuid before opening.
-          awaitingBaseline: { uuid, startedAt: 100 },
+          awaitingClaude: {
+            session: "work",
+            // Click-time baseline: we already saw this uuid before opening.
+            baseline: { uuid, startedAt: 100 },
+          },
           meta: {},
         },
         dispatch: () => {},
@@ -530,8 +523,10 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          awaitingBaseline: { uuid: oldUuid, startedAt: 100 },
+          awaitingClaude: {
+            session: "work",
+            baseline: { uuid: oldUuid, startedAt: 100 },
+          },
           meta: {},
         },
         dispatch: () => {},
@@ -561,8 +556,10 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          awaitingBaseline: { uuid, startedAt: 100 },
+          awaitingClaude: {
+            session: "work",
+            baseline: { uuid, startedAt: 100 },
+          },
           meta: {},
         },
         dispatch: () => {},
@@ -593,8 +590,10 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          awaitingBaseline: { uuid: null, startedAt: 0 },
+          awaitingClaude: {
+            session: "work",
+            baseline: { uuid: null, startedAt: 0 },
+          },
           meta: {},
         },
         dispatch: (a) => dispatched.push(a),
@@ -614,7 +613,7 @@ describe("feedRenderer", () => {
       const patch = dispatched.find(a => a.type === "ui/UPDATE_PROPS");
       assert.ok(patch);
       assert.equal(patch.patch.topic, `claude/${uuid}`);
-      assert.equal(patch.patch.awaitingClaudeForSession, null);
+      assert.equal(patch.patch.awaitingClaude, null);
     });
 
     it("ignores non-claude topic-new events while awaiting", () => {
@@ -628,8 +627,10 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          awaitingBaseline: { uuid: null, startedAt: 0 },
+          awaitingClaude: {
+            session: "work",
+            baseline: { uuid: null, startedAt: 0 },
+          },
           meta: {},
         },
         dispatch: () => {},
@@ -655,8 +656,10 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          awaitingBaseline: { uuid, startedAt: 100 },
+          awaitingClaude: {
+            session: "work",
+            baseline: { uuid, startedAt: 100 },
+          },
           meta: {},
         },
         dispatch: () => {},
@@ -687,8 +690,10 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          awaitingBaseline: { uuid: null, startedAt: 0 },
+          awaitingClaude: {
+            session: "work",
+            baseline: { uuid: null, startedAt: 0 },
+          },
           meta: {},
         },
         dispatch: () => {},
@@ -730,8 +735,10 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          awaitingBaseline: { uuid: null, startedAt: 0 },
+          awaitingClaude: {
+            session: "work",
+            baseline: { uuid: null, startedAt: 0 },
+          },
           meta: {},
         },
         dispatch: () => {},
@@ -759,8 +766,10 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          awaitingBaseline: { uuid: null, startedAt: 0 },
+          awaitingClaude: {
+            session: "work",
+            baseline: { uuid: null, startedAt: 0 },
+          },
           meta: {},
         },
         dispatch: () => {},
@@ -783,8 +792,10 @@ describe("feedRenderer", () => {
         id: "feed-1",
         props: {
           topic: null,
-          awaitingClaudeForSession: "work",
-          awaitingBaseline: { uuid: null, startedAt: 0 },
+          awaitingClaude: {
+            session: "work",
+            baseline: { uuid: null, startedAt: 0 },
+          },
           meta: {},
         },
         dispatch: () => {},

@@ -1,10 +1,16 @@
 /**
  * Feed Tile Renderer
  *
- * General-purpose event streamer that subscribes to a pub/sub topic via
- * SSE and renders events according to topic metadata. The tile is a
- * subscriber — it decides how to display raw domain events. Another
- * subscriber (an orchestrator) could use the same events for choreography.
+ * Event streamer that subscribes to a pub/sub topic via SSE and renders
+ * events according to topic metadata. The tile is a subscriber — it
+ * decides how to display raw domain events. Another subscriber (an
+ * orchestrator) could use the same events for choreography.
+ *
+ * Dual role:
+ *   - Generic mode — pick any topic and stream it.
+ *   - Claude-aware mode — when `props.awaitingClaude` is set, render a
+ *     blank stream and auto-swap to the live `claude/<uuid>` topic the
+ *     moment a fresh uuid surfaces (via sessionStore or topic-new event).
  *
  * Lifecycle:
  *   1. Opens blank with an inline topic picker (fetched from /api/topics)
@@ -14,7 +20,9 @@
  *      - "progress" — checklist with keyed step updates + status bullets
  *      - default    — chronological event log with timestamps
  *
- * Single-file renderer: no factory, no init deps.
+ * Single-file renderer. `init({ getSessionStore })` is optional — when
+ * omitted the awaiting-Claude view falls back to the topic-new broadcast
+ * path alone.
  */
 
 // ── Rendering strategies ────────────────────────────────────────────
@@ -101,13 +109,13 @@ function renderLogItem(row, msg, ts) {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-let _getSessionStore = () => null;
+let _sessionStoreGetter = () => null;
 
 export const feedRenderer = {
   type: "feed",
 
   init({ getSessionStore } = {}) {
-    if (typeof getSessionStore === "function") _getSessionStore = getSessionStore;
+    if (typeof getSessionStore === "function") _sessionStoreGetter = getSessionStore;
   },
 
   describe(props) {
@@ -115,7 +123,7 @@ export const feedRenderer = {
     // would restore a blank waiter whose baseline is epoch-zero, which
     // would then swap to any lingering claude/<uuid> uuid. Drop them on
     // reload and let the user re-invoke the sparkle.
-    const persistable = !props.awaitingClaudeForSession;
+    const persistable = !props.awaitingClaude;
     return {
       title: props.title || props.topic || "Feed",
       icon: "rss",
@@ -145,16 +153,45 @@ export const feedRenderer = {
     root.className = "feed-tile-root";
     el.appendChild(root);
 
+    // Shared header for awaiting + streaming views — keeps the DOM
+    // identical across the transition so the swap has no visual reshuffle.
+    function buildStreamHeader(titleText) {
+      const header = document.createElement("div");
+      header.className = "feed-tile-header";
+
+      const backBtn = document.createElement("button");
+      backBtn.className = "feed-tile-back-btn";
+      backBtn.innerHTML = '<i class="ph ph-arrow-left"></i>';
+      backBtn.title = "Back to topics";
+      backBtn.addEventListener("click", () => { if (mounted) showTopicPicker(); });
+      header.appendChild(backBtn);
+
+      const headerTitle = document.createElement("span");
+      headerTitle.className = "feed-tile-header-title";
+      headerTitle.textContent = titleText;
+      header.appendChild(headerTitle);
+
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "feed-tile-close-btn";
+      closeBtn.innerHTML = '<i class="ph ph-x"></i>';
+      closeBtn.title = "Close";
+      closeBtn.addEventListener("click", () => ctx?.requestClose?.());
+      header.appendChild(closeBtn);
+
+      return header;
+    }
+
     // Route on mount:
     //   - `topic` present → stream it (normal restore path).
-    //   - `awaitingClaudeForSession` → blank stream view that subscribes to
-    //     the session store and auto-swaps when the new Claude uuid lands.
+    //   - `awaitingClaude: { session, baseline }` → blank stream view that
+    //     subscribes to the session store and auto-swaps when the Claude
+    //     uuid for `session` advances past `baseline`.
     //   - otherwise → topic picker.
     try {
       if (props.topic) {
         startStreaming(props.topic, props.meta || {});
-      } else if (props.awaitingClaudeForSession) {
-        startAwaitingClaude(props.awaitingClaudeForSession, props.awaitingBaseline || null);
+      } else if (props.awaitingClaude?.session) {
+        startAwaitingClaude(props.awaitingClaude.session, props.awaitingClaude.baseline || null);
       } else {
         showTopicPicker();
       }
@@ -357,29 +394,7 @@ export const feedRenderer = {
       drainViewCleanups();
       root.innerHTML = "";
 
-      const header = document.createElement("div");
-      header.className = "feed-tile-header";
-
-      const backBtn = document.createElement("button");
-      backBtn.className = "feed-tile-back-btn";
-      backBtn.innerHTML = '<i class="ph ph-arrow-left"></i>';
-      backBtn.title = "Back to topics";
-      backBtn.addEventListener("click", () => { if (mounted) showTopicPicker(); });
-      header.appendChild(backBtn);
-
-      const headerTitle = document.createElement("span");
-      headerTitle.className = "feed-tile-header-title";
-      headerTitle.textContent = "Claude";
-      header.appendChild(headerTitle);
-
-      const closeBtn = document.createElement("button");
-      closeBtn.className = "feed-tile-close-btn";
-      closeBtn.innerHTML = '<i class="ph ph-x"></i>';
-      closeBtn.title = "Close";
-      closeBtn.addEventListener("click", () => ctx?.requestClose?.());
-      header.appendChild(closeBtn);
-
-      root.appendChild(header);
+      root.appendChild(buildStreamHeader("Claude"));
 
       const list = document.createElement("div");
       list.className = "feed-tile-list";
@@ -389,7 +404,11 @@ export const feedRenderer = {
       const seenUuid = baseline?.uuid || null;
       const seenStartedAt = baseline?.startedAt || 0;
 
-      function isFreshUuid(m) {
+      // Policy mirror: see `applyClaudeMetaFromHook` in
+      // lib/routes/app-routes.js — SessionStart bumps `startedAt`, so a
+      // newer uuid OR a later `startedAt` signals a new Claude session
+      // worth swapping to.
+      function isNewerSession(m) {
         if (!m?.uuid) return false;
         if (m.uuid !== seenUuid) return true;
         return (m.startedAt || 0) > seenStartedAt;
@@ -407,7 +426,7 @@ export const feedRenderer = {
             id,
             patch: {
               topic, title: topic, meta,
-              awaitingClaudeForSession: null, awaitingBaseline: null,
+              awaitingClaude: null,
             },
           });
         }
@@ -433,7 +452,7 @@ export const feedRenderer = {
       window.addEventListener("katulong:topic-new", onTopicNew);
       viewCleanups.push(() => window.removeEventListener("katulong:topic-new", onTopicNew));
 
-      const store = _getSessionStore();
+      const store = _sessionStoreGetter();
       if (!store) return; // No store wired — topic-new listener still active.
 
       function readClaudeMeta() {
@@ -445,12 +464,12 @@ export const feedRenderer = {
       // Check once synchronously in case the uuid landed between the
       // click and mount.
       const immediate = readClaudeMeta();
-      if (isFreshUuid(immediate)) { swapToTopic(immediate.uuid); return; }
+      if (isNewerSession(immediate)) { swapToTopic(immediate.uuid); return; }
 
       const unsubscribe = store.subscribe(() => {
         if (!mounted || swapped) return;
         const m = readClaudeMeta();
-        if (isFreshUuid(m)) swapToTopic(m.uuid);
+        if (isNewerSession(m)) swapToTopic(m.uuid);
       });
       viewCleanups.push(unsubscribe);
     }

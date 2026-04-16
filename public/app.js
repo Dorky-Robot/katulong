@@ -1953,8 +1953,10 @@
               topic: null,
               title: "Claude",
               meta: {},
-              awaitingClaudeForSession: sessionName,
-              awaitingBaseline: { uuid: null, startedAt: 0 },
+              awaitingClaude: {
+                session: sessionName,
+                baseline: { uuid: null, startedAt: 0 },
+              },
             },
           },
           { focus: true, insertAt: "afterFocus" },
@@ -2196,6 +2198,18 @@
         windowTabSet.addTab(e.session);
         switchSession(e.session);
       },
+      /**
+       * Broadcast that a pub/sub topic was created on the server.
+       *
+       * Consumed by feed tiles — the picker uses it to add live rows,
+       * and awaiting-Claude tiles use it as a second signal path for
+       * swapping to a fresh `claude/<uuid>` stream when the session
+       * store's `meta.claude.uuid` never surfaces (e.g. hooks weren't
+       * installed before Claude started). Any new listener should
+       * verify the topic shape before acting — detail is not validated.
+       *
+       * @param {{ topic: string, meta?: object }} e
+       */
       dispatchTopicNew: (e) => {
         window.dispatchEvent(new CustomEvent('katulong:topic-new', {
           detail: { topic: e.topic, meta: e.meta },
