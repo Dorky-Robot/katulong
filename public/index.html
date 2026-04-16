@@ -2434,6 +2434,11 @@
     /* Narrative block — blog-like prose from the Ollama model */
     .feed-status-narrative { flex-direction: column; gap: var(--space-xs); }
     .feed-tile-narrative { line-height: 1.55; color: var(--text); overflow-wrap: break-word; }
+    /* Completion — Claude's final assistant message from a Stop hook.
+       Distinguishable from narrative via a subtle muted left border so
+       readers can tell the model's own words from the synthesized summary. */
+    .feed-status-completion { flex-direction: column; gap: var(--space-xs); border-left: 2px solid var(--border, rgba(255,255,255,0.12)); padding-left: var(--space-sm); }
+    .feed-tile-completion { line-height: 1.55; color: var(--text); overflow-wrap: break-word; white-space: pre-wrap; }
     /* Summary — session objective */
     .feed-status-summary { border-left: 2px solid var(--accent, #58a6ff); padding-left: var(--space-sm); }
     .feed-tile-summary { font-weight: 600; color: var(--text); font-size: var(--text-sm); }

@@ -50,6 +50,17 @@ function renderProgressItem(row, msg) {
     return;
   }
 
+  // Completion — Claude's last assistant message from a Stop hook.
+  // Shown at full legibility because it's often the only signal a
+  // resumed session emits before (or without) an Ollama narrative.
+  if (status === "completion") {
+    const prose = document.createElement("div");
+    prose.className = "feed-tile-completion";
+    prose.textContent = msg.step || "";
+    row.appendChild(prose);
+    return;
+  }
+
   // Summary — session objective line from the model.
   if (status === "summary") {
     const summaryEl = document.createElement("div");
@@ -498,7 +509,7 @@ export const feedRenderer = {
       // always visible. Tool-use progress events (active, done, pending,
       // text, etc.) collapse into expandable <details> groups between
       // narrative blocks so the feed reads like a blog, not a log.
-      const PROMINENT = new Set(["narrative", "summary", "attention"]);
+      const PROMINENT = new Set(["narrative", "summary", "attention", "completion"]);
       let currentDetails = null; // the open <details> group, if any
       let detailCount = 0;
 

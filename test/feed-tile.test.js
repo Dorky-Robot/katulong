@@ -244,6 +244,49 @@ describe("feedRenderer", () => {
       const list = root.children[1]; // header is [0], list is [1]
       assert.equal(list.children.length, 1);
     });
+
+    it("renders completion events as prominent (not folded into details)", () => {
+      // Stop hooks emit `status: "completion"` cards — on resumed sessions
+      // without Ollama narratives these are often the only signal the user
+      // sees. They must render at full legibility, not inside a muted
+      // collapsible details group.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      const es = eventSources[0];
+      es.onmessage({
+        data: JSON.stringify({
+          seq: 1,
+          topic: "claude/abc",
+          message: JSON.stringify({
+            step: "All tests pass.",
+            status: "completion",
+            event: "Completion",
+          }),
+          timestamp: Date.now(),
+        }),
+      });
+
+      const root = el.children[0];
+      const list = root.children[1];
+
+      // Completion row lives directly on the list, not inside a details group.
+      assert.equal(list.children.length, 1);
+      const row = list.children[0];
+      assert.ok(
+        row.className.includes("feed-status-completion"),
+        `expected feed-status-completion, got: ${row.className}`,
+      );
+      assert.equal(row.children[0].className, "feed-tile-completion");
+      assert.equal(row.children[0].textContent, "All tests pass.");
+      // No collapsible details group was created.
+      assert.equal(list.querySelector(".feed-tile-details-group"), null);
+    });
   });
 
   describe("unmount", () => {
