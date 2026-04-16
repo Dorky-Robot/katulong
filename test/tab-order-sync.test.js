@@ -37,6 +37,8 @@ globalThis.BroadcastChannel = class {
 
 const { createWindowTabSet } = await import("../public/lib/window-tab-set.js");
 const { navigateTab, moveTab, jumpToTab } = await import("../public/lib/navigation.js");
+const { installTabOrderSync } = await import("../public/lib/tab-order-sync.js");
+const { createUiStore } = await import("../public/lib/ui-store.js");
 
 function makeTabSet(initialTabs = []) {
   stores.session = {};
@@ -207,13 +209,13 @@ describe("windowTabSet syncs to carousel order after restore", () => {
   });
 });
 
-describe("drag reorder syncs carousel via windowTabSet subscriber", () => {
+describe("windowTabSet.subscribe — raw callback wiring (sanity check)", () => {
   beforeEach(() => {
     stores.session = {};
     stores.local = {};
   });
 
-  it("windowTabSet subscriber can trigger carousel reorder", () => {
+  it("a subscriber callback can mirror reorderTabs into a parallel array", () => {
     const ts = makeTabSet(["a", "b", "c"]);
     let carouselCards = ["a", "b", "c"];
 
@@ -229,5 +231,101 @@ describe("drag reorder syncs carousel via windowTabSet subscriber", () => {
 
     assert.deepEqual(ts.getTabs(), ["c", "a", "b"]);
     assert.deepEqual(carouselCards, ["c", "a", "b"]);
+  });
+});
+
+/**
+ * Regression for the "new tile jumps to end of carousel" bug. The ui-store
+ * addTile + "afterFocus" inserts the new column right of the focused tile;
+ * windowTabSet.addTab appends. Before the permutation gate in
+ * installTabOrderSync, the subscriber would immediately overwrite
+ * ui-store's correctly-positioned order with windowTabSet's append-ordered
+ * list. These tests exercise the real installTabOrderSync wiring with a
+ * real uiStore + a real windowTabSet, asserting both the regression path
+ * and the legitimate drag-reorder sync path.
+ */
+describe("installTabOrderSync — ADD_TILE afterFocus must survive windowTabSet.addTab", () => {
+  beforeEach(() => {
+    stores.session = {};
+    stores.local = {};
+  });
+
+  function buildStoreWithOrder(ids, focusedId) {
+    const uiStore = createUiStore();
+    for (const id of ids) {
+      uiStore.addTile({ id, type: "terminal", props: {} });
+    }
+    if (focusedId) uiStore.focusTile(focusedId);
+    return uiStore;
+  }
+
+  const orderOf = (uiStore) => uiStore.getState().order;
+
+  it("new tile opens right of focused tile (not at end) when windowTabSet.addTab also fires", () => {
+    // Three tabs, B focused. createNewSession will dispatch addTile
+    // afterFocus then addTab — both must agree on placement.
+    const uiStore = buildStoreWithOrder(["A", "B", "C"], "B");
+    const ts = makeTabSet(["A", "B", "C"]);
+    installTabOrderSync({ windowTabSet: ts, uiStore });
+
+    uiStore.addTile({ id: "D", type: "terminal", props: {} }, { focus: true, insertAt: "afterFocus" });
+    ts.addTab("D");
+
+    assert.deepEqual(
+      orderOf(uiStore),
+      ["A", "B", "D", "C"],
+      "uiStore.reorder must NOT fire on addTab — afterFocus placement has to win",
+    );
+    assert.deepEqual(ts.getTabs(), ["A", "B", "C", "D"]);
+  });
+
+  it("new tile opens at end when no tab is focused", () => {
+    const uiStore = buildStoreWithOrder(["A", "B", "C"], null);
+    const ts = makeTabSet(["A", "B", "C"]);
+    installTabOrderSync({ windowTabSet: ts, uiStore });
+
+    uiStore.addTile({ id: "D", type: "terminal", props: {} }, { focus: true, insertAt: "afterFocus" });
+    ts.addTab("D");
+
+    assert.deepEqual(orderOf(uiStore), ["A", "B", "C", "D"]);
+  });
+
+  it("removeTab does not trigger uiStore.reorder either", () => {
+    const uiStore = buildStoreWithOrder(["A", "B", "C"], "B");
+    const ts = makeTabSet(["A", "B", "C"]);
+    installTabOrderSync({ windowTabSet: ts, uiStore });
+
+    uiStore.removeTile("B");
+    ts.removeTab("B");
+
+    assert.deepEqual(orderOf(uiStore), ["A", "C"]);
+    assert.deepEqual(ts.getTabs(), ["A", "C"]);
+  });
+
+  it("pure reorder (session-list drag) does propagate to uiStore", () => {
+    const uiStore = buildStoreWithOrder(["A", "B", "C"], "A");
+    const ts = makeTabSet(["A", "B", "C"]);
+    installTabOrderSync({ windowTabSet: ts, uiStore });
+
+    ts.reorderTabs(["C", "A", "B"]);
+
+    assert.deepEqual(orderOf(uiStore), ["C", "A", "B"]);
+    assert.deepEqual(ts.getTabs(), ["C", "A", "B"]);
+  });
+
+  it("returns an unsubscribe handle", () => {
+    const uiStore = buildStoreWithOrder(["A", "B"], "A");
+    const ts = makeTabSet(["A", "B"]);
+    const unsubscribe = installTabOrderSync({ windowTabSet: ts, uiStore });
+    assert.equal(typeof unsubscribe, "function");
+
+    unsubscribe();
+    ts.reorderTabs(["B", "A"]);
+    assert.deepEqual(orderOf(uiStore), ["A", "B"]);
+  });
+
+  it("no-ops when called without windowTabSet or uiStore", () => {
+    assert.equal(typeof installTabOrderSync(), "function");
+    assert.equal(typeof installTabOrderSync({ windowTabSet: null, uiStore: null }), "function");
   });
 });

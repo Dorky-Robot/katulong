@@ -28,6 +28,7 @@
     import { openCommandPicker } from "/lib/command-picker.js";
     import { fetchSessionLists } from "/lib/session-fetch.js";
     import { createWindowTabSet } from "/lib/window-tab-set.js";
+    import { installTabOrderSync } from "/lib/tab-order-sync.js";
     import { createPasteHandler } from "/lib/paste-handler.js";
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
@@ -957,9 +958,18 @@
         if (sidebar?.classList.contains("collapsed")) {
           setSidebarCollapsed(false);
         }
-        // routeToSession dispatches ADD_TILE with insertAt: "afterFocus"
+        // routeToSession dispatches ADD_TILE with insertAt: "afterFocus".
+        // Mirror the same anchor index into windowTabSet so the sidebar
+        // session list (which reads from windowTabSet.getTabs()) shows the
+        // new tab right of the active one too. Other addTab call sites
+        // (activateSession, onAdoptSession, the WS session-adopted handler)
+        // append intentionally — they're adopting sessions uiStore hasn't
+        // placed yet, so there's no positioned insertion to mirror.
+        const activeName = getActiveSessionName();
+        const priorTabs = windowTabSet.getTabs();
+        const anchorIdx = activeName ? priorTabs.indexOf(activeName) : -1;
         routeToSession(data.name);
-        windowTabSet.addTab(data.name);
+        windowTabSet.addTab(data.name, anchorIdx >= 0 ? anchorIdx + 1 : undefined);
         cm.reconnectNow();
       } catch (err) {
         console.error("Failed to create session:", err);
@@ -1480,13 +1490,7 @@
       uiStore,
     });
 
-    // Sync ui-store order when tabs are reordered via the legacy shortcut bar.
-    // Routes through ui-store so tile-host drives carousel.reorderCards.
-    if (windowTabSet) {
-      windowTabSet.subscribe(() => {
-        uiStore.reorder(windowTabSet.getTabs());
-      });
-    }
+    installTabOrderSync({ windowTabSet, uiStore });
 
     // ── <tile-tab-bar> event handlers ──────────────────────────────────
     // The web component dispatches CustomEvents for actions that need
