@@ -25,7 +25,7 @@ import { selectClusterView } from "./selectors.js";
 // a user-dragged width saved in localStorage always wins.
 const DEFAULT_CARD_WIDTHS = {
   "file-browser": 420,
-  "feed": 480,
+  "feed": 380,
 };
 
 function defaultCardWidthForType(type) {
