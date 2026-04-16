@@ -9,16 +9,25 @@
  *
  * Errors from either endpoint degrade to an empty list rather than
  * aborting the whole fetch — showing half the picker is strictly better
- * than showing none of it.
+ * than showing none of it. Shortcut-bar previously used an outer
+ * try/catch that zeroed both lists when either endpoint failed; the
+ * per-fetch .catch here intentionally preserves partial results, which
+ * is the behavior openTilePicker already had.
  */
 
 import { api } from "/lib/api-client.js";
 
 export async function fetchSessionLists() {
-  const bust = Date.now();
+  const cacheBust = Date.now();
   const [sessData, tmuxData] = await Promise.all([
-    api.get(`/sessions?_t=${bust}`).catch(() => []),
-    api.get(`/tmux-sessions?_t=${bust}`).catch(() => []),
+    api.get(`/sessions?_t=${cacheBust}`).catch((err) => {
+      console.warn("[session-fetch] /sessions failed:", err.message);
+      return [];
+    }),
+    api.get(`/tmux-sessions?_t=${cacheBust}`).catch((err) => {
+      console.warn("[session-fetch] /tmux-sessions failed:", err.message);
+      return [];
+    }),
   ]);
   const managed = sessData || [];
   const unmanaged = (tmuxData || []).map(
