@@ -97,24 +97,24 @@ function renderReplyItem(row, msg, ts) {
   row.className = "feed-tile-item feed-status-reply";
   const text = msg.step || "";
 
-  const header = document.createElement("div");
-  header.className = "feed-tile-reply-header";
-  header.appendChild(makeTimeSpan(ts));
-  if (Array.isArray(msg.files) && msg.files.length > 0) {
-    const files = document.createElement("span");
-    files.className = "feed-tile-reply-files";
-    for (const f of msg.files) files.appendChild(makeFileChip(f));
-    header.appendChild(files);
-  }
-  row.appendChild(header);
-
-  // Markdown → HTML for the reply body. Claude's replies are markdown
-  // (bullets, code spans, bold) and showing raw `**foo**` looks like a
-  // rendering bug. Same sanitize pipeline the document tile uses.
+  // Prose first, metadata below — the reply IS the content. The footer
+  // is reference material (when it happened, what it touched) that a
+  // reader glances at after skimming the body.
   const prose = document.createElement("div");
   prose.className = "feed-tile-reply-body";
   renderMarkdown(prose, text);
   row.appendChild(prose);
+
+  const footer = document.createElement("div");
+  footer.className = "feed-tile-reply-footer";
+  footer.appendChild(makeTimeSpan(ts));
+  if (Array.isArray(msg.files) && msg.files.length > 0) {
+    const files = document.createElement("span");
+    files.className = "feed-tile-reply-files";
+    for (const f of msg.files) files.appendChild(makeFileChip(f));
+    footer.appendChild(files);
+  }
+  row.appendChild(footer);
 }
 
 function renderLogItem(row, msg, ts) {

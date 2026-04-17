@@ -295,10 +295,11 @@ describe("feedRenderer", () => {
       assert.equal(list.children.length, 1);
     });
 
-    it("renders reply events as a flat card — header with time, body with prose", () => {
-      // One `reply` event → one div with [header, body]. Header carries
-      // the formatted time; body shows the reply text, rendered as HTML
-      // through the markdown pipeline.
+    it("renders reply events as a flat card — prose on top, time footer below", () => {
+      // One `reply` event → one div with [body, footer]. Body shows the
+      // reply text (rendered as HTML through the markdown pipeline);
+      // footer carries the formatted time so the reader's eye lands on
+      // the reply first.
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -330,17 +331,17 @@ describe("feedRenderer", () => {
         `expected feed-status-reply, got: ${row.className}`,
       );
 
-      const header = row.children[0];
-      assert.equal(header.className, "feed-tile-reply-header");
-      const timeSpan = header.children[0];
-      assert.equal(timeSpan.className, "feed-tile-row-time");
-      assert.ok(timeSpan.textContent, "time span renders a formatted timestamp");
-
-      const body = row.children[1];
+      const body = row.children[0];
       assert.equal(body.className, "feed-tile-reply-body");
       // In Node the markdown pipeline can't load and feed.js uses the
       // textContent fallback — so the test asserts against that path.
       assert.equal(body.textContent, "All tests pass.");
+
+      const footer = row.children[1];
+      assert.equal(footer.className, "feed-tile-reply-footer");
+      const timeSpan = footer.children[0];
+      assert.equal(timeSpan.className, "feed-tile-row-time");
+      assert.ok(timeSpan.textContent, "time span renders a formatted timestamp");
     });
 
     it("renders file chips for reply.files and fires katulong:open-file on click", () => {
@@ -370,10 +371,10 @@ describe("feedRenderer", () => {
       });
 
       const list = el.children[0].children[1];
-      const header = list.children[0].children[0];
-      assert.equal(header.className, "feed-tile-reply-header");
-      // Header is [time, files-wrapper]; body is the next sibling.
-      const filesWrapper = header.children[1];
+      // Row is [body, footer]; footer is [time, files-wrapper].
+      const footer = list.children[0].children[1];
+      assert.equal(footer.className, "feed-tile-reply-footer");
+      const filesWrapper = footer.children[1];
       assert.equal(filesWrapper.className, "feed-tile-reply-files");
       assert.equal(filesWrapper.children.length, 2);
 
@@ -428,7 +429,8 @@ describe("feedRenderer", () => {
 
       const list = el.children[0].children[1];
       assert.equal(list.children.length, 1, "no duplicate row for same entryId");
-      assert.equal(list.children[0].children[1].textContent, "second");
+      // children[0] is the body (prose first); assert its updated text.
+      assert.equal(list.children[0].children[0].textContent, "second");
     });
 
     it("silently drops legacy narrative / completion / summary / reply-title events", () => {

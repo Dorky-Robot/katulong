@@ -2461,8 +2461,9 @@
        is the narrative, not a second copy. Subtle muted left border sets
        it apart from the narrative below. */
     .feed-status-reply { display: block; border-left: 2px solid var(--border, rgba(255,255,255,0.12)); padding-left: var(--space-sm); padding-top: var(--space-xs); padding-bottom: var(--space-xs); }
-    /* Header row: time + optional file chips. Prose sits below. */
-    .feed-tile-reply-header { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; color: var(--text-muted); font-size: var(--text-xs); padding-bottom: 4px; }
+    /* Footer row (below the prose): time + optional file chips. Kept
+       muted so the eye lands on the reply text first. */
+    .feed-tile-reply-footer { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; color: var(--text-muted); font-size: var(--text-xs); padding-top: 4px; }
     /* File chips — clickable basenames of files touched in this reply. */
     .feed-tile-reply-files { display: inline-flex; gap: 4px; flex-wrap: wrap; }
     .feed-tile-reply-file {
