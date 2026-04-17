@@ -1897,11 +1897,13 @@
 
     /** Open a feed tile for the Claude session running in the current terminal.
      *
-     * Flow: POST /api/claude/watch with `{ uuid, cwd }` to opt the UUID into
-     * the narration watchlist, then open a feed tile that streams
-     * `/api/claude/stream/:uuid`. The sparkle button is gated on
-     * `meta.claude.uuid`, which is populated by the SessionStart hook — so
-     * by the time we reach this handler, both uuid and cwd are present.
+     * Flow: fetch the session's cwd, POST /api/claude/watch with `{ uuid, cwd }`
+     * to opt the UUID into the narration watchlist, then open a feed tile that
+     * streams `/api/claude/stream/:uuid`. The sparkle button is gated on
+     * `meta.claude.uuid`, which is populated by the SessionStart hook.
+     *
+     * `cwd` is not on the session object (Session.toJSON doesn't include it),
+     * so we fetch it from /sessions/cwd/:name — same pattern file-browser uses.
      *
      * No session / no uuid → generic picker. Resolution failure → toast +
      * picker (handles the corner case where a stale client still has an old
@@ -1919,8 +1921,21 @@
       const active = (sessions || []).find(s => s.name === sessionName);
       const claudeMeta = active?.meta?.claude || null;
 
-      if (!claudeMeta?.uuid || !active?.cwd) {
+      if (!claudeMeta?.uuid) {
         showToast("Install Claude hooks first: `katulong setup claude-hooks`", true);
+        openFeedTile();
+        return;
+      }
+
+      let cwd;
+      try {
+        const data = await api.get(`/sessions/cwd/${encodeURIComponent(sessionName)}`);
+        cwd = data?.cwd;
+      } catch {
+        cwd = null;
+      }
+      if (!cwd) {
+        showToast("Couldn't resolve the terminal's working directory", true);
         openFeedTile();
         return;
       }
@@ -1929,7 +1944,7 @@
       try {
         resolved = await api.post("/api/claude/watch", {
           uuid: claudeMeta.uuid,
-          cwd: active.cwd,
+          cwd,
         });
       } catch (err) {
         showToast(`Couldn't find a Claude transcript: ${err.message || "unknown"}`, true);
