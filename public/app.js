@@ -1759,6 +1759,23 @@
     }
 
     // Sync per-session icons from server session data
+    // Surface the running Claude-session summary as the terminal tab's
+    // tooltip so a mouse-over tells the reader what work is happening
+    // inside each pane. The summary lands on `session.meta.claude.summary`
+    // via the processor's Ollama pass; here we just walk the rendered
+    // tab bar and set the native `title` attribute.
+    function syncTabTooltips(sessions) {
+      if (!bar) return;
+      const byName = new Map((sessions || []).map((s) => [s.name, s]));
+      for (const el of bar.querySelectorAll(".tab-bar-tab")) {
+        const name = el.dataset?.session;
+        if (!name) continue;
+        const long = byName.get(name)?.meta?.claude?.summary?.long;
+        if (typeof long === "string" && long) el.title = long;
+        else el.removeAttribute("title");
+      }
+    }
+
     sessionStore.subscribe(() => {
       const { sessions } = sessionStore.getState();
       if (!sessions) return;
@@ -1770,6 +1787,7 @@
         }
       }
       syncJoystickContext();
+      syncTabTooltips(sessions);
     });
 
     // Active tile changes (e.g. user switches sessions) need an immediate

@@ -562,6 +562,26 @@ export const feedRenderer = {
       })();
       const responseBar = claudeUuid ? createResponseBar(claudeUuid) : null;
 
+      // Pinned summary at the top of the list. Rendered only for
+      // claude topics; hidden until the first `session-summary`
+      // event lands. `short` shows in the card; `long` is held on
+      // a data-attribute so a future surface (tooltip, expand) can
+      // read it.
+      const summaryCard = isProgress && claudeUuid ? document.createElement("div") : null;
+      if (summaryCard) {
+        summaryCard.className = "feed-tile-summary-card";
+        summaryCard.style.display = "none";
+        list.appendChild(summaryCard);
+      }
+      function applySummary(msg) {
+        if (!summaryCard) return;
+        const short = typeof msg.short === "string" ? msg.short.trim() : "";
+        if (!short) { summaryCard.style.display = "none"; return; }
+        summaryCard.style.display = "";
+        summaryCard.dataset.long = typeof msg.long === "string" ? msg.long : "";
+        summaryCard.textContent = short;
+      }
+
       function handleEvent(envelope) {
         let msg;
         try { msg = JSON.parse(envelope.message); } catch { msg = envelope.message; }
@@ -574,6 +594,10 @@ export const feedRenderer = {
         // completion, reply-title) still sitting in old topic logs are
         // silently dropped.
         if (isProgress) {
+          if (status === "session-summary") {
+            applySummary(msg);
+            return;
+          }
           if (status === "reply" && typeof msg.entryId === "string") {
             let row = replyItems.get(msg.entryId);
             if (!row) {
