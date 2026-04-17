@@ -33,7 +33,6 @@ import { createWebSocketManager } from "./lib/ws-manager.js";
 import { createTopicBroker } from "./lib/topic-broker.js";
 import { createWatchlist } from "./lib/claude-watchlist.js";
 import { createClaudeProcessor } from "./lib/claude-processor.js";
-import { createOllamaClient } from "./lib/ollama-client.js";
 import { createClaudeFeedRoutes } from "./lib/routes/claude-feed-routes.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 import { homedir } from "node:os";
@@ -262,7 +261,6 @@ const claudeWatchlist = createWatchlist({ dataDir: DATA_DIR });
 const claudeProcessor = createClaudeProcessor({
   watchlist: claudeWatchlist,
   topicBroker,
-  callOllama: createOllamaClient(),
 });
 
 const routes = [

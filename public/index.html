@@ -2460,15 +2460,11 @@
        because the user just saw the reply in the terminal; the feed's job
        is the narrative, not a second copy. Subtle muted left border sets
        it apart from the narrative below. */
-    .feed-status-reply { display: block; border-left: 2px solid var(--border, rgba(255,255,255,0.12)); padding-left: var(--space-sm); }
-    .feed-tile-reply-summary { cursor: pointer; color: var(--text-muted); font-size: var(--text-xs); padding: 4px 0; user-select: none; list-style: none; }
-    .feed-tile-reply-summary::before { content: "\25B8"; display: inline-block; width: 1.2em; transition: transform 0.15s; }
-    .feed-status-reply[open] > .feed-tile-reply-summary::before { transform: rotate(90deg); }
-    .feed-tile-reply-summary::-webkit-details-marker { display: none; }
-    /* File chips — clickable basenames of files touched in this reply.
-       Shown inline in the collapsed summary so the user can jump to a
-       file without opening the card. */
-    .feed-tile-reply-files { display: inline-flex; gap: 4px; margin-left: var(--space-xs); flex-wrap: wrap; vertical-align: middle; }
+    .feed-status-reply { display: block; border-left: 2px solid var(--border, rgba(255,255,255,0.12)); padding-left: var(--space-sm); padding-top: var(--space-xs); padding-bottom: var(--space-xs); }
+    /* Header row: time + optional file chips. Prose sits below. */
+    .feed-tile-reply-header { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; color: var(--text-muted); font-size: var(--text-xs); padding-bottom: 4px; }
+    /* File chips — clickable basenames of files touched in this reply. */
+    .feed-tile-reply-files { display: inline-flex; gap: 4px; flex-wrap: wrap; }
     .feed-tile-reply-file {
       display: inline-block; font: inherit; font-size: 0.85em;
       background: color-mix(in srgb, var(--text) 6%, transparent);
@@ -2478,7 +2474,18 @@
       text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
     }
     .feed-tile-reply-file:hover { background: color-mix(in srgb, var(--text) 14%, transparent); }
-    .feed-tile-reply-body { line-height: 1.55; color: var(--text); overflow-wrap: break-word; white-space: pre-wrap; padding: var(--space-xs) 0; }
+    /* Reply prose — markdown rendered to HTML. Tighten default block
+       spacing so a reply doesn't eat the whole tile. */
+    .feed-tile-reply-body { line-height: 1.55; color: var(--text); overflow-wrap: break-word; }
+    .feed-tile-reply-body > :first-child { margin-top: 0; }
+    .feed-tile-reply-body > :last-child { margin-bottom: 0; }
+    .feed-tile-reply-body p { margin: var(--space-xs) 0; }
+    .feed-tile-reply-body pre { background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 4px; padding: var(--space-xs) var(--space-sm); overflow-x: auto; font-size: 0.9em; }
+    .feed-tile-reply-body code { background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 3px; padding: 0 4px; font-size: 0.9em; }
+    .feed-tile-reply-body pre > code { background: transparent; padding: 0; }
+    .feed-tile-reply-body ul, .feed-tile-reply-body ol { margin: var(--space-xs) 0; padding-left: 1.5em; }
+    .feed-tile-reply-body li { margin: 2px 0; }
+    .feed-tile-reply-body h1, .feed-tile-reply-body h2, .feed-tile-reply-body h3 { margin: var(--space-sm) 0 var(--space-xs); font-size: 1em; font-weight: 700; }
     /* Summary — session objective */
     .feed-status-summary { border-left: 2px solid var(--warning, #d3b63b); padding-left: var(--space-sm); }
     .feed-tile-summary { font-weight: 600; color: var(--text); font-size: var(--text-sm); }

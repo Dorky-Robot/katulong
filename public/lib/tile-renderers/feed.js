@@ -6,28 +6,43 @@
  *
  * Routing:
  *   - `claude/<uuid>` topics stream via `/api/claude/stream/:uuid`. That
- *     endpoint acquires a per-UUID processor refcount for the lifetime of
- *     the connection, so transcript polling + Ollama enrichment only run
- *     while the tile is open. Opt-in (POST /api/claude/watch) happens
+ *     endpoint acquires a per-UUID processor refcount for the lifetime
+ *     of the connection. Opt-in (POST /api/claude/watch) happens
  *     elsewhere — typically the sparkle-click handler in app.js.
  *   - Any other topic streams via `/sub/<topic>`, the generic broker SSE.
  *
- * Event shapes (progress topics):
- *   reply        — { status, entryId, step, ts } — a whole Claude reply,
- *                  rendered as a <details> block: collapsed label shows the
- *                  time + (title || "Claude's reply (N words)"); expanded
- *                  body shows the full text.
- *   reply-title  — { status, entryId, title } — progressive-enhancement
- *                  patch from the Ollama title generator. Finds the reply
- *                  card with the same entryId and swaps in the title.
+ * Event shape (progress topics):
+ *   reply — { status, entryId, step, ts, files?: [{ path, line? }] }
+ *           One full Claude reply per turn. Rendered flat (no <details>):
+ *           a timestamp + file chips row on top, the reply prose below.
+ *           Files chips are clickable and open a document tile.
  *
  * Lifecycle:
  *   1. Mount with `props.topic` → stream immediately.
  *   2. Mount without → inline topic picker (from /api/topics).
  *   3. Rendering strategy chosen by `props.meta.type`:
- *        "progress" — Claude reply cards with optional Ollama titles.
+ *        "progress" — Claude reply cards.
  *        default    — chronological event log with timestamps.
  */
+
+// Markdown rendering for reply bodies. Dynamic-imported so the module
+// still loads in environments (Node tests) that can't resolve the
+// /vendor/... browser paths. When the import succeeds we render markdown
+// → sanitized HTML; when it fails we fall back to setting textContent
+// and the tests never hit the real parser.
+let renderMarkdown = (el, text) => { el.textContent = text || ""; };
+try {
+  const [{ marked }, purifyMod] = await Promise.all([
+    import("/vendor/marked/marked.esm.js"),
+    import("/vendor/dompurify/purify.es.mjs"),
+  ]);
+  const DOMPurify = purifyMod.default;
+  renderMarkdown = (el, text) => {
+    el.innerHTML = DOMPurify.sanitize(marked.parse(text || ""));
+  };
+} catch {
+  // Fallback already set above.
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -57,31 +72,17 @@ function makeTimeSpan(ts) {
   return t;
 }
 
-// Label shown inside the collapsed <summary> before (or in the absence of)
-// an Ollama-generated title. The time span is added separately, outside
-// the label, so it stays aligned even as the label text swaps in.
-function replyFallbackLabel(text) {
-  const words = typeof text === "string" && text.trim()
-    ? text.trim().split(/\s+/).length
-    : 0;
-  return words
-    ? `Claude's reply (${words} word${words === 1 ? "" : "s"})`
-    : "Claude's reply";
-}
-
-// File chips shown inline on the collapsed summary — clicking one
-// dispatches a window CustomEvent that app.js catches to open the file
-// in a document tile (same path as a file link clicked in the terminal).
+// File chips shown inline on the header row — clicking one dispatches a
+// window CustomEvent that app.js catches to open the file in a document
+// tile (same path as a file link clicked in the terminal).
 function makeFileChip(file) {
   const chip = document.createElement("button");
   chip.type = "button";
   chip.className = "feed-tile-reply-file";
-  // basename for display, full path in the title + click payload
   const base = (file.path || "").split("/").filter(Boolean).pop() || file.path;
   chip.textContent = file.line ? `${base}:${file.line}` : base;
   chip.title = file.line ? `${file.path}:${file.line}` : file.path;
   chip.addEventListener("click", (ev) => {
-    // Prevent the click from toggling the <details> open/closed.
     ev.preventDefault();
     ev.stopPropagation();
     window.dispatchEvent(new CustomEvent("katulong:open-file", {
@@ -96,30 +97,23 @@ function renderReplyItem(row, msg, ts) {
   row.className = "feed-tile-item feed-status-reply";
   const text = msg.step || "";
 
-  const summary = document.createElement("summary");
-  summary.className = "feed-tile-reply-summary";
-  // Time lives inside <summary> so it stays visible when the reply is
-  // collapsed — <details> hides everything below the first <summary>.
-  summary.appendChild(makeTimeSpan(ts));
-  const label = document.createElement("span");
-  label.className = "feed-tile-reply-label";
-  label.textContent = typeof msg.title === "string" && msg.title
-    ? msg.title
-    : replyFallbackLabel(text);
-  summary.appendChild(label);
-
+  const header = document.createElement("div");
+  header.className = "feed-tile-reply-header";
+  header.appendChild(makeTimeSpan(ts));
   if (Array.isArray(msg.files) && msg.files.length > 0) {
     const files = document.createElement("span");
     files.className = "feed-tile-reply-files";
     for (const f of msg.files) files.appendChild(makeFileChip(f));
-    summary.appendChild(files);
+    header.appendChild(files);
   }
+  row.appendChild(header);
 
-  row.appendChild(summary);
-
+  // Markdown → HTML for the reply body. Claude's replies are markdown
+  // (bullets, code spans, bold) and showing raw `**foo**` looks like a
+  // rendering bug. Same sanitize pipeline the document tile uses.
   const prose = document.createElement("div");
   prose.className = "feed-tile-reply-body";
-  prose.textContent = text;
+  renderMarkdown(prose, text);
   row.appendChild(prose);
 }
 
@@ -397,28 +391,14 @@ export const feedRenderer = {
       root.appendChild(list);
 
       // Reply cards are keyed by their transcript entry uuid so that a
-      // later `reply-title` enrichment event can find and patch the same
-      // <details> node in place without rebuilding it.
+      // republished reply (e.g. after a processor catch-up) updates the
+      // existing row in place rather than duplicating it.
       const replyItems = new Map();
-      // Pending titles that arrived BEFORE their reply card (shouldn't
-      // happen within a single topic — the processor publishes reply
-      // first — but cheap insurance across reconnects and replays).
-      const pendingTitles = new Map();
       // Ephemeral non-reply events (generic log topics or pre-rewrite
       // persisted events) get auto-keyed row slots.
       const logItems = new Map();
       let autoKey = 0;
       const isProgress = topicMeta.type === "progress";
-
-      function applyTitle(entryId, title) {
-        const row = replyItems.get(entryId);
-        if (!row) {
-          pendingTitles.set(entryId, title);
-          return;
-        }
-        const label = row.querySelector(".feed-tile-reply-label");
-        if (label) label.textContent = title;
-      }
 
       function handleEvent(envelope) {
         let msg;
@@ -427,28 +407,20 @@ export const feedRenderer = {
 
         const status = msg.status || "";
 
-        // Progress-shaped topics only render two things — a reply card and
-        // its (optional, late-arriving) Ollama title. Everything else that
-        // might still be sitting in an old topic log (narrative, summary,
-        // attention, completion from the old narrator) is silently ignored.
+        // Progress-shaped topics render one thing: a flat reply card per
+        // assistant turn. Legacy events (narrative, summary, attention,
+        // completion, reply-title) still sitting in old topic logs are
+        // silently dropped.
         if (isProgress) {
           if (status === "reply" && typeof msg.entryId === "string") {
             let row = replyItems.get(msg.entryId);
             if (!row) {
-              row = document.createElement("details");
+              row = document.createElement("div");
               list.appendChild(row);
               replyItems.set(msg.entryId, row);
             }
-            const pending = pendingTitles.get(msg.entryId);
-            if (pending && !msg.title) {
-              msg.title = pending;
-              pendingTitles.delete(msg.entryId);
-            }
             renderReplyItem(row, msg, envelope.timestamp);
-          } else if (status === "reply-title" && typeof msg.entryId === "string" && msg.title) {
-            applyTitle(msg.entryId, msg.title);
           }
-          // Silent drop for any other status.
           list.scrollTop = list.scrollHeight;
           return;
         }
