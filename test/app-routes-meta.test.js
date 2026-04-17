@@ -73,30 +73,40 @@ describe("applyClaudeMetaFromHook", () => {
     assert.equal(session.meta.claude.uuid, "11111111-2222-3333-4444-555555555555");
   });
 
-  it("clears meta.claude on SessionEnd", () => {
+  it("preserves meta.claude on SessionEnd — uuid must keep resolving after Claude exits", () => {
+    // Watchlist subscribers need the uuid to remain addressable so the
+    // transcript file (which lives on disk after Claude quits) can still
+    // back feed replays. Clearing uuid on Stop was a bug — the transcript
+    // is the source of truth, not the live Claude process.
     const { session, calls } = makeSession();
-    session.meta.claude = { uuid: "old", startedAt: 1 };
+    session.meta.claude = {
+      uuid: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      startedAt: 1,
+    };
     const verdict = applyClaudeMetaFromHook({
       hook_event_name: "SessionEnd",
       session_id: "11111111-2222-3333-4444-555555555555",
       _tmuxPane: "%3",
     }, makeManager(session));
-    assert.equal(verdict, "cleared");
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0][1], null);
-    assert.equal(session.meta.claude, undefined);
+    assert.equal(verdict, null);
+    assert.equal(calls.length, 0);
+    assert.equal(session.meta.claude.uuid, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
   });
 
-  it("clears meta.claude on Stop", () => {
-    const { session } = makeSession();
-    session.meta.claude = { uuid: "old", startedAt: 1 };
+  it("preserves meta.claude on Stop", () => {
+    const { session, calls } = makeSession();
+    session.meta.claude = {
+      uuid: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      startedAt: 1,
+    };
     const verdict = applyClaudeMetaFromHook({
       hook_event_name: "Stop",
       session_id: "11111111-2222-3333-4444-555555555555",
       _tmuxPane: "%3",
     }, makeManager(session));
-    assert.equal(verdict, "cleared");
-    assert.equal(session.meta.claude, undefined);
+    assert.equal(verdict, null);
+    assert.equal(calls.length, 0);
+    assert.equal(session.meta.claude.uuid, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
   });
 
   it("no-ops for unknown pane", () => {
@@ -220,11 +230,13 @@ describe("applyClaudeMetaFromHook", () => {
     assert.equal(typeof session.meta.claude.startedAt, "number");
   });
 
-  it("preserves detection-owned keys on SessionEnd clear", () => {
-    // SessionEnd only owns `uuid` / `startedAt`. Pane monitor's
-    // `running` / `detectedAt` must survive a hook clear so the card's
-    // glint doesn't vanish while claude is actually still running.
-    const { session } = makeSession();
+  it("SessionEnd is a no-op — preserves all meta.claude keys", () => {
+    // SessionEnd no longer clears anything. Pane monitor owns running/
+    // detectedAt; hooks own uuid/startedAt. Stop/End are exit signals
+    // that the pane monitor reflects via `running: false`, but the
+    // uuid pointer is kept so a watched feed keeps resolving the
+    // on-disk transcript.
+    const { session, calls } = makeSession();
     session.meta.claude = {
       uuid: "11111111-2222-3333-4444-555555555555",
       startedAt: 1,
@@ -235,7 +247,13 @@ describe("applyClaudeMetaFromHook", () => {
       hook_event_name: "SessionEnd",
       _tmuxPane: "%3",
     }, makeManager(session));
-    assert.equal(verdict, "cleared");
-    assert.deepEqual(session.meta.claude, { running: true, detectedAt: 100 });
+    assert.equal(verdict, null);
+    assert.equal(calls.length, 0);
+    assert.deepEqual(session.meta.claude, {
+      uuid: "11111111-2222-3333-4444-555555555555",
+      startedAt: 1,
+      running: true,
+      detectedAt: 100,
+    });
   });
 });
