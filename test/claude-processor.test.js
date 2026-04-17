@@ -387,6 +387,63 @@ describe("createClaudeProcessor", () => {
     await assert.rejects(() => processor.acquire(UUID), /destroyed/);
   });
 
+  it("enriches newest reply first (priority queue, not FIFO)", async () => {
+    // When the tile opens on a big backlog, the user wants the most
+    // recent titles first — those are the ones about the work Claude is
+    // currently doing. Older titles fill in later.
+    writeTranscript(transcriptPath, [
+      fakeAssistantLine("oldest reply"),
+      fakeAssistantLine("middle reply"),
+      fakeAssistantLine("newest reply"),
+    ]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const callOrder = [];
+    const gate = { resolve: null };
+    const callOllama = async (userPrompt) => {
+      callOrder.push(userPrompt);
+      // Block the first call so the queue fills with the remaining two
+      // before any drain completes — gives the priority order something
+      // to act on.
+      if (callOrder.length === 1) {
+        await new Promise((r) => { gate.resolve = r; });
+      }
+      const m = userPrompt.match(/CLAUDE REPLY:\n([^\n]+)/);
+      return `title for: ${m[1]}`;
+    };
+
+    const processor = createClaudeProcessor({
+      watchlist,
+      topicBroker: broker,
+      callOllama,
+      pollIntervalMs: 50,
+      maxConcurrent: 1,
+    });
+
+    await processor.acquire(UUID);
+
+    // Wait for all 3 replies to be published and the first Ollama call to
+    // have started and be blocked on the gate.
+    await waitFor(() =>
+      broker.published.filter((p) => JSON.parse(p.message).status === "reply").length === 3
+      && callOrder.length === 1,
+    );
+
+    // Unblock the first call. The remaining two should drain newest-first.
+    gate.resolve();
+
+    await waitFor(() => callOrder.length === 3);
+
+    // The first call grabbed whichever entry got queued first (oldest, at
+    // the head of the slice). The queue then reorders: after that call
+    // returns, the drain pulls the newest-ts remaining entry.
+    assert.ok(callOrder[1].includes("newest reply"), `call 2 should be newest, got: ${callOrder[1]}`);
+    assert.ok(callOrder[2].includes("middle reply"), `call 3 should be middle, got: ${callOrder[2]}`);
+
+    processor.destroy();
+  });
+
   it("catches up in batches when the backlog exceeds sliceLimit", async () => {
     const lines = Array.from({ length: 5 }, (_, i) => fakeAssistantLine(`reply ${i}`));
     writeTranscript(transcriptPath, lines);
