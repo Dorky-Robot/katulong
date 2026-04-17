@@ -1,8 +1,12 @@
 /**
  * slugifyCwd tests — the slug rule must match Claude's observed on-disk
- * convention. The old `resolveLatestTranscript` heuristic was removed
- * (live-process inspection replaces it; see claude-feed-routes.js), so
- * this file only covers the remaining pure function.
+ * convention. Earlier iterations of this module exported heuristics for
+ * picking a transcript file (`resolveLatestTranscript` by mtime, then a
+ * live-process lsof variant); both were removed because Claude keeps
+ * multiple JSONLs open during startup, so the filesystem can't tell which
+ * session is yours. The SessionStart hook is the reliable signal and
+ * `lib/routes/claude-feed-routes.js` builds the path from an explicit uuid
+ * + cwd. This file now only covers the remaining pure slug function.
  */
 
 import { describe, it } from "node:test";

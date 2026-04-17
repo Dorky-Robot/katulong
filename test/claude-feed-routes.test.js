@@ -214,38 +214,18 @@ describe("createClaudeFeedRoutes", () => {
     assert.strictEqual(res.status, 400);
   });
 
-  it("POST /api/claude/watch { session } — 400 when session is unknown", async () => {
-    sessionManager = { getSession: () => null };
-    ctx = makeCtx({ watchlist, processor, topicBroker: broker, sessionManager, homeDir: home });
-    routes = createClaudeFeedRoutes(ctx);
-
-    const route = routeFor("POST", "/api/claude/watch");
-    const res = makeRes();
-    await route.handler(makeReq({ method: "POST", body: { session: "ghost" } }), res);
-    assert.strictEqual(res.status, 400);
-    assert.match(JSON.parse(res.chunks[0]).error, /Session not found/);
-  });
-
-  it("POST /api/claude/watch { session } — 404 when session exists but has no live Claude", async () => {
-    // Sparkle button should only be clickable when Claude is running, but
-    // if the user somehow triggers the endpoint without a live process
-    // (race: Claude just exited, stale client state), we return 404
-    // rather than pretending some unrelated transcript is theirs.
-    //
-    // sessionManager returns a session with no tmuxName/alive, which
-    // makes findLiveClaudeInPane short-circuit to null — the behavior we
-    // want without shelling out to tmux/pgrep/lsof in tests.
-    sessionManager = {
-      getSession: (name) => name === "work" ? { name, meta: {}, alive: false } : null,
-    };
-    ctx = makeCtx({ watchlist, processor, topicBroker: broker, sessionManager, homeDir: home });
-    routes = createClaudeFeedRoutes(ctx);
-
+  it("POST /api/claude/watch { session } without uuid — 400 pointing to hook setup", async () => {
+    // The server can't resolve a uuid from session name alone — prior
+    // attempts (mtime scan, lsof on the pane pid) both picked the wrong
+    // transcript when Claude Code has multiple JSONLs open (compaction
+    // context). The only reliable signal is the SessionStart hook. If the
+    // client didn't populate meta.claude.uuid, we point them at the
+    // hook-install command rather than guessing.
     const route = routeFor("POST", "/api/claude/watch");
     const res = makeRes();
     await route.handler(makeReq({ method: "POST", body: { session: "work" } }), res);
-    assert.strictEqual(res.status, 404);
-    assert.match(JSON.parse(res.chunks[0]).error, /No Claude process/);
+    assert.strictEqual(res.status, 400);
+    assert.match(JSON.parse(res.chunks[0]).error, /katulong setup claude-hooks/);
   });
 
   it("DELETE /api/claude/watch/:uuid removes an existing entry", async () => {

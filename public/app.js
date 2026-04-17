@@ -784,7 +784,7 @@
     const TILE_CONTEXTS = [
       {
         id: "claude",
-        test: (s) => !!(s?.meta?.claude?.uuid || s?.meta?.claude?.running),
+        test: (s) => !!(s?.meta?.claude?.uuid),
         icon: "sparkle",
         label: "Claude feed",
         className: "joystick-action-btn--claude",
@@ -1893,13 +1893,15 @@
 
     /** Open a feed tile for the Claude session running in the current terminal.
      *
-     * Flow: POST /api/claude/watch to opt the UUID into the narration
-     * watchlist, then open a feed tile that streams `/api/claude/stream/:uuid`.
-     * The server resolves the UUID from either an explicit `{ uuid, cwd }`
-     * (fast path, when the session meta already has it) or a `{ session }`
-     * name (falls back to `~/.claude/projects/<cwd-slug>/` directory scan).
+     * Flow: POST /api/claude/watch with `{ uuid, cwd }` to opt the UUID into
+     * the narration watchlist, then open a feed tile that streams
+     * `/api/claude/stream/:uuid`. The sparkle button is gated on
+     * `meta.claude.uuid`, which is populated by the SessionStart hook — so
+     * by the time we reach this handler, both uuid and cwd are present.
      *
-     * No session → generic picker. Resolution failure → toast + picker.
+     * No session / no uuid → generic picker. Resolution failure → toast +
+     * picker (handles the corner case where a stale client still has an old
+     * uuid that the server can't match to a transcript).
      */
     async function openClaudeFeedTile() {
       const sessionName = getActiveSessionName();
@@ -1913,13 +1915,18 @@
       const active = (sessions || []).find(s => s.name === sessionName);
       const claudeMeta = active?.meta?.claude || null;
 
-      const body = (claudeMeta?.uuid && active?.cwd)
-        ? { uuid: claudeMeta.uuid, cwd: active.cwd }
-        : { session: sessionName };
+      if (!claudeMeta?.uuid || !active?.cwd) {
+        showToast("Install Claude hooks first: `katulong setup claude-hooks`", true);
+        openFeedTile();
+        return;
+      }
 
       let resolved;
       try {
-        resolved = await api.post("/api/claude/watch", body);
+        resolved = await api.post("/api/claude/watch", {
+          uuid: claudeMeta.uuid,
+          cwd: active.cwd,
+        });
       } catch (err) {
         showToast(`Couldn't find a Claude transcript: ${err.message || "unknown"}`, true);
         openFeedTile();
