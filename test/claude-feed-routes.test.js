@@ -181,11 +181,14 @@ describe("createClaudeFeedRoutes", () => {
     assert.strictEqual(res.status, 200);
     const body = JSON.parse(res.chunks[0]);
     assert.strictEqual(body.uuid, UUID);
-    assert.ok(body.transcriptPath.endsWith(`${UUID}.jsonl`));
+    // transcriptPath is server-internal — the client does not see it
+    // (absolute host paths leak filesystem layout).
+    assert.strictEqual(body.transcriptPath, undefined);
     assert.strictEqual(body.lastProcessedLine, 0);
 
     const stored = await watchlist.get(UUID);
     assert.ok(stored);
+    assert.ok(stored.transcriptPath.endsWith(`${UUID}.jsonl`));
   });
 
   it("POST /api/claude/watch is idempotent — re-adding preserves cursor", async () => {

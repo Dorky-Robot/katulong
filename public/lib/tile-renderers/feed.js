@@ -605,7 +605,7 @@ export const feedRenderer = {
       const emptyHint = document.createElement("div");
       emptyHint.className = "feed-tile-empty-hint";
       emptyHint.textContent = topic.startsWith("claude/")
-        ? "Waiting for Claude narration\u2026 if this stays blank, re-open the feed from the sparkle button."
+        ? "Waiting for Claude narration\u2026 open this feed from a session's sparkle button if it stays blank."
         : "No events yet.";
       list.appendChild(emptyHint);
       function clearEmptyHint() {
@@ -627,7 +627,7 @@ export const feedRenderer = {
         if (!mounted) return;
         if (!emptyHint.parentNode) return; // events already flowed
         emptyHint.textContent = topic.startsWith("claude/")
-          ? "Couldn't open Claude narration. Click the sparkle button to re-subscribe."
+          ? "Couldn't open Claude narration. Open the feed from a session's sparkle button to re-subscribe."
           : "Couldn't open stream.";
         emptyHint.classList.add("feed-tile-empty-hint-error");
       };
