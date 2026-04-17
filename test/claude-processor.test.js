@@ -127,6 +127,36 @@ describe("createClaudeProcessor", () => {
     processor.destroy();
   });
 
+  it("publishes a prompt event for each user entry with text", async () => {
+    writeTranscript(transcriptPath, [
+      fakeUserLine("refactor the auth handler"),
+      fakeAssistantLine("ok, starting now"),
+      fakeUserLine("also add a test"),
+    ]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist, topicBroker: broker, pollIntervalMs: 50,
+    });
+
+    await processor.acquire(UUID);
+    await waitFor(() =>
+      broker.published.filter((p) => JSON.parse(p.message).status === "prompt").length >= 2,
+    );
+
+    const prompts = broker.published
+      .map((p) => JSON.parse(p.message))
+      .filter((m) => m.status === "prompt");
+    assert.equal(prompts.length, 2);
+    assert.equal(prompts[0].step, "refactor the auth handler");
+    assert.equal(prompts[1].step, "also add a test");
+    assert.ok(prompts[0].entryId);
+    assert.ok(Number.isFinite(prompts[0].ts));
+
+    processor.destroy();
+  });
+
   it("publishes a reply event per assistant entry with text", async () => {
     writeTranscript(transcriptPath, [
       fakeUserLine("fix the login bug"),

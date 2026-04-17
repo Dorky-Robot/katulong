@@ -436,6 +436,48 @@ describe("feedRenderer", () => {
       assert.equal(stoppedBubble, true);
     });
 
+    it("renders prompt events distinctly from reply events", () => {
+      // User prompts and Claude replies share the list but get
+      // different classnames + bodies so the reader can eyeball the
+      // conversation flow. Also shared entryId map → a republished
+      // prompt updates in place just like a reply would.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify({
+            status: "prompt", entryId: "p-1",
+            step: "refactor the auth handler", ts: 1_700_000_000_000,
+          }),
+          timestamp: 1_700_000_000_000,
+        }),
+      });
+      eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 2, topic: "claude/abc",
+          message: JSON.stringify({
+            status: "reply", entryId: "r-1",
+            step: "ok, on it", ts: 1_700_000_000_001,
+          }),
+          timestamp: 1_700_000_000_001,
+        }),
+      });
+
+      const list = el.children[0].children[1];
+      assert.equal(list.children.length, 2);
+      assert.ok(list.children[0].className.includes("feed-status-prompt"));
+      assert.ok(list.children[1].className.includes("feed-status-reply"));
+      assert.equal(list.children[0].children[0].className, "feed-tile-prompt-body");
+      assert.equal(list.children[0].children[0].textContent, "refactor the auth handler");
+    });
+
     it("re-rendering the same entryId updates in place (no duplicates)", () => {
       const el = new FakeElement("div");
       feedRenderer.mount(el, {

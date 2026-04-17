@@ -2488,7 +2488,37 @@
     .feed-tile-reply-body li { margin: 2px 0; }
     .feed-tile-reply-body h1, .feed-tile-reply-body h2, .feed-tile-reply-body h3 { margin: var(--space-sm) 0 var(--space-xs); font-size: 1em; font-weight: 700; }
 
-    /* --- Feed Tile: response bar (pinned to bottom on claude topics) --- */
+    /* Prompt card — the user's own message. Visually distinct from a
+       reply so the reader can skim the conversation flow: warmer
+       accent border on the LEFT (mirrors reply's muted left border),
+       subtle tinted background, slightly smaller text. */
+    .feed-status-prompt {
+      display: block;
+      border-left: 2px solid color-mix(in srgb, var(--accent-strong, #6f87b3) 70%, var(--text));
+      background: color-mix(in srgb, var(--accent-strong, #6f87b3) 5%, transparent);
+      padding: var(--space-xs) var(--space-sm);
+      border-radius: 0 4px 4px 0;
+    }
+    .feed-tile-prompt-body {
+      line-height: 1.5; color: var(--text); overflow-wrap: break-word;
+      font-size: 0.92em;
+    }
+    .feed-tile-prompt-body > :first-child { margin-top: 0; }
+    .feed-tile-prompt-body > :last-child { margin-bottom: 0; }
+    .feed-tile-prompt-body p { margin: 2px 0; }
+    .feed-tile-prompt-body pre, .feed-tile-prompt-body code {
+      background: color-mix(in srgb, var(--text) 6%, transparent);
+      border-radius: 3px;
+    }
+    .feed-tile-prompt-body pre { padding: var(--space-xs) var(--space-sm); overflow-x: auto; font-size: 0.9em; }
+    .feed-tile-prompt-body code { padding: 0 4px; font-size: 0.9em; }
+    .feed-tile-prompt-body pre > code { background: transparent; padding: 0; }
+    .feed-tile-prompt-footer { color: var(--text-muted); font-size: var(--text-xs); padding-top: 2px; }
+
+    /* --- Feed Tile: response bar (pinned to bottom on claude topics) ---
+       Large textarea, no Send button. Enter submits; Shift+Enter
+       inserts a newline. Quick-pick buttons appear above when the
+       latest reply ends in a numbered options list. */
     .feed-tile-response-bar {
       border-top: 1px solid var(--border, rgba(255,255,255,0.12));
       padding: var(--space-xs) var(--space-sm);
@@ -2512,20 +2542,13 @@
       padding-right: 6px;
     }
     .feed-tile-response-option-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .feed-tile-response-input { display: flex; gap: 6px; align-items: flex-end; }
     .feed-tile-response-textarea {
-      flex: 1; font: inherit; font-size: 0.95em; color: var(--text);
+      width: 100%; font: inherit; font-size: 0.95em; color: var(--text);
       background: var(--bg); border: 1px solid var(--border, rgba(255,255,255,0.12));
-      border-radius: 4px; padding: 6px 8px; resize: vertical; min-height: 28px; max-height: 160px;
+      border-radius: 4px; padding: 8px 10px; resize: vertical;
+      min-height: 96px;
     }
-    .feed-tile-response-send {
-      font: inherit; font-size: 0.9em; font-weight: 600;
-      color: var(--text); background: var(--accent, #2a2a2a);
-      border: 1px solid var(--border, rgba(255,255,255,0.12));
-      border-radius: 4px; padding: 6px 14px; cursor: pointer;
-    }
-    .feed-tile-response-send:disabled { opacity: 0.5; cursor: not-allowed; }
-    .feed-tile-response-send:hover:not(:disabled) { background: color-mix(in srgb, var(--accent, #2a2a2a) 80%, var(--text)); }
+    .feed-tile-response-textarea:disabled { opacity: 0.6; }
     .feed-tile-response-status { font-size: 0.8em; color: var(--text-muted); min-height: 1em; }
     .feed-tile-response-status-error { color: var(--warning, #d3b63b); }
     /* Summary — session objective */

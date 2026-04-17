@@ -115,29 +115,22 @@ function createResponseBar(claudeUuid) {
   optionsRow.style.display = "none";
   el.appendChild(optionsRow);
 
-  const inputRow = document.createElement("div");
-  inputRow.className = "feed-tile-response-input";
-  el.appendChild(inputRow);
-
   const textarea = document.createElement("textarea");
   textarea.className = "feed-tile-response-textarea";
-  textarea.rows = 1;
-  textarea.placeholder = "Reply to Claude…";
-  inputRow.appendChild(textarea);
-
-  const sendBtn = document.createElement("button");
-  sendBtn.type = "button";
-  sendBtn.className = "feed-tile-response-send";
-  sendBtn.textContent = "Send";
-  inputRow.appendChild(sendBtn);
+  textarea.rows = 4;
+  textarea.placeholder = "Reply to Claude — Enter to send, Shift+Enter for newline";
+  el.appendChild(textarea);
 
   const status = document.createElement("div");
   status.className = "feed-tile-response-status";
   el.appendChild(status);
 
+  let sending = false;
   async function send(text) {
+    if (sending) return;
     if (!text || !text.trim()) return;
-    sendBtn.disabled = true;
+    sending = true;
+    textarea.disabled = true;
     status.textContent = "Sending…";
     status.className = "feed-tile-response-status";
     try {
@@ -165,15 +158,19 @@ function createResponseBar(claudeUuid) {
       status.textContent = err.message || "Send failed";
       status.classList.add("feed-tile-response-status-error");
     } finally {
-      sendBtn.disabled = false;
+      sending = false;
+      textarea.disabled = false;
+      textarea.focus();
     }
   }
 
-  sendBtn.addEventListener("click", () => send(textarea.value));
   textarea.addEventListener("keydown", (ev) => {
-    // Cmd/Ctrl+Enter sends. Plain Enter stays literal so multi-line
-    // responses work the same as they do in the terminal.
-    if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {
+    // Enter alone sends — matching chat apps' default and how a user
+    // expects to submit a reply. Shift+Enter inserts a literal newline
+    // for the occasional multi-line message. The IME composition guard
+    // avoids firing while the user is still mid-compose on Asian input
+    // methods, where Enter commits the candidate instead of submitting.
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
       ev.preventDefault();
       send(textarea.value);
     }
@@ -191,7 +188,6 @@ function createResponseBar(claudeUuid) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "feed-tile-response-option";
-      btn.innerHTML = "";
       const num = document.createElement("span");
       num.className = "feed-tile-response-option-num";
       num.textContent = opt.key;
@@ -250,6 +246,25 @@ function renderReplyItem(row, msg, ts) {
     for (const f of msg.files) files.appendChild(makeFileChip(f));
     footer.appendChild(files);
   }
+  row.appendChild(footer);
+}
+
+// The user's side of the conversation. Same structural shape as a
+// reply (body + time footer) but styled differently so the reader
+// can eyeball the back-and-forth without reading every word.
+function renderPromptItem(row, msg, ts) {
+  row.innerHTML = "";
+  row.className = "feed-tile-item feed-status-prompt";
+  const text = msg.step || "";
+
+  const prose = document.createElement("div");
+  prose.className = "feed-tile-prompt-body";
+  renderMarkdown(prose, text);
+  row.appendChild(prose);
+
+  const footer = document.createElement("div");
+  footer.className = "feed-tile-prompt-footer";
+  footer.appendChild(makeTimeSpan(ts));
   row.appendChild(footer);
 }
 
@@ -575,6 +590,18 @@ export const feedRenderer = {
             // options list might flicker; accepted tradeoff for not
             // maintaining a full ordered index client-side.)
             if (responseBar) responseBar.setOptions(msg.step || "");
+          } else if (status === "prompt" && typeof msg.entryId === "string") {
+            // Share the same items map as replies — entryId space is
+            // per-transcript and doesn't collide, and keying both lets
+            // a republished prompt update its row in place just like
+            // replies do.
+            let row = replyItems.get(msg.entryId);
+            if (!row) {
+              row = document.createElement("div");
+              list.appendChild(row);
+              replyItems.set(msg.entryId, row);
+            }
+            renderPromptItem(row, msg, envelope.timestamp);
           }
           list.scrollTop = list.scrollHeight;
           return;
