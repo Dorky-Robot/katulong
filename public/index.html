@@ -2487,6 +2487,47 @@
     .feed-tile-reply-body ul, .feed-tile-reply-body ol { margin: var(--space-xs) 0; padding-left: 1.5em; }
     .feed-tile-reply-body li { margin: 2px 0; }
     .feed-tile-reply-body h1, .feed-tile-reply-body h2, .feed-tile-reply-body h3 { margin: var(--space-sm) 0 var(--space-xs); font-size: 1em; font-weight: 700; }
+
+    /* --- Feed Tile: response bar (pinned to bottom on claude topics) --- */
+    .feed-tile-response-bar {
+      border-top: 1px solid var(--border, rgba(255,255,255,0.12));
+      padding: var(--space-xs) var(--space-sm);
+      background: color-mix(in srgb, var(--bg) 96%, var(--text) 4%);
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .feed-tile-response-options { display: flex; flex-wrap: wrap; gap: 4px; }
+    .feed-tile-response-option {
+      display: inline-flex; align-items: center; gap: 6px;
+      font: inherit; font-size: 0.9em;
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+      color: var(--text); border: 1px solid var(--border, rgba(255,255,255,0.12));
+      border-radius: 4px; padding: 4px 8px; cursor: pointer;
+      text-align: left; max-width: 100%;
+    }
+    .feed-tile-response-option:hover { background: color-mix(in srgb, var(--text) 16%, transparent); }
+    .feed-tile-response-option-num {
+      min-width: 1.5em; text-align: center;
+      font-variant-numeric: tabular-nums; color: var(--text-muted);
+      border-right: 1px solid var(--border, rgba(255,255,255,0.12));
+      padding-right: 6px;
+    }
+    .feed-tile-response-option-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .feed-tile-response-input { display: flex; gap: 6px; align-items: flex-end; }
+    .feed-tile-response-textarea {
+      flex: 1; font: inherit; font-size: 0.95em; color: var(--text);
+      background: var(--bg); border: 1px solid var(--border, rgba(255,255,255,0.12));
+      border-radius: 4px; padding: 6px 8px; resize: vertical; min-height: 28px; max-height: 160px;
+    }
+    .feed-tile-response-send {
+      font: inherit; font-size: 0.9em; font-weight: 600;
+      color: var(--text); background: var(--accent, #2a2a2a);
+      border: 1px solid var(--border, rgba(255,255,255,0.12));
+      border-radius: 4px; padding: 6px 14px; cursor: pointer;
+    }
+    .feed-tile-response-send:disabled { opacity: 0.5; cursor: not-allowed; }
+    .feed-tile-response-send:hover:not(:disabled) { background: color-mix(in srgb, var(--accent, #2a2a2a) 80%, var(--text)); }
+    .feed-tile-response-status { font-size: 0.8em; color: var(--text-muted); min-height: 1em; }
+    .feed-tile-response-status-error { color: var(--warning, #d3b63b); }
     /* Summary — session objective */
     .feed-status-summary { border-left: 2px solid var(--warning, #d3b63b); padding-left: var(--space-sm); }
     .feed-tile-summary { font-weight: 600; color: var(--text); font-size: var(--text-sm); }

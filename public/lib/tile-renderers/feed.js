@@ -44,6 +44,37 @@ try {
   // Fallback already set above.
 }
 
+// Pull numbered options off the end of a reply so the feed can offer
+// quick-pick buttons. Accepts the common Claude prompt shape:
+//
+//     Some preamble question?
+//
+//     1. Yes, do the thing
+//     2. No, cancel
+//     3. Ask me something else
+//
+// Returns the trailing option block as `[{ key, label }]` only when
+// we see at least two consecutive numbered items at the end of the
+// reply; anything less is noise (a standalone "1." inside prose is
+// usually part of a discussion, not an option list).
+export function parseReplyOptions(text) {
+  if (typeof text !== "string" || !text.trim()) return [];
+  const lines = text.split("\n");
+  const opts = [];
+  // Walk backwards, collecting trailing `\d+. ...` lines. Stop on the
+  // first non-option, non-blank line so only the TAIL qualifies — a
+  // numbered list in the middle of a reply isn't an answer prompt.
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (!line.trim()) { if (opts.length === 0) continue; break; }
+    const m = line.match(/^\s*(\d+)[.)]\s+(.+?)\s*$/);
+    if (!m) break;
+    opts.push({ key: m[1], label: m[2] });
+  }
+  if (opts.length < 2) return [];
+  return opts.reverse();
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function streamUrlForTopic(topic) {
@@ -70,6 +101,111 @@ function makeTimeSpan(ts) {
   t.className = "feed-tile-row-time";
   t.textContent = formatTime(ts);
   return t;
+}
+
+// A pinned-to-bottom composer for Claude topics. Shows quick-pick
+// buttons when the latest reply ends in a numbered options list, plus
+// a textarea + Send button for typed responses.
+function createResponseBar(claudeUuid) {
+  const el = document.createElement("div");
+  el.className = "feed-tile-response-bar";
+
+  const optionsRow = document.createElement("div");
+  optionsRow.className = "feed-tile-response-options";
+  optionsRow.style.display = "none";
+  el.appendChild(optionsRow);
+
+  const inputRow = document.createElement("div");
+  inputRow.className = "feed-tile-response-input";
+  el.appendChild(inputRow);
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "feed-tile-response-textarea";
+  textarea.rows = 1;
+  textarea.placeholder = "Reply to Claude…";
+  inputRow.appendChild(textarea);
+
+  const sendBtn = document.createElement("button");
+  sendBtn.type = "button";
+  sendBtn.className = "feed-tile-response-send";
+  sendBtn.textContent = "Send";
+  inputRow.appendChild(sendBtn);
+
+  const status = document.createElement("div");
+  status.className = "feed-tile-response-status";
+  el.appendChild(status);
+
+  async function send(text) {
+    if (!text || !text.trim()) return;
+    sendBtn.disabled = true;
+    status.textContent = "Sending…";
+    status.className = "feed-tile-response-status";
+    try {
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      const headers = { "Content-Type": "application/json" };
+      if (csrfMeta?.content) headers["X-CSRF-Token"] = csrfMeta.content;
+      const res = await fetch(`/api/claude/respond/${encodeURIComponent(claudeUuid)}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ text }),
+        credentials: "same-origin",
+        redirect: "error",
+      });
+      if (!res.ok) {
+        let msg = `Send failed (${res.status})`;
+        try { msg = (await res.json()).error || msg; } catch { /* non-JSON */ }
+        throw new Error(msg);
+      }
+      textarea.value = "";
+      status.textContent = "Sent.";
+      setTimeout(() => {
+        if (status.textContent === "Sent.") status.textContent = "";
+      }, 1500);
+    } catch (err) {
+      status.textContent = err.message || "Send failed";
+      status.classList.add("feed-tile-response-status-error");
+    } finally {
+      sendBtn.disabled = false;
+    }
+  }
+
+  sendBtn.addEventListener("click", () => send(textarea.value));
+  textarea.addEventListener("keydown", (ev) => {
+    // Cmd/Ctrl+Enter sends. Plain Enter stays literal so multi-line
+    // responses work the same as they do in the terminal.
+    if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {
+      ev.preventDefault();
+      send(textarea.value);
+    }
+  });
+
+  function setOptions(replyText) {
+    const opts = parseReplyOptions(replyText);
+    optionsRow.innerHTML = "";
+    if (opts.length === 0) {
+      optionsRow.style.display = "none";
+      return;
+    }
+    optionsRow.style.display = "";
+    for (const opt of opts) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "feed-tile-response-option";
+      btn.innerHTML = "";
+      const num = document.createElement("span");
+      num.className = "feed-tile-response-option-num";
+      num.textContent = opt.key;
+      btn.appendChild(num);
+      const label = document.createElement("span");
+      label.className = "feed-tile-response-option-label";
+      label.textContent = opt.label;
+      btn.appendChild(label);
+      btn.addEventListener("click", () => send(opt.key));
+      optionsRow.appendChild(btn);
+    }
+  }
+
+  return { el, setOptions };
 }
 
 // File chips shown inline on the header row — clicking one dispatches a
@@ -400,6 +536,17 @@ export const feedRenderer = {
       let autoKey = 0;
       const isProgress = topicMeta.type === "progress";
 
+      // Response bar — only for claude/<uuid> topics. Lets the user
+      // type back to the Claude session without leaving the feed, and
+      // offers quick-pick buttons when the latest reply ends in a
+      // numbered options list.
+      const claudeUuid = (() => {
+        if (!topic.startsWith("claude/")) return null;
+        const u = topic.slice("claude/".length);
+        return UUID_RE.test(u) ? u : null;
+      })();
+      const responseBar = claudeUuid ? createResponseBar(claudeUuid) : null;
+
       function handleEvent(envelope) {
         let msg;
         try { msg = JSON.parse(envelope.message); } catch { msg = envelope.message; }
@@ -420,6 +567,14 @@ export const feedRenderer = {
               replyItems.set(msg.entryId, row);
             }
             renderReplyItem(row, msg, envelope.timestamp);
+            // Re-evaluate quick-pick options from the latest reply. The
+            // "latest" is always the most recent publish on the topic
+            // log — for a live stream that's also the last message
+            // rendered, so we can just feed this reply's text in. (If
+            // a replay delivers an OLDER reply after a newer one, the
+            // options list might flicker; accepted tradeoff for not
+            // maintaining a full ordered index client-side.)
+            if (responseBar) responseBar.setOptions(msg.step || "");
           }
           list.scrollTop = list.scrollHeight;
           return;
@@ -436,6 +591,10 @@ export const feedRenderer = {
         renderLogItem(row, msg, envelope.timestamp);
         list.scrollTop = list.scrollHeight;
       }
+
+      // Append the response bar AFTER the list, outside scrollable area
+      // so it stays pinned while the list scrolls with new replies.
+      if (responseBar) root.appendChild(responseBar.el);
 
       // Empty-state: shown until the first envelope arrives. EventSource
       // opens asynchronously, so on a successful stream the user sees this

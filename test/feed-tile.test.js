@@ -120,9 +120,41 @@ globalThis.CustomEvent = class CustomEvent {
   }
 };
 
-const { feedRenderer } = await import(
+const { feedRenderer, parseReplyOptions } = await import(
   new URL("../public/lib/tile-renderers/feed.js", import.meta.url).href
 );
+
+describe("parseReplyOptions", () => {
+  it("returns [] when there's no trailing option list", () => {
+    assert.deepEqual(parseReplyOptions(""), []);
+    assert.deepEqual(parseReplyOptions("plain prose, nothing numbered"), []);
+    assert.deepEqual(parseReplyOptions("1. lonely one-item list"), []);
+  });
+
+  it("pulls a trailing numbered list off the end", () => {
+    const text = `Which approach do you prefer?\n\n1. Merge first\n2. Rebase first\n3. Abort`;
+    assert.deepEqual(parseReplyOptions(text), [
+      { key: "1", label: "Merge first" },
+      { key: "2", label: "Rebase first" },
+      { key: "3", label: "Abort" },
+    ]);
+  });
+
+  it("stops at the first non-option, non-blank line (only the TAIL qualifies)", () => {
+    const text = `Here's a recap:\n1. First\n2. Second\nNow, what next?\n1. Merge\n2. Abort`;
+    assert.deepEqual(parseReplyOptions(text), [
+      { key: "1", label: "Merge" },
+      { key: "2", label: "Abort" },
+    ]);
+  });
+
+  it("accepts `1)` style as well as `1.`", () => {
+    assert.deepEqual(parseReplyOptions(`Pick one:\n1) A\n2) B`), [
+      { key: "1", label: "A" },
+      { key: "2", label: "B" },
+    ]);
+  });
+});
 
 describe("feedRenderer", () => {
   beforeEach(() => {
