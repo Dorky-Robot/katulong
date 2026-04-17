@@ -29,7 +29,25 @@ LOG="$HOME/.katulong/dev-server.log"
 mkdir -p "$(dirname "$LOG")"
 
 if [ "${KATULONG_RESTART_DETACHED:-}" != "1" ]; then
-  # Parent: detach a worker copy of this same script, then wait briefly for
+  # Parent: bump the dev version suffix so the browser can visually
+  # confirm it's running the latest iteration. `-feedN` increments on
+  # each restart — `0.56.1` → `0.56.1-feed1` → `0.56.1-feed2`, etc.
+  # A clean (no-suffix) base is inferred by stripping any existing
+  # `-feedN`, so a commit that resets the version still works.
+  EXPECTED_VERSION=$(node -e '
+    const fs = require("node:fs");
+    const path = "'"$REPO_ROOT"'/package.json";
+    const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+    const raw = pkg.version || "";
+    const base = raw.replace(/(?:-feed\d*)+$/, "");
+    const curr = raw.match(/-feed(\d+)$/);
+    const next = curr ? parseInt(curr[1], 10) + 1 : 1;
+    pkg.version = `${base}-feed${next}`;
+    fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
+    process.stdout.write(pkg.version);
+  ')
+
+  # Detach a worker copy of this same script, then wait briefly for
   # /health to come back so the user sees confirmation.
   : > "$LOG"
   KATULONG_RESTART_DETACHED=1 PORT="$PORT" \
@@ -40,16 +58,19 @@ if [ "${KATULONG_RESTART_DETACHED:-}" != "1" ]; then
   printf '\033[1;32m==>\033[0m restart-dev detached (pid %s); tailing %s\n' \
     "$WORKER_PID" "$LOG"
 
+  # Wait for the new server — gated by BOTH liveness AND version match so
+  # we don't flash the previous server's version while its TCP socket is
+  # still closing. The new worker has the version we just wrote; anything
+  # else is the outgoing server and we keep polling.
   for _ in $(seq 1 30); do
-    # Single fetch: reuse the body for both liveness and version extraction
-    # so we don't print `v` with an empty version if the server flaps between
-    # the liveness probe and the follow-up read.
     body=$(curl -sf "http://localhost:$PORT/health" 2>/dev/null || true)
     if [ -n "$body" ]; then
       version=$(printf '%s' "$body" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
-      printf '\033[1;32m==>\033[0m dev server up on :%s (v%s)\n' \
-        "$PORT" "$version"
-      exit 0
+      if [ "$version" = "$EXPECTED_VERSION" ]; then
+        printf '\033[1;32m==>\033[0m dev server up on :%s (v%s)\n' \
+          "$PORT" "$version"
+        exit 0
+      fi
     fi
     sleep 0.5
   done

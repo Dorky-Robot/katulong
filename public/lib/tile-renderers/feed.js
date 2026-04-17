@@ -1,38 +1,100 @@
 /**
  * Feed Tile Renderer
  *
- * Event streamer that subscribes to a pub/sub topic via SSE and renders
- * events according to topic metadata. The tile is a subscriber — it
- * decides how to display raw domain events. Another subscriber (an
- * orchestrator) could use the same events for choreography.
+ * Subscribes to a pub/sub topic via SSE and renders events according to
+ * topic metadata. Pure subscriber — no knowledge of who produces events.
  *
- * Dual role:
- *   - Generic mode — pick any topic and stream it.
- *   - Claude-aware mode — when `props.awaitingClaude` is set, render a
- *     blank stream and auto-swap to the live `claude/<uuid>` topic the
- *     moment a fresh uuid surfaces (via sessionStore or topic-new event).
+ * Routing:
+ *   - `claude/<uuid>` topics stream via `/api/claude/stream/:uuid`. That
+ *     endpoint acquires a per-UUID narrator refcount for the lifetime of
+ *     the connection, so narration only runs while the tile is open.
+ *     Opt-in (POST /api/claude/watch) happens elsewhere — typically the
+ *     sparkle-click handler in app.js.
+ *   - Any other topic streams via `/sub/<topic>`, the generic broker SSE.
  *
  * Lifecycle:
- *   1. Opens blank with an inline topic picker (fetched from /api/topics)
- *   2. User picks a topic → tile starts streaming via SSE
- *   3. Rendering strategy chosen by topic meta.type (closed enumeration —
- *      not an extension point; new strategies require an in-tree PR):
- *      - "progress" — checklist with keyed step updates + status bullets
- *      - default    — chronological event log with timestamps
- *
- * Single-file renderer. `init({ getSessionStore })` is optional — when
- * omitted the awaiting-Claude view falls back to the topic-new broadcast
- * path alone.
+ *   1. Mount with `props.topic` → stream immediately.
+ *   2. Mount without → inline topic picker (from /api/topics).
+ *   3. Rendering strategy chosen by `props.meta.type`:
+ *        "progress" — prominent narrative/summary/attention/completion
+ *                     rows plus collapsible groups of lower-signal steps.
+ *        default    — chronological event log with timestamps.
  */
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Rotating gerunds for the "working" card shown between a completion event
+// and the Ollama-generated narrative. Goofy on purpose — a frozen-looking
+// feed is a worse UX than a slightly-silly one.
+const WORKING_PHRASES = [
+  "whatcha-diggling…",
+  "whatcumacalling…",
+  "thingamabobbing…",
+  "jibber-jabbering…",
+  "noodle-noodling…",
+  "doodad-dabbling…",
+  "widget-wiggling…",
+  "dingus-doodling…",
+  "whatnot-whirring…",
+  "thinky-thinking…",
+  "brain-wriggling…",
+  "gizmo-jiggling…",
+  "snuffling-about…",
+  "neuron-noodling…",
+  "bamboozling-a-thought…",
+  "hmm-hmming…",
+  "cog-whirring…",
+  "puzzle-piecing…",
+  "head-scratching…",
+  "marinating-a-muse…",
+  "percolating-prose…",
+  "mulling-mulishly…",
+  "flummoxing…",
+  "scritch-scratching…",
+  "tinker-tonking…",
+  "wrassling-a-whatsit…",
+  "squiggle-thinking…",
+  "brain-gerbiling…",
+  "doohickey-ducking…",
+  "woo-wooing-a-notion…",
+];
+const WORKING_ROTATE_MS = 2000;
+const WORKING_TIMEOUT_MS = 90000;
+
+function streamUrlForTopic(topic) {
+  if (typeof topic === "string" && topic.startsWith("claude/")) {
+    const uuid = topic.slice("claude/".length);
+    if (UUID_RE.test(uuid)) {
+      return `/api/claude/stream/${encodeURIComponent(uuid)}?fromSeq=0`;
+    }
+  }
+  return `/sub/${encodeURIComponent(topic)}?fromSeq=0`;
+}
+
 // ── Rendering strategies ────────────────────────────────────────────
+
+// Claude's own reply — both Stop-hook "completion" events and
+// question-form "attention" events echo the assistant text the user
+// already saw in the terminal. Render the same way in both cases: a
+// collapsible <details> whose summary shows a word count and a small hint
+// that input is required for the question variant.
+function isClaudeReply(msg) {
+  if (!msg || typeof msg !== "object") return false;
+  if (msg.status === "completion") return true;
+  // PreToolUse attention cards carry a non-null `tool` — those are tool
+  // approval prompts (actionable), NOT echoes. Keep those prominent.
+  if (msg.status === "attention" && !msg.tool) return true;
+  return false;
+}
 
 function renderProgressItem(row, msg) {
   row.innerHTML = "";
   const status = msg.status || "info";
-  row.className = `feed-tile-item feed-status-${status}`;
+  const reply = isClaudeReply(msg);
+  row.className = reply
+    ? "feed-tile-item feed-status-reply"
+    : `feed-tile-item feed-status-${status}`;
 
-  // Assistant text renders as a standalone narrative block
   if (status === "text") {
     const text = document.createElement("span");
     text.className = "feed-tile-step feed-tile-assistant-text";
@@ -41,7 +103,6 @@ function renderProgressItem(row, msg) {
     return;
   }
 
-  // Narrative — blog-like markdown update from the Ollama model.
   if (status === "narrative") {
     const prose = document.createElement("div");
     prose.className = "feed-tile-narrative";
@@ -50,18 +111,24 @@ function renderProgressItem(row, msg) {
     return;
   }
 
-  // Completion — Claude's last assistant message from a Stop hook.
-  // Shown at full legibility because it's often the only signal a
-  // resumed session emits before (or without) an Ollama narrative.
-  if (status === "completion") {
+  if (reply) {
+    const text = msg.step || "";
+    const words = text ? text.trim().split(/\s+/).length : 0;
+    const awaiting = msg.status === "attention";
+    const summary = document.createElement("summary");
+    summary.className = "feed-tile-reply-summary";
+    const label = words
+      ? `Claude's reply (${words} word${words === 1 ? "" : "s"})`
+      : "Claude's reply";
+    summary.textContent = awaiting ? `${label} \u00b7 waiting for you` : label;
+    row.appendChild(summary);
     const prose = document.createElement("div");
-    prose.className = "feed-tile-completion";
-    prose.textContent = msg.step || "";
+    prose.className = "feed-tile-reply-body";
+    prose.textContent = text;
     row.appendChild(prose);
     return;
   }
 
-  // Summary — session objective line from the model.
   if (status === "summary") {
     const summaryEl = document.createElement("div");
     summaryEl.className = "feed-tile-summary";
@@ -70,7 +137,6 @@ function renderProgressItem(row, msg) {
     return;
   }
 
-  // Attention — Claude is waiting for user input.
   if (status === "attention") {
     const attn = document.createElement("div");
     attn.className = "feed-tile-attention";
@@ -118,24 +184,12 @@ function renderLogItem(row, msg, ts) {
 
 // ── Renderer ────────────────────────────────────────────────────────
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-let _sessionStoreGetter = () => null;
-
 export const feedRenderer = {
   type: "feed",
 
-  init({ getSessionStore } = {}) {
-    _sessionStoreGetter = typeof getSessionStore === "function"
-      ? getSessionStore
-      : () => null;
-  },
+  init() {},
 
   describe(props) {
-    // Awaiting-Claude tiles persist across reload. The epoch-zero baseline
-    // means any current claude/<uuid> auto-adopts on restore — which is
-    // exactly what the user wants: a tile opened for the active Claude
-    // session should keep showing that session's feed after a refresh.
     return {
       title: props.title || props.topic || "Feed",
       icon: "rss",
@@ -150,10 +204,8 @@ export const feedRenderer = {
   mount(el, { id, props, dispatch, ctx }) {
     let mounted = true;
     let es = null;
-    // View-local cleanups: drained whenever we transition between views
-    // (picker → awaiting → streaming) so stale window listeners don't
-    // accumulate. Each view function calls drainViewCleanups() before
-    // registering its own listeners.
+    // Drained on view transitions (picker → streaming) so stale window
+    // listeners don't accumulate.
     let viewCleanups = [];
     function drainViewCleanups() {
       const fns = viewCleanups;
@@ -165,8 +217,6 @@ export const feedRenderer = {
     root.className = "feed-tile-root";
     el.appendChild(root);
 
-    // Shared header for awaiting + streaming views — keeps the DOM
-    // identical across the transition so the swap has no visual reshuffle.
     function buildStreamHeader(titleText) {
       const header = document.createElement("div");
       header.className = "feed-tile-header";
@@ -190,20 +240,12 @@ export const feedRenderer = {
       closeBtn.addEventListener("click", () => ctx?.requestClose?.());
       header.appendChild(closeBtn);
 
-      return header;
+      return { header };
     }
 
-    // Route on mount:
-    //   - `topic` present → stream it (normal restore path).
-    //   - `awaitingClaude: { session, baseline }` → blank stream view that
-    //     subscribes to the session store and auto-swaps when the Claude
-    //     uuid for `session` advances past `baseline`.
-    //   - otherwise → topic picker.
     try {
       if (props.topic) {
         startStreaming(props.topic, props.meta || {});
-      } else if (props.awaitingClaude?.session) {
-        startAwaitingClaude(props.awaitingClaude.session, props.awaitingClaude.baseline || null);
       } else {
         showTopicPicker();
       }
@@ -217,10 +259,8 @@ export const feedRenderer = {
       drainViewCleanups();
       root.innerHTML = "";
 
-      // Restore checked state from persisted props
       const selected = new Set(props.checked || []);
 
-      // Clear persisted topic so we're back to picker state (keep checked)
       if (dispatch) {
         dispatch({ type: "ui/UPDATE_PROPS", id, patch: { topic: null, title: "Feed", meta: {} } });
       }
@@ -228,7 +268,6 @@ export const feedRenderer = {
       const picker = document.createElement("div");
       picker.className = "feed-tile-picker";
 
-      // Header row with title + toolbar
       const header = document.createElement("div");
       header.className = "feed-tile-picker-title";
 
@@ -253,7 +292,6 @@ export const feedRenderer = {
       listArea.textContent = "Loading topics\u2026";
       picker.appendChild(listArea);
 
-      // Bottom action bar — visible only when items are checked
       const actionBar = document.createElement("div");
       actionBar.className = "feed-tile-picker-actionbar";
       actionBar.style.display = "none";
@@ -288,7 +326,6 @@ export const feedRenderer = {
             });
           } catch { /* continue with others */ }
         }
-        // Clear deleted topics from persisted checked state
         if (dispatch) {
           dispatch({ type: "ui/UPDATE_PROPS", id, patch: { checked: [] } });
         }
@@ -300,7 +337,6 @@ export const feedRenderer = {
         deleteSelected();
       });
 
-      // Track known topic names so we don't add duplicates on live updates
       const knownTopics = new Set();
       let emptyEl = null;
 
@@ -308,7 +344,6 @@ export const feedRenderer = {
         if (knownTopics.has(t.name)) return;
         knownTopics.add(t.name);
 
-        // Remove "no topics" placeholder if present
         if (emptyEl) { emptyEl.remove(); emptyEl = null; }
 
         const item = document.createElement("div");
@@ -318,7 +353,6 @@ export const feedRenderer = {
         cb.type = "checkbox";
         cb.className = "feed-tile-picker-cb";
         cb.addEventListener("click", (e) => e.stopPropagation());
-        // Restore checked state from persisted selection
         if (selected.has(t.name)) {
           cb.checked = true;
           item.classList.add("selected");
@@ -327,7 +361,6 @@ export const feedRenderer = {
           if (cb.checked) selected.add(t.name); else selected.delete(t.name);
           item.classList.toggle("selected", cb.checked);
           updateToolbar();
-          // Persist checked state to tile props
           if (dispatch) {
             dispatch({ type: "ui/UPDATE_PROPS", id, patch: { checked: [...selected] } });
           }
@@ -358,7 +391,6 @@ export const feedRenderer = {
         listArea.appendChild(item);
       }
 
-      // Listen for new topics via WebSocket
       function onTopicNew(e) {
         if (!mounted) return;
         createTopicItem({ name: e.detail.topic, meta: e.detail.meta, messages: 0 });
@@ -366,7 +398,6 @@ export const feedRenderer = {
       window.addEventListener("katulong:topic-new", onTopicNew);
       viewCleanups.push(() => window.removeEventListener("katulong:topic-new", onTopicNew));
 
-      // Fetch existing topics
       fetch("/api/topics", { credentials: "same-origin", redirect: "error" })
         .then(r => r.ok ? r.json() : [])
         .catch(() => [])
@@ -383,7 +414,6 @@ export const feedRenderer = {
             listArea.appendChild(emptyEl);
           }
 
-          // Prune stale topic names that no longer exist on the server
           let pruned = false;
           for (const name of selected) {
             if (!knownTopics.has(name)) { selected.delete(name); pruned = true; }
@@ -395,97 +425,6 @@ export const feedRenderer = {
         });
     }
 
-    // ── Awaiting Claude view ────────────────────────────────────
-    // Shown when the user clicks the Claude sparkle before the
-    // SessionStart hook has reported a fresh uuid. Renders a blank
-    // stream (header + empty list) and waits for the sessionStore
-    // to surface a uuid that is newer than the click-time baseline,
-    // then swaps to the real streaming view with no UI reshuffle.
-    function startAwaitingClaude(sessionName, baseline) {
-      if (es) { es.close(); es = null; }
-      drainViewCleanups();
-      root.innerHTML = "";
-
-      root.appendChild(buildStreamHeader("Claude"));
-
-      const list = document.createElement("div");
-      list.className = "feed-tile-list";
-      list.tabIndex = 0;
-      root.appendChild(list);
-
-      const seenUuid = baseline?.uuid || null;
-      const seenStartedAt = baseline?.startedAt || 0;
-
-      // Policy mirror: see `applyClaudeMetaFromHook` in
-      // lib/routes/app-routes.js — SessionStart bumps `startedAt`, so a
-      // newer uuid OR a later `startedAt` signals a new Claude session
-      // worth swapping to.
-      function isNewerSession(m) {
-        if (!m?.uuid) return false;
-        if (m.uuid !== seenUuid) return true;
-        return (m.startedAt || 0) > seenStartedAt;
-      }
-
-      let swapped = false;
-      function swapToTopic(uuid) {
-        if (swapped) return;
-        swapped = true;
-        const topic = `claude/${uuid}`;
-        const meta = { type: "progress" };
-        if (dispatch) {
-          dispatch({
-            type: "ui/UPDATE_PROPS",
-            id,
-            patch: {
-              topic, title: topic, meta,
-              awaitingClaude: null,
-            },
-          });
-        }
-        startStreaming(topic, meta);
-      }
-
-      // Topic-new listener: broadcast path. The pub/sub bridge publishes
-      // a `katulong:topic-new` CustomEvent whenever a topic is created on
-      // the server — this fires even when session.meta.claude.uuid never
-      // surfaces (e.g. hooks were installed late, or the session store
-      // isn't the authoritative source). Matches any fresh `claude/<uuid>`.
-      function onTopicNew(e) {
-        if (!mounted || swapped) return;
-        const topic = e?.detail?.topic || "";
-        if (!topic.startsWith("claude/")) return;
-        const uuid = topic.slice("claude/".length);
-        // Defense-in-depth: the server already gates /sub/ topics via an
-        // allowlist regex, but matching here too keeps client-side pivots
-        // safe regardless of who dispatched the CustomEvent.
-        if (!UUID_RE.test(uuid) || uuid === seenUuid) return;
-        swapToTopic(uuid);
-      }
-      window.addEventListener("katulong:topic-new", onTopicNew);
-      viewCleanups.push(() => window.removeEventListener("katulong:topic-new", onTopicNew));
-
-      const store = _sessionStoreGetter();
-      if (!store) return; // No store wired — topic-new listener still active.
-
-      function readClaudeMeta() {
-        const { sessions } = store.getState();
-        const s = (sessions || []).find((x) => x.name === sessionName);
-        return s?.meta?.claude || null;
-      }
-
-      // Check once synchronously in case the uuid landed between the
-      // click and mount.
-      const immediate = readClaudeMeta();
-      if (isNewerSession(immediate)) { swapToTopic(immediate.uuid); return; }
-
-      const unsubscribe = store.subscribe(() => {
-        if (!mounted || swapped) return;
-        const m = readClaudeMeta();
-        if (isNewerSession(m)) swapToTopic(m.uuid);
-      });
-      viewCleanups.push(unsubscribe);
-    }
-
     // ── Streaming view ──────────────────────────────────────────
     function startStreaming(topic, meta) {
       if (es) { es.close(); es = null; }
@@ -493,23 +432,62 @@ export const feedRenderer = {
       root.innerHTML = "";
       const topicMeta = meta || {};
 
-      root.appendChild(buildStreamHeader(topic));
+      const { header } = buildStreamHeader(topic);
+      root.appendChild(header);
 
       const list = document.createElement("div");
       list.className = "feed-tile-list";
       list.tabIndex = 0;
       root.appendChild(list);
 
+      // "Working" card lifecycle: after a completion event we show a card
+      // with a pulsing dot and a rotating goofy gerund so the user knows
+      // Ollama is still chewing. Hidden when a narrative/summary/attention
+      // event arrives or after WORKING_TIMEOUT_MS (covers disabled/failed
+      // narrator so the card doesn't stick forever). Appended to `list` at
+      // the bottom — a new completion moves it back to the bottom.
+      let workingCard = null;
+      let workingRotateTimer = null;
+      let workingHideTimer = null;
+      function showWorkingCard() {
+        if (!workingCard) {
+          workingCard = document.createElement("div");
+          workingCard.className = "feed-tile-working-card";
+          const dot = document.createElement("span");
+          dot.className = "feed-tile-working-dot";
+          workingCard.appendChild(dot);
+          const phrase = document.createElement("span");
+          phrase.className = "feed-tile-working-phrase";
+          phrase.textContent = WORKING_PHRASES[Math.floor(Math.random() * WORKING_PHRASES.length)];
+          workingCard.appendChild(phrase);
+        } else {
+          workingCard.remove();
+        }
+        list.appendChild(workingCard);
+        if (workingRotateTimer) clearInterval(workingRotateTimer);
+        workingRotateTimer = setInterval(() => {
+          const phrase = workingCard?.querySelector(".feed-tile-working-phrase");
+          if (phrase) phrase.textContent = WORKING_PHRASES[Math.floor(Math.random() * WORKING_PHRASES.length)];
+        }, WORKING_ROTATE_MS);
+        if (workingHideTimer) clearTimeout(workingHideTimer);
+        workingHideTimer = setTimeout(hideWorkingCard, WORKING_TIMEOUT_MS);
+      }
+      function hideWorkingCard() {
+        if (workingRotateTimer) { clearInterval(workingRotateTimer); workingRotateTimer = null; }
+        if (workingHideTimer) { clearTimeout(workingHideTimer); workingHideTimer = null; }
+        if (workingCard) { workingCard.remove(); workingCard = null; }
+      }
+      viewCleanups.push(hideWorkingCard);
+
       const items = new Map();
       let autoKey = 0;
       const isProgress = topicMeta.type === "progress";
 
-      // Narrative-first rendering: narrative/summary/attention events are
-      // always visible. Tool-use progress events (active, done, pending,
-      // text, etc.) collapse into expandable <details> groups between
-      // narrative blocks so the feed reads like a blog, not a log.
+      // Narrative-first rendering: narrative/summary/attention/completion
+      // are always visible. Tool-use progress events collapse into
+      // expandable <details> groups between narrative blocks.
       const PROMINENT = new Set(["narrative", "summary", "attention", "completion"]);
-      let currentDetails = null; // the open <details> group, if any
+      let currentDetails = null;
       let detailCount = 0;
 
       function ensureDetailsGroup() {
@@ -524,8 +502,6 @@ export const feedRenderer = {
         currentDetails.appendChild(body);
         list.appendChild(currentDetails);
         detailCount = 0;
-        // Caller increments detailCount + calls updateDetailsSummary for
-        // the first item, which sets the visible label.
         return body;
       }
 
@@ -543,19 +519,35 @@ export const feedRenderer = {
         const key = isProgress && msg.step ? msg.step : `_evt_${autoKey++}`;
 
         if (isProgress && PROMINENT.has(status)) {
-          // Close the current details group — next non-prominent events
-          // will start a fresh group after this prominent item.
           currentDetails = null;
 
+          const replyShape = isClaudeReply(typeof msg === "object" ? msg : {});
           let row = items.get(key);
+          const desiredTag = replyShape ? "DETAILS" : "DIV";
+          if (row && row.tagName !== desiredTag) {
+            row.remove();
+            items.delete(key);
+            row = null;
+          }
           if (!row) {
-            row = document.createElement("div");
+            row = document.createElement(replyShape ? "details" : "div");
             list.appendChild(row);
             items.set(key, row);
           }
           renderProgressItem(row, msg);
+
+          // Reply events (completion or question-form attention) mean the
+          // model just spoke — kick the "working" card until the Ollama
+          // narrative lands. Narrative / summary / tool-approval attention
+          // supersede it, so hide in those cases.
+          if (replyShape) {
+            showWorkingCard();
+          } else if (status === "narrative" || status === "summary" || status === "attention") {
+            hideWorkingCard();
+          }
+          // If the working card is present, keep it at the bottom.
+          if (workingCard && workingCard.parentNode === list) list.appendChild(workingCard);
         } else if (isProgress) {
-          // Non-prominent: tuck into a collapsible group
           const body = ensureDetailsGroup();
           let row = items.get(key);
           if (!row) {
@@ -579,14 +571,40 @@ export const feedRenderer = {
         list.scrollTop = list.scrollHeight;
       }
 
-      // Connect SSE
-      const url = `/sub/${encodeURIComponent(topic)}?fromSeq=0`;
-      es = new EventSource(url);
+      // Empty-state: shown until the first envelope arrives. EventSource
+      // opens asynchronously, so on a successful stream the user sees this
+      // for a few ms; on a failing stream (e.g. claude/<uuid> no longer on
+      // the watchlist because staging data was wiped) it stays — hence the
+      // hint. For Claude topics we word it as a recovery prompt; generic
+      // topics just say "no events yet".
+      const emptyHint = document.createElement("div");
+      emptyHint.className = "feed-tile-empty-hint";
+      emptyHint.textContent = topic.startsWith("claude/")
+        ? "Waiting for Claude narration\u2026 if this stays blank, re-open the feed from the sparkle button."
+        : "No events yet.";
+      list.appendChild(emptyHint);
+      function clearEmptyHint() {
+        if (emptyHint.parentNode) emptyHint.remove();
+      }
+
+      es = new EventSource(streamUrlForTopic(topic));
       es.onmessage = (event) => {
         if (!mounted) return;
+        clearEmptyHint();
         try {
           handleEvent(JSON.parse(event.data));
         } catch { /* ignore malformed */ }
+      };
+      // On connection failure (404 from /api/claude/stream, network drop,
+      // etc.) the browser auto-retries. Swap the hint for an explicit
+      // failure message so the user isn't staring at a frozen placeholder.
+      es.onerror = () => {
+        if (!mounted) return;
+        if (!emptyHint.parentNode) return; // events already flowed
+        emptyHint.textContent = topic.startsWith("claude/")
+          ? "Couldn't open Claude narration. Click the sparkle button to re-subscribe."
+          : "Couldn't open stream.";
+        emptyHint.classList.add("feed-tile-empty-hint-error");
       };
     }
 

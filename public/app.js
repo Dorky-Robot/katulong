@@ -1893,18 +1893,15 @@
 
     /** Open a feed tile for the Claude session running in the current terminal.
      *
-     * Resolution order:
-     *   1. `meta.claude.uuid` present → open the exact `claude/<uuid>` topic.
-     *      SessionStart overwrites uuid when a new Claude starts, so we trust
-     *      whatever uuid is currently in meta.
-     *   2. `meta.claude.running` is true but no uuid → open a blank stream
-     *      tile that subscribes to sessionStore and swaps to the real topic
-     *      when the hook lands a uuid. Covers the case where hooks were
-     *      installed after Claude started (SessionStart already fired into
-     *      the void; the server now adopts the uuid on the next hook event).
-     *   3. No Claude signal at all → generic picker.
+     * Flow: POST /api/claude/watch to opt the UUID into the narration
+     * watchlist, then open a feed tile that streams `/api/claude/stream/:uuid`.
+     * The server resolves the UUID from either an explicit `{ uuid, cwd }`
+     * (fast path, when the session meta already has it) or a `{ session }`
+     * name (falls back to `~/.claude/projects/<cwd-slug>/` directory scan).
+     *
+     * No session → generic picker. Resolution failure → toast + picker.
      */
-    function openClaudeFeedTile() {
+    async function openClaudeFeedTile() {
       const sessionName = getActiveSessionName();
 
       if (!sessionName) {
@@ -1916,67 +1913,26 @@
       const active = (sessions || []).find(s => s.name === sessionName);
       const claudeMeta = active?.meta?.claude || null;
 
-      if (claudeMeta?.uuid) {
-        const topic = `claude/${claudeMeta.uuid}`;
-        const tileId = `feed-${Date.now().toString(36)}`;
-        uiStore.addTile(
-          { id: tileId, type: "feed", props: { topic, title: topic, meta: { type: "progress" } } },
-          { focus: true, insertAt: "afterFocus" },
-        );
-        if (isOverlayViewport()) setOverlaySidebar(false);
-        return;
-      }
+      const body = (claudeMeta?.uuid && active?.cwd)
+        ? { uuid: claudeMeta.uuid, cwd: active.cwd }
+        : { session: sessionName };
 
-      if (claudeMeta?.running) {
-        // Fire-and-forget: install hooks if missing so the next hook event
-        // wires up automatically.
-        ensureClaudeHooksInstalled();
-
-        const tileId = `feed-${Date.now().toString(36)}`;
-        uiStore.addTile(
-          {
-            id: tileId,
-            type: "feed",
-            props: {
-              topic: null,
-              title: "Claude",
-              meta: {},
-              awaitingClaude: {
-                session: sessionName,
-                baseline: { uuid: null, startedAt: 0 },
-              },
-            },
-          },
-          { focus: true, insertAt: "afterFocus" },
-        );
-        if (isOverlayViewport()) setOverlaySidebar(false);
-        return;
-      }
-
-      openFeedTile();
-      if (isOverlayViewport()) setOverlaySidebar(false);
-    }
-
-    // Ensure `~/.claude/settings.local.json` has the katulong relay hook
-    // wired. Idempotent on the server side — this client only needs to
-    // care about the first install, so we track a per-tab flag to avoid
-    // retoasting on every click after install.
-    let _claudeHooksToasted = false;
-    async function ensureClaudeHooksInstalled() {
+      let resolved;
       try {
-        const status = await api.get("/api/claude-hooks/status");
-        if (status?.installed) return;
-        const result = await api.post("/api/claude-hooks/install", {});
-        if (!_claudeHooksToasted && result?.added?.length) {
-          _claudeHooksToasted = true;
-          showToast("Claude hooks installed. Start a new Claude session for a direct-open feed.");
-        }
-      } catch {
-        // Non-fatal: if install fails the user still gets the topic
-        // picker, and surfacing a red error here would be more noise
-        // than signal. The manual `katulong setup claude-hooks` path
-        // remains available as an escape hatch.
+        resolved = await api.post("/api/claude/watch", body);
+      } catch (err) {
+        showToast(`Couldn't find a Claude transcript: ${err.message || "unknown"}`, true);
+        openFeedTile();
+        return;
       }
+
+      const topic = `claude/${resolved.uuid}`;
+      const tileId = `feed-${Date.now().toString(36)}`;
+      uiStore.addTile(
+        { id: tileId, type: "feed", props: { topic, title: topic, meta: { type: "progress" } } },
+        { focus: true, insertAt: "afterFocus" },
+      );
+      if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
     // --- Localhost Browser (tile) ---
