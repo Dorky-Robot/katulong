@@ -320,7 +320,14 @@ describe("feedRenderer", () => {
       );
       assert.equal(row.children[0].tagName, "SUMMARY");
       assert.equal(row.children[0].className, "feed-tile-reply-summary");
-      assert.equal(row.children[0].textContent, "Claude's reply (3 words)");
+      // Summary now holds [time span, label span] so the time is still
+      // visible when the reply is collapsed.
+      const summary = row.children[0];
+      const timeSpan = summary.children[0];
+      const labelSpan = summary.children[1];
+      assert.equal(timeSpan.className, "feed-tile-row-time");
+      assert.ok(timeSpan.textContent, "time span should render a formatted timestamp");
+      assert.equal(labelSpan.textContent, "Claude's reply (3 words)");
       assert.equal(row.children[1].className, "feed-tile-reply-body");
       assert.equal(row.children[1].textContent, "All tests pass.");
       assert.equal(list.querySelector(".feed-tile-details-group"), null);
@@ -355,9 +362,11 @@ describe("feedRenderer", () => {
       assert.equal(row.tagName, "DETAILS");
       assert.ok(row.className.includes("feed-status-reply"));
       // Summary hints at waiting-for-input since the message was a question.
+      const summary = row.children[0];
+      const labelText = summary.children[1].textContent;
       assert.ok(
-        row.children[0].textContent.includes("waiting for you"),
-        `expected waiting-for-you hint, got: ${row.children[0].textContent}`,
+        labelText.includes("waiting for you"),
+        `expected waiting-for-you hint, got: ${labelText}`,
       );
     });
 
@@ -387,7 +396,9 @@ describe("feedRenderer", () => {
       const row = el.children[0].children[1].children[0];
       assert.equal(row.tagName, "DIV");
       assert.ok(row.className.includes("feed-status-attention"));
-      assert.equal(row.children[0].className, "feed-tile-attention");
+      // First child is the time span; the attention card is second.
+      assert.equal(row.children[0].className, "feed-tile-row-time");
+      assert.equal(row.children[1].className, "feed-tile-attention");
     });
 
     it("shows a working card below the completion row", () => {

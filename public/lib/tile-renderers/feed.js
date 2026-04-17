@@ -87,7 +87,21 @@ function isClaudeReply(msg) {
   return false;
 }
 
-function renderProgressItem(row, msg) {
+function formatTime(ts) {
+  if (!ts && ts !== 0) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function makeTimeSpan(ts) {
+  const t = document.createElement("span");
+  t.className = "feed-tile-row-time";
+  t.textContent = formatTime(ts);
+  return t;
+}
+
+function renderProgressItem(row, msg, ts) {
   row.innerHTML = "";
   const status = msg.status || "info";
   const reply = isClaudeReply(msg);
@@ -96,6 +110,7 @@ function renderProgressItem(row, msg) {
     : `feed-tile-item feed-status-${status}`;
 
   if (status === "text") {
+    row.appendChild(makeTimeSpan(ts));
     const text = document.createElement("span");
     text.className = "feed-tile-step feed-tile-assistant-text";
     text.textContent = msg.step || "";
@@ -104,6 +119,7 @@ function renderProgressItem(row, msg) {
   }
 
   if (status === "narrative") {
+    row.appendChild(makeTimeSpan(ts));
     const prose = document.createElement("div");
     prose.className = "feed-tile-narrative";
     prose.textContent = msg.step || "";
@@ -117,10 +133,16 @@ function renderProgressItem(row, msg) {
     const awaiting = msg.status === "attention";
     const summary = document.createElement("summary");
     summary.className = "feed-tile-reply-summary";
-    const label = words
+    // Time lives inside <summary> so it stays visible when the reply
+    // is collapsed — <details> hides everything below the first <summary>.
+    summary.appendChild(makeTimeSpan(ts));
+    const label = document.createElement("span");
+    label.className = "feed-tile-reply-label";
+    const base = words
       ? `Claude's reply (${words} word${words === 1 ? "" : "s"})`
       : "Claude's reply";
-    summary.textContent = awaiting ? `${label} \u00b7 waiting for you` : label;
+    label.textContent = awaiting ? `${base} \u00b7 waiting for you` : base;
+    summary.appendChild(label);
     row.appendChild(summary);
     const prose = document.createElement("div");
     prose.className = "feed-tile-reply-body";
@@ -130,6 +152,7 @@ function renderProgressItem(row, msg) {
   }
 
   if (status === "summary") {
+    row.appendChild(makeTimeSpan(ts));
     const summaryEl = document.createElement("div");
     summaryEl.className = "feed-tile-summary";
     summaryEl.textContent = msg.step || "";
@@ -138,6 +161,7 @@ function renderProgressItem(row, msg) {
   }
 
   if (status === "attention") {
+    row.appendChild(makeTimeSpan(ts));
     const attn = document.createElement("div");
     attn.className = "feed-tile-attention";
     attn.textContent = msg.step || "Waiting for input\u2026";
@@ -145,6 +169,7 @@ function renderProgressItem(row, msg) {
     return;
   }
 
+  row.appendChild(makeTimeSpan(ts));
   const bullet = document.createElement("span");
   bullet.className = "feed-tile-bullet";
   bullet.textContent = status === "done" ? "\u25CF"
@@ -534,7 +559,7 @@ export const feedRenderer = {
             list.appendChild(row);
             items.set(key, row);
           }
-          renderProgressItem(row, msg);
+          renderProgressItem(row, msg, envelope.timestamp);
 
           // Reply events (completion or question-form attention) mean the
           // model just spoke — kick the "working" card until the Ollama
@@ -557,7 +582,7 @@ export const feedRenderer = {
             detailCount++;
             updateDetailsSummary();
           }
-          renderProgressItem(row, msg);
+          renderProgressItem(row, msg, envelope.timestamp);
         } else {
           let row = items.get(key);
           if (!row) {
