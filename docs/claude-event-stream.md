@@ -1,6 +1,11 @@
 # Claude Event Stream — Live Agent Activity via Hooks
 
-> **⚠️ This document is mid-rewrite (as of 2026-04-14).**
+> **⚠️ Superseded (2026-04-16).** See [`claude-feed-watchlist.md`](claude-feed-watchlist.md) for the current design.
+> In the new model hooks are optional, transcript JSONL is the source of truth,
+> narration is opt-in via a sparkle-click watchlist, and processing only runs
+> while someone is subscribed. This doc is retained for historical context only.
+>
+> **⚠️ This document was also mid-rewrite (as of 2026-04-14) before being superseded.**
 >
 > The architecture described below — "thin translator publishes every
 > transformed hook event to the topic broker" — has been superseded by a

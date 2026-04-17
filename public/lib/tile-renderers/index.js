@@ -50,7 +50,7 @@ export function initRenderers({ terminalPool, createTerminalTile, uiStore, getSe
   fileBrowserRenderer.init({ uiStore });
   documentRenderer.init({});
   clusterRenderer.init({ createTerminalTile });
-  feedRenderer.init({ getSessionStore });
+  feedRenderer.init();
   localhostBrowserRenderer.init({});
   progressRenderer.init({});
   imageRenderer.init({});

@@ -18,12 +18,29 @@ class FakeElement {
     this.innerHTML = "";
     this.scrollHeight = 0;
     this.scrollTop = 0;
+    this.parentNode = null;
   }
-  appendChild(child) { this.children.push(child); return child; }
+  appendChild(child) {
+    // Match DOM semantics: appending a node that already has a parent
+    // detaches it from the old parent first.
+    if (child.parentNode && child.parentNode !== this) {
+      const idx = child.parentNode.children.indexOf(child);
+      if (idx >= 0) child.parentNode.children.splice(idx, 1);
+    } else if (child.parentNode === this) {
+      const idx = this.children.indexOf(child);
+      if (idx >= 0) this.children.splice(idx, 1);
+    }
+    this.children.push(child);
+    child.parentNode = this;
+    return child;
+  }
   querySelector(sel) {
-    // Simple class-based search
+    // Simple class- or tag-based search
+    const pred = sel.startsWith(".")
+      ? (c) => c.className?.includes?.(sel.slice(1))
+      : (c) => c.tagName === sel.toUpperCase();
     for (const c of this.children) {
-      if (sel.startsWith(".") && c.className.includes(sel.slice(1))) return c;
+      if (pred(c)) return c;
       const found = c.querySelector?.(sel);
       if (found) return found;
     }
@@ -32,7 +49,12 @@ class FakeElement {
   addEventListener(evt, fn) {
     (this._listeners[evt] ||= []).push(fn);
   }
-  remove() {}
+  remove() {
+    if (!this.parentNode) return;
+    const idx = this.parentNode.children.indexOf(this);
+    if (idx >= 0) this.parentNode.children.splice(idx, 1);
+    this.parentNode = null;
+  }
 }
 
 // Stub global document for feed.js
@@ -61,7 +83,7 @@ globalThis.fetch = async (url, opts) => ({
 });
 
 // Stub global window — the feed tile attaches `katulong:topic-new`
-// listeners to catch new-topic broadcasts.
+// listeners to catch new-topic broadcasts for the picker.
 const winListeners = {};
 globalThis.window = {
   addEventListener(evt, fn) { (winListeners[evt] ||= []).push(fn); },
@@ -92,9 +114,6 @@ describe("feedRenderer", () => {
     eventSources.length = 0;
     fetchResult = [];
     for (const k of Object.keys(winListeners)) delete winListeners[k];
-    // Reset module-level session store getter so tests that don't need
-    // a store don't inherit one from a prior test.
-    feedRenderer.init({});
   });
 
   describe("structure", () => {
@@ -102,9 +121,8 @@ describe("feedRenderer", () => {
       assert.equal(feedRenderer.type, "feed");
     });
 
-    it("init accepts empty deps", () => {
-      // Should not throw
-      feedRenderer.init({});
+    it("init accepts no args", () => {
+      feedRenderer.init();
     });
   });
 
@@ -125,19 +143,9 @@ describe("feedRenderer", () => {
       assert.equal(d.title, "My Feed");
     });
 
-    it("is persistable for normal props", () => {
+    it("is persistable", () => {
       assert.equal(feedRenderer.describe({}).persistable, true);
       assert.equal(feedRenderer.describe({ topic: "some/topic" }).persistable, true);
-    });
-
-    it("is NOT persistable while awaiting Claude (transient state)", () => {
-      // Persisting a waiter with baseline { uuid: null, startedAt: 0 } would
-      // swap to any lingering claude/<uuid> on reload. Dropping the tile
-      // instead keeps restores clean.
-      assert.equal(
-        feedRenderer.describe({ awaitingClaude: { session: "work" } }).persistable,
-        false,
-      );
     });
   });
 
@@ -153,23 +161,19 @@ describe("feedRenderer", () => {
         ctx: {},
       });
 
-      // Root element should be appended
       assert.equal(el.children.length, 1);
       const root = el.children[0];
       assert.equal(root.className, "feed-tile-root");
 
-      // Picker should be appended synchronously
       assert.ok(root.children.length >= 1, "picker should be in root");
       const picker = root.children[0];
       assert.equal(picker.className, "feed-tile-picker");
 
-      // Title should say "Subscribe to a topic"
       assert.ok(picker.children.length >= 1);
       const titleEl = picker.children[0];
       assert.equal(titleEl.className, "feed-tile-picker-title");
       assert.equal(titleEl.children[0].textContent, "Subscribe to a topic");
 
-      // List area with loading text
       const listArea = picker.children[1];
       assert.equal(listArea.className, "feed-tile-picker-list");
       assert.equal(listArea.textContent, "Loading topics\u2026");
@@ -179,13 +183,12 @@ describe("feedRenderer", () => {
       const el = new FakeElement("div");
       feedRenderer.mount(el, { id: "feed-1", props: {}, dispatch: () => {}, ctx: {} });
 
-      // No EventSource should have been created
       assert.equal(eventSources.length, 0);
     });
   });
 
   describe("mount() — streaming", () => {
-    it("opens EventSource immediately when topic is in props", () => {
+    it("opens EventSource at /sub/ for generic topics", () => {
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -197,6 +200,40 @@ describe("feedRenderer", () => {
       assert.equal(eventSources.length, 1);
       assert.ok(eventSources[0].url.includes("/sub/_build%2Ftest"));
       assert.ok(eventSources[0].url.includes("fromSeq=0"));
+    });
+
+    it("opens EventSource at /api/claude/stream/:uuid for claude/<uuid>", () => {
+      // Claude topics route to the narration-aware endpoint, which refcounts
+      // a per-UUID processor for the life of the connection.
+      const uuid = "11111111-2222-3333-4444-555555555555";
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: `claude/${uuid}`, meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      assert.equal(eventSources.length, 1);
+      assert.ok(
+        eventSources[0].url.includes(`/api/claude/stream/${uuid}`),
+        `expected /api/claude/stream/${uuid} in ${eventSources[0].url}`,
+      );
+      assert.ok(eventSources[0].url.includes("fromSeq=0"));
+    });
+
+    it("falls back to /sub/ when a claude/<nonuuid> topic sneaks in", () => {
+      // Defense-in-depth: only well-formed UUIDs get the narration route.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/not-a-uuid", meta: {} },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      assert.equal(eventSources.length, 1);
+      assert.ok(eventSources[0].url.includes("/sub/claude%2Fnot-a-uuid"));
     });
 
     it("renders header with back button, topic name, and close button", () => {
@@ -229,7 +266,6 @@ describe("feedRenderer", () => {
 
       const es = eventSources[0];
 
-      // Simulate an SSE event
       es.onmessage({
         data: JSON.stringify({
           seq: 1,
@@ -239,10 +275,186 @@ describe("feedRenderer", () => {
         }),
       });
 
-      // List should have one item
       const root = el.children[0];
       const list = root.children[1]; // header is [0], list is [1]
       assert.equal(list.children.length, 1);
+    });
+
+    it("renders completion events as collapsible <details> rows", () => {
+      // Stop hooks emit `status: "completion"` cards — the user already saw
+      // this reply in the terminal, so we render it as a <details> with a
+      // concise summary. The body stays one click away without crowding
+      // the narrative. Must NOT fold into the muted details-group.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      const es = eventSources[0];
+      es.onmessage({
+        data: JSON.stringify({
+          seq: 1,
+          topic: "claude/abc",
+          message: JSON.stringify({
+            step: "All tests pass.",
+            status: "completion",
+            event: "Completion",
+          }),
+          timestamp: Date.now(),
+        }),
+      });
+
+      const root = el.children[0];
+      const list = root.children[1];
+
+      // list now has [reply row, working card]
+      assert.ok(list.children.length >= 1);
+      const row = list.children[0];
+      assert.equal(row.tagName, "DETAILS");
+      assert.ok(
+        row.className.includes("feed-status-reply"),
+        `expected feed-status-reply, got: ${row.className}`,
+      );
+      assert.equal(row.children[0].tagName, "SUMMARY");
+      assert.equal(row.children[0].className, "feed-tile-reply-summary");
+      // Summary now holds [time span, label span] so the time is still
+      // visible when the reply is collapsed.
+      const summary = row.children[0];
+      const timeSpan = summary.children[0];
+      const labelSpan = summary.children[1];
+      assert.equal(timeSpan.className, "feed-tile-row-time");
+      assert.ok(timeSpan.textContent, "time span should render a formatted timestamp");
+      assert.equal(labelSpan.textContent, "Claude's reply (3 words)");
+      assert.equal(row.children[1].className, "feed-tile-reply-body");
+      assert.equal(row.children[1].textContent, "All tests pass.");
+      assert.equal(list.querySelector(".feed-tile-details-group"), null);
+    });
+
+    it("renders question-form attention as a collapsible reply", () => {
+      // Stop-hook replies ending in '?' are emitted as status: attention
+      // (Claude is waiting for the user). The text itself is still just
+      // the reply the user saw in the terminal, so collapse it like a
+      // completion. Tool-approval attention (tool != null) stays prominent.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify({
+            step: "Hi! What would you like to work on?",
+            status: "attention", event: "Attention", tool: null,
+          }),
+          timestamp: Date.now(),
+        }),
+      });
+
+      const list = el.children[0].children[1];
+      const row = list.children[0];
+      assert.equal(row.tagName, "DETAILS");
+      assert.ok(row.className.includes("feed-status-reply"));
+      // Summary hints at waiting-for-input since the message was a question.
+      const summary = row.children[0];
+      const labelText = summary.children[1].textContent;
+      assert.ok(
+        labelText.includes("waiting for you"),
+        `expected waiting-for-you hint, got: ${labelText}`,
+      );
+    });
+
+    it("keeps tool-approval attention prominent (not collapsed)", () => {
+      // PreToolUse events carry a tool name and are actionable — render as
+      // a normal attention card with high-contrast warning color, not a
+      // hidden details body.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify({
+            step: "Approve Bash: ls?", status: "attention",
+            event: "Attention", tool: "Bash",
+          }),
+          timestamp: Date.now(),
+        }),
+      });
+
+      const row = el.children[0].children[1].children[0];
+      assert.equal(row.tagName, "DIV");
+      assert.ok(row.className.includes("feed-status-attention"));
+      // First child is the time span; the attention card is second.
+      assert.equal(row.children[0].className, "feed-tile-row-time");
+      assert.equal(row.children[1].className, "feed-tile-attention");
+    });
+
+    it("shows a working card below the completion row", () => {
+      // The working card gives visual feedback while Ollama processes the
+      // narrative — a rotating goofy gerund so the feed doesn't look frozen.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify({ step: "done", status: "completion" }),
+          timestamp: Date.now(),
+        }),
+      });
+
+      const list = el.children[0].children[1];
+      const card = list.querySelector(".feed-tile-working-card");
+      assert.ok(card, "expected a working card after completion");
+      assert.ok(card.querySelector(".feed-tile-working-dot"));
+      assert.ok(card.querySelector(".feed-tile-working-phrase"));
+    });
+
+    it("hides the working card once a narrative arrives", () => {
+      // The narrative supersedes the placeholder — card must disappear so
+      // the user doesn't think another thing is still in flight.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify({ step: "done", status: "completion" }),
+          timestamp: Date.now(),
+        }),
+      });
+      eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 2, topic: "claude/abc",
+          message: JSON.stringify({ step: "Claude tidied up the tests.", status: "narrative" }),
+          timestamp: Date.now(),
+        }),
+      });
+
+      const list = el.children[0].children[1];
+      assert.equal(list.querySelector(".feed-tile-working-card"), null);
     });
   });
 
@@ -286,7 +498,6 @@ describe("feedRenderer", () => {
       const es = eventSources[0];
       handle.unmount();
 
-      // Should not throw
       es.onmessage({
         data: JSON.stringify({
           seq: 1, topic: "t", message: '{"text":"late"}', timestamp: Date.now(),
@@ -312,502 +523,6 @@ describe("feedRenderer", () => {
       assert.equal(typeof handle.getSessions, "function");
       assert.deepEqual(handle.getSessions(), []);
       assert.equal(handle.tile, null);
-    });
-  });
-
-  // ── Awaiting-Claude state ──────────────────────────────────────────
-  //
-  // When the user clicks the Claude sparkle before the SessionStart hook
-  // has published a fresh uuid, the feed tile mounts in an awaiting state.
-  // It must subscribe to the session store and transition into a normal
-  // streaming view as soon as a fresh uuid appears.
-
-  describe("mount() — awaiting Claude", () => {
-    // Minimal fake session store — enough for the tile to read state and
-    // register a subscriber. Tests mutate `state.sessions[*].meta.claude`
-    // and call `emit()` to simulate a server-pushed session-updated.
-    function makeFakeSessionStore(sessions) {
-      const state = { sessions };
-      const subs = [];
-      return {
-        _state: state,
-        _subs: subs,
-        getState() { return state; },
-        subscribe(fn) {
-          subs.push(fn);
-          return () => {
-            const i = subs.indexOf(fn);
-            if (i >= 0) subs.splice(i, 1);
-          };
-        },
-        emit() { for (const fn of [...subs]) fn(state); },
-      };
-    }
-
-    it("renders blank stream header and list without opening EventSource", () => {
-      const store = makeFakeSessionStore([
-        { name: "work", meta: { claude: { running: true } } },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            baseline: { uuid: null, startedAt: 0 },
-          },
-          meta: {},
-        },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      // No EventSource — nothing to subscribe to yet.
-      assert.equal(eventSources.length, 0);
-
-      const root = el.children[0];
-      assert.equal(root.className, "feed-tile-root");
-
-      // Header [back, title, close] + empty list.
-      const header = root.children[0];
-      assert.equal(header.className, "feed-tile-header");
-      assert.equal(header.children.length, 3);
-      assert.equal(header.children[1].textContent, "Claude");
-
-      const list = root.children[1];
-      assert.equal(list.className, "feed-tile-list");
-      assert.equal(list.children.length, 0);
-    });
-
-    it("registers a subscriber on the session store", () => {
-      const store = makeFakeSessionStore([
-        { name: "work", meta: { claude: { running: true } } },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            baseline: { uuid: null, startedAt: 0 },
-          },
-          meta: {},
-        },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      assert.equal(store._subs.length, 1);
-    });
-
-    it("transitions to streaming when a fresh uuid lands", () => {
-      const store = makeFakeSessionStore([
-        { name: "work", meta: { claude: { running: true } } },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      const dispatched = [];
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            baseline: { uuid: null, startedAt: 0 },
-          },
-          meta: {},
-        },
-        dispatch: (a) => dispatched.push(a),
-        ctx: {},
-      });
-
-      assert.equal(eventSources.length, 0);
-
-      // Simulate SessionStart hook populating the uuid server-side, then
-      // the session-updated push reaching the client.
-      store._state.sessions[0].meta.claude = {
-        running: true,
-        detectedAt: 1,
-        uuid: "11111111-2222-3333-4444-555555555555",
-        startedAt: 2,
-      };
-      store.emit();
-
-      assert.equal(eventSources.length, 1, "streaming EventSource should open");
-      assert.ok(eventSources[0].url.includes("/sub/claude%2F11111111-2222-3333-4444-555555555555"));
-
-      // Persistence: UPDATE_PROPS dispatched so the tile restores as a
-      // normal streaming tile after a reload.
-      const patchAction = dispatched.find(a => a.type === "ui/UPDATE_PROPS");
-      assert.ok(patchAction, "UPDATE_PROPS should be dispatched");
-      assert.equal(patchAction.patch.topic, "claude/11111111-2222-3333-4444-555555555555");
-      assert.equal(patchAction.patch.awaitingClaude, null);
-    });
-
-    it("swaps immediately when the uuid is already fresh at mount", () => {
-      const store = makeFakeSessionStore([
-        {
-          name: "work",
-          meta: { claude: {
-            running: true, detectedAt: 1,
-            uuid: "11111111-2222-3333-4444-555555555555",
-            startedAt: 2,
-          } },
-        },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            baseline: { uuid: null, startedAt: 0 },
-          },
-          meta: {},
-        },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      // Synchronous swap — no subscriber tick required.
-      assert.equal(eventSources.length, 1);
-    });
-
-    it("does NOT swap when the stored uuid matches the baseline (stale)", () => {
-      const uuid = "11111111-2222-3333-4444-555555555555";
-      const store = makeFakeSessionStore([
-        { name: "work", meta: { claude: { running: true, uuid, startedAt: 100 } } },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            // Click-time baseline: we already saw this uuid before opening.
-            baseline: { uuid, startedAt: 100 },
-          },
-          meta: {},
-        },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      assert.equal(eventSources.length, 0);
-
-      // A store emit with the same meta should be a no-op.
-      store.emit();
-      assert.equal(eventSources.length, 0);
-    });
-
-    it("swaps when the uuid itself changes (new Claude session)", () => {
-      const oldUuid = "11111111-1111-1111-1111-111111111111";
-      const newUuid = "22222222-2222-2222-2222-222222222222";
-      const store = makeFakeSessionStore([
-        { name: "work", meta: { claude: { running: true, uuid: oldUuid, startedAt: 100 } } },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            baseline: { uuid: oldUuid, startedAt: 100 },
-          },
-          meta: {},
-        },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      store._state.sessions[0].meta.claude = {
-        running: true, uuid: newUuid, startedAt: 200,
-      };
-      store.emit();
-
-      assert.equal(eventSources.length, 1);
-      assert.ok(eventSources[0].url.includes(encodeURIComponent(`claude/${newUuid}`)));
-    });
-
-    it("swaps when startedAt advances even if uuid is unchanged", () => {
-      // This catches the hook-restart case where Claude kept the same
-      // session_id but the server re-wrote startedAt after a flap.
-      const uuid = "11111111-2222-3333-4444-555555555555";
-      const store = makeFakeSessionStore([
-        { name: "work", meta: { claude: { running: true, uuid, startedAt: 100 } } },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            baseline: { uuid, startedAt: 100 },
-          },
-          meta: {},
-        },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      store._state.sessions[0].meta.claude = {
-        running: true, uuid, startedAt: 200,
-      };
-      store.emit();
-
-      assert.equal(eventSources.length, 1);
-    });
-
-    it("swaps when a katulong:topic-new claude/<uuid> event arrives", () => {
-      // Fallback path: session store never surfaces meta.claude.uuid
-      // (e.g. staging doesn't receive hook events), but the topic itself
-      // gets broadcast via the pub/sub bridge. The awaiting view must
-      // still swap so the user sees live events.
-      const store = makeFakeSessionStore([
-        { name: "work", meta: { claude: { running: true } } },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      const dispatched = [];
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            baseline: { uuid: null, startedAt: 0 },
-          },
-          meta: {},
-        },
-        dispatch: (a) => dispatched.push(a),
-        ctx: {},
-      });
-
-      assert.equal(eventSources.length, 0);
-
-      const uuid = "33333333-3333-3333-3333-333333333333";
-      globalThis.window.dispatchEvent(new globalThis.CustomEvent("katulong:topic-new", {
-        detail: { topic: `claude/${uuid}`, meta: { type: "progress" } },
-      }));
-
-      assert.equal(eventSources.length, 1, "streaming should open on topic-new");
-      assert.ok(eventSources[0].url.includes(encodeURIComponent(`claude/${uuid}`)));
-
-      const patch = dispatched.find(a => a.type === "ui/UPDATE_PROPS");
-      assert.ok(patch);
-      assert.equal(patch.patch.topic, `claude/${uuid}`);
-      assert.equal(patch.patch.awaitingClaude, null);
-    });
-
-    it("ignores non-claude topic-new events while awaiting", () => {
-      const store = makeFakeSessionStore([
-        { name: "work", meta: { claude: { running: true } } },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            baseline: { uuid: null, startedAt: 0 },
-          },
-          meta: {},
-        },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      globalThis.window.dispatchEvent(new globalThis.CustomEvent("katulong:topic-new", {
-        detail: { topic: "build/something", meta: {} },
-      }));
-
-      assert.equal(eventSources.length, 0);
-    });
-
-    it("ignores claude/<uuid> that matches baseline uuid (stale)", () => {
-      const uuid = "44444444-4444-4444-4444-444444444444";
-      const store = makeFakeSessionStore([
-        { name: "work", meta: { claude: { running: true } } },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            baseline: { uuid, startedAt: 100 },
-          },
-          meta: {},
-        },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      globalThis.window.dispatchEvent(new globalThis.CustomEvent("katulong:topic-new", {
-        detail: { topic: `claude/${uuid}`, meta: {} },
-      }));
-
-      assert.equal(eventSources.length, 0);
-    });
-
-    it("drops the awaiting topic-new listener when back → picker transitions view", () => {
-      // Regression: the tile used to register listeners into a flat
-      // cleanups[] array drained only on unmount, so clicking "back" from
-      // the awaiting view into the picker left the awaiting-mode
-      // onTopicNew live. A subsequent claude/<uuid> broadcast would then
-      // silently hijack the tile into streaming mode while the user was
-      // browsing the picker. View-local cleanups drain on transition.
-      const store = makeFakeSessionStore([
-        { name: "work", meta: { claude: { running: true } } },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            baseline: { uuid: null, startedAt: 0 },
-          },
-          meta: {},
-        },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      // Awaiting view is up — one topic-new listener.
-      assert.equal((winListeners["katulong:topic-new"] || []).length, 1);
-
-      // Simulate "back" button click — calls showTopicPicker internally.
-      const root = el.children[0];
-      const headerBackBtn = root.children[0].children[0];
-      assert.equal(headerBackBtn.className, "feed-tile-back-btn");
-      const clickHandlers = headerBackBtn._listeners.click || [];
-      assert.equal(clickHandlers.length, 1);
-      clickHandlers[0]();
-
-      // Picker has exactly one topic-new listener — the awaiting one was
-      // drained, not accumulated.
-      assert.equal((winListeners["katulong:topic-new"] || []).length, 1);
-
-      // Prove the drained listener is actually gone: dispatching a
-      // claude/<uuid> topic-new must NOT pivot the picker to streaming.
-      const uuid = "55555555-5555-5555-5555-555555555555";
-      globalThis.window.dispatchEvent(new globalThis.CustomEvent("katulong:topic-new", {
-        detail: { topic: `claude/${uuid}`, meta: {} },
-      }));
-      assert.equal(eventSources.length, 0, "picker must not auto-swap to stream");
-    });
-
-    it("rejects topic-new payloads whose uuid is not a valid UUID", () => {
-      const store = makeFakeSessionStore([
-        { name: "work", meta: { claude: { running: true } } },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            baseline: { uuid: null, startedAt: 0 },
-          },
-          meta: {},
-        },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      globalThis.window.dispatchEvent(new globalThis.CustomEvent("katulong:topic-new", {
-        detail: { topic: "claude/../etc/passwd", meta: {} },
-      }));
-      globalThis.window.dispatchEvent(new globalThis.CustomEvent("katulong:topic-new", {
-        detail: { topic: "claude/not-a-uuid", meta: {} },
-      }));
-
-      assert.equal(eventSources.length, 0);
-    });
-
-    it("removes the topic-new listener on unmount", () => {
-      const store = makeFakeSessionStore([
-        { name: "work", meta: { claude: { running: true } } },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      const handle = feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            baseline: { uuid: null, startedAt: 0 },
-          },
-          meta: {},
-        },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      assert.equal((winListeners["katulong:topic-new"] || []).length, 1);
-      handle.unmount();
-      assert.equal((winListeners["katulong:topic-new"] || []).length, 0);
-    });
-
-    it("unsubscribes from the store on unmount", () => {
-      const store = makeFakeSessionStore([
-        { name: "work", meta: { claude: { running: true } } },
-      ]);
-      feedRenderer.init({ getSessionStore: () => store });
-
-      const el = new FakeElement("div");
-      const handle = feedRenderer.mount(el, {
-        id: "feed-1",
-        props: {
-          topic: null,
-          awaitingClaude: {
-            session: "work",
-            baseline: { uuid: null, startedAt: 0 },
-          },
-          meta: {},
-        },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      assert.equal(store._subs.length, 1);
-      handle.unmount();
-      assert.equal(store._subs.length, 0);
     });
   });
 });
