@@ -1907,6 +1907,7 @@
       const sessionName = getActiveSessionName();
 
       if (!sessionName) {
+        console.log("[claude-feed] no active session → generic picker");
         openFeedTile();
         return;
       }
@@ -1915,7 +1916,17 @@
       const active = (sessions || []).find(s => s.name === sessionName);
       const claudeMeta = active?.meta?.claude || null;
 
+      console.log("[claude-feed] sparkle click", {
+        sessionName,
+        cwd: active?.cwd,
+        claudeMeta,
+      });
+
       if (!claudeMeta?.uuid || !active?.cwd) {
+        console.warn("[claude-feed] missing uuid or cwd — falling back", {
+          hasUuid: !!claudeMeta?.uuid,
+          hasCwd: !!active?.cwd,
+        });
         showToast("Install Claude hooks first: `katulong setup claude-hooks`", true);
         openFeedTile();
         return;
@@ -1927,7 +1938,9 @@
           uuid: claudeMeta.uuid,
           cwd: active.cwd,
         });
+        console.log("[claude-feed] watch resolved", resolved);
       } catch (err) {
+        console.error("[claude-feed] watch failed", err);
         showToast(`Couldn't find a Claude transcript: ${err.message || "unknown"}`, true);
         openFeedTile();
         return;
