@@ -163,13 +163,14 @@ describe("createClaudeFeedRoutes", () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it("exposes the expected four routes", () => {
+  it("exposes the expected routes", () => {
     const keys = routes.map(r => [r.method, r.path || r.prefix]);
     assert.deepStrictEqual(keys, [
       ["POST", "/api/claude/watch"],
       ["DELETE", "/api/claude/watch/"],
       ["GET", "/api/claude/watchlist"],
       ["GET", "/api/claude/stream/"],
+      ["POST", "/api/claude/reprocess/"],
     ]);
   });
 

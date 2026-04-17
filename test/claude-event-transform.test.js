@@ -278,9 +278,32 @@ describe("readTranscriptEntries", () => {
   before(() => { tmpDir = mkdtempSync(join(tmpdir(), "transcript-test-")); });
   after(() => { rmSync(tmpDir, { recursive: true, force: true }); });
 
+  // Inject the minimum fields every real transcript entry has (uuid +
+  // timestamp) unless the test already sets them. Keeps fixtures focused on
+  // the content shape without every line restating bookkeeping.
+  let _fakeUuidCtr = 0;
+  let _fakeTsCtr = 0;
+  function withDefaults(entry) {
+    if (typeof entry === "string") return entry;
+    if (!entry || typeof entry !== "object") return entry;
+    const patched = { ...entry };
+    if (patched.uuid === undefined && patched.type !== "summary") {
+      // Fixed base so tests can compare entry uuids when they care; each
+      // writeTranscript() call starts the counter fresh.
+      patched.uuid = `00000000-0000-4000-8000-${String(_fakeUuidCtr++).padStart(12, "0")}`;
+    }
+    if (patched.timestamp === undefined && patched.type !== "summary") {
+      patched.timestamp = new Date(1_700_000_000_000 + 1000 * _fakeTsCtr++).toISOString();
+    }
+    return patched;
+  }
+
   function writeTranscript(name, lines) {
+    _fakeUuidCtr = 0;
+    _fakeTsCtr = 0;
     const path = join(tmpDir, name);
-    writeFileSync(path, lines.map(l => typeof l === "string" ? l : JSON.stringify(l)).join("\n"));
+    const patched = lines.map(withDefaults);
+    writeFileSync(path, patched.map(l => typeof l === "string" ? l : JSON.stringify(l)).join("\n"));
     return path;
   }
 
@@ -323,7 +346,10 @@ describe("readTranscriptEntries", () => {
     ]);
     const { entries } = readTranscriptEntries(path);
     assert.equal(entries.length, 1);
-    assert.deepEqual(entries[0], { role: "user", text: "Fix the login bug." });
+    assert.equal(entries[0].role, "user");
+    assert.equal(entries[0].text, "Fix the login bug.");
+    assert.ok(typeof entries[0].uuid === "string" && entries[0].uuid);
+    assert.ok(Number.isFinite(entries[0].ts));
   });
 
   it("distinguishes user text from tool_result user entries", () => {

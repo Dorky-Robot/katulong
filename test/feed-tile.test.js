@@ -280,11 +280,10 @@ describe("feedRenderer", () => {
       assert.equal(list.children.length, 1);
     });
 
-    it("renders completion events as collapsible <details> rows", () => {
-      // Stop hooks emit `status: "completion"` cards — the user already saw
-      // this reply in the terminal, so we render it as a <details> with a
-      // concise summary. The body stays one click away without crowding
-      // the narrative. Must NOT fold into the muted details-group.
+    it("renders reply events as collapsible <details> rows with word-count fallback", () => {
+      // The processor publishes one `reply` event per assistant entry from
+      // the transcript. Collapsed summary shows `Claude's reply (N words)`
+      // until Ollama (optionally) enriches it with a one-liner title.
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -293,51 +292,43 @@ describe("feedRenderer", () => {
         ctx: {},
       });
 
-      const es = eventSources[0];
-      es.onmessage({
+      eventSources[0].onmessage({
         data: JSON.stringify({
           seq: 1,
           topic: "claude/abc",
           message: JSON.stringify({
+            status: "reply",
+            entryId: "entry-1",
             step: "All tests pass.",
-            status: "completion",
-            event: "Completion",
+            ts: 1_700_000_000_000,
           }),
-          timestamp: Date.now(),
+          timestamp: 1_700_000_000_000,
         }),
       });
 
-      const root = el.children[0];
-      const list = root.children[1];
-
-      // list now has [reply row, working card]
-      assert.ok(list.children.length >= 1);
+      const list = el.children[0].children[1];
+      assert.equal(list.children.length, 1);
       const row = list.children[0];
       assert.equal(row.tagName, "DETAILS");
       assert.ok(
         row.className.includes("feed-status-reply"),
         `expected feed-status-reply, got: ${row.className}`,
       );
-      assert.equal(row.children[0].tagName, "SUMMARY");
-      assert.equal(row.children[0].className, "feed-tile-reply-summary");
-      // Summary now holds [time span, label span] so the time is still
-      // visible when the reply is collapsed.
       const summary = row.children[0];
+      assert.equal(summary.tagName, "SUMMARY");
       const timeSpan = summary.children[0];
       const labelSpan = summary.children[1];
       assert.equal(timeSpan.className, "feed-tile-row-time");
-      assert.ok(timeSpan.textContent, "time span should render a formatted timestamp");
+      assert.ok(timeSpan.textContent, "time span renders a formatted timestamp");
       assert.equal(labelSpan.textContent, "Claude's reply (3 words)");
       assert.equal(row.children[1].className, "feed-tile-reply-body");
       assert.equal(row.children[1].textContent, "All tests pass.");
-      assert.equal(list.querySelector(".feed-tile-details-group"), null);
     });
 
-    it("renders question-form attention as a collapsible reply", () => {
-      // Stop-hook replies ending in '?' are emitted as status: attention
-      // (Claude is waiting for the user). The text itself is still just
-      // the reply the user saw in the terminal, so collapse it like a
-      // completion. Tool-approval attention (tool != null) stays prominent.
+    it("applies a reply-title enrichment to the matching entryId", () => {
+      // Progressive enhancement: the reply card renders immediately with
+      // the word-count fallback; when Ollama finishes, a `reply-title`
+      // event swaps the label in place.
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -350,30 +341,36 @@ describe("feedRenderer", () => {
         data: JSON.stringify({
           seq: 1, topic: "claude/abc",
           message: JSON.stringify({
-            step: "Hi! What would you like to work on?",
-            status: "attention", event: "Attention", tool: null,
+            status: "reply", entryId: "entry-x",
+            step: "Reading the auth module.",
+            ts: 1_700_000_000_000,
           }),
-          timestamp: Date.now(),
+          timestamp: 1_700_000_000_000,
+        }),
+      });
+
+      eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 2, topic: "claude/abc",
+          message: JSON.stringify({
+            status: "reply-title", entryId: "entry-x",
+            title: "Reading the auth module",
+          }),
+          timestamp: 1_700_000_000_000,
         }),
       });
 
       const list = el.children[0].children[1];
       const row = list.children[0];
-      assert.equal(row.tagName, "DETAILS");
-      assert.ok(row.className.includes("feed-status-reply"));
-      // Summary hints at waiting-for-input since the message was a question.
-      const summary = row.children[0];
-      const labelText = summary.children[1].textContent;
-      assert.ok(
-        labelText.includes("waiting for you"),
-        `expected waiting-for-you hint, got: ${labelText}`,
-      );
+      const label = row.children[0].children[1];
+      assert.equal(label.textContent, "Reading the auth module");
     });
 
-    it("keeps tool-approval attention prominent (not collapsed)", () => {
-      // PreToolUse events carry a tool name and are actionable — render as
-      // a normal attention card with high-contrast warning color, not a
-      // hidden details body.
+    it("buffers a reply-title that arrives before its reply (defensive)", () => {
+      // Within a single topic the processor publishes reply first, but
+      // across reconnects / replays the SSE replay order can't be fully
+      // trusted. If the title shows up first, hold it and apply when the
+      // reply appears — no broken state, no dropped enrichment.
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -386,75 +383,57 @@ describe("feedRenderer", () => {
         data: JSON.stringify({
           seq: 1, topic: "claude/abc",
           message: JSON.stringify({
-            step: "Approve Bash: ls?", status: "attention",
-            event: "Attention", tool: "Bash",
+            status: "reply-title", entryId: "entry-y", title: "Early title",
           }),
-          timestamp: Date.now(),
+          timestamp: 1_700_000_000_000,
         }),
       });
 
-      const row = el.children[0].children[1].children[0];
-      assert.equal(row.tagName, "DIV");
-      assert.ok(row.className.includes("feed-status-attention"));
-      // First child is the time span; the attention card is second.
-      assert.equal(row.children[0].className, "feed-tile-row-time");
-      assert.equal(row.children[1].className, "feed-tile-attention");
-    });
-
-    it("shows a working card below the completion row", () => {
-      // The working card gives visual feedback while Ollama processes the
-      // narrative — a rotating goofy gerund so the feed doesn't look frozen.
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: { topic: "claude/abc", meta: { type: "progress" } },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      eventSources[0].onmessage({
-        data: JSON.stringify({
-          seq: 1, topic: "claude/abc",
-          message: JSON.stringify({ step: "done", status: "completion" }),
-          timestamp: Date.now(),
-        }),
-      });
-
-      const list = el.children[0].children[1];
-      const card = list.querySelector(".feed-tile-working-card");
-      assert.ok(card, "expected a working card after completion");
-      assert.ok(card.querySelector(".feed-tile-working-dot"));
-      assert.ok(card.querySelector(".feed-tile-working-phrase"));
-    });
-
-    it("hides the working card once a narrative arrives", () => {
-      // The narrative supersedes the placeholder — card must disappear so
-      // the user doesn't think another thing is still in flight.
-      const el = new FakeElement("div");
-      feedRenderer.mount(el, {
-        id: "feed-1",
-        props: { topic: "claude/abc", meta: { type: "progress" } },
-        dispatch: () => {},
-        ctx: {},
-      });
-
-      eventSources[0].onmessage({
-        data: JSON.stringify({
-          seq: 1, topic: "claude/abc",
-          message: JSON.stringify({ step: "done", status: "completion" }),
-          timestamp: Date.now(),
-        }),
-      });
       eventSources[0].onmessage({
         data: JSON.stringify({
           seq: 2, topic: "claude/abc",
-          message: JSON.stringify({ step: "Claude tidied up the tests.", status: "narrative" }),
-          timestamp: Date.now(),
+          message: JSON.stringify({
+            status: "reply", entryId: "entry-y",
+            step: "Hello.", ts: 1_700_000_000_000,
+          }),
+          timestamp: 1_700_000_000_000,
         }),
       });
 
       const list = el.children[0].children[1];
-      assert.equal(list.querySelector(".feed-tile-working-card"), null);
+      const label = list.children[0].children[0].children[1];
+      assert.equal(label.textContent, "Early title");
+    });
+
+    it("silently drops legacy narrative / completion / summary events", () => {
+      // Old topic logs (from the pre-rewire narrator) still contain these
+      // event types. New renderers ignore them rather than crashing or
+      // rendering raw JSON.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      for (const [i, legacy] of [
+        { step: "old narrative", status: "narrative" },
+        { step: "old objective", status: "summary" },
+        { step: "old completion", status: "completion" },
+        { step: "old attention", status: "attention" },
+      ].entries()) {
+        eventSources[0].onmessage({
+          data: JSON.stringify({
+            seq: i + 1, topic: "claude/abc",
+            message: JSON.stringify(legacy),
+            timestamp: Date.now(),
+          }),
+        });
+      }
+
+      const list = el.children[0].children[1];
+      assert.equal(list.children.length, 0);
     });
   });
 

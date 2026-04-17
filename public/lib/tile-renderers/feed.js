@@ -6,60 +6,30 @@
  *
  * Routing:
  *   - `claude/<uuid>` topics stream via `/api/claude/stream/:uuid`. That
- *     endpoint acquires a per-UUID narrator refcount for the lifetime of
- *     the connection, so narration only runs while the tile is open.
- *     Opt-in (POST /api/claude/watch) happens elsewhere — typically the
- *     sparkle-click handler in app.js.
+ *     endpoint acquires a per-UUID processor refcount for the lifetime of
+ *     the connection, so transcript polling + Ollama enrichment only run
+ *     while the tile is open. Opt-in (POST /api/claude/watch) happens
+ *     elsewhere — typically the sparkle-click handler in app.js.
  *   - Any other topic streams via `/sub/<topic>`, the generic broker SSE.
+ *
+ * Event shapes (progress topics):
+ *   reply        — { status, entryId, step, ts } — a whole Claude reply,
+ *                  rendered as a <details> block: collapsed label shows the
+ *                  time + (title || "Claude's reply (N words)"); expanded
+ *                  body shows the full text.
+ *   reply-title  — { status, entryId, title } — progressive-enhancement
+ *                  patch from the Ollama title generator. Finds the reply
+ *                  card with the same entryId and swaps in the title.
  *
  * Lifecycle:
  *   1. Mount with `props.topic` → stream immediately.
  *   2. Mount without → inline topic picker (from /api/topics).
  *   3. Rendering strategy chosen by `props.meta.type`:
- *        "progress" — prominent narrative/summary/attention/completion
- *                     rows plus collapsible groups of lower-signal steps.
+ *        "progress" — Claude reply cards with optional Ollama titles.
  *        default    — chronological event log with timestamps.
  */
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// Rotating gerunds for the "working" card shown between a completion event
-// and the Ollama-generated narrative. Goofy on purpose — a frozen-looking
-// feed is a worse UX than a slightly-silly one.
-const WORKING_PHRASES = [
-  "whatcha-diggling…",
-  "whatcumacalling…",
-  "thingamabobbing…",
-  "jibber-jabbering…",
-  "noodle-noodling…",
-  "doodad-dabbling…",
-  "widget-wiggling…",
-  "dingus-doodling…",
-  "whatnot-whirring…",
-  "thinky-thinking…",
-  "brain-wriggling…",
-  "gizmo-jiggling…",
-  "snuffling-about…",
-  "neuron-noodling…",
-  "bamboozling-a-thought…",
-  "hmm-hmming…",
-  "cog-whirring…",
-  "puzzle-piecing…",
-  "head-scratching…",
-  "marinating-a-muse…",
-  "percolating-prose…",
-  "mulling-mulishly…",
-  "flummoxing…",
-  "scritch-scratching…",
-  "tinker-tonking…",
-  "wrassling-a-whatsit…",
-  "squiggle-thinking…",
-  "brain-gerbiling…",
-  "doohickey-ducking…",
-  "woo-wooing-a-notion…",
-];
-const WORKING_ROTATE_MS = 2000;
-const WORKING_TIMEOUT_MS = 90000;
 
 function streamUrlForTopic(topic) {
   if (typeof topic === "string" && topic.startsWith("claude/")) {
@@ -72,20 +42,6 @@ function streamUrlForTopic(topic) {
 }
 
 // ── Rendering strategies ────────────────────────────────────────────
-
-// Claude's own reply — both Stop-hook "completion" events and
-// question-form "attention" events echo the assistant text the user
-// already saw in the terminal. Render the same way in both cases: a
-// collapsible <details> whose summary shows a word count and a small hint
-// that input is required for the question variant.
-function isClaudeReply(msg) {
-  if (!msg || typeof msg !== "object") return false;
-  if (msg.status === "completion") return true;
-  // PreToolUse attention cards carry a non-null `tool` — those are tool
-  // approval prompts (actionable), NOT echoes. Keep those prominent.
-  if (msg.status === "attention" && !msg.tool) return true;
-  return false;
-}
 
 function formatTime(ts) {
   if (!ts && ts !== 0) return "";
@@ -101,95 +57,40 @@ function makeTimeSpan(ts) {
   return t;
 }
 
-function renderProgressItem(row, msg, ts) {
+// Label shown inside the collapsed <summary> before (or in the absence of)
+// an Ollama-generated title. The time span is added separately, outside
+// the label, so it stays aligned even as the label text swaps in.
+function replyFallbackLabel(text) {
+  const words = typeof text === "string" && text.trim()
+    ? text.trim().split(/\s+/).length
+    : 0;
+  return words
+    ? `Claude's reply (${words} word${words === 1 ? "" : "s"})`
+    : "Claude's reply";
+}
+
+function renderReplyItem(row, msg, ts) {
   row.innerHTML = "";
-  const status = msg.status || "info";
-  const reply = isClaudeReply(msg);
-  row.className = reply
-    ? "feed-tile-item feed-status-reply"
-    : `feed-tile-item feed-status-${status}`;
+  row.className = "feed-tile-item feed-status-reply";
+  const text = msg.step || "";
 
-  if (status === "text") {
-    row.appendChild(makeTimeSpan(ts));
-    const text = document.createElement("span");
-    text.className = "feed-tile-step feed-tile-assistant-text";
-    text.textContent = msg.step || "";
-    row.appendChild(text);
-    return;
-  }
+  const summary = document.createElement("summary");
+  summary.className = "feed-tile-reply-summary";
+  // Time lives inside <summary> so it stays visible when the reply is
+  // collapsed — <details> hides everything below the first <summary>.
+  summary.appendChild(makeTimeSpan(ts));
+  const label = document.createElement("span");
+  label.className = "feed-tile-reply-label";
+  label.textContent = typeof msg.title === "string" && msg.title
+    ? msg.title
+    : replyFallbackLabel(text);
+  summary.appendChild(label);
+  row.appendChild(summary);
 
-  if (status === "narrative") {
-    row.appendChild(makeTimeSpan(ts));
-    const prose = document.createElement("div");
-    prose.className = "feed-tile-narrative";
-    prose.textContent = msg.step || "";
-    row.appendChild(prose);
-    return;
-  }
-
-  if (reply) {
-    const text = msg.step || "";
-    const words = text ? text.trim().split(/\s+/).length : 0;
-    const awaiting = msg.status === "attention";
-    const summary = document.createElement("summary");
-    summary.className = "feed-tile-reply-summary";
-    // Time lives inside <summary> so it stays visible when the reply
-    // is collapsed — <details> hides everything below the first <summary>.
-    summary.appendChild(makeTimeSpan(ts));
-    const label = document.createElement("span");
-    label.className = "feed-tile-reply-label";
-    const base = words
-      ? `Claude's reply (${words} word${words === 1 ? "" : "s"})`
-      : "Claude's reply";
-    label.textContent = awaiting ? `${base} \u00b7 waiting for you` : base;
-    summary.appendChild(label);
-    row.appendChild(summary);
-    const prose = document.createElement("div");
-    prose.className = "feed-tile-reply-body";
-    prose.textContent = text;
-    row.appendChild(prose);
-    return;
-  }
-
-  if (status === "summary") {
-    row.appendChild(makeTimeSpan(ts));
-    const summaryEl = document.createElement("div");
-    summaryEl.className = "feed-tile-summary";
-    summaryEl.textContent = msg.step || "";
-    row.appendChild(summaryEl);
-    return;
-  }
-
-  if (status === "attention") {
-    row.appendChild(makeTimeSpan(ts));
-    const attn = document.createElement("div");
-    attn.className = "feed-tile-attention";
-    attn.textContent = msg.step || "Waiting for input\u2026";
-    row.appendChild(attn);
-    return;
-  }
-
-  row.appendChild(makeTimeSpan(ts));
-  const bullet = document.createElement("span");
-  bullet.className = "feed-tile-bullet";
-  bullet.textContent = status === "done" ? "\u25CF"
-    : status === "active" ? "\u25C9"
-    : status === "error" ? "\u2715"
-    : status === "pending" ? "\u25CB"
-    : "\u2022";
-  row.appendChild(bullet);
-
-  const text = document.createElement("span");
-  text.className = "feed-tile-step";
-  text.textContent = msg.step || msg.detail || JSON.stringify(msg);
-  row.appendChild(text);
-
-  if (msg.detail && msg.step) {
-    const detail = document.createElement("div");
-    detail.className = "feed-tile-detail";
-    detail.textContent = msg.detail;
-    row.appendChild(detail);
-  }
+  const prose = document.createElement("div");
+  prose.className = "feed-tile-reply-body";
+  prose.textContent = text;
+  row.appendChild(prose);
 }
 
 function renderLogItem(row, msg, ts) {
@@ -465,134 +366,72 @@ export const feedRenderer = {
       list.tabIndex = 0;
       root.appendChild(list);
 
-      // "Working" card lifecycle: after a completion event we show a card
-      // with a pulsing dot and a rotating goofy gerund so the user knows
-      // Ollama is still chewing. Hidden when a narrative/summary/attention
-      // event arrives or after WORKING_TIMEOUT_MS (covers disabled/failed
-      // narrator so the card doesn't stick forever). Appended to `list` at
-      // the bottom — a new completion moves it back to the bottom.
-      let workingCard = null;
-      let workingRotateTimer = null;
-      let workingHideTimer = null;
-      function showWorkingCard() {
-        if (!workingCard) {
-          workingCard = document.createElement("div");
-          workingCard.className = "feed-tile-working-card";
-          const dot = document.createElement("span");
-          dot.className = "feed-tile-working-dot";
-          workingCard.appendChild(dot);
-          const phrase = document.createElement("span");
-          phrase.className = "feed-tile-working-phrase";
-          phrase.textContent = WORKING_PHRASES[Math.floor(Math.random() * WORKING_PHRASES.length)];
-          workingCard.appendChild(phrase);
-        } else {
-          workingCard.remove();
-        }
-        list.appendChild(workingCard);
-        if (workingRotateTimer) clearInterval(workingRotateTimer);
-        workingRotateTimer = setInterval(() => {
-          const phrase = workingCard?.querySelector(".feed-tile-working-phrase");
-          if (phrase) phrase.textContent = WORKING_PHRASES[Math.floor(Math.random() * WORKING_PHRASES.length)];
-        }, WORKING_ROTATE_MS);
-        if (workingHideTimer) clearTimeout(workingHideTimer);
-        workingHideTimer = setTimeout(hideWorkingCard, WORKING_TIMEOUT_MS);
-      }
-      function hideWorkingCard() {
-        if (workingRotateTimer) { clearInterval(workingRotateTimer); workingRotateTimer = null; }
-        if (workingHideTimer) { clearTimeout(workingHideTimer); workingHideTimer = null; }
-        if (workingCard) { workingCard.remove(); workingCard = null; }
-      }
-      viewCleanups.push(hideWorkingCard);
-
-      const items = new Map();
+      // Reply cards are keyed by their transcript entry uuid so that a
+      // later `reply-title` enrichment event can find and patch the same
+      // <details> node in place without rebuilding it.
+      const replyItems = new Map();
+      // Pending titles that arrived BEFORE their reply card (shouldn't
+      // happen within a single topic — the processor publishes reply
+      // first — but cheap insurance across reconnects and replays).
+      const pendingTitles = new Map();
+      // Ephemeral non-reply events (generic log topics or pre-rewrite
+      // persisted events) get auto-keyed row slots.
+      const logItems = new Map();
       let autoKey = 0;
       const isProgress = topicMeta.type === "progress";
 
-      // Narrative-first rendering: narrative/summary/attention/completion
-      // are always visible. Tool-use progress events collapse into
-      // expandable <details> groups between narrative blocks.
-      const PROMINENT = new Set(["narrative", "summary", "attention", "completion"]);
-      let currentDetails = null;
-      let detailCount = 0;
-
-      function ensureDetailsGroup() {
-        if (currentDetails) return currentDetails.querySelector(".feed-tile-details-body");
-        currentDetails = document.createElement("details");
-        currentDetails.className = "feed-tile-details-group";
-        const summary = document.createElement("summary");
-        summary.className = "feed-tile-details-summary";
-        currentDetails.appendChild(summary);
-        const body = document.createElement("div");
-        body.className = "feed-tile-details-body";
-        currentDetails.appendChild(body);
-        list.appendChild(currentDetails);
-        detailCount = 0;
-        return body;
-      }
-
-      function updateDetailsSummary() {
-        if (!currentDetails) return;
-        const summary = currentDetails.querySelector("summary");
-        summary.textContent = `${detailCount} step${detailCount === 1 ? "" : "s"}`;
+      function applyTitle(entryId, title) {
+        const row = replyItems.get(entryId);
+        if (!row) {
+          pendingTitles.set(entryId, title);
+          return;
+        }
+        const label = row.querySelector(".feed-tile-reply-label");
+        if (label) label.textContent = title;
       }
 
       function handleEvent(envelope) {
         let msg;
         try { msg = JSON.parse(envelope.message); } catch { msg = envelope.message; }
+        if (!msg || typeof msg !== "object") return;
 
-        const status = (typeof msg === "object" && msg.status) || "";
-        const key = isProgress && msg.step ? msg.step : `_evt_${autoKey++}`;
+        const status = msg.status || "";
 
-        if (isProgress && PROMINENT.has(status)) {
-          currentDetails = null;
-
-          const replyShape = isClaudeReply(typeof msg === "object" ? msg : {});
-          let row = items.get(key);
-          const desiredTag = replyShape ? "DETAILS" : "DIV";
-          if (row && row.tagName !== desiredTag) {
-            row.remove();
-            items.delete(key);
-            row = null;
+        // Progress-shaped topics only render two things — a reply card and
+        // its (optional, late-arriving) Ollama title. Everything else that
+        // might still be sitting in an old topic log (narrative, summary,
+        // attention, completion from the old narrator) is silently ignored.
+        if (isProgress) {
+          if (status === "reply" && typeof msg.entryId === "string") {
+            let row = replyItems.get(msg.entryId);
+            if (!row) {
+              row = document.createElement("details");
+              list.appendChild(row);
+              replyItems.set(msg.entryId, row);
+            }
+            const pending = pendingTitles.get(msg.entryId);
+            if (pending && !msg.title) {
+              msg.title = pending;
+              pendingTitles.delete(msg.entryId);
+            }
+            renderReplyItem(row, msg, envelope.timestamp);
+          } else if (status === "reply-title" && typeof msg.entryId === "string" && msg.title) {
+            applyTitle(msg.entryId, msg.title);
           }
-          if (!row) {
-            row = document.createElement(replyShape ? "details" : "div");
-            list.appendChild(row);
-            items.set(key, row);
-          }
-          renderProgressItem(row, msg, envelope.timestamp);
-
-          // Reply events (completion or question-form attention) mean the
-          // model just spoke — kick the "working" card until the Ollama
-          // narrative lands. Narrative / summary / tool-approval attention
-          // supersede it, so hide in those cases.
-          if (replyShape) {
-            showWorkingCard();
-          } else if (status === "narrative" || status === "summary" || status === "attention") {
-            hideWorkingCard();
-          }
-          // If the working card is present, keep it at the bottom.
-          if (workingCard && workingCard.parentNode === list) list.appendChild(workingCard);
-        } else if (isProgress) {
-          const body = ensureDetailsGroup();
-          let row = items.get(key);
-          if (!row) {
-            row = document.createElement("div");
-            body.appendChild(row);
-            items.set(key, row);
-            detailCount++;
-            updateDetailsSummary();
-          }
-          renderProgressItem(row, msg, envelope.timestamp);
-        } else {
-          let row = items.get(key);
-          if (!row) {
-            row = document.createElement("div");
-            list.appendChild(row);
-            items.set(key, row);
-          }
-          renderLogItem(row, msg, envelope.timestamp);
+          // Silent drop for any other status.
+          list.scrollTop = list.scrollHeight;
+          return;
         }
 
+        // Generic log-topic mode: one row per event, chronological.
+        const key = `_evt_${autoKey++}`;
+        let row = logItems.get(key);
+        if (!row) {
+          row = document.createElement("div");
+          list.appendChild(row);
+          logItems.set(key, row);
+        }
+        renderLogItem(row, msg, envelope.timestamp);
         list.scrollTop = list.scrollHeight;
       }
 

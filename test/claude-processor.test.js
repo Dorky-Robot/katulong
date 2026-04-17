@@ -1,18 +1,21 @@
 /**
  * Claude processor tests.
  *
- * The processor is the refcounted layer between subscribers and the narrator:
- *   acquire(uuid) → narrate loop starts, publishes to claude/<uuid>
- *   release(uuid) → loop stops on last caller
- *   watchlist.advance is called only after a successful narrate
+ * The processor is the refcounted layer between subscribers and the
+ * transcript reader. For every assistant entry with text it publishes a
+ * `reply` event straight from the JSONL (stamped with the entry's own
+ * timestamp), then fires a background Ollama call that publishes a
+ * `reply-title` enrichment event when it resolves. Reply publishing is
+ * independent of Ollama — the feed stays live even when Ollama is down.
  *
  * We use a real watchlist (tmpdir) and a real transcript file, but a fake
- * topic broker (captures published messages) and a fake callOllama.
+ * topic broker (captures published messages) and a controllable fake
+ * callOllama.
  */
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, appendFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -25,18 +28,39 @@ function makeBroker() {
   const published = [];
   return {
     published,
-    publish(topic, message) {
-      published.push({ topic, message });
+    publish(topic, message, meta = {}) {
+      published.push({ topic, message, meta });
     },
   };
 }
 
+// Counter that rolls each writeTranscript/appendTranscript call.
+let _lineCtr = 0;
+const BASE_TS_MS = 1_700_000_000_000;
+function withBookkeeping(line, i) {
+  if (typeof line === "string") return line;
+  return {
+    uuid: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    timestamp: new Date(BASE_TS_MS + 1000 * i).toISOString(),
+    ...line,
+  };
+}
+
 function writeTranscript(path, lines) {
-  writeFileSync(path, lines.map(l => JSON.stringify(l)).join("\n") + "\n");
+  _lineCtr = 0;
+  const patched = lines.map((l) => withBookkeeping(l, _lineCtr++));
+  writeFileSync(
+    path,
+    patched.map((l) => (typeof l === "string" ? l : JSON.stringify(l))).join("\n") + "\n",
+  );
 }
 
 function appendTranscript(path, lines) {
-  appendFileSync(path, lines.map(l => JSON.stringify(l)).join("\n") + "\n");
+  const patched = lines.map((l) => withBookkeeping(l, _lineCtr++));
+  appendFileSync(
+    path,
+    patched.map((l) => (typeof l === "string" ? l : JSON.stringify(l))).join("\n") + "\n",
+  );
 }
 
 function fakeUserLine(text) {
@@ -59,7 +83,7 @@ async function waitFor(predicate, { timeoutMs = 2000, intervalMs = 10 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await predicate()) return true;
-    await new Promise(r => setTimeout(r, intervalMs));
+    await new Promise((r) => setTimeout(r, intervalMs));
   }
   throw new Error("waitFor: timed out");
 }
@@ -94,53 +118,143 @@ describe("createClaudeProcessor", () => {
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: makeBroker(),
-      callOllama: async () => "OBJECTIVE: x\n---\nY",
+      callOllama: async () => "title",
     });
     await assert.rejects(() => processor.acquire(UUID), /not on the watchlist/);
     processor.destroy();
   });
 
-  it("spins up a worker on first acquire and narrates the backlog", async () => {
+  it("publishes a reply event per assistant entry with text", async () => {
     writeTranscript(transcriptPath, [
       fakeUserLine("fix the login bug"),
-      fakeAssistantLine("ok"),
+      fakeAssistantLine("Reading auth.js first."),
+      fakeUserLine("anything else?"),
+      fakeAssistantLine("Found it — missing session flag."),
     ]);
     await watchlist.add(UUID, { transcriptPath });
 
     const broker = makeBroker();
-    let callCount = 0;
-    const callOllama = async () => {
-      callCount += 1;
-      return "OBJECTIVE: Fix login\n---\nReading `a.js`.";
-    };
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: broker,
-      callOllama,
+      callOllama: async () => "summary",
       pollIntervalMs: 50,
     });
 
     await processor.acquire(UUID);
-    await waitFor(() => broker.published.length >= 2);
+    await waitFor(() =>
+      broker.published.filter((p) => {
+        try { return JSON.parse(p.message).status === "reply"; } catch { return false; }
+      }).length >= 2,
+    );
 
-    const messages = broker.published.map(p => JSON.parse(p.message));
-    assert.deepStrictEqual(messages.map(m => m.status), ["narrative", "summary"]);
-    assert.strictEqual(broker.published[0].topic, `claude/${UUID}`);
+    const replies = broker.published
+      .map((p) => JSON.parse(p.message))
+      .filter((m) => m.status === "reply");
+    assert.equal(replies.length, 2);
+    assert.equal(replies[0].step, "Reading auth.js first.");
+    assert.equal(replies[1].step, "Found it — missing session flag.");
+    assert.ok(replies[0].entryId && replies[1].entryId);
+    assert.notEqual(replies[0].entryId, replies[1].entryId);
 
+    processor.destroy();
+  });
+
+  it("stamps the reply envelope with the transcript entry timestamp", async () => {
+    writeTranscript(transcriptPath, [fakeAssistantLine("hello")]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist,
+      topicBroker: broker,
+      callOllama: async () => null,
+      pollIntervalMs: 50,
+    });
+
+    await processor.acquire(UUID);
+    await waitFor(() => broker.published.length >= 1);
+
+    const replyPub = broker.published.find((p) => JSON.parse(p.message).status === "reply");
+    assert.ok(replyPub);
+    assert.equal(replyPub.meta.timestamp, BASE_TS_MS, "envelope timestamp == entry ts");
+    const body = JSON.parse(replyPub.message);
+    assert.equal(body.ts, BASE_TS_MS);
+
+    processor.destroy();
+  });
+
+  it("publishes a reply-title enrichment keyed on the same entryId", async () => {
+    writeTranscript(transcriptPath, [fakeAssistantLine("Investigating the auth bug.")]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist,
+      topicBroker: broker,
+      callOllama: async () => "Investigating the auth bug",
+      pollIntervalMs: 50,
+    });
+
+    await processor.acquire(UUID);
+    await waitFor(() =>
+      broker.published.some((p) => {
+        try { return JSON.parse(p.message).status === "reply-title"; } catch { return false; }
+      }),
+    );
+
+    const parsed = broker.published.map((p) => JSON.parse(p.message));
+    const reply = parsed.find((m) => m.status === "reply");
+    const title = parsed.find((m) => m.status === "reply-title");
+    assert.ok(reply && title);
+    assert.equal(title.entryId, reply.entryId);
+    assert.equal(title.title, "Investigating the auth bug");
+
+    processor.destroy();
+  });
+
+  it("still publishes the reply card when Ollama throws", async () => {
+    writeTranscript(transcriptPath, [fakeAssistantLine("ok")]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist,
+      topicBroker: broker,
+      callOllama: async () => { throw new Error("ollama down"); },
+      pollIntervalMs: 50,
+    });
+
+    await processor.acquire(UUID);
+    await waitFor(() => broker.published.length >= 1);
+
+    const replies = broker.published
+      .map((p) => JSON.parse(p.message))
+      .filter((m) => m.status === "reply");
+    assert.equal(replies.length, 1, "reply card publishes even when Ollama fails");
+
+    // Give the background enrichment a moment to settle without publishing.
+    await new Promise((r) => setTimeout(r, 80));
+    const titles = broker.published
+      .map((p) => JSON.parse(p.message))
+      .filter((m) => m.status === "reply-title");
+    assert.equal(titles.length, 0);
+
+    // Cursor still advances — reply publishing is the load-bearing action.
     const entry = await watchlist.get(UUID);
-    assert.strictEqual(entry.lastProcessedLine, 2);
-    assert.ok(callCount >= 1);
+    assert.equal(entry.lastProcessedLine, 1);
+
     processor.destroy();
   });
 
   it("refcount: second acquire does not start another worker; release drops to zero", async () => {
-    writeTranscript(transcriptPath, [fakeUserLine("hi")]);
+    writeTranscript(transcriptPath, [fakeAssistantLine("hi")]);
     await watchlist.add(UUID, { transcriptPath });
 
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: makeBroker(),
-      callOllama: async () => "OBJECTIVE: x\n---\nY",
+      callOllama: async () => "t",
       pollIntervalMs: 50,
     });
 
@@ -169,33 +283,15 @@ describe("createClaudeProcessor", () => {
     processor.destroy();
   });
 
-  it("does not advance the cursor when the narrate call fails", async () => {
-    writeTranscript(transcriptPath, [fakeUserLine("fix it")]);
-    await watchlist.add(UUID, { transcriptPath });
-
-    const callOllama = async () => { throw new Error("ollama down"); };
-    const processor = createClaudeProcessor({
-      watchlist,
-      topicBroker: makeBroker(),
-      callOllama,
-      pollIntervalMs: 50,
-    });
-
-    await processor.acquire(UUID);
-    // Let a few cycles fail.
-    await new Promise(r => setTimeout(r, 200));
-
-    const entry = await watchlist.get(UUID);
-    assert.strictEqual(entry.lastProcessedLine, 0);
-    processor.destroy();
-  });
-
-  it("advances past lines that normalize to no entries without calling Ollama", async () => {
-    // Session metadata lines only — nothing the narrator can work with.
-    writeTranscript(transcriptPath, [
-      { type: "summary", summary: "old" },
-      { type: "summary", summary: "still old" },
-    ]);
+  it("advances past lines that normalize to no entries without publishing", async () => {
+    // All session metadata — no uuid, no timestamp — nothing to render.
+    writeFileSync(
+      transcriptPath,
+      [
+        { type: "permission-mode", permissionMode: "default", sessionId: "s" },
+        { type: "file-history-snapshot", messageId: "m", snapshot: {}, isSnapshotUpdate: false },
+      ].map((l) => JSON.stringify(l)).join("\n") + "\n",
+    );
     await watchlist.add(UUID, { transcriptPath });
 
     const broker = makeBroker();
@@ -219,67 +315,68 @@ describe("createClaudeProcessor", () => {
   });
 
   it("picks up newly appended lines on subsequent polls", async () => {
-    writeTranscript(transcriptPath, [fakeUserLine("first")]);
+    writeTranscript(transcriptPath, [fakeAssistantLine("first")]);
     await watchlist.add(UUID, { transcriptPath });
 
     const broker = makeBroker();
-    const callOllama = async () => "OBJECTIVE: x\n---\nY";
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: broker,
-      callOllama,
+      callOllama: async () => "title",
       pollIntervalMs: 30,
     });
 
     await processor.acquire(UUID);
-    await waitFor(() => broker.published.length >= 2);
-    const before = broker.published.length;
+    await waitFor(() =>
+      broker.published.some((p) => JSON.parse(p.message).status === "reply"),
+    );
+    const before = broker.published.filter((p) => JSON.parse(p.message).status === "reply").length;
 
-    appendTranscript(transcriptPath, [fakeUserLine("second prompt")]);
+    appendTranscript(transcriptPath, [fakeAssistantLine("second")]);
 
-    await waitFor(() => broker.published.length > before);
-    const entry = await watchlist.get(UUID);
-    assert.strictEqual(entry.lastProcessedLine, 2);
+    await waitFor(() =>
+      broker.published.filter((p) => JSON.parse(p.message).status === "reply").length > before,
+    );
 
     processor.destroy();
   });
 
   it("stops polling after the last release (no more publishes)", async () => {
-    writeTranscript(transcriptPath, [fakeUserLine("first")]);
+    writeTranscript(transcriptPath, [fakeAssistantLine("first")]);
     await watchlist.add(UUID, { transcriptPath });
 
     const broker = makeBroker();
-    const callOllama = async () => "OBJECTIVE: x\n---\nY";
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: broker,
-      callOllama,
+      callOllama: async () => "t",
       pollIntervalMs: 20,
     });
 
     await processor.acquire(UUID);
-    await waitFor(() => broker.published.length >= 2);
+    await waitFor(() =>
+      broker.published.some((p) => JSON.parse(p.message).status === "reply"),
+    );
     processor.release(UUID);
 
     const after = broker.published.length;
-    appendTranscript(transcriptPath, [fakeUserLine("while no one's watching")]);
-    await new Promise(r => setTimeout(r, 100));
+    appendTranscript(transcriptPath, [fakeAssistantLine("while no one's watching")]);
+    await new Promise((r) => setTimeout(r, 100));
 
     assert.strictEqual(broker.published.length, after);
     const entry = await watchlist.get(UUID);
-    // Cursor stayed where it was — we never processed the new line.
     assert.strictEqual(entry.lastProcessedLine, 1);
     processor.destroy();
   });
 
   it("destroy() stops all workers", async () => {
-    writeTranscript(transcriptPath, [fakeUserLine("one")]);
+    writeTranscript(transcriptPath, [fakeAssistantLine("one")]);
     await watchlist.add(UUID, { transcriptPath });
 
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: makeBroker(),
-      callOllama: async () => "OBJECTIVE: x\n---\nY",
+      callOllama: async () => "t",
       pollIntervalMs: 20,
     });
 
@@ -290,62 +387,17 @@ describe("createClaudeProcessor", () => {
     await assert.rejects(() => processor.acquire(UUID), /destroyed/);
   });
 
-  it("respects maxConcurrent across workers (no stampede)", async () => {
-    const UUID_B = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-    const pathA = join(dataDir, "a.jsonl");
-    const pathB = join(dataDir, "b.jsonl");
-    writeTranscript(pathA, [fakeUserLine("A")]);
-    writeTranscript(pathB, [fakeUserLine("B")]);
-    await watchlist.add(UUID, { transcriptPath: pathA });
-    await watchlist.add(UUID_B, { transcriptPath: pathB });
-
-    let inFlight = 0;
-    let maxSeen = 0;
-    const callOllama = async () => {
-      inFlight += 1;
-      maxSeen = Math.max(maxSeen, inFlight);
-      await new Promise(r => setTimeout(r, 30));
-      inFlight -= 1;
-      return "OBJECTIVE: x\n---\nY";
-    };
-
-    const broker = makeBroker();
-    const processor = createClaudeProcessor({
-      watchlist,
-      topicBroker: broker,
-      callOllama,
-      pollIntervalMs: 20,
-      maxConcurrent: 1,
-    });
-
-    await processor.acquire(UUID);
-    await processor.acquire(UUID_B);
-
-    await waitFor(() => {
-      const topics = new Set(broker.published.map(p => p.topic));
-      return topics.has(`claude/${UUID}`) && topics.has(`claude/${UUID_B}`);
-    });
-
-    assert.strictEqual(maxSeen, 1);
-    processor.destroy();
-  });
-
   it("catches up in batches when the backlog exceeds sliceLimit", async () => {
-    const lines = Array.from({ length: 5 }, (_, i) => fakeUserLine(`p${i}`));
+    const lines = Array.from({ length: 5 }, (_, i) => fakeAssistantLine(`reply ${i}`));
     writeTranscript(transcriptPath, lines);
     await watchlist.add(UUID, { transcriptPath });
 
     const broker = makeBroker();
-    let callCount = 0;
-    const callOllama = async () => {
-      callCount += 1;
-      return "OBJECTIVE: x\n---\nY";
-    };
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: broker,
-      callOllama,
-      pollIntervalMs: 500, // long poll — we rely on hasMore fast-path
+      callOllama: async () => "t",
+      pollIntervalMs: 500, // long poll — relies on hasMore fast-path
       sliceLimit: 2,
     });
 
@@ -355,7 +407,11 @@ describe("createClaudeProcessor", () => {
       return entry.lastProcessedLine === 5;
     });
 
-    assert.ok(callCount >= 3, `expected ≥3 narrate cycles, got ${callCount}`);
+    const replies = broker.published
+      .map((p) => JSON.parse(p.message))
+      .filter((m) => m.status === "reply");
+    assert.equal(replies.length, 5);
+
     processor.destroy();
   });
 });
