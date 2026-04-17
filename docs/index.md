@@ -67,4 +67,5 @@ The session manager runs in-process. Sessions are backed by tmux — restart the
 | [Dorky Robot Stack](dorkyrobot-stack.md) | Full tool stack: katulong, sipag, hulma, tunnels, kubo, diwa, yolo |
 | [P2P Enhancement](p2p-progressive-enhancement.md) | WebRTC progressive enhancement on LAN |
 | [Clipboard Bridge](clipboard-bridge.md) | Remote clipboard architecture |
+| [Claude Feed Watchlist](claude-feed-watchlist.md) | Opt-in narration of Claude sessions, transcript-as-source-of-truth |
 | [Use Cases](use-cases.md) | Real-world scenarios |

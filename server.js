@@ -31,7 +31,12 @@ import { createFileBrowserRoutes } from "./lib/file-browser.js";
 import { createPortProxyRoutes, proxyWebSocket } from "./lib/port-proxy.js";
 import { createWebSocketManager } from "./lib/ws-manager.js";
 import { createTopicBroker } from "./lib/topic-broker.js";
+import { createWatchlist } from "./lib/claude-watchlist.js";
+import { createClaudeProcessor } from "./lib/claude-processor.js";
+import { createOllamaClient } from "./lib/ollama-client.js";
+import { createClaudeFeedRoutes } from "./lib/routes/claude-feed-routes.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
+import { homedir } from "node:os";
 import { loadPlugins } from "./lib/plugin-loader.js";
 import { createUpgradeHandler } from "./lib/server-upgrade.js";
 import { createServerShutdown } from "./lib/server-shutdown.js";
@@ -247,6 +252,19 @@ const { wsClients, broadcastToAll, closeAllWebSockets } = wsManager;
 let shutdown = null;
 const getDraining = () => shutdown?.isDraining() ?? false;
 
+// Claude feed — opt-in narration of Claude Code sessions.
+// The watchlist is the persistent ledger of UUIDs we've been asked to narrate.
+// The processor refcounts active subscribers; a UUID is narrated only while
+// someone has an open /api/claude/stream connection. See
+// docs/claude-feed-watchlist.md for the full design.
+const topicBroker = createTopicBroker();
+const claudeWatchlist = createWatchlist({ dataDir: DATA_DIR });
+const claudeProcessor = createClaudeProcessor({
+  watchlist: claudeWatchlist,
+  topicBroker,
+  callOllama: createOllamaClient(),
+});
+
 const routes = [
   ...createAuthRoutes({
     json, parseJSON, isAuthenticated,
@@ -264,8 +282,17 @@ const routes = [
     getDraining,
     shortcutsPath: join(DATA_DIR, "shortcuts.json"),
     auth, csrf,
-    topicBroker: createTopicBroker(),
+    topicBroker,
     getExternalUrl: () => configManager.getPublicUrl(),
+  }),
+  ...createClaudeFeedRoutes({
+    json, parseJSON, auth, csrf,
+    watchlist: claudeWatchlist,
+    processor: claudeProcessor,
+    topicBroker,
+    sessionManager,
+    homeDir: homedir(),
+    log,
   }),
   ...createFileBrowserRoutes({ json, parseJSON, auth, csrf }),
   ...createPortProxyRoutes({ auth, PORT, configManager }),

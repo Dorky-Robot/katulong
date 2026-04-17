@@ -285,27 +285,60 @@ describe("Session persistence", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("persists user/system meta but strips the claude namespace", async () => {
+  it("persists hook-owned claude fields but strips transient ones", async () => {
     const mgr = createSessionManager({
       bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
     });
     await mgr.createSession("with-meta", 80, 24);
     const session = mgr.getSession("with-meta");
     session.setMeta("user", { note: "hi" });
-    session.setMeta("claude", { uuid: "uuid-live-only" });
+    session.setMeta("claude", {
+      uuid: "ff16582e-bbb4-49c6-90cf-e731be656442",
+      startedAt: 1776000000000,
+      running: true,
+      detectedAt: 1776000001000,
+    });
 
     // Wait for debounced save
     await new Promise((r) => setTimeout(r, 200));
 
     const saved = JSON.parse(readFileSync(join(dataDir, "sessions.json"), "utf-8"));
-    assert.deepStrictEqual(saved["with-meta"].meta, { user: { note: "hi" } });
-    assert.strictEqual(saved["with-meta"].meta.claude, undefined);
+    assert.deepStrictEqual(saved["with-meta"].meta, {
+      user: { note: "hi" },
+      claude: {
+        uuid: "ff16582e-bbb4-49c6-90cf-e731be656442",
+        startedAt: 1776000000000,
+      },
+    });
 
     mgr.shutdown();
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("round-trips persisted meta through restore (minus claude)", async () => {
+  it("drops the claude namespace entirely when only transient fields are set", async () => {
+    const mgr = createSessionManager({
+      bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
+    });
+    await mgr.createSession("transient-only", 80, 24);
+    mgr.getSession("transient-only").setMeta("claude", {
+      running: true,
+      detectedAt: 1776000000000,
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const saved = JSON.parse(readFileSync(join(dataDir, "sessions.json"), "utf-8"));
+    assert.strictEqual(
+      Object.prototype.hasOwnProperty.call(saved["transient-only"], "meta"),
+      false,
+      "A bucket with only transient claude fields should not be written",
+    );
+
+    mgr.shutdown();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("round-trips claude uuid/startedAt through restore, drops stale running flag", async () => {
     writeFileSync(
       join(dataDir, "sessions.json"),
       JSON.stringify({
@@ -315,7 +348,12 @@ describe("Session persistence", () => {
           tmuxPane: "%1",
           meta: {
             user: { note: "keeps" },
-            claude: { uuid: "should-be-dropped" },
+            claude: {
+              uuid: "ff16582e-bbb4-49c6-90cf-e731be656442",
+              startedAt: 1776000000000,
+              running: true,
+              detectedAt: 1776000001000,
+            },
           },
         },
       }),
@@ -329,7 +367,13 @@ describe("Session persistence", () => {
 
     const alpha = mgr.getSession("alpha");
     assert.ok(alpha, "alpha should be restored");
-    assert.deepStrictEqual(alpha.meta, { user: { note: "keeps" } });
+    assert.deepStrictEqual(alpha.meta, {
+      user: { note: "keeps" },
+      claude: {
+        uuid: "ff16582e-bbb4-49c6-90cf-e731be656442",
+        startedAt: 1776000000000,
+      },
+    });
 
     mgr.shutdown();
     rmSync(dataDir, { recursive: true, force: true });
