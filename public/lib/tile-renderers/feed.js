@@ -69,6 +69,28 @@ function replyFallbackLabel(text) {
     : "Claude's reply";
 }
 
+// File chips shown inline on the collapsed summary — clicking one
+// dispatches a window CustomEvent that app.js catches to open the file
+// in a document tile (same path as a file link clicked in the terminal).
+function makeFileChip(file) {
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "feed-tile-reply-file";
+  // basename for display, full path in the title + click payload
+  const base = (file.path || "").split("/").filter(Boolean).pop() || file.path;
+  chip.textContent = file.line ? `${base}:${file.line}` : base;
+  chip.title = file.line ? `${file.path}:${file.line}` : file.path;
+  chip.addEventListener("click", (ev) => {
+    // Prevent the click from toggling the <details> open/closed.
+    ev.preventDefault();
+    ev.stopPropagation();
+    window.dispatchEvent(new CustomEvent("katulong:open-file", {
+      detail: { path: file.path, line: file.line },
+    }));
+  });
+  return chip;
+}
+
 function renderReplyItem(row, msg, ts) {
   row.innerHTML = "";
   row.className = "feed-tile-item feed-status-reply";
@@ -85,6 +107,14 @@ function renderReplyItem(row, msg, ts) {
     ? msg.title
     : replyFallbackLabel(text);
   summary.appendChild(label);
+
+  if (Array.isArray(msg.files) && msg.files.length > 0) {
+    const files = document.createElement("span");
+    files.className = "feed-tile-reply-files";
+    for (const f of msg.files) files.appendChild(makeFileChip(f));
+    summary.appendChild(files);
+  }
+
   row.appendChild(summary);
 
   const prose = document.createElement("div");

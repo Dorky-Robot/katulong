@@ -325,6 +325,63 @@ describe("feedRenderer", () => {
       assert.equal(row.children[1].textContent, "All tests pass.");
     });
 
+    it("renders file chips for reply.files and fires katulong:open-file on click", () => {
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify({
+            status: "reply",
+            entryId: "entry-1",
+            step: "Updated the session handler.",
+            ts: 1_700_000_000_000,
+            files: [
+              { path: "/src/session.js" },
+              { path: "/src/auth.js", line: 42 },
+            ],
+          }),
+          timestamp: 1_700_000_000_000,
+        }),
+      });
+
+      const list = el.children[0].children[1];
+      const summary = list.children[0].children[0];
+      const filesWrapper = summary.children[2];
+      assert.equal(filesWrapper.className, "feed-tile-reply-files");
+      assert.equal(filesWrapper.children.length, 2);
+
+      const chipA = filesWrapper.children[0];
+      assert.equal(chipA.className, "feed-tile-reply-file");
+      assert.equal(chipA.textContent, "session.js");
+      assert.equal(chipA.title, "/src/session.js");
+
+      const chipB = filesWrapper.children[1];
+      assert.equal(chipB.textContent, "auth.js:42");
+      assert.equal(chipB.title, "/src/auth.js:42");
+
+      // Clicking the chip should dispatch katulong:open-file with the
+      // full path + line, AND stop the click from bubbling to <details>.
+      let opened = null;
+      window.addEventListener("katulong:open-file", (ev) => { opened = ev.detail; });
+      let defaultPrevented = false;
+      let stoppedBubble = false;
+      const fakeEvent = {
+        preventDefault: () => { defaultPrevented = true; },
+        stopPropagation: () => { stoppedBubble = true; },
+      };
+      chipB._listeners.click[0](fakeEvent);
+      assert.deepEqual(opened, { path: "/src/auth.js", line: 42 });
+      assert.equal(defaultPrevented, true);
+      assert.equal(stoppedBubble, true);
+    });
+
     it("applies a reply-title enrichment to the matching entryId", () => {
       // Progressive enhancement: the reply card renders immediately with
       // the word-count fallback; when Ollama finishes, a `reply-title`

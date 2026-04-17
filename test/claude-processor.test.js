@@ -67,14 +67,24 @@ function fakeUserLine(text) {
   return { type: "user", message: { content: text } };
 }
 
-function fakeAssistantLine(text) {
+function fakeAssistantLine(text, extraTools = []) {
   return {
     type: "assistant",
     message: {
       content: [
         { type: "text", text },
         { type: "tool_use", name: "Read", input: { file_path: "/a.js" } },
+        ...extraTools.map((t) => ({ type: "tool_use", ...t })),
       ],
+    },
+  };
+}
+
+function fakeAssistantToolOnly(tools) {
+  return {
+    type: "assistant",
+    message: {
+      content: tools.map((t) => ({ type: "tool_use", ...t })),
     },
   };
 }
@@ -385,6 +395,48 @@ describe("createClaudeProcessor", () => {
     processor.destroy();
     assert.strictEqual(processor.has(UUID), false);
     await assert.rejects(() => processor.acquire(UUID), /destroyed/);
+  });
+
+  it("attaches files from tools in the reply's turn to the reply event", async () => {
+    // A reply bundles files touched by earlier tool-only assistant entries
+    // in the same turn, not just its own tools. The UI renders these as
+    // clickable chips on the collapsed summary so the user can jump to
+    // what was changed.
+    writeTranscript(transcriptPath, [
+      fakeUserLine("refactor auth"),
+      fakeAssistantToolOnly([
+        { name: "Read", input: { file_path: "/src/auth.js", offset: 1 } },
+        { name: "Edit", input: { file_path: "/src/session.js" } },
+      ]),
+      fakeAssistantLine("Done — updated both files."),
+    ]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist,
+      topicBroker: broker,
+      callOllama: async () => null,
+      pollIntervalMs: 50,
+    });
+
+    await processor.acquire(UUID);
+    await waitFor(() => broker.published.some((p) => JSON.parse(p.message).status === "reply"));
+
+    const reply = broker.published
+      .map((p) => JSON.parse(p.message))
+      .find((m) => m.status === "reply");
+    assert.ok(Array.isArray(reply.files));
+    // fakeAssistantLine defaults to adding /a.js too; Read before Edit
+    // for the standalone assistant line.
+    const paths = reply.files.map((f) => f.path);
+    assert.ok(paths.includes("/src/auth.js"));
+    assert.ok(paths.includes("/src/session.js"));
+    assert.ok(paths.includes("/a.js"));
+    const authFile = reply.files.find((f) => f.path === "/src/auth.js");
+    assert.equal(authFile.line, 1);
+
+    processor.destroy();
   });
 
   it("enriches newest reply first (priority queue, not FIFO)", async () => {

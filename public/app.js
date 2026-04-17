@@ -158,32 +158,46 @@
     // _uiStore is also used by onFileLinkClick below — both closures
     // share the same late-bound ref, assigned when createUiStore() runs.
 
+    // Resolve a (possibly relative) file path against the active session's
+    // cwd and open it in a document tile. Shared by the terminal's
+    // file-link click handler and the feed tile's reply-file chips.
+    async function openFileInDocTile(filePath, line) {
+      if (!_uiStore || typeof filePath !== "string" || !filePath) return;
+      // Defense-in-depth: reject paths with traversal segments
+      if (filePath.split("/").some(seg => seg === "..")) return;
+      let resolved = filePath;
+      if (!filePath.startsWith("/")) {
+        const sessionName = getActiveSessionName();
+        if (sessionName) {
+          try {
+            const data = await api.get(`/sessions/cwd/${encodeURIComponent(sessionName)}`);
+            if (data.cwd && data.cwd.startsWith("/")) resolved = data.cwd + "/" + filePath;
+          } catch { /* fall through with relative path */ }
+        }
+      }
+      const props = { filePath: resolved };
+      if (typeof line === "number" && line > 0) props.line = line;
+      const docId = `doc-${Date.now().toString(36)}`;
+      _uiStore.addTile(
+        { id: docId, type: "document", props },
+        { focus: true, insertAt: "afterFocus" },
+      );
+    }
+
+    // Feed tile file chips dispatch this event. Same entry point as the
+    // terminal's onFileLinkClick — the feed doesn't own the UI store, so
+    // the handler lives here where it does.
+    window.addEventListener("katulong:open-file", (ev) => {
+      const { path, line } = ev.detail || {};
+      openFileInDocTile(path, line);
+    });
+
     const terminalPool = createTerminalPool({
       parentEl: document.getElementById("terminal-container"),
       onResize: (sessionName, cols, rows) => {
         cm.send(JSON.stringify({ type: "resize", session: sessionName, cols, rows }));
       },
-      onFileLinkClick: async (_event, filePath) => {
-        if (!_uiStore) return;
-        // Defense-in-depth: reject paths with traversal segments
-        if (filePath.split("/").some(seg => seg === "..")) return;
-        // Resolve relative paths against the active session's CWD
-        let resolved = filePath;
-        if (!filePath.startsWith("/")) {
-          const sessionName = getActiveSessionName();
-          if (sessionName) {
-            try {
-              const data = await api.get(`/sessions/cwd/${encodeURIComponent(sessionName)}`);
-              if (data.cwd && data.cwd.startsWith("/")) resolved = data.cwd + "/" + filePath;
-            } catch { /* fall through with relative path */ }
-          }
-        }
-        const docId = `doc-${Date.now().toString(36)}`;
-        _uiStore.addTile(
-          { id: docId, type: "document", props: { filePath: resolved } },
-          { focus: true, insertAt: "afterFocus" },
-        );
-      },
+      onFileLinkClick: (_event, filePath) => openFileInDocTile(filePath),
       terminalOptions: {
         cols: DEFAULT_COLS,
         rows: TERMINAL_ROWS_DEFAULT,
