@@ -9,7 +9,7 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
@@ -108,9 +108,9 @@ describe("resolveWatchTarget", () => {
     assert.match(out.error, /JSON object/);
   });
 
-  it("rejects when neither uuid+cwd nor session provided", () => {
+  it("rejects when uuid or cwd missing", () => {
     const out = resolveWatchTarget({ body: {}, homeDir });
-    assert.match(out.error, /uuid, cwd|session/);
+    assert.match(out.error, /uuid, cwd/);
   });
 
   it("rejects an invalid uuid", () => {
@@ -128,22 +128,6 @@ describe("resolveWatchTarget", () => {
       out.transcriptPath,
       `${homeDir}/.claude/projects/${slugifyCwd("/Users/felix/Projects/katulong")}/${UUID}.jsonl`,
     );
-  });
-
-  it("rejects { session } when caller provides no sessionCwd", () => {
-    const out = resolveWatchTarget({
-      body: { session: "work" }, sessionCwd: null, homeDir,
-    });
-    assert.match(out.error, /no cwd/);
-  });
-
-  it("rejects { session } when no recent transcript is found under the cwd", () => {
-    const out = resolveWatchTarget({
-      body: { session: "work" },
-      sessionCwd: "/nonexistent/path",
-      homeDir,
-    });
-    assert.match(out.error, /No recent Claude transcript/);
   });
 });
 
@@ -230,76 +214,6 @@ describe("createClaudeFeedRoutes", () => {
     assert.strictEqual(res.status, 400);
   });
 
-  it("POST /api/claude/watch { session } — prefers meta.claude.cwd over pane fallbacks", async () => {
-    // Worktree case: Claude was launched with `--add-dir <worktree>`. The
-    // shell cwd (meta.pane.cwd / live tmux poll) points at the main
-    // checkout, but Claude is actually operating on the worktree —
-    // meta.claude.cwd is the authoritative source, and the transcript
-    // only exists under the worktree's slug. See
-    // docs/file-link-worktree-resolution.md.
-    const worktreeCwd = "/Users/felix/worktree-a";
-    const shellCwd = "/Users/felix/main";
-    const worktreeSlug = slugifyCwd(worktreeCwd);
-    const projectsDir = join(home, ".claude", "projects", worktreeSlug);
-    mkdirSync(projectsDir, { recursive: true });
-    const transcriptPath = join(projectsDir, `${UUID}.jsonl`);
-    const now = Date.now();
-    writeFileSync(transcriptPath, JSON.stringify({
-      type: "user", timestamp: new Date(now - 1000).toISOString(),
-      message: { content: "hi" },
-    }) + "\n");
-
-    sessionManager = {
-      getSession: (name) => name === "work" ? {
-        name,
-        meta: {
-          claude: { cwd: worktreeCwd },
-          pane: { cwd: shellCwd },
-        },
-      } : null,
-      getSessionCwd: async () => shellCwd,
-    };
-    ctx = makeCtx({ watchlist, processor, topicBroker: broker, sessionManager, homeDir: home });
-    routes = createClaudeFeedRoutes(ctx);
-
-    const route = routeFor("POST", "/api/claude/watch");
-    const res = makeRes();
-    await route.handler(makeReq({ method: "POST", body: { session: "work" } }), res);
-    assert.strictEqual(res.status, 200, `expected 200, got ${res.status}: ${res.chunks[0]}`);
-    const body = JSON.parse(res.chunks[0]);
-    assert.strictEqual(body.uuid, UUID);
-    assert.strictEqual(body.transcriptPath, transcriptPath);
-  });
-
-  it("POST /api/claude/watch { session } — falls back to live getSessionCwd when meta is empty", async () => {
-    // Today's common case: no meta.pane.cwd yet (PR #613 step 1 not
-    // landed), no meta.claude.cwd yet (PR #613 step 4 not landed). The
-    // route must still work by live-polling tmux.
-    const cwd = "/Users/felix/live";
-    const slug = slugifyCwd(cwd);
-    const projectsDir = join(home, ".claude", "projects", slug);
-    mkdirSync(projectsDir, { recursive: true });
-    const transcriptPath = join(projectsDir, `${UUID}.jsonl`);
-    writeFileSync(transcriptPath, JSON.stringify({
-      type: "user", timestamp: new Date(Date.now() - 1000).toISOString(),
-      message: { content: "hi" },
-    }) + "\n");
-
-    sessionManager = {
-      getSession: (name) => name === "work" ? { name, meta: {} } : null,
-      getSessionCwd: async (name) => name === "work" ? cwd : null,
-    };
-    ctx = makeCtx({ watchlist, processor, topicBroker: broker, sessionManager, homeDir: home });
-    routes = createClaudeFeedRoutes(ctx);
-
-    const route = routeFor("POST", "/api/claude/watch");
-    const res = makeRes();
-    await route.handler(makeReq({ method: "POST", body: { session: "work" } }), res);
-    assert.strictEqual(res.status, 200, `expected 200, got ${res.status}: ${res.chunks[0]}`);
-    const body = JSON.parse(res.chunks[0]);
-    assert.strictEqual(body.uuid, UUID);
-  });
-
   it("POST /api/claude/watch { session } — 400 when session is unknown", async () => {
     sessionManager = { getSession: () => null };
     ctx = makeCtx({ watchlist, processor, topicBroker: broker, sessionManager, homeDir: home });
@@ -310,6 +224,28 @@ describe("createClaudeFeedRoutes", () => {
     await route.handler(makeReq({ method: "POST", body: { session: "ghost" } }), res);
     assert.strictEqual(res.status, 400);
     assert.match(JSON.parse(res.chunks[0]).error, /Session not found/);
+  });
+
+  it("POST /api/claude/watch { session } — 404 when session exists but has no live Claude", async () => {
+    // Sparkle button should only be clickable when Claude is running, but
+    // if the user somehow triggers the endpoint without a live process
+    // (race: Claude just exited, stale client state), we return 404
+    // rather than pretending some unrelated transcript is theirs.
+    //
+    // sessionManager returns a session with no tmuxName/alive, which
+    // makes findLiveClaudeInPane short-circuit to null — the behavior we
+    // want without shelling out to tmux/pgrep/lsof in tests.
+    sessionManager = {
+      getSession: (name) => name === "work" ? { name, meta: {}, alive: false } : null,
+    };
+    ctx = makeCtx({ watchlist, processor, topicBroker: broker, sessionManager, homeDir: home });
+    routes = createClaudeFeedRoutes(ctx);
+
+    const route = routeFor("POST", "/api/claude/watch");
+    const res = makeRes();
+    await route.handler(makeReq({ method: "POST", body: { session: "work" } }), res);
+    assert.strictEqual(res.status, 404);
+    assert.match(JSON.parse(res.chunks[0]).error, /No Claude process/);
   });
 
   it("DELETE /api/claude/watch/:uuid removes an existing entry", async () => {
