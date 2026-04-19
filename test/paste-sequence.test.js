@@ -111,7 +111,7 @@ describe("replayPasteSequence", () => {
     assert.deepEqual(session.writes, ["hi", "\r"]);
   });
 
-  it("does NOT write \\x16 when both clipboard-set and bridges fail", async () => {
+  it("does NOT write \\x16 or fire onImagePasted when both clipboard-set and bridges fail", async () => {
     const session = makeSession();
     const deps = makeDeps({
       setClipboard: async () => false,
@@ -124,8 +124,9 @@ describe("replayPasteSequence", () => {
     });
     assert.equal(out.pasted, 0);
     assert.deepEqual(session.writes, []);
-    // Still reports progress so the client isn't stuck waiting.
-    assert.deepEqual(deps.calls.imagePasted, [imgA]);
+    // Pre-refactor behavior: no `paste-complete` WS event on failure,
+    // so the xterm clipboard bridge doesn't show a false success.
+    assert.deepEqual(deps.calls.imagePasted, []);
   });
 
   it("uses \\x16 if clipboard failed but a container bridge succeeded", async () => {
@@ -182,6 +183,41 @@ describe("replayPasteSequence", () => {
     assert.equal(out.aborted, true);
     assert.deepEqual(session.writes, ["kill"]);
     assert.equal(deps.calls.setClipboard.length, 0);
+  });
+
+  it("returns aborted:true and skips the write when the session dies during clipboard/bridge awaits", async () => {
+    const session = makeSession();
+    const deps = makeDeps({
+      // Simulate a slow clipboard/bridge — session dies in the meantime.
+      setClipboard: async () => { session.alive = false; return true; },
+    });
+    const out = await replayPasteSequence({
+      tokens: [{ type: "image", path: imgA }],
+      session, uploadsDir, submit: true, ...deps,
+    });
+    assert.equal(out.aborted, true);
+    assert.equal(out.pasted, 0);
+    // No \x16 (session died after clipboard set) and no trailing \r.
+    assert.deepEqual(session.writes, []);
+  });
+
+  it("does not submit Enter when the session died mid-replay", async () => {
+    const session = makeSession();
+    const deps = makeDeps();
+    const origWrite = session.write.bind(session);
+    session.write = (bytes) => {
+      origWrite(bytes);
+      if (bytes === "kill") session.alive = false;
+    };
+    const out = await replayPasteSequence({
+      tokens: [
+        { type: "text", value: "kill" },
+        { type: "text", value: "never" },
+      ],
+      session, uploadsDir, submit: true, ...deps,
+    });
+    assert.equal(out.aborted, true);
+    assert.deepEqual(session.writes, ["kill"]);
   });
 
   it("ignores image tokens with paths outside uploadsDir", async () => {

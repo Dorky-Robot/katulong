@@ -213,7 +213,7 @@ function createResponseBar(claudeUuid) {
   async function uploadReplyImage(file) {
     const headers = { "Content-Type": "application/octet-stream" };
     const csrfMeta = document.querySelector('meta[name="csrf-token"]');
-    if (csrfMeta?.content) headers["x-csrf-token"] = csrfMeta.content;
+    if (csrfMeta?.content) headers["X-CSRF-Token"] = csrfMeta.content;
     const res = await fetch("/upload", {
       method: "POST", headers, body: file,
       credentials: "same-origin", redirect: "error",
