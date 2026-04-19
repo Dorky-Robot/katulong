@@ -267,7 +267,18 @@ const claudeProcessor = createClaudeProcessor({
   watchlist: claudeWatchlist,
   topicBroker,
   callOllama,
-  sessionManager,
+  // Mirror every summary onto the matching tmux session's
+  // meta.claude.summary so the terminal-tab tooltip picks it up via
+  // the normal session-updated broadcast channel. Kept outside the
+  // processor so it doesn't depend on sessionManager directly.
+  onSummary: (uuid, summary) => {
+    const sessions = sessionManager.listSessions?.().sessions || [];
+    const target = sessions.find((s) => s.meta?.claude?.uuid === uuid);
+    if (!target) return;
+    const live = sessionManager.getSession?.(target.name);
+    const current = live?.meta?.claude || target.meta?.claude || {};
+    live?.setMeta?.("claude", { ...current, summary });
+  },
 });
 
 // Generic per-session summarizer — gives every tab a short auto-title
