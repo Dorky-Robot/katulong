@@ -499,6 +499,94 @@ function renderReplyItem(row, msg, ts) {
   row.appendChild(footer);
 }
 
+// Derive a short header label for a tool card from the raw tool_use
+// input blob. Mirrors the per-tool heuristics in
+// `claude-event-transform.js` so the UI shows the same concise target
+// (filename, first 40 chars of a command, glob pattern, etc.) that the
+// narrator would for a PostToolUse event.
+function toolTargetLabel(name, input) {
+  if (!input || typeof input !== "object") return "";
+  switch (name) {
+    case "Edit":
+    case "Read":
+    case "Write": {
+      const fp = input.file_path;
+      if (typeof fp !== "string") return "";
+      const i = fp.lastIndexOf("/");
+      return i >= 0 ? fp.slice(i + 1) : fp;
+    }
+    case "Bash":
+      return typeof input.command === "string" ? input.command : "";
+    case "Grep":
+    case "Glob":
+      return typeof input.pattern === "string" ? input.pattern : "";
+    case "Agent":
+      return typeof input.description === "string" ? input.description : "";
+    default:
+      return "";
+  }
+}
+
+// Tool card. Collapsed by default — just the header row showing
+// name + target + state — taps expand to reveal the full output. The
+// state class (`feed-tile-tool--running|ok|error`) drives the border
+// style (animated / green / red) so the user can scan a long feed and
+// see at a glance which tool calls are still in flight and which
+// completed, without opening every card.
+//
+// The row is rebuilt on every update (running → ok/error) because the
+// output payload only lands on the terminal tool_result event —
+// holding a reference to the inner body and mutating it would mean
+// threading more state through handleEvent than it's worth.
+function renderToolItem(row, info, ts) {
+  row.innerHTML = "";
+  const state = info.state === "ok" || info.state === "error" ? info.state : "running";
+  row.className = `feed-tile-item feed-status-tool feed-tile-tool--${state}`;
+
+  const details = document.createElement("details");
+  details.className = "feed-tile-tool";
+
+  const header = document.createElement("summary");
+  header.className = "feed-tile-tool-header";
+
+  const name = document.createElement("span");
+  name.className = "feed-tile-tool-name";
+  name.textContent = info.name || "Tool";
+  header.appendChild(name);
+
+  const target = toolTargetLabel(info.name, info.input);
+  if (target) {
+    const tgt = document.createElement("span");
+    tgt.className = "feed-tile-tool-target";
+    tgt.textContent = target;
+    header.appendChild(tgt);
+  }
+
+  const stateLabel = document.createElement("span");
+  stateLabel.className = "feed-tile-tool-state";
+  stateLabel.textContent = state === "running" ? "running" : state === "ok" ? "ok" : "error";
+  header.appendChild(stateLabel);
+
+  header.appendChild(makeTimeSpan(ts));
+  details.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "feed-tile-tool-body";
+  if (typeof info.output === "string" && info.output) {
+    const pre = document.createElement("pre");
+    pre.className = "feed-tile-tool-output";
+    pre.textContent = info.output;
+    body.appendChild(pre);
+  } else if (state === "running") {
+    const hint = document.createElement("div");
+    hint.className = "feed-tile-tool-hint";
+    hint.textContent = "Running\u2026";
+    body.appendChild(hint);
+  }
+  details.appendChild(body);
+  row.appendChild(details);
+}
+
 // The user's side of the conversation. Same structural shape as a
 // reply (body + time footer) but styled differently so the reader
 // can eyeball the back-and-forth without reading every word.
@@ -796,6 +884,13 @@ export const feedRenderer = {
       // republished reply (e.g. after a processor catch-up) updates the
       // existing row in place rather than duplicating it.
       const replyItems = new Map();
+      // Tool cards are keyed by their tool_use id. A running card is
+      // stamped on the tool_use event; the matching tool_result event
+      // flips state (ok/error) and fills the output body. Values hold
+      // the merged info so an out-of-order republish (running event
+      // delivered AFTER its result, e.g. during a catch-up slice)
+      // doesn't clobber the terminal state.
+      const toolItems = new Map();
       // Ephemeral non-reply events (generic log topics or pre-rewrite
       // persisted events) get auto-keyed row slots.
       const logItems = new Map();
@@ -858,6 +953,36 @@ export const feedRenderer = {
         if (isProgress) {
           if (status === "session-summary") {
             applySummary(msg);
+            return;
+          }
+          if (status === "tool" && typeof msg.toolUseId === "string") {
+            const existing = toolItems.get(msg.toolUseId);
+            let entry;
+            if (!existing) {
+              const row = document.createElement("div");
+              list.appendChild(row);
+              entry = { row, info: { ...msg } };
+              toolItems.set(msg.toolUseId, entry);
+            } else {
+              entry = existing;
+              // Merge so running metadata (name/input, stamped first)
+              // survives when a later ok/error event carries only the
+              // output — and conversely, a running republish doesn't
+              // drop a terminal state that already landed. Snapshot
+              // prev BEFORE the spread since `entry.info` is the object
+              // being overwritten.
+              const prevState = entry.info.state;
+              const prevOutput = entry.info.output;
+              const wasTerminal = prevState === "ok" || prevState === "error";
+              const isTerminal = msg.state === "ok" || msg.state === "error";
+              entry.info = { ...entry.info, ...msg };
+              if (wasTerminal && !isTerminal) {
+                entry.info.state = prevState;
+                if (typeof prevOutput === "string") entry.info.output = prevOutput;
+              }
+            }
+            renderToolItem(entry.row, entry.info, envelope.timestamp);
+            list.scrollTop = list.scrollHeight;
             return;
           }
           if (status === "reply" && typeof msg.entryId === "string") {

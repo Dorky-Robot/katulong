@@ -325,7 +325,7 @@ describe("readTranscriptEntries", () => {
           role: "assistant",
           content: [
             { type: "text", text: "Looking at the auth module." },
-            { type: "tool_use", name: "Read", input: { file_path: "/src/auth.js", offset: 42 } },
+            { type: "tool_use", id: "toolu_01ABC", name: "Read", input: { file_path: "/src/auth.js", offset: 42 } },
           ],
         },
       },
@@ -336,8 +336,74 @@ describe("readTranscriptEntries", () => {
     assert.equal(entries[0].role, "assistant");
     assert.equal(entries[0].text, "Looking at the auth module.");
     assert.deepEqual(entries[0].tools, [
-      { name: "Read", input: { file_path: "/src/auth.js", offset: 42 } },
+      { id: "toolu_01ABC", name: "Read", input: { file_path: "/src/auth.js", offset: 42 } },
     ]);
+  });
+
+  it("preserves tool_use.id and correlates tool_result.tool_use_id", () => {
+    // The frontend keys tool cards on toolUseId to flip running→ok/error
+    // when the matching result lands. A transform that drops either id
+    // side breaks that correlation silently (cards stuck mid-animation).
+    const path = writeTranscript("pair.jsonl", [
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "tool_use", id: "toolu_01AAA", name: "Bash", input: { command: "ls -la" } },
+          ],
+        },
+      },
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "toolu_01AAA", content: "total 8\ndrwx...", is_error: false },
+          ],
+        },
+      },
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "toolu_01BBB", content: "command failed", is_error: true },
+          ],
+        },
+      },
+    ]);
+    const { entries } = readTranscriptEntries(path);
+    assert.equal(entries.length, 3);
+    assert.equal(entries[0].tools[0].id, "toolu_01AAA");
+    assert.equal(entries[1].role, "tool_result");
+    assert.deepEqual(entries[1].results, [
+      { toolUseId: "toolu_01AAA", text: "total 8\ndrwx...", isError: false },
+    ]);
+    assert.equal(entries[2].results[0].toolUseId, "toolu_01BBB");
+    assert.equal(entries[2].results[0].isError, true);
+  });
+
+  it("keeps tool_result full output on results[] even when text is truncated", () => {
+    // The narrator's `text` field is capped at 500 chars so the
+    // summarizer doesn't eat a whole bash log, but the feed card's
+    // expand body needs the full output. `results[].text` must carry
+    // the untruncated content per block.
+    const big = "x".repeat(2000);
+    const path = writeTranscript("big.jsonl", [
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "toolu_01X", content: big }],
+        },
+      },
+    ]);
+    const { entries } = readTranscriptEntries(path);
+    assert.equal(entries.length, 1);
+    assert.ok(entries[0].text.length <= 500, "narrator text is capped");
+    assert.equal(entries[0].results[0].text.length, 2000, "per-result text is full");
+    assert.equal(entries[0].results[0].isError, false);
   });
 
   it("normalizes a user string-content entry", () => {
