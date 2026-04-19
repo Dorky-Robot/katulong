@@ -564,13 +564,24 @@ export const feedRenderer = {
 
       // Pinned summary at the top of the list. Rendered only for
       // claude topics; hidden until the first `session-summary`
-      // event lands. `short` shows in the card; `long` is held on
-      // a data-attribute so a future surface (tooltip, expand) can
-      // read it.
-      const summaryCard = isProgress && claudeUuid ? document.createElement("div") : null;
+      // event lands. Uses a native <details> so the user can
+      // collapse the card out of the way — when closed only the
+      // compact header row stays pinned to the top of the feed,
+      // giving replies more vertical real estate. `short` shows
+      // in the body; `long` is held on a data-attribute so a
+      // future surface (tooltip, expand) can read it.
+      const summaryCard = isProgress && claudeUuid ? document.createElement("details") : null;
+      let summaryBody = null;
       if (summaryCard) {
         summaryCard.className = "feed-tile-summary-card";
+        summaryCard.open = true;
         summaryCard.style.display = "none";
+        const summaryHeader = document.createElement("summary");
+        summaryHeader.textContent = "Session summary";
+        summaryBody = document.createElement("div");
+        summaryBody.className = "feed-tile-summary-body";
+        summaryCard.appendChild(summaryHeader);
+        summaryCard.appendChild(summaryBody);
         list.appendChild(summaryCard);
       }
       function applySummary(msg) {
@@ -579,7 +590,7 @@ export const feedRenderer = {
         if (!short) { summaryCard.style.display = "none"; return; }
         summaryCard.style.display = "";
         summaryCard.dataset.long = typeof msg.long === "string" ? msg.long : "";
-        summaryCard.textContent = short;
+        summaryBody.textContent = short;
       }
 
       function handleEvent(envelope) {

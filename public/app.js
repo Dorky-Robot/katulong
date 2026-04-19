@@ -796,14 +796,23 @@
     // a tile signal to a button config. First match wins; no match hides
     // the button. Adding a new context (e.g. `meta.node`, `meta.git`) is a
     // single entry — no joystick or subscriber changes required.
+    //
+    // Coding-agent sparkle: `meta.agent.kind` is the harness-agnostic
+    // presence signal, written by the server's pane monitor from tmux's
+    // `pane_current_command` against the `lib/agent-presence.js`
+    // registry. The sparkle lights up for any recognized agent (today:
+    // claude; tomorrow: opencode, codex, aider) with zero hook-install
+    // prerequisite. Richer per-harness enrichment (Claude's transcript
+    // uuid) is layered on top via `meta.<kind>.*` and only affects what
+    // happens when the sparkle is *clicked* — see openAgentFeedTile.
     const TILE_CONTEXTS = [
       {
-        id: "claude",
-        test: (s) => !!(s?.meta?.claude?.uuid),
+        id: "agent",
+        test: (s) => !!(s?.meta?.agent?.kind),
         icon: "sparkle",
-        label: "Claude feed",
+        label: "Agent feed",
         className: "joystick-action-btn--claude",
-        action: () => openClaudeFeedTile(),
+        action: () => openAgentFeedTile(),
       },
     ];
 
@@ -1465,7 +1474,7 @@
         } else if (type === "file-browser") {
           openFileBrowserTile();
         } else if (type === "feed") {
-          openClaudeFeedTile();
+          openAgentFeedTile();
         } else if (type === "localhost-browser") {
           openLocalhostBrowserTile();
         }
@@ -1731,7 +1740,7 @@
       createTile: (type) => {
         if (type === "terminal") createNewSession();
         else if (type === "file-browser") openFileBrowserTile();
-        else if (type === "feed") openClaudeFeedTile();
+        else if (type === "feed") openAgentFeedTile();
         else if (type === "localhost-browser") openLocalhostBrowserTile();
       },
       showHelp: () => toggleKeyboardHelp(),
@@ -1744,8 +1753,9 @@
     const renderBar = (name) => shortcutBarInstance.render(name);
 
     // Reflect the active tile's detected context onto the joystick's
-    // contextual slot. The server flips `meta.claude.running` from tmux's
-    // `pane_current_command` poll and `meta.claude.uuid` from the
+    // contextual slot. The server writes `meta.agent.kind` from tmux's
+    // `pane_current_command` poll (harness-agnostic presence) and any
+    // Claude-specific enrichment lands on `meta.claude.uuid` via the
     // SessionStart hook. Wired below to both sessionStore (server pushes
     // every ~5s) and uiStore (active-tile switches), so the icon never
     // lags by more than one broadcast interval or one tap. When no
@@ -1759,20 +1769,41 @@
     }
 
     // Sync per-session icons from server session data
-    // Surface the running Claude-session summary as the terminal tab's
-    // tooltip so a mouse-over tells the reader what work is happening
-    // inside each pane. The summary lands on `session.meta.claude.summary`
-    // via the processor's Ollama pass; here we just walk the rendered
-    // tab bar and set the native `title` attribute.
+    // Surface the generic session summary as the terminal tab's tooltip
+    // so a mouse-over tells the reader what work is happening inside
+    // each pane. The summary lands on `session.meta.summary.long` via
+    // the server-side session-summarizer (Ollama pass over the
+    // RingBuffer tail); it is not coupled to Claude — any session with
+    // enough recent output gets one. The richer Claude-specific summary
+    // lives on `session.meta.claude.summary` and feeds the feed tile;
+    // that surface is unchanged.
     function syncTabTooltips(sessions) {
       if (!bar) return;
       const byName = new Map((sessions || []).map((s) => [s.name, s]));
       for (const el of bar.querySelectorAll(".tab-bar-tab")) {
         const name = el.dataset?.session;
         if (!name) continue;
-        const long = byName.get(name)?.meta?.claude?.summary?.long;
+        const long = byName.get(name)?.meta?.summary?.long;
         if (typeof long === "string" && long) el.title = long;
         else el.removeAttribute("title");
+      }
+    }
+
+    // Mirror each session's user/auto title onto its terminal tile props so
+    // the tile-tab-bar (which renders from uiStore state via describe()) sees
+    // them. A `null` patch clears a value that was previously set — e.g. when
+    // the summarizer hasn't produced anything for a freshly-created session.
+    function syncTileTitles(sessions) {
+      const state = uiStore.getState();
+      if (!state?.tiles) return;
+      for (const s of sessions || []) {
+        const tile = state.tiles[s.name];
+        if (!tile || tile.type !== "terminal") continue;
+        const userTitle = s.meta?.userTitle ?? null;
+        const autoTitle = s.meta?.autoTitle ?? null;
+        const p = tile.props || {};
+        if ((p.userTitle ?? null) === userTitle && (p.autoTitle ?? null) === autoTitle) continue;
+        uiStore.updateProps(s.name, { userTitle, autoTitle });
       }
     }
 
@@ -1788,6 +1819,7 @@
       }
       syncJoystickContext();
       syncTabTooltips(sessions);
+      syncTileTitles(sessions);
     });
 
     // Active tile changes (e.g. user switches sessions) need an immediate
@@ -1927,21 +1959,26 @@
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
-    /** Open a feed tile for the Claude session running in the current terminal.
+    /** Open a feed tile for the coding agent running in the current terminal.
      *
-     * Flow: fetch the session's cwd, POST /api/claude/watch with `{ uuid, cwd }`
-     * to opt the UUID into the narration watchlist, then open a feed tile that
-     * streams `/api/claude/stream/:uuid`. The sparkle button is gated on
-     * `meta.claude.uuid`, which is populated by the SessionStart hook.
+     * Sparkle click dispatches on `meta.agent.kind` — the generic presence
+     * signal lit up by pane_current_command. Each recognized harness has
+     * its own branch here; none is required for the sparkle itself to
+     * appear.
      *
-     * `cwd` is not on the session object (Session.toJSON doesn't include it),
-     * so we fetch it from /sessions/cwd/:name — same pattern file-browser uses.
+     *   claude + meta.claude.uuid → transcript feed tile
+     *     (POSTs /api/claude/watch to opt the uuid into the narration
+     *      watchlist, then streams /api/claude/stream/:uuid)
+     *   claude without uuid → toast "install hooks" + generic picker
+     *     (presence is real, but the transcript pointer comes from
+     *      SessionStart hook; nudge the user toward installation)
+     *   no active session / unknown kind → generic picker
      *
-     * No session / no uuid → generic picker. Resolution failure → toast +
-     * picker (handles the corner case where a stale client still has an old
-     * uuid that the server can't match to a transcript).
+     * When a second harness lands (opencode, codex, …), add a branch
+     * here that resolves its own enrichment namespace (meta.opencode.*,
+     * etc.) without touching the Claude branch.
      */
-    async function openClaudeFeedTile() {
+    async function openAgentFeedTile() {
       const sessionName = getActiveSessionName();
 
       if (!sessionName) {
@@ -1951,10 +1988,19 @@
 
       const { sessions } = sessionStore.getState();
       const active = (sessions || []).find(s => s.name === sessionName);
-      const claudeMeta = active?.meta?.claude || null;
+      const kind = active?.meta?.agent?.kind || null;
 
+      if (kind !== "claude") {
+        // No Claude-specific enrichment path applies. Once opencode /
+        // codex branches exist, route here; for now, fall back to the
+        // generic picker.
+        openFeedTile();
+        return;
+      }
+
+      const claudeMeta = active?.meta?.claude || null;
       if (!claudeMeta?.uuid) {
-        showToast("Install Claude hooks first: `katulong setup claude-hooks`", true);
+        showToast("Install Claude hooks for a richer feed: `katulong setup claude-hooks`", true);
         openFeedTile();
         return;
       }

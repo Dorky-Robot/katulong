@@ -215,7 +215,7 @@ describe("createClaudeProcessor", () => {
     processor.destroy();
   });
 
-  it("refcount: second acquire does not start another worker; release drops to zero", async () => {
+  it("refcount: second acquire does not start another worker; release drops to zero without stopping the worker", async () => {
     writeTranscript(transcriptPath, [fakeAssistantLine("hi")]);
     await watchlist.add(UUID, { transcriptPath });
 
@@ -234,10 +234,14 @@ describe("createClaudeProcessor", () => {
     assert.strictEqual(processor.release(UUID), 1);
     assert.strictEqual(processor.has(UUID), true);
 
+    // Refcount 0 no longer stops the worker — it stays alive at the
+    // idle poll cadence so the cursor advances during subscriber gaps.
     assert.strictEqual(processor.release(UUID), 0);
-    assert.strictEqual(processor.has(UUID), false);
+    assert.strictEqual(processor.has(UUID), true);
+    assert.strictEqual(processor.refcount(UUID), 0);
 
     processor.destroy();
+    assert.strictEqual(processor.has(UUID), false);
   });
 
   it("release on a uuid that's not active returns 0", async () => {
@@ -302,7 +306,13 @@ describe("createClaudeProcessor", () => {
     processor.destroy();
   });
 
-  it("stops polling after the last release (no more publishes)", async () => {
+  it("keeps polling after the last release, at the idle cadence, so the cursor never freezes", async () => {
+    // The whole point of decoupling worker lifecycle from subscribers:
+    // a subscriber gap (page refresh, server restart, disconnect) must
+    // not freeze the cursor. The worker stays alive at idlePollIntervalMs
+    // and keeps advancing; when the next subscriber attaches they see
+    // up-to-date state instead of stale data pinned to the previous
+    // subscriber's last seq.
     writeTranscript(transcriptPath, [fakeAssistantLine("first")]);
     await watchlist.add(UUID, { transcriptPath });
 
@@ -311,6 +321,68 @@ describe("createClaudeProcessor", () => {
       watchlist,
       topicBroker: broker,
       pollIntervalMs: 20,
+      idlePollIntervalMs: 20,
+    });
+
+    await processor.acquire(UUID);
+    await waitFor(() =>
+      broker.published.some((p) => JSON.parse(p.message).status === "reply"),
+    );
+    const beforeRelease = broker.published.filter((p) => JSON.parse(p.message).status === "reply").length;
+    processor.release(UUID);
+
+    appendTranscript(transcriptPath, [fakeAssistantLine("while no one's watching")]);
+    await waitFor(() =>
+      broker.published.filter((p) => JSON.parse(p.message).status === "reply").length > beforeRelease,
+    );
+
+    const entry = await watchlist.get(UUID);
+    assert.strictEqual(entry.lastProcessedLine, 2);
+    assert.strictEqual(processor.has(UUID), true);
+    processor.destroy();
+  });
+
+  it("boot-spawns idle workers for uuids already on the watchlist at creation", async () => {
+    // Server restart scenario: the watchlist survives on disk. When the
+    // processor comes back up it should immediately start polling
+    // every entry at the idle cadence — without waiting for someone to
+    // open a feed tile. Otherwise the first subscriber after restart
+    // hits a long stall while the worker initializes.
+    writeTranscript(transcriptPath, [fakeAssistantLine("pre-existing reply")]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist,
+      topicBroker: broker,
+      pollIntervalMs: 500,
+      idlePollIntervalMs: 20,
+    });
+
+    await processor.ready();
+    assert.strictEqual(processor.has(UUID), true);
+    assert.strictEqual(processor.refcount(UUID), 0);
+
+    await waitFor(() =>
+      broker.published.some((p) => JSON.parse(p.message).status === "reply"),
+    );
+    processor.destroy();
+  });
+
+  it("acquire after an idle period kicks an immediate cycle", async () => {
+    // After release drops refcount to 0 the worker idles on a slow
+    // cadence. A subscriber reconnecting should not wait a full idle
+    // interval to see fresh state — acquire on 0→1 must trigger an
+    // immediate poll.
+    writeTranscript(transcriptPath, [fakeAssistantLine("first")]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist,
+      topicBroker: broker,
+      pollIntervalMs: 20,
+      idlePollIntervalMs: 60_000, // effectively disables idle catch-up for this test
     });
 
     await processor.acquire(UUID);
@@ -318,14 +390,38 @@ describe("createClaudeProcessor", () => {
       broker.published.some((p) => JSON.parse(p.message).status === "reply"),
     );
     processor.release(UUID);
+    // Wait a beat to ensure any in-flight cycle settles and the next
+    // scheduleNext uses the slow idle interval.
+    await new Promise((r) => setTimeout(r, 30));
 
-    const after = broker.published.length;
-    appendTranscript(transcriptPath, [fakeAssistantLine("while no one's watching")]);
-    await new Promise((r) => setTimeout(r, 100));
+    appendTranscript(transcriptPath, [fakeAssistantLine("second")]);
+    const before = broker.published.filter((p) => JSON.parse(p.message).status === "reply").length;
+    await processor.acquire(UUID);
+    // An immediate fast cycle should catch the second line well before
+    // idlePollIntervalMs (60s) would.
+    await waitFor(() =>
+      broker.published.filter((p) => JSON.parse(p.message).status === "reply").length > before,
+    { timeoutMs: 500 });
 
-    assert.strictEqual(broker.published.length, after);
-    const entry = await watchlist.get(UUID);
-    assert.strictEqual(entry.lastProcessedLine, 1);
+    processor.destroy();
+  });
+
+  it("stops the worker when the watchlist entry is removed mid-run", async () => {
+    writeTranscript(transcriptPath, [fakeAssistantLine("first")]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const processor = createClaudeProcessor({
+      watchlist,
+      topicBroker: makeBroker(),
+      pollIntervalMs: 20,
+      idlePollIntervalMs: 20,
+    });
+
+    await processor.acquire(UUID);
+    assert.strictEqual(processor.has(UUID), true);
+
+    await watchlist.remove(UUID);
+    await waitFor(() => !processor.has(UUID));
     processor.destroy();
   });
 

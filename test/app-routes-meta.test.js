@@ -179,17 +179,19 @@ describe("applyClaudeMetaFromHook", () => {
     assert.equal(session.meta.claude.uuid, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
   });
 
-  it("adopting uuid preserves detection-owned running/detectedAt", () => {
+  it("adopting uuid does not touch meta.agent (pane-monitor namespace)", () => {
+    // The pane monitor writes meta.agent = { kind, running, detectedAt }
+    // independently. The hook writer must never stomp on a sibling
+    // namespace — different writer, different keys.
     const { session } = makeSession();
-    session.meta.claude = { running: true, detectedAt: 100 };
+    session.meta.agent = { kind: "claude", running: true, detectedAt: 100 };
     const verdict = applyClaudeMetaFromHook({
       hook_event_name: "UserPromptSubmit",
       session_id: "11111111-2222-3333-4444-555555555555",
       _tmuxPane: "%3",
     }, makeManager(session));
     assert.equal(verdict, "set");
-    assert.equal(session.meta.claude.running, true);
-    assert.equal(session.meta.claude.detectedAt, 100);
+    assert.deepEqual(session.meta.agent, { kind: "claude", running: true, detectedAt: 100 });
     assert.equal(session.meta.claude.uuid, "11111111-2222-3333-4444-555555555555");
   });
 
@@ -213,35 +215,32 @@ describe("applyClaudeMetaFromHook", () => {
     assert.equal(applyClaudeMetaFromHook("nope", makeManager(null)), null);
   });
 
-  it("preserves detection-owned keys on SessionStart merge", () => {
-    // The pane monitor wrote `running` / `detectedAt` before the hook fired.
-    // SessionStart must add `uuid` / `startedAt` without wiping those.
+  it("SessionStart leaves meta.agent untouched", () => {
+    // The pane monitor wrote meta.agent before the hook fired. The hook
+    // writer owns meta.claude and must never stomp on the sibling
+    // meta.agent namespace.
     const { session } = makeSession();
-    session.meta.claude = { running: true, detectedAt: 100 };
+    session.meta.agent = { kind: "claude", running: true, detectedAt: 100 };
     const verdict = applyClaudeMetaFromHook({
       hook_event_name: "SessionStart",
       session_id: "11111111-2222-3333-4444-555555555555",
       _tmuxPane: "%3",
     }, makeManager(session));
     assert.equal(verdict, "set");
-    assert.equal(session.meta.claude.running, true);
-    assert.equal(session.meta.claude.detectedAt, 100);
+    assert.deepEqual(session.meta.agent, { kind: "claude", running: true, detectedAt: 100 });
     assert.equal(session.meta.claude.uuid, "11111111-2222-3333-4444-555555555555");
     assert.equal(typeof session.meta.claude.startedAt, "number");
   });
 
-  it("SessionEnd is a no-op — preserves all meta.claude keys", () => {
-    // SessionEnd no longer clears anything. Pane monitor owns running/
-    // detectedAt; hooks own uuid/startedAt. Stop/End are exit signals
-    // that the pane monitor reflects via `running: false`, but the
-    // uuid pointer is kept so a watched feed keeps resolving the
-    // on-disk transcript.
+  it("SessionEnd is a no-op — preserves meta.claude enrichment", () => {
+    // SessionEnd no longer clears anything. meta.claude only carries the
+    // transcript pointer (uuid + startedAt); "is Claude live?" now lives
+    // on meta.agent, flipped by the pane monitor. Keeping the uuid means
+    // a watched feed keeps resolving the on-disk transcript after exit.
     const { session, calls } = makeSession();
     session.meta.claude = {
       uuid: "11111111-2222-3333-4444-555555555555",
       startedAt: 1,
-      running: true,
-      detectedAt: 100,
     };
     const verdict = applyClaudeMetaFromHook({
       hook_event_name: "SessionEnd",
@@ -252,8 +251,6 @@ describe("applyClaudeMetaFromHook", () => {
     assert.deepEqual(session.meta.claude, {
       uuid: "11111111-2222-3333-4444-555555555555",
       startedAt: 1,
-      running: true,
-      detectedAt: 100,
     });
   });
 });

@@ -24,8 +24,14 @@ export const terminalRenderer = {
   },
 
   describe(props) {
+    // Tab label precedence: user-set rename → auto-generated summary title
+    // → raw tmux session name. The summarizer only writes `autoTitle` when
+    // a session has produced enough meaningful output, so new or quiet
+    // tabs stay on `kat_xxx…` until there is something to infer.
+    const title =
+      props.userTitle || props.autoTitle || props.sessionName || "terminal";
     return {
-      title: props.sessionName || "terminal",
+      title,
       icon: "terminal-window",
       persistable: true,
       // Capabilities — tile-host uses these instead of type checks

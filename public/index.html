@@ -2491,16 +2491,34 @@
     /* Pinned session summary — sits at the top of the feed list
        (sticky within the scroll container) so the "what is this
        session about" stays visible as the user scrolls through
-       replies. Two to three sentences; slightly muted to separate
-       from the live conversation below. */
+       replies. Negative margins + matching sticky `top` bleed the
+       card flush against the feed list's padded edges so there's
+       no visible gap along the top or sides. Native <details> so
+       the user can collapse it out of the way; only the summary
+       row stays pinned when closed. */
     .feed-tile-summary-card {
-      position: sticky; top: 0; z-index: 2;
+      position: sticky; top: calc(var(--space-sm) * -1); z-index: 2;
+      margin: calc(var(--space-sm) * -1) calc(var(--space-sm) * -1) 0;
       background: color-mix(in srgb, var(--bg) 88%, var(--accent-strong, #6f87b3) 12%);
       color: var(--text);
       border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
-      padding: var(--space-sm); line-height: 1.45;
-      font-size: 0.92em;
+      line-height: 1.45; font-size: 0.92em;
     }
+    .feed-tile-summary-card > summary {
+      cursor: pointer; user-select: none; list-style: none;
+      display: flex; align-items: center; gap: var(--space-xs);
+      padding: var(--space-xs) var(--space-sm);
+      color: var(--text-secondary); font-size: var(--text-xs);
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .feed-tile-summary-card > summary::before {
+      content: "\25B8"; display: inline-block; width: 1em;
+      transition: transform 0.15s;
+    }
+    .feed-tile-summary-card[open] > summary::before { transform: rotate(90deg); }
+    .feed-tile-summary-card > summary::-webkit-details-marker { display: none; }
+    .feed-tile-summary-card > summary::marker { content: ""; }
+    .feed-tile-summary-body { padding: 0 var(--space-sm) var(--space-sm); }
 
     /* Prompt card — the user's own message. Visually distinct from a
        reply so the reader can skim the conversation flow: warmer
