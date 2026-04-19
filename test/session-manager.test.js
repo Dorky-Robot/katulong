@@ -130,6 +130,24 @@ describe("session manager", () => {
       assert.ok(names.includes("a"));
       assert.ok(names.includes("b"));
     });
+
+    it("strips PRIVATE_META_KEYS (transcriptPath) from returned meta", async () => {
+      const { mgr } = makeManager();
+      await mgr.createSession("a");
+      const session = mgr.getSession("a");
+      session.setMeta("claude", {
+        uuid: "11111111-2222-3333-4444-555555555555",
+        startedAt: Date.now(),
+        transcriptPath: "/Users/x/.claude/projects/y/11111111-2222-3333-4444-555555555555.jsonl",
+      });
+      const result = mgr.listSessions();
+      const entry = result.sessions.find(s => s.name === "a");
+      assert.ok(entry);
+      assert.ok(entry.meta?.claude, "public meta.claude should survive the filter");
+      assert.strictEqual(entry.meta.claude.uuid, "11111111-2222-3333-4444-555555555555");
+      assert.strictEqual(entry.meta.claude.transcriptPath, undefined,
+        "transcriptPath must not cross the REST boundary");
+    });
   });
 
   describe("deleteSession", () => {
