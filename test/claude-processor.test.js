@@ -524,13 +524,16 @@ describe("createClaudeProcessor", () => {
       .filter((m) => m.status === "tool");
     assert.equal(toolEvents.length, 2, "ignores tool_use blocks with no id");
     assert.deepEqual(
-      toolEvents.map((e) => ({ id: e.toolUseId, state: e.state, name: e.name })),
+      toolEvents.map((e) => ({ id: e.toolUseId, state: e.state, name: e.name, target: e.target })),
       [
-        { id: "toolu_RUN_1", state: "running", name: "Bash" },
-        { id: "toolu_RUN_2", state: "running", name: "Read" },
+        { id: "toolu_RUN_1", state: "running", name: "Bash", target: "ls -la" },
+        { id: "toolu_RUN_2", state: "running", name: "Read", target: "auth.js" },
       ],
     );
-    assert.deepEqual(toolEvents[0].input, { command: "ls -la" });
+    // Raw input is no longer broadcast — the pre-computed `target` is
+    // what the feed card renders, so subscribers don't need the full
+    // tool input blob.
+    assert.ok(!("input" in toolEvents[0]), "raw tool input is not on the wire");
 
     processor.destroy();
   });

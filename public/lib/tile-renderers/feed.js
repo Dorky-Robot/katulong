@@ -499,34 +499,6 @@ function renderReplyItem(row, msg, ts) {
   row.appendChild(footer);
 }
 
-// Derive a short header label for a tool card from the raw tool_use
-// input blob. Mirrors the per-tool heuristics in
-// `claude-event-transform.js` so the UI shows the same concise target
-// (filename, first 40 chars of a command, glob pattern, etc.) that the
-// narrator would for a PostToolUse event.
-function toolTargetLabel(name, input) {
-  if (!input || typeof input !== "object") return "";
-  switch (name) {
-    case "Edit":
-    case "Read":
-    case "Write": {
-      const fp = input.file_path;
-      if (typeof fp !== "string") return "";
-      const i = fp.lastIndexOf("/");
-      return i >= 0 ? fp.slice(i + 1) : fp;
-    }
-    case "Bash":
-      return typeof input.command === "string" ? input.command : "";
-    case "Grep":
-    case "Glob":
-      return typeof input.pattern === "string" ? input.pattern : "";
-    case "Agent":
-      return typeof input.description === "string" ? input.description : "";
-    default:
-      return "";
-  }
-}
-
 // Tool card. Collapsed by default — just the header row showing
 // name + target + state — taps expand to reveal the full output. The
 // state class (`feed-tile-tool--running|ok|error`) drives the border
@@ -538,6 +510,10 @@ function toolTargetLabel(name, input) {
 // output payload only lands on the terminal tool_result event —
 // holding a reference to the inner body and mutating it would mean
 // threading more state through handleEvent than it's worth.
+//
+// `info.target` is pre-computed server-side (see toolTargetLabel in
+// claude-event-transform.js) so this renderer stays ignorant of
+// Claude's tool input shapes.
 function renderToolItem(row, info, ts) {
   row.innerHTML = "";
   const state = info.state === "ok" || info.state === "error" ? info.state : "running";
@@ -547,24 +523,22 @@ function renderToolItem(row, info, ts) {
   details.className = "feed-tile-tool";
 
   const header = document.createElement("summary");
-  header.className = "feed-tile-tool-header";
 
   const name = document.createElement("span");
   name.className = "feed-tile-tool-name";
   name.textContent = info.name || "Tool";
   header.appendChild(name);
 
-  const target = toolTargetLabel(info.name, info.input);
-  if (target) {
+  if (typeof info.target === "string" && info.target) {
     const tgt = document.createElement("span");
     tgt.className = "feed-tile-tool-target";
-    tgt.textContent = target;
+    tgt.textContent = info.target;
     header.appendChild(tgt);
   }
 
   const stateLabel = document.createElement("span");
   stateLabel.className = "feed-tile-tool-state";
-  stateLabel.textContent = state === "running" ? "running" : state === "ok" ? "ok" : "error";
+  stateLabel.textContent = state;
   header.appendChild(stateLabel);
 
   header.appendChild(makeTimeSpan(ts));

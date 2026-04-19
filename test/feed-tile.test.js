@@ -708,7 +708,7 @@ describe("feedRenderer", () => {
             toolUseId: "toolu_R1",
             state: "running",
             name: "Bash",
-            input: { command: "ls -la" },
+            target: "ls -la",
             ts: 1_700_000_000_000,
           }),
           timestamp: 1_700_000_000_000,
@@ -748,7 +748,7 @@ describe("feedRenderer", () => {
 
       send({
         status: "tool", toolUseId: "toolu_OK", state: "running",
-        name: "Read", input: { file_path: "/src/auth.js" },
+        name: "Read", target: "auth.js",
         ts: 1_700_000_000_000,
       });
       send({
@@ -790,7 +790,7 @@ describe("feedRenderer", () => {
 
       send({
         status: "tool", toolUseId: "toolu_ERR", state: "running",
-        name: "Bash", input: { command: "false" },
+        name: "Bash", target: "false",
         ts: 1_700_000_000_000,
       });
       send({
@@ -828,7 +828,7 @@ describe("feedRenderer", () => {
 
       send({
         status: "tool", toolUseId: "toolu_KEEP", state: "running",
-        name: "Bash", input: { command: "ls" }, ts: 1_700_000_000_000,
+        name: "Bash", target: "ls", ts: 1_700_000_000_000,
       });
       send({
         status: "tool", toolUseId: "toolu_KEEP", state: "ok",
@@ -837,7 +837,7 @@ describe("feedRenderer", () => {
       // Late running republish — must not clobber the ok state.
       send({
         status: "tool", toolUseId: "toolu_KEEP", state: "running",
-        name: "Bash", input: { command: "ls" }, ts: 1_700_000_000_000,
+        name: "Bash", target: "ls", ts: 1_700_000_000_000,
       });
 
       const row = el.children[0].children[1].children[0];

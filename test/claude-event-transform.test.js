@@ -336,7 +336,12 @@ describe("readTranscriptEntries", () => {
     assert.equal(entries[0].role, "assistant");
     assert.equal(entries[0].text, "Looking at the auth module.");
     assert.deepEqual(entries[0].tools, [
-      { id: "toolu_01ABC", name: "Read", input: { file_path: "/src/auth.js", offset: 42 } },
+      {
+        id: "toolu_01ABC",
+        name: "Read",
+        input: { file_path: "/src/auth.js", offset: 42 },
+        target: "auth.js",
+      },
     ]);
   });
 
@@ -404,6 +409,57 @@ describe("readTranscriptEntries", () => {
     assert.ok(entries[0].text.length <= 500, "narrator text is capped");
     assert.equal(entries[0].results[0].text.length, 2000, "per-result text is full");
     assert.equal(entries[0].results[0].isError, false);
+  });
+
+  it("caps per-block tool_result text at 64KB to bound SSE payload size", () => {
+    // A single pathological tool output (multi-MB bash stdout, binary
+    // dump mistakenly piped to stdout) would otherwise be JSON-encoded
+    // into every SSE envelope and fanned out to every subscriber. Cap
+    // per-block so the feed card shows enough to identify what happened
+    // without broadcasting the whole thing.
+    const huge = "y".repeat(200 * 1024);
+    const path = writeTranscript("huge.jsonl", [
+      {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "toolu_01Y", content: huge }],
+        },
+      },
+    ]);
+    const { entries } = readTranscriptEntries(path);
+    assert.equal(entries.length, 1);
+    const cap = 64 * 1024;
+    assert.ok(entries[0].results[0].text.length <= cap, `capped, got ${entries[0].results[0].text.length}`);
+    // Truncation marker is the ellipsis inserted by `truncate()`.
+    assert.ok(entries[0].results[0].text.endsWith("\u2026"), "ends with ellipsis");
+  });
+
+  it("attaches a pre-computed target label to each tool_use in the normalized entry", () => {
+    // The feed-tile renderer used to re-derive this label client-side
+    // from tool.input, which meant every new tool shape needed a
+    // frontend change. Emit it from the transform so the UI stays
+    // ignorant of Claude's input schemas.
+    const path = writeTranscript("targets.jsonl", [
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "tool_use", id: "toolu_B", name: "Bash", input: { command: "ls -la /tmp" } },
+            { type: "tool_use", id: "toolu_G", name: "Grep", input: { pattern: "TODO" } },
+            { type: "tool_use", id: "toolu_W", name: "Write", input: { file_path: "/a/b/c.js" } },
+            { type: "tool_use", id: "toolu_X", name: "Unknown", input: { foo: "bar" } },
+          ],
+        },
+      },
+    ]);
+    const { entries } = readTranscriptEntries(path);
+    const tools = entries[0].tools;
+    assert.equal(tools.find((t) => t.id === "toolu_B").target, "ls -la /tmp");
+    assert.equal(tools.find((t) => t.id === "toolu_G").target, "TODO");
+    assert.equal(tools.find((t) => t.id === "toolu_W").target, "c.js");
+    assert.equal(tools.find((t) => t.id === "toolu_X").target, "");
   });
 
   it("normalizes a user string-content entry", () => {
