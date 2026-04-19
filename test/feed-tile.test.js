@@ -688,6 +688,164 @@ describe("feedRenderer", () => {
       assert.equal(list.children[0].children[0].textContent, "second");
     });
 
+    it("renders a running tool card with state class and tool name", () => {
+      // A tool_use event stamps a "running" card so the user sees the
+      // in-progress state before the result arrives. The state class
+      // drives the animated left border in CSS.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify({
+            status: "tool",
+            toolUseId: "toolu_R1",
+            state: "running",
+            name: "Bash",
+            target: "ls -la",
+            ts: 1_700_000_000_000,
+          }),
+          timestamp: 1_700_000_000_000,
+        }),
+      });
+
+      const list = el.children[0].children[1];
+      assert.equal(list.children.length, 1);
+      const row = list.children[0];
+      assert.ok(row.className.includes("feed-status-tool"), row.className);
+      assert.ok(row.className.includes("feed-tile-tool--running"), row.className);
+      // row → <details> → [<summary>, <body>]
+      const details = row.children[0];
+      const header = details.children[0];
+      // header → [name, target, state, time]
+      assert.equal(header.children[0].textContent, "Bash");
+      assert.equal(header.children[1].textContent, "ls -la");
+      assert.equal(header.children[2].textContent, "running");
+    });
+
+    it("flips running → ok when a matching tool_result lands", () => {
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      const send = (body) => eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify(body),
+          timestamp: 1_700_000_000_000,
+        }),
+      });
+
+      send({
+        status: "tool", toolUseId: "toolu_OK", state: "running",
+        name: "Read", target: "auth.js",
+        ts: 1_700_000_000_000,
+      });
+      send({
+        status: "tool", toolUseId: "toolu_OK", state: "ok",
+        output: "file contents here",
+        ts: 1_700_000_000_001,
+      });
+
+      const list = el.children[0].children[1];
+      assert.equal(list.children.length, 1, "same toolUseId updates in place");
+      const row = list.children[0];
+      assert.ok(row.className.includes("feed-tile-tool--ok"), row.className);
+      const header = row.children[0].children[0];
+      // Name/target from the running event must survive merge with the
+      // ok-only payload (which only carries output + state).
+      assert.equal(header.children[0].textContent, "Read");
+      assert.equal(header.children[1].textContent, "auth.js");
+      assert.equal(header.children[2].textContent, "ok");
+      const body = row.children[0].children[1];
+      assert.equal(body.children[0].textContent, "file contents here");
+    });
+
+    it("flips running → error on is_error result", () => {
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      const send = (body) => eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify(body),
+          timestamp: 1_700_000_000_000,
+        }),
+      });
+
+      send({
+        status: "tool", toolUseId: "toolu_ERR", state: "running",
+        name: "Bash", target: "false",
+        ts: 1_700_000_000_000,
+      });
+      send({
+        status: "tool", toolUseId: "toolu_ERR", state: "error",
+        output: "exit 1",
+        ts: 1_700_000_000_001,
+      });
+
+      const row = el.children[0].children[1].children[0];
+      assert.ok(row.className.includes("feed-tile-tool--error"), row.className);
+      assert.equal(row.children[0].children[0].children[2].textContent, "error");
+    });
+
+    it("does not regress a terminal card back to running on a late republish", () => {
+      // Replay order: during a catch-up, the processor can republish
+      // events out of order (running → ok, then on the NEXT cycle
+      // running again when the slice boundary spans the same turn).
+      // The ok state must stick — otherwise a completed card briefly
+      // animates like it's still running after the result came in.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      const send = (body) => eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify(body),
+          timestamp: 1_700_000_000_000,
+        }),
+      });
+
+      send({
+        status: "tool", toolUseId: "toolu_KEEP", state: "running",
+        name: "Bash", target: "ls", ts: 1_700_000_000_000,
+      });
+      send({
+        status: "tool", toolUseId: "toolu_KEEP", state: "ok",
+        output: "a\nb", ts: 1_700_000_000_001,
+      });
+      // Late running republish — must not clobber the ok state.
+      send({
+        status: "tool", toolUseId: "toolu_KEEP", state: "running",
+        name: "Bash", target: "ls", ts: 1_700_000_000_000,
+      });
+
+      const row = el.children[0].children[1].children[0];
+      assert.ok(row.className.includes("feed-tile-tool--ok"), row.className);
+      const body = row.children[0].children[1];
+      assert.equal(body.children[0].textContent, "a\nb");
+    });
+
     it("silently drops legacy narrative / completion / summary / reply-title events", () => {
       // Old topic logs (from the pre-flatten narrator) still contain
       // these event types. New renderers ignore them rather than

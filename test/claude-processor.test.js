@@ -88,6 +88,17 @@ function fakeAssistantToolOnly(tools) {
   };
 }
 
+function fakeToolResultLine(toolUseId, content, { isError = false } = {}) {
+  return {
+    type: "user",
+    message: {
+      content: [
+        { type: "tool_result", tool_use_id: toolUseId, content, is_error: isError },
+      ],
+    },
+  };
+}
+
 async function waitFor(predicate, { timeoutMs = 2000, intervalMs = 10 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -479,6 +490,145 @@ describe("createClaudeProcessor", () => {
     assert.ok(paths.includes("/a.js"));
     const authFile = reply.files.find((f) => f.path === "/src/auth.js");
     assert.equal(authFile.line, 1);
+
+    processor.destroy();
+  });
+
+  it("publishes a running tool event for each tool_use block with an id", async () => {
+    // Tool cards in the feed need a "running" stamp the moment a
+    // tool_use lands so the user sees the in-progress state before
+    // the result arrives. Blocks without an id are ignored (legacy
+    // transcripts, malformed entries) since the frontend keys cards
+    // on toolUseId and can't correlate a result without one.
+    writeTranscript(transcriptPath, [
+      fakeAssistantToolOnly([
+        { id: "toolu_RUN_1", name: "Bash", input: { command: "ls -la" } },
+        { id: "toolu_RUN_2", name: "Read", input: { file_path: "/src/auth.js" } },
+        { name: "NoId", input: {} },
+      ]),
+    ]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist, topicBroker: broker, pollIntervalMs: 50,
+    });
+
+    await processor.acquire(UUID);
+    await waitFor(() =>
+      broker.published.filter((p) => JSON.parse(p.message).status === "tool").length >= 2,
+    );
+
+    const toolEvents = broker.published
+      .map((p) => JSON.parse(p.message))
+      .filter((m) => m.status === "tool");
+    assert.equal(toolEvents.length, 2, "ignores tool_use blocks with no id");
+    assert.deepEqual(
+      toolEvents.map((e) => ({ id: e.toolUseId, state: e.state, name: e.name, target: e.target })),
+      [
+        { id: "toolu_RUN_1", state: "running", name: "Bash", target: "ls -la" },
+        { id: "toolu_RUN_2", state: "running", name: "Read", target: "auth.js" },
+      ],
+    );
+    // Raw input is no longer broadcast — the pre-computed `target` is
+    // what the feed card renders, so subscribers don't need the full
+    // tool input blob.
+    assert.ok(!("input" in toolEvents[0]), "raw tool input is not on the wire");
+
+    processor.destroy();
+  });
+
+  it("flips running→ok on matching tool_result (is_error false)", async () => {
+    writeTranscript(transcriptPath, [
+      fakeAssistantToolOnly([{ id: "toolu_OK_1", name: "Bash", input: { command: "echo hi" } }]),
+      fakeToolResultLine("toolu_OK_1", "hi\n"),
+    ]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist, topicBroker: broker, pollIntervalMs: 50,
+    });
+
+    await processor.acquire(UUID);
+    await waitFor(() =>
+      broker.published.filter((p) => JSON.parse(p.message).status === "tool").length >= 2,
+    );
+
+    const toolEvents = broker.published
+      .map((p) => JSON.parse(p.message))
+      .filter((m) => m.status === "tool");
+    assert.equal(toolEvents.length, 2);
+    assert.deepEqual(
+      toolEvents.map((e) => ({ id: e.toolUseId, state: e.state })),
+      [
+        { id: "toolu_OK_1", state: "running" },
+        { id: "toolu_OK_1", state: "ok" },
+      ],
+    );
+    assert.equal(toolEvents[1].output, "hi\n");
+
+    processor.destroy();
+  });
+
+  it("flips running→error on matching tool_result (is_error true)", async () => {
+    writeTranscript(transcriptPath, [
+      fakeAssistantToolOnly([{ id: "toolu_ERR_1", name: "Bash", input: { command: "false" } }]),
+      fakeToolResultLine("toolu_ERR_1", "command failed", { isError: true }),
+    ]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist, topicBroker: broker, pollIntervalMs: 50,
+    });
+
+    await processor.acquire(UUID);
+    await waitFor(() =>
+      broker.published.filter((p) => JSON.parse(p.message).status === "tool" && JSON.parse(p.message).state === "error").length >= 1,
+    );
+
+    const errorEvent = broker.published
+      .map((p) => JSON.parse(p.message))
+      .find((m) => m.status === "tool" && m.state === "error");
+    assert.equal(errorEvent.toolUseId, "toolu_ERR_1");
+    assert.equal(errorEvent.output, "command failed");
+
+    processor.destroy();
+  });
+
+  it("emits tool events straddling a slice boundary in order", async () => {
+    // Backlog catch-up reads in sliceLimit-sized chunks. A tool_use
+    // landing in chunk N with its tool_result in chunk N+1 must still
+    // surface as running then ok/error — the accumulator lives on the
+    // worker across cycles, so the correlation holds.
+    writeTranscript(transcriptPath, [
+      fakeAssistantToolOnly([{ id: "toolu_SPLIT", name: "Bash", input: { command: "date" } }]),
+      fakeToolResultLine("toolu_SPLIT", "today"),
+    ]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist, topicBroker: broker, pollIntervalMs: 500, sliceLimit: 1,
+    });
+
+    await processor.acquire(UUID);
+    await waitFor(async () => {
+      const entry = await watchlist.get(UUID);
+      return entry.lastProcessedLine === 2;
+    });
+
+    const toolEvents = broker.published
+      .map((p) => JSON.parse(p.message))
+      .filter((m) => m.status === "tool");
+    assert.deepEqual(
+      toolEvents.map((e) => ({ id: e.toolUseId, state: e.state })),
+      [
+        { id: "toolu_SPLIT", state: "running" },
+        { id: "toolu_SPLIT", state: "ok" },
+      ],
+    );
 
     processor.destroy();
   });
