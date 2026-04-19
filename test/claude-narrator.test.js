@@ -4,10 +4,10 @@ import assert from "node:assert/strict";
 import {
   extractFilesFromEntry,
   summarizeSession,
-  parseSummaryResponse,
+  parseShortLongResponse,
 } from "../lib/claude-narrator.js";
 
-describe("parseSummaryResponse", () => {
+describe("parseShortLongResponse", () => {
   it("splits SHORT and LONG sections", () => {
     const raw = `SHORT:
 We're reworking the Claude feed to pin a running summary.
@@ -16,7 +16,7 @@ LONG:
 The feed tile now gets a session summary that updates as the conversation
 continues, with the short form at the top and a longer form for the tab
 tooltip.`;
-    const out = parseSummaryResponse(raw);
+    const out = parseShortLongResponse(raw);
     assert.equal(out.short, "We're reworking the Claude feed to pin a running summary.");
     assert.ok(out.long.startsWith("The feed tile now gets"));
   });
@@ -26,21 +26,21 @@ tooltip.`;
 
 LONG:
 The session is pinned on fixing a regression in session token rotation.`;
-    const out = parseSummaryResponse(raw);
+    const out = parseShortLongResponse(raw);
     assert.equal(out.short, "We're debugging the auth flow.");
     assert.ok(out.long.startsWith("The session is pinned"));
   });
 
   it("falls back to whole-body as both short and long when the divider is missing", () => {
     const raw = "We're just chatting.";
-    const out = parseSummaryResponse(raw);
+    const out = parseShortLongResponse(raw);
     assert.equal(out.short, "We're just chatting.");
     assert.equal(out.long, "We're just chatting.");
   });
 
   it("returns null for empty input", () => {
-    assert.strictEqual(parseSummaryResponse(""), null);
-    assert.strictEqual(parseSummaryResponse("   "), null);
+    assert.strictEqual(parseShortLongResponse(""), null);
+    assert.strictEqual(parseShortLongResponse("   "), null);
   });
 });
 
