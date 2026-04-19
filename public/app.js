@@ -46,6 +46,7 @@
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
     import { createClusterTileFactory } from "/lib/tiles/cluster-tile.js";
     import { createFileBrowserTileFactory } from "/lib/tiles/file-browser-tile.js";
+    import { isImagePath } from "/lib/tiles/image-tile.js";
     import { dispatchNotification } from "/lib/notify.js";
     import { createUiStore, loadFromStorage, EMPTY_STATE } from "/lib/ui-store.js";
     import { buildBootState } from "/lib/boot-state.js";
@@ -161,25 +162,45 @@
     // Resolve a (possibly relative) file path against the active session's
     // cwd and open it in a document tile. Shared by the terminal's
     // file-link click handler and the feed tile's reply-file chips.
-    async function openFileInDocTile(filePath, line) {
+    //
+    // Resolution precedence: `meta.claude.cwd` (Claude's process cwd,
+    // authoritative when Claude is running — doesn't drift with shell
+    // cd's) → `meta.pane.cwd` (tmux pane_current_path, authoritative
+    // when the pane is idle) → fall through with the raw relative path.
+    // See docs/file-link-worktree-resolution.md for why the former
+    // round-trip to GET /sessions/cwd was replaced by cached meta.
+    function resolveSessionCwd(sessionName) {
+      if (!sessionName) return null;
+      const { sessions } = sessionStore.getState();
+      const session = (sessions || []).find(s => s.name === sessionName);
+      if (!session) return null;
+      const claudeCwd = session.meta?.claude?.cwd;
+      if (typeof claudeCwd === "string" && claudeCwd.startsWith("/")) return claudeCwd;
+      const paneCwd = session.meta?.pane?.cwd;
+      if (typeof paneCwd === "string" && paneCwd.startsWith("/")) return paneCwd;
+      return null;
+    }
+
+    function openFileInDocTile(filePath, line) {
       if (!_uiStore || typeof filePath !== "string" || !filePath) return;
       // Defense-in-depth: reject paths with traversal segments
       if (filePath.split("/").some(seg => seg === "..")) return;
       let resolved = filePath;
       if (!filePath.startsWith("/")) {
-        const sessionName = getActiveSessionName();
-        if (sessionName) {
-          try {
-            const data = await api.get(`/sessions/cwd/${encodeURIComponent(sessionName)}`);
-            if (data.cwd && data.cwd.startsWith("/")) resolved = data.cwd + "/" + filePath;
-          } catch { /* fall through with relative path */ }
-        }
+        const cwd = resolveSessionCwd(getActiveSessionName());
+        if (cwd) resolved = cwd + "/" + filePath;
       }
+      // Route by extension: images go to the image tile (with zoom/pan),
+      // everything else to the document tile. Both are reached via the
+      // same katulong:open-file event so feed thumbnails, reply chips,
+      // and terminal file links all funnel through one codepath.
+      const isImg = isImagePath(resolved);
       const props = { filePath: resolved };
-      if (typeof line === "number" && line > 0) props.line = line;
-      const docId = `doc-${Date.now().toString(36)}`;
+      if (!isImg && typeof line === "number" && line > 0) props.line = line;
+      const type = isImg ? "image" : "document";
+      const id = `${isImg ? "img" : "doc"}-${Date.now().toString(36)}`;
       _uiStore.addTile(
-        { id: docId, type: "document", props },
+        { id, type, props },
         { focus: true, insertAt: "afterFocus" },
       );
     }
@@ -1929,15 +1950,9 @@
      *  browser tiles that can sit side-by-side in the carousel. The
      *  previous "focus existing" shortcut was removed because it
      *  conflicts with the multi-instance file-browser UX. */
-    async function openFileBrowserTile() {
+    function openFileBrowserTile() {
       const sessionName = getActiveSessionName();
-      let cwd = "";
-      if (sessionName) {
-        try {
-          const data = await api.get(`/sessions/cwd/${encodeURIComponent(sessionName)}`);
-          if (data.cwd) cwd = data.cwd;
-        } catch {}
-      }
+      const cwd = resolveSessionCwd(sessionName) || "";
       const tileId = `file-browser-${Date.now().toString(36)}`;
       // Single dispatch — tile-host mounts via renderer, <tile-tab-bar>
       // picks up the new tile via its ui-store subscription. No manual
@@ -2005,13 +2020,7 @@
         return;
       }
 
-      let cwd;
-      try {
-        const data = await api.get(`/sessions/cwd/${encodeURIComponent(sessionName)}`);
-        cwd = data?.cwd;
-      } catch {
-        cwd = null;
-      }
+      const cwd = resolveSessionCwd(sessionName);
       if (!cwd) {
         showToast("Couldn't resolve the terminal's working directory", true);
         openFeedTile();

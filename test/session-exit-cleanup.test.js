@@ -90,7 +90,6 @@ mock.module(tmuxModuleUrl, {
     applyTmuxSessionOptions: async () => {},
     captureVisiblePane: async () => "$ prompt\n",
     getCursorPosition: async () => ({ row: 1, col: 10 }),
-    getPaneCwd: async () => "/tmp",
     checkTmux: async () => {},
     cleanTmuxServerEnv: async () => {},
     setTmuxKatulongEnv: async () => {},

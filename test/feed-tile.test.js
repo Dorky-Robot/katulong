@@ -49,6 +49,29 @@ class FakeElement {
     child.parentNode = this;
     return child;
   }
+  querySelectorAll(sel) {
+    // Recursive class- or tag-based search — dumb but enough for the
+    // post-render enrichment passes, which only call this for "code".
+    const pred = sel.startsWith(".")
+      ? (c) => c.className?.includes?.(sel.slice(1))
+      : (c) => c.tagName === sel.toUpperCase();
+    const out = [];
+    const walk = (node) => {
+      for (const c of node.children || []) {
+        if (pred(c)) out.push(c);
+        walk(c);
+      }
+    };
+    walk(this);
+    return out;
+  }
+  closest() { return null; }
+  replaceWith() {
+    if (!this.parentNode) return;
+    const idx = this.parentNode.children.indexOf(this);
+    if (idx >= 0) this.parentNode.children.splice(idx, 1);
+    this.parentNode = null;
+  }
   querySelector(sel) {
     // Simple class- or tag-based search
     const pred = sel.startsWith(".")
@@ -72,9 +95,24 @@ class FakeElement {
   }
 }
 
-// Stub global document for feed.js
+// Stub global document for feed.js. createTreeWalker and
+// createDocumentFragment give the post-render enrichment passes
+// enough of an API to no-op quietly: the text-node walker never
+// advances because FakeElement doesn't track text nodes, and the
+// code-linkifier's querySelectorAll returns [] since renderMarkdown's
+// Node fallback writes textContent (no <code> children are built).
 globalThis.document = {
   createElement(tag) { return new FakeElement(tag); },
+  createTextNode(text) { return { nodeType: 3, nodeValue: text, replaceWith() {} }; },
+  createDocumentFragment() {
+    return { appendChild() {} };
+  },
+  createTreeWalker() {
+    return { currentNode: null, nextNode() { return null; } };
+  },
+};
+globalThis.NodeFilter = {
+  SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_SKIP: 3, FILTER_REJECT: 2,
 };
 
 // Stub global EventSource — track what URLs are opened
@@ -120,7 +158,7 @@ globalThis.CustomEvent = class CustomEvent {
   }
 };
 
-const { feedRenderer, parseReplyOptions, buildReplyTokens } = await import(
+const { feedRenderer, parseReplyOptions, buildReplyTokens, looksLikeFilePath, parsePathAndLine } = await import(
   new URL("../public/lib/tile-renderers/feed.js", import.meta.url).href
 );
 
@@ -221,6 +259,81 @@ describe("buildReplyTokens", () => {
       buildReplyTokens("[Image #1]", paths),
       [{ type: "image", path: "/a.png" }],
     );
+  });
+});
+
+describe("looksLikeFilePath", () => {
+  it("accepts home-rooted paths", () => {
+    assert.equal(looksLikeFilePath("~/Projects/dorky_robot"), true);
+    assert.equal(looksLikeFilePath("~/.claude/worktrees/file-link-cwd"), true);
+  });
+
+  it("accepts absolute paths with at least one additional segment", () => {
+    assert.equal(looksLikeFilePath("/Users/felixflores/Projects"), true);
+    assert.equal(looksLikeFilePath("/var/log/app.log"), true);
+    // single-segment absolute path is suspicious (bare "/" or "/tmp" alone)
+    assert.equal(looksLikeFilePath("/"), false);
+    assert.equal(looksLikeFilePath("/tmp"), false);
+  });
+
+  it("accepts filename:line references with known extensions", () => {
+    assert.equal(looksLikeFilePath("app-routes.js:99"), true);
+    assert.equal(looksLikeFilePath("vision.md"), true);
+    assert.equal(looksLikeFilePath("feed.js"), true);
+  });
+
+  it("accepts relative paths with a filename extension", () => {
+    assert.equal(looksLikeFilePath("docs/file-link-worktree-resolution.md"), true);
+    assert.equal(looksLikeFilePath("lib/session-child-counter.js:68"), true);
+    assert.equal(looksLikeFilePath("public/app.js"), true);
+  });
+
+  it("rejects dotted identifiers that just look like paths", () => {
+    // `session.meta.claude` is a property path in our own code —
+    // `claude` isn't in the known-ext whitelist and there's no slash,
+    // so we don't linkify it. This is the regression case: if we
+    // accept `foo.claude` we'd linkify dozens of false positives in
+    // every reply that talks about meta namespaces.
+    assert.equal(looksLikeFilePath("session.meta.claude"), false);
+    assert.equal(looksLikeFilePath("foo.bar.baz"), false);
+    assert.equal(looksLikeFilePath("e.g"), false);
+  });
+
+  it("rejects URLs, CSS selectors, dotfiles with no dir, and prose", () => {
+    assert.equal(looksLikeFilePath("https://example.com/foo"), false);
+    assert.equal(looksLikeFilePath(".feed-tile-reply-file"), false);
+    assert.equal(looksLikeFilePath(".env"), false);
+    assert.equal(looksLikeFilePath("hello world"), false);
+    assert.equal(looksLikeFilePath("click here"), false);
+    assert.equal(looksLikeFilePath(""), false);
+    assert.equal(looksLikeFilePath(null), false);
+    assert.equal(looksLikeFilePath(undefined), false);
+  });
+
+  it("rejects strings with angle brackets, quotes, or backticks", () => {
+    assert.equal(looksLikeFilePath("<div>"), false);
+    assert.equal(looksLikeFilePath("\"quoted.js\""), false);
+    assert.equal(looksLikeFilePath("`code`"), false);
+  });
+});
+
+describe("parsePathAndLine", () => {
+  it("splits off a trailing :line marker", () => {
+    assert.deepEqual(parsePathAndLine("app-routes.js:99"), {
+      path: "app-routes.js", line: 99,
+    });
+    assert.deepEqual(parsePathAndLine("/abs/path/file.js:12"), {
+      path: "/abs/path/file.js", line: 12,
+    });
+  });
+
+  it("returns line=null when no :N suffix", () => {
+    assert.deepEqual(parsePathAndLine("~/Projects/dorky_robot"), {
+      path: "~/Projects/dorky_robot", line: null,
+    });
+    assert.deepEqual(parsePathAndLine("vision.md"), {
+      path: "vision.md", line: null,
+    });
   });
 });
 

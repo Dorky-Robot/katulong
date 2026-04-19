@@ -216,16 +216,21 @@ describe("reconcileClaudeEnrichment", () => {
     const discover = async () => FOUND;
     const wrote = await reconcileClaudeEnrichment(session, "claude", 1000, { discover });
     assert.equal(wrote, true);
-    assert.deepEqual(session.meta.claude, { uuid: FOUND.uuid, startedAt: FOUND.startedAt });
+    assert.deepEqual(session.meta.claude, {
+      uuid: FOUND.uuid,
+      cwd: FOUND.cwd,
+      startedAt: FOUND.startedAt,
+    });
   });
 
-  it("probes every tick but no-ops when uuid matches", async () => {
+  it("probes every tick but no-ops when uuid+cwd both match", async () => {
     // Steady-state: discovery runs every tick to self-heal a stale
     // persisted uuid, but setMeta is only called when the value
-    // actually differs. A single probe per tick is the intended cost.
+    // actually differs. Dedup is on the full (uuid, cwd) tuple so a
+    // `claude --resume` into a different worktree still refreshes.
     const session = makeSession({
       agent: { kind: "claude", running: true, detectedAt: 1 },
-      claude: { uuid: FOUND.uuid, startedAt: FOUND.startedAt },
+      claude: { uuid: FOUND.uuid, cwd: FOUND.cwd, startedAt: FOUND.startedAt },
     });
     let probed = 0;
     let written = 0;
@@ -236,6 +241,60 @@ describe("reconcileClaudeEnrichment", () => {
     assert.equal(wrote, false);
     assert.equal(probed, 1);
     assert.equal(written, 0);
+  });
+
+  it("refreshes cwd when uuid matches but cwd differs (resume into new worktree)", async () => {
+    // `claude --resume <uuid>` keeps the uuid but can land in a
+    // different directory. File-link resolution must follow the new cwd
+    // or the user's click resolves against the prior worktree.
+    const session = makeSession({
+      agent: { kind: "claude", running: true, detectedAt: 1 },
+      claude: { uuid: FOUND.uuid, cwd: "/old/path", startedAt: FOUND.startedAt },
+    });
+    const discover = async () => FOUND;
+    const wrote = await reconcileClaudeEnrichment(session, "claude", 1000, { discover });
+    assert.equal(wrote, true);
+    assert.equal(session.meta.claude.cwd, FOUND.cwd);
+  });
+
+  it("preserves transcriptPath across monitor writes when uuid is unchanged", async () => {
+    // The hook ingest path owns transcriptPath but the monitor also
+    // writes meta.claude (full-replace semantics). Preserve the
+    // cross-writer field so a monitor tick doesn't wipe out the
+    // transcript pointer the feed tile reads.
+    const session = makeSession({
+      claude: {
+        uuid: FOUND.uuid,
+        cwd: "/old/path",
+        startedAt: FOUND.startedAt,
+        transcriptPath: `/Users/x/.claude/projects/proj/${FOUND.uuid}.jsonl`,
+      },
+    });
+    const discover = async () => FOUND;
+    await reconcileClaudeEnrichment(session, "claude", 1000, { discover });
+    assert.equal(
+      session.meta.claude.transcriptPath,
+      `/Users/x/.claude/projects/proj/${FOUND.uuid}.jsonl`,
+    );
+    assert.equal(session.meta.claude.cwd, FOUND.cwd);
+  });
+
+  it("drops stale transcriptPath when uuid changes (new session)", async () => {
+    // A transcriptPath scoped to the old uuid would resolve to the
+    // wrong file if carried across a new-session boundary. Only
+    // preserve when the uuid stays the same.
+    const session = makeSession({
+      claude: {
+        uuid: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        cwd: "/old",
+        startedAt: 1,
+        transcriptPath: "/Users/x/.claude/projects/old/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl",
+      },
+    });
+    const discover = async () => FOUND;
+    await reconcileClaudeEnrichment(session, "claude", 1000, { discover });
+    assert.equal(session.meta.claude.uuid, FOUND.uuid);
+    assert.equal(session.meta.claude.transcriptPath, undefined);
   });
 
   it("refreshes a stale uuid without a presence transition (server-restart self-heal)", async () => {

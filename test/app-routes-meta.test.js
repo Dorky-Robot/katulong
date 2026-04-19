@@ -371,6 +371,46 @@ describe("applyClaudeMetaFromHook", () => {
     assert.equal(session.meta.claude.transcriptPath, undefined);
   });
 
+  it("preserves meta.claude.cwd across hook writes when uuid is unchanged", () => {
+    // The pane monitor stamps meta.claude.cwd from ~/.claude/sessions/
+    // <pid>.json. When a hook event fires with the same uuid, the
+    // hook writer must not wipe out cwd — file-link resolution on the
+    // client depends on it surviving every tool-use tick.
+    const { session } = makeSession();
+    session.meta.claude = {
+      uuid: UUID_A,
+      cwd: "/Users/x/worktree",
+      startedAt: 100,
+    };
+    const verdict = applyClaudeMetaFromHook({
+      hook_event_name: "SessionStart",
+      session_id: UUID_A,
+      _tmuxPane: "%3",
+    }, makeManager(session));
+    assert.equal(verdict, "set");
+    assert.equal(session.meta.claude.cwd, "/Users/x/worktree");
+  });
+
+  it("drops pre-existing cwd when SessionStart brings a new uuid", () => {
+    // A new session id means the prior cwd belongs to the old Claude
+    // process — carrying it over would misresolve file links in the
+    // new session's directory.
+    const { session } = makeSession();
+    session.meta.claude = {
+      uuid: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      cwd: "/Users/x/old",
+      startedAt: 100,
+    };
+    const verdict = applyClaudeMetaFromHook({
+      hook_event_name: "SessionStart",
+      session_id: UUID_A,
+      _tmuxPane: "%3",
+    }, makeManager(session));
+    assert.equal(verdict, "set");
+    assert.equal(session.meta.claude.uuid, UUID_A);
+    assert.equal(session.meta.claude.cwd, undefined);
+  });
+
   it("SessionEnd is a no-op — preserves meta.claude enrichment", () => {
     // SessionEnd no longer clears anything. meta.claude only carries the
     // transcript pointer (uuid + startedAt); "is Claude live?" now lives

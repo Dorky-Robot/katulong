@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  isClaudeCommand, reconcileAgentPresence,
+  isClaudeCommand, reconcileAgentPresence, reconcilePaneCwd,
 } from "../lib/session-child-counter.js";
 import { detectAgent } from "../lib/agent-presence.js";
 
@@ -142,5 +142,63 @@ describe("reconcileAgentPresence", () => {
     const changed = reconcileAgentPresence(session, "bash");
     assert.equal(changed, false);
     assert.equal(session.meta.agent, undefined);
+  });
+});
+
+describe("reconcilePaneCwd", () => {
+  function makeSession(initialMeta = {}) {
+    return {
+      name: "work",
+      meta: initialMeta,
+      setMeta(ns, val) {
+        if (val == null) delete this.meta[ns];
+        else this.meta[ns] = val;
+      },
+    };
+  }
+
+  it("writes meta.pane.cwd on first observation", () => {
+    const session = makeSession();
+    const changed = reconcilePaneCwd(session, "/Users/x/proj");
+    assert.equal(changed, true);
+    assert.deepEqual(session.meta.pane, { cwd: "/Users/x/proj" });
+  });
+
+  it("no-ops when cwd is unchanged", () => {
+    const session = makeSession({ pane: { cwd: "/Users/x/proj" } });
+    let written = 0;
+    const origSetMeta = session.setMeta.bind(session);
+    session.setMeta = (ns, val) => { written += 1; return origSetMeta(ns, val); };
+    const changed = reconcilePaneCwd(session, "/Users/x/proj");
+    assert.equal(changed, false);
+    assert.equal(written, 0);
+  });
+
+  it("updates meta.pane.cwd when cwd moves (user cd's)", () => {
+    const session = makeSession({ pane: { cwd: "/Users/x/proj" } });
+    const changed = reconcilePaneCwd(session, "/Users/x/proj/worktree");
+    assert.equal(changed, true);
+    assert.equal(session.meta.pane.cwd, "/Users/x/proj/worktree");
+  });
+
+  it("ignores null / empty paneCwd so tmux hiccups don't wipe the last-known value", () => {
+    const session = makeSession({ pane: { cwd: "/Users/x/proj" } });
+    assert.equal(reconcilePaneCwd(session, null), false);
+    assert.equal(reconcilePaneCwd(session, ""), false);
+    assert.equal(reconcilePaneCwd(session, undefined), false);
+    assert.equal(session.meta.pane.cwd, "/Users/x/proj");
+  });
+
+  it("does not touch meta.claude (cross-namespace isolation)", () => {
+    const session = makeSession({
+      claude: { uuid: "11111111-2222-3333-4444-555555555555", cwd: "/claude/dir", startedAt: 1 },
+    });
+    reconcilePaneCwd(session, "/shell/dir");
+    assert.deepEqual(session.meta.claude, {
+      uuid: "11111111-2222-3333-4444-555555555555",
+      cwd: "/claude/dir",
+      startedAt: 1,
+    });
+    assert.equal(session.meta.pane.cwd, "/shell/dir");
   });
 });
