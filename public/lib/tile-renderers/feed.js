@@ -308,6 +308,151 @@ function createResponseBar(claudeUuid) {
   return { el, setOptions };
 }
 
+// Extensions we recognize as files when we see them in prose without
+// a surrounding slash — e.g., "app-routes.js:99" with no directory is
+// still clearly a source file. Keeping this list conservative stops
+// us from linkifying dotted identifiers like `session.meta.claude`
+// just because they happen to end with a few letters. Extend as new
+// file kinds come up in Claude's output.
+const KNOWN_PATH_EXTS = new Set([
+  "js", "mjs", "cjs", "ts", "tsx", "jsx", "json", "md", "mdx",
+  "html", "htm", "css", "scss", "less",
+  "yaml", "yml", "toml", "ini", "conf", "env",
+  "sh", "zsh", "bash", "fish",
+  "py", "rb", "go", "rs", "java", "kt", "swift",
+  "c", "h", "cpp", "hpp", "cc", "cxx",
+  "php", "lua", "sql", "txt", "log", "xml", "svg",
+  "vue", "svelte", "sol", "proto",
+]);
+
+/**
+ * Decide whether an inline `<code>` text looks like a file path we
+ * should make clickable. Accepts:
+ *   - ~/path/... or /abs/path with at least one slash
+ *   - path/with/slashes + .ext
+ *   - filename.ext with a known extension (file.js, app-routes.js:99)
+ * Rejects anything with whitespace, URL schemes, angle brackets, or
+ * a leading dot (CSS class selectors, dotfiles without a directory).
+ */
+export function looksLikeFilePath(raw) {
+  if (typeof raw !== "string") return false;
+  const text = raw.trim();
+  if (!text || /\s/.test(text)) return false;
+  if (text.includes("://") || text.startsWith("mailto:")) return false;
+  if (/[<>{}"`]/.test(text)) return false;
+  if (text.startsWith(".")) return false;
+  if (text.startsWith("~/")) return true;
+  if (text.startsWith("/")) return text.indexOf("/", 1) > 0;
+  const lineStripped = text.replace(/:\d+$/, "");
+  const extMatch = lineStripped.match(/\.([a-zA-Z][a-zA-Z0-9]{0,7})$/);
+  if (!extMatch) return false;
+  if (lineStripped.includes("/")) return true;
+  return KNOWN_PATH_EXTS.has(extMatch[1].toLowerCase());
+}
+
+/** Split "path:123" → { path, line } ; "path" → { path, line: null } */
+export function parsePathAndLine(text) {
+  const m = text.match(/^(.+?):(\d+)$/);
+  if (m) return { path: m[1], line: parseInt(m[2], 10) };
+  return { path: text, line: null };
+}
+
+// Post-render pass: any inline <code> whose text looks like a file
+// path becomes a clickable button that reuses the same
+// `katulong:open-file` event the terminal's file-link handler fires.
+// Fenced code blocks (<pre><code>) are skipped — they're code samples,
+// not references.
+function linkifyInlineCodePaths(root) {
+  const codes = root.querySelectorAll("code");
+  for (const code of codes) {
+    if (code.closest("pre")) continue;
+    const text = (code.textContent || "").trim();
+    if (!looksLikeFilePath(text)) continue;
+    const { path, line } = parsePathAndLine(text);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "feed-tile-prose-link";
+    btn.textContent = code.textContent;
+    btn.title = text;
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      window.dispatchEvent(new CustomEvent("katulong:open-file", {
+        detail: { path, line },
+      }));
+    });
+    code.replaceWith(btn);
+  }
+}
+
+// Compaction summaries replay earlier image inputs as the literal
+// string `[Image: source: /abs/path.png]` in the user prompt. Marked
+// renders that as plaintext (no `()` target = not a markdown link),
+// so we post-process text nodes and swap it for a square thumbnail.
+// Clicking the thumbnail opens the image tile via the same event as
+// any other file link.
+const IMAGE_REF_RE = /\[Image:\s*source:\s*(\/[^\]\s]+)\s*\]/g;
+
+function makeImageThumb(absPath) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "feed-tile-image-thumb";
+  btn.title = absPath;
+  const img = document.createElement("img");
+  img.src = `/api/files/image?path=${encodeURIComponent(absPath)}`;
+  img.alt = absPath.split("/").pop() || absPath;
+  img.loading = "lazy";
+  btn.appendChild(img);
+  btn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    window.dispatchEvent(new CustomEvent("katulong:open-file", {
+      detail: { path: absPath, line: null },
+    }));
+  });
+  return btn;
+}
+
+function replaceImageRefsInTextNode(node) {
+  const text = node.nodeValue || "";
+  IMAGE_REF_RE.lastIndex = 0;
+  let match;
+  let lastIdx = 0;
+  const frag = document.createDocumentFragment();
+  while ((match = IMAGE_REF_RE.exec(text)) !== null) {
+    if (match.index > lastIdx) {
+      frag.appendChild(document.createTextNode(text.slice(lastIdx, match.index)));
+    }
+    frag.appendChild(makeImageThumb(match[1]));
+    lastIdx = match.index + match[0].length;
+  }
+  if (lastIdx === 0) return;
+  if (lastIdx < text.length) frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+  node.replaceWith(frag);
+}
+
+function thumbnailImageRefs(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      if (!n.nodeValue || !n.nodeValue.includes("[Image:")) return NodeFilter.FILTER_SKIP;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const hits = [];
+  while (walker.nextNode()) hits.push(walker.currentNode);
+  for (const node of hits) replaceImageRefsInTextNode(node);
+}
+
+// Apply both enrichment passes to a rendered-markdown root in the
+// order that matters: thumbnails first (they split text nodes), then
+// inline-code linkification (DOM walk on <code> elements is unaffected
+// by text-node edits).
+export function enrichFeedProse(root) {
+  if (!root) return;
+  thumbnailImageRefs(root);
+  linkifyInlineCodePaths(root);
+}
+
 // File chips shown inline on the header row — clicking one dispatches a
 // window CustomEvent that app.js catches to open the file in a document
 // tile (same path as a file link clicked in the terminal).
@@ -339,6 +484,7 @@ function renderReplyItem(row, msg, ts) {
   const prose = document.createElement("div");
   prose.className = "feed-tile-reply-body";
   renderMarkdown(prose, text);
+  enrichFeedProse(prose);
   row.appendChild(prose);
 
   const footer = document.createElement("div");
@@ -364,6 +510,7 @@ function renderPromptItem(row, msg, ts) {
   const prose = document.createElement("div");
   prose.className = "feed-tile-prompt-body";
   renderMarkdown(prose, text);
+  enrichFeedProse(prose);
   row.appendChild(prose);
 
   const footer = document.createElement("div");

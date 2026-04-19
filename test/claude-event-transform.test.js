@@ -426,6 +426,25 @@ describe("readTranscriptEntries", () => {
     assert.ok(entries[0].text.endsWith("\u2026"));
   });
 
+  it("does NOT truncate long user prompts", () => {
+    // Conversation-compaction summaries get replayed as one huge user
+    // message — the feed tile needs to render them in full or the
+    // reader sees "Key Tech…" with no way to recover the rest.
+    const longText = "x".repeat(50_000);
+    const stringPath = writeTranscript("user-long-string.jsonl", [
+      { type: "user", message: { role: "user", content: longText } },
+    ]);
+    const blockPath = writeTranscript("user-long-block.jsonl", [
+      { type: "user", message: { role: "user", content: [{ type: "text", text: longText }] } },
+    ]);
+    const fromString = readTranscriptEntries(stringPath).entries;
+    const fromBlock = readTranscriptEntries(blockPath).entries;
+    assert.equal(fromString[0].text.length, 50_000);
+    assert.equal(fromBlock[0].text.length, 50_000);
+    assert.ok(!fromString[0].text.endsWith("\u2026"));
+    assert.ok(!fromBlock[0].text.endsWith("\u2026"));
+  });
+
   it("skips assistant entries with only thinking blocks", () => {
     const path = writeTranscript("think.jsonl", [
       { type: "assistant", message: { role: "assistant", content: [{ type: "thinking", thinking: "deep thoughts" }] } },

@@ -2475,17 +2475,53 @@
       text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
     }
     .feed-tile-reply-file:hover { background: color-mix(in srgb, var(--text) 14%, transparent); }
+    /* Inline clickable path — replaces a <code> that looked like a
+       file path during post-render enrichment. Matches the inline code
+       background so the visual weight stays the same; hover adds an
+       underline to cue "this is a link". */
+    .feed-tile-prose-link {
+      font: inherit; font-size: 0.9em;
+      font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+      color: inherit;
+      background: color-mix(in srgb, var(--text) 6%, transparent);
+      border: none; border-radius: 3px; padding: 0 4px;
+      cursor: pointer; vertical-align: baseline;
+    }
+    .feed-tile-prose-link:hover {
+      background: color-mix(in srgb, var(--text) 16%, transparent);
+      text-decoration: underline;
+    }
+    /* Square thumbnail — replaces "[Image: source: /abs/path]" tokens
+       that show up in compaction summaries. 48px matches the
+       reading-flow height of about two lines so the thumbnail sits
+       in-line without breaking paragraph rhythm. */
+    .feed-tile-image-thumb {
+      display: inline-block; vertical-align: middle;
+      width: 48px; height: 48px;
+      margin: 2px 4px; padding: 0;
+      background: color-mix(in srgb, var(--text) 6%, transparent);
+      border: 1px solid var(--border, rgba(255,255,255,0.12));
+      border-radius: 4px; cursor: pointer; overflow: hidden;
+    }
+    .feed-tile-image-thumb img {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+    }
+    .feed-tile-image-thumb:hover { border-color: var(--text); }
     /* Reply prose — markdown rendered to HTML. Tighten default block
        spacing so a reply doesn't eat the whole tile. */
     .feed-tile-reply-body { line-height: 1.55; color: var(--text); overflow-wrap: break-word; }
     .feed-tile-reply-body > :first-child { margin-top: 0; }
     .feed-tile-reply-body > :last-child { margin-bottom: 0; }
-    .feed-tile-reply-body p { margin: var(--space-xs) 0; }
+    .feed-tile-reply-body p { margin: 0.6em 0; }
     .feed-tile-reply-body pre { background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 4px; padding: var(--space-xs) var(--space-sm); overflow-x: auto; font-size: 0.9em; }
     .feed-tile-reply-body code { background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 3px; padding: 0 4px; font-size: 0.9em; }
     .feed-tile-reply-body pre > code { background: transparent; padding: 0; }
-    .feed-tile-reply-body ul, .feed-tile-reply-body ol { margin: var(--space-xs) 0; padding-left: 1.5em; }
-    .feed-tile-reply-body li { margin: 2px 0; }
+    /* Lists: enough padding-left that the 1. / • marker sits inside the
+       tile body, not in the tile's outer padding where it can look cut
+       off on narrow widths. */
+    .feed-tile-reply-body ul, .feed-tile-reply-body ol { margin: 0.6em 0; padding-left: 1.8em; }
+    .feed-tile-reply-body li { margin: 0.25em 0; }
+    .feed-tile-reply-body li > p { margin: 0.25em 0; }
     .feed-tile-reply-body h1, .feed-tile-reply-body h2, .feed-tile-reply-body h3 { margin: var(--space-sm) 0 var(--space-xs); font-size: 1em; font-weight: 700; }
 
     /* Pinned session summary — sits at the top of the feed list
@@ -2537,7 +2573,7 @@
     }
     .feed-tile-prompt-body > :first-child { margin-top: 0; }
     .feed-tile-prompt-body > :last-child { margin-bottom: 0; }
-    .feed-tile-prompt-body p { margin: 2px 0; }
+    .feed-tile-prompt-body p { margin: 0.6em 0; }
     .feed-tile-prompt-body pre, .feed-tile-prompt-body code {
       background: color-mix(in srgb, var(--text) 6%, transparent);
       border-radius: 3px;
@@ -2545,6 +2581,9 @@
     .feed-tile-prompt-body pre { padding: var(--space-xs) var(--space-sm); overflow-x: auto; font-size: 0.9em; }
     .feed-tile-prompt-body code { padding: 0 4px; font-size: 0.9em; }
     .feed-tile-prompt-body pre > code { background: transparent; padding: 0; }
+    .feed-tile-prompt-body ul, .feed-tile-prompt-body ol { margin: 0.6em 0; padding-left: 1.8em; }
+    .feed-tile-prompt-body li { margin: 0.25em 0; }
+    .feed-tile-prompt-body li > p { margin: 0.25em 0; }
     .feed-tile-prompt-footer { color: var(--text-muted); font-size: var(--text-xs); padding-top: 2px; }
 
     /* --- Feed Tile: response bar (pinned to bottom on claude topics) ---

@@ -1,5 +1,20 @@
 # File link resolution across worktrees
 
+## Status
+
+**Steps 1-3 shipped.** `meta.pane.cwd` is stamped by the 5s pane monitor,
+`meta.claude.cwd` is stamped by the same monitor from Claude's per-pid
+session JSON, and the frontend resolver reads them from the cached
+session object with precedence `meta.claude.cwd → meta.pane.cwd →
+relative`. The `/sessions/cwd/:name` route, `getSessionCwd`, and
+`getPaneCwd` are retired.
+
+**Step 4 (lsof Claude pid cwd) is still deferred.** An earlier attempt
+was reverted — follow-up work should read the revert reasoning before
+redoing it. The current fix covers the `cd worktree && claude` flow;
+the `claude --add-dir` and in-process `/cd` cases still fall back to
+the (possibly stale) pane shell cwd.
+
 ## Problem
 
 Clicking a relative file link in the terminal (e.g. `docs/claude-feed-watchlist.md`
@@ -67,8 +82,10 @@ just broadcast.
 
 Grep for other callers of `GET /sessions/cwd/:name` and `getSessionCwd`. If
 there are none, delete `lib/session-manager.js:390-394` and the route at
-`lib/routes/app-routes.js:724-727`. `getPaneCwd` in `lib/tmux.js` stays — the
-pane monitor still uses it indirectly.
+`lib/routes/app-routes.js:724-727`. `getPaneCwd` in `lib/tmux.js` is also
+retired: the pane monitor now reads `pane_current_path` via the existing
+`list-panes` format string in `inspectTmuxPane`, so the separate helper has
+no remaining callers.
 
 ### Step 4 (optional) — capture Claude's process cwd
 
