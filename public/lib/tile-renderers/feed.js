@@ -103,9 +103,38 @@ function makeTimeSpan(ts) {
   return t;
 }
 
+// Split a textarea value around `[Image #N]` placeholders into an
+// ordered token list the server can replay. Unknown N (placeholder
+// text that points to nothing in the stash) passes through as literal
+// text — so a user who pastes the string `[Image #99]` from somewhere
+// else doesn't get their reply silently gutted.
+export function buildReplyTokens(value, imagePaths) {
+  if (typeof value !== "string" || value.length === 0) return [];
+  const parts = value.split(/(\[Image #\d+\])/g);
+  const out = [];
+  function pushText(s) {
+    if (!s) return;
+    const last = out[out.length - 1];
+    if (last && last.type === "text") last.value += s;
+    else out.push({ type: "text", value: s });
+  }
+  for (const part of parts) {
+    const m = part.match(/^\[Image #(\d+)\]$/);
+    if (m) {
+      const path = imagePaths.get(parseInt(m[1], 10));
+      if (path) { out.push({ type: "image", path }); continue; }
+    }
+    pushText(part);
+  }
+  return out;
+}
+
 // A pinned-to-bottom composer for Claude topics. Shows quick-pick
 // buttons when the latest reply ends in a numbered options list, plus
-// a textarea + Send button for typed responses.
+// a textarea + Send button for typed responses. Inline images: paste
+// an image into the textarea, we upload it to /upload and insert an
+// `[Image #N]` placeholder — on send, the server replays the text +
+// image tokens into the Claude pane in the same order.
 function createResponseBar(claudeUuid) {
   const el = document.createElement("div");
   el.className = "feed-tile-response-bar";
@@ -118,12 +147,25 @@ function createResponseBar(claudeUuid) {
   const textarea = document.createElement("textarea");
   textarea.className = "feed-tile-response-textarea";
   textarea.rows = 4;
-  textarea.placeholder = "Reply to Claude — Enter to send, Shift+Enter for newline";
+  textarea.placeholder = "Reply to Claude — paste images inline, Enter to send, Shift+Enter for newline";
   el.appendChild(textarea);
 
   const status = document.createElement("div");
   status.className = "feed-tile-response-status";
   el.appendChild(status);
+
+  // Inline-image state. `imagePaths` maps a placeholder number to the
+  // server-side path returned from /upload. Cleared after a successful
+  // send; orphaned entries (user deleted the placeholder text) are
+  // dropped at send time because buildReplyTokens only emits image
+  // tokens for N values still present in the textarea.
+  const imagePaths = new Map();
+  let imageCounter = 0;
+
+  function resetImageState() {
+    imagePaths.clear();
+    imageCounter = 0;
+  }
 
   let sending = false;
   async function send(text) {
@@ -137,10 +179,13 @@ function createResponseBar(claudeUuid) {
       const csrfMeta = document.querySelector('meta[name="csrf-token"]');
       const headers = { "Content-Type": "application/json" };
       if (csrfMeta?.content) headers["X-CSRF-Token"] = csrfMeta.content;
+      const tokens = buildReplyTokens(text, imagePaths);
+      const hasImages = tokens.some((t) => t.type === "image");
+      const payload = hasImages ? { tokens } : { text };
       const res = await fetch(`/api/claude/respond/${encodeURIComponent(claudeUuid)}`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(payload),
         credentials: "same-origin",
         redirect: "error",
       });
@@ -150,6 +195,7 @@ function createResponseBar(claudeUuid) {
         throw new Error(msg);
       }
       textarea.value = "";
+      resetImageState();
       status.textContent = "Sent.";
       setTimeout(() => {
         if (status.textContent === "Sent.") status.textContent = "";
@@ -163,6 +209,64 @@ function createResponseBar(claudeUuid) {
       textarea.focus();
     }
   }
+
+  async function uploadReplyImage(file) {
+    const headers = { "Content-Type": "application/octet-stream" };
+    const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    if (csrfMeta?.content) headers["x-csrf-token"] = csrfMeta.content;
+    const res = await fetch("/upload", {
+      method: "POST", headers, body: file,
+      credentials: "same-origin", redirect: "error",
+    });
+    if (!res.ok) {
+      let msg = `Upload failed (${res.status})`;
+      try { msg = (await res.json()).error || msg; } catch { /* non-JSON */ }
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    return data.path;
+  }
+
+  function insertAtCursor(ta, s) {
+    const start = ta.selectionStart ?? ta.value.length;
+    const end = ta.selectionEnd ?? ta.value.length;
+    ta.value = ta.value.slice(0, start) + s + ta.value.slice(end);
+    ta.selectionStart = ta.selectionEnd = start + s.length;
+  }
+
+  textarea.addEventListener("paste", async (ev) => {
+    const dt = ev.clipboardData;
+    if (!dt) return;
+    const images = [];
+    // Safari only exposes pasted images via `items`; Chrome/Firefox
+    // fill `files` too. Check both, de-duping on reference identity so
+    // a browser that populates both doesn't double-upload.
+    const seen = new Set();
+    for (const item of dt.items || []) {
+      if (item.type?.startsWith("image/")) {
+        const f = item.getAsFile();
+        if (f && !seen.has(f)) { images.push(f); seen.add(f); }
+      }
+    }
+    for (const f of dt.files || []) {
+      if (f.type?.startsWith("image/") && !seen.has(f)) { images.push(f); seen.add(f); }
+    }
+    if (images.length === 0) return;  // fall through to default text paste
+    ev.preventDefault();
+    status.textContent = images.length === 1 ? "Uploading image…" : `Uploading ${images.length} images…`;
+    try {
+      for (const f of images) {
+        const path = await uploadReplyImage(f);
+        const n = ++imageCounter;
+        imagePaths.set(n, path);
+        insertAtCursor(textarea, `[Image #${n}]`);
+      }
+      status.textContent = "";
+    } catch (err) {
+      status.textContent = err.message || "Upload failed";
+      status.classList.add("feed-tile-response-status-error");
+    }
+  });
 
   textarea.addEventListener("keydown", (ev) => {
     // Enter alone sends — matching chat apps' default and how a user

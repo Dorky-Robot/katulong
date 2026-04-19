@@ -120,7 +120,7 @@ globalThis.CustomEvent = class CustomEvent {
   }
 };
 
-const { feedRenderer, parseReplyOptions } = await import(
+const { feedRenderer, parseReplyOptions, buildReplyTokens } = await import(
   new URL("../public/lib/tile-renderers/feed.js", import.meta.url).href
 );
 
@@ -153,6 +153,74 @@ describe("parseReplyOptions", () => {
       { key: "1", label: "A" },
       { key: "2", label: "B" },
     ]);
+  });
+});
+
+describe("buildReplyTokens", () => {
+  it("returns [] for empty input", () => {
+    assert.deepEqual(buildReplyTokens("", new Map()), []);
+  });
+
+  it("returns a single text token when there are no placeholders", () => {
+    assert.deepEqual(
+      buildReplyTokens("hello claude", new Map()),
+      [{ type: "text", value: "hello claude" }],
+    );
+  });
+
+  it("splits around placeholders that have a mapped path", () => {
+    const paths = new Map([[1, "/uploads/a.png"], [2, "/uploads/b.png"]]);
+    assert.deepEqual(
+      buildReplyTokens("before [Image #1] middle [Image #2] after", paths),
+      [
+        { type: "text", value: "before " },
+        { type: "image", path: "/uploads/a.png" },
+        { type: "text", value: " middle " },
+        { type: "image", path: "/uploads/b.png" },
+        { type: "text", value: " after" },
+      ],
+    );
+  });
+
+  it("keeps placeholders with no mapped path as literal text", () => {
+    // User pastes `[Image #99]` from somewhere else — we have no stash
+    // for N=99, so we leave the text untouched rather than silently
+    // dropping it.
+    const paths = new Map([[1, "/uploads/a.png"]]);
+    assert.deepEqual(
+      buildReplyTokens("see [Image #99] and [Image #1]", paths),
+      [
+        { type: "text", value: "see [Image #99] and " },
+        { type: "image", path: "/uploads/a.png" },
+      ],
+    );
+  });
+
+  it("coalesces adjacent text segments (literal placeholder + prose)", () => {
+    const paths = new Map();
+    assert.deepEqual(
+      buildReplyTokens("a [Image #5] b", paths),
+      [{ type: "text", value: "a [Image #5] b" }],
+    );
+  });
+
+  it("handles back-to-back placeholders with no text between", () => {
+    const paths = new Map([[1, "/a.png"], [2, "/b.png"]]);
+    assert.deepEqual(
+      buildReplyTokens("[Image #1][Image #2]", paths),
+      [
+        { type: "image", path: "/a.png" },
+        { type: "image", path: "/b.png" },
+      ],
+    );
+  });
+
+  it("handles a textarea that is only a placeholder", () => {
+    const paths = new Map([[1, "/a.png"]]);
+    assert.deepEqual(
+      buildReplyTokens("[Image #1]", paths),
+      [{ type: "image", path: "/a.png" }],
+    );
   });
 });
 
