@@ -9,7 +9,7 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
@@ -17,6 +17,7 @@ import { EventEmitter } from "node:events";
 import { createWatchlist } from "../lib/claude-watchlist.js";
 import {
   resolveWatchTarget,
+  findTranscriptByUuid,
   createClaudeFeedRoutes,
 } from "../lib/routes/claude-feed-routes.js";
 import { slugifyCwd } from "../lib/claude-transcript-discovery.js";
@@ -101,33 +102,157 @@ function makeFakeBroker() {
 }
 
 describe("resolveWatchTarget", () => {
-  const homeDir = "/home/felix";
+  let home;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "katulong-resolve-target-home-"));
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  // Create `<home>/.claude/projects/<slug>/<uuid>.jsonl` so `existsSync`
+  // checks in resolveWatchTarget see the file.
+  function writeTranscript(slug, uuid) {
+    const dir = join(home, ".claude", "projects", slug);
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${uuid}.jsonl`);
+    writeFileSync(path, "");
+    return path;
+  }
 
   it("rejects an empty body", () => {
-    const out = resolveWatchTarget({ body: null, homeDir });
+    const out = resolveWatchTarget({ body: null, homeDir: home });
     assert.match(out.error, /JSON object/);
   });
 
-  it("rejects when uuid or cwd missing", () => {
-    const out = resolveWatchTarget({ body: {}, homeDir });
+  it("rejects when uuid missing", () => {
+    const out = resolveWatchTarget({ body: {}, homeDir: home });
+    assert.match(out.error, /uuid, cwd/);
+  });
+
+  it("rejects when cwd missing and no session-meta resolves", () => {
+    const out = resolveWatchTarget({ body: { uuid: UUID }, homeDir: home });
     assert.match(out.error, /uuid, cwd/);
   });
 
   it("rejects an invalid uuid", () => {
-    const out = resolveWatchTarget({ body: { uuid: "nope", cwd: "/x" }, homeDir });
+    const out = resolveWatchTarget({ body: { uuid: "nope", cwd: "/x" }, homeDir: home });
     assert.match(out.error, /Invalid uuid/);
   });
 
-  it("builds a transcriptPath from uuid + cwd", () => {
+  it("returns cwd-slug path when the slug file exists on disk", () => {
+    const cwd = "/Users/felix/Projects/katulong";
+    const slug = slugifyCwd(cwd);
+    const expected = writeTranscript(slug, UUID);
+    const out = resolveWatchTarget({ body: { uuid: UUID, cwd }, homeDir: home });
+    assert.strictEqual(out.transcriptPath, expected);
+    assert.strictEqual(out.source, "cwd-slug");
+  });
+
+  it("prefers session-meta transcriptPath when the session's meta matches the uuid", () => {
+    // Ground truth comes from the SessionStart hook. Even if the cwd
+    // slug path also exists, the stamped path wins because it reflects
+    // what Claude Code actually reported at launch time.
+    const sessionManager = {
+      getSession: () => ({
+        meta: { claude: { uuid: UUID, transcriptPath: "/abs/from/hook.jsonl" } },
+      }),
+    };
+    const cwd = "/Users/felix/Projects/katulong";
+    writeTranscript(slugifyCwd(cwd), UUID); // on-disk, still ignored
     const out = resolveWatchTarget({
-      body: { uuid: UUID, cwd: "/Users/felix/Projects/katulong" },
-      homeDir,
+      body: { uuid: UUID, cwd, session: "work" },
+      homeDir: home,
+      sessionManager,
     });
-    assert.strictEqual(out.uuid, UUID);
-    assert.strictEqual(
-      out.transcriptPath,
-      `${homeDir}/.claude/projects/${slugifyCwd("/Users/felix/Projects/katulong")}/${UUID}.jsonl`,
-    );
+    assert.strictEqual(out.transcriptPath, "/abs/from/hook.jsonl");
+    assert.strictEqual(out.source, "session-meta");
+  });
+
+  it("ignores session-meta when its uuid doesn't match the requested uuid", () => {
+    // Stale meta from a previous Claude run in the same pane must not
+    // hijack a new request — only a meta.claude.uuid that matches the
+    // requested watch-target uuid is trusted.
+    const sessionManager = {
+      getSession: () => ({
+        meta: {
+          claude: {
+            uuid: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            transcriptPath: "/stale/path.jsonl",
+          },
+        },
+      }),
+    };
+    const cwd = "/Users/felix/Projects/katulong";
+    const expected = writeTranscript(slugifyCwd(cwd), UUID);
+    const out = resolveWatchTarget({
+      body: { uuid: UUID, cwd, session: "work" },
+      homeDir: home,
+      sessionManager,
+    });
+    assert.strictEqual(out.transcriptPath, expected);
+    assert.strictEqual(out.source, "cwd-slug");
+  });
+
+  it("falls back to a glob scan when the cwd-slug file doesn't exist", () => {
+    // Typical stall case: the frontend's live cwd slugified into a dir
+    // Claude Code never wrote to (worktree vs canonical repo). The glob
+    // finds the real transcript by UUID — the uuid is globally unique
+    // so exactly one project dir can contain `<uuid>.jsonl`.
+    const realSlug = "-Users-felix-Projects-katulong";
+    const expected = writeTranscript(realSlug, UUID);
+    const out = resolveWatchTarget({
+      body: { uuid: UUID, cwd: "/Users/felix/.claude/worktrees/whatever" },
+      homeDir: home,
+    });
+    assert.strictEqual(out.transcriptPath, expected);
+    assert.strictEqual(out.source, "glob");
+  });
+
+  it("returns cwd-slug-missing when nothing resolves — watchlist still entered", () => {
+    // No hook-stamp, no existing file, no glob match. The handler still
+    // returns a path so the watchlist entry can be created; the file
+    // might appear if Claude Code writes it after the request.
+    const cwd = "/Users/felix/Projects/katulong";
+    const out = resolveWatchTarget({
+      body: { uuid: UUID, cwd },
+      homeDir: home,
+    });
+    assert.strictEqual(out.source, "cwd-slug-missing");
+    assert.ok(out.transcriptPath.endsWith(`${UUID}.jsonl`));
+  });
+});
+
+describe("findTranscriptByUuid", () => {
+  let home;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "katulong-find-transcript-home-"));
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("returns null when ~/.claude/projects doesn't exist", () => {
+    assert.strictEqual(findTranscriptByUuid(home, UUID), null);
+  });
+
+  it("returns null for an invalid uuid", () => {
+    assert.strictEqual(findTranscriptByUuid(home, "not-a-uuid"), null);
+  });
+
+  it("returns the path when the file exists in any project directory", () => {
+    const dir = join(home, ".claude", "projects", "-some-slug");
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${UUID}.jsonl`);
+    writeFileSync(path, "");
+    assert.strictEqual(findTranscriptByUuid(home, UUID), path);
+  });
+
+  it("returns null when the uuid isn't present in any project directory", () => {
+    const dir = join(home, ".claude", "projects", "-some-slug");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${UUID_B}.jsonl`), "");
+    assert.strictEqual(findTranscriptByUuid(home, UUID), null);
   });
 });
 
@@ -190,6 +315,30 @@ describe("createClaudeFeedRoutes", () => {
     const stored = await watchlist.get(UUID);
     assert.ok(stored);
     assert.ok(stored.transcriptPath.endsWith(`${UUID}.jsonl`));
+  });
+
+  it("POST /api/claude/watch prefers session-meta transcriptPath over cwd slug", async () => {
+    // The SessionStart hook stamped `meta.claude.transcriptPath` — the
+    // route must trust it even when a slug-derived path would also
+    // resolve. This is the fix for the "feed stalled at X AM" bug: the
+    // live tmux pane cwd had drifted, so the slug path was wrong, but
+    // the hook's transcript_path always points at Claude's real file.
+    const stampedPath = "/abs/from/hook.jsonl";
+    ctx.sessionManager = {
+      getSession: () => ({
+        meta: { claude: { uuid: UUID, transcriptPath: stampedPath } },
+      }),
+    };
+    routes = createClaudeFeedRoutes(ctx);
+    const route = routeFor("POST", "/api/claude/watch");
+    const req = makeReq({
+      method: "POST",
+      body: { uuid: UUID, cwd: "/Users/felix/proj", session: "work" },
+    });
+    await route.handler(req, makeRes());
+
+    const stored = await watchlist.get(UUID);
+    assert.strictEqual(stored.transcriptPath, stampedPath);
   });
 
   it("POST /api/claude/watch is idempotent — re-adding preserves cursor", async () => {

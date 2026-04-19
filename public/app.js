@@ -2020,9 +2020,14 @@
 
       let resolved;
       try {
+        // Include `session` so the server can prefer the transcriptPath
+        // stamped by the SessionStart hook over a slug derived from the
+        // live tmux pane cwd (which drifts when the shell cd's after
+        // Claude launches — worktree vs canonical root, etc.).
         resolved = await api.post("/api/claude/watch", {
           uuid: claudeMeta.uuid,
           cwd,
+          session: sessionName,
         });
       } catch (err) {
         showToast(`Couldn't find a Claude transcript: ${err.message || "unknown"}`, true);

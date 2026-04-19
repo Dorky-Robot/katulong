@@ -1,6 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { publicMeta, PRIVATE_META_KEYS, applyClaudeMetaFromHook } from "../lib/routes/app-routes.js";
+import {
+  publicMeta, PRIVATE_META_KEYS, applyClaudeMetaFromHook, safeTranscriptPath,
+} from "../lib/routes/app-routes.js";
+
+const UUID_A = "11111111-2222-3333-4444-555555555555";
 
 describe("publicMeta", () => {
   it("strips known private keys", () => {
@@ -30,6 +34,47 @@ describe("publicMeta", () => {
     // server-only field should update both the set and the broadcast
     // paths (see ensureTopicMeta / /api/topics / POST meta).
     assert.ok(PRIVATE_META_KEYS.has("transcriptPath"));
+  });
+});
+
+describe("safeTranscriptPath", () => {
+  it("accepts a well-formed path whose uuid matches", () => {
+    const p = `/Users/x/.claude/projects/-Users-x-proj/${UUID_A}.jsonl`;
+    assert.equal(safeTranscriptPath(p, UUID_A), p);
+  });
+
+  it("rejects a path that doesn't start with /", () => {
+    assert.equal(
+      safeTranscriptPath(`Users/x/.claude/projects/s/${UUID_A}.jsonl`, UUID_A),
+      null,
+    );
+  });
+
+  it("rejects paths containing a .. segment", () => {
+    assert.equal(
+      safeTranscriptPath(`/x/.claude/projects/../../etc/${UUID_A}.jsonl`, UUID_A),
+      null,
+    );
+  });
+
+  it("rejects paths outside /.claude/projects/", () => {
+    assert.equal(safeTranscriptPath(`/tmp/${UUID_A}.jsonl`, UUID_A), null);
+  });
+
+  it("rejects when filename uuid mismatches the session_id", () => {
+    assert.equal(
+      safeTranscriptPath(
+        "/Users/x/.claude/projects/s/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl",
+        UUID_A,
+      ),
+      null,
+    );
+  });
+
+  it("rejects non-string / empty input", () => {
+    assert.equal(safeTranscriptPath(null, UUID_A), null);
+    assert.equal(safeTranscriptPath("", UUID_A), null);
+    assert.equal(safeTranscriptPath(123, UUID_A), null);
   });
 });
 
@@ -230,6 +275,73 @@ describe("applyClaudeMetaFromHook", () => {
     assert.deepEqual(session.meta.agent, { kind: "claude", running: true, detectedAt: 100 });
     assert.equal(session.meta.claude.uuid, "11111111-2222-3333-4444-555555555555");
     assert.equal(typeof session.meta.claude.startedAt, "number");
+  });
+
+  it("SessionStart stamps meta.claude.transcriptPath when hook payload is safe", () => {
+    // The SessionStart hook payload includes transcript_path — the
+    // ground-truth location Claude Code writes to. Stamping it into
+    // meta lets the watch route skip the fragile cwd-slug derivation
+    // and read the file Claude Code is actually writing.
+    const { session } = makeSession();
+    const verdict = applyClaudeMetaFromHook({
+      hook_event_name: "SessionStart",
+      session_id: UUID_A,
+      _tmuxPane: "%3",
+      transcript_path: `/Users/x/.claude/projects/-Users-x-proj/${UUID_A}.jsonl`,
+    }, makeManager(session));
+    assert.equal(verdict, "set");
+    assert.equal(session.meta.claude.uuid, UUID_A);
+    assert.equal(
+      session.meta.claude.transcriptPath,
+      `/Users/x/.claude/projects/-Users-x-proj/${UUID_A}.jsonl`,
+    );
+  });
+
+  it("SessionStart drops transcript_path on traversal attempts", () => {
+    const { session } = makeSession();
+    applyClaudeMetaFromHook({
+      hook_event_name: "SessionStart",
+      session_id: UUID_A,
+      _tmuxPane: "%3",
+      transcript_path: `/Users/x/.claude/projects/../../../etc/${UUID_A}.jsonl`,
+    }, makeManager(session));
+    assert.equal(session.meta.claude.uuid, UUID_A);
+    assert.equal(session.meta.claude.transcriptPath, undefined);
+  });
+
+  it("SessionStart drops transcript_path when uuid in filename doesn't match session_id", () => {
+    const { session } = makeSession();
+    applyClaudeMetaFromHook({
+      hook_event_name: "SessionStart",
+      session_id: UUID_A,
+      _tmuxPane: "%3",
+      transcript_path: "/Users/x/.claude/projects/slug/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl",
+    }, makeManager(session));
+    assert.equal(session.meta.claude.transcriptPath, undefined);
+  });
+
+  it("SessionStart drops transcript_path when it isn't under /.claude/projects/", () => {
+    const { session } = makeSession();
+    applyClaudeMetaFromHook({
+      hook_event_name: "SessionStart",
+      session_id: UUID_A,
+      _tmuxPane: "%3",
+      transcript_path: `/tmp/${UUID_A}.jsonl`,
+    }, makeManager(session));
+    assert.equal(session.meta.claude.transcriptPath, undefined);
+  });
+
+  it("SessionStart leaves transcriptPath unset when hook payload has no transcript_path", () => {
+    // Back-compat: older hook shims, or non-SessionStart adoptions, don't
+    // include transcript_path — the enrichment drops cleanly.
+    const { session } = makeSession();
+    applyClaudeMetaFromHook({
+      hook_event_name: "SessionStart",
+      session_id: UUID_A,
+      _tmuxPane: "%3",
+    }, makeManager(session));
+    assert.equal(session.meta.claude.uuid, UUID_A);
+    assert.equal(session.meta.claude.transcriptPath, undefined);
   });
 
   it("SessionEnd is a no-op — preserves meta.claude enrichment", () => {

@@ -316,6 +316,7 @@ const routes = [
     watchlist: claudeWatchlist,
     processor: claudeProcessor,
     topicBroker,
+    sessionManager,
     homeDir: homedir(),
     log,
   }),
