@@ -148,10 +148,25 @@ describe("extractFilesFromEntry", () => {
     assert.deepEqual(files, [{ path: "/a/SKILL.md" }]);
   });
 
-  it("promotes a line number onto the retained entry when the first had none", () => {
-    // Edit-then-Read-with-offset on the same basename: the user clicks
-    // one chip, so it should carry the most useful line info available
-    // from anywhere in the turn.
+  it("promotes a line number onto the retained entry for the same path (Edit then Read+offset)", () => {
+    // Same file touched twice — Edit without a line, then Read with
+    // offset. The user clicks one chip and expects it to land on the
+    // offset they can see in the transcript.
+    const files = extractFilesFromEntry({
+      role: "assistant",
+      tools: [
+        { name: "Edit", input: { file_path: "/src/a.js" } },
+        { name: "Read", input: { file_path: "/src/a.js", offset: 42 } },
+      ],
+    });
+    assert.deepEqual(files, [{ path: "/src/a.js", line: 42 }]);
+  });
+
+  it("does NOT promote a line number across different paths that share a basename", () => {
+    // Guard against cross-file line bleeding: /src/a.js and /other/a.js
+    // are different files. A line number from /other/a.js must not land
+    // on the /src/a.js chip — the user would be sent to a line that was
+    // never associated with that file.
     const files = extractFilesFromEntry({
       role: "assistant",
       tools: [
@@ -159,7 +174,7 @@ describe("extractFilesFromEntry", () => {
         { name: "Read", input: { file_path: "/other/a.js", offset: 42 } },
       ],
     });
-    assert.deepEqual(files, [{ path: "/src/a.js", line: 42 }]);
+    assert.deepEqual(files, [{ path: "/src/a.js" }]);
   });
 
   it("skips Grep/Glob paths containing a glob star", () => {
