@@ -120,7 +120,7 @@ describe("extractFilesFromEntry", () => {
     assert.deepEqual(files, [{ path: "/out.txt" }, { path: "/src/mod.js" }]);
   });
 
-  it("dedupes by path — first line wins", () => {
+  it("dedupes by basename — first occurrence wins", () => {
     const files = extractFilesFromEntry({
       role: "assistant",
       tools: [
@@ -130,6 +130,36 @@ describe("extractFilesFromEntry", () => {
       ],
     });
     assert.deepEqual(files, [{ path: "/src/a.js", line: 10 }]);
+  });
+
+  it("collapses different paths that share a basename to one chip", () => {
+    // The chip UI shows the basename — so eight different SKILL.md files
+    // at different paths would render as eight identical-looking chips.
+    // Dedupe by basename to cut that noise; the first path seen is what
+    // the chip opens on click.
+    const files = extractFilesFromEntry({
+      role: "assistant",
+      tools: [
+        { name: "Read", input: { file_path: "/a/SKILL.md" } },
+        { name: "Read", input: { file_path: "/b/SKILL.md" } },
+        { name: "Edit", input: { file_path: "/c/SKILL.md" } },
+      ],
+    });
+    assert.deepEqual(files, [{ path: "/a/SKILL.md" }]);
+  });
+
+  it("promotes a line number onto the retained entry when the first had none", () => {
+    // Edit-then-Read-with-offset on the same basename: the user clicks
+    // one chip, so it should carry the most useful line info available
+    // from anywhere in the turn.
+    const files = extractFilesFromEntry({
+      role: "assistant",
+      tools: [
+        { name: "Edit", input: { file_path: "/src/a.js" } },
+        { name: "Read", input: { file_path: "/other/a.js", offset: 42 } },
+      ],
+    });
+    assert.deepEqual(files, [{ path: "/src/a.js", line: 42 }]);
   });
 
   it("skips Grep/Glob paths containing a glob star", () => {
