@@ -77,6 +77,32 @@ describe("discoverClaudeSession", () => {
     assert.equal(out.uuid, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
   });
 
+  it("rejects records with relative or tilde-prefixed cwd", async () => {
+    // A malformed session file with a non-absolute cwd must NOT propagate
+    // into session meta. The frontend treats meta.claude.cwd as a
+    // resolution base for file-link clicks; a value like "proj" or "~/x"
+    // would either mis-resolve or fall through to meta.pane, and either
+    // way shouldn't be trusted as-is from an on-disk file that an
+    // attacker-controlled Claude process could write.
+    const deps = makeDeps({
+      tree: { 5500: [], 5600: [] },
+      sessions: {
+        5500: {
+          sessionId: "11111111-2222-3333-4444-555555555555",
+          cwd: "relative/path",
+          startedAt: 1,
+        },
+        5600: {
+          sessionId: "11111111-2222-3333-4444-555555555555",
+          cwd: "~/home",
+          startedAt: 1,
+        },
+      },
+    });
+    assert.equal(await discoverClaudeSession(5500, deps), null);
+    assert.equal(await discoverClaudeSession(5600, deps), null);
+  });
+
   it("rejects records with non-UUID sessionId", async () => {
     const deps = makeDeps({
       tree: { 5000: [] },
@@ -354,6 +380,34 @@ describe("reconcileClaudeEnrichment", () => {
     const wrote = await reconcileClaudeEnrichment(session, "claude", 1000, { discover });
     assert.equal(wrote, false);
     assert.equal(session.meta.claude, undefined);
+  });
+
+  it("preserves a transcriptPath written DURING the async discover() call", async () => {
+    // Race: a SessionStart hook can land between reconcileClaudeEnrichment's
+    // entry and its setMeta call, because discover() is async. If the
+    // reconciler snapshots meta.claude at function entry (pre-await), it
+    // sees no transcriptPath yet and silently wipes the hook's write.
+    //
+    // The fix is to re-read meta.claude at the point of write. This test
+    // simulates the race by having discover() perform the concurrent hook
+    // write before it resolves — any snapshot captured before the await
+    // would miss it.
+    const session = makeSession({
+      agent: { kind: "claude", running: true, detectedAt: 1 },
+    });
+    const HOOK_PATH = `/Users/x/.claude/projects/proj/${FOUND.uuid}.jsonl`;
+    const discover = async () => {
+      // Concurrent hook ingest fires while discover() is in flight.
+      session.setMeta("claude", {
+        uuid: FOUND.uuid,
+        transcriptPath: HOOK_PATH,
+      });
+      return FOUND;
+    };
+    const wrote = await reconcileClaudeEnrichment(session, "claude", 1000, { discover });
+    assert.equal(wrote, true);
+    assert.equal(session.meta.claude.transcriptPath, HOOK_PATH);
+    assert.equal(session.meta.claude.cwd, FOUND.cwd);
   });
 
   it("swallows setMeta errors and returns false", async () => {

@@ -82,8 +82,10 @@ just broadcast.
 
 Grep for other callers of `GET /sessions/cwd/:name` and `getSessionCwd`. If
 there are none, delete `lib/session-manager.js:390-394` and the route at
-`lib/routes/app-routes.js:724-727`. `getPaneCwd` in `lib/tmux.js` stays — the
-pane monitor still uses it indirectly.
+`lib/routes/app-routes.js:724-727`. `getPaneCwd` in `lib/tmux.js` is also
+retired: the pane monitor now reads `pane_current_path` via the existing
+`list-panes` format string in `inspectTmuxPane`, so the separate helper has
+no remaining callers.
 
 ### Step 4 (optional) — capture Claude's process cwd
 
