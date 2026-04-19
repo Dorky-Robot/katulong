@@ -127,12 +127,12 @@ describe("resolveWatchTarget", () => {
 
   it("rejects when uuid missing", () => {
     const out = resolveWatchTarget({ body: {}, homeDir: home });
-    assert.match(out.error, /uuid, cwd/);
+    assert.match(out.error, /Missing uuid/);
   });
 
   it("rejects when cwd missing and no session-meta resolves", () => {
     const out = resolveWatchTarget({ body: { uuid: UUID }, homeDir: home });
-    assert.match(out.error, /uuid, cwd/);
+    assert.match(out.error, /Missing cwd/);
   });
 
   it("rejects an invalid uuid", () => {

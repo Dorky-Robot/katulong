@@ -35,6 +35,33 @@ describe("publicMeta", () => {
     // paths (see ensureTopicMeta / /api/topics / POST meta).
     assert.ok(PRIVATE_META_KEYS.has("transcriptPath"));
   });
+
+  it("strips private keys one level deep inside namespaces", () => {
+    // session.meta shape is { [ns]: { ...fields } } — e.g.
+    // meta.claude.transcriptPath — so the filter must recurse into
+    // plain-object values, not just filter the top level.
+    const out = publicMeta({
+      claude: {
+        uuid: "11111111-2222-3333-4444-555555555555",
+        startedAt: 1700000000000,
+        transcriptPath: "/Users/x/.claude/projects/y/abc.jsonl",
+      },
+      agent: { kind: "claude", running: true },
+    });
+    assert.deepEqual(out, {
+      claude: { uuid: "11111111-2222-3333-4444-555555555555", startedAt: 1700000000000 },
+      agent: { kind: "claude", running: true },
+    });
+  });
+
+  it("leaves non-plain namespace values unchanged", () => {
+    const out = publicMeta({
+      tags: ["a", "b"],
+      count: 3,
+      label: null,
+    });
+    assert.deepEqual(out, { tags: ["a", "b"], count: 3, label: null });
+  });
 });
 
 describe("safeTranscriptPath", () => {
