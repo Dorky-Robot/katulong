@@ -476,11 +476,67 @@ describe("feedRenderer", () => {
       const root = el.children[0];
       const header = root.children[0];
       assert.equal(header.className, "feed-tile-header");
+      // Generic topic — no claudeUuid, so no open-terminal button:
       // [backBtn, title, closeBtn]
       assert.equal(header.children.length, 3);
       assert.equal(header.children[0].className, "feed-tile-back-btn");
       assert.equal(header.children[1].textContent, "my/topic");
       assert.equal(header.children[2].className, "feed-tile-close-btn");
+    });
+
+    it("adds an open-terminal button for claude/<uuid> topics that dispatches katulong:open-terminal-for-uuid", () => {
+      // The terminal button is the reverse of openAgentFeedTile — from a
+      // feed tile, jump back to the terminal running that Claude
+      // session. The feed doesn't own the ui-store, so it only announces
+      // intent; app.js owns the find-or-create decision.
+      const uuid = "11111111-2222-3333-4444-555555555555";
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: `claude/${uuid}`, meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      const header = el.children[0].children[0];
+      assert.equal(header.children.length, 4, "claude topic header has 4 children");
+      const openTerminalBtn = header.children[2];
+      assert.equal(openTerminalBtn.className, "feed-tile-open-terminal-btn");
+      assert.equal(openTerminalBtn.tagName, "BUTTON");
+
+      // Clicking fires a CustomEvent with { uuid, topic } and stops
+      // propagation so the carousel doesn't eat the click as a drag.
+      const dispatched = [];
+      const orig = globalThis.window.dispatchEvent;
+      globalThis.window.dispatchEvent = (ev) => { dispatched.push(ev); };
+      try {
+        const clickListener = openTerminalBtn._listeners.click?.[0];
+        assert.ok(clickListener, "click listener registered");
+        let propagated = true;
+        clickListener({ stopPropagation: () => { propagated = false; } });
+        assert.equal(propagated, false, "stopPropagation called");
+        assert.equal(dispatched.length, 1);
+        assert.equal(dispatched[0].type, "katulong:open-terminal-for-uuid");
+        assert.deepEqual(dispatched[0].detail, { uuid, topic: `claude/${uuid}` });
+      } finally {
+        globalThis.window.dispatchEvent = orig;
+      }
+    });
+
+    it("omits the open-terminal button when the topic isn't a claude/<uuid>", () => {
+      // Defense-in-depth: the topic shape decides whether we offer
+      // terminal resume. A bare topic has no uuid to pass along.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/not-a-uuid", meta: {} },
+        dispatch: () => {},
+        ctx: {},
+      });
+      const header = el.children[0].children[0];
+      for (const child of header.children) {
+        assert.notEqual(child.className, "feed-tile-open-terminal-btn");
+      }
     });
 
     it("processes SSE events via onmessage", () => {
@@ -508,11 +564,14 @@ describe("feedRenderer", () => {
       assert.equal(list.children.length, 1);
     });
 
-    it("renders reply events as a flat card — prose on top, time footer below", () => {
-      // One `reply` event → one div with [body, footer]. Body shows the
-      // reply text (rendered as HTML through the markdown pipeline);
-      // footer carries the formatted time so the reader's eye lands on
-      // the reply first.
+    it("renders reply events as a block — clickable header wraps prose + footer", () => {
+      // One `reply` event → one reply block with:
+      //   block.children = [header, toolsEl]
+      //   header.children = [body, footer]
+      // The header is clickable so the user can toggle the nested tools
+      // list; the toolsEl is empty until a tool event arrives. Footer
+      // carries the formatted time so the reader's eye lands on the
+      // reply prose first.
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -537,24 +596,39 @@ describe("feedRenderer", () => {
 
       const list = el.children[0].children[1];
       assert.equal(list.children.length, 1);
-      const row = list.children[0];
-      assert.equal(row.tagName, "DIV");
+      const block = list.children[0];
+      assert.equal(block.tagName, "DIV");
       assert.ok(
-        row.className.includes("feed-status-reply"),
-        `expected feed-status-reply, got: ${row.className}`,
+        block.className.includes("feed-status-reply"),
+        `expected feed-status-reply, got: ${block.className}`,
       );
+      assert.ok(
+        block.className.includes("feed-tile-reply-block"),
+        `expected feed-tile-reply-block, got: ${block.className}`,
+      );
+      // First reply is marked is-active (pulse border + auto-expand),
+      // but has-tools / is-running only kick in once a tool lands.
+      assert.ok(block.className.includes("is-active"), block.className);
+      assert.ok(!block.className.includes("has-tools"), block.className);
+      assert.ok(!block.className.includes("is-running"), block.className);
 
-      const body = row.children[0];
+      const header = block.children[0];
+      assert.equal(header.className, "feed-tile-reply-header");
+      const body = header.children[0];
       assert.equal(body.className, "feed-tile-reply-body");
       // In Node the markdown pipeline can't load and feed.js uses the
       // textContent fallback — so the test asserts against that path.
       assert.equal(body.textContent, "All tests pass.");
 
-      const footer = row.children[1];
+      const footer = header.children[1];
       assert.equal(footer.className, "feed-tile-reply-footer");
       const timeSpan = footer.children[0];
       assert.equal(timeSpan.className, "feed-tile-row-time");
       assert.ok(timeSpan.textContent, "time span renders a formatted timestamp");
+
+      const toolsEl = block.children[1];
+      assert.equal(toolsEl.className, "feed-tile-reply-tools");
+      assert.equal(toolsEl.children.length, 0, "no tools yet");
     });
 
     it("renders file chips for reply.files and fires katulong:open-file on click", () => {
@@ -584,8 +658,10 @@ describe("feedRenderer", () => {
       });
 
       const list = el.children[0].children[1];
-      // Row is [body, footer]; footer is [time, files-wrapper].
-      const footer = list.children[0].children[1];
+      // Block → [header, toolsEl]; header → [body, footer];
+      // footer → [time, files-wrapper].
+      const header = list.children[0].children[0];
+      const footer = header.children[1];
       assert.equal(footer.className, "feed-tile-reply-footer");
       const filesWrapper = footer.children[1];
       assert.equal(filesWrapper.className, "feed-tile-reply-files");
@@ -683,9 +759,149 @@ describe("feedRenderer", () => {
       publish("second");
 
       const list = el.children[0].children[1];
-      assert.equal(list.children.length, 1, "no duplicate row for same entryId");
-      // children[0] is the body (prose first); assert its updated text.
-      assert.equal(list.children[0].children[0].textContent, "second");
+      assert.equal(list.children.length, 1, "no duplicate block for same entryId");
+      // block → header → body (prose first); assert its updated text.
+      const body = list.children[0].children[0].children[0];
+      assert.equal(body.className, "feed-tile-reply-body");
+      assert.equal(body.textContent, "second");
+    });
+
+    it("folds a tool that arrives after a reply into that reply's nested tools list", () => {
+      // Option B folding: a tool_use event that lands AFTER a reply
+      // belongs to that reply (the reply is what kicked the tool off).
+      // The tool row is appended to reply.toolsEl, not to the top-level
+      // list — so the list still has one child (the reply block). The
+      // reply picks up has-tools + is-running modifier classes so the
+      // border animates while work is live.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      const send = (body) => eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify(body),
+          timestamp: 1_700_000_000_000,
+        }),
+      });
+
+      send({ status: "reply", entryId: "r-1", step: "Now running tests.", ts: 1 });
+      send({
+        status: "tool", toolUseId: "toolu_A", state: "running",
+        name: "Bash", target: "npm test", ts: 2,
+      });
+
+      const list = el.children[0].children[1];
+      assert.equal(list.children.length, 1, "tool folds under reply, not a sibling");
+      const block = list.children[0];
+      const toolsEl = block.children[1];
+      assert.equal(toolsEl.className, "feed-tile-reply-tools");
+      assert.equal(toolsEl.children.length, 1, "tool rendered inside the reply");
+      assert.ok(
+        block.className.includes("has-tools"),
+        `expected has-tools, got: ${block.className}`,
+      );
+      assert.ok(
+        block.className.includes("is-running"),
+        `expected is-running while tool is live, got: ${block.className}`,
+      );
+    });
+
+    it("drops is-running once every nested tool has a terminal state", () => {
+      // While at least one tool under the reply is still running we
+      // pulse the border (is-running). As soon as every tool has
+      // landed an ok/error result the class is removed and the border
+      // goes solid — signalling the reply's work finished.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      const send = (body) => eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify(body),
+          timestamp: 1_700_000_000_000,
+        }),
+      });
+
+      send({ status: "reply", entryId: "r-1", step: "Running.", ts: 1 });
+      send({ status: "tool", toolUseId: "toolu_A", state: "running", name: "Bash", target: "a", ts: 2 });
+      send({ status: "tool", toolUseId: "toolu_A", state: "ok", output: "done", ts: 3 });
+
+      const block = el.children[0].children[1].children[0];
+      assert.ok(block.className.includes("has-tools"), block.className);
+      assert.ok(!block.className.includes("is-running"), block.className);
+    });
+
+    it("a new reply takes is-active from the prior reply", () => {
+      // Only the most recent reply pulses. When the next reply lands,
+      // the prior one drops is-active (border goes calm) and collapses
+      // its tools; the new reply inherits the active slot and auto-
+      // expands.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      const send = (body) => eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify(body),
+          timestamp: 1_700_000_000_000,
+        }),
+      });
+
+      send({ status: "reply", entryId: "r-1", step: "First.", ts: 1 });
+      send({ status: "reply", entryId: "r-2", step: "Second.", ts: 2 });
+
+      const list = el.children[0].children[1];
+      assert.equal(list.children.length, 2);
+      const first = list.children[0];
+      const second = list.children[1];
+      assert.ok(!first.className.includes("is-active"), `first: ${first.className}`);
+      assert.ok(!first.className.includes("is-expanded"), `first: ${first.className}`);
+      assert.ok(second.className.includes("is-active"), `second: ${second.className}`);
+      assert.ok(second.className.includes("is-expanded"), `second: ${second.className}`);
+    });
+
+    it("tapping a reply header toggles is-expanded", () => {
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      const send = (body) => eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify(body),
+          timestamp: 1_700_000_000_000,
+        }),
+      });
+
+      send({ status: "reply", entryId: "r-1", step: "Only.", ts: 1 });
+      const block = el.children[0].children[1].children[0];
+      const header = block.children[0];
+      // Active reply is auto-expanded; one tap collapses, another
+      // reopens.
+      assert.ok(block.className.includes("is-expanded"), block.className);
+      header._listeners.click[0]();
+      assert.ok(!block.className.includes("is-expanded"), block.className);
+      header._listeners.click[0]();
+      assert.ok(block.className.includes("is-expanded"), block.className);
     });
 
     it("renders a running tool card with state class and tool name", () => {

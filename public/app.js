@@ -2053,6 +2053,75 @@
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
+    // Reverse of openAgentFeedTile — jump from a feed back to the terminal
+    // running that Claude session. Three cases:
+    //   A. A live session exists with matching meta.claude.uuid AND its
+    //      terminal tile is already mounted → focus the tile. Carousel
+    //      slides it into view so feed + terminal sit side-by-side.
+    //   B. Live session exists but no tile → routeToSession adds one.
+    //   C. No live session → look up the launch cwd from the transcript
+    //      (stored by `/api/claude/session-info/:uuid`), spawn a fresh
+    //      session there, and `claude --resume <uuid>` in it.
+    // Dispatched by the feed tile's open-terminal-button. The feed tile
+    // never touches uiStore/sessionStore directly — it only announces
+    // intent.
+    const CLAUDE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    async function openTerminalForClaudeUuid(uuid) {
+      if (typeof uuid !== "string" || !CLAUDE_UUID_RE.test(uuid)) return;
+
+      const { sessions } = sessionStore.getState();
+      const match = (sessions || []).find((s) => s?.meta?.claude?.uuid === uuid);
+      if (match) {
+        routeToSession(match.name);
+        if (isOverlayViewport()) setOverlaySidebar(false);
+        return;
+      }
+
+      let cwd;
+      try {
+        const info = await api.get(`/api/claude/session-info/${encodeURIComponent(uuid)}`);
+        cwd = info?.cwd;
+      } catch (err) {
+        showToast(`Couldn't look up session cwd: ${err.message || "unknown"}`, true);
+        return;
+      }
+      if (typeof cwd !== "string" || !cwd) {
+        showToast("No cwd recorded for that Claude session", true);
+        return;
+      }
+
+      let created;
+      try {
+        const name = generateSessionName();
+        created = await api.post("/sessions", { name, cwd });
+      } catch (err) {
+        showToast(`Couldn't create terminal: ${err.message || "unknown"}`, true);
+        return;
+      }
+
+      // Mirror createNewSession's tab-bar placement so the new tab
+      // appears right of the active one, matching the + button behavior.
+      const activeName = getActiveSessionName();
+      const priorTabs = windowTabSet.getTabs();
+      const anchorIdx = activeName ? priorTabs.indexOf(activeName) : -1;
+      routeToSession(created.name);
+      windowTabSet.addTab(created.name, anchorIdx >= 0 ? anchorIdx + 1 : undefined);
+
+      try {
+        await api.post(`/sessions/by-id/${encodeURIComponent(created.id)}/exec`, {
+          input: `claude --resume ${uuid}`,
+        });
+      } catch (err) {
+        showToast(`Resume command failed: ${err.message || "unknown"}`, true);
+      }
+      if (isOverlayViewport()) setOverlaySidebar(false);
+    }
+
+    window.addEventListener("katulong:open-terminal-for-uuid", (ev) => {
+      const { uuid } = ev.detail || {};
+      openTerminalForClaudeUuid(uuid);
+    });
+
     // --- Localhost Browser (tile) ---
 
     function openLocalhostBrowserTile() {
