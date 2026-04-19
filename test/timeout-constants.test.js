@@ -32,9 +32,9 @@ describe("reduced timeout constants", () => {
     assert.match(src, /if \(ps\.pending\) \{ ps\.pending = false; pull\(name\); \}\n\s*\}, 100\)/);
   });
 
-  it("routes: PASTE_DELAY_MS = 50", () => {
-    const src = readSource("lib/routes/app-routes.js");
-    assert.match(src, /const PASTE_DELAY_MS = 50;/);
+  it("paste-sequence: DEFAULT_PASTE_DELAY_MS = 50", () => {
+    const src = readSource("lib/paste-sequence.js");
+    assert.match(src, /const DEFAULT_PASTE_DELAY_MS = 50;/);
   });
 
   it("key-mapping: inter-key delay = 50ms", () => {
