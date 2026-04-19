@@ -34,6 +34,7 @@ import { createTopicBroker } from "./lib/topic-broker.js";
 import { createWatchlist } from "./lib/claude-watchlist.js";
 import { createClaudeProcessor } from "./lib/claude-processor.js";
 import { createOllamaClient } from "./lib/ollama-client.js";
+import { createSessionSummarizer } from "./lib/session-summarizer.js";
 import { createClaudeFeedRoutes } from "./lib/routes/claude-feed-routes.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 import { homedir } from "node:os";
@@ -254,16 +255,41 @@ const getDraining = () => shutdown?.isDraining() ?? false;
 
 // Claude feed — opt-in narration of Claude Code sessions.
 // The watchlist is the persistent ledger of UUIDs we've been asked to narrate.
-// The processor refcounts active subscribers; a UUID is narrated only while
-// someone has an open /api/claude/stream connection. See
+// The processor auto-polls every watchlist entry from boot onward (slow when
+// nobody is subscribed, fast when a feed tile is open). Refcount drives poll
+// cadence, not worker existence — so a reconnecting subscriber sees the
+// current transcript state instead of a cursor frozen at the last gap. See
 // docs/claude-feed-watchlist.md for the full design.
 const topicBroker = createTopicBroker();
 const claudeWatchlist = createWatchlist({ dataDir: DATA_DIR });
+const callOllama = createOllamaClient();
 const claudeProcessor = createClaudeProcessor({
   watchlist: claudeWatchlist,
   topicBroker,
-  callOllama: createOllamaClient(),
+  callOllama,
+  // Mirror every summary onto the matching tmux session's
+  // meta.claude.summary so the terminal-tab tooltip picks it up via
+  // the normal session-updated broadcast channel. Kept outside the
+  // processor so it doesn't depend on sessionManager directly.
+  onSummary: (uuid, summary) => {
+    const sessions = sessionManager.listSessions?.().sessions || [];
+    const target = sessions.find((s) => s.meta?.claude?.uuid === uuid);
+    if (!target) return;
+    const live = sessionManager.getSession?.(target.name);
+    const current = live?.meta?.claude || target.meta?.claude || {};
+    live?.setMeta?.("claude", { ...current, summary });
+  },
 });
+
+// Generic per-session summarizer — gives every tab a short auto-title
+// and hover-tooltip based on recent terminal output. Independent of
+// the Claude feed; works for any shell. Writes `meta.autoTitle` +
+// `meta.summary`; the frontend prefers `meta.userTitle` when set.
+const sessionSummarizer = createSessionSummarizer({
+  sessionManager,
+  callOllama,
+});
+sessionSummarizer.start();
 
 const routes = [
   ...createAuthRoutes({
@@ -451,7 +477,10 @@ shutdown = createServerShutdown({
   broadcastToAll,
   closeAllWebSockets,
   sessionManager,
-  shutdownPlugins,
+  shutdownPlugins: async () => {
+    sessionSummarizer.stop();
+    await shutdownPlugins();
+  },
   drainTimeoutMs: DRAIN_TIMEOUT_MS,
   pidPath: SERVER_PID_PATH,
   infoPath: SERVER_INFO_PATH,

@@ -310,9 +310,22 @@ export function createCardCarousel({
     // capture, so it serves as a reliable fallback.
     let handledByPointerdown = false;
 
+    // Don't claw focus back to the tile when the user taps an
+    // interactive form control (text input, textarea, button, etc.).
+    // Doing so on mobile prevents the keyboard from opening — the
+    // textarea starts to receive focus, we immediately punt focus to
+    // the tile's own focus handle (which on feed.js focuses the list
+    // div), and the browser dismisses the keyboard because the focus
+    // target isn't a text input anymore.
+    function isInteractiveTarget(target) {
+      if (!target || !target.closest) return false;
+      return !!target.closest("input, textarea, button, select, [contenteditable=\"true\"]");
+    }
+
     wrapper.addEventListener("pointerdown", (e) => {
       if (!active) return;
       if (focusedId === tileId) {
+        if (isInteractiveTarget(e.target)) return;
         const entry = cardEls.get(tileId);
         if (entry) {
           const visibleTile = entry.flipped ? entry.backTile : entry.tile;
@@ -320,6 +333,7 @@ export function createCardCarousel({
         }
         return;
       }
+      if (isInteractiveTarget(e.target)) return;
       handledByPointerdown = true;
       e.preventDefault();
       e.stopPropagation();
@@ -329,6 +343,7 @@ export function createCardCarousel({
     wrapper.addEventListener("click", (e) => {
       if (!active) return;
       if (focusedId === tileId) {
+        if (isInteractiveTarget(e.target)) return;
         const entry = cardEls.get(tileId);
         if (entry) {
           const visibleTile = entry.flipped ? entry.backTile : entry.tile;
@@ -337,6 +352,7 @@ export function createCardCarousel({
         return;
       }
       if (handledByPointerdown) { handledByPointerdown = false; return; }
+      if (isInteractiveTarget(e.target)) return;
       e.preventDefault();
       e.stopPropagation();
       focusCard(tileId);

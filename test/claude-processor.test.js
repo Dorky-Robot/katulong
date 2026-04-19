@@ -9,8 +9,7 @@
  * independent of Ollama — the feed stays live even when Ollama is down.
  *
  * We use a real watchlist (tmpdir) and a real transcript file, but a fake
- * topic broker (captures published messages) and a controllable fake
- * callOllama.
+ * topic broker (captures published messages).
  */
 
 import { describe, it, beforeEach, afterEach } from "node:test";
@@ -115,22 +114,46 @@ describe("createClaudeProcessor", () => {
 
   it("rejects missing args", () => {
     const broker = makeBroker();
-    const callOllama = async () => "x";
-    assert.throws(() => createClaudeProcessor({ topicBroker: broker, callOllama }), /watchlist/);
-    assert.throws(() => createClaudeProcessor({ watchlist, callOllama }), /topicBroker/);
-    assert.throws(
-      () => createClaudeProcessor({ watchlist, topicBroker: broker }),
-      /callOllama/,
-    );
+    assert.throws(() => createClaudeProcessor({ topicBroker: broker }), /watchlist/);
+    assert.throws(() => createClaudeProcessor({ watchlist }), /topicBroker/);
   });
 
   it("throws on acquire for a uuid that's not on the watchlist", async () => {
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: makeBroker(),
-      callOllama: async () => "title",
     });
     await assert.rejects(() => processor.acquire(UUID), /not on the watchlist/);
+    processor.destroy();
+  });
+
+  it("publishes a prompt event for each user entry with text", async () => {
+    writeTranscript(transcriptPath, [
+      fakeUserLine("refactor the auth handler"),
+      fakeAssistantLine("ok, starting now"),
+      fakeUserLine("also add a test"),
+    ]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist, topicBroker: broker, pollIntervalMs: 50,
+    });
+
+    await processor.acquire(UUID);
+    await waitFor(() =>
+      broker.published.filter((p) => JSON.parse(p.message).status === "prompt").length >= 2,
+    );
+
+    const prompts = broker.published
+      .map((p) => JSON.parse(p.message))
+      .filter((m) => m.status === "prompt");
+    assert.equal(prompts.length, 2);
+    assert.equal(prompts[0].step, "refactor the auth handler");
+    assert.equal(prompts[1].step, "also add a test");
+    assert.ok(prompts[0].entryId);
+    assert.ok(Number.isFinite(prompts[0].ts));
+
     processor.destroy();
   });
 
@@ -147,7 +170,6 @@ describe("createClaudeProcessor", () => {
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: broker,
-      callOllama: async () => "summary",
       pollIntervalMs: 50,
     });
 
@@ -178,7 +200,6 @@ describe("createClaudeProcessor", () => {
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: broker,
-      callOllama: async () => null,
       pollIntervalMs: 50,
     });
 
@@ -194,77 +215,13 @@ describe("createClaudeProcessor", () => {
     processor.destroy();
   });
 
-  it("publishes a reply-title enrichment keyed on the same entryId", async () => {
-    writeTranscript(transcriptPath, [fakeAssistantLine("Investigating the auth bug.")]);
-    await watchlist.add(UUID, { transcriptPath });
-
-    const broker = makeBroker();
-    const processor = createClaudeProcessor({
-      watchlist,
-      topicBroker: broker,
-      callOllama: async () => "Investigating the auth bug",
-      pollIntervalMs: 50,
-    });
-
-    await processor.acquire(UUID);
-    await waitFor(() =>
-      broker.published.some((p) => {
-        try { return JSON.parse(p.message).status === "reply-title"; } catch { return false; }
-      }),
-    );
-
-    const parsed = broker.published.map((p) => JSON.parse(p.message));
-    const reply = parsed.find((m) => m.status === "reply");
-    const title = parsed.find((m) => m.status === "reply-title");
-    assert.ok(reply && title);
-    assert.equal(title.entryId, reply.entryId);
-    assert.equal(title.title, "Investigating the auth bug");
-
-    processor.destroy();
-  });
-
-  it("still publishes the reply card when Ollama throws", async () => {
-    writeTranscript(transcriptPath, [fakeAssistantLine("ok")]);
-    await watchlist.add(UUID, { transcriptPath });
-
-    const broker = makeBroker();
-    const processor = createClaudeProcessor({
-      watchlist,
-      topicBroker: broker,
-      callOllama: async () => { throw new Error("ollama down"); },
-      pollIntervalMs: 50,
-    });
-
-    await processor.acquire(UUID);
-    await waitFor(() => broker.published.length >= 1);
-
-    const replies = broker.published
-      .map((p) => JSON.parse(p.message))
-      .filter((m) => m.status === "reply");
-    assert.equal(replies.length, 1, "reply card publishes even when Ollama fails");
-
-    // Give the background enrichment a moment to settle without publishing.
-    await new Promise((r) => setTimeout(r, 80));
-    const titles = broker.published
-      .map((p) => JSON.parse(p.message))
-      .filter((m) => m.status === "reply-title");
-    assert.equal(titles.length, 0);
-
-    // Cursor still advances — reply publishing is the load-bearing action.
-    const entry = await watchlist.get(UUID);
-    assert.equal(entry.lastProcessedLine, 1);
-
-    processor.destroy();
-  });
-
-  it("refcount: second acquire does not start another worker; release drops to zero", async () => {
+  it("refcount: second acquire does not start another worker; release drops to zero without stopping the worker", async () => {
     writeTranscript(transcriptPath, [fakeAssistantLine("hi")]);
     await watchlist.add(UUID, { transcriptPath });
 
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: makeBroker(),
-      callOllama: async () => "t",
       pollIntervalMs: 50,
     });
 
@@ -277,17 +234,20 @@ describe("createClaudeProcessor", () => {
     assert.strictEqual(processor.release(UUID), 1);
     assert.strictEqual(processor.has(UUID), true);
 
+    // Refcount 0 no longer stops the worker — it stays alive at the
+    // idle poll cadence so the cursor advances during subscriber gaps.
     assert.strictEqual(processor.release(UUID), 0);
-    assert.strictEqual(processor.has(UUID), false);
+    assert.strictEqual(processor.has(UUID), true);
+    assert.strictEqual(processor.refcount(UUID), 0);
 
     processor.destroy();
+    assert.strictEqual(processor.has(UUID), false);
   });
 
   it("release on a uuid that's not active returns 0", async () => {
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: makeBroker(),
-      callOllama: async () => "x",
     });
     assert.strictEqual(processor.release(UUID), 0);
     processor.destroy();
@@ -305,12 +265,9 @@ describe("createClaudeProcessor", () => {
     await watchlist.add(UUID, { transcriptPath });
 
     const broker = makeBroker();
-    let called = false;
-    const callOllama = async () => { called = true; return "x"; };
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: broker,
-      callOllama,
       pollIntervalMs: 50,
     });
 
@@ -319,7 +276,6 @@ describe("createClaudeProcessor", () => {
       const entry = await watchlist.get(UUID);
       return entry.lastProcessedLine === 2;
     });
-    assert.strictEqual(called, false);
     assert.strictEqual(broker.published.length, 0);
     processor.destroy();
   });
@@ -332,7 +288,6 @@ describe("createClaudeProcessor", () => {
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: broker,
-      callOllama: async () => "title",
       pollIntervalMs: 30,
     });
 
@@ -351,7 +306,13 @@ describe("createClaudeProcessor", () => {
     processor.destroy();
   });
 
-  it("stops polling after the last release (no more publishes)", async () => {
+  it("keeps polling after the last release, at the idle cadence, so the cursor never freezes", async () => {
+    // The whole point of decoupling worker lifecycle from subscribers:
+    // a subscriber gap (page refresh, server restart, disconnect) must
+    // not freeze the cursor. The worker stays alive at idlePollIntervalMs
+    // and keeps advancing; when the next subscriber attaches they see
+    // up-to-date state instead of stale data pinned to the previous
+    // subscriber's last seq.
     writeTranscript(transcriptPath, [fakeAssistantLine("first")]);
     await watchlist.add(UUID, { transcriptPath });
 
@@ -359,8 +320,69 @@ describe("createClaudeProcessor", () => {
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: broker,
-      callOllama: async () => "t",
       pollIntervalMs: 20,
+      idlePollIntervalMs: 20,
+    });
+
+    await processor.acquire(UUID);
+    await waitFor(() =>
+      broker.published.some((p) => JSON.parse(p.message).status === "reply"),
+    );
+    const beforeRelease = broker.published.filter((p) => JSON.parse(p.message).status === "reply").length;
+    processor.release(UUID);
+
+    appendTranscript(transcriptPath, [fakeAssistantLine("while no one's watching")]);
+    await waitFor(() =>
+      broker.published.filter((p) => JSON.parse(p.message).status === "reply").length > beforeRelease,
+    );
+
+    const entry = await watchlist.get(UUID);
+    assert.strictEqual(entry.lastProcessedLine, 2);
+    assert.strictEqual(processor.has(UUID), true);
+    processor.destroy();
+  });
+
+  it("boot-spawns idle workers for uuids already on the watchlist at creation", async () => {
+    // Server restart scenario: the watchlist survives on disk. When the
+    // processor comes back up it should immediately start polling
+    // every entry at the idle cadence — without waiting for someone to
+    // open a feed tile. Otherwise the first subscriber after restart
+    // hits a long stall while the worker initializes.
+    writeTranscript(transcriptPath, [fakeAssistantLine("pre-existing reply")]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist,
+      topicBroker: broker,
+      pollIntervalMs: 500,
+      idlePollIntervalMs: 20,
+    });
+
+    await processor.ready();
+    assert.strictEqual(processor.has(UUID), true);
+    assert.strictEqual(processor.refcount(UUID), 0);
+
+    await waitFor(() =>
+      broker.published.some((p) => JSON.parse(p.message).status === "reply"),
+    );
+    processor.destroy();
+  });
+
+  it("acquire after an idle period kicks an immediate cycle", async () => {
+    // After release drops refcount to 0 the worker idles on a slow
+    // cadence. A subscriber reconnecting should not wait a full idle
+    // interval to see fresh state — acquire on 0→1 must trigger an
+    // immediate poll.
+    writeTranscript(transcriptPath, [fakeAssistantLine("first")]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const broker = makeBroker();
+    const processor = createClaudeProcessor({
+      watchlist,
+      topicBroker: broker,
+      pollIntervalMs: 20,
+      idlePollIntervalMs: 60_000, // effectively disables idle catch-up for this test
     });
 
     await processor.acquire(UUID);
@@ -368,14 +390,38 @@ describe("createClaudeProcessor", () => {
       broker.published.some((p) => JSON.parse(p.message).status === "reply"),
     );
     processor.release(UUID);
+    // Wait a beat to ensure any in-flight cycle settles and the next
+    // scheduleNext uses the slow idle interval.
+    await new Promise((r) => setTimeout(r, 30));
 
-    const after = broker.published.length;
-    appendTranscript(transcriptPath, [fakeAssistantLine("while no one's watching")]);
-    await new Promise((r) => setTimeout(r, 100));
+    appendTranscript(transcriptPath, [fakeAssistantLine("second")]);
+    const before = broker.published.filter((p) => JSON.parse(p.message).status === "reply").length;
+    await processor.acquire(UUID);
+    // An immediate fast cycle should catch the second line well before
+    // idlePollIntervalMs (60s) would.
+    await waitFor(() =>
+      broker.published.filter((p) => JSON.parse(p.message).status === "reply").length > before,
+    { timeoutMs: 500 });
 
-    assert.strictEqual(broker.published.length, after);
-    const entry = await watchlist.get(UUID);
-    assert.strictEqual(entry.lastProcessedLine, 1);
+    processor.destroy();
+  });
+
+  it("stops the worker when the watchlist entry is removed mid-run", async () => {
+    writeTranscript(transcriptPath, [fakeAssistantLine("first")]);
+    await watchlist.add(UUID, { transcriptPath });
+
+    const processor = createClaudeProcessor({
+      watchlist,
+      topicBroker: makeBroker(),
+      pollIntervalMs: 20,
+      idlePollIntervalMs: 20,
+    });
+
+    await processor.acquire(UUID);
+    assert.strictEqual(processor.has(UUID), true);
+
+    await watchlist.remove(UUID);
+    await waitFor(() => !processor.has(UUID));
     processor.destroy();
   });
 
@@ -386,7 +432,6 @@ describe("createClaudeProcessor", () => {
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: makeBroker(),
-      callOllama: async () => "t",
       pollIntervalMs: 20,
     });
 
@@ -416,7 +461,6 @@ describe("createClaudeProcessor", () => {
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: broker,
-      callOllama: async () => null,
       pollIntervalMs: 50,
     });
 
@@ -439,63 +483,6 @@ describe("createClaudeProcessor", () => {
     processor.destroy();
   });
 
-  it("enriches newest reply first (priority queue, not FIFO)", async () => {
-    // When the tile opens on a big backlog, the user wants the most
-    // recent titles first — those are the ones about the work Claude is
-    // currently doing. Older titles fill in later.
-    writeTranscript(transcriptPath, [
-      fakeAssistantLine("oldest reply"),
-      fakeAssistantLine("middle reply"),
-      fakeAssistantLine("newest reply"),
-    ]);
-    await watchlist.add(UUID, { transcriptPath });
-
-    const broker = makeBroker();
-    const callOrder = [];
-    const gate = { resolve: null };
-    const callOllama = async (userPrompt) => {
-      callOrder.push(userPrompt);
-      // Block the first call so the queue fills with the remaining two
-      // before any drain completes — gives the priority order something
-      // to act on.
-      if (callOrder.length === 1) {
-        await new Promise((r) => { gate.resolve = r; });
-      }
-      const m = userPrompt.match(/CLAUDE REPLY:\n([^\n]+)/);
-      return `title for: ${m[1]}`;
-    };
-
-    const processor = createClaudeProcessor({
-      watchlist,
-      topicBroker: broker,
-      callOllama,
-      pollIntervalMs: 50,
-      maxConcurrent: 1,
-    });
-
-    await processor.acquire(UUID);
-
-    // Wait for all 3 replies to be published and the first Ollama call to
-    // have started and be blocked on the gate.
-    await waitFor(() =>
-      broker.published.filter((p) => JSON.parse(p.message).status === "reply").length === 3
-      && callOrder.length === 1,
-    );
-
-    // Unblock the first call. The remaining two should drain newest-first.
-    gate.resolve();
-
-    await waitFor(() => callOrder.length === 3);
-
-    // The first call grabbed whichever entry got queued first (oldest, at
-    // the head of the slice). The queue then reorders: after that call
-    // returns, the drain pulls the newest-ts remaining entry.
-    assert.ok(callOrder[1].includes("newest reply"), `call 2 should be newest, got: ${callOrder[1]}`);
-    assert.ok(callOrder[2].includes("middle reply"), `call 3 should be middle, got: ${callOrder[2]}`);
-
-    processor.destroy();
-  });
-
   it("catches up in batches when the backlog exceeds sliceLimit", async () => {
     const lines = Array.from({ length: 5 }, (_, i) => fakeAssistantLine(`reply ${i}`));
     writeTranscript(transcriptPath, lines);
@@ -505,7 +492,6 @@ describe("createClaudeProcessor", () => {
     const processor = createClaudeProcessor({
       watchlist,
       topicBroker: broker,
-      callOllama: async () => "t",
       pollIntervalMs: 500, // long poll — relies on hasMore fast-path
       sliceLimit: 2,
     });

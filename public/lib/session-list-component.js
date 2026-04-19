@@ -285,14 +285,16 @@ export function createSessionListComponent(store, options = {}) {
       handle.innerHTML = '<i class="ph ph-dots-six"></i>';
       card.appendChild(handle);
 
-      // Claude-presence badge — the server's pane monitor flips
-      // meta.claude.running when tmux reports `claude` as the pane's
-      // foreground command, so this lights up on every card whose tile
-      // has Claude actively running.
-      if (s.meta?.claude?.running) {
+      // Agent-presence badge — the server's pane monitor writes
+      // meta.agent.{kind,running} when tmux reports a recognized
+      // coding-agent command as the pane's foreground process, so
+      // this lights up on every card whose tile has an agent running.
+      // Only claude is wired today; future kinds (opencode, etc.)
+      // will activate the same badge without any change here.
+      if (s.meta?.agent?.kind) {
         const badge = document.createElement("div");
         badge.className = "session-card-claude-badge";
-        badge.setAttribute("aria-label", "Claude session running");
+        badge.setAttribute("aria-label", "Agent session running");
         badge.innerHTML = '<i class="ph ph-sparkle"></i>';
         card.appendChild(badge);
       }

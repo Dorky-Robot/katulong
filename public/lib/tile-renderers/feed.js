@@ -6,28 +6,74 @@
  *
  * Routing:
  *   - `claude/<uuid>` topics stream via `/api/claude/stream/:uuid`. That
- *     endpoint acquires a per-UUID processor refcount for the lifetime of
- *     the connection, so transcript polling + Ollama enrichment only run
- *     while the tile is open. Opt-in (POST /api/claude/watch) happens
+ *     endpoint acquires a per-UUID processor refcount for the lifetime
+ *     of the connection. Opt-in (POST /api/claude/watch) happens
  *     elsewhere — typically the sparkle-click handler in app.js.
  *   - Any other topic streams via `/sub/<topic>`, the generic broker SSE.
  *
- * Event shapes (progress topics):
- *   reply        — { status, entryId, step, ts } — a whole Claude reply,
- *                  rendered as a <details> block: collapsed label shows the
- *                  time + (title || "Claude's reply (N words)"); expanded
- *                  body shows the full text.
- *   reply-title  — { status, entryId, title } — progressive-enhancement
- *                  patch from the Ollama title generator. Finds the reply
- *                  card with the same entryId and swaps in the title.
+ * Event shape (progress topics):
+ *   reply — { status, entryId, step, ts, files?: [{ path, line? }] }
+ *           One full Claude reply per turn. Rendered flat (no <details>):
+ *           a timestamp + file chips row on top, the reply prose below.
+ *           Files chips are clickable and open a document tile.
  *
  * Lifecycle:
  *   1. Mount with `props.topic` → stream immediately.
  *   2. Mount without → inline topic picker (from /api/topics).
  *   3. Rendering strategy chosen by `props.meta.type`:
- *        "progress" — Claude reply cards with optional Ollama titles.
+ *        "progress" — Claude reply cards.
  *        default    — chronological event log with timestamps.
  */
+
+// Markdown rendering for reply bodies. Dynamic-imported so the module
+// still loads in environments (Node tests) that can't resolve the
+// /vendor/... browser paths. When the import succeeds we render markdown
+// → sanitized HTML; when it fails we fall back to setting textContent
+// and the tests never hit the real parser.
+let renderMarkdown = (el, text) => { el.textContent = text || ""; };
+try {
+  const [{ marked }, purifyMod] = await Promise.all([
+    import("/vendor/marked/marked.esm.js"),
+    import("/vendor/dompurify/purify.es.mjs"),
+  ]);
+  const DOMPurify = purifyMod.default;
+  renderMarkdown = (el, text) => {
+    el.innerHTML = DOMPurify.sanitize(marked.parse(text || ""));
+  };
+} catch {
+  // Fallback already set above.
+}
+
+// Pull numbered options off the end of a reply so the feed can offer
+// quick-pick buttons. Accepts the common Claude prompt shape:
+//
+//     Some preamble question?
+//
+//     1. Yes, do the thing
+//     2. No, cancel
+//     3. Ask me something else
+//
+// Returns the trailing option block as `[{ key, label }]` only when
+// we see at least two consecutive numbered items at the end of the
+// reply; anything less is noise (a standalone "1." inside prose is
+// usually part of a discussion, not an option list).
+export function parseReplyOptions(text) {
+  if (typeof text !== "string" || !text.trim()) return [];
+  const lines = text.split("\n");
+  const opts = [];
+  // Walk backwards, collecting trailing `\d+. ...` lines. Stop on the
+  // first non-option, non-blank line so only the TAIL qualifies — a
+  // numbered list in the middle of a reply isn't an answer prompt.
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (!line.trim()) { if (opts.length === 0) continue; break; }
+    const m = line.match(/^\s*(\d+)[.)]\s+(.+?)\s*$/);
+    if (!m) break;
+    opts.push({ key: m[1], label: m[2] });
+  }
+  if (opts.length < 2) return [];
+  return opts.reverse();
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -57,31 +103,118 @@ function makeTimeSpan(ts) {
   return t;
 }
 
-// Label shown inside the collapsed <summary> before (or in the absence of)
-// an Ollama-generated title. The time span is added separately, outside
-// the label, so it stays aligned even as the label text swaps in.
-function replyFallbackLabel(text) {
-  const words = typeof text === "string" && text.trim()
-    ? text.trim().split(/\s+/).length
-    : 0;
-  return words
-    ? `Claude's reply (${words} word${words === 1 ? "" : "s"})`
-    : "Claude's reply";
+// A pinned-to-bottom composer for Claude topics. Shows quick-pick
+// buttons when the latest reply ends in a numbered options list, plus
+// a textarea + Send button for typed responses.
+function createResponseBar(claudeUuid) {
+  const el = document.createElement("div");
+  el.className = "feed-tile-response-bar";
+
+  const optionsRow = document.createElement("div");
+  optionsRow.className = "feed-tile-response-options";
+  optionsRow.style.display = "none";
+  el.appendChild(optionsRow);
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "feed-tile-response-textarea";
+  textarea.rows = 4;
+  textarea.placeholder = "Reply to Claude — Enter to send, Shift+Enter for newline";
+  el.appendChild(textarea);
+
+  const status = document.createElement("div");
+  status.className = "feed-tile-response-status";
+  el.appendChild(status);
+
+  let sending = false;
+  async function send(text) {
+    if (sending) return;
+    if (!text || !text.trim()) return;
+    sending = true;
+    textarea.disabled = true;
+    status.textContent = "Sending…";
+    status.className = "feed-tile-response-status";
+    try {
+      const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+      const headers = { "Content-Type": "application/json" };
+      if (csrfMeta?.content) headers["X-CSRF-Token"] = csrfMeta.content;
+      const res = await fetch(`/api/claude/respond/${encodeURIComponent(claudeUuid)}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ text }),
+        credentials: "same-origin",
+        redirect: "error",
+      });
+      if (!res.ok) {
+        let msg = `Send failed (${res.status})`;
+        try { msg = (await res.json()).error || msg; } catch { /* non-JSON */ }
+        throw new Error(msg);
+      }
+      textarea.value = "";
+      status.textContent = "Sent.";
+      setTimeout(() => {
+        if (status.textContent === "Sent.") status.textContent = "";
+      }, 1500);
+    } catch (err) {
+      status.textContent = err.message || "Send failed";
+      status.classList.add("feed-tile-response-status-error");
+    } finally {
+      sending = false;
+      textarea.disabled = false;
+      textarea.focus();
+    }
+  }
+
+  textarea.addEventListener("keydown", (ev) => {
+    // Enter alone sends — matching chat apps' default and how a user
+    // expects to submit a reply. Shift+Enter inserts a literal newline
+    // for the occasional multi-line message. The IME composition guard
+    // avoids firing while the user is still mid-compose on Asian input
+    // methods, where Enter commits the candidate instead of submitting.
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+      ev.preventDefault();
+      send(textarea.value);
+    }
+  });
+
+  function setOptions(replyText) {
+    const opts = parseReplyOptions(replyText);
+    optionsRow.innerHTML = "";
+    if (opts.length === 0) {
+      optionsRow.style.display = "none";
+      return;
+    }
+    optionsRow.style.display = "";
+    for (const opt of opts) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "feed-tile-response-option";
+      const num = document.createElement("span");
+      num.className = "feed-tile-response-option-num";
+      num.textContent = opt.key;
+      btn.appendChild(num);
+      const label = document.createElement("span");
+      label.className = "feed-tile-response-option-label";
+      label.textContent = opt.label;
+      btn.appendChild(label);
+      btn.addEventListener("click", () => send(opt.key));
+      optionsRow.appendChild(btn);
+    }
+  }
+
+  return { el, setOptions };
 }
 
-// File chips shown inline on the collapsed summary — clicking one
-// dispatches a window CustomEvent that app.js catches to open the file
-// in a document tile (same path as a file link clicked in the terminal).
+// File chips shown inline on the header row — clicking one dispatches a
+// window CustomEvent that app.js catches to open the file in a document
+// tile (same path as a file link clicked in the terminal).
 function makeFileChip(file) {
   const chip = document.createElement("button");
   chip.type = "button";
   chip.className = "feed-tile-reply-file";
-  // basename for display, full path in the title + click payload
   const base = (file.path || "").split("/").filter(Boolean).pop() || file.path;
   chip.textContent = file.line ? `${base}:${file.line}` : base;
   chip.title = file.line ? `${file.path}:${file.line}` : file.path;
   chip.addEventListener("click", (ev) => {
-    // Prevent the click from toggling the <details> open/closed.
     ev.preventDefault();
     ev.stopPropagation();
     window.dispatchEvent(new CustomEvent("katulong:open-file", {
@@ -96,31 +229,43 @@ function renderReplyItem(row, msg, ts) {
   row.className = "feed-tile-item feed-status-reply";
   const text = msg.step || "";
 
-  const summary = document.createElement("summary");
-  summary.className = "feed-tile-reply-summary";
-  // Time lives inside <summary> so it stays visible when the reply is
-  // collapsed — <details> hides everything below the first <summary>.
-  summary.appendChild(makeTimeSpan(ts));
-  const label = document.createElement("span");
-  label.className = "feed-tile-reply-label";
-  label.textContent = typeof msg.title === "string" && msg.title
-    ? msg.title
-    : replyFallbackLabel(text);
-  summary.appendChild(label);
+  // Prose first, metadata below — the reply IS the content. The footer
+  // is reference material (when it happened, what it touched) that a
+  // reader glances at after skimming the body.
+  const prose = document.createElement("div");
+  prose.className = "feed-tile-reply-body";
+  renderMarkdown(prose, text);
+  row.appendChild(prose);
 
+  const footer = document.createElement("div");
+  footer.className = "feed-tile-reply-footer";
+  footer.appendChild(makeTimeSpan(ts));
   if (Array.isArray(msg.files) && msg.files.length > 0) {
     const files = document.createElement("span");
     files.className = "feed-tile-reply-files";
     for (const f of msg.files) files.appendChild(makeFileChip(f));
-    summary.appendChild(files);
+    footer.appendChild(files);
   }
+  row.appendChild(footer);
+}
 
-  row.appendChild(summary);
+// The user's side of the conversation. Same structural shape as a
+// reply (body + time footer) but styled differently so the reader
+// can eyeball the back-and-forth without reading every word.
+function renderPromptItem(row, msg, ts) {
+  row.innerHTML = "";
+  row.className = "feed-tile-item feed-status-prompt";
+  const text = msg.step || "";
 
   const prose = document.createElement("div");
-  prose.className = "feed-tile-reply-body";
-  prose.textContent = text;
+  prose.className = "feed-tile-prompt-body";
+  renderMarkdown(prose, text);
   row.appendChild(prose);
+
+  const footer = document.createElement("div");
+  footer.className = "feed-tile-prompt-footer";
+  footer.appendChild(makeTimeSpan(ts));
+  row.appendChild(footer);
 }
 
 function renderLogItem(row, msg, ts) {
@@ -397,27 +542,55 @@ export const feedRenderer = {
       root.appendChild(list);
 
       // Reply cards are keyed by their transcript entry uuid so that a
-      // later `reply-title` enrichment event can find and patch the same
-      // <details> node in place without rebuilding it.
+      // republished reply (e.g. after a processor catch-up) updates the
+      // existing row in place rather than duplicating it.
       const replyItems = new Map();
-      // Pending titles that arrived BEFORE their reply card (shouldn't
-      // happen within a single topic — the processor publishes reply
-      // first — but cheap insurance across reconnects and replays).
-      const pendingTitles = new Map();
       // Ephemeral non-reply events (generic log topics or pre-rewrite
       // persisted events) get auto-keyed row slots.
       const logItems = new Map();
       let autoKey = 0;
       const isProgress = topicMeta.type === "progress";
 
-      function applyTitle(entryId, title) {
-        const row = replyItems.get(entryId);
-        if (!row) {
-          pendingTitles.set(entryId, title);
-          return;
-        }
-        const label = row.querySelector(".feed-tile-reply-label");
-        if (label) label.textContent = title;
+      // Response bar — only for claude/<uuid> topics. Lets the user
+      // type back to the Claude session without leaving the feed, and
+      // offers quick-pick buttons when the latest reply ends in a
+      // numbered options list.
+      const claudeUuid = (() => {
+        if (!topic.startsWith("claude/")) return null;
+        const u = topic.slice("claude/".length);
+        return UUID_RE.test(u) ? u : null;
+      })();
+      const responseBar = claudeUuid ? createResponseBar(claudeUuid) : null;
+
+      // Pinned summary at the top of the list. Rendered only for
+      // claude topics; hidden until the first `session-summary`
+      // event lands. Uses a native <details> so the user can
+      // collapse the card out of the way — when closed only the
+      // compact header row stays pinned to the top of the feed,
+      // giving replies more vertical real estate. `short` shows
+      // in the body; `long` is held on a data-attribute so a
+      // future surface (tooltip, expand) can read it.
+      const summaryCard = isProgress && claudeUuid ? document.createElement("details") : null;
+      let summaryBody = null;
+      if (summaryCard) {
+        summaryCard.className = "feed-tile-summary-card";
+        summaryCard.open = true;
+        summaryCard.style.display = "none";
+        const summaryHeader = document.createElement("summary");
+        summaryHeader.textContent = "Session summary";
+        summaryBody = document.createElement("div");
+        summaryBody.className = "feed-tile-summary-body";
+        summaryCard.appendChild(summaryHeader);
+        summaryCard.appendChild(summaryBody);
+        list.appendChild(summaryCard);
+      }
+      function applySummary(msg) {
+        if (!summaryCard) return;
+        const short = typeof msg.short === "string" ? msg.short.trim() : "";
+        if (!short) { summaryCard.style.display = "none"; return; }
+        summaryCard.style.display = "";
+        summaryCard.dataset.long = typeof msg.long === "string" ? msg.long : "";
+        summaryBody.textContent = short;
       }
 
       function handleEvent(envelope) {
@@ -427,28 +600,44 @@ export const feedRenderer = {
 
         const status = msg.status || "";
 
-        // Progress-shaped topics only render two things — a reply card and
-        // its (optional, late-arriving) Ollama title. Everything else that
-        // might still be sitting in an old topic log (narrative, summary,
-        // attention, completion from the old narrator) is silently ignored.
+        // Progress-shaped topics render one thing: a flat reply card per
+        // assistant turn. Legacy events (narrative, summary, attention,
+        // completion, reply-title) still sitting in old topic logs are
+        // silently dropped.
         if (isProgress) {
+          if (status === "session-summary") {
+            applySummary(msg);
+            return;
+          }
           if (status === "reply" && typeof msg.entryId === "string") {
             let row = replyItems.get(msg.entryId);
             if (!row) {
-              row = document.createElement("details");
+              row = document.createElement("div");
               list.appendChild(row);
               replyItems.set(msg.entryId, row);
             }
-            const pending = pendingTitles.get(msg.entryId);
-            if (pending && !msg.title) {
-              msg.title = pending;
-              pendingTitles.delete(msg.entryId);
-            }
             renderReplyItem(row, msg, envelope.timestamp);
-          } else if (status === "reply-title" && typeof msg.entryId === "string" && msg.title) {
-            applyTitle(msg.entryId, msg.title);
+            // Re-evaluate quick-pick options from the latest reply. The
+            // "latest" is always the most recent publish on the topic
+            // log — for a live stream that's also the last message
+            // rendered, so we can just feed this reply's text in. (If
+            // a replay delivers an OLDER reply after a newer one, the
+            // options list might flicker; accepted tradeoff for not
+            // maintaining a full ordered index client-side.)
+            if (responseBar) responseBar.setOptions(msg.step || "");
+          } else if (status === "prompt" && typeof msg.entryId === "string") {
+            // Share the same items map as replies — entryId space is
+            // per-transcript and doesn't collide, and keying both lets
+            // a republished prompt update its row in place just like
+            // replies do.
+            let row = replyItems.get(msg.entryId);
+            if (!row) {
+              row = document.createElement("div");
+              list.appendChild(row);
+              replyItems.set(msg.entryId, row);
+            }
+            renderPromptItem(row, msg, envelope.timestamp);
           }
-          // Silent drop for any other status.
           list.scrollTop = list.scrollHeight;
           return;
         }
@@ -464,6 +653,10 @@ export const feedRenderer = {
         renderLogItem(row, msg, envelope.timestamp);
         list.scrollTop = list.scrollHeight;
       }
+
+      // Append the response bar AFTER the list, outside scrollable area
+      // so it stays pinned while the list scrolls with new replies.
+      if (responseBar) root.appendChild(responseBar.el);
 
       // Empty-state: shown until the first envelope arrives. EventSource
       // opens asynchronously, so on a successful stream the user sees this

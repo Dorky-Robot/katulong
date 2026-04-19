@@ -1,6 +1,11 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
+// feed.js tries to dynamic-import /vendor/marked and /vendor/dompurify;
+// in Node those resolves fail and it falls back to a textContent
+// renderer for reply bodies. Tests assert against the fallback — the
+// real markdown→HTML pipeline is exercised in the browser.
+
 // feed.js uses DOM APIs — provide minimal stubs so the module loads in Node.
 // We only need enough to verify the renderer's structure and mount lifecycle.
 
@@ -15,10 +20,20 @@ class FakeElement {
     this._listeners = {};
     this.style = {};
     this.classList = { toggle() {}, add() {}, remove() {} };
-    this.innerHTML = "";
+    this._innerHTML = "";
     this.scrollHeight = 0;
     this.scrollTop = 0;
     this.parentNode = null;
+  }
+  // Mirror real DOM: assigning `innerHTML = ""` clears children. Some
+  // renderers rely on this to reset a node before rebuilding its body.
+  get innerHTML() { return this._innerHTML; }
+  set innerHTML(v) {
+    this._innerHTML = v;
+    if (v === "" || v == null) {
+      for (const c of this.children) c.parentNode = null;
+      this.children = [];
+    }
   }
   appendChild(child) {
     // Match DOM semantics: appending a node that already has a parent
@@ -105,9 +120,41 @@ globalThis.CustomEvent = class CustomEvent {
   }
 };
 
-const { feedRenderer } = await import(
+const { feedRenderer, parseReplyOptions } = await import(
   new URL("../public/lib/tile-renderers/feed.js", import.meta.url).href
 );
+
+describe("parseReplyOptions", () => {
+  it("returns [] when there's no trailing option list", () => {
+    assert.deepEqual(parseReplyOptions(""), []);
+    assert.deepEqual(parseReplyOptions("plain prose, nothing numbered"), []);
+    assert.deepEqual(parseReplyOptions("1. lonely one-item list"), []);
+  });
+
+  it("pulls a trailing numbered list off the end", () => {
+    const text = `Which approach do you prefer?\n\n1. Merge first\n2. Rebase first\n3. Abort`;
+    assert.deepEqual(parseReplyOptions(text), [
+      { key: "1", label: "Merge first" },
+      { key: "2", label: "Rebase first" },
+      { key: "3", label: "Abort" },
+    ]);
+  });
+
+  it("stops at the first non-option, non-blank line (only the TAIL qualifies)", () => {
+    const text = `Here's a recap:\n1. First\n2. Second\nNow, what next?\n1. Merge\n2. Abort`;
+    assert.deepEqual(parseReplyOptions(text), [
+      { key: "1", label: "Merge" },
+      { key: "2", label: "Abort" },
+    ]);
+  });
+
+  it("accepts `1)` style as well as `1.`", () => {
+    assert.deepEqual(parseReplyOptions(`Pick one:\n1) A\n2) B`), [
+      { key: "1", label: "A" },
+      { key: "2", label: "B" },
+    ]);
+  });
+});
 
 describe("feedRenderer", () => {
   beforeEach(() => {
@@ -280,10 +327,11 @@ describe("feedRenderer", () => {
       assert.equal(list.children.length, 1);
     });
 
-    it("renders reply events as collapsible <details> rows with word-count fallback", () => {
-      // The processor publishes one `reply` event per assistant entry from
-      // the transcript. Collapsed summary shows `Claude's reply (N words)`
-      // until Ollama (optionally) enriches it with a one-liner title.
+    it("renders reply events as a flat card — prose on top, time footer below", () => {
+      // One `reply` event → one div with [body, footer]. Body shows the
+      // reply text (rendered as HTML through the markdown pipeline);
+      // footer carries the formatted time so the reader's eye lands on
+      // the reply first.
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -309,20 +357,23 @@ describe("feedRenderer", () => {
       const list = el.children[0].children[1];
       assert.equal(list.children.length, 1);
       const row = list.children[0];
-      assert.equal(row.tagName, "DETAILS");
+      assert.equal(row.tagName, "DIV");
       assert.ok(
         row.className.includes("feed-status-reply"),
         `expected feed-status-reply, got: ${row.className}`,
       );
-      const summary = row.children[0];
-      assert.equal(summary.tagName, "SUMMARY");
-      const timeSpan = summary.children[0];
-      const labelSpan = summary.children[1];
+
+      const body = row.children[0];
+      assert.equal(body.className, "feed-tile-reply-body");
+      // In Node the markdown pipeline can't load and feed.js uses the
+      // textContent fallback — so the test asserts against that path.
+      assert.equal(body.textContent, "All tests pass.");
+
+      const footer = row.children[1];
+      assert.equal(footer.className, "feed-tile-reply-footer");
+      const timeSpan = footer.children[0];
       assert.equal(timeSpan.className, "feed-tile-row-time");
       assert.ok(timeSpan.textContent, "time span renders a formatted timestamp");
-      assert.equal(labelSpan.textContent, "Claude's reply (3 words)");
-      assert.equal(row.children[1].className, "feed-tile-reply-body");
-      assert.equal(row.children[1].textContent, "All tests pass.");
     });
 
     it("renders file chips for reply.files and fires katulong:open-file on click", () => {
@@ -352,8 +403,10 @@ describe("feedRenderer", () => {
       });
 
       const list = el.children[0].children[1];
-      const summary = list.children[0].children[0];
-      const filesWrapper = summary.children[2];
+      // Row is [body, footer]; footer is [time, files-wrapper].
+      const footer = list.children[0].children[1];
+      assert.equal(footer.className, "feed-tile-reply-footer");
+      const filesWrapper = footer.children[1];
       assert.equal(filesWrapper.className, "feed-tile-reply-files");
       assert.equal(filesWrapper.children.length, 2);
 
@@ -367,7 +420,8 @@ describe("feedRenderer", () => {
       assert.equal(chipB.title, "/src/auth.js:42");
 
       // Clicking the chip should dispatch katulong:open-file with the
-      // full path + line, AND stop the click from bubbling to <details>.
+      // full path + line. Click also stops propagation so a future
+      // ancestor handler (if any) doesn't double-fire.
       let opened = null;
       window.addEventListener("katulong:open-file", (ev) => { opened = ev.detail; });
       let defaultPrevented = false;
@@ -382,10 +436,11 @@ describe("feedRenderer", () => {
       assert.equal(stoppedBubble, true);
     });
 
-    it("applies a reply-title enrichment to the matching entryId", () => {
-      // Progressive enhancement: the reply card renders immediately with
-      // the word-count fallback; when Ollama finishes, a `reply-title`
-      // event swaps the label in place.
+    it("renders prompt events distinctly from reply events", () => {
+      // User prompts and Claude replies share the list but get
+      // different classnames + bodies so the reader can eyeball the
+      // conversation flow. Also shared entryId map → a republished
+      // prompt updates in place just like a reply would.
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -398,36 +453,32 @@ describe("feedRenderer", () => {
         data: JSON.stringify({
           seq: 1, topic: "claude/abc",
           message: JSON.stringify({
-            status: "reply", entryId: "entry-x",
-            step: "Reading the auth module.",
-            ts: 1_700_000_000_000,
+            status: "prompt", entryId: "p-1",
+            step: "refactor the auth handler", ts: 1_700_000_000_000,
           }),
           timestamp: 1_700_000_000_000,
         }),
       });
-
       eventSources[0].onmessage({
         data: JSON.stringify({
           seq: 2, topic: "claude/abc",
           message: JSON.stringify({
-            status: "reply-title", entryId: "entry-x",
-            title: "Reading the auth module",
+            status: "reply", entryId: "r-1",
+            step: "ok, on it", ts: 1_700_000_000_001,
           }),
-          timestamp: 1_700_000_000_000,
+          timestamp: 1_700_000_000_001,
         }),
       });
 
       const list = el.children[0].children[1];
-      const row = list.children[0];
-      const label = row.children[0].children[1];
-      assert.equal(label.textContent, "Reading the auth module");
+      assert.equal(list.children.length, 2);
+      assert.ok(list.children[0].className.includes("feed-status-prompt"));
+      assert.ok(list.children[1].className.includes("feed-status-reply"));
+      assert.equal(list.children[0].children[0].className, "feed-tile-prompt-body");
+      assert.equal(list.children[0].children[0].textContent, "refactor the auth handler");
     });
 
-    it("buffers a reply-title that arrives before its reply (defensive)", () => {
-      // Within a single topic the processor publishes reply first, but
-      // across reconnects / replays the SSE replay order can't be fully
-      // trusted. If the title shows up first, hold it and apply when the
-      // reply appears — no broken state, no dropped enrichment.
+    it("re-rendering the same entryId updates in place (no duplicates)", () => {
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -436,36 +487,30 @@ describe("feedRenderer", () => {
         ctx: {},
       });
 
-      eventSources[0].onmessage({
+      const publish = (step) => eventSources[0].onmessage({
         data: JSON.stringify({
           seq: 1, topic: "claude/abc",
           message: JSON.stringify({
-            status: "reply-title", entryId: "entry-y", title: "Early title",
+            status: "reply", entryId: "entry-dup",
+            step, ts: 1_700_000_000_000,
           }),
           timestamp: 1_700_000_000_000,
         }),
       });
 
-      eventSources[0].onmessage({
-        data: JSON.stringify({
-          seq: 2, topic: "claude/abc",
-          message: JSON.stringify({
-            status: "reply", entryId: "entry-y",
-            step: "Hello.", ts: 1_700_000_000_000,
-          }),
-          timestamp: 1_700_000_000_000,
-        }),
-      });
+      publish("first");
+      publish("second");
 
       const list = el.children[0].children[1];
-      const label = list.children[0].children[0].children[1];
-      assert.equal(label.textContent, "Early title");
+      assert.equal(list.children.length, 1, "no duplicate row for same entryId");
+      // children[0] is the body (prose first); assert its updated text.
+      assert.equal(list.children[0].children[0].textContent, "second");
     });
 
-    it("silently drops legacy narrative / completion / summary events", () => {
-      // Old topic logs (from the pre-rewire narrator) still contain these
-      // event types. New renderers ignore them rather than crashing or
-      // rendering raw JSON.
+    it("silently drops legacy narrative / completion / summary / reply-title events", () => {
+      // Old topic logs (from the pre-flatten narrator) still contain
+      // these event types. New renderers ignore them rather than
+      // crashing or rendering raw JSON.
       const el = new FakeElement("div");
       feedRenderer.mount(el, {
         id: "feed-1",
@@ -479,6 +524,7 @@ describe("feedRenderer", () => {
         { step: "old objective", status: "summary" },
         { step: "old completion", status: "completion" },
         { step: "old attention", status: "attention" },
+        { status: "reply-title", entryId: "whatever", title: "stale" },
       ].entries()) {
         eventSources[0].onmessage({
           data: JSON.stringify({

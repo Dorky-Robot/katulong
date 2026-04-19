@@ -1,79 +1,92 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { summarizeReply, SYSTEM_PROMPT, extractFilesFromEntry } from "../lib/claude-narrator.js";
+import {
+  extractFilesFromEntry,
+  summarizeSession,
+  parseShortLongResponse,
+} from "../lib/claude-narrator.js";
 
-describe("summarizeReply", () => {
-  it("returns null for empty / non-string input without calling Ollama", async () => {
+describe("parseShortLongResponse", () => {
+  it("splits SHORT and LONG sections", () => {
+    const raw = `SHORT:
+We're reworking the Claude feed to pin a running summary.
+
+LONG:
+The feed tile now gets a session summary that updates as the conversation
+continues, with the short form at the top and a longer form for the tab
+tooltip.`;
+    const out = parseShortLongResponse(raw);
+    assert.equal(out.short, "We're reworking the Claude feed to pin a running summary.");
+    assert.ok(out.long.startsWith("The feed tile now gets"));
+  });
+
+  it("tolerates missing SHORT label", () => {
+    const raw = `We're debugging the auth flow.
+
+LONG:
+The session is pinned on fixing a regression in session token rotation.`;
+    const out = parseShortLongResponse(raw);
+    assert.equal(out.short, "We're debugging the auth flow.");
+    assert.ok(out.long.startsWith("The session is pinned"));
+  });
+
+  it("falls back to whole-body as both short and long when the divider is missing", () => {
+    const raw = "We're just chatting.";
+    const out = parseShortLongResponse(raw);
+    assert.equal(out.short, "We're just chatting.");
+    assert.equal(out.long, "We're just chatting.");
+  });
+
+  it("returns null for empty input", () => {
+    assert.strictEqual(parseShortLongResponse(""), null);
+    assert.strictEqual(parseShortLongResponse("   "), null);
+  });
+});
+
+describe("summarizeSession", () => {
+  it("returns null without calling Ollama when transcript is empty", async () => {
     let called = false;
     const callOllama = async () => { called = true; return "nope"; };
+    assert.strictEqual(await summarizeSession({ transcript: "", callOllama }), null);
+    assert.strictEqual(await summarizeSession({ transcript: "   ", callOllama }), null);
+    assert.strictEqual(called, false);
+  });
 
-    assert.strictEqual(await summarizeReply("", callOllama), null);
-    assert.strictEqual(await summarizeReply("   ", callOllama), null);
-    assert.strictEqual(await summarizeReply(null, callOllama), null);
-    assert.strictEqual(await summarizeReply(undefined, callOllama), null);
-    assert.strictEqual(called, false, "empty input must not trigger an Ollama call");
+  it("passes previous summary + transcript into the prompt and parses the response", async () => {
+    const capturedPrompts = [];
+    const callOllama = async (userPrompt, { systemPrompt }) => {
+      capturedPrompts.push({ userPrompt, systemPrompt });
+      return `SHORT:\nWe're writing tests.\n\nLONG:\nVerifying the summarizer wiring.`;
+    };
+    const out = await summarizeSession({
+      transcript: "User: write a test\nClaude: on it",
+      previous: { short: "Earlier short", long: "Earlier long" },
+      callOllama,
+    });
+    assert.equal(out.short, "We're writing tests.");
+    assert.equal(out.long, "Verifying the summarizer wiring.");
+    assert.equal(capturedPrompts.length, 1);
+    assert.ok(capturedPrompts[0].userPrompt.includes("PREVIOUS SUMMARY"));
+    assert.ok(capturedPrompts[0].userPrompt.includes("Earlier short"));
+    assert.ok(capturedPrompts[0].userPrompt.includes("RECENT TRANSCRIPT"));
+    assert.ok(capturedPrompts[0].systemPrompt.includes("summarize"));
+  });
+
+  it("omits PREVIOUS SUMMARY when there isn't one yet", async () => {
+    const capturedPrompts = [];
+    const callOllama = async (userPrompt) => {
+      capturedPrompts.push(userPrompt);
+      return "SHORT:\nFresh.\nLONG:\nNo prior state.";
+    };
+    await summarizeSession({ transcript: "User: hi\nClaude: hello", callOllama });
+    assert.ok(!capturedPrompts[0].includes("PREVIOUS SUMMARY"));
   });
 
   it("throws when callOllama is not a function", async () => {
     await assert.rejects(
-      () => summarizeReply("hello", null),
+      () => summarizeSession({ transcript: "x", callOllama: null }),
       /callOllama is required/,
-    );
-  });
-
-  it("returns the first-line trim of the Ollama response", async () => {
-    const callOllama = async (userPrompt, opts) => {
-      assert.ok(userPrompt.includes("CLAUDE REPLY"), "prompt names the input kind");
-      assert.equal(opts.systemPrompt, SYSTEM_PROMPT);
-      return "  Narrowing down the regex bug to a locale issue  ";
-    };
-
-    const title = await summarizeReply("some long reply text…", callOllama);
-    assert.equal(title, "Narrowing down the regex bug to a locale issue");
-  });
-
-  it("discards everything after the first newline", async () => {
-    const callOllama = async () => "Title line\nexplanation we don't want";
-    const title = await summarizeReply("reply", callOllama);
-    assert.equal(title, "Title line");
-  });
-
-  it("strips leading / trailing quote marks", async () => {
-    const callOllama = async () => `"Investigating the failing auth redirect"`;
-    const title = await summarizeReply("reply", callOllama);
-    assert.equal(title, "Investigating the failing auth redirect");
-  });
-
-  it("strips an accidental 'Title: ' prefix", async () => {
-    const callOllama = async () => "Title: Fixing the regex bug";
-    const title = await summarizeReply("reply", callOllama);
-    assert.equal(title, "Fixing the regex bug");
-  });
-
-  it("returns null when the model response is whitespace-only", async () => {
-    const callOllama = async () => "   \n\n  ";
-    assert.strictEqual(await summarizeReply("reply", callOllama), null);
-  });
-
-  it("returns null when callOllama returns a non-string", async () => {
-    const callOllama = async () => ({ err: "nope" });
-    assert.strictEqual(await summarizeReply("reply", callOllama), null);
-  });
-
-  it("caps the title at MAX_TITLE_CHARS with an ellipsis", async () => {
-    const long = "x".repeat(500);
-    const callOllama = async () => long;
-    const title = await summarizeReply("reply", callOllama);
-    assert.ok(title.length <= 140, `expected ≤ 140 chars, got ${title.length}`);
-    assert.ok(title.endsWith("…"));
-  });
-
-  it("propagates Ollama errors (caller decides retry/skip)", async () => {
-    const callOllama = async () => { throw new Error("connection refused"); };
-    await assert.rejects(
-      () => summarizeReply("reply", callOllama),
-      /connection refused/,
     );
   });
 });

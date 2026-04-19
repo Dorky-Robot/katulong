@@ -1614,9 +1614,9 @@
         pointer-events: none; z-index: 1;
       }
     }
-    /* Claude-presence badge — small glint in the top-right of any session
-       card whose tile currently has claude running. Populated from
-       session.meta.claude.running which the pane monitor keeps live. */
+    /* Agent-presence badge — small glint in the top-right of any session
+       card whose tile currently has a coding agent running. Populated
+       from session.meta.agent.kind which the pane monitor keeps live. */
     .session-card-claude-badge {
       position: absolute;
       top: 0.25rem; right: 0.25rem;
@@ -2460,15 +2460,12 @@
        because the user just saw the reply in the terminal; the feed's job
        is the narrative, not a second copy. Subtle muted left border sets
        it apart from the narrative below. */
-    .feed-status-reply { display: block; border-left: 2px solid var(--border, rgba(255,255,255,0.12)); padding-left: var(--space-sm); }
-    .feed-tile-reply-summary { cursor: pointer; color: var(--text-muted); font-size: var(--text-xs); padding: 4px 0; user-select: none; list-style: none; }
-    .feed-tile-reply-summary::before { content: "\25B8"; display: inline-block; width: 1.2em; transition: transform 0.15s; }
-    .feed-status-reply[open] > .feed-tile-reply-summary::before { transform: rotate(90deg); }
-    .feed-tile-reply-summary::-webkit-details-marker { display: none; }
-    /* File chips — clickable basenames of files touched in this reply.
-       Shown inline in the collapsed summary so the user can jump to a
-       file without opening the card. */
-    .feed-tile-reply-files { display: inline-flex; gap: 4px; margin-left: var(--space-xs); flex-wrap: wrap; vertical-align: middle; }
+    .feed-status-reply { display: block; border-left: 2px solid var(--border, rgba(255,255,255,0.12)); padding-left: var(--space-sm); padding-top: var(--space-xs); padding-bottom: var(--space-xs); }
+    /* Footer row (below the prose): time + optional file chips. Kept
+       muted so the eye lands on the reply text first. */
+    .feed-tile-reply-footer { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; color: var(--text-muted); font-size: var(--text-xs); padding-top: 4px; }
+    /* File chips — clickable basenames of files touched in this reply. */
+    .feed-tile-reply-files { display: inline-flex; gap: 4px; flex-wrap: wrap; }
     .feed-tile-reply-file {
       display: inline-block; font: inherit; font-size: 0.85em;
       background: color-mix(in srgb, var(--text) 6%, transparent);
@@ -2478,7 +2475,114 @@
       text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
     }
     .feed-tile-reply-file:hover { background: color-mix(in srgb, var(--text) 14%, transparent); }
-    .feed-tile-reply-body { line-height: 1.55; color: var(--text); overflow-wrap: break-word; white-space: pre-wrap; padding: var(--space-xs) 0; }
+    /* Reply prose — markdown rendered to HTML. Tighten default block
+       spacing so a reply doesn't eat the whole tile. */
+    .feed-tile-reply-body { line-height: 1.55; color: var(--text); overflow-wrap: break-word; }
+    .feed-tile-reply-body > :first-child { margin-top: 0; }
+    .feed-tile-reply-body > :last-child { margin-bottom: 0; }
+    .feed-tile-reply-body p { margin: var(--space-xs) 0; }
+    .feed-tile-reply-body pre { background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 4px; padding: var(--space-xs) var(--space-sm); overflow-x: auto; font-size: 0.9em; }
+    .feed-tile-reply-body code { background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 3px; padding: 0 4px; font-size: 0.9em; }
+    .feed-tile-reply-body pre > code { background: transparent; padding: 0; }
+    .feed-tile-reply-body ul, .feed-tile-reply-body ol { margin: var(--space-xs) 0; padding-left: 1.5em; }
+    .feed-tile-reply-body li { margin: 2px 0; }
+    .feed-tile-reply-body h1, .feed-tile-reply-body h2, .feed-tile-reply-body h3 { margin: var(--space-sm) 0 var(--space-xs); font-size: 1em; font-weight: 700; }
+
+    /* Pinned session summary — sits at the top of the feed list
+       (sticky within the scroll container) so the "what is this
+       session about" stays visible as the user scrolls through
+       replies. Negative margins + matching sticky `top` bleed the
+       card flush against the feed list's padded edges so there's
+       no visible gap along the top or sides. Native <details> so
+       the user can collapse it out of the way; only the summary
+       row stays pinned when closed. */
+    .feed-tile-summary-card {
+      position: sticky; top: calc(var(--space-sm) * -1); z-index: 2;
+      margin: calc(var(--space-sm) * -1) calc(var(--space-sm) * -1) 0;
+      background: color-mix(in srgb, var(--bg) 88%, var(--accent-strong, #6f87b3) 12%);
+      color: var(--text);
+      border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
+      line-height: 1.45; font-size: 0.92em;
+    }
+    .feed-tile-summary-card > summary {
+      cursor: pointer; user-select: none; list-style: none;
+      display: flex; align-items: center; gap: var(--space-xs);
+      padding: var(--space-xs) var(--space-sm);
+      color: var(--text-secondary); font-size: var(--text-xs);
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .feed-tile-summary-card > summary::before {
+      content: "\25B8"; display: inline-block; width: 1em;
+      transition: transform 0.15s;
+    }
+    .feed-tile-summary-card[open] > summary::before { transform: rotate(90deg); }
+    .feed-tile-summary-card > summary::-webkit-details-marker { display: none; }
+    .feed-tile-summary-card > summary::marker { content: ""; }
+    .feed-tile-summary-body { padding: 0 var(--space-sm) var(--space-sm); }
+
+    /* Prompt card — the user's own message. Visually distinct from a
+       reply so the reader can skim the conversation flow: warmer
+       accent border on the LEFT (mirrors reply's muted left border),
+       subtle tinted background, slightly smaller text. */
+    .feed-status-prompt {
+      display: block;
+      border-left: 2px solid color-mix(in srgb, var(--accent-strong, #6f87b3) 70%, var(--text));
+      background: color-mix(in srgb, var(--accent-strong, #6f87b3) 5%, transparent);
+      padding: var(--space-xs) var(--space-sm);
+      border-radius: 0 4px 4px 0;
+    }
+    .feed-tile-prompt-body {
+      line-height: 1.5; color: var(--text); overflow-wrap: break-word;
+      font-size: 0.92em;
+    }
+    .feed-tile-prompt-body > :first-child { margin-top: 0; }
+    .feed-tile-prompt-body > :last-child { margin-bottom: 0; }
+    .feed-tile-prompt-body p { margin: 2px 0; }
+    .feed-tile-prompt-body pre, .feed-tile-prompt-body code {
+      background: color-mix(in srgb, var(--text) 6%, transparent);
+      border-radius: 3px;
+    }
+    .feed-tile-prompt-body pre { padding: var(--space-xs) var(--space-sm); overflow-x: auto; font-size: 0.9em; }
+    .feed-tile-prompt-body code { padding: 0 4px; font-size: 0.9em; }
+    .feed-tile-prompt-body pre > code { background: transparent; padding: 0; }
+    .feed-tile-prompt-footer { color: var(--text-muted); font-size: var(--text-xs); padding-top: 2px; }
+
+    /* --- Feed Tile: response bar (pinned to bottom on claude topics) ---
+       Large textarea, no Send button. Enter submits; Shift+Enter
+       inserts a newline. Quick-pick buttons appear above when the
+       latest reply ends in a numbered options list. */
+    .feed-tile-response-bar {
+      border-top: 1px solid var(--border, rgba(255,255,255,0.12));
+      padding: var(--space-xs) var(--space-sm);
+      background: color-mix(in srgb, var(--bg) 96%, var(--text) 4%);
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .feed-tile-response-options { display: flex; flex-wrap: wrap; gap: 4px; }
+    .feed-tile-response-option {
+      display: inline-flex; align-items: center; gap: 6px;
+      font: inherit; font-size: 0.9em;
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+      color: var(--text); border: 1px solid var(--border, rgba(255,255,255,0.12));
+      border-radius: 4px; padding: 4px 8px; cursor: pointer;
+      text-align: left; max-width: 100%;
+    }
+    .feed-tile-response-option:hover { background: color-mix(in srgb, var(--text) 16%, transparent); }
+    .feed-tile-response-option-num {
+      min-width: 1.5em; text-align: center;
+      font-variant-numeric: tabular-nums; color: var(--text-muted);
+      border-right: 1px solid var(--border, rgba(255,255,255,0.12));
+      padding-right: 6px;
+    }
+    .feed-tile-response-option-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .feed-tile-response-textarea {
+      width: 100%; font: inherit; font-size: 0.95em; color: var(--text);
+      background: var(--bg); border: 1px solid var(--border, rgba(255,255,255,0.12));
+      border-radius: 4px; padding: 8px 10px; resize: vertical;
+      min-height: 96px;
+    }
+    .feed-tile-response-textarea:disabled { opacity: 0.6; }
+    .feed-tile-response-status { font-size: 0.8em; color: var(--text-muted); min-height: 1em; }
+    .feed-tile-response-status-error { color: var(--warning, #d3b63b); }
     /* Summary — session objective */
     .feed-status-summary { border-left: 2px solid var(--warning, #d3b63b); padding-left: var(--space-sm); }
     .feed-tile-summary { font-weight: 600; color: var(--text); font-size: var(--text-sm); }
