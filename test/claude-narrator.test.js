@@ -120,7 +120,7 @@ describe("extractFilesFromEntry", () => {
     assert.deepEqual(files, [{ path: "/out.txt" }, { path: "/src/mod.js" }]);
   });
 
-  it("dedupes by path — first line wins", () => {
+  it("dedupes by basename — first occurrence wins", () => {
     const files = extractFilesFromEntry({
       role: "assistant",
       tools: [
@@ -130,6 +130,51 @@ describe("extractFilesFromEntry", () => {
       ],
     });
     assert.deepEqual(files, [{ path: "/src/a.js", line: 10 }]);
+  });
+
+  it("collapses different paths that share a basename to one chip", () => {
+    // The chip UI shows the basename — so eight different SKILL.md files
+    // at different paths would render as eight identical-looking chips.
+    // Dedupe by basename to cut that noise; the first path seen is what
+    // the chip opens on click.
+    const files = extractFilesFromEntry({
+      role: "assistant",
+      tools: [
+        { name: "Read", input: { file_path: "/a/SKILL.md" } },
+        { name: "Read", input: { file_path: "/b/SKILL.md" } },
+        { name: "Edit", input: { file_path: "/c/SKILL.md" } },
+      ],
+    });
+    assert.deepEqual(files, [{ path: "/a/SKILL.md" }]);
+  });
+
+  it("promotes a line number onto the retained entry for the same path (Edit then Read+offset)", () => {
+    // Same file touched twice — Edit without a line, then Read with
+    // offset. The user clicks one chip and expects it to land on the
+    // offset they can see in the transcript.
+    const files = extractFilesFromEntry({
+      role: "assistant",
+      tools: [
+        { name: "Edit", input: { file_path: "/src/a.js" } },
+        { name: "Read", input: { file_path: "/src/a.js", offset: 42 } },
+      ],
+    });
+    assert.deepEqual(files, [{ path: "/src/a.js", line: 42 }]);
+  });
+
+  it("does NOT promote a line number across different paths that share a basename", () => {
+    // Guard against cross-file line bleeding: /src/a.js and /other/a.js
+    // are different files. A line number from /other/a.js must not land
+    // on the /src/a.js chip — the user would be sent to a line that was
+    // never associated with that file.
+    const files = extractFilesFromEntry({
+      role: "assistant",
+      tools: [
+        { name: "Edit", input: { file_path: "/src/a.js" } },
+        { name: "Read", input: { file_path: "/other/a.js", offset: 42 } },
+      ],
+    });
+    assert.deepEqual(files, [{ path: "/src/a.js" }]);
   });
 
   it("skips Grep/Glob paths containing a glob star", () => {
