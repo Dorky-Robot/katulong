@@ -64,8 +64,17 @@ docker run -d -p 3001:3001 -v katulong-data:/root/.katulong your-image
 ### Homebrew (macOS)
 
 ```bash
-brew install dorky-robot/tap/katulong
+# Add the canonical Dorky-Robot tap (shared across all their projects)
+brew tap dorky-robot/tap
+
+# Install
+brew install katulong
+
+# Start
 katulong start
+
+# Or use brew services for auto-start on login
+brew services start katulong
 ```
 
 ### Manual
