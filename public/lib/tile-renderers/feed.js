@@ -497,7 +497,10 @@ function makeFileChip(file) {
 //
 // Modifier classes toggled at runtime:
 //   is-active    — most recent reply; next reply strips this
-//   is-expanded  — tools list revealed (auto for active, toggle via tap)
+//   is-expanded  — tools list revealed; always collapsed by default, even
+//                  for the active reply, so a turn with a dozen tools doesn't
+//                  push every earlier reply off the screen. Tap the header
+//                  to toggle.
 //   has-tools    — at least one tool attached (shows chevron, enables tap)
 //   is-running   — at least one tool still in flight (animates border)
 function createReplyEntry() {
@@ -1260,7 +1263,7 @@ export const feedRenderer = {
               }
               activeReplyId = msg.entryId;
               entry.isActive = true;
-              entry.expanded = true;
+              entry.expanded = false;
             }
             entry.msg = msg;
             entry.ts = envelope.timestamp;
