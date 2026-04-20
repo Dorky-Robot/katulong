@@ -294,9 +294,67 @@ describe("createClaudeFeedRoutes", () => {
       ["POST", "/api/claude/watch"],
       ["DELETE", "/api/claude/watch/"],
       ["GET", "/api/claude/watchlist"],
+      ["GET", "/api/claude/session-info/"],
       ["GET", "/api/claude/stream/"],
       ["POST", "/api/claude/reprocess/"],
     ]);
+  });
+
+  it("GET /api/claude/session-info/:uuid returns cwd sniffed from the transcript head", async () => {
+    // Claude Code writes per-turn entries with a `cwd` field. The feed
+    // tile's open-terminal button needs to know where to spawn a shell
+    // when the original Claude session is no longer live — the head of
+    // the transcript is authoritative and cheap to read.
+    const transcriptDir = join(home, ".claude", "projects", "-Users-felix-proj");
+    mkdirSync(transcriptDir, { recursive: true });
+    const transcriptPath = join(transcriptDir, `${UUID}.jsonl`);
+    const lines = [
+      JSON.stringify({ type: "permission-mode", permissionMode: "default" }),
+      JSON.stringify({ type: "user", cwd: "/Users/felix/Projects/katulong", message: "hi" }),
+    ];
+    writeFileSync(transcriptPath, lines.join("\n") + "\n");
+    await watchlist.add(UUID, { transcriptPath });
+
+    const route = routeFor("GET", "/api/claude/session-info/");
+    const res = makeRes();
+    await route.handler(makeReq(), res, UUID);
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(JSON.parse(res.chunks[0]), {
+      uuid: UUID,
+      cwd: "/Users/felix/Projects/katulong",
+    });
+  });
+
+  it("GET /api/claude/session-info/:uuid returns 404 when uuid isn't on the watchlist", async () => {
+    const route = routeFor("GET", "/api/claude/session-info/");
+    const res = makeRes();
+    await route.handler(makeReq(), res, UUID);
+    assert.strictEqual(res.status, 404);
+  });
+
+  it("GET /api/claude/session-info/:uuid returns 404 when transcript has no cwd", async () => {
+    // A transcript that only contains system-y entries (no user turn
+    // ever recorded) has no cwd we can trust. Return 404 so the caller
+    // can show a clear toast instead of spawning a shell in an arbitrary
+    // directory.
+    const transcriptDir = join(home, ".claude", "projects", "-no-cwd");
+    mkdirSync(transcriptDir, { recursive: true });
+    const transcriptPath = join(transcriptDir, `${UUID}.jsonl`);
+    writeFileSync(transcriptPath, JSON.stringify({ type: "permission-mode" }) + "\n");
+    await watchlist.add(UUID, { transcriptPath });
+
+    const route = routeFor("GET", "/api/claude/session-info/");
+    const res = makeRes();
+    await route.handler(makeReq(), res, UUID);
+    assert.strictEqual(res.status, 404);
+    assert.match(JSON.parse(res.chunks[0]).error, /Cwd not found/);
+  });
+
+  it("GET /api/claude/session-info/:uuid rejects an invalid uuid with 400", async () => {
+    const route = routeFor("GET", "/api/claude/session-info/");
+    const res = makeRes();
+    await route.handler(makeReq(), res, "not-a-uuid");
+    assert.strictEqual(res.status, 400);
   });
 
   it("POST /api/claude/watch adds by { uuid, cwd } and returns the entry", async () => {

@@ -473,30 +473,98 @@ function makeFileChip(file) {
   return chip;
 }
 
-function renderReplyItem(row, msg, ts) {
-  row.innerHTML = "";
-  row.className = "feed-tile-item feed-status-reply";
-  const text = msg.step || "";
-
-  // Prose first, metadata below — the reply IS the content. The footer
-  // is reference material (when it happened, what it touched) that a
-  // reader glances at after skimming the body.
-  const prose = document.createElement("div");
-  prose.className = "feed-tile-reply-body";
-  renderMarkdown(prose, text);
-  enrichFeedProse(prose);
-  row.appendChild(prose);
-
+// Reply block. A reply now owns the intermediate tool calls that ran
+// UNDER it (Option B folding: tools land after the reply that kicked
+// them off and belong to that reply). Structure:
+//
+//   <div class="feed-tile-reply-block feed-status-reply ...">
+//     <div class="feed-tile-reply-header">        ← clickable
+//       <div class="feed-tile-reply-body">…</div>
+//       <div class="feed-tile-reply-footer">time · files · chevron</div>
+//     </div>
+//     <div class="feed-tile-reply-tools">        ← nested tool rows
+//       <div class="feed-tile-item feed-status-tool …">…</div>
+//     </div>
+//   </div>
+//
+// Modifier classes toggled at runtime:
+//   is-active    — most recent reply; next reply strips this
+//   is-expanded  — tools list revealed (auto for active, toggle via tap)
+//   has-tools    — at least one tool attached (shows chevron, enables tap)
+//   is-running   — at least one tool still in flight (animates border)
+function createReplyEntry() {
+  const block = document.createElement("div");
+  const header = document.createElement("div");
+  header.className = "feed-tile-reply-header";
+  const body = document.createElement("div");
+  body.className = "feed-tile-reply-body";
   const footer = document.createElement("div");
   footer.className = "feed-tile-reply-footer";
-  footer.appendChild(makeTimeSpan(ts));
-  if (Array.isArray(msg.files) && msg.files.length > 0) {
+  const toolsEl = document.createElement("div");
+  toolsEl.className = "feed-tile-reply-tools";
+  header.appendChild(body);
+  header.appendChild(footer);
+  block.appendChild(header);
+  block.appendChild(toolsEl);
+  const entry = {
+    kind: "reply",
+    block, header, body, footer, toolsEl,
+    tools: new Map(),       // toolUseId → current state
+    msg: null, ts: null,
+    isActive: false,
+    expanded: false,
+  };
+  header.addEventListener("click", () => {
+    entry.expanded = !entry.expanded;
+    applyReplyClasses(entry);
+  });
+  // className is set by the caller via applyReplyClasses() after it
+  // configures isActive/expanded — skipping it here avoids a write
+  // that would be immediately overwritten.
+  return entry;
+}
+
+function applyReplyClasses(entry) {
+  const cls = ["feed-tile-item", "feed-status-reply", "feed-tile-reply-block"];
+  if (entry.tools.size > 0) cls.push("has-tools");
+  if (entry.isActive) cls.push("is-active");
+  if (entry.expanded) cls.push("is-expanded");
+  let anyRunning = false;
+  for (const state of entry.tools.values()) {
+    if (state !== "ok" && state !== "error") { anyRunning = true; break; }
+  }
+  if (anyRunning) cls.push("is-running");
+  entry.block.className = cls.join(" ");
+}
+
+function renderReplyBody(entry) {
+  if (!entry.msg) return;
+  entry.body.innerHTML = "";
+  renderMarkdown(entry.body, entry.msg.step || "");
+  enrichFeedProse(entry.body);
+}
+
+function renderReplyFooter(entry) {
+  entry.footer.innerHTML = "";
+  entry.footer.appendChild(makeTimeSpan(entry.ts));
+  const msg = entry.msg;
+  if (msg && Array.isArray(msg.files) && msg.files.length > 0) {
     const files = document.createElement("span");
     files.className = "feed-tile-reply-files";
     for (const f of msg.files) files.appendChild(makeFileChip(f));
-    footer.appendChild(files);
+    entry.footer.appendChild(files);
   }
-  row.appendChild(footer);
+  if (entry.tools.size > 0) {
+    const n = entry.tools.size;
+    const count = document.createElement("span");
+    count.className = "feed-tile-reply-tool-count";
+    count.textContent = `${n} step${n === 1 ? "" : "s"}`;
+    entry.footer.appendChild(count);
+    const chev = document.createElement("span");
+    chev.className = "feed-tile-reply-chevron";
+    chev.innerHTML = '<i class="ph ph-caret-down"></i>';
+    entry.footer.appendChild(chev);
+  }
 }
 
 // Tool card. Collapsed by default — just the header row showing
@@ -631,7 +699,7 @@ export const feedRenderer = {
     root.className = "feed-tile-root";
     el.appendChild(root);
 
-    function buildStreamHeader(titleText) {
+    function buildStreamHeader(titleText, { claudeUuid = null, topic = null } = {}) {
       const header = document.createElement("div");
       header.className = "feed-tile-header";
 
@@ -646,6 +714,26 @@ export const feedRenderer = {
       headerTitle.className = "feed-tile-header-title";
       headerTitle.textContent = titleText;
       header.appendChild(headerTitle);
+
+      // Jump to (or spawn) the terminal session running this Claude
+      // transcript. The feed tile doesn't own the UI store, so this just
+      // announces intent — app.js owns the find-or-create decision
+      // (focus existing tile / add tile for live session / create new
+      // session with cwd + `claude --resume`). Rendered only for claude
+      // topics since only they have a uuid worth resuming.
+      if (claudeUuid) {
+        const openTerminalBtn = document.createElement("button");
+        openTerminalBtn.className = "feed-tile-open-terminal-btn";
+        openTerminalBtn.innerHTML = '<i class="ph ph-terminal-window"></i>';
+        openTerminalBtn.title = "Open terminal session";
+        openTerminalBtn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          window.dispatchEvent(new CustomEvent("katulong:open-terminal-for-uuid", {
+            detail: { uuid: claudeUuid, topic },
+          }));
+        });
+        header.appendChild(openTerminalBtn);
+      }
 
       const closeBtn = document.createElement("button");
       closeBtn.className = "feed-tile-close-btn";
@@ -846,7 +934,17 @@ export const feedRenderer = {
       root.innerHTML = "";
       const topicMeta = meta || {};
 
-      const { header } = buildStreamHeader(topic);
+      // Claude-topic extraction. `claudeUuid` drives two pieces of the
+      // header chrome: the response bar (pinned textarea) and the
+      // open-terminal button. Compute it up-front so buildStreamHeader
+      // can render the terminal button without knowing the topic format.
+      const claudeUuid = (() => {
+        if (!topic.startsWith("claude/")) return null;
+        const u = topic.slice("claude/".length);
+        return UUID_RE.test(u) ? u : null;
+      })();
+
+      const { header } = buildStreamHeader(topic, { claudeUuid, topic });
       root.appendChild(header);
 
       const list = document.createElement("div");
@@ -854,16 +952,24 @@ export const feedRenderer = {
       list.tabIndex = 0;
       root.appendChild(list);
 
-      // Reply cards are keyed by their transcript entry uuid so that a
-      // republished reply (e.g. after a processor catch-up) updates the
-      // existing row in place rather than duplicating it.
-      const replyItems = new Map();
+      // Reply/prompt entries are keyed by their transcript entry uuid so
+      // a republished turn (e.g. after a processor catch-up) updates the
+      // existing card in place rather than duplicating it. Each value is
+      // `{ kind: "reply"|"prompt", ... }` — reply entries carry the full
+      // block structure (header/body/footer/toolsEl + tools map); prompt
+      // entries are just `{ kind: "prompt", row }`.
+      const entryItems = new Map();
+      // Most recent reply entryId — tools that arrive after it fold into
+      // its nested tool list. Stays null until the first reply lands.
+      let activeReplyId = null;
       // Tool cards are keyed by their tool_use id. A running card is
       // stamped on the tool_use event; the matching tool_result event
       // flips state (ok/error) and fills the output body. Values hold
       // the merged info so an out-of-order republish (running event
       // delivered AFTER its result, e.g. during a catch-up slice)
-      // doesn't clobber the terminal state.
+      // doesn't clobber the terminal state. `ownerReplyId` records the
+      // reply the tool was folded into — null means the tool landed
+      // before any reply and is currently shown as a top-level orphan.
       const toolItems = new Map();
       // Ephemeral non-reply events (generic log topics or pre-rewrite
       // persisted events) get auto-keyed row slots.
@@ -875,11 +981,6 @@ export const feedRenderer = {
       // type back to the Claude session without leaving the feed, and
       // offers quick-pick buttons when the latest reply ends in a
       // numbered options list.
-      const claudeUuid = (() => {
-        if (!topic.startsWith("claude/")) return null;
-        const u = topic.slice("claude/".length);
-        return UUID_RE.test(u) ? u : null;
-      })();
       const responseBar = claudeUuid ? createResponseBar(claudeUuid) : null;
 
       // Pinned summary at the top of the list. Rendered only for
@@ -934,9 +1035,23 @@ export const feedRenderer = {
             let entry;
             if (!existing) {
               const row = document.createElement("div");
-              list.appendChild(row);
-              entry = { row, info: { ...msg } };
+              entry = { row, info: { ...msg }, ownerReplyId: null };
               toolItems.set(msg.toolUseId, entry);
+              // Fold into the active reply if one has landed; otherwise
+              // show as an orphan at the top of the list and adopt it
+              // when the first reply arrives. In practice Claude always
+              // emits a preamble reply before running tools, so orphan
+              // tools are rare (early-start slices, mostly).
+              if (activeReplyId && entryItems.has(activeReplyId)) {
+                const owner = entryItems.get(activeReplyId);
+                owner.toolsEl.appendChild(row);
+                owner.tools.set(msg.toolUseId, msg.state || "running");
+                entry.ownerReplyId = activeReplyId;
+                renderReplyFooter(owner);
+                applyReplyClasses(owner);
+              } else {
+                list.appendChild(row);
+              }
             } else {
               entry = existing;
               // Merge so running metadata (name/input, stamped first)
@@ -954,19 +1069,54 @@ export const feedRenderer = {
                 entry.info.state = prevState;
                 if (typeof prevOutput === "string") entry.info.output = prevOutput;
               }
+              // Mirror the merged state into the owning reply so its
+              // is-running / tool-count indicators stay accurate.
+              if (entry.ownerReplyId && entryItems.has(entry.ownerReplyId)) {
+                const owner = entryItems.get(entry.ownerReplyId);
+                owner.tools.set(msg.toolUseId, entry.info.state);
+                applyReplyClasses(owner);
+              }
             }
             renderToolItem(entry.row, entry.info, envelope.timestamp);
             list.scrollTop = list.scrollHeight;
             return;
           }
           if (status === "reply" && typeof msg.entryId === "string") {
-            let row = replyItems.get(msg.entryId);
-            if (!row) {
-              row = document.createElement("div");
-              list.appendChild(row);
-              replyItems.set(msg.entryId, row);
+            let entry = entryItems.get(msg.entryId);
+            const firstRender = !entry || entry.kind !== "reply";
+            if (firstRender) {
+              entry = createReplyEntry();
+              entryItems.set(msg.entryId, entry);
+              list.appendChild(entry.block);
+              // Adopt any orphan tools that landed before this reply.
+              for (const [toolUseId, toolEntry] of toolItems) {
+                if (!toolEntry.ownerReplyId) {
+                  toolEntry.ownerReplyId = msg.entryId;
+                  entry.toolsEl.appendChild(toolEntry.row);
+                  entry.tools.set(toolUseId, toolEntry.info.state || "running");
+                }
+              }
+              // Deactivate the prior reply — it stops pulsing, collapses
+              // its tools, and makes room for the new one to claim the
+              // "current work" border. Tapping a prior reply later still
+              // re-expands it.
+              if (activeReplyId && entryItems.has(activeReplyId)) {
+                const prior = entryItems.get(activeReplyId);
+                if (prior.kind === "reply") {
+                  prior.isActive = false;
+                  prior.expanded = false;
+                  applyReplyClasses(prior);
+                }
+              }
+              activeReplyId = msg.entryId;
+              entry.isActive = true;
+              entry.expanded = true;
             }
-            renderReplyItem(row, msg, envelope.timestamp);
+            entry.msg = msg;
+            entry.ts = envelope.timestamp;
+            renderReplyBody(entry);
+            renderReplyFooter(entry);
+            applyReplyClasses(entry);
             // Re-evaluate quick-pick options from the latest reply. The
             // "latest" is always the most recent publish on the topic
             // log — for a live stream that's also the last message
@@ -976,17 +1126,14 @@ export const feedRenderer = {
             // maintaining a full ordered index client-side.)
             if (responseBar) responseBar.setOptions(msg.step || "");
           } else if (status === "prompt" && typeof msg.entryId === "string") {
-            // Share the same items map as replies — entryId space is
-            // per-transcript and doesn't collide, and keying both lets
-            // a republished prompt update its row in place just like
-            // replies do.
-            let row = replyItems.get(msg.entryId);
-            if (!row) {
-              row = document.createElement("div");
+            let entry = entryItems.get(msg.entryId);
+            if (!entry || entry.kind !== "prompt") {
+              const row = document.createElement("div");
               list.appendChild(row);
-              replyItems.set(msg.entryId, row);
+              entry = { kind: "prompt", row };
+              entryItems.set(msg.entryId, entry);
             }
-            renderPromptItem(row, msg, envelope.timestamp);
+            renderPromptItem(entry.row, msg, envelope.timestamp);
           }
           list.scrollTop = list.scrollHeight;
           return;
