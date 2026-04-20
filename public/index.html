@@ -2413,15 +2413,20 @@
     .feed-tile-working-dot { flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--accent, #58a6ff); animation: feed-working-pulse 1.2s ease-in-out infinite; }
     .feed-tile-working-phrase { min-width: 0; overflow-wrap: break-word; }
     @keyframes feed-working-pulse { 0%, 100% { opacity: 0.35; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1.1); } }
-    .feed-tile-list { flex: 1; overflow-y: auto; overflow-x: hidden; padding: var(--space-sm); outline: none; }
-    /* Horizontal rule between top-level blocks so each event reads as its
-       own mini-post. Uses `+` (adjacent-sibling) rather than `:not(:first-child)`
-       so the first block in the list has no leading rule. */
-    .feed-tile-list > * + * { margin-top: var(--space-sm); padding-top: var(--space-sm); border-top: 1px solid var(--border, rgba(255,255,255,0.1)); }
-    /* Timestamp shown at the top of each block (and inside the reply's
-       <summary> so it survives collapse). Tabular-nums keeps digits
-       aligned when blocks stack vertically. */
-    .feed-tile-row-time { display: block; width: 100%; color: var(--text-muted); font-family: var(--font-mono); font-size: var(--text-xs); font-variant-numeric: tabular-nums; margin-bottom: 2px; }
+    .feed-tile-list { flex: 1; overflow-y: auto; overflow-x: hidden; padding: var(--space-md) var(--space-sm); outline: none; }
+    /* Separator between top-level blocks. A softer hairline with more
+       breathing room on either side reads as "paragraph break" rather
+       than "log entries" — the feed is prose, not a terminal log. */
+    .feed-tile-list > * + * {
+      margin-top: var(--space-md);
+      padding-top: var(--space-md);
+      border-top: 1px solid color-mix(in srgb, var(--text) 6%, transparent);
+    }
+    /* Timestamp shown at the top of each block. Sans-serif (inherits from
+       the feed root) and very muted — it's a peripheral cue, not a piece
+       of data you read. No tabular-nums / monospace: those were terminal
+       carryovers, not appropriate for conversational content. */
+    .feed-tile-row-time { display: block; width: 100%; color: var(--text-muted); font-size: var(--text-xs); opacity: 0.7; margin-bottom: 4px; letter-spacing: 0.01em; }
     .feed-tile-reply-summary .feed-tile-row-time { display: inline-block; width: auto; margin-right: var(--space-xs); margin-bottom: 0; }
     .feed-tile-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-xs); padding: var(--space-xs) 0; min-width: 0; }
     .feed-tile-bullet { flex-shrink: 0; width: 1.2em; text-align: center; }
@@ -2435,8 +2440,8 @@
     .feed-status-error .feed-tile-detail { color: var(--text-error, #f66); }
     @keyframes feed-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
     .feed-log-item { gap: var(--space-sm); border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.04)); }
-    .feed-tile-time { flex-shrink: 0; color: var(--text-muted); font-family: var(--font-mono); font-size: var(--text-xs); }
-    .feed-tile-text { font-family: var(--font-mono); word-break: break-all; min-width: 0; }
+    .feed-tile-time { flex-shrink: 0; color: var(--text-muted); font-size: var(--text-xs); opacity: 0.7; }
+    .feed-tile-text { word-break: break-word; min-width: 0; }
 
     /* Collapsible step groups — non-narrative events fold into <details> */
     .feed-tile-details-group { margin: var(--space-xs) 0; }
@@ -2460,21 +2465,31 @@
        because the user just saw the reply in the terminal; the feed's job
        is the narrative, not a second copy. Subtle muted left border sets
        it apart from the narrative below. */
-    .feed-status-reply { display: block; border-left: 2px solid var(--border, rgba(255,255,255,0.12)); padding-left: var(--space-sm); padding-top: var(--space-xs); padding-bottom: var(--space-xs); }
+    .feed-status-reply {
+      display: block;
+      border-left: 2px solid color-mix(in srgb, var(--text) 10%, transparent);
+      border-radius: 1px;
+      padding-left: var(--space-md);
+      padding-top: 2px;
+      padding-bottom: 2px;
+    }
     /* Footer row (below the prose): time + optional file chips. Kept
        muted so the eye lands on the reply text first. */
-    .feed-tile-reply-footer { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; color: var(--text-muted); font-size: var(--text-xs); padding-top: 4px; }
-    /* File chips — clickable basenames of files touched in this reply. */
+    .feed-tile-reply-footer { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--text-muted); font-size: var(--text-xs); padding-top: 6px; opacity: 0.8; }
+    /* File chips — clickable basenames of files touched in this reply.
+       Soft pill silhouette (fully rounded, no hard border) to read as a
+       quiet tag rather than a code token. */
     .feed-tile-reply-files { display: inline-flex; gap: 4px; flex-wrap: wrap; }
     .feed-tile-reply-file {
       display: inline-block; font: inherit; font-size: 0.85em;
-      background: color-mix(in srgb, var(--text) 6%, transparent);
-      color: var(--text); border: 1px solid var(--border, rgba(255,255,255,0.12));
-      border-radius: 4px; padding: 1px 6px; cursor: pointer;
+      background: color-mix(in srgb, var(--text) 7%, transparent);
+      color: var(--text-secondary); border: none;
+      border-radius: 999px; padding: 2px 10px; cursor: pointer;
       line-height: 1.4; max-width: 22ch; overflow: hidden;
       text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
+      transition: background 0.15s, color 0.15s;
     }
-    .feed-tile-reply-file:hover { background: color-mix(in srgb, var(--text) 14%, transparent); }
+    .feed-tile-reply-file:hover { background: color-mix(in srgb, var(--text) 14%, transparent); color: var(--text); }
     /* Inline clickable path — replaces a <code> that looked like a
        file path during post-render enrichment. Matches the inline code
        background so the visual weight stays the same; hover adds an
@@ -2511,9 +2526,9 @@
        nested tool list that folds intermediate tool calls UNDER the
        reply that kicked them off. Tap the header to toggle the nested
        list; while at least one tool is still running the block's left
-       border pulses to signal work in progress. The most recent reply
-       auto-expands (is-active + is-expanded); prior replies collapse
-       when a new one lands but can be reopened via tap. */
+       border pulses to signal work in progress. All replies render
+       collapsed by default — even the active one — so a turn with
+       many tools doesn't push earlier replies off-screen. */
     .feed-tile-reply-block { /* inherits border/padding from feed-status-reply */ }
     .feed-tile-reply-header { display: flex; flex-direction: column; gap: 4px; }
     .feed-tile-reply-block.has-tools .feed-tile-reply-header { cursor: pointer; }
@@ -2522,8 +2537,9 @@
     /* Nested tools don't get the sibling `+` rule from .feed-tile-list,
        so hand-roll a small gap between stacked tool cards. */
     .feed-tile-reply-tools > * + * { margin-top: var(--space-xs); }
-    .feed-tile-reply-tool-count { color: var(--text-muted); font-size: var(--text-xs); }
-    .feed-tile-reply-chevron { display: inline-flex; align-items: center; color: var(--text-muted); font-size: 0.85em; transition: transform 0.15s ease; margin-left: auto; }
+    .feed-tile-reply-tool-count { color: var(--text-muted); font-size: var(--text-xs); letter-spacing: 0.02em; }
+    .feed-tile-reply-chevron { display: inline-flex; align-items: center; color: var(--text-muted); font-size: 0.85em; opacity: 0.7; transition: transform 0.2s ease, opacity 0.15s ease; margin-left: auto; }
+    .feed-tile-reply-block.has-tools .feed-tile-reply-header:hover .feed-tile-reply-chevron { opacity: 1; }
     .feed-tile-reply-block.is-expanded .feed-tile-reply-chevron { transform: rotate(180deg); }
     /* Active-work pulse — while any tool under this reply is still
        running, the left border animates so a reader scanning the feed
@@ -2538,12 +2554,13 @@
       .feed-tile-reply-block.is-running { animation: none; }
     }
 
-    /* Reply prose — markdown rendered to HTML. Tighten default block
-       spacing so a reply doesn't eat the whole tile. */
-    .feed-tile-reply-body { line-height: 1.55; color: var(--text); overflow-wrap: break-word; }
+    /* Reply prose — markdown rendered to HTML. Generous line-height +
+       a touch of letter-spacing push the feel from "log output" toward
+       "reading a note". */
+    .feed-tile-reply-body { line-height: 1.65; letter-spacing: 0.005em; color: var(--text); overflow-wrap: break-word; }
     .feed-tile-reply-body > :first-child { margin-top: 0; }
     .feed-tile-reply-body > :last-child { margin-bottom: 0; }
-    .feed-tile-reply-body p { margin: 0.6em 0; }
+    .feed-tile-reply-body p { margin: 0.7em 0; }
     .feed-tile-reply-body pre { background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 4px; padding: var(--space-xs) var(--space-sm); overflow-x: auto; font-size: 0.9em; }
     .feed-tile-reply-body code { background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 3px; padding: 0 4px; font-size: 0.9em; }
     .feed-tile-reply-body pre > code { background: transparent; padding: 0; }
@@ -2593,14 +2610,15 @@
        subtle tinted background, slightly smaller text. */
     .feed-status-prompt {
       display: block;
-      border-left: 2px solid color-mix(in srgb, var(--accent-strong, #6f87b3) 70%, var(--text));
-      background: color-mix(in srgb, var(--accent-strong, #6f87b3) 5%, transparent);
-      padding: var(--space-xs) var(--space-sm);
-      border-radius: 0 4px 4px 0;
+      border-left: 2px solid color-mix(in srgb, var(--accent-strong, #6f87b3) 55%, transparent);
+      background: color-mix(in srgb, var(--accent-strong, #6f87b3) 4%, transparent);
+      padding: var(--space-sm) var(--space-md);
+      border-radius: 0 8px 8px 0;
     }
     .feed-tile-prompt-body {
-      line-height: 1.5; color: var(--text); overflow-wrap: break-word;
-      font-size: 0.92em;
+      line-height: 1.6; letter-spacing: 0.005em;
+      color: var(--text); overflow-wrap: break-word;
+      font-size: 0.95em;
     }
     .feed-tile-prompt-body > :first-child { margin-top: 0; }
     .feed-tile-prompt-body > :last-child { margin-bottom: 0; }
