@@ -93,7 +93,9 @@ function formatTime(ts) {
   if (!ts && ts !== 0) return "";
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  // Soft "5:47 PM" format — no seconds. The feed isn't a debug log;
+  // second-level precision just adds visual noise.
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function makeTimeSpan(ts) {
@@ -489,7 +491,10 @@ function makeFileChip(file) {
 //
 // Modifier classes toggled at runtime:
 //   is-active    — most recent reply; next reply strips this
-//   is-expanded  — tools list revealed (auto for active, toggle via tap)
+//   is-expanded  — tools list revealed; always collapsed by default, even
+//                  for the active reply, so a turn with a dozen tools doesn't
+//                  push every earlier reply off the screen. Tap the header
+//                  to toggle.
 //   has-tools    — at least one tool attached (shows chevron, enables tap)
 //   is-running   — at least one tool still in flight (animates border)
 function createReplyEntry() {
@@ -655,7 +660,7 @@ function renderLogItem(row, msg, ts) {
 
   const time = document.createElement("span");
   time.className = "feed-tile-time";
-  time.textContent = new Date(ts).toLocaleTimeString();
+  time.textContent = formatTime(ts);
   row.appendChild(time);
 
   const text = document.createElement("span");
@@ -1110,7 +1115,7 @@ export const feedRenderer = {
               }
               activeReplyId = msg.entryId;
               entry.isActive = true;
-              entry.expanded = true;
+              entry.expanded = false;
             }
             entry.msg = msg;
             entry.ts = envelope.timestamp;

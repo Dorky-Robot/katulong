@@ -606,9 +606,12 @@ describe("feedRenderer", () => {
         block.className.includes("feed-tile-reply-block"),
         `expected feed-tile-reply-block, got: ${block.className}`,
       );
-      // First reply is marked is-active (pulse border + auto-expand),
-      // but has-tools / is-running only kick in once a tool lands.
+      // First reply is marked is-active (pulse border) but NOT
+      // is-expanded — the tools fold stays closed until the user taps
+      // the header. has-tools / is-running only kick in once a tool
+      // lands.
       assert.ok(block.className.includes("is-active"), block.className);
+      assert.ok(!block.className.includes("is-expanded"), block.className);
       assert.ok(!block.className.includes("has-tools"), block.className);
       assert.ok(!block.className.includes("is-running"), block.className);
 
@@ -872,7 +875,9 @@ describe("feedRenderer", () => {
       assert.ok(!first.className.includes("is-active"), `first: ${first.className}`);
       assert.ok(!first.className.includes("is-expanded"), `first: ${first.className}`);
       assert.ok(second.className.includes("is-active"), `second: ${second.className}`);
-      assert.ok(second.className.includes("is-expanded"), `second: ${second.className}`);
+      // Active reply is NOT auto-expanded — the tools fold stays closed
+      // by default so a long turn doesn't push earlier replies off-screen.
+      assert.ok(!second.className.includes("is-expanded"), `second: ${second.className}`);
     });
 
     it("tapping a reply header toggles is-expanded", () => {
@@ -895,13 +900,13 @@ describe("feedRenderer", () => {
       send({ status: "reply", entryId: "r-1", step: "Only.", ts: 1 });
       const block = el.children[0].children[1].children[0];
       const header = block.children[0];
-      // Active reply is auto-expanded; one tap collapses, another
-      // reopens.
-      assert.ok(block.className.includes("is-expanded"), block.className);
-      header._listeners.click[0]();
+      // Replies start collapsed (even the active one); one tap expands,
+      // another collapses.
       assert.ok(!block.className.includes("is-expanded"), block.className);
       header._listeners.click[0]();
       assert.ok(block.className.includes("is-expanded"), block.className);
+      header._listeners.click[0]();
+      assert.ok(!block.className.includes("is-expanded"), block.className);
     });
 
     it("renders a running tool card with state class and tool name", () => {

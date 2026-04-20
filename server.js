@@ -262,11 +262,19 @@ const getDraining = () => shutdown?.isDraining() ?? false;
 // docs/claude-feed-watchlist.md for the full design.
 const topicBroker = createTopicBroker();
 const claudeWatchlist = createWatchlist({ dataDir: DATA_DIR });
+// Two Ollama clients on purpose. The feed narrator runs against a bigger
+// cloud-routed backbone (gemma4:31b-cloud via Ollama's :cloud suffix) because
+// the reply/tool summaries benefit noticeably from the larger model, and the
+// work is fire-and-forget off the request path so the cloud round-trip is
+// acceptable. The generic session summarizer stays on the local default
+// (gemma3n:e2b) — it runs against every shell tab and we don't want to
+// pay a network hop per tab just to title an idle terminal.
 const callOllama = createOllamaClient();
+const callOllamaFeed = createOllamaClient({ model: "gemma4:31b-cloud" });
 const claudeProcessor = createClaudeProcessor({
   watchlist: claudeWatchlist,
   topicBroker,
-  callOllama,
+  callOllama: callOllamaFeed,
   // Mirror every summary onto the matching tmux session's
   // meta.claude.summary so the terminal-tab tooltip picks it up via
   // the normal session-updated broadcast channel. Kept outside the
