@@ -2066,55 +2066,65 @@
     // never touches uiStore/sessionStore directly — it only announces
     // intent.
     const CLAUDE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    // Per-uuid in-flight guard. A rapid double-click (before session-info
+    // and POST /sessions resolve) would otherwise spawn two terminals
+    // both running `claude --resume <uuid>`. Dropped once the open
+    // attempt resolves — on failure the user can retry.
+    const openingTerminalForUuid = new Set();
     async function openTerminalForClaudeUuid(uuid) {
       if (typeof uuid !== "string" || !CLAUDE_UUID_RE.test(uuid)) return;
+      if (openingTerminalForUuid.has(uuid)) return;
+      openingTerminalForUuid.add(uuid);
+      try {
+        const { sessions } = sessionStore.getState();
+        const match = (sessions || []).find((s) => s?.meta?.claude?.uuid === uuid);
+        if (match) {
+          routeToSession(match.name);
+          if (isOverlayViewport()) setOverlaySidebar(false);
+          return;
+        }
 
-      const { sessions } = sessionStore.getState();
-      const match = (sessions || []).find((s) => s?.meta?.claude?.uuid === uuid);
-      if (match) {
-        routeToSession(match.name);
+        let cwd;
+        try {
+          const info = await api.get(`/api/claude/session-info/${encodeURIComponent(uuid)}`);
+          cwd = info?.cwd;
+        } catch (err) {
+          showToast(`Couldn't look up session cwd: ${err.message || "unknown"}`, true);
+          return;
+        }
+        if (typeof cwd !== "string" || !cwd) {
+          showToast("No cwd recorded for that Claude session", true);
+          return;
+        }
+
+        let created;
+        try {
+          const name = generateSessionName();
+          created = await api.post("/sessions", { name, cwd });
+        } catch (err) {
+          showToast(`Couldn't create terminal: ${err.message || "unknown"}`, true);
+          return;
+        }
+
+        // Mirror createNewSession's tab-bar placement so the new tab
+        // appears right of the active one, matching the + button behavior.
+        const activeName = getActiveSessionName();
+        const priorTabs = windowTabSet.getTabs();
+        const anchorIdx = activeName ? priorTabs.indexOf(activeName) : -1;
+        routeToSession(created.name);
+        windowTabSet.addTab(created.name, anchorIdx >= 0 ? anchorIdx + 1 : undefined);
+
+        try {
+          await api.post(`/sessions/by-id/${encodeURIComponent(created.id)}/exec`, {
+            input: `claude --resume ${uuid}`,
+          });
+        } catch (err) {
+          showToast(`Resume command failed: ${err.message || "unknown"}`, true);
+        }
         if (isOverlayViewport()) setOverlaySidebar(false);
-        return;
+      } finally {
+        openingTerminalForUuid.delete(uuid);
       }
-
-      let cwd;
-      try {
-        const info = await api.get(`/api/claude/session-info/${encodeURIComponent(uuid)}`);
-        cwd = info?.cwd;
-      } catch (err) {
-        showToast(`Couldn't look up session cwd: ${err.message || "unknown"}`, true);
-        return;
-      }
-      if (typeof cwd !== "string" || !cwd) {
-        showToast("No cwd recorded for that Claude session", true);
-        return;
-      }
-
-      let created;
-      try {
-        const name = generateSessionName();
-        created = await api.post("/sessions", { name, cwd });
-      } catch (err) {
-        showToast(`Couldn't create terminal: ${err.message || "unknown"}`, true);
-        return;
-      }
-
-      // Mirror createNewSession's tab-bar placement so the new tab
-      // appears right of the active one, matching the + button behavior.
-      const activeName = getActiveSessionName();
-      const priorTabs = windowTabSet.getTabs();
-      const anchorIdx = activeName ? priorTabs.indexOf(activeName) : -1;
-      routeToSession(created.name);
-      windowTabSet.addTab(created.name, anchorIdx >= 0 ? anchorIdx + 1 : undefined);
-
-      try {
-        await api.post(`/sessions/by-id/${encodeURIComponent(created.id)}/exec`, {
-          input: `claude --resume ${uuid}`,
-        });
-      } catch (err) {
-        showToast(`Resume command failed: ${err.message || "unknown"}`, true);
-      }
-      if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
     window.addEventListener("katulong:open-terminal-for-uuid", (ev) => {

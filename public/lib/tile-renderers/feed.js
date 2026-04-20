@@ -518,7 +518,9 @@ function createReplyEntry() {
     entry.expanded = !entry.expanded;
     applyReplyClasses(entry);
   });
-  applyReplyClasses(entry);
+  // className is set by the caller via applyReplyClasses() after it
+  // configures isActive/expanded — skipping it here avoids a write
+  // that would be immediately overwritten.
   return entry;
 }
 
