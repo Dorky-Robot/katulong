@@ -93,7 +93,9 @@ function formatTime(ts) {
   if (!ts && ts !== 0) return "";
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  // Soft "5:47 PM" format — no seconds. The feed isn't a debug log;
+  // second-level precision just adds visual noise.
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function makeTimeSpan(ts) {
@@ -788,7 +790,7 @@ function renderLogItem(row, msg, ts) {
 
   const time = document.createElement("span");
   time.className = "feed-tile-time";
-  time.textContent = new Date(ts).toLocaleTimeString();
+  time.textContent = formatTime(ts);
   row.appendChild(time);
 
   const text = document.createElement("span");
