@@ -264,7 +264,15 @@ const getDraining = () => shutdown?.isDraining() ?? false;
 const topicBroker = createTopicBroker();
 const claudeWatchlist = createWatchlist({ dataDir: DATA_DIR });
 const permissionStore = createPermissionStore();
-const callOllama = createOllamaClient();
+// Pinned to the cloud model: local backbones (gemma3n:e2b,
+// qwen2.5-coder:7b) were too resource-intensive on laptop-class hosts
+// — the model swapped out between prompts and summaries stretched to
+// minutes. The cloud offload is served through the same local Ollama
+// daemon at http://127.0.0.1:11434 after `ollama signin`, so no
+// additional config is needed beyond authenticating the daemon.
+// Single shared client is intentional: we stay Claude-specific until
+// a consumer actually needs a different model / timeout / host.
+const callOllama = createOllamaClient({ model: "gemma4:31b-cloud" });
 const claudeProcessor = createClaudeProcessor({
   watchlist: claudeWatchlist,
   topicBroker,
