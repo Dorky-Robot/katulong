@@ -212,10 +212,21 @@ child count, etc.) into an explicit, versioned schema. Both sides validate
 against it. Migration from the existing free-form shape happens once during
 cutover.
 
-### 4.4 Acceptance criteria for the freeze
+### 4.4 Tile plugin contract
+
+The shape defined in §6.4 — `kind`, `mount(host, tile, api)`, returned
+`{update, unmount}`, and the `api` surface (`subscribe`, `dispatch`,
+`send`, `lifecycle`, `logger`) — becomes `docs/protocol/tile-plugin.md`.
+Versioned the same way as the WS and HTTP contracts. This is the public
+frontend API that lets anyone write a tile in plain JS without knowing
+CLJS.
+
+### 4.5 Acceptance criteria for the freeze
 
 - A new contributor can implement a client from the protocol doc without
   reading the JS source.
+- A new contributor can implement a tile in plain JS from the tile
+  contract doc without reading any CLJS.
 - Every existing integration test references the doc by anchor.
 
 ---
@@ -335,7 +346,20 @@ Phoenix handles backpressure, reconnect, and replay buffering.
 
 ---
 
-## 6. Frontend architecture (ClojureScript)
+## 6. Frontend architecture (ClojureScript core, JS-friendly tile boundary)
+
+The core of the frontend — state, events, routing, transport, tile host,
+layout grid, shortcuts — is written in ClojureScript with re-frame. The
+immutability, centralised `app-db`, and pure event handlers are where the
+stability wins come from.
+
+Tiles are the natural extension point of katulong and already work as
+pluggable renderers in the Node frontend (`public/lib/tile-renderers/*.js`
++ `tile-host.js`). The rewrite preserves that boundary and makes it
+explicit: **tiles are plugins that implement a small, documented
+contract**. A tile can be authored in CLJS (get Reagent, subs, idiomatic
+re-frame) or in plain JS (no CLJS knowledge required). The tile host
+bridges either side without the tile author having to care.
 
 ### 6.1 shadow-cljs configuration
 
@@ -348,7 +372,7 @@ Phoenix handles backpressure, reconnect, and replay buffering.
 - Dev: `shadow-cljs watch app login`, hot reload into the Phoenix dev
   server.
 
-### 6.2 re-frame structure
+### 6.2 CLJS core: re-frame
 
 - **app-db** — single source of truth, replacing the union of `ui-store`,
   `stores`, `connection-store`, `reconciler-store`, and `terminal-pool`
@@ -359,34 +383,136 @@ Phoenix handles backpressure, reconnect, and replay buffering.
   produce effects.
 - **Subs** — selectors equivalent to `public/lib/selectors.js`, but
   memoized by re-frame.
-- **Effects** — a `:ws/send` effect for outgoing messages, `:xterm/write`
-  for writing into a terminal instance, `:storage/set` for localStorage.
-- **Coeffects** — `:now`, `:localStorage`, `:xterm/serialize` for tests and
-  replay.
+- **Effects** — `:ws/send` for outgoing messages, `:xterm/write` for
+  writing into a terminal instance, `:storage/set` for localStorage.
+- **Coeffects** — `:now`, `:localStorage`, `:xterm/serialize` for tests
+  and replay.
 
-### 6.3 Tile rendering
+The core does not import from tile implementations. Tiles register
+themselves; the core only knows about the registry.
 
-- Tile-renderer registry becomes a CLJS multimethod dispatched on
-  `:tile/kind`.
-- Terminal tile: Reagent component that mounts a `<div>` and, on
-  `component-did-mount`, instantiates xterm.js from the JS interop layer.
-  Further data flows are `(.write term chunk)` calls in an effect handler.
-- File browser, document, image, feed, cluster, localhost, progress —
-  each a Reagent namespace under `katulong.tiles/*`.
+### 6.3 Tile host
 
-### 6.4 JS interop islands
+A Reagent component that:
 
-Kept as raw `.js` files under `assets/src/katulong/js/`:
+1. Reads the spatial grid (`:tiles`, `:clusters`) from app-db.
+2. For each visible tile, creates a container `<div>` and looks up its
+   renderer in the tile registry by `:kind`.
+3. Calls the renderer's `mount`/`update`/`unmount` via the tile contract
+   (§6.4). Translates CLJS data to plain JS objects at the boundary so
+   JS renderers never see ClojureScript values.
+4. Owns DOM-level concerns the individual tiles shouldn't redo: focus
+   management, resize observation, drag-drop interop, keyboard focus
+   propagation, tile-chrome (title bar, close button, menus).
 
-- `paste-handler.js` — three-layer keyboard/paste/Clipboard-API interception
-  (see `docs/clipboard-bridge.md`). WebKit-fragile; do not port.
+The host is the only CLJS code a JS tile author interacts with, and they
+interact with it through the contract — not by importing it.
+
+### 6.4 Tile plugin contract
+
+A tile plugin is a plain object. The same shape works whether the tile
+is written in CLJS or JS.
+
+```js
+// Minimal JS tile
+export default {
+  kind: 'image',            // unique; string
+
+  // Called once per tile instance when the host mounts it.
+  // Returns a handle the host uses for subsequent lifecycle events.
+  mount(host, tile, api) {
+    const img = document.createElement('img')
+    img.src = tile.data.src
+    host.appendChild(img)
+
+    return {
+      update(nextTile) { img.src = nextTile.data.src },
+      unmount()        { host.removeChild(img) }
+    }
+  }
+}
+```
+
+**What the host gives the tile:**
+
+- `host` — the container `HTMLElement`. The tile appends its DOM here.
+  The host owns sizing, borders, chrome. The tile owns the inside.
+- `tile` — a frozen plain-JS snapshot of the tile record: `{ id, kind,
+  data, config, size, focused, ... }`. No CLJS types leak across.
+- `api` — a narrow object of JS-friendly helpers:
+  - `api.subscribe(selector, cb) → unsubscribe` — reactive read from
+    app-db. `selector` is either a path (`['tiles', id, 'data']`) or a
+    registered sub name (`'current-session-id'`). `cb` is called with
+    the plain-JS value on mount and on every change.
+  - `api.dispatch(event)` — fire a re-frame event in array form:
+    `api.dispatch(['tile/resize', id, cols, rows])`. The tile does not
+    see re-frame directly.
+  - `api.send(topic, message)` — send on a Phoenix Channel joined by the
+    core. Replaces per-tile WS plumbing.
+  - `api.lifecycle.onResize(fn)`, `api.lifecycle.onFocus(fn)`,
+    `api.lifecycle.onVisibility(fn)` — hooks the host already observes.
+    The tile subscribes to what it needs instead of each tile
+    installing its own `ResizeObserver`.
+  - `api.logger(ns)` — namespaced console wrapper with a kill switch.
+
+**Registration:**
+
+```js
+// Tile plugins register on boot.
+window.katulong.registerTile(terminalTile)
+window.katulong.registerTile(imageTile)
+window.katulong.registerTile(myCustomTile)
+```
+
+CLJS tiles use the same registry via a thin helper:
+
+```clojure
+(katulong.tiles.registry/register!
+  {:kind :file-browser
+   :mount (fn [host tile api] ...)})
+```
+
+**Stability of the contract.** The contract is documented under
+`docs/protocol/tile-plugin.md` alongside the WS and HTTP contracts. It
+is the public API of the frontend. Breaking changes require a version
+bump on the contract and an explicit migration note.
+
+**What the contract deliberately does not include:**
+
+- A templating system. Tiles use DOM APIs, Reagent, or whatever they
+  want inside `host`. The core doesn't care.
+- A schema for `tile.data`. That belongs to the tile kind — different
+  tiles hold wildly different payloads (a filesystem tree vs a byte
+  buffer vs a markdown document).
+- Cross-tile messaging. If two tiles need to talk, they do it through
+  app-db (dispatch to update, subscribe to read). No direct calls.
+
+### 6.5 CLJS tiles vs JS tiles — when to use which
+
+| Author in CLJS when | Author in JS when |
+|---|---|
+| The tile is mostly data transformation + declarative rendering (file browser, document viewer, feed, cluster, progress) | The tile wraps an imperative third-party library with its own event model (xterm.js terminal, codemirror editor, future libs) |
+| The tile has rich derived state that benefits from re-frame subs | The tile is a thin binding to a browser API (image, audio, iframe) |
+| The tile needs fine-grained reactive updates (many subs, small diffs) | The tile is simple enough that Reagent is overkill |
+
+In both cases the contract is the same. The choice is ergonomic, not
+architectural.
+
+### 6.6 JS interop islands (not tiles)
+
+These are raw `.js` files loaded alongside the CLJS app, not tile
+plugins — they are cross-cutting browser helpers:
+
+- `paste-handler.js` — three-layer keyboard/paste/Clipboard-API
+  interception (see `docs/clipboard-bridge.md`). WebKit-fragile; do not
+  port.
 - `image-upload.js` — paired with paste-handler for the image path.
 - `early-scroll-lock.js` — must run before first paint, kept as a plain
   script tag in `index.html`.
-- `color-math.js`, `scroll-utils.js` — pure algorithms, port opportunistically
-  later; no rush.
+- `color-math.js`, `scroll-utils.js` — pure algorithms; port
+  opportunistically later if at all.
 
-### 6.5 Service worker
+### 6.7 Service worker
 
 Port `public/sw.js` verbatim as a plain JS file served from
 `priv/static/`. It's tiny and has no CLJS value-add.
@@ -415,7 +541,8 @@ difficulty, hardest first.
 | 13 | Credential lockout | `credential-lockout.js` | `Auth.Lockout` | `credential-lockout.test.js` |
 | 14 | WebRTC signaling | `webrtc-signaling.js` | **Deferred** — remove from v1 unless needed | `webrtc-signaling.test.js` |
 | 15 | Tile grid state | `ui-store.js` | re-frame `:tiles` + `:clusters` | `ui-store.test.js`, `cluster-*.test.js`, `window-tab-set.test.js` |
-| 16 | Terminal rendering | `terminal-pool.js` + `tile-renderers/terminal.js` | `katulong.tiles.terminal` | `term-update-client.test.js`, `terminal-tab-handler.test.js` |
+| 15b | **Tile plugin contract + host** | `tile-host.js`, `tile-renderers/` registry | `katulong.tiles.host` + `katulong.tiles.registry` + `docs/protocol/tile-plugin.md` | `tile-host.test.js`, `tile-resize.test.js`, `feed-tile.test.js` |
+| 16 | Terminal rendering (JS tile via contract) | `terminal-pool.js` + `tile-renderers/terminal.js` | JS tile plugin under `assets/src/katulong/js/tiles/terminal.js`, wraps xterm.js | `term-update-client.test.js`, `terminal-tab-handler.test.js` |
 | 17 | Paste + clipboard bridge | `paste-handler.js`, `image-upload.js` | **Keep as JS** (interop) | `paste-handler.test.js`, `clipboard-bridge.test.js` |
 | 18 | Shortcut bar + key mapping | `shortcut-bar.js`, `key-mapping.js`, `terminal-key-decider.js` | `katulong.shortcuts` | `shortcuts.test.js`, `keyboard-spec.test.js`, `key-island.test.js` |
 | 19 | Connection manager | `connection-manager.js` | re-frame ws fx + reconnect | `connection-store.test.js` |
@@ -472,9 +599,10 @@ work happens on `rewrite-elixir-cljs`; nothing ships until Phase 6.
 ### Phase 0 — Protocol freeze (doc-only, no code)
 
 Output: `docs/protocol/websocket.md`, `docs/protocol/http.md`,
-`docs/protocol/session-meta.md`. Exit criterion: the protocol docs are
-complete enough that the backend and frontend can be implemented in
-parallel.
+`docs/protocol/session-meta.md`, `docs/protocol/tile-plugin.md`. Exit
+criterion: the protocol docs are complete enough that the backend,
+frontend core, and individual tiles can be implemented in parallel
+without cross-coordination.
 
 ### Phase 1 — Elixir skeleton
 
@@ -647,9 +775,17 @@ These need explicit answers before Phase 1 starts.
   don't thrash twice.
 - Rewrite for scaling beyond one host. Katulong is still self-hosted,
   single-user. No multi-tenancy, no distributed Erlang, no cluster.
-- Pluggable anything — per the memory note on premature generalization.
-  Stay Katulong-specific until a second concrete consumer exists.
 - Add new features during the rewrite. Parity first, features after.
+- Generalise the backend for plugins. Backend plugin loader stays
+  deferred (§7 row 21) until a concrete use case exists.
+
+**A note on the tile plugin contract (§6.4).** This is not premature
+generalisation. The tile-renderer registry already exists in the current
+Node frontend (`public/lib/tile-renderers/`, `tile-host.js`) and already
+supports ~8 tile kinds with different authoring styles. The rewrite
+preserves that boundary and documents it; we are not introducing a new
+extension point, we are stabilising an existing one across the
+language change.
 
 ---
 
