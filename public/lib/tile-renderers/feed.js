@@ -300,7 +300,15 @@ function createResponseBar(claudeUuid) {
       label.className = "feed-tile-response-option-label";
       label.textContent = opt.label;
       btn.appendChild(label);
-      btn.addEventListener("click", () => send(opt.key));
+      btn.addEventListener("click", () => {
+        // Hide immediately so a fast second click can't send the same
+        // choice again. The row repopulates on the next reply if that
+        // reply ends in another numbered list, and stays hidden
+        // otherwise.
+        optionsRow.style.display = "none";
+        optionsRow.innerHTML = "";
+        send(opt.key);
+      });
       optionsRow.appendChild(btn);
     }
   }
