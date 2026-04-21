@@ -9,11 +9,24 @@ session object with precedence `meta.claude.cwd → meta.pane.cwd →
 relative`. The `/sessions/cwd/:name` route, `getSessionCwd`, and
 `getPaneCwd` are retired.
 
+**Worktree-aware search fallback shipped (PR #628).** Originally listed
+as a non-goal below, the fallback was reconsidered after the
+`claude --add-dir` / in-process `/cd` / `git -C <worktree>` paths
+continued to 404 clicks even with the meta-based resolver. Rather than
+enumerating every channel by which Claude might redirect its effective
+cwd, we let the filesystem answer: when `join(cwd, relpath)` doesn't
+exist, `resolveFilePath` (lib/worktree-resolver.js) tries the same
+relpath under every sibling worktree that `git worktree list` knows
+about and returns the first hit. Ambiguity (same relpath in multiple
+worktrees) is resolved by preferring the session's cwd worktree first,
+then the order git reports. Tiles surface a `worktreeLabel` badge when
+the resolved file lives in a non-primary worktree so the resolution is
+visible, not implicit.
+
 **Step 4 (lsof Claude pid cwd) is still deferred.** An earlier attempt
 was reverted — follow-up work should read the revert reasoning before
-redoing it. The current fix covers the `cd worktree && claude` flow;
-the `claude --add-dir` and in-process `/cd` cases still fall back to
-the (possibly stale) pane shell cwd.
+redoing it. It is now less urgent: the worktree-search fallback covers
+the common `--add-dir` / `/cd` / `git -C` cases.
 
 ## Problem
 
@@ -115,12 +128,12 @@ worktree).
 - **No reactive OSC 7 parser.** 5s polling is fine for this UX; a file link
   click that follows a `cd` within 5s is rare and self-corrects on the next
   tick.
-- **No worktree-aware search fallback.** "If the file 404s, search sibling
-  worktrees" is tempting but ambiguous when the same path exists in several
-  worktrees. Prefer explicit state over heuristics.
 - **No client-side project root override UI.** If the meta-based resolution
   still misses, the user can always click the absolute path Claude prints in
   parallel — no need for a dedicated selector.
+
+(The former "No worktree-aware search fallback" non-goal has been
+superseded — see the Status section and PR #628.)
 
 ## Open questions
 

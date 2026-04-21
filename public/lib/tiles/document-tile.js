@@ -22,6 +22,7 @@ import { api } from "/lib/api-client.js";
 import { marked } from "/vendor/marked/marked.esm.js";
 import DOMPurify from "/vendor/dompurify/purify.es.mjs";
 import { createDocumentWatcher } from "/lib/document-watcher.js";
+import { createWorktreeBadge } from "/lib/tiles/tile-badge.js";
 
 /* ---------- cute animated error pages ---------- */
 
@@ -464,13 +465,7 @@ export function createDocumentTileFactory(_deps = {}) {
         header.className = "doc-tile-header";
         headerEl = header;
 
-        if (worktreeLabel) {
-          const badge = document.createElement("span");
-          badge.className = "tile-worktree-badge";
-          badge.textContent = worktreeLabel;
-          badge.title = `Worktree: ${worktreeLabel}`;
-          header.appendChild(badge);
-        }
+        if (worktreeLabel) header.appendChild(createWorktreeBadge(worktreeLabel));
 
         const headerTitle = document.createElement("span");
         headerTitle.className = "doc-tile-header-title";
@@ -711,9 +706,7 @@ export function createDocumentTileFactory(_deps = {}) {
 
       serialize() {
         if (isFileBacked) {
-          const out = { type: "document", filePath };
-          if (worktreeLabel) out.worktreeLabel = worktreeLabel;
-          return out;
+          return { type: "document", filePath };
         }
         return { type: "document", title, format };
       },
