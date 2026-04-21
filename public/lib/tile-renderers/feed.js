@@ -300,7 +300,15 @@ function createResponseBar(claudeUuid) {
       label.className = "feed-tile-response-option-label";
       label.textContent = opt.label;
       btn.appendChild(label);
-      btn.addEventListener("click", () => send(opt.key));
+      btn.addEventListener("click", () => {
+        // Hide immediately so a fast second click can't send the same
+        // choice again. The row repopulates on the next reply if that
+        // reply ends in another numbered list, and stays hidden
+        // otherwise.
+        optionsRow.style.display = "none";
+        optionsRow.innerHTML = "";
+        send(opt.key);
+      });
       optionsRow.appendChild(btn);
     }
   }
@@ -535,6 +543,128 @@ function applyReplyClasses(entry) {
   }
   if (anyRunning) cls.push("is-running");
   entry.block.className = cls.join(" ");
+}
+
+// Build the interactive permission-request card. Claude's own TTY
+// already shows its numbered menu; the card mirrors the same three
+// choices so the reader doesn't need to remember the keystroke.
+// Dismiss is the fourth option for "I already answered in the terminal,
+// stop showing this card" — it skips the tmux write entirely.
+//
+// `claudeUuid` is captured in the outer scope; card clicks POST to a
+// uuid-agnostic endpoint, so the closure only needs `requestId` from
+// the message.
+const PERMISSION_CHOICES = [
+  { choice: "allow", label: "Allow once", icon: "ph-check" },
+  { choice: "allow-session", label: "Allow this session", icon: "ph-check-circle" },
+  { choice: "deny", label: "Deny", icon: "ph-x" },
+  { choice: "dismiss", label: "Dismiss", icon: "ph-eye-slash" },
+];
+
+function renderPermissionCard(msg, _claudeUuid, cards) {
+  const row = document.createElement("div");
+  row.className = "feed-tile-item feed-tile-permission";
+
+  const header = document.createElement("div");
+  header.className = "feed-tile-permission-header";
+  const icon = document.createElement("i");
+  icon.className = "ph ph-hand-waving";
+  header.appendChild(icon);
+  const title = document.createElement("span");
+  title.className = "feed-tile-permission-title";
+  title.textContent = msg.tool
+    ? `Claude wants permission to use ${msg.tool}`
+    : "Claude is waiting for your input";
+  header.appendChild(title);
+  row.appendChild(header);
+
+  if (msg.message) {
+    const body = document.createElement("div");
+    body.className = "feed-tile-permission-message";
+    body.textContent = msg.message;
+    row.appendChild(body);
+  }
+
+  const buttonsEl = document.createElement("div");
+  buttonsEl.className = "feed-tile-permission-buttons";
+  const buttons = [];
+  for (const { choice, label, icon: iconClass } of PERMISSION_CHOICES) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `feed-tile-permission-btn feed-tile-permission-btn-${choice}`;
+    btn.dataset.choice = choice;
+    const btnIcon = document.createElement("i");
+    btnIcon.className = `ph ${iconClass}`;
+    btn.appendChild(btnIcon);
+    const btnLabel = document.createElement("span");
+    btnLabel.textContent = label;
+    btn.appendChild(btnLabel);
+    btn.addEventListener("click", () => submitPermissionChoice(msg.requestId, choice, cards));
+    buttonsEl.appendChild(btn);
+    buttons.push(btn);
+  }
+  row.appendChild(buttonsEl);
+
+  const status = document.createElement("div");
+  status.className = "feed-tile-permission-status";
+  row.appendChild(status);
+
+  return { row, buttons, status, resolved: false };
+}
+
+async function submitPermissionChoice(requestId, choice, cards) {
+  const card = cards.get(requestId);
+  if (!card || card.resolved) return;
+
+  // Disable the whole button row immediately so a double-click can't
+  // double-post — the server already de-dupes via single-shot resolve,
+  // but the UI should reflect pending state without waiting for the
+  // round-trip.
+  for (const b of card.buttons) b.disabled = true;
+  card.status.textContent = "Sending…";
+  card.status.className = "feed-tile-permission-status";
+
+  try {
+    const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    const headers = { "Content-Type": "application/json" };
+    if (csrfMeta?.content) headers["X-CSRF-Token"] = csrfMeta.content;
+    const res = await fetch("/api/claude/permission", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ requestId, choice }),
+      credentials: "same-origin",
+      redirect: "error",
+    });
+    if (!res.ok) {
+      let msg = `Send failed (${res.status})`;
+      try { msg = (await res.json()).error || msg; } catch { /* non-JSON */ }
+      throw new Error(msg);
+    }
+    // Success path — leave the card disabled. The permission-resolved
+    // event the server publishes will call markPermissionResolved, which
+    // stamps the chosen label into `.feed-tile-permission-status`.
+  } catch (err) {
+    card.status.textContent = err.message || "Send failed";
+    card.status.classList.add("feed-tile-permission-status-error");
+    // Re-enable buttons so the user can retry — except dismiss, which
+    // just hides the card locally and doesn't benefit from retry logic.
+    for (const b of card.buttons) {
+      if (b.dataset.choice !== "dismiss") b.disabled = false;
+    }
+  }
+}
+
+function markPermissionResolved(card, choice) {
+  if (card.resolved) return;
+  card.resolved = true;
+  card.row.classList.add("is-resolved");
+  for (const b of card.buttons) {
+    b.disabled = true;
+    if (b.dataset.choice === choice) b.classList.add("is-chosen");
+  }
+  const label = PERMISSION_CHOICES.find((c) => c.choice === choice)?.label;
+  card.status.textContent = label ? `Resolved: ${label}` : "Resolved";
+  card.status.classList.remove("feed-tile-permission-status-error");
 }
 
 function renderReplyBody(entry) {
@@ -971,6 +1101,12 @@ export const feedRenderer = {
       // reply the tool was folded into — null means the tool landed
       // before any reply and is currently shown as a top-level orphan.
       const toolItems = new Map();
+      // Permission-request menu cards, keyed by requestId. A card lives
+      // in the feed as an inline row between replies — appending lets it
+      // sort alongside whatever else is landing. On resolve we dim
+      // instead of removing so the reader has a local record that the
+      // question was answered (and doesn't mistake it for unanswered).
+      const permissionCards = new Map();
       // Ephemeral non-reply events (generic log topics or pre-rewrite
       // persisted events) get auto-keyed row slots.
       const logItems = new Map();
@@ -1028,6 +1164,20 @@ export const feedRenderer = {
         if (isProgress) {
           if (status === "session-summary") {
             applySummary(msg);
+            return;
+          }
+          if (status === "permission-request" && typeof msg.requestId === "string") {
+            // Already rendered? (duplicate publish, e.g. on reconnect) — no-op.
+            if (permissionCards.has(msg.requestId)) return;
+            const card = renderPermissionCard(msg, claudeUuid, permissionCards);
+            list.appendChild(card.row);
+            permissionCards.set(msg.requestId, card);
+            list.scrollTop = list.scrollHeight;
+            return;
+          }
+          if (status === "permission-resolved" && typeof msg.requestId === "string") {
+            const card = permissionCards.get(msg.requestId);
+            if (card) markPermissionResolved(card, msg.choice);
             return;
           }
           if (status === "tool" && typeof msg.toolUseId === "string") {

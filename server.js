@@ -36,6 +36,7 @@ import { createClaudeProcessor } from "./lib/claude-processor.js";
 import { createOllamaClient } from "./lib/ollama-client.js";
 import { createSessionSummarizer } from "./lib/session-summarizer.js";
 import { createClaudeFeedRoutes } from "./lib/routes/claude-feed-routes.js";
+import { createPermissionStore } from "./lib/claude-permissions.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 import { homedir } from "node:os";
 import { loadPlugins } from "./lib/plugin-loader.js";
@@ -262,6 +263,7 @@ const getDraining = () => shutdown?.isDraining() ?? false;
 // docs/claude-feed-watchlist.md for the full design.
 const topicBroker = createTopicBroker();
 const claudeWatchlist = createWatchlist({ dataDir: DATA_DIR });
+const permissionStore = createPermissionStore();
 // Pinned to the cloud model: local backbones (gemma3n:e2b,
 // qwen2.5-coder:7b) were too resource-intensive on laptop-class hosts
 // — the model swapped out between prompts and summaries stretched to
@@ -317,6 +319,7 @@ const routes = [
     shortcutsPath: join(DATA_DIR, "shortcuts.json"),
     auth, csrf,
     topicBroker,
+    permissionStore,
     getExternalUrl: () => configManager.getPublicUrl(),
   }),
   ...createClaudeFeedRoutes({
@@ -325,6 +328,7 @@ const routes = [
     processor: claudeProcessor,
     topicBroker,
     sessionManager,
+    permissionStore,
     homeDir: homedir(),
     log,
   }),
