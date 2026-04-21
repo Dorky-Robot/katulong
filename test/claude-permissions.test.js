@@ -1,5 +1,5 @@
 /**
- * Permission-store + notification-payload parser tests.
+ * Permission-store + pre-tool-use-payload parser tests.
  *
  * Two kinds of coverage:
  *
@@ -7,10 +7,10 @@
  *      at-most-once `resolve`. Tests use an injected clock + id generator
  *      so timing and request-id values are deterministic.
  *
- *   2. `parseNotificationPayload` — classifier for Claude Code's
- *      `Notification` hook. Only permission prompts should produce a
- *      record; idle-prompt notifications must be dropped so the feed
- *      doesn't render menu cards that have no meaningful action.
+ *   2. `parsePreToolUsePayload` — validator for Claude Code's
+ *      `PreToolUse` hook. Extracts the uuid/pane/tool triple the
+ *      pane scanner needs; rejects malformed payloads so the route
+ *      handler doesn't have to.
  */
 
 import { describe, it } from "node:test";
@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 
 import {
   createPermissionStore,
-  parseNotificationPayload,
+  parsePreToolUsePayload,
 } from "../lib/claude-permissions.js";
 
 const UUID = "ff16582e-bbb4-49c6-90cf-e731be656442";
@@ -83,15 +83,32 @@ describe("createPermissionStore", () => {
     assert.equal(store.resolve("nope"), null);
     assert.equal(store.get("nope"), null);
   });
+
+  it("findByUuid returns all pending requests for a session", () => {
+    const { store } = makeStore();
+    const a = store.add({ uuid: UUID, tool: "Bash" });
+    const b = store.add({ uuid: UUID, tool: "Edit" });
+    store.add({ uuid: "other-uuid", tool: "Write" });
+    const hits = store.findByUuid(UUID).map((r) => r.requestId).sort();
+    assert.deepEqual(hits, [a.requestId, b.requestId].sort());
+  });
+
+  it("findByUuid returns [] when the uuid is absent or falsy", () => {
+    const { store } = makeStore();
+    store.add({ uuid: UUID });
+    assert.deepEqual(store.findByUuid("missing-uuid"), []);
+    assert.deepEqual(store.findByUuid(null), []);
+    assert.deepEqual(store.findByUuid(""), []);
+  });
 });
 
-describe("parseNotificationPayload", () => {
-  it("accepts permission_prompt via matcher field", () => {
-    const out = parseNotificationPayload({
-      hook_event_name: "Notification",
+describe("parsePreToolUsePayload", () => {
+  it("accepts a well-formed PreToolUse payload", () => {
+    const out = parsePreToolUsePayload({
+      hook_event_name: "PreToolUse",
       session_id: UUID,
-      matcher: "permission_prompt",
-      message: "Claude needs your permission to use Bash",
+      tool_name: "Bash",
+      tool_input: { command: "rm -f /tmp/foo" },
       _tmuxPane: "%7",
     });
     assert.equal(out.uuid, UUID);
@@ -99,62 +116,49 @@ describe("parseNotificationPayload", () => {
     assert.equal(out.pane, "%7");
   });
 
-  it("accepts permission_prompt via message_type field", () => {
-    const out = parseNotificationPayload({
-      hook_event_name: "Notification",
+  it("returns pane=null when the tmux pane stamp is missing", () => {
+    const out = parsePreToolUsePayload({
+      hook_event_name: "PreToolUse",
       session_id: UUID,
-      message_type: "permission_prompt",
-      message: "Claude needs permission to use Edit",
+      tool_name: "Bash",
     });
-    assert.equal(out.uuid, UUID);
-    assert.equal(out.tool, "Edit");
+    assert.equal(out.pane, null);
   });
 
-  it("falls back to the message text when matcher is absent", () => {
-    const out = parseNotificationPayload({
-      hook_event_name: "Notification",
+  it("drops a malformed pane id rather than echoing it", () => {
+    const out = parsePreToolUsePayload({
+      hook_event_name: "PreToolUse",
       session_id: UUID,
-      message: "Claude needs your permission to use WebFetch",
+      tool_name: "Bash",
+      _tmuxPane: "not-a-pane",
     });
-    assert.equal(out.tool, "WebFetch");
+    assert.equal(out.pane, null);
   });
 
-  it("rejects idle-prompt notifications (no action to offer)", () => {
-    const out = parseNotificationPayload({
-      hook_event_name: "Notification",
+  it("drops a malformed tool name so it can't leak into logs/UI", () => {
+    const out = parsePreToolUsePayload({
+      hook_event_name: "PreToolUse",
       session_id: UUID,
-      matcher: "idle_prompt",
-      message: "Claude has been idle for a while",
+      tool_name: "Bash; rm -rf /",
+      _tmuxPane: "%1",
     });
-    assert.equal(out, null);
+    assert.equal(out.tool, null);
   });
 
-  it("rejects non-Notification events", () => {
-    const out = parseNotificationPayload({
+  it("rejects non-PreToolUse events", () => {
+    const out = parsePreToolUsePayload({
       hook_event_name: "PostToolUse",
       session_id: UUID,
-      message: "ignored",
+      tool_name: "Bash",
     });
     assert.equal(out, null);
   });
 
   it("rejects payloads without a session_id", () => {
-    const out = parseNotificationPayload({
-      hook_event_name: "Notification",
-      matcher: "permission_prompt",
-      message: "Claude needs permission to use Bash",
+    const out = parsePreToolUsePayload({
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
     });
     assert.equal(out, null);
-  });
-
-  it("drops a malformed pane id rather than echoing it", () => {
-    const out = parseNotificationPayload({
-      hook_event_name: "Notification",
-      session_id: UUID,
-      matcher: "permission_prompt",
-      message: "Claude needs permission to use Bash",
-      _tmuxPane: "not-a-pane",
-    });
-    assert.equal(out.pane, null);
   });
 });
