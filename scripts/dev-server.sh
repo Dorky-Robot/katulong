@@ -130,7 +130,7 @@ cmd_start() {
   # SessionStart hook, breaking the Claude feed narration pipeline.
   : > "$LOG_FILE"
   nohup env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_EXECPATH \
-    PORT="$PORT" node server.js >> "$LOG_FILE" 2>&1 </dev/null &
+    PORT="$PORT" KATULONG_TMUX_SOCKET="katulong" node server.js >> "$LOG_FILE" 2>&1 </dev/null &
   local pid=$!
   echo "$pid" > "$PID_FILE"
   disown 2>/dev/null || true
