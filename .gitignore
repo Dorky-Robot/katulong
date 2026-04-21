@@ -24,3 +24,12 @@ site/
 .claude/scheduled_tasks.lock
 .worktrees/
 core
+
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Trunk (Leptos frontend build)
+.trunk/
+crates/web/dist/
