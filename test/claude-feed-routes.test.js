@@ -21,6 +21,7 @@ import {
   createClaudeFeedRoutes,
 } from "../lib/routes/claude-feed-routes.js";
 import { slugifyCwd } from "../lib/claude-transcript-discovery.js";
+import { createPermissionStore } from "../lib/claude-permissions.js";
 
 const UUID = "ff16582e-bbb4-49c6-90cf-e731be656442";
 const UUID_B = "01234567-89ab-cdef-0123-456789abcdef";
@@ -45,7 +46,7 @@ function makeReq({ method = "GET", url = "/", body = null, headers = {} } = {}) 
   return req;
 }
 
-function makeCtx({ watchlist, processor, topicBroker, sessionManager, homeDir }) {
+function makeCtx({ watchlist, processor, topicBroker, sessionManager, homeDir, permissionStore }) {
   const parseJSON = async (req) => req._body;
   const json = (res, status, data) => {
     res.writeHead(status, { "Content-Type": "application/json" });
@@ -56,6 +57,7 @@ function makeCtx({ watchlist, processor, topicBroker, sessionManager, homeDir })
   return {
     json, parseJSON, auth: passthrough, csrf: passthrough,
     watchlist, processor, topicBroker, sessionManager, homeDir,
+    permissionStore,
     log: null,
   };
 }
@@ -272,6 +274,8 @@ describe("createClaudeFeedRoutes", () => {
     );
   }
 
+  let permissionStore;
+
   beforeEach(() => {
     dataDir = mkdtempSync(join(tmpdir(), "katulong-feed-routes-"));
     home = mkdtempSync(join(tmpdir(), "katulong-feed-routes-home-"));
@@ -279,7 +283,11 @@ describe("createClaudeFeedRoutes", () => {
     processor = makeFakeProcessor();
     broker = makeFakeBroker();
     sessionManager = { getSession: () => null };
-    ctx = makeCtx({ watchlist, processor, topicBroker: broker, sessionManager, homeDir: home });
+    permissionStore = createPermissionStore();
+    ctx = makeCtx({
+      watchlist, processor, topicBroker: broker, sessionManager, homeDir: home,
+      permissionStore,
+    });
     routes = createClaudeFeedRoutes(ctx);
   });
 
@@ -297,6 +305,7 @@ describe("createClaudeFeedRoutes", () => {
       ["GET", "/api/claude/session-info/"],
       ["GET", "/api/claude/stream/"],
       ["POST", "/api/claude/reprocess/"],
+      ["POST", "/api/claude/permission"],
     ]);
   });
 
@@ -520,5 +529,142 @@ describe("createClaudeFeedRoutes", () => {
     await route.handler(makeReq(), res, "not-a-uuid");
     assert.strictEqual(res.status, 400);
     assert.deepStrictEqual(processor.calls.acquire, []);
+  });
+
+  // Build a sessionManager stub that answers listSessions + getSession in
+  // the shape handlePermissionPost expects. The captured `writes` array
+  // records every session.write() call so tests can assert the keystroke
+  // made it through.
+  function stubSessionManagerForUuid(uuid, writes) {
+    const session = {
+      name: "work",
+      alive: true,
+      meta: { claude: { uuid } },
+      write(data) { writes.push(data); },
+    };
+    return {
+      listSessions: () => ({ sessions: [session] }),
+      getSession: (name) => (name === "work" ? session : null),
+    };
+  }
+
+  it("POST /api/claude/permission sends '1' for allow and publishes resolved", async () => {
+    const writes = [];
+    ctx.sessionManager = stubSessionManagerForUuid(UUID, writes);
+    routes = createClaudeFeedRoutes(ctx);
+
+    const record = permissionStore.add({ uuid: UUID, message: "perm", tool: "Bash" });
+    const route = routeFor("POST", "/api/claude/permission");
+    const published = [];
+    broker.subscribe(`claude/${UUID}`, (env) => published.push(env.message));
+
+    const req = makeReq({ method: "POST", body: { requestId: record.requestId, choice: "allow" } });
+    const res = makeRes();
+    await route.handler(req, res);
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(writes, ["1"]);
+    assert.strictEqual(permissionStore.size(), 0, "request should be popped");
+    assert.ok(published.some(m =>
+      m?.status === "permission-resolved" &&
+      m?.choice === "allow" &&
+      m?.requestId === record.requestId
+    ));
+  });
+
+  it("POST /api/claude/permission maps choices to the right digit", async () => {
+    const cases = [["allow", "1"], ["allow-session", "2"], ["deny", "3"]];
+    for (const [choice, key] of cases) {
+      const writes = [];
+      ctx.sessionManager = stubSessionManagerForUuid(UUID, writes);
+      routes = createClaudeFeedRoutes(ctx);
+      const record = permissionStore.add({ uuid: UUID });
+      const route = routeFor("POST", "/api/claude/permission");
+      const res = makeRes();
+      await route.handler(
+        makeReq({ method: "POST", body: { requestId: record.requestId, choice } }),
+        res,
+      );
+      assert.strictEqual(res.status, 200, `choice=${choice}`);
+      assert.deepStrictEqual(writes, [key], `choice=${choice}`);
+    }
+  });
+
+  it("POST /api/claude/permission with choice=dismiss never writes to the pane", async () => {
+    const writes = [];
+    ctx.sessionManager = stubSessionManagerForUuid(UUID, writes);
+    routes = createClaudeFeedRoutes(ctx);
+
+    const record = permissionStore.add({ uuid: UUID });
+    const published = [];
+    broker.subscribe(`claude/${UUID}`, (env) => published.push(env.message));
+
+    const route = routeFor("POST", "/api/claude/permission");
+    const res = makeRes();
+    await route.handler(
+      makeReq({ method: "POST", body: { requestId: record.requestId, choice: "dismiss" } }),
+      res,
+    );
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(writes, [], "dismiss must not send a keystroke");
+    assert.ok(published.some(m => m?.status === "permission-resolved" && m?.choice === "dismiss"));
+    assert.strictEqual(permissionStore.size(), 0);
+  });
+
+  it("POST /api/claude/permission returns 404 for an unknown requestId", async () => {
+    const route = routeFor("POST", "/api/claude/permission");
+    const res = makeRes();
+    await route.handler(
+      makeReq({ method: "POST", body: { requestId: "nope", choice: "allow" } }),
+      res,
+    );
+    assert.strictEqual(res.status, 404);
+  });
+
+  it("POST /api/claude/permission double-resolve is a 404, not a double-write", async () => {
+    const writes = [];
+    ctx.sessionManager = stubSessionManagerForUuid(UUID, writes);
+    routes = createClaudeFeedRoutes(ctx);
+
+    const record = permissionStore.add({ uuid: UUID });
+    const route = routeFor("POST", "/api/claude/permission");
+    const req1 = makeReq({ method: "POST", body: { requestId: record.requestId, choice: "allow" } });
+    const req2 = makeReq({ method: "POST", body: { requestId: record.requestId, choice: "allow" } });
+    const r1 = makeRes();
+    const r2 = makeRes();
+    await route.handler(req1, r1);
+    await route.handler(req2, r2);
+
+    assert.strictEqual(r1.status, 200);
+    assert.strictEqual(r2.status, 404);
+    assert.deepStrictEqual(writes, ["1"], "only the first resolve writes");
+  });
+
+  it("POST /api/claude/permission rejects unknown choices with 400", async () => {
+    const record = permissionStore.add({ uuid: UUID });
+    const route = routeFor("POST", "/api/claude/permission");
+    const res = makeRes();
+    await route.handler(
+      makeReq({ method: "POST", body: { requestId: record.requestId, choice: "drop-nuke" } }),
+      res,
+    );
+    assert.strictEqual(res.status, 400);
+    // Bad choice must NOT pop the store — the user gets to retry.
+    assert.strictEqual(permissionStore.size(), 1);
+  });
+
+  it("POST /api/claude/permission returns 404 when no live session has that uuid", async () => {
+    ctx.sessionManager = { listSessions: () => ({ sessions: [] }), getSession: () => null };
+    routes = createClaudeFeedRoutes(ctx);
+
+    const record = permissionStore.add({ uuid: UUID });
+    const route = routeFor("POST", "/api/claude/permission");
+    const res = makeRes();
+    await route.handler(
+      makeReq({ method: "POST", body: { requestId: record.requestId, choice: "allow" } }),
+      res,
+    );
+    assert.strictEqual(res.status, 404);
   });
 });

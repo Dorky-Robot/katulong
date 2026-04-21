@@ -110,6 +110,10 @@ globalThis.document = {
   createTreeWalker() {
     return { currentNode: null, nextNode() { return null; } };
   },
+  // Several handlers look up `<meta name="csrf-token">` to forward the
+  // token on state-changing POSTs. In Node there's no meta — return null
+  // so the header branch just skips the header.
+  querySelector() { return null; },
 };
 globalThis.NodeFilter = {
   SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_SKIP: 3, FILTER_REJECT: 2,
@@ -1060,6 +1064,180 @@ describe("feedRenderer", () => {
       assert.ok(row.className.includes("feed-tile-tool--ok"), row.className);
       const body = row.children[0].children[1];
       assert.equal(body.children[0].textContent, "a\nb");
+    });
+
+    it("renders a permission-request card with four action buttons", () => {
+      // The feed must show a visible, actionable menu card when the
+      // Notification hook fires with permission_prompt. Without this the
+      // user in the browser has no idea Claude is waiting — the TTY
+      // shows the menu but the feed only ever saw tool / reply events.
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+
+      eventSources[0].onmessage({
+        data: JSON.stringify({
+          seq: 1, topic: "claude/abc",
+          message: JSON.stringify({
+            status: "permission-request",
+            requestId: "rid-1",
+            message: "Claude needs your permission to use Bash",
+            tool: "Bash",
+          }),
+          timestamp: Date.now(),
+        }),
+      });
+
+      const list = el.children[0].children[1];
+      assert.equal(list.children.length, 1);
+      const card = list.children[0];
+      assert.ok(card.className.includes("feed-tile-permission"), card.className);
+      const title = card.querySelector(".feed-tile-permission-title");
+      assert.ok(title.textContent.includes("Bash"), title.textContent);
+
+      const buttonsEl = card.querySelector(".feed-tile-permission-buttons");
+      assert.equal(buttonsEl.children.length, 4);
+      const choices = buttonsEl.children.map((b) => b.dataset.choice);
+      assert.deepEqual(choices, ["allow", "allow-session", "deny", "dismiss"]);
+    });
+
+    it("clicking an allow button POSTs /api/claude/permission with the requestId", async () => {
+      const el = new FakeElement("div");
+      const calls = [];
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = async (url, opts) => {
+        calls.push({ url, opts });
+        return { ok: true, json: async () => ({ ok: true }) };
+      };
+      try {
+        feedRenderer.mount(el, {
+          id: "feed-1",
+          props: { topic: "claude/abc", meta: { type: "progress" } },
+          dispatch: () => {},
+          ctx: {},
+        });
+        eventSources[0].onmessage({
+          data: JSON.stringify({
+            seq: 1, topic: "claude/abc",
+            message: JSON.stringify({
+              status: "permission-request",
+              requestId: "rid-2",
+              message: "Claude needs your permission to use Bash",
+              tool: "Bash",
+            }),
+            timestamp: Date.now(),
+          }),
+        });
+
+        const buttonsEl = el.children[0].children[1].children[0]
+          .querySelector(".feed-tile-permission-buttons");
+        const allowBtn = buttonsEl.children[0];
+        // Invoke the click listener directly — FakeElement doesn't
+        // dispatch synthesized events. This mirrors what a user click
+        // produces: the addEventListener callback runs.
+        const listeners = allowBtn._listeners.click || [];
+        assert.equal(listeners.length, 1, "allow button has exactly one click handler");
+        await listeners[0]();
+
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0].url, "/api/claude/permission");
+        assert.equal(calls[0].opts.method, "POST");
+        const body = JSON.parse(calls[0].opts.body);
+        assert.deepEqual(body, { requestId: "rid-2", choice: "allow" });
+        // Buttons stay disabled after the request — the server's
+        // permission-resolved event will finalize the visual state.
+        for (const b of buttonsEl.children) assert.equal(b.disabled, true);
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+
+    it("dismiss button POSTs {choice: dismiss} (no keystroke server-side)", async () => {
+      const el = new FakeElement("div");
+      const calls = [];
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = async (url, opts) => {
+        calls.push({ url, opts });
+        return { ok: true, json: async () => ({ ok: true }) };
+      };
+      try {
+        feedRenderer.mount(el, {
+          id: "feed-1",
+          props: { topic: "claude/abc", meta: { type: "progress" } },
+          dispatch: () => {},
+          ctx: {},
+        });
+        eventSources[0].onmessage({
+          data: JSON.stringify({
+            seq: 1, topic: "claude/abc",
+            message: JSON.stringify({
+              status: "permission-request",
+              requestId: "rid-3",
+              message: "perm",
+              tool: "Bash",
+            }),
+            timestamp: Date.now(),
+          }),
+        });
+
+        const buttonsEl = el.children[0].children[1].children[0]
+          .querySelector(".feed-tile-permission-buttons");
+        const dismissBtn = buttonsEl.children[3];
+        assert.equal(dismissBtn.dataset.choice, "dismiss");
+        await dismissBtn._listeners.click[0]();
+
+        assert.equal(calls.length, 1);
+        const body = JSON.parse(calls[0].opts.body);
+        assert.equal(body.choice, "dismiss");
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+
+    it("permission-resolved event dims the matching card", () => {
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+      const send = (msg, seq) => eventSources[0].onmessage({
+        data: JSON.stringify({ seq, topic: "claude/abc", message: JSON.stringify(msg), timestamp: Date.now() }),
+      });
+      send({ status: "permission-request", requestId: "rid-4", message: "m", tool: "Bash" }, 1);
+      send({ status: "permission-resolved", requestId: "rid-4", choice: "allow" }, 2);
+
+      const card = el.children[0].children[1].children[0];
+      // classList is a stub — instead check the render side-effect:
+      // the status row gets the "Resolved: ..." label and every button
+      // is disabled.
+      const status = card.querySelector(".feed-tile-permission-status");
+      assert.match(status.textContent, /Resolved/);
+      const buttonsEl = card.querySelector(".feed-tile-permission-buttons");
+      for (const b of buttonsEl.children) assert.equal(b.disabled, true);
+    });
+
+    it("permission-request is idempotent: a duplicate publish does not add a second card", () => {
+      const el = new FakeElement("div");
+      feedRenderer.mount(el, {
+        id: "feed-1",
+        props: { topic: "claude/abc", meta: { type: "progress" } },
+        dispatch: () => {},
+        ctx: {},
+      });
+      const send = (msg, seq) => eventSources[0].onmessage({
+        data: JSON.stringify({ seq, topic: "claude/abc", message: JSON.stringify(msg), timestamp: Date.now() }),
+      });
+      send({ status: "permission-request", requestId: "rid-5", message: "m", tool: "Bash" }, 1);
+      send({ status: "permission-request", requestId: "rid-5", message: "m", tool: "Bash" }, 2);
+
+      const list = el.children[0].children[1];
+      assert.equal(list.children.length, 1);
     });
 
     it("silently drops legacy narrative / completion / summary / reply-title events", () => {

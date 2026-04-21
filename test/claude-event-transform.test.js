@@ -538,14 +538,17 @@ describe("readTranscriptEntries", () => {
     assert.equal(entries[0].text, "ok");
   });
 
-  it("truncates long assistant text", () => {
-    const longText = "x".repeat(2000);
-    const path = writeTranscript("long.jsonl", [
+  it("does NOT truncate long assistant text", () => {
+    // Assistant replies render verbatim in the feed. Truncating them
+    // leaves the reader seeing "the code is structured as…" with no way
+    // to recover the rest — exactly when they want the whole thing.
+    const longText = "x".repeat(50_000);
+    const path = writeTranscript("assistant-long.jsonl", [
       { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: longText }] } },
     ]);
     const { entries } = readTranscriptEntries(path);
-    assert.ok(entries[0].text.length <= 1000);
-    assert.ok(entries[0].text.endsWith("\u2026"));
+    assert.equal(entries[0].text.length, 50_000);
+    assert.ok(!entries[0].text.endsWith("\u2026"));
   });
 
   it("does NOT truncate long user prompts", () => {
