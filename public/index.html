@@ -2334,6 +2334,11 @@
     .doc-tile-root { display: flex; flex-direction: column; height: 100%; width: 100%; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: var(--text-sm); }
     .doc-tile-header { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg-surface); color: var(--text-secondary); font-size: var(--text-xs); }
     .doc-tile-header-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Shared worktree badge for document + image tiles — shown when the
+       opened file lives in a non-primary git worktree so it's obvious
+       at a glance which checkout you're looking at. */
+    .tile-worktree-badge { display: inline-flex; align-items: center; flex-shrink: 0; padding: 1px 6px; border-radius: 999px; background: rgba(201, 164, 245, 0.15); color: var(--accent-active); font-size: var(--text-xs); font-family: var(--font-mono); white-space: nowrap; max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
     .doc-tile-content { flex: 1; overflow: auto; margin: 0; padding: var(--space-sm); white-space: pre-wrap; word-wrap: break-word; tab-size: 2; line-height: 1.5; outline: none; }
     .doc-tile-content:focus { outline: none; }
     .doc-tile-editor { flex: 1; overflow: hidden; }

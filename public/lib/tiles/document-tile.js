@@ -338,7 +338,7 @@ function buildTheme(cm) {
  * @returns {(options: { filePath?, title?, content?, format? }) => TilePrototype}
  */
 export function createDocumentTileFactory(_deps = {}) {
-  return function createDocumentTile({ filePath, title, content, format } = {}) {
+  return function createDocumentTile({ filePath, title, content, format, worktreeLabel } = {}) {
     let container = null;
     let mounted = false;
     let editorView = null;
@@ -463,6 +463,14 @@ export function createDocumentTileFactory(_deps = {}) {
         const header = document.createElement("div");
         header.className = "doc-tile-header";
         headerEl = header;
+
+        if (worktreeLabel) {
+          const badge = document.createElement("span");
+          badge.className = "tile-worktree-badge";
+          badge.textContent = worktreeLabel;
+          badge.title = `Worktree: ${worktreeLabel}`;
+          header.appendChild(badge);
+        }
 
         const headerTitle = document.createElement("span");
         headerTitle.className = "doc-tile-header-title";
@@ -703,7 +711,9 @@ export function createDocumentTileFactory(_deps = {}) {
 
       serialize() {
         if (isFileBacked) {
-          return { type: "document", filePath };
+          const out = { type: "document", filePath };
+          if (worktreeLabel) out.worktreeLabel = worktreeLabel;
+          return out;
         }
         return { type: "document", title, format };
       },

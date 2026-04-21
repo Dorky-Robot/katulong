@@ -25,7 +25,7 @@ export function isImagePath(filePath) {
 }
 
 export function createImageTileFactory(_deps) {
-  return function createImageTile({ filePath }) {
+  return function createImageTile({ filePath, worktreeLabel }) {
     let mounted = false;
     let root = null;
     let imgEl = null;
@@ -96,6 +96,14 @@ export function createImageTileFactory(_deps) {
         // --- Header ---
         const header = document.createElement("div");
         header.className = "img-tile-header";
+
+        if (worktreeLabel) {
+          const badge = document.createElement("span");
+          badge.className = "tile-worktree-badge";
+          badge.textContent = worktreeLabel;
+          badge.title = `Worktree: ${worktreeLabel}`;
+          header.appendChild(badge);
+        }
 
         const titleEl = document.createElement("span");
         titleEl.className = "img-tile-header-title";

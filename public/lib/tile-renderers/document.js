@@ -55,6 +55,7 @@ export const documentRenderer = {
       title: props.title,
       content: props.content,
       format: props.format,
+      worktreeLabel: props.worktreeLabel,
     });
     tile.mount(el, {
       ...ctx,

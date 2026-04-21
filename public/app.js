@@ -159,16 +159,10 @@
     // _uiStore is also used by onFileLinkClick below — both closures
     // share the same late-bound ref, assigned when createUiStore() runs.
 
-    // Resolve a (possibly relative) file path against the active session's
-    // cwd and open it in a document tile. Shared by the terminal's
-    // file-link click handler and the feed tile's reply-file chips.
-    //
-    // Resolution precedence: `meta.claude.cwd` (Claude's process cwd,
-    // authoritative when Claude is running — doesn't drift with shell
-    // cd's) → `meta.pane.cwd` (tmux pane_current_path, authoritative
-    // when the pane is idle) → fall through with the raw relative path.
-    // See docs/file-link-worktree-resolution.md for why the former
-    // round-trip to GET /sessions/cwd was replaced by cached meta.
+    // Cwd off cached session meta — a fallback used only when the server
+    // resolver is unreachable. Precedence matches the server:
+    // `meta.claude.cwd` → `meta.pane.cwd`. See
+    // `docs/file-link-worktree-resolution.md`.
     function resolveSessionCwd(sessionName) {
       if (!sessionName) return null;
       const { sessions } = sessionStore.getState();
@@ -181,21 +175,44 @@
       return null;
     }
 
-    function openFileInDocTile(filePath, line) {
+    // Open the file in a document or image tile, resolved against the active
+    // session's cwd with a sibling-worktree fallback (see
+    // `lib/worktree-resolver.js`). Shared by terminal file-link clicks and
+    // feed tile reply-file chips. Async because the worktree lookup needs
+    // a `git worktree list` on the server, but the call is fire-and-forget
+    // from the caller's perspective — no caller awaits the tile opening.
+    async function openFileInDocTile(filePath, line) {
       if (!_uiStore || typeof filePath !== "string" || !filePath) return;
       // Defense-in-depth: reject paths with traversal segments
       if (filePath.split("/").some(seg => seg === "..")) return;
+
+      const sessionName = getActiveSessionName();
       let resolved = filePath;
-      if (!filePath.startsWith("/")) {
-        const cwd = resolveSessionCwd(getActiveSessionName());
-        if (cwd) resolved = cwd + "/" + filePath;
+      let worktreeLabel = null;
+      try {
+        const q = `path=${encodeURIComponent(filePath)}` +
+          (sessionName ? `&session=${encodeURIComponent(sessionName)}` : "");
+        const res = await api.get(`/api/resolve-file?${q}`);
+        if (res && typeof res.absPath === "string" && res.absPath) {
+          resolved = res.absPath;
+          worktreeLabel = res.worktreeLabel || null;
+        }
+      } catch {
+        // Resolver unreachable (offline / server restart) — fall back to
+        // naive cwd-relative join so the tile at least opens.
+        if (!filePath.startsWith("/")) {
+          const cwd = resolveSessionCwd(sessionName);
+          if (cwd) resolved = cwd + "/" + filePath;
+        }
       }
+
       // Route by extension: images go to the image tile (with zoom/pan),
       // everything else to the document tile. Both are reached via the
       // same katulong:open-file event so feed thumbnails, reply chips,
       // and terminal file links all funnel through one codepath.
       const isImg = isImagePath(resolved);
       const props = { filePath: resolved };
+      if (worktreeLabel) props.worktreeLabel = worktreeLabel;
       if (!isImg && typeof line === "number" && line > 0) props.line = line;
       const type = isImg ? "image" : "document";
       const id = `${isImg ? "img" : "doc"}-${Date.now().toString(36)}`;
