@@ -11,6 +11,8 @@
  * Only file-backed (given a filePath). Persistable — re-fetches on restore.
  */
 
+import { createWorktreeBadge } from "/lib/tiles/tile-badge.js";
+
 // Keep in sync with MIME map in lib/file-browser.js GET /api/files/image
 // SVG intentionally excluded — contains executable JavaScript (XSS risk)
 const IMAGE_EXTS = new Set([
@@ -25,7 +27,7 @@ export function isImagePath(filePath) {
 }
 
 export function createImageTileFactory(_deps) {
-  return function createImageTile({ filePath }) {
+  return function createImageTile({ filePath, worktreeLabel }) {
     let mounted = false;
     let root = null;
     let imgEl = null;
@@ -96,6 +98,8 @@ export function createImageTileFactory(_deps) {
         // --- Header ---
         const header = document.createElement("div");
         header.className = "img-tile-header";
+
+        if (worktreeLabel) header.appendChild(createWorktreeBadge(worktreeLabel));
 
         const titleEl = document.createElement("span");
         titleEl.className = "img-tile-header-title";

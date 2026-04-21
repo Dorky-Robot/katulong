@@ -22,6 +22,7 @@ import { api } from "/lib/api-client.js";
 import { marked } from "/vendor/marked/marked.esm.js";
 import DOMPurify from "/vendor/dompurify/purify.es.mjs";
 import { createDocumentWatcher } from "/lib/document-watcher.js";
+import { createWorktreeBadge } from "/lib/tiles/tile-badge.js";
 
 /* ---------- cute animated error pages ---------- */
 
@@ -338,7 +339,7 @@ function buildTheme(cm) {
  * @returns {(options: { filePath?, title?, content?, format? }) => TilePrototype}
  */
 export function createDocumentTileFactory(_deps = {}) {
-  return function createDocumentTile({ filePath, title, content, format } = {}) {
+  return function createDocumentTile({ filePath, title, content, format, worktreeLabel } = {}) {
     let container = null;
     let mounted = false;
     let editorView = null;
@@ -463,6 +464,8 @@ export function createDocumentTileFactory(_deps = {}) {
         const header = document.createElement("div");
         header.className = "doc-tile-header";
         headerEl = header;
+
+        if (worktreeLabel) header.appendChild(createWorktreeBadge(worktreeLabel));
 
         const headerTitle = document.createElement("span");
         headerTitle.className = "doc-tile-header-title";
