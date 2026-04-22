@@ -11,22 +11,50 @@ pub mod cookie;
 pub mod state;
 
 use auth_middleware::Authenticated;
-use axum::{routing::get, Json, Router};
+use axum::{extract::DefaultBodyLimit, routing::get, Json, Router};
 use katulong_shared::{ServerMessage, PROTOCOL_VERSION};
 use serde_json::json;
 use state::AppState;
+
+/// Hard ceiling on request body bytes. 1 MiB matches the Node
+/// implementation's per-auth-route limit. Applied globally here rather
+/// than per-route so future POST routes (slice 5) can't forget to set
+/// their own cap — the axum `content-length` check rejects over-large
+/// requests before they reach any handler.
+const REQUEST_BODY_LIMIT: usize = 1024 * 1024;
 
 /// Build the router with the given application state.
 ///
 /// Separated from `main.rs` so tests can spin up the router against
 /// ephemeral `AuthStore`/`WebAuthnService` instances without opening a
-/// socket. The `/api/me` route is the slice-4 smoke signal — it returns
-/// 200 with the credential id on authenticated requests, 401 otherwise.
+/// socket.
+///
+/// # Public-route convention
+///
+/// By default **every route is unauthenticated** — axum only runs the
+/// `Authenticated` extractor when a handler asks for it. When adding a
+/// route, the reviewer asks: does this handler take `Authenticated`?
+/// If no, add an explanatory comment next to the `.route(...)` line
+/// explaining WHY it's public (health probe, protocol handshake,
+/// auth-kickoff endpoint, etc.) so the allowlist is reviewable
+/// inline. The Node implementation kept this allowlist centralised as
+/// `isPublicPath()`; we enforce it socially instead, which means the
+/// comments ARE the contract.
+///
+/// Currently public: `/health` (k8s/uptime probe, returns static "ok"),
+/// `/api/hello` (protocol-version handshake, no state exposed).
 pub fn app(state: AppState) -> Router {
     Router::new()
+        // PUBLIC: liveness probe. Returns static "ok".
         .route("/health", get(health))
+        // PUBLIC: protocol-version handshake. Exposes no state.
         .route("/api/hello", get(hello))
+        // PROTECTED: smoke-test endpoint that exercises the full
+        // auth extractor chain (access classification, cookie
+        // extraction, store lookup) in a single round-trip.
+        // Integration tests target this route.
         .route("/api/me", get(me))
+        .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT))
         .with_state(state)
 }
 

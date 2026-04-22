@@ -34,7 +34,7 @@ fn cfg() -> ServerConfig {
     }
 }
 
-async fn build() -> (AppState, TempDir) {
+async fn ephemeral_state() -> (AppState, TempDir) {
     let dir = TempDir::new().unwrap();
     let store = AuthStore::open(dir.path().join("auth.json")).await.unwrap();
     let webauthn = WebAuthnService::new("katulong.test", "Katulong Test", "https://katulong.test")
@@ -68,7 +68,7 @@ fn req(peer: SocketAddr, host: &str) -> RequestBuilder {
 
 #[tokio::test]
 async fn unauthed_remote_request_is_rejected() {
-    let (state, _dir) = build().await;
+    let (state, _dir) = ephemeral_state().await;
     let router = app(state);
     let resp = router
         .oneshot(
@@ -84,7 +84,7 @@ async fn unauthed_remote_request_is_rejected() {
 
 #[tokio::test]
 async fn remote_request_with_valid_cookie_is_authenticated() {
-    let (state, _dir) = build().await;
+    let (state, _dir) = ephemeral_state().await;
 
     // Seed a credential + session directly into the store.
     let session_token;
@@ -128,7 +128,7 @@ async fn remote_request_with_valid_cookie_is_authenticated() {
 
 #[tokio::test]
 async fn loopback_peer_plus_loopback_host_bypasses_auth() {
-    let (state, _dir) = build().await;
+    let (state, _dir) = ephemeral_state().await;
     let router = app(state);
     let resp = router
         .oneshot(
@@ -151,7 +151,7 @@ async fn loopback_peer_with_tunnel_host_is_remote_and_rejected() {
     // The Cloudflare Tunnel scar: cloudflared bridges from loopback, so
     // peer == 127.0.0.1 even for internet traffic. The Host header is
     // the public domain — must NOT classify as localhost.
-    let (state, _dir) = build().await;
+    let (state, _dir) = ephemeral_state().await;
     let router = app(state);
     let resp = router
         .oneshot(
@@ -171,7 +171,7 @@ async fn loopback_peer_with_tunnel_host_is_remote_and_rejected() {
 
 #[tokio::test]
 async fn expired_session_cookie_is_rejected() {
-    let (state, _dir) = build().await;
+    let (state, _dir) = ephemeral_state().await;
     let token: String = state
         .auth_store
         .transact(|s| {
@@ -202,7 +202,7 @@ async fn expired_session_cookie_is_rejected() {
 
 #[tokio::test]
 async fn unauthed_routes_still_reachable() {
-    let (state, _dir) = build().await;
+    let (state, _dir) = ephemeral_state().await;
     let router = app(state);
     let resp = router
         .oneshot(

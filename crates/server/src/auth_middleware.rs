@@ -15,7 +15,7 @@ use crate::access::AccessMethod;
 use crate::cookie::extract_session_token;
 use crate::state::AppState;
 use axum::{
-    extract::{ConnectInfo, FromRequestParts, State},
+    extract::{ConnectInfo, FromRequestParts},
     http::{header, request::Parts, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -117,9 +117,3 @@ impl FromRequestParts<AppState> for Authenticated {
     }
 }
 
-/// The extractor is generic over `S: AppState`-like state. We also
-/// provide a `State<AppState>` shim so handlers that want direct state
-/// access can take both extractors in one signature — axum composes them
-/// fine, and this keeps the boilerplate-for-the-reader low.
-#[allow(dead_code)]
-pub type AppStateExt = State<AppState>;

@@ -42,31 +42,27 @@ impl AccessMethod {
         if !peer.ip().is_loopback() {
             return Self::Remote;
         }
-        match host_header.and_then(host_is_loopback) {
-            Some(true) => Self::Localhost,
-            _ => Self::Remote,
+        if host_header.is_some_and(host_is_loopback) {
+            Self::Localhost
+        } else {
+            Self::Remote
         }
     }
 }
 
 /// Strip any `:port` from a Host header and test whether the remaining
-/// authority is a loopback hostname or literal loopback IP. Returns
-/// `None` if the header is unparseable at all; the caller treats `None`
-/// as "not loopback."
+/// authority is a loopback hostname or literal loopback IP.
 ///
 /// Accepts the obvious literals (`localhost`, `127.0.0.1`, `::1`) and any
 /// IPv4 in `127.0.0.0/8` — the full loopback range, not just the
 /// single-address one, since `127.0.0.2` etc. are valid loopback aliases
 /// on most platforms and a test rig may use them.
-fn host_is_loopback(header: &str) -> Option<bool> {
+fn host_is_loopback(header: &str) -> bool {
     let authority = strip_port(header);
     if authority.eq_ignore_ascii_case("localhost") {
-        return Some(true);
+        return true;
     }
-    if let Ok(ip) = authority.parse::<IpAddr>() {
-        return Some(ip.is_loopback());
-    }
-    Some(false)
+    authority.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
 /// Strip a trailing `:port` from a host authority, if any. Must handle
@@ -157,7 +153,7 @@ mod tests {
     #[test]
     fn full_127_loopback_range_is_loopback() {
         // `127.0.0.2` and friends are valid loopback on most systems.
-        assert_eq!(host_is_loopback("127.0.0.2"), Some(true));
-        assert_eq!(host_is_loopback("127.255.255.254"), Some(true));
+        assert!(host_is_loopback("127.0.0.2"));
+        assert!(host_is_loopback("127.255.255.254"));
     }
 }

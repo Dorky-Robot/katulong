@@ -25,8 +25,14 @@ pub fn extract_session_token(header_value: &str) -> Option<String> {
     for pair in header_value.split(';') {
         let pair = pair.trim();
         if let Some((name, value)) = pair.split_once('=') {
-            if name == SESSION_COOKIE {
-                return Some(value.to_string());
+            if name.trim() == SESSION_COOKIE {
+                // Trim the value too — some clients emit
+                // `katulong_session=TOKEN ; next=1` where the space before
+                // the semicolon lands inside the value. Our tokens are
+                // hex-only so whitespace can never be a real value, and a
+                // trimmed mismatch (`"TOKEN "` vs `"TOKEN"`) would silently
+                // 401 an authenticated user.
+                return Some(value.trim().to_string());
             }
         }
     }
@@ -54,14 +60,11 @@ pub fn extract_session_token(header_value: &str) -> Option<String> {
 /// responsible for encoding it; a change here without one there would
 /// silently produce cookies the client can't send back.
 pub fn build_set_cookie(token: &str, max_age_secs: u64, secure: bool) -> String {
-    let mut cookie = format!(
-        "{name}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}",
-        name = SESSION_COOKIE
-    );
-    if secure {
-        cookie.push_str("; Secure");
-    }
-    cookie
+    format!(
+        "{name}={token}; Max-Age={max_age_secs}{flags}",
+        name = SESSION_COOKIE,
+        flags = cookie_flags(secure),
+    )
 }
 
 /// Build a `Set-Cookie` header that clears the session cookie.
@@ -72,14 +75,25 @@ pub fn build_set_cookie(token: &str, max_age_secs: u64, secure: bool) -> String 
 /// `Set-Cookie`. `Secure` follows the live cookie's setting so the
 /// browser is willing to overwrite on the right scheme.
 pub fn build_clear_cookie(secure: bool) -> String {
-    let mut cookie = format!(
-        "{name}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
-        name = SESSION_COOKIE
-    );
+    format!(
+        "{name}=; Max-Age=0{flags}",
+        name = SESSION_COOKIE,
+        flags = cookie_flags(secure),
+    )
+}
+
+/// The canonical flag block. Returns the suffix that every `Set-Cookie`
+/// we emit must carry: `HttpOnly`, `SameSite=Lax`, `Path=/`, and
+/// conditional `Secure`. Lives as a private helper so the module's
+/// stated "one flag list" guarantee is structural: adding a flag
+/// (e.g. `Partitioned` or the `__Host-` prefix if we ever adopt it)
+/// is a single-site change rather than "remember both emitters."
+fn cookie_flags(secure: bool) -> String {
+    let mut s = String::from("; HttpOnly; SameSite=Lax; Path=/");
     if secure {
-        cookie.push_str("; Secure");
+        s.push_str("; Secure");
     }
-    cookie
+    s
 }
 
 #[cfg(test)]
@@ -120,6 +134,22 @@ mod tests {
             extract_session_token("katulong_session_other=decoy"),
             None,
             "a similar-but-not-identical name must not match"
+        );
+    }
+
+    #[test]
+    fn extract_trims_whitespace_from_value() {
+        // Clients sometimes emit `katulong_session=TOKEN ; next=1` where
+        // the space before `;` lands inside the value. Hex tokens can't
+        // legitimately contain whitespace, and a non-trimmed mismatch
+        // silently 401s an authenticated user.
+        assert_eq!(
+            extract_session_token("katulong_session=abc123 ; other=1"),
+            Some("abc123".to_string())
+        );
+        assert_eq!(
+            extract_session_token("katulong_session=  abc123  "),
+            Some("abc123".to_string())
         );
     }
 
