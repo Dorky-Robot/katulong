@@ -29,11 +29,31 @@ pub enum AuthError {
     #[error("password-hash error: {0}")]
     Hash(String),
 
+    /// WebAuthn service misconfiguration surfaced at startup — bad origin
+    /// URL, RP-id mismatch, missing feature on the relying-party builder.
+    /// Maps to a 500-class response if it ever reached an HTTP layer, but
+    /// in practice should panic the process at init rather than be served.
+    /// Kept distinct from `WebAuthn` so a 401-class ceremony failure isn't
+    /// indistinguishable from a startup bug via string-matching.
+    #[error("webauthn configuration error: {0}")]
+    WebAuthnConfig(String),
+
+    /// Runtime WebAuthn ceremony failure — signature verification failed,
+    /// challenge response malformed, counter regressed, etc. Caller should
+    /// render this as 401 and prompt the user to retry.
     #[error("webauthn error: {0}")]
     WebAuthn(String),
 
     #[error("challenge not found or expired")]
     ChallengeNotFound,
+
+    /// The server is at capacity for pending registration/authentication
+    /// ceremonies. Caller should render as 503 and ask the user to retry in
+    /// a few seconds. See the `MAX_PENDING_CHALLENGES` cap in `webauthn.rs`
+    /// — this variant exists so an HTTP handler can distinguish "retry
+    /// shortly" from "something is permanently broken."
+    #[error("too many pending challenges")]
+    TooManyPendingChallenges,
 }
 
 impl AuthError {

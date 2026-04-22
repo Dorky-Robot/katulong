@@ -1,9 +1,9 @@
+use crate::random::random_hex;
 use crate::{AuthError, Result};
-use rand_core::{OsRng, RngCore};
+use rand_core::OsRng;
 use scrypt::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use scrypt::{Params, Scrypt};
 use serde::{Deserialize, Serialize};
-use std::fmt::Write;
 use std::time::{Duration, SystemTime};
 
 /// A single-use, time-limited token used to pair a new device.
@@ -121,16 +121,6 @@ fn hash_token(plaintext: &str) -> Result<String> {
         .hash_password_customized(plaintext.as_bytes(), None, None, params, &salt)
         .map(|h| h.to_string())
         .map_err(|e| AuthError::Hash(e.to_string()))
-}
-
-fn random_hex(bytes: usize) -> String {
-    let mut buf = vec![0u8; bytes];
-    OsRng.fill_bytes(&mut buf);
-    let mut out = String::with_capacity(bytes * 2);
-    for b in buf {
-        write!(&mut out, "{b:02x}").expect("write to String cannot fail");
-    }
-    out
 }
 
 #[cfg(test)]

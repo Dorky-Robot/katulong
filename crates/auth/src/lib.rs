@@ -13,6 +13,7 @@
 
 mod credential;
 mod error;
+mod random;
 mod session;
 mod setup_token;
 mod state;
@@ -25,6 +26,6 @@ pub use session::Session;
 pub use setup_token::{PlaintextToken, SetupToken};
 pub use state::AuthState;
 pub use store::AuthStore;
-pub use webauthn::{AuthenticationOutcome, ChallengeId, WebAuthnCeremony};
+pub use webauthn::{ChallengeId, VerifiedAuthentication, WebAuthnService};
 
 pub type Result<T> = std::result::Result<T, AuthError>;

@@ -14,6 +14,16 @@ tempfile = { workspace = true }
 scrypt = { version = "0.11", default-features = false, features = ["simple"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 subtle = { version = "2", default-features = false }
+# SAFETY: the `danger-allow-state-serialisation` feature enables Serde derives
+# on `PasskeyRegistration` / `PasskeyAuthentication` so they can live inside
+# the `Mutex<HashMap<...>>` challenge stores in `webauthn.rs`. That in-memory
+# use is safe. Persisting those types to disk or sending them over the wire
+# would open a ceremony-replay vector — upstream named the flag `danger-*` for
+# exactly that reason. The flag is ALSO required to serialize finished
+# `Passkey` blobs into `Credential.public_key`, which IS long-lived on-disk
+# state — that's fine because the completed passkey is what the spec expects
+# us to store. Do NOT extend the flag's reach to persist pending ceremony
+# state without a security review.
 webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
