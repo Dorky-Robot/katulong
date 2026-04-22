@@ -312,10 +312,22 @@ describe("GET /auth/consume — lifecycle", () => {
 
   it("rejects unknown consume token", async () => {
     const route = findRoute(routes, "GET", "/auth/consume");
-    const req = makeReq({ method: "GET", url: "/auth/consume?token=deadbeef" });
+    // Valid-shaped hex token that was never minted → 404 from Map lookup.
+    const unknown = "a".repeat(64);
+    const req = makeReq({ method: "GET", url: `/auth/consume?token=${unknown}` });
     const res = makeRes();
     await route.handler(req, res);
     assert.equal(res.statusCode, 404);
+  });
+
+  it("rejects malformed consume token (non-hex)", async () => {
+    const route = findRoute(routes, "GET", "/auth/consume");
+    const req = makeReq({ method: "GET", url: "/auth/consume?token=deadbeef" });
+    const res = makeRes();
+    await route.handler(req, res);
+    assert.equal(res.statusCode, 400);
+    const body = JSON.parse(res._body);
+    assert.ok(/format/i.test(body.error), "error mentions format");
   });
 
   it("rejects when token param is missing", async () => {
