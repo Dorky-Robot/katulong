@@ -41,13 +41,6 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { sweepOrphanTmuxSockets } from "../../lib/tmux-socket-sweep.js";
 
-// Marks the process as a test run — production modules can gate
-// mutating test-only exports on this (see lib/routes/auth-routes.js
-// `_resetMintForTesting` / `_expireMintForTesting`).
-if (!process.env.NODE_ENV) {
-  process.env.NODE_ENV = "test";
-}
-
 if (!process.env.KATULONG_DATA_DIR) {
   const dir = mkdtempSync(join(tmpdir(), "katulong-test-"));
   process.env.KATULONG_DATA_DIR = dir;

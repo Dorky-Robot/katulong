@@ -128,24 +128,9 @@ katulong apikey create "monitoring" --json
 
 The key is shown **once** — save it immediately.
 
-Keys default to the `full` scope (same authority as a logged-in browser
-session). To mint a narrow-scope key that can only do one thing, pass
-`--scope`:
-
-```bash
-# Can only call /api/sessions/mint — used for fleet federation.
-katulong apikey create "fleet-hub" --scope mint-session --json
-```
-
-Known scopes: `full` (default), `mint-session`. Unknown scopes are
-rejected. Narrow-scope keys are default-denied on every route that
-doesn't explicitly opt in — adding a new scope can't accidentally grant
-access to an existing endpoint. See `docs/federation-setup.md` for the
-mint-session workflow.
-
 ### apikey list
 
-List all API keys. The `SCOPES` column shows what each key can do.
+List all API keys.
 
 ```bash
 katulong apikey list
@@ -159,28 +144,6 @@ Revoke an API key by ID.
 ```bash
 katulong apikey revoke abc123def456
 ```
-
-## Fleet Federation
-
-Helpers for operating katulong across multiple hosts. See
-`docs/federation-setup.md` for the end-to-end setup procedure.
-
-### fleet test-mint
-
-Verify a `mint-session` API key works against a remote instance by
-performing a mint + consume round-trip and reporting whether the
-instance returned a session cookie.
-
-```bash
-katulong fleet test-mint https://katulong.example.com --key <key>
-katulong fleet test-mint https://katulong.example.com --json
-
-# Or pass the key via env so it doesn't land in shell history.
-KATULONG_FLEET_KEY=<key> katulong fleet test-mint https://katulong.example.com
-```
-
-Exits 0 on success, 1 on failure. The `--json` output is structured for
-scripting (e.g. looping over a fleet and collecting results).
 
 ## Token Management
 

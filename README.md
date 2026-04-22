@@ -119,9 +119,7 @@ katulong notify <message>               # Send native notification
 # Auth
 katulong token create <name>            # Create setup token (shows QR code)
 katulong apikey create <name>           # Create API key for external access
-katulong apikey create <name> --scope mint-session  # Narrow-scope key for fleet federation
 katulong credential list                # List registered passkeys
-katulong fleet test-mint <url>          # Verify mint-session primitives against an instance
 
 # Other
 katulong info                           # System info
@@ -158,10 +156,6 @@ This application provides direct shell access to the host. Security isn't option
 - **No passwords** — Identity is proven by cryptographic key, not a shared secret.
 - **Localhost bypass** — Local connections auto-authenticate. Remote connections require a session cookie.
 - **30-day sessions** — Server-side tokens, pruned on expiry. No tokens in URLs or localStorage.
-
-Running katulong on multiple hosts? See [`docs/federation-setup.md`](docs/federation-setup.md)
-for how to issue narrow-scope `mint-session` keys so a hub can federate tiles across
-instances without forwarding passkeys.
 
 ## How it works
 
