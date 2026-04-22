@@ -8,6 +8,7 @@
 
 pub mod auth;
 pub mod csrf;
+pub mod devices;
 pub mod error;
 pub mod extract;
 pub mod tokens;

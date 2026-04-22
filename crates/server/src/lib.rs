@@ -12,6 +12,7 @@ pub mod cookie;
 pub mod state;
 
 use api::auth::auth_routes;
+use api::devices::device_routes;
 use api::tokens::token_routes;
 use auth_middleware::Authenticated;
 use axum::{extract::DefaultBodyLimit, routing::get, Json, Router};
@@ -63,6 +64,9 @@ pub fn app(state: AppState) -> Router {
         // Setup-token management (list/create/revoke). All protected;
         // state-changing ones additionally require CSRF.
         .merge(token_routes())
+        // Device (credential) management (list/revoke). Same
+        // auth/CSRF shape as tokens.
+        .merge(device_routes())
         .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT))
         .with_state(state)
 }

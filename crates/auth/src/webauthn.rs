@@ -237,7 +237,23 @@ impl WebAuthnService {
     ) -> Result<(ChallengeId, RequestChallengeResponse)> {
         let passkeys: Vec<Passkey> = credentials
             .iter()
-            .filter_map(|c| serde_json::from_slice(&c.public_key).ok())
+            .filter_map(|c| match serde_json::from_slice(&c.public_key) {
+                Ok(pk) => Some(pk),
+                Err(e) => {
+                    // A corrupt `public_key` blob would otherwise be
+                    // silently dropped from `allowCredentials`, which
+                    // makes storage corruption invisible to operators
+                    // until a user complains they can't log in. Warn
+                    // per-row without the blob bytes so the log stays
+                    // actionable but doesn't leak material.
+                    tracing::warn!(
+                        credential_id = %c.id,
+                        error = %e,
+                        "dropping credential from allowCredentials: Passkey blob failed to deserialize"
+                    );
+                    None
+                }
+            })
             .collect();
         if passkeys.is_empty() {
             return Err(AuthError::WebAuthn(
