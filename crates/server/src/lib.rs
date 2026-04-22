@@ -12,6 +12,7 @@ pub mod cookie;
 pub mod state;
 
 use api::auth::auth_routes;
+use api::tokens::token_routes;
 use auth_middleware::Authenticated;
 use axum::{extract::DefaultBodyLimit, routing::get, Json, Router};
 use katulong_shared::{ServerMessage, PROTOCOL_VERSION};
@@ -59,6 +60,9 @@ pub fn app(state: AppState) -> Router {
         // Auth ceremony routes. Each endpoint's public/protected
         // status is documented on the route line inside the module.
         .merge(auth_routes())
+        // Setup-token management (list/create/revoke). All protected;
+        // state-changing ones additionally require CSRF.
+        .merge(token_routes())
         .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT))
         .with_state(state)
 }

@@ -309,6 +309,27 @@ impl WebAuthnService {
         })
     }
 
+    /// Finish a pairing ceremony, returning a `Credential` already
+    /// stamped with the setup token that authorised it. The
+    /// bidirectional `setup_token_id` link (Node scar `7742ac3`) is a
+    /// domain invariant of the auth crate — a future caller
+    /// constructing a paired credential without it would break the
+    /// cascade on setup-token revoke. Owning the stamp here means
+    /// HTTP handlers can't forget the link.
+    pub fn finish_paired_registration(
+        &self,
+        challenge_id: &str,
+        response: &RegisterPublicKeyCredential,
+        setup_token_id: String,
+        now: SystemTime,
+    ) -> Result<Credential> {
+        let cred = self.finish_registration(challenge_id, response, now)?;
+        Ok(Credential {
+            setup_token_id: Some(setup_token_id),
+            ..cred
+        })
+    }
+
     /// Drop challenges whose TTL has elapsed. Cheap to call periodically.
     /// The HTTP / server layer is expected to schedule this (e.g. every
     /// minute via `tokio::time::interval`); `start_*` also runs an

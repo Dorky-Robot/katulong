@@ -1041,6 +1041,7 @@ dependencies = [
  "katulong-shared",
  "serde",
  "serde_json",
+ "subtle",
  "tempfile",
  "tokio",
  "tower 0.4.13",
