@@ -6,8 +6,10 @@
 //! mutex, `WebAuthnService` holds its in-memory challenge maps behind
 //! their own mutexes. `AppState` itself is just a bundle of references.
 
+use crate::revocation::RevocationPublisher;
 use katulong_auth::{AuthStore, WebAuthnService};
 use std::sync::Arc;
+use tokio::sync::broadcast::Receiver;
 
 /// Operator-supplied configuration captured at startup.
 #[derive(Debug, Clone)]
@@ -35,6 +37,12 @@ pub struct AppState {
     pub auth_store: Arc<AuthStore>,
     pub webauthn: Arc<WebAuthnService>,
     pub config: Arc<ServerConfig>,
+    /// Publishes credential-revocation events to every long-lived
+    /// transport (WS, future WebRTC peer-links). Handlers call
+    /// `state.revocations.emit(...)` after a successful revoke;
+    /// subscribers call `state.subscribe_revocations()` at the
+    /// start of their connection loop.
+    pub revocations: RevocationPublisher,
 }
 
 impl AppState {
@@ -43,6 +51,16 @@ impl AppState {
             auth_store: Arc::new(auth_store),
             webauthn: Arc::new(webauthn),
             config: Arc::new(config),
+            revocations: RevocationPublisher::new(),
         }
+    }
+
+    /// Subscribe to credential-revocation events. Transport-agnostic
+    /// — the returned receiver delivers the same events to a WS
+    /// handler or a future WebRTC peer connection. Subscribers
+    /// compare each event's `credential_id` to the credential their
+    /// connection is bound to and tear down on match.
+    pub fn subscribe_revocations(&self) -> Receiver<crate::revocation::RevocationEvent> {
+        self.revocations.subscribe()
     }
 }
