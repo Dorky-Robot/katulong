@@ -25,7 +25,7 @@ const { AuthState } = await import("../lib/auth-state.js");
 const { SCOPE_MINT_SESSION, SCOPE_FULL } = await import("../lib/api-key-scopes.js");
 const { authenticateBearerKey } = await import("../lib/api-key-auth.js");
 const authRepo = await import("../lib/auth-repository.js");
-const { createAuthRoutes, _resetMintStateForTesting, _expireMintForTesting } = await import("../lib/routes/auth-routes.js");
+const { createAuthRoutes, _resetMintForTesting, _expireMintForTesting } = await import("../lib/routes/auth-routes.js");
 const { createMiddleware } = await import("../lib/routes/middleware.js");
 
 const ORIGIN = "https://example.com";
@@ -106,11 +106,12 @@ function json(res, status, data) {
 }
 
 // isAuthenticated for tests — reuses the same Bearer resolver as server.js
-// so the test path cannot drift from production.
+// so the test path cannot drift from production. Tests exercise Bearer-only
+// routes, so both "no header" and "bogus header" are treated as unauthorized;
+// only `matched: true` is a success.
 function isAuthenticatedForTests(req) {
   const result = authenticateBearerKey(req, authRepo.loadState());
-  if (result === null) return null; // Bearer header present but invalid
-  if (!result.matched) return null; // No Bearer header at all
+  if (!result.matched) return null;
   return {
     authenticated: true,
     sessionToken: null,
@@ -171,7 +172,7 @@ before(async () => {
 });
 
 beforeEach(() => {
-  _resetMintStateForTesting();
+  _resetMintForTesting();
 });
 
 after(() => {

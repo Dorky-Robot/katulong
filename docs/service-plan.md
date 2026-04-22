@@ -18,16 +18,19 @@ locked-away features.
 
 ## The ladder
 
-Three tiers, each a superset of the previous in convenience, not
-capability:
+Three tiers are anticipated, each a superset of the previous in
+convenience, not capability. Only the protocol primitives ship in
+this branch; the hub implementations described here are planned but
+not yet present in the repo. The only fleet CLI surface shipping
+today is `katulong fleet test-mint` for operator verification.
 
-1. **Laptop-local.** `katulong fleet open` spins up an ephemeral
-   hub on localhost that iframes your registered instances. Zero
-   ops. CLI-only. Every katulong install has it.
+1. **Laptop-local (planned).** `katulong fleet open` would spin up
+   an ephemeral hub on localhost that iframes your registered
+   instances. Zero ops, CLI-only.
 
-2. **Self-hosted hub.** `katulong hub start` runs the same hub as
-   a long-lived process on any box you own. Same protocol as the
-   managed tier — you run the infra.
+2. **Self-hosted hub (planned).** `katulong hub start` would run
+   the same hub as a long-lived process on any box you own. Same
+   protocol as a managed tier — you run the infra.
 
 3. **Managed hub (hypothetical).** One-passkey sign-in, unified
    carousel across your instances, auto-enrolled via the tunnel

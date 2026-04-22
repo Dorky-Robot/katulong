@@ -134,8 +134,19 @@ function isTrustedProxy(req) {
  * Check if a request is authenticated.
  * @returns {{ authenticated: boolean, sessionToken: string|null, credentialId: string|null } | null}
  *   Rich result object when authenticated, null when not.
+ *
+ * Result is cached on `req._authResult` for the remainder of the request —
+ * `handleRequest` calls isAuthenticated both as a gate (public-path check)
+ * and implicitly inside `auth()` middleware, and without caching the state
+ * lookup + Bearer activity-update would fire twice per request.
  */
 function isAuthenticated(req) {
+  if (req._authResult !== undefined) return req._authResult;
+  req._authResult = computeAuth(req);
+  return req._authResult;
+}
+
+function computeAuth(req) {
   if (isTrustedProxy(req)) {
     log.debug("Auth bypassed: trusted proxy", { ip: req.socket.remoteAddress });
     return { authenticated: true, sessionToken: null, credentialId: null };
@@ -146,7 +157,7 @@ function isAuthenticated(req) {
   }
   // API key auth via Bearer token
   const bearerResult = authenticateBearerKey(req, loadState());
-  if (bearerResult === null) {
+  if (bearerResult.invalid) {
     return null; // Bearer header present but invalid — don't fall through to cookie
   }
   if (bearerResult.matched) {
