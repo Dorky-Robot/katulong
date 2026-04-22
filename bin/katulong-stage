@@ -58,8 +58,42 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 STAGE_BASE="/tmp/katulong-stage"
+
+# Resolve REPO_ROOT: explicit env var wins. Otherwise, if the caller's cwd is
+# inside a git worktree that shares the same .git common dir as the main
+# checkout (the script's own parent dir), use that worktree's root. This lets
+# `katulong-stage start` work zero-argument from any worktree — the name
+# defaults from the worktree's branch, server.js and node_modules resolve to
+# the worktree's copies, and staging serves whatever version is checked out
+# there. Falls back to the main checkout when run from outside any worktree.
+resolve_repo_root() {
+  if [[ -n "${REPO_ROOT:-}" ]]; then
+    echo "$REPO_ROOT"
+    return 0
+  fi
+  local main_root main_common cwd_top cwd_common
+  main_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+  # Anchor every git call to an explicit -C <dir> so relative paths emitted
+  # by --git-common-dir (".git" in a main checkout, "../.git" from a subdir,
+  # absolute paths in linked worktrees) all resolve against the same base
+  # the subsequent `cd` normalization uses. Without anchoring, running from
+  # a main-checkout subdir emits "../.git" relative to the original cwd, but
+  # the normalization `cd "$cwd_top" && cd <path>` resolves it against the
+  # worktree toplevel — the two don't align and the cd lands nowhere,
+  # silently disabling worktree detection.
+  main_common="$(git -C "$main_root" rev-parse --git-common-dir 2>/dev/null)" || { echo "$main_root"; return 0; }
+  main_common="$(cd "$main_root" && cd "$main_common" && pwd 2>/dev/null)" || { echo "$main_root"; return 0; }
+  cwd_top="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "$main_root"; return 0; }
+  cwd_common="$(git -C "$cwd_top" rev-parse --git-common-dir 2>/dev/null)" || { echo "$main_root"; return 0; }
+  cwd_common="$(cd "$cwd_top" && cd "$cwd_common" && pwd 2>/dev/null)" || { echo "$main_root"; return 0; }
+  if [[ "$main_common" == "$cwd_common" ]]; then
+    echo "$cwd_top"
+  else
+    echo "$main_root"
+  fi
+}
+REPO_ROOT="$(resolve_repo_root)"
 
 # User-level config lives in the prod katulong's data dir, NOT in the per-staging
 # dir we're about to create. Honor KATULONG_DATA_DIR if the user has overridden
