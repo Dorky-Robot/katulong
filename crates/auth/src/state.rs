@@ -1,6 +1,17 @@
 use crate::{Credential, Session, SetupToken};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
+use subtle::ConstantTimeEq;
+
+/// Constant-time string equality. Used for session-token lookups so that
+/// byte-wise comparison timing cannot leak which prefix of a submitted
+/// token matched a stored one. Session tokens are 32-byte CSPRNG output,
+/// which makes timing attacks impractical at internet latencies, but
+/// mirroring the setup-token discipline keeps the invariant consistent
+/// crate-wide.
+fn ct_eq_str(a: &str, b: &str) -> bool {
+    a.as_bytes().ct_eq(b.as_bytes()).into()
+}
 
 /// Immutable auth state. Every transition takes `&self` and returns owned
 /// `Self` — there is no in-place mutation.
@@ -49,7 +60,7 @@ impl AuthState {
     }
 
     pub fn find_session(&self, token: &str) -> Option<&Session> {
-        self.sessions.iter().find(|s| s.token == token)
+        self.sessions.iter().find(|s| ct_eq_str(&s.token, token))
     }
 
     /// `find_session` plus an expiry check. Returns `None` if the session is
@@ -79,9 +90,16 @@ impl AuthState {
         plaintext: &str,
         now: SystemTime,
     ) -> Option<&SetupToken> {
+        // Intentionally written as two separate statements per iteration so
+        // the "verify runs for every token" property is unambiguous at the
+        // source level. Do NOT collapse into `Iterator::find(|t|
+        // t.verify(...))`, which would short-circuit the scrypt KDF and
+        // leak "a matching record existed earlier in the list" as a timing
+        // signal.
         let mut found: Option<&SetupToken> = None;
         for t in &self.setup_tokens {
-            if t.verify(plaintext) && found.is_none() {
+            let matches = t.verify(plaintext);
+            if matches && found.is_none() {
                 found = Some(t);
             }
         }
@@ -126,7 +144,8 @@ impl AuthState {
         }
     }
 
-    pub fn add_session(&self, session: Session) -> Self {
+    /// Add or replace a session by token (upsert — mirrors `upsert_credential`).
+    pub fn upsert_session(&self, session: Session) -> Self {
         let mut sessions = self.sessions.clone();
         sessions.retain(|s| s.token != session.token);
         sessions.push(session);
@@ -299,16 +318,25 @@ impl AuthState {
 /// integers cleanly. We deliberately don't use RFC 3339 strings: they're
 /// bigger on disk, slower to parse, and invite timezone confusion where
 /// none exists.
+///
+/// Overflow beyond `u64::MAX` milliseconds surfaces as a serde error
+/// rather than a silent `as u64` truncation — guards against a bogus or
+/// adversarial `SystemTime` feeding a wrapped value into the on-disk
+/// format.
 pub(crate) mod systime {
     use serde::{Deserialize, Deserializer, Serializer};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    pub fn serialize<S: Serializer>(t: &SystemTime, s: S) -> Result<S::Ok, S::Error> {
-        let millis = t
+    pub(super) fn to_millis<E: serde::ser::Error>(t: &SystemTime) -> Result<u64, E> {
+        let since = t
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| serde::ser::Error::custom(format!("timestamp before UNIX_EPOCH: {e}")))?
-            .as_millis() as u64;
-        s.serialize_u64(millis)
+            .map_err(|e| E::custom(format!("timestamp before UNIX_EPOCH: {e}")))?
+            .as_millis();
+        u64::try_from(since).map_err(|_| E::custom("timestamp exceeds u64 milliseconds"))
+    }
+
+    pub fn serialize<S: Serializer>(t: &SystemTime, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u64(to_millis::<S::Error>(t)?)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<SystemTime, D::Error> {
@@ -317,23 +345,18 @@ pub(crate) mod systime {
     }
 }
 
-/// `Option<SystemTime>` variant — `None` serializes as `null`.
+/// `Option<SystemTime>` variant — `None` serializes as `null`. Delegates
+/// the per-timestamp encoding to `systime` so both helpers share the same
+/// overflow and epoch checks.
 pub(crate) mod systime_opt {
+    use super::systime;
     use serde::{Deserialize, Deserializer, Serializer};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     pub fn serialize<S: Serializer>(t: &Option<SystemTime>, s: S) -> Result<S::Ok, S::Error> {
         match t {
             None => s.serialize_none(),
-            Some(t) => {
-                let millis = t
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|e| {
-                        serde::ser::Error::custom(format!("timestamp before UNIX_EPOCH: {e}"))
-                    })?
-                    .as_millis() as u64;
-                s.serialize_some(&millis)
-            }
+            Some(t) => s.serialize_some(&systime::to_millis::<S::Error>(t)?),
         }
     }
 
@@ -398,8 +421,8 @@ mod tests {
         let s = AuthState::new()
             .upsert_credential(cred("a"))
             .upsert_credential(cred("b"))
-            .add_session(sess("t1", "a", 1000))
-            .add_session(sess("t2", "b", 1000))
+            .upsert_session(sess("t1", "a", 1000))
+            .upsert_session(sess("t2", "b", 1000))
             .remove_credential("a");
         assert!(s.find_credential("a").is_none());
         assert!(s.find_credential("b").is_some());
@@ -417,7 +440,7 @@ mod tests {
 
     #[test]
     fn valid_session_rejects_expired() {
-        let s = AuthState::new().add_session(sess("t", "a", 500));
+        let s = AuthState::new().upsert_session(sess("t", "a", 500));
         assert!(s.valid_session("t", epoch_plus(499)).is_some());
         assert!(s.valid_session("t", epoch_plus(500)).is_none());
         assert!(s.valid_session("t", epoch_plus(501)).is_none());
@@ -426,8 +449,8 @@ mod tests {
     #[test]
     fn prune_expired_drops_only_expired() {
         let s = AuthState::new()
-            .add_session(sess("live", "a", 1000))
-            .add_session(sess("dead", "a", 500))
+            .upsert_session(sess("live", "a", 1000))
+            .upsert_session(sess("dead", "a", 500))
             .prune_expired(epoch_plus(700));
         assert!(s.find_session("live").is_some());
         assert!(s.find_session("dead").is_none());
@@ -436,8 +459,8 @@ mod tests {
     #[test]
     fn touch_session_updates_only_target() {
         let s = AuthState::new()
-            .add_session(sess("target", "a", 1000))
-            .add_session(sess("other", "a", 1000))
+            .upsert_session(sess("target", "a", 1000))
+            .upsert_session(sess("other", "a", 1000))
             .touch_session("target", epoch_plus(500));
         assert_eq!(
             s.find_session("target").unwrap().last_activity_at,
@@ -452,16 +475,16 @@ mod tests {
     #[test]
     fn renew_session_extends_expiry() {
         let s = AuthState::new()
-            .add_session(sess("t", "a", 500))
+            .upsert_session(sess("t", "a", 500))
             .renew_session("t", epoch_plus(2000));
         assert_eq!(s.find_session("t").unwrap().expires_at, epoch_plus(2000));
     }
 
     #[test]
-    fn add_session_replaces_same_token() {
+    fn upsert_session_replaces_same_token() {
         let s = AuthState::new()
-            .add_session(sess("t", "a", 500))
-            .add_session(sess("t", "a", 1500));
+            .upsert_session(sess("t", "a", 500))
+            .upsert_session(sess("t", "a", 1500));
         assert_eq!(s.sessions.len(), 1);
         assert_eq!(s.find_session("t").unwrap().expires_at, epoch_plus(1500));
     }
@@ -470,7 +493,7 @@ mod tests {
     fn serde_round_trip() {
         let s = AuthState::new()
             .upsert_credential(cred("a"))
-            .add_session(sess("t", "a", 1000));
+            .upsert_session(sess("t", "a", 1000));
         let json = serde_json::to_string(&s).unwrap();
         let back: AuthState = serde_json::from_str(&json).unwrap();
         assert_eq!(s, back);
@@ -548,8 +571,8 @@ mod tests {
         let s = AuthState::new()
             .upsert_credential(cred("c1"))
             .upsert_credential(cred("c2"))
-            .add_session(sess("t1", "c1", 1000))
-            .add_session(sess("t2", "c2", 1000))
+            .upsert_session(sess("t1", "c1", 1000))
+            .upsert_session(sess("t2", "c2", 1000))
             .add_setup_token(t)
             .consume_setup_token(&id, "c1", epoch_plus(10))
             .remove_setup_token(&id);

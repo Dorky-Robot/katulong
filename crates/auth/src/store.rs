@@ -30,7 +30,12 @@ impl AuthStore {
         let state = match tokio::fs::read(&path).await {
             Ok(bytes) => {
                 let parsed: AuthState = serde_json::from_slice(&bytes)?;
-                if parsed.schema_version > SCHEMA_VERSION {
+                // Reject both forward- and backward-incompatible versions.
+                // A non-matching version means this binary doesn't know the
+                // on-disk layout; silent acceptance would either clobber a
+                // newer file or misinterpret an older one. Real upgrades
+                // must land as an explicit migration path.
+                if parsed.schema_version != SCHEMA_VERSION {
                     return Err(AuthError::UnsupportedVersion(parsed.schema_version));
                 }
                 parsed
@@ -81,38 +86,51 @@ impl AuthStore {
 /// `rename(2)` to be atomic; a temp in `/tmp` would cross filesystems on
 /// most Linux boxes and fall back to copy+unlink, which is NOT atomic.
 ///
-/// Permissions are locked to `0600` on Unix before the rename — the rename
-/// preserves the mode, so the final file is owner-only from the moment it
-/// appears. We do this on the temp file rather than post-rename because
-/// there's otherwise a window where a world-readable file exists at the
-/// final path.
+/// Permissions are locked to `0600` on Unix by the `Builder` at creation
+/// time — the temp file is never observable with default-umask permissions,
+/// and `rename(2)` preserves the mode, so the final file is owner-only from
+/// the moment it appears. Setting permissions *after* creation would leave
+/// a window during which another local user on a permissive umask could
+/// open the temp file and read hashes + session tokens out of it.
 async fn persist_atomic(path: &Path, state: &AuthState) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(state)?;
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let path_owned = path.to_path_buf();
+    let path_for_err = path_owned.clone();
+    let join = tokio::task::spawn_blocking(move || -> Result<()> {
+        let dir = path_owned.parent().unwrap_or_else(|| Path::new("."));
         if !dir.as_os_str().is_empty() {
-            std::fs::create_dir_all(dir).map_err(|e| AuthError::io(&path, e))?;
+            std::fs::create_dir_all(dir).map_err(|e| AuthError::io(&path_owned, e))?;
         }
-        let mut tmp = tempfile::NamedTempFile::new_in(dir).map_err(|e| AuthError::io(&path, e))?;
-        tmp.write_all(&bytes).map_err(|e| AuthError::io(&path, e))?;
-        tmp.as_file_mut()
-            .sync_all()
-            .map_err(|e| AuthError::io(&path, e))?;
 
+        let mut builder = tempfile::Builder::new();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o600))
-                .map_err(|e| AuthError::io(&path, e))?;
+            builder.permissions(std::fs::Permissions::from_mode(0o600));
         }
+        let mut tmp = builder
+            .tempfile_in(dir)
+            .map_err(|e| AuthError::io(&path_owned, e))?;
 
-        tmp.persist(&path)
-            .map_err(|e| AuthError::io(&path, e.error))?;
+        tmp.write_all(&bytes)
+            .map_err(|e| AuthError::io(&path_owned, e))?;
+        tmp.as_file_mut()
+            .sync_all()
+            .map_err(|e| AuthError::io(&path_owned, e))?;
+
+        tmp.persist(&path_owned)
+            .map_err(|e| AuthError::io(&path_owned, e.error))?;
         Ok(())
     })
-    .await
-    .expect("persist task panicked")
+    .await;
+
+    match join {
+        Ok(inner) => inner,
+        Err(join_err) => Err(AuthError::io(
+            path_for_err,
+            std::io::Error::other(format!("persist task panicked: {join_err}")),
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -174,7 +192,7 @@ mod tests {
         let store = AuthStore::open(dir.path().join("auth.json")).await.unwrap();
         let token = store
             .transact(|s| {
-                let next = s.add_session(sess("t", "a"));
+                let next = s.upsert_session(sess("t", "a"));
                 Ok((next, "t".to_string()))
             })
             .await
@@ -226,6 +244,31 @@ mod tests {
         let bytes = tokio::fs::read(&path).await.unwrap();
         let parsed: AuthState = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(parsed.credentials.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn concurrent_transacts_all_commit() {
+        // Exercises the mutex: fire N tasks that each upsert a different
+        // credential concurrently. Every commit must survive — a stale
+        // read-modify-write would drop commits.
+        let dir = TempDir::new().unwrap();
+        let store =
+            std::sync::Arc::new(AuthStore::open(dir.path().join("auth.json")).await.unwrap());
+        let mut handles = Vec::new();
+        for i in 0..20 {
+            let store = store.clone();
+            handles.push(tokio::spawn(async move {
+                let id = format!("c{i}");
+                store
+                    .transact(move |s| Ok((s.upsert_credential(cred(&id)), ())))
+                    .await
+                    .unwrap();
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+        assert_eq!(store.snapshot().await.credentials.len(), 20);
     }
 
     #[cfg(unix)]
