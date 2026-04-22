@@ -41,6 +41,17 @@ pub enum ApiError {
     /// this action yet (e.g., login against a fresh install with no
     /// credentials).
     Conflict(&'static str),
+    /// State-changing request reached us without an `X-Csrf-Token`
+    /// header. Maps to 403 with code `csrf_missing`. Distinct from
+    /// `CsrfMismatch` so a client can distinguish "never sent" from
+    /// "sent but wrong" — the first is a client-code bug, the second
+    /// is an expired session.
+    CsrfMissing,
+    /// State-changing request reached us with an `X-Csrf-Token` that
+    /// didn't match the session's paired value. Usually indicates a
+    /// stale session (the client has a cookie + csrf from a previous
+    /// login that's been superseded).
+    CsrfMismatch,
     /// Anything else — mapped to 500. Internal detail is logged at the
     /// `From<AuthError>` conversion site, NOT stored on the variant, so
     /// no caller can pattern-match this variant and re-render the
@@ -66,6 +77,16 @@ impl ApiError {
                 "server busy; retry shortly".into(),
             ),
             Self::Conflict(why) => (StatusCode::CONFLICT, "conflict", (*why).into()),
+            Self::CsrfMissing => (
+                StatusCode::FORBIDDEN,
+                "csrf_missing",
+                "missing X-Csrf-Token header".into(),
+            ),
+            Self::CsrfMismatch => (
+                StatusCode::FORBIDDEN,
+                "csrf_mismatch",
+                "X-Csrf-Token does not match session".into(),
+            ),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",

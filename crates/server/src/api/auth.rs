@@ -19,10 +19,11 @@
 //! as a fast-fail for the common non-racing case.
 
 use crate::access::AccessMethod;
+use crate::api::csrf::CsrfProtected;
 use crate::api::error::ApiError;
 use crate::api::extract::JsonBody;
-use crate::auth_middleware::Authenticated;
-use crate::cookie::build_set_cookie;
+use crate::auth_middleware::{AuthContext, Authenticated};
+use crate::cookie::{build_clear_cookie, build_set_cookie, extract_session_token};
 use crate::state::AppState;
 use axum::{
     extract::{ConnectInfo, State},
@@ -35,7 +36,7 @@ use katulong_auth::webauthn_wire::{
     CreationChallengeResponse, PublicKeyCredential, RegisterPublicKeyCredential,
     RequestChallengeResponse,
 };
-use katulong_auth::{AuthError, ChallengeId, Session, SESSION_TTL};
+use katulong_auth::{AuthError, ChallengeId, Credential, Session, SESSION_TTL};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::time::SystemTime;
@@ -48,14 +49,24 @@ pub fn auth_routes() -> Router<AppState> {
         .route("/api/auth/status", get(status))
         // PUBLIC (but state-gated): first-device registration. Only
         // works from localhost AND only when no credentials exist.
-        // Additional-device registration uses the setup-token flow in
-        // slice 6, not this route.
+        // Additional-device registration uses the pair flow below.
         .route("/api/auth/register/start", post(register_start))
         .route("/api/auth/register/finish", post(register_finish))
         // PUBLIC: anyone can try to log in. The ceremony itself gates
         // who actually succeeds.
         .route("/api/auth/login/start", post(login_start))
         .route("/api/auth/login/finish", post(login_finish))
+        // PUBLIC: pair a new device using a setup token issued by an
+        // authenticated admin. The token value IS the gate — anyone
+        // with a valid plaintext token can pair. Token validity and
+        // single-use semantics are enforced inside `transact`.
+        .route("/api/auth/pair/start", post(pair_start))
+        .route("/api/auth/pair/finish", post(pair_finish))
+        // PROTECTED + CSRF: end the caller's session. Localhost
+        // callers get a 409 — there's no session to end, and the
+        // UI shouldn't offer logout for physical-access peers (Node
+        // scar `23981ca`).
+        .route("/api/auth/logout", post(logout))
 }
 
 /// JSON wire format for the status endpoint.
@@ -384,4 +395,212 @@ where
 {
     let cookie = build_set_cookie(token, SESSION_TTL.as_secs(), secure);
     (status, [(header::SET_COOKIE, cookie)], body)
+}
+
+// ============== pair flow (setup-token-gated registration) ==============
+
+#[derive(Debug, Deserialize)]
+struct PairStartRequest {
+    /// Plaintext setup token value as given to the new device's
+    /// operator. The server hashes and looks it up.
+    setup_token: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PairStartResponse {
+    challenge_id: ChallengeId,
+    /// The setup-token id — opaque to the client, returned so the
+    /// finish call can reference it without re-submitting the
+    /// plaintext value. Defence in depth: keeps the plaintext
+    /// transiting the network once, not twice.
+    setup_token_id: String,
+    options: CreationChallengeResponse,
+}
+
+#[derive(Debug, Deserialize)]
+struct PairFinishRequest {
+    challenge_id: ChallengeId,
+    setup_token_id: String,
+    response: RegisterPublicKeyCredential,
+}
+
+#[derive(Debug, Serialize)]
+struct PairFinishResponse {
+    credential_id: String,
+    csrf_token: String,
+}
+
+/// Validate the plaintext token, start a WebAuthn registration
+/// ceremony, and return the challenge. Public — anyone with a valid
+/// token can pair.
+///
+/// Token validation uses `find_redeemable_setup_token` which walks
+/// every token and runs scrypt verify (no short-circuit — the slice-2
+/// comment calls out the timing-channel concern). Only live,
+/// non-consumed tokens pass.
+async fn pair_start(
+    State(state): State<AppState>,
+    JsonBody(body): JsonBody<PairStartRequest>,
+) -> Result<Json<PairStartResponse>, ApiError> {
+    let now = SystemTime::now();
+    // Take the snapshot once: we need user_handle + existing
+    // credentials + the matching setup token. All three come from
+    // the same point-in-time view. A concurrent mutation between
+    // here and pair_finish's transact is handled by re-validating
+    // the token inside that closure (below).
+    let snap = state.auth_store.snapshot().await;
+    let token = snap
+        .find_redeemable_setup_token(&body.setup_token, now)
+        .ok_or_else(|| {
+            tracing::warn!("pair_start: setup token not redeemable");
+            ApiError::Unauthorized
+        })?;
+    let setup_token_id = token.id.clone();
+
+    // Pairing requires an already-initialised instance — otherwise
+    // the first-device path is the right answer. This is mostly a
+    // guard against a pathological deployment that has tokens without
+    // credentials (shouldn't happen but fail-closed anyway).
+    let (user_handle, _) = snap.user_handle_or_init();
+
+    let (challenge_id, ccr) = state
+        .webauthn
+        .start_registration(
+            user_handle,
+            "katulong",
+            "Katulong",
+            &snap.credentials,
+            now,
+        )
+        .map_err(ApiError::from)?;
+
+    Ok(Json(PairStartResponse {
+        challenge_id,
+        setup_token_id,
+        options: ccr,
+    }))
+}
+
+/// Complete the pair ceremony. Verifies the challenge, verifies the
+/// setup token is STILL redeemable under the mutex (TOCTOU-safe vs a
+/// concurrent revoke between start and finish), consumes the token,
+/// persists the new credential with a bidirectional link to the
+/// token, and mints a session cookie.
+///
+/// The bidirectional link (token ↔ credential, Node scar `7742ac3`)
+/// means that revoking the setup token later also cascades to
+/// removing this device. We set it here so future
+/// `remove_setup_token(id)` calls can follow the link.
+async fn pair_finish(
+    State(state): State<AppState>,
+    JsonBody(body): JsonBody<PairFinishRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let now = SystemTime::now();
+    let credential = state
+        .webauthn
+        .finish_registration(&body.challenge_id, &body.response, now)
+        .inspect_err(|e| {
+            tracing::warn!(
+                challenge_id = %body.challenge_id,
+                error = %e,
+                "pair ceremony failed"
+            );
+        })
+        .map_err(ApiError::from)?;
+
+    // Stamp the bidirectional link before persisting.
+    let linked_credential = Credential {
+        setup_token_id: Some(body.setup_token_id.clone()),
+        ..credential
+    };
+
+    let cred_clone = linked_credential.clone();
+    let setup_token_id = body.setup_token_id.clone();
+    let (plaintext_token, minted_session) = state
+        .auth_store
+        .transact(move |s| {
+            // Re-validate the token under the mutex: a concurrent
+            // revoke between pair_start and pair_finish must NOT
+            // succeed in pairing. `find_setup_token` by id because at
+            // this point we're committing against the specific token
+            // the client referenced; we also require it to still be
+            // redeemable.
+            let Some(token) = s.find_setup_token(&setup_token_id) else {
+                return Err(AuthError::StateConflict(
+                    "setup token revoked during pair ceremony",
+                ));
+            };
+            if !token.is_redeemable(now) {
+                return Err(AuthError::StateConflict(
+                    "setup token no longer redeemable (consumed or expired)",
+                ));
+            }
+
+            let (plaintext, session) = Session::mint(cred_clone.id.clone(), now, SESSION_TTL);
+            let next = s
+                .upsert_credential(cred_clone.clone())
+                .consume_setup_token(&setup_token_id, &cred_clone.id, now)
+                .upsert_session(session.clone());
+            Ok((next, (plaintext, session)))
+        })
+        .await
+        .map_err(ApiError::from)?;
+
+    tracing::info!(
+        credential_id = %linked_credential.id,
+        setup_token_id = %body.setup_token_id,
+        "paired new device; session minted"
+    );
+
+    Ok(session_cookie_response(
+        StatusCode::CREATED,
+        &plaintext_token,
+        state.config.cookie_secure,
+        Json(PairFinishResponse {
+            credential_id: linked_credential.id,
+            csrf_token: minted_session.csrf_token,
+        }),
+    ))
+}
+
+// ============== logout ==============
+
+async fn logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    CsrfProtected(ctx): CsrfProtected,
+) -> Result<impl IntoResponse, ApiError> {
+    // Localhost has no session — nothing to end. Return 409 rather
+    // than silently succeeding so the UI can surface "you're
+    // physically present; logout doesn't apply." Node reached the
+    // same conclusion (`23981ca`): the logout button is hidden for
+    // localhost callers; a request arriving here from localhost is
+    // therefore either a buggy client or a probe. Treating it as a
+    // conflict keeps the behaviour observable.
+    if matches!(ctx, AuthContext::Localhost) {
+        return Err(ApiError::Conflict("localhost peer has no session to end"));
+    }
+
+    // Pull the cookie's plaintext so we can remove the matching
+    // session from the store. The `Authenticated` extractor already
+    // validated it; we re-read here because the session lookup keys
+    // off the plaintext, not off the already-resolved Session.
+    let cookie_value = headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(extract_session_token)
+        .ok_or(ApiError::Unauthorized)?;
+
+    state
+        .auth_store
+        .transact(move |s| Ok((s.remove_session(&cookie_value), ())))
+        .await
+        .map_err(ApiError::from)?;
+
+    let clear = build_clear_cookie(state.config.cookie_secure);
+    tracing::info!("logout succeeded; session removed");
+    Ok((
+        StatusCode::NO_CONTENT,
+        [(header::SET_COOKIE, clear)],
+    ))
 }
