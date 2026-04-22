@@ -82,6 +82,12 @@ pub type ChallengeId = String;
 /// rewritten (e.g., counterless synced passkeys with identical backup
 /// state) — this is the `Passkey::update_credential` returning
 /// `Some(false)` case, not an error.
+///
+/// `#[must_use]` applies to the whole struct: forgetting to inspect
+/// `updated_credential` silently reopens the clone-detection gap this
+/// slice was built to close, so the compiler should warn if the whole
+/// value is dropped without a match.
+#[must_use = "updated_credential must be persisted via AuthStore or webauthn-rs clone-detection is inert"]
 #[derive(Debug, Clone)]
 pub struct VerifiedAuthentication {
     pub credential_id: String,
@@ -201,7 +207,7 @@ impl WebAuthnService {
         // monotonicity there (clone-detection happens inside the library,
         // not against our field). Our `Credential.counter` is a display/audit
         // echo: start at 0 and keep it in sync via
-        // `AuthenticationOutcome.new_counter` on each subsequent login.
+        // `VerifiedAuthentication.new_counter` on each subsequent login.
         //
         // Reaching into `Passkey` via the `danger-credential-internals`
         // feature was considered and rejected — the feature name is a flag,
@@ -296,17 +302,22 @@ impl WebAuthnService {
         let new_counter = result.counter();
         let user_verified = result.user_verified();
 
-        // Find the matching stored credential so we can advance its
-        // Passkey blob's internal counter. Not finding it would be surprising
-        // — `finish_passkey_authentication` only succeeds against a cred_id
-        // we included in the `auth_state` at start — but we handle it
-        // defensively rather than panicking, since a concurrent delete
-        // between start and finish is theoretically possible.
-        let updated_credential = credentials
+        // The stored credential must still exist for the assertion to be
+        // meaningful: `start_authentication` captured it in `auth_state`, and
+        // an admin revocation during the 5-minute challenge window (or any
+        // other deletion) means the passkey has been explicitly disallowed.
+        // Letting the ceremony succeed anyway would defeat revocation — the
+        // caller would mint a session against a credential the admin
+        // already pulled. Fail closed.
+        let cred = credentials
             .iter()
             .find(|c| c.id == credential_id)
-            .and_then(|cred| apply_auth_result(cred, &result).transpose())
-            .transpose()?;
+            .ok_or_else(|| {
+                AuthError::WebAuthn(
+                    "credential revoked or missing after successful ceremony".into(),
+                )
+            })?;
+        let updated_credential = apply_auth_result(cred, &result)?;
 
         Ok(VerifiedAuthentication {
             credential_id,
@@ -341,7 +352,10 @@ impl WebAuthnService {
 /// skip the write. `Some(updated)` means the `Passkey` advanced and the
 /// caller must upsert — failing to persist leaves clone-detection stuck
 /// at the previous baseline.
-fn apply_auth_result(cred: &Credential, result: &AuthenticationResult) -> Result<Option<Credential>> {
+fn apply_auth_result(
+    cred: &Credential,
+    result: &AuthenticationResult,
+) -> Result<Option<Credential>> {
     let mut passkey = cred.to_passkey()?;
     match passkey.update_credential(result) {
         Some(true) => {
@@ -353,12 +367,19 @@ fn apply_auth_result(cred: &Credential, result: &AuthenticationResult) -> Result
                 ..cred.clone()
             }))
         }
-        // `Some(false)` — cred id matched but nothing to update.
-        // `None` — cred id didn't match, which would mean webauthn-rs
-        // verified against one passkey but we're looking up a different
-        // credential; treat as "nothing to persist on THIS record" so we
-        // don't write a same-bytes blob on an unrelated credential.
-        Some(false) | None => Ok(None),
+        // Cred id matched, nothing to update — counterless synced passkey
+        // with identical backup state. Safe no-op.
+        Some(false) => Ok(None),
+        // Cred id inside the blob doesn't match the result's cred id.
+        // The caller already looked up `cred` by the result's encoded
+        // cred id, so this means the stored blob disagrees with its
+        // own row — a data-integrity corruption. Fail loudly rather
+        // than silently skipping the counter update, because collapsing
+        // this into `Ok(None)` would leave clone-detection permanently
+        // inert for that credential with no operator-visible signal.
+        None => Err(AuthError::WebAuthn(
+            "credential blob cred_id mismatch; refusing to skip counter update".into(),
+        )),
     }
 }
 
