@@ -34,7 +34,7 @@ export const imageRenderer = {
 
   mount(el, { id, props, dispatch, ctx }) {
     if (!factory) throw new Error("imageRenderer.init() not called");
-    const tile = factory({ filePath: props.filePath });
+    const tile = factory({ filePath: props.filePath, worktreeLabel: props.worktreeLabel });
     tile.mount(el, {
       ...ctx,
       setTitle(title) {
