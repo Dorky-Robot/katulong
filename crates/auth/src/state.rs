@@ -3,12 +3,18 @@ use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use subtle::ConstantTimeEq;
 
-/// Constant-time string equality. Used for session-token lookups so that
-/// byte-wise comparison timing cannot leak which prefix of a submitted
-/// token matched a stored one. Session tokens are 32-byte CSPRNG output,
-/// which makes timing attacks impractical at internet latencies, but
-/// mirroring the setup-token discipline keeps the invariant consistent
-/// crate-wide.
+/// Constant-time string equality. Used for every session-token comparison
+/// in this module — reads *and* writes — so byte-wise comparison timing
+/// cannot leak which prefix of a submitted token matched a stored one.
+///
+/// Session tokens are 32-byte CSPRNG output, which makes timing attacks
+/// impractical at internet latencies, but applying the rule uniformly to
+/// every token comparison removes "which paths are safe" as a thing
+/// reviewers have to track. The write-path methods
+/// (`upsert_session`/`remove_session`/`touch_session`/`renew_session`) run
+/// behind `AuthStore`'s mutex and aren't authentication lookups, but a
+/// reviewer grepping for `s.token ==` should never find any — single rule,
+/// no exceptions.
 fn ct_eq_str(a: &str, b: &str) -> bool {
     a.as_bytes().ct_eq(b.as_bytes()).into()
 }
@@ -147,7 +153,7 @@ impl AuthState {
     /// Add or replace a session by token (upsert — mirrors `upsert_credential`).
     pub fn upsert_session(&self, session: Session) -> Self {
         let mut sessions = self.sessions.clone();
-        sessions.retain(|s| s.token != session.token);
+        sessions.retain(|s| !ct_eq_str(&s.token, &session.token));
         sessions.push(session);
         Self {
             sessions,
@@ -160,7 +166,7 @@ impl AuthState {
             sessions: self
                 .sessions
                 .iter()
-                .filter(|s| s.token != token)
+                .filter(|s| !ct_eq_str(&s.token, token))
                 .cloned()
                 .collect(),
             ..self.clone()
@@ -191,7 +197,7 @@ impl AuthState {
                 .sessions
                 .iter()
                 .map(|s| {
-                    if s.token == token {
+                    if ct_eq_str(&s.token, token) {
                         Session {
                             last_activity_at: now,
                             ..s.clone()
@@ -212,7 +218,7 @@ impl AuthState {
                 .sessions
                 .iter()
                 .map(|s| {
-                    if s.token == token {
+                    if ct_eq_str(&s.token, token) {
                         Session {
                             expires_at: new_expires_at,
                             ..s.clone()
