@@ -200,14 +200,27 @@ async fn revoke_token(
         .await
         .map_err(ApiError::from)?;
 
-    if let Some(ref cred_id) = paired_credential_id {
-        state.revocations.emit(cred_id);
+    // Two distinct log messages so a log-aggregation query can
+    // cleanly separate "revoked a live paired device" from "revoked
+    // an unused token" for incident response. A single message with
+    // an optional field makes the two cases structurally identical
+    // at query time, which is exactly what incident responders want
+    // to avoid.
+    match paired_credential_id {
+        Some(cred_id) => {
+            state.revocations.emit(&cred_id);
+            tracing::info!(
+                token_id = %token_id,
+                credential_id = %cred_id,
+                "setup token revoked; paired credential removed"
+            );
+        }
+        None => {
+            tracing::info!(
+                token_id = %token_id,
+                "setup token revoked (no paired credential)"
+            );
+        }
     }
-
-    tracing::info!(
-        token_id = %token_id,
-        paired_credential_id = paired_credential_id.as_deref().unwrap_or("none"),
-        "setup token revoked"
-    );
     Ok(StatusCode::NO_CONTENT)
 }

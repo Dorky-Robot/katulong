@@ -31,6 +31,38 @@
 //!   must subscribe BEFORE they touch anything they'd want to tear
 //!   down on revoke (e.g., a WS handler subscribes at upgrade time,
 //!   then enters its message loop).
+//!
+//! # Subscriber contract (read before slice 9c wires WS consumption)
+//!
+//! 1. **Subscribe before you validate.** A WS handler that accepts
+//!    the upgrade, reads the session cookie, validates it against
+//!    `AuthStore`, THEN subscribes will miss any revocation that
+//!    landed between the validate and the subscribe. Correct order:
+//!    subscribe first, then snapshot+validate. The snapshot IS the
+//!    "still valid?" check; the subscribe is the "will stay valid?"
+//!    guarantee for the lifetime of the connection.
+//!
+//! 2. **On `Lagged`, close.** Don't try to catch up — the
+//!    conservative failure is to assume your credential was among
+//!    the lost events. A fresh connection is cheap.
+//!
+//! 3. **Credential-id equality is the only check.** Subscribers
+//!    compare `event.credential_id` to the credential their
+//!    connection is bound to. No wildcards, no tree matches.
+//!
+//! # Emitter contract
+//!
+//! Any code path that removes a `Credential` from the store must
+//! emit on this channel after the transact commits. Today that's
+//! enforced socially in two call sites (`revoke_device`,
+//! `revoke_token`'s cascade). Future `AuthState` transitions that
+//! call `remove_credential` MUST also emit — this obligation has no
+//! type-system enforcement. If a background task (e.g., an
+//! eventual "expired unused tokens" pruner that cascades to
+//! credentials) ever adds a third removal path, wire it through
+//! `AppState::revocations.emit(cred_id)` or the WS layer will keep
+//! a ghost shell connection against a credential nobody can see
+//! anymore.
 
 use tokio::sync::broadcast::{self, error::SendError, Receiver, Sender};
 
