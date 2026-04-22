@@ -188,18 +188,18 @@
       if (filePath.split("/").some(seg => seg === "..")) return;
 
       const sessionName = getActiveSessionName();
-      let resolved = filePath;
+      let resolvedPath = filePath;
       let worktreeLabel = null;
       try {
         const out = await resolveFilePathForTile(api, filePath, sessionName);
-        resolved = out.resolvedPath;
+        resolvedPath = out.resolvedPath;
         worktreeLabel = out.worktreeLabel;
       } catch {
         // Resolver unreachable (offline / server restart) — fall back to
         // naive cwd-relative join so the tile at least opens.
         if (!filePath.startsWith("/")) {
           const cwd = resolveSessionCwd(sessionName);
-          if (cwd) resolved = cwd + "/" + filePath;
+          if (cwd) resolvedPath = cwd + "/" + filePath;
         }
       }
 
@@ -207,8 +207,8 @@
       // everything else to the document tile. Both are reached via the
       // same katulong:open-file event so feed thumbnails, reply chips,
       // and terminal file links all funnel through one codepath.
-      const isImg = isImagePath(resolved);
-      const props = { filePath: resolved };
+      const isImg = isImagePath(resolvedPath);
+      const props = { filePath: resolvedPath };
       if (worktreeLabel) props.worktreeLabel = worktreeLabel;
       if (!isImg && typeof line === "number" && line > 0) props.line = line;
       const type = isImg ? "image" : "document";

@@ -45,8 +45,6 @@ export const fileBrowserRenderer = {
   mount(el, { id, props, dispatch, ctx }) {
     if (!factory) throw new Error("fileBrowserRenderer.init() not called");
 
-    // --- File open: open a document or image tile adjacent to this browser ---
-    //
     // Awaits `/api/resolve-file` before opening, same pattern as
     // `openFileInDocTile` in app.js (terminal file-link clicks + feed reply
     // chips). File-browser click paths are already absolute, so the
