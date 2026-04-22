@@ -12,14 +12,15 @@
 //! tunnel) land in slice 6.
 //!
 //! Every successful ceremony writes through `AuthStore::transact` so
-//! the "compute new state, persist atomically, swap in memory" contract
-//! holds. Snapshots are taken exactly once per handler; callers read
-//! from the snapshot and the subsequent `transact` closure re-reads
-//! the (possibly newer) state inside the mutex — cheaper than a
-//! double round-trip and correct under contention.
+//! the "compute new state, persist atomically, swap in memory"
+//! contract holds. Invariants that gate a write (e.g., "first device
+//! only") are checked **inside** the transact closure so the mutex
+//! is the authoritative enforcement point — a pre-flight guard stays
+//! as a fast-fail for the common non-racing case.
 
 use crate::access::AccessMethod;
 use crate::api::error::ApiError;
+use crate::auth_middleware::Authenticated;
 use crate::cookie::build_set_cookie;
 use crate::state::AppState;
 use axum::{
@@ -33,11 +34,10 @@ use katulong_auth::webauthn_wire::{
     CreationChallengeResponse, PublicKeyCredential, RegisterPublicKeyCredential,
     RequestChallengeResponse,
 };
-use katulong_auth::{ChallengeId, Session, SESSION_TTL};
+use katulong_auth::{fresh_user_handle, AuthError, ChallengeId, Session, SESSION_TTL};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::time::SystemTime;
-use uuid::Uuid;
 
 pub fn auth_routes() -> Router<AppState> {
     Router::new()
@@ -57,6 +57,13 @@ pub fn auth_routes() -> Router<AppState> {
         .route("/api/auth/login/finish", post(login_finish))
 }
 
+/// JSON wire format for the status endpoint.
+///
+/// Snake_case on purpose — this is a fresh Rust-only wire format, no
+/// migrated Node clients to stay compatible with. Serde's default
+/// encoding already uses the struct field names so we don't carry a
+/// `rename_all` attribute. Any future interop requirement would land
+/// as an explicit rename.
 #[derive(Debug, Serialize)]
 struct AuthStatus {
     /// `"localhost"` or `"remote"` — the binary access model. No LAN
@@ -67,8 +74,10 @@ struct AuthStatus {
     /// flow.
     has_credentials: bool,
     /// True when the current request would pass the `Authenticated`
-    /// extractor — localhost peers are always authenticated; remote
-    /// peers need a valid cookie.
+    /// extractor. Derived from the same extractor in-process (via
+    /// `Option<Authenticated>`) so the two can't drift — if the
+    /// extractor's acceptance criteria change later, `status` tracks
+    /// automatically.
     authenticated: bool,
 }
 
@@ -76,31 +85,18 @@ async fn status(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
+    authed: Option<Authenticated>,
 ) -> Json<AuthStatus> {
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
     let access = AccessMethod::classify(peer, host);
     let snap = state.auth_store.snapshot().await;
-    let has_credentials = !snap.credentials.is_empty();
-
-    // Reuse the same cookie-lookup path as the extractor so the
-    // "authenticated" field can't drift from the middleware's answer.
-    let authenticated = match access {
-        AccessMethod::Localhost => true,
-        AccessMethod::Remote => headers
-            .get(header::COOKIE)
-            .and_then(|v| v.to_str().ok())
-            .and_then(crate::cookie::extract_session_token)
-            .and_then(|token| snap.valid_session(&token, SystemTime::now()).cloned())
-            .is_some(),
-    };
-
     Json(AuthStatus {
         access_method: match access {
             AccessMethod::Localhost => "localhost",
             AccessMethod::Remote => "remote",
         },
-        has_credentials,
-        authenticated,
+        has_credentials: !snap.credentials.is_empty(),
+        authenticated: authed.is_some(),
     })
 }
 
@@ -111,15 +107,27 @@ struct ChallengeStart<T: Serialize> {
 }
 
 #[derive(Debug, Deserialize)]
-struct FinishRegister {
+struct RegisterFinishRequest {
     challenge_id: ChallengeId,
     response: RegisterPublicKeyCredential,
 }
 
+#[derive(Debug, Serialize)]
+struct RegisterFinishResponse {
+    credential_id: String,
+    csrf_token: String,
+}
+
 #[derive(Debug, Deserialize)]
-struct FinishLogin {
+struct LoginFinishRequest {
     challenge_id: ChallengeId,
     response: PublicKeyCredential,
+}
+
+#[derive(Debug, Serialize)]
+struct LoginFinishResponse {
+    credential_id: String,
+    csrf_token: String,
 }
 
 /// Start a first-device registration ceremony.
@@ -129,7 +137,8 @@ struct FinishLogin {
 /// slice 6 (which reuses `WebAuthnService::start_registration` but
 /// gates the state differently).
 ///
-/// Two guards:
+/// Two guards — both enforced again inside `register_finish`'s
+/// `transact` closure so a race can't slip past the pre-flight:
 /// 1. `access == Localhost` — physical access is required to bootstrap
 ///    the first device, since there's nothing to authenticate against
 ///    yet. If we let this run from a tunnel, anyone with the URL could
@@ -143,13 +152,30 @@ async fn register_start(
     headers: HeaderMap,
 ) -> Result<Json<ChallengeStart<CreationChallengeResponse>>, ApiError> {
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
-    guard_first_device_registration(&state, AccessMethod::classify(peer, host)).await?;
+    let access = AccessMethod::classify(peer, host);
+    if !matches!(access, AccessMethod::Localhost) {
+        return Err(ApiError::Forbidden(
+            "first-device registration must originate from localhost",
+        ));
+    }
 
+    // Single snapshot for this handler: we use it both for the
+    // "no credentials yet" check and for the `excludeCredentials`
+    // argument. The authoritative re-check happens inside
+    // `register_finish`'s transact closure; this path is the
+    // fast-fail so the user doesn't do a whole biometric prompt only
+    // to be told "already initialised" at the end.
     let snap = state.auth_store.snapshot().await;
+    if !snap.credentials.is_empty() {
+        return Err(ApiError::Conflict(
+            "instance already initialised; additional devices must pair via setup token",
+        ));
+    }
+
     let (id, ccr) = state
         .webauthn
         .start_registration(
-            Uuid::new_v4(),
+            fresh_user_handle(),
             "katulong",
             "Katulong",
             &snap.credentials,
@@ -164,14 +190,26 @@ async fn register_start(
 
 /// Finish the first-device registration, persist the credential, and
 /// mint a session cookie bound to it.
+///
+/// The localhost check is outside `transact` (socket state doesn't
+/// change under the mutex). The "no credentials yet" check is INSIDE
+/// `transact` so it evaluates under the same lock that will do the
+/// write — without this, two concurrent finishes could each pass the
+/// pre-flight check on separate snapshots and both end up upserting a
+/// credential on what was supposed to be a single-device install.
 async fn register_finish(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    Json(body): Json<FinishRegister>,
+    Json(body): Json<RegisterFinishRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
-    guard_first_device_registration(&state, AccessMethod::classify(peer, host)).await?;
+    let access = AccessMethod::classify(peer, host);
+    if !matches!(access, AccessMethod::Localhost) {
+        return Err(ApiError::Forbidden(
+            "first-device registration must originate from localhost",
+        ));
+    }
 
     let now = SystemTime::now();
     let credential = state
@@ -179,36 +217,42 @@ async fn register_finish(
         .finish_registration(&body.challenge_id, &body.response, now)
         .map_err(ApiError::from)?;
 
-    // Persist credential + mint session atomically so a crash between
-    // the two writes can't leave a registered credential with no way to
-    // log in. `transact` holds the mutex across the closure.
+    // The credentials.is_empty() re-check inside the closure is the
+    // authoritative TOCTOU-safe enforcement — a second concurrent
+    // finisher will see state already containing the first winner's
+    // credential and bail out with StateConflict (→ 409).
+    let credential_clone = credential.clone();
     let session = state
         .auth_store
-        .transact(|s| {
-            let session = Session::mint(credential.id.clone(), now, SESSION_TTL);
+        .transact(move |s| {
+            if !s.credentials.is_empty() {
+                return Err(AuthError::StateConflict(
+                    "instance already initialised by a concurrent registration",
+                ));
+            }
+            let session = Session::mint(credential_clone.id.clone(), now, SESSION_TTL);
             let next = s
-                .upsert_credential(credential.clone())
+                .upsert_credential(credential_clone.clone())
                 .upsert_session(session.clone());
             Ok((next, session))
         })
         .await
         .map_err(ApiError::from)?;
 
+    tracing::info!(
+        credential_id = %credential.id,
+        "registered first device; session minted"
+    );
+
     Ok(session_cookie_response(
         StatusCode::CREATED,
         &session.token,
         state.config.cookie_secure,
-        Json(RegisterFinishBody {
+        Json(RegisterFinishResponse {
             credential_id: credential.id,
             csrf_token: session.csrf_token,
         }),
     ))
-}
-
-#[derive(Debug, Serialize)]
-struct RegisterFinishBody {
-    credential_id: String,
-    csrf_token: String,
 }
 
 /// Start an authentication ceremony. Public — the ceremony itself
@@ -239,7 +283,7 @@ async fn login_start(
 /// mint a session cookie.
 async fn login_finish(
     State(state): State<AppState>,
-    Json(body): Json<FinishLogin>,
+    Json(body): Json<LoginFinishRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let now = SystemTime::now();
     let snap = state.auth_store.snapshot().await;
@@ -252,6 +296,15 @@ async fn login_finish(
     // counter or backup-state change. Persisting it advances the
     // monotonicity baseline inside the stored Passkey blob — see
     // `VerifiedAuthentication` docs for why this MUST happen.
+    //
+    // A theoretical improvement: recompute `updated_credential` from
+    // the live credential inside `transact` rather than from `snap`,
+    // so two simultaneous logins can't regress each other's counter.
+    // Deferred to slice 6 alongside logout/revocation lifecycle work
+    // — the scenario requires two successful concurrent logins with
+    // the same passkey (rare; self-corrects on the next auth) and a
+    // cleaner fix wants `Credential::apply(&AuthenticationResult)`
+    // exposed, which is a bigger refactor than the risk justifies now.
     let credential_id = verified.credential_id.clone();
     let session = state
         .auth_store
@@ -267,46 +320,20 @@ async fn login_finish(
         .await
         .map_err(ApiError::from)?;
 
+    tracing::info!(
+        credential_id = %verified.credential_id,
+        "login succeeded; session minted"
+    );
+
     Ok(session_cookie_response(
         StatusCode::OK,
         &session.token,
         state.config.cookie_secure,
-        Json(LoginFinishBody {
+        Json(LoginFinishResponse {
             credential_id: verified.credential_id,
             csrf_token: session.csrf_token,
         }),
     ))
-}
-
-#[derive(Debug, Serialize)]
-struct LoginFinishBody {
-    credential_id: String,
-    csrf_token: String,
-}
-
-/// Guard both first-device registration endpoints.
-///
-/// Must be localhost AND must have zero existing credentials.
-/// Returning `Forbidden` (not `Unauthorized`) because the caller is
-/// authenticated-ish via locality; the action is just not permitted in
-/// the current server state. `Conflict` for "already initialised" to
-/// distinguish from "wrong place."
-async fn guard_first_device_registration(
-    state: &AppState,
-    access: AccessMethod,
-) -> Result<(), ApiError> {
-    if !matches!(access, AccessMethod::Localhost) {
-        return Err(ApiError::Forbidden(
-            "first-device registration must originate from localhost",
-        ));
-    }
-    let snap = state.auth_store.snapshot().await;
-    if !snap.credentials.is_empty() {
-        return Err(ApiError::Conflict(
-            "instance already initialised; additional devices must pair via setup token",
-        ));
-    }
-    Ok(())
 }
 
 /// Build a response that attaches a Set-Cookie header carrying a fresh
@@ -323,4 +350,3 @@ where
     let cookie = build_set_cookie(token, SESSION_TTL.as_secs(), secure);
     (status, [(header::SET_COOKIE, cookie)], body)
 }
-

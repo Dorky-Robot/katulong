@@ -41,9 +41,12 @@ pub enum ApiError {
     /// this action yet (e.g., login against a fresh install with no
     /// credentials).
     Conflict(&'static str),
-    /// Anything else — mapped to 500. Internal detail goes to logs,
-    /// NOT the response body.
-    Internal(AuthError),
+    /// Anything else — mapped to 500. Internal detail is logged at the
+    /// `From<AuthError>` conversion site, NOT stored on the variant, so
+    /// no caller can pattern-match this variant and re-render the
+    /// inner chain into user-facing text by accident. A future handler
+    /// seeing `Internal` in a match arm sees only the tag.
+    Internal,
 }
 
 impl ApiError {
@@ -63,7 +66,7 @@ impl ApiError {
                 "server busy; retry shortly".into(),
             ),
             Self::Conflict(why) => (StatusCode::CONFLICT, "conflict", (*why).into()),
-            Self::Internal(_) => (
+            Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
                 "internal server error".into(),
@@ -75,11 +78,6 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code, message) = self.as_pieces();
-        // Log the full internal detail for operators — never reach the
-        // client. `Display` of `AuthError` carries path + library chain.
-        if let Self::Internal(ref inner) = self {
-            tracing::error!(error = %inner, "api internal error");
-        }
         let body = Json(json!({
             "error": { "code": code, "message": message },
         }));
@@ -93,15 +91,25 @@ impl From<AuthError> for ApiError {
     /// `ChallengeNotFound` and `TooManyPendingChallenges` have obvious
     /// HTTP semantics. `WebAuthn(_)` (runtime ceremony failure) maps to
     /// 401 — the assertion didn't verify, which from the caller's
-    /// perspective looks like "auth failed." Everything else (IO,
+    /// perspective looks like "auth failed." `StateConflict` maps to
+    /// 409 so a transact-internal invariant check surfaces the same
+    /// shape as the handler's fast-fail guard. Everything else (IO,
     /// Parse of on-disk state, Hash, WebAuthnConfig — all
-    /// server-internal) becomes 500.
+    /// server-internal) becomes 500 AND is logged here; the `Internal`
+    /// variant deliberately carries no data so a future handler can't
+    /// accidentally re-render the chain into a response body.
     fn from(err: AuthError) -> Self {
         match err {
             AuthError::ChallengeNotFound => Self::ChallengeNotFound,
             AuthError::TooManyPendingChallenges => Self::RateLimited,
             AuthError::WebAuthn(_) => Self::Unauthorized,
-            other => Self::Internal(other),
+            AuthError::StateConflict(msg) => Self::Conflict(msg),
+            other => {
+                // Log the full chain for operators; the response body
+                // stays opaque via the unit variant.
+                tracing::error!(error = %other, "api internal error");
+                Self::Internal
+            }
         }
     }
 }

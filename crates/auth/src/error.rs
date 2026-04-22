@@ -54,6 +54,16 @@ pub enum AuthError {
     /// shortly" from "something is permanently broken."
     #[error("too many pending challenges")]
     TooManyPendingChallenges,
+
+    /// A state-level invariant was violated while inside an
+    /// `AuthStore::transact` closure — the check that gates the
+    /// transition saw a state that wouldn't permit it. Raised
+    /// specifically to make the TOCTOU-safe pattern usable: a handler
+    /// can do a fast-fail guard outside the mutex AND re-check the same
+    /// invariant inside the closure, with the inner check's error
+    /// routing to the same HTTP `Conflict` shape as the outer one.
+    #[error("state conflict: {0}")]
+    StateConflict(&'static str),
 }
 
 impl AuthError {

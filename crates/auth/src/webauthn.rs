@@ -111,6 +111,20 @@ pub struct WebAuthnService {
     pending_authentications: Mutex<HashMap<ChallengeId, (PasskeyAuthentication, SystemTime)>>,
 }
 
+/// Mint a fresh WebAuthn user handle.
+///
+/// Separated from `WebAuthnService::start_registration` so the caller
+/// can reuse a stable handle across subsequent-device registrations
+/// (slice 6) without forcing a new one per call. For slice 5 the
+/// first-device path is the only caller and a brand-new UUID is fine.
+///
+/// Owned by the auth crate so the server crate doesn't need a direct
+/// `uuid` dep — the concept "what is a user handle" lives with the
+/// ceremony that consumes it.
+pub fn fresh_user_handle() -> Uuid {
+    Uuid::new_v4()
+}
+
 impl WebAuthnService {
     /// Build a service bound to a specific RP ID + origin. `rp_name` is the
     /// human-readable string that shows up in the browser's passkey dialogue.

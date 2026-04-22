@@ -8,74 +8,29 @@
 //! - `/api/auth/status` in all four cases (install × access)
 //! - `register_start` guards: non-localhost → 403; fresh localhost → 200
 //!   with a challenge id + options; already-initialised → 409
-//! - `register_finish` guard: non-localhost → 403
-//! - `register_finish` with a localhost peer but bogus challenge id →
-//!   `challenge_not_found` (validates the error pipe, not the crypto)
-//! - `login_start` on a fresh install → 409 (the Conflict branch that
-//!   replaces Node's "empty usable credentials" 401)
-//! - Unknown JSON shape → 400
+//! - `register_finish` guards: non-localhost → 403
+//! - `register_finish` with unknown challenge id → 401
+//!   `challenge_not_found`
+//! - `register_finish` with a real challenge id but cryptographically
+//!   bogus response → 401 `unauthorized` (exercises the crypto-reject
+//!   path through the route handler)
+//! - `login_start` on a fresh install → 409 Conflict
+//! - `login_finish` with unknown challenge id → 401
+//! - `login_finish` with a real challenge id + bogus response → 401
 //!
 //! A separate end-to-end test that drives an actual browser passkey
 //! belongs in the e2e layer (Playwright, slice 8-ish), not here.
 
+mod common;
+
 use axum::{
     body::Body,
-    http::{header, request::Builder as RequestBuilder, Method, Request, StatusCode},
+    http::{header, Method, StatusCode},
 };
-use http_body_util::BodyExt;
-use katulong_auth::{AuthStore, Credential, WebAuthnService};
-use katulong_server::{
-    app,
-    state::{AppState, ServerConfig},
-};
+use common::{body_json, ephemeral_state, json_body, req, stub_credential};
+use katulong_server::app;
 use serde_json::{json, Value};
-use std::net::SocketAddr;
-use std::time::SystemTime;
-use tempfile::TempDir;
 use tower::util::ServiceExt;
-
-fn cfg() -> ServerConfig {
-    ServerConfig {
-        public_origin: "https://katulong.test".into(),
-        rp_id: "katulong.test".into(),
-        rp_name: "Katulong Test".into(),
-        cookie_secure: true,
-    }
-}
-
-async fn ephemeral_state() -> (AppState, TempDir) {
-    let dir = TempDir::new().unwrap();
-    let store = AuthStore::open(dir.path().join("auth.json")).await.unwrap();
-    let webauthn = WebAuthnService::new("katulong.test", "Katulong Test", "https://katulong.test")
-        .unwrap();
-    (AppState::new(store, webauthn, cfg()), dir)
-}
-
-fn seed_credential(id: &str) -> Credential {
-    Credential {
-        id: id.into(),
-        public_key: b"{}".to_vec(),
-        name: None,
-        counter: 0,
-        created_at: SystemTime::UNIX_EPOCH,
-        setup_token_id: None,
-    }
-}
-
-fn req(peer: SocketAddr, host: &str) -> RequestBuilder {
-    Request::builder()
-        .extension(axum::extract::ConnectInfo(peer))
-        .header(header::HOST, host)
-}
-
-fn json_body<T: serde::Serialize>(value: &T) -> Body {
-    Body::from(serde_json::to_vec(value).unwrap())
-}
-
-async fn body_json(resp: axum::response::Response) -> Value {
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    serde_json::from_slice(&bytes).unwrap()
-}
 
 // ---------------- /api/auth/status ----------------
 
@@ -124,7 +79,7 @@ async fn status_after_credential_registered() {
     let (state, _dir) = ephemeral_state().await;
     state
         .auth_store
-        .transact(|s| Ok((s.upsert_credential(seed_credential("c1")), ())))
+        .transact(|s| Ok((s.upsert_credential(stub_credential("c1")), ())))
         .await
         .unwrap();
     let resp = app(state)
@@ -191,7 +146,7 @@ async fn register_start_localhost_after_init_is_conflict() {
     let (state, _dir) = ephemeral_state().await;
     state
         .auth_store
-        .transact(|s| Ok((s.upsert_credential(seed_credential("c1")), ())))
+        .transact(|s| Ok((s.upsert_credential(stub_credential("c1")), ())))
         .await
         .unwrap();
     let resp = app(state)
@@ -257,6 +212,55 @@ async fn register_finish_with_unknown_challenge_id_returns_challenge_not_found()
 }
 
 #[tokio::test]
+async fn register_finish_with_real_challenge_but_bogus_response_returns_401() {
+    // Covers the crypto-rejection path: a challenge was legitimately
+    // issued by `register_start` so it exists in the pending map, but
+    // the response payload is cryptographically garbage. webauthn-rs
+    // must reject, `finish_registration` must return an error, and
+    // the handler must map it to 401 `unauthorized` (not 500, not
+    // `challenge_not_found`).
+    let (state, _dir) = ephemeral_state().await;
+    let router = app(state);
+
+    let start = router
+        .clone()
+        .oneshot(
+            req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
+                .method(Method::POST)
+                .uri("/api/auth/register/start")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+    let challenge_id = body_json(start).await["challenge_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let body = json!({
+        "challenge_id": challenge_id,
+        "response": fake_register_response(),
+    });
+    let resp = router
+        .oneshot(
+            req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
+                .method(Method::POST)
+                .uri("/api/auth/register/finish")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json_body(&body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let v = body_json(resp).await;
+    assert_eq!(v["error"]["code"], "unauthorized");
+}
+
+#[tokio::test]
 async fn register_finish_with_bad_json_returns_400() {
     let (state, _dir) = ephemeral_state().await;
     let resp = app(state)
@@ -299,11 +303,9 @@ async fn login_start_on_fresh_install_is_conflict() {
 #[tokio::test]
 async fn login_finish_with_unknown_challenge_id_returns_challenge_not_found() {
     let (state, _dir) = ephemeral_state().await;
-    // Seed a credential so `login_start` wouldn't 409, though we bypass
-    // it and go straight to finish with a bogus id.
     state
         .auth_store
-        .transact(|s| Ok((s.upsert_credential(seed_credential("c1")), ())))
+        .transact(|s| Ok((s.upsert_credential(stub_credential("c1")), ())))
         .await
         .unwrap();
     let body = json!({
