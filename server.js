@@ -20,7 +20,6 @@ import { ConfigManager } from "./lib/config.js";
 
 import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest, isLoopbackAddress } from "./lib/access-method.js";
-import { authenticateBearerKey } from "./lib/api-key-auth.js";
 import { serveStaticFile, clearFileCache, buildVendorHashes } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createSessionManager, checkTmux, cleanTmuxServerEnv, setTmuxKatulongEnv } from "./lib/session-manager.js";
@@ -134,19 +133,8 @@ function isTrustedProxy(req) {
  * Check if a request is authenticated.
  * @returns {{ authenticated: boolean, sessionToken: string|null, credentialId: string|null } | null}
  *   Rich result object when authenticated, null when not.
- *
- * Result is cached on `req._authResult` for the remainder of the request —
- * `handleRequest` calls isAuthenticated both as a gate (public-path check)
- * and implicitly inside `auth()` middleware, and without caching the state
- * lookup + Bearer activity-update would fire twice per request.
  */
 function isAuthenticated(req) {
-  if (req._authResult !== undefined) return req._authResult;
-  req._authResult = computeAuth(req);
-  return req._authResult;
-}
-
-function computeAuth(req) {
   if (isTrustedProxy(req)) {
     log.debug("Auth bypassed: trusted proxy", { ip: req.socket.remoteAddress });
     return { authenticated: true, sessionToken: null, credentialId: null };
@@ -156,17 +144,22 @@ function computeAuth(req) {
     return { authenticated: true, sessionToken: null, credentialId: null };
   }
   // API key auth via Bearer token
-  const bearerResult = authenticateBearerKey(req, loadState());
-  if (bearerResult.invalid) {
-    return null; // Bearer header present but invalid — don't fall through to cookie
-  }
-  if (bearerResult.matched) {
-    const keyId = bearerResult.keyData.id;
-    withStateLock((s) => {
-      if (!s) return {};
-      return { state: s.updateApiKeyActivity(keyId) };
-    }).catch(() => {});
-    return { authenticated: true, sessionToken: null, credentialId: null, apiKeyId: keyId };
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const apiKey = authHeader.slice(7);
+    const state = loadState();
+    if (state) {
+      const keyData = state.findApiKey(apiKey);
+      if (keyData) {
+        req._apiKeyAuth = true;
+        withStateLock((s) => {
+          if (!s) return {};
+          return { state: s.updateApiKeyActivity(keyData.id) };
+        }).catch(() => {});
+        return { authenticated: true, sessionToken: null, credentialId: null, apiKeyId: keyData.id };
+      }
+    }
+    return null; // Invalid API key — don't fall through to cookie
   }
 
   const cookies = parseCookies(req.headers.cookie);
@@ -236,7 +229,7 @@ pruneTimer.unref();
 
 // --- HTTP routes (assembled from lib/routes/) ---
 
-const { auth, csrf, requireScope, requireBearerAuth } = createMiddleware({ isAuthenticated, json });
+const { auth, csrf } = createMiddleware({ isAuthenticated, json });
 
 // --- Plugins ---
 const { pluginRoutes, pluginWsHandlers, shutdownPlugins } = await loadPlugins({
@@ -315,7 +308,7 @@ const routes = [
     bridge,
     credentialLockout,
     RP_NAME, PORT,
-    auth, csrf, requireScope, requireBearerAuth,
+    auth, csrf,
   }),
   ...createAppRoutes({
     json, parseJSON, readBody, isAuthenticated, sessionManager,
