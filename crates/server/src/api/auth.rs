@@ -101,7 +101,7 @@ async fn status(
 }
 
 #[derive(Debug, Serialize)]
-struct ChallengeStart<T: Serialize> {
+struct ChallengeStartResponse<T: Serialize> {
     challenge_id: ChallengeId,
     options: T,
 }
@@ -150,7 +150,7 @@ async fn register_start(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-) -> Result<Json<ChallengeStart<CreationChallengeResponse>>, ApiError> {
+) -> Result<Json<ChallengeStartResponse<CreationChallengeResponse>>, ApiError> {
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
     let access = AccessMethod::classify(peer, host);
     if !matches!(access, AccessMethod::Localhost) {
@@ -182,7 +182,7 @@ async fn register_start(
             SystemTime::now(),
         )
         .map_err(ApiError::from)?;
-    Ok(Json(ChallengeStart {
+    Ok(Json(ChallengeStartResponse {
         challenge_id: id,
         options: ccr,
     }))
@@ -215,6 +215,17 @@ async fn register_finish(
     let credential = state
         .webauthn
         .finish_registration(&body.challenge_id, &body.response, now)
+        .inspect_err(|e| {
+            // Log failed ceremonies at `warn` so brute-force or replay
+            // attempts are visible in operator logs. The challenge id
+            // is safe to log — it's an opaque server-issued handle,
+            // not the attestation response bytes.
+            tracing::warn!(
+                challenge_id = %body.challenge_id,
+                error = %e,
+                "registration ceremony failed"
+            );
+        })
         .map_err(ApiError::from)?;
 
     // The credentials.is_empty() re-check inside the closure is the
@@ -259,7 +270,7 @@ async fn register_finish(
 /// gates who actually passes.
 async fn login_start(
     State(state): State<AppState>,
-) -> Result<Json<ChallengeStart<RequestChallengeResponse>>, ApiError> {
+) -> Result<Json<ChallengeStartResponse<RequestChallengeResponse>>, ApiError> {
     let snap = state.auth_store.snapshot().await;
     if snap.credentials.is_empty() {
         // Fresh-install case. Return an explicit conflict rather than
@@ -273,7 +284,7 @@ async fn login_start(
         .webauthn
         .start_authentication(&snap.credentials, SystemTime::now())
         .map_err(ApiError::from)?;
-    Ok(Json(ChallengeStart {
+    Ok(Json(ChallengeStartResponse {
         challenge_id: id,
         options: rcr,
     }))
@@ -290,6 +301,13 @@ async fn login_finish(
     let verified = state
         .webauthn
         .finish_authentication(&body.challenge_id, &body.response, &snap.credentials, now)
+        .inspect_err(|e| {
+            tracing::warn!(
+                challenge_id = %body.challenge_id,
+                error = %e,
+                "login ceremony failed"
+            );
+        })
         .map_err(ApiError::from)?;
 
     // `updated_credential` is `Some` iff the authenticator reported a
