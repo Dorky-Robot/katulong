@@ -139,6 +139,7 @@ impl From<AuthError> for ApiError {
             AuthError::TooManyPendingChallenges => Self::RateLimited,
             AuthError::WebAuthn(_) => Self::Unauthorized,
             AuthError::StateConflict(msg) => Self::Conflict(msg),
+            AuthError::LastCredentialRemoval => Self::LastCredential,
             other => {
                 // Log the full chain for operators; the response body
                 // stays opaque via the unit variant.

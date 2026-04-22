@@ -64,6 +64,17 @@ pub enum AuthError {
     /// routing to the same HTTP `Conflict` shape as the outer one.
     #[error("state conflict: {0}")]
     StateConflict(&'static str),
+
+    /// A transact closure refused to remove the only remaining
+    /// credential on this instance. Raised by the device-revoke
+    /// handler for remote callers when `credentials.len() == 1` —
+    /// allowing the deletion would lock them out of their own
+    /// install over the tunnel (Node scar `f25855f`). Dedicated
+    /// variant so the HTTP layer can typed-discriminate without
+    /// matching on `StateConflict`'s string payload; the compiler
+    /// enforces the pairing rather than a literal on both sides.
+    #[error("cannot remove the last credential")]
+    LastCredentialRemoval,
 }
 
 impl AuthError {

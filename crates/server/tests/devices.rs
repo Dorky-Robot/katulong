@@ -97,10 +97,10 @@ async fn list_devices_from_localhost_shows_no_current() {
 }
 
 #[tokio::test]
-async fn list_devices_surfaces_paired_via_setup_token_id() {
-    // Bidirectional link: Credential.setup_token_id surfaces as
-    // paired_via_setup_token_id. Set it directly via state mutation
-    // since we can't run a real pair ceremony inline.
+async fn list_devices_surfaces_setup_token_id() {
+    // Bidirectional link: Credential.setup_token_id surfaces on the
+    // DTO under the same field name. Set it directly via state
+    // mutation since we can't run a real pair ceremony inline.
     let (state, _dir) = ephemeral_state().await;
     let (cookie, _csrf) = seeded_auth(&state, "admin").await;
     state
@@ -132,7 +132,7 @@ async fn list_devices_surfaces_paired_via_setup_token_id() {
         .iter()
         .find(|e| e["id"] == "paired-device")
         .expect("paired device should appear in list");
-    assert_eq!(paired["paired_via_setup_token_id"], "token-abc");
+    assert_eq!(paired["setup_token_id"], "token-abc");
 }
 
 // ---------------- revoke ----------------

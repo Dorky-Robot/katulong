@@ -47,15 +47,14 @@ struct DeviceEntry {
     /// Unix-millis of registration. `u64` for JSON integer safety —
     /// `u128` would serialize as a string past 2^53.
     created_at_millis: u64,
-    /// Last counter observed from the authenticator. Useful for the
-    /// UI to surface "stale" credentials (counter hasn't moved in a
-    /// long time). Zero for counterless synced passkeys is normal.
+    /// Last counter observed from the authenticator. Zero is normal
+    /// for counterless synced passkeys.
     counter: u32,
-    /// `Some` when this device was paired via a setup token — lets
-    /// the UI show "paired via token <name>". Populated by the
-    /// bidirectional link in `Credential.setup_token_id` (Node scar
-    /// `7742ac3`).
-    paired_via_setup_token_id: Option<String>,
+    /// `Some` when this device was paired via a setup token. Mirrors
+    /// `TokenListEntry.credential_id` from the opposite side of the
+    /// bidirectional link (Node scar `7742ac3`). Name matches the
+    /// `Credential.setup_token_id` field directly.
+    setup_token_id: Option<String>,
     /// True when this entry is the credential the caller is
     /// currently authenticated as. `Localhost` callers have no
     /// current credential; all entries report `false`. Server-side
@@ -85,7 +84,7 @@ async fn list_devices(
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0),
             counter: c.counter,
-            paired_via_setup_token_id: c.setup_token_id.clone(),
+            setup_token_id: c.setup_token_id.clone(),
             is_current: current_id.as_deref() == Some(c.id.as_str()),
         })
         .collect();
@@ -98,21 +97,26 @@ async fn revoke_device(
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let is_localhost = matches!(ctx, AuthContext::Localhost);
+    let revoked_by = match &ctx {
+        AuthContext::Localhost => "localhost".to_string(),
+        AuthContext::Remote { credential, .. } => credential.id.clone(),
+    };
 
     // The last-credential check runs inside `transact` so a
     // concurrent registration (or revocation) cannot slip past on a
-    // stale snapshot. Remote callers fail with `LastCredential` → 409
-    // if the state would hit zero credentials; localhost callers
-    // bypass the check entirely (physical access = no lockout risk).
-    let id_for_log = id.clone();
+    // stale snapshot. Remote callers fail with `LastCredentialRemoval`
+    // → 409 `last_credential` if the state would hit zero
+    // credentials; localhost callers bypass the check entirely
+    // (physical access = no lockout risk). `LastCredentialRemoval`
+    // is a dedicated `AuthError` variant so the HTTP layer's mapping
+    // is compiler-enforced rather than string-matched.
+    let credential_id = id.clone();
     state
         .auth_store
         .transact(move |s| {
             let target_exists = s.find_credential(&id).is_some();
             if !is_localhost && target_exists && s.credentials.len() == 1 {
-                return Err(katulong_auth::AuthError::StateConflict(
-                    "cannot remove last credential from remote session",
-                ));
+                return Err(katulong_auth::AuthError::LastCredentialRemoval);
             }
             // `remove_credential` cascades to the credential's
             // sessions (slice 1+2 transition). Unknown id is a no-op
@@ -120,18 +124,12 @@ async fn revoke_device(
             Ok((s.remove_credential(&id), ()))
         })
         .await
-        .map_err(|e| match e {
-            // Map the specific state-conflict message back to the
-            // dedicated LastCredential variant so the client sees
-            // `code: "last_credential"` rather than generic
-            // `conflict`. Any other StateConflict goes through the
-            // default path.
-            katulong_auth::AuthError::StateConflict(
-                "cannot remove last credential from remote session",
-            ) => ApiError::LastCredential,
-            other => ApiError::from(other),
-        })?;
+        .map_err(ApiError::from)?;
 
-    tracing::info!(credential_id = %id_for_log, "device revoked");
+    tracing::info!(
+        credential_id = %credential_id,
+        revoked_by = %revoked_by,
+        "device revoked"
+    );
     Ok(StatusCode::NO_CONTENT)
 }
