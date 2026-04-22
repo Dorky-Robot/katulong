@@ -1,0 +1,16 @@
+[package]
+name = "katulong-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+tempfile = { workspace = true }
+scrypt = { version = "0.11", default-features = false, features = ["simple"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+subtle = { version = "2", default-features = false }
