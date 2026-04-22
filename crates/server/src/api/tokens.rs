@@ -56,7 +56,11 @@ struct TokenListEntry {
     id: String,
     name: Option<String>,
     /// Unix millis. Clients compute "expires in" locally.
-    expires_at_millis: u128,
+    /// Unix-millis encoded as `u64`. `u128` would overflow
+    /// `serde_json`'s 2^53 safe-integer range into a string, which
+    /// JS clients parsing `v.as_u64()` would then drop. u64 holds
+    /// unix-ms out to year 584,554,051 — ample.
+    expires_at_millis: u64,
     /// Stable semantic tag:
     /// - `"live"` — not used, not expired, redeemable by a new device
     /// - `"used"` — already consumed; linked credential still paired
@@ -68,6 +72,10 @@ struct TokenListEntry {
     credential_id: Option<String>,
 }
 
+/// List setup tokens. Auth-only (no CSRF) because GET is a safe
+/// method — no state change to protect against cross-site replay.
+/// Write-path handlers in this module use `CsrfProtected`; the
+/// distinction is intentional and consistent with axum/HTTP norms.
 async fn list_tokens(
     State(state): State<AppState>,
     Authenticated(_): Authenticated,
@@ -83,7 +91,7 @@ async fn list_tokens(
             expires_at_millis: t
                 .expires_at
                 .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_millis())
+                .map(|d| d.as_millis() as u64)
                 .unwrap_or(0),
             status: if t.is_consumed() {
                 "used"
@@ -113,7 +121,11 @@ struct CreateTokenResponse {
     /// Hand this to the user. Once the HTTP response is sent, the
     /// server holds only the scrypt hash — recovery is impossible.
     plaintext: PlaintextToken,
-    expires_at_millis: u128,
+    /// Unix-millis encoded as `u64`. `u128` would overflow
+    /// `serde_json`'s 2^53 safe-integer range into a string, which
+    /// JS clients parsing `v.as_u64()` would then drop. u64 holds
+    /// unix-ms out to year 584,554,051 — ample.
+    expires_at_millis: u64,
 }
 
 /// Max length for the human-readable `name` field. Chosen so a
@@ -154,7 +166,7 @@ async fn create_token(
             plaintext,
             expires_at_millis: expires_at
                 .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_millis())
+                .map(|d| d.as_millis() as u64)
                 .unwrap_or(0),
         }),
     ))
@@ -169,10 +181,12 @@ async fn revoke_token(
     // as idempotent success (204). The caller can't tell "never
     // existed" from "already revoked," which is fine: both answers
     // mean "this id is not redeemable from here forward."
+    let id_for_log = id.clone();
     state
         .auth_store
         .transact(move |s| Ok((s.remove_setup_token(&id), ())))
         .await
         .map_err(ApiError::from)?;
+    tracing::info!(token_id = %id_for_log, "setup token revoked");
     Ok(StatusCode::NO_CONTENT)
 }

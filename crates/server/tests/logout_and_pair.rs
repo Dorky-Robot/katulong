@@ -18,33 +18,11 @@ use axum::{
     body::Body,
     http::{header, Method, StatusCode},
 };
-use common::{body_json, ephemeral_state, json_body, req, stub_credential};
-use katulong_auth::{Session, SESSION_TTL};
+use common::{body_json, ephemeral_state, json_body, req, seeded_auth, stub_credential};
 use katulong_server::app;
 use serde_json::{json, Value};
 use std::time::SystemTime;
 use tower::util::ServiceExt;
-
-/// Seed a credential + session and return the cookie plaintext AND
-/// csrf token — the pair every CSRF-protected route needs.
-async fn seeded_auth(state: &katulong_server::state::AppState, cred_id: &str) -> (String, String) {
-    state
-        .auth_store
-        .clone()
-        .transact({
-            let cred_id = cred_id.to_string();
-            move |s| {
-                let credential = stub_credential(&cred_id);
-                let now = SystemTime::now();
-                let (plaintext, session) = Session::mint(cred_id.clone(), now, SESSION_TTL);
-                let csrf = session.csrf_token.clone();
-                let next = s.upsert_credential(credential).upsert_session(session);
-                Ok((next, (plaintext, csrf)))
-            }
-        })
-        .await
-        .unwrap()
-}
 
 // ---------------- logout ----------------
 

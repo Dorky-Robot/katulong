@@ -1,29 +1,34 @@
 //! Authentication HTTP routes.
 //!
-//! Five endpoints covering the first-device happy path:
+//! Eight endpoints covering the full auth surface:
 //!
-//! - `GET  /api/auth/status`          — public; surfaces access mode + install state
-//! - `POST /api/auth/register/start`  — localhost-only, no existing credentials
-//! - `POST /api/auth/register/finish` — localhost-only, no existing credentials
+//! - `GET  /api/auth/status`          — public; access mode + install state + authenticated
+//! - `POST /api/auth/register/start`  — localhost-only, fresh install
+//! - `POST /api/auth/register/finish` — localhost-only, fresh install; mints session
 //! - `POST /api/auth/login/start`     — public
-//! - `POST /api/auth/login/finish`    — public; mints session on success
+//! - `POST /api/auth/login/finish`    — public; updates counter + mints session
+//! - `POST /api/auth/pair/start`      — public, setup-token-gated
+//! - `POST /api/auth/pair/finish`     — public; links credential to token + mints session
+//! - `POST /api/auth/logout`          — auth + CSRF; localhost → 409
 //!
-//! Logout + setup-token pairing (for adding a second device over a
-//! tunnel) land in slice 6.
+//! Setup-token management (list / create / revoke) lives in
+//! `api::tokens`. Those routes share the same `CsrfProtected` pattern
+//! as logout for state-changing verbs.
 //!
 //! Every successful ceremony writes through `AuthStore::transact` so
 //! the "compute new state, persist atomically, swap in memory"
 //! contract holds. Invariants that gate a write (e.g., "first device
-//! only") are checked **inside** the transact closure so the mutex
-//! is the authoritative enforcement point — a pre-flight guard stays
-//! as a fast-fail for the common non-racing case.
+//! only", "setup token still redeemable") are checked **inside** the
+//! transact closure so the mutex is the authoritative enforcement
+//! point — a pre-flight guard stays as a fast-fail for the common
+//! non-racing case.
 
 use crate::access::AccessMethod;
 use crate::api::csrf::CsrfProtected;
 use crate::api::error::ApiError;
 use crate::api::extract::JsonBody;
 use crate::auth_middleware::{AuthContext, Authenticated};
-use crate::cookie::{build_clear_cookie, build_set_cookie, extract_session_token};
+use crate::cookie::{build_clear_cookie, build_set_cookie};
 use crate::state::AppState;
 use axum::{
     extract::{ConnectInfo, State},
@@ -36,7 +41,7 @@ use katulong_auth::webauthn_wire::{
     CreationChallengeResponse, PublicKeyCredential, RegisterPublicKeyCredential,
     RequestChallengeResponse,
 };
-use katulong_auth::{AuthError, ChallengeId, Credential, Session, SESSION_TTL};
+use katulong_auth::{AuthError, ChallengeId, Session, SESSION_TTL};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::time::SystemTime;
@@ -124,20 +129,22 @@ struct RegisterFinishRequest {
     response: RegisterPublicKeyCredential,
 }
 
-#[derive(Debug, Serialize)]
-struct RegisterFinishResponse {
-    credential_id: String,
-    csrf_token: String,
-}
-
 #[derive(Debug, Deserialize)]
 struct LoginFinishRequest {
     challenge_id: ChallengeId,
     response: PublicKeyCredential,
 }
 
+/// Shared response shape for every flow that mints a session on
+/// success — register, login, and pair. All three return the same two
+/// fields (`credential_id` for UI display, `csrf_token` for the
+/// client to echo in the `X-Csrf-Token` header on subsequent
+/// state-changing requests). Keeping them as one type means a future
+/// schema addition (e.g., `session_expires_at`) lands in one place.
+/// Status codes still differ per route (201 on register/pair, 200 on
+/// login), so the distinction is preserved at the call sites.
 #[derive(Debug, Serialize)]
-struct LoginFinishResponse {
+struct AuthFinishResponse {
     credential_id: String,
     csrf_token: String,
 }
@@ -263,7 +270,7 @@ async fn register_finish(
     // authoritative TOCTOU-safe enforcement — a second concurrent
     // finisher will see state already containing the first winner's
     // credential and bail out with StateConflict (→ 409).
-    let credential_clone = credential.clone();
+    let new_credential = credential.clone();
     let (plaintext_token, minted_session) = state
         .auth_store
         .transact(move |s| {
@@ -272,9 +279,9 @@ async fn register_finish(
                     "instance already initialised by a concurrent registration",
                 ));
             }
-            let (plaintext, session) = Session::mint(credential_clone.id.clone(), now, SESSION_TTL);
+            let (plaintext, session) = Session::mint(new_credential.id.clone(), now, SESSION_TTL);
             let next = s
-                .upsert_credential(credential_clone.clone())
+                .upsert_credential(new_credential.clone())
                 .upsert_session(session.clone());
             Ok((next, (plaintext, session)))
         })
@@ -290,7 +297,7 @@ async fn register_finish(
         StatusCode::CREATED,
         &plaintext_token,
         state.config.cookie_secure,
-        Json(RegisterFinishResponse {
+        Json(AuthFinishResponse {
             credential_id: credential.id,
             csrf_token: minted_session.csrf_token,
         }),
@@ -375,7 +382,7 @@ async fn login_finish(
         StatusCode::OK,
         &plaintext_token,
         state.config.cookie_secure,
-        Json(LoginFinishResponse {
+        Json(AuthFinishResponse {
             credential_id: verified.credential_id,
             csrf_token: minted_session.csrf_token,
         }),
@@ -424,12 +431,6 @@ struct PairFinishRequest {
     response: RegisterPublicKeyCredential,
 }
 
-#[derive(Debug, Serialize)]
-struct PairFinishResponse {
-    credential_id: String,
-    csrf_token: String,
-}
-
 /// Validate the plaintext token, start a WebAuthn registration
 /// ceremony, and return the challenge. Public — anyone with a valid
 /// token can pair.
@@ -438,16 +439,49 @@ struct PairFinishResponse {
 /// every token and runs scrypt verify (no short-circuit — the slice-2
 /// comment calls out the timing-channel concern). Only live,
 /// non-consumed tokens pass.
+/// Upper bound on the raw `setup_token` value accepted by
+/// `pair_start`. Legitimate tokens are 64 hex chars (32 bytes from
+/// CSPRNG, hex-encoded); 128 gives headroom. The cap exists to stop
+/// an unauthenticated caller from submitting a megabyte-long string
+/// and forcing `find_redeemable_setup_token` to run scrypt verify
+/// against every stored token with a megabyte input per call — a CPU
+/// amplification DoS vector because pair_start is public.
+const SETUP_TOKEN_MAX_LEN: usize = 128;
+
 async fn pair_start(
     State(state): State<AppState>,
     JsonBody(body): JsonBody<PairStartRequest>,
 ) -> Result<Json<PairStartResponse>, ApiError> {
+    if body.setup_token.len() > SETUP_TOKEN_MAX_LEN {
+        tracing::warn!(
+            length = body.setup_token.len(),
+            "pair_start: setup_token exceeds maximum length"
+        );
+        return Err(ApiError::BadRequest("setup_token exceeds maximum length"));
+    }
+
     let now = SystemTime::now();
-    // Take the snapshot once: we need user_handle + existing
-    // credentials + the matching setup token. All three come from
-    // the same point-in-time view. A concurrent mutation between
-    // here and pair_finish's transact is handled by re-validating
-    // the token inside that closure (below).
+
+    // Ensure the stable user handle is persisted before we hand it
+    // to the WebAuthn ceremony. `user_handle_or_init` is idempotent:
+    // returns the existing value on a live install, mints + persists
+    // a fresh one on the pathological path where tokens somehow
+    // exist without a handle. Running this inside `transact` means
+    // the handle that pair_finish reads back is the SAME value that
+    // was used here, even across concurrent pair_start calls.
+    let user_handle = state
+        .auth_store
+        .transact(|s| {
+            let (uh, next) = s.user_handle_or_init();
+            Ok((next, uh))
+        })
+        .await
+        .map_err(ApiError::from)?;
+
+    // A separate snapshot for token validation + excludeCredentials.
+    // `find_redeemable_setup_token` walks every record with scrypt
+    // verify, so a concurrent mutation doesn't matter — the
+    // authoritative token re-check happens in pair_finish's transact.
     let snap = state.auth_store.snapshot().await;
     let token = snap
         .find_redeemable_setup_token(&body.setup_token, now)
@@ -456,12 +490,6 @@ async fn pair_start(
             ApiError::Unauthorized
         })?;
     let setup_token_id = token.id.clone();
-
-    // Pairing requires an already-initialised instance — otherwise
-    // the first-device path is the right answer. This is mostly a
-    // guard against a pathological deployment that has tokens without
-    // credentials (shouldn't happen but fail-closed anyway).
-    let (user_handle, _) = snap.user_handle_or_init();
 
     let (challenge_id, ccr) = state
         .webauthn
@@ -496,9 +524,18 @@ async fn pair_finish(
     JsonBody(body): JsonBody<PairFinishRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let now = SystemTime::now();
+    // The auth crate owns the bidirectional link invariant (credential
+    // ↔ setup token). `finish_paired_registration` returns a
+    // credential already stamped with `setup_token_id` — the handler
+    // never constructs that link by hand.
     let credential = state
         .webauthn
-        .finish_registration(&body.challenge_id, &body.response, now)
+        .finish_paired_registration(
+            &body.challenge_id,
+            &body.response,
+            body.setup_token_id.clone(),
+            now,
+        )
         .inspect_err(|e| {
             tracing::warn!(
                 challenge_id = %body.challenge_id,
@@ -508,13 +545,7 @@ async fn pair_finish(
         })
         .map_err(ApiError::from)?;
 
-    // Stamp the bidirectional link before persisting.
-    let linked_credential = Credential {
-        setup_token_id: Some(body.setup_token_id.clone()),
-        ..credential
-    };
-
-    let cred_clone = linked_credential.clone();
+    let new_credential = credential.clone();
     let setup_token_id = body.setup_token_id.clone();
     let (plaintext_token, minted_session) = state
         .auth_store
@@ -536,10 +567,11 @@ async fn pair_finish(
                 ));
             }
 
-            let (plaintext, session) = Session::mint(cred_clone.id.clone(), now, SESSION_TTL);
+            let (plaintext, session) =
+                Session::mint(new_credential.id.clone(), now, SESSION_TTL);
             let next = s
-                .upsert_credential(cred_clone.clone())
-                .consume_setup_token(&setup_token_id, &cred_clone.id, now)
+                .upsert_credential(new_credential.clone())
+                .consume_setup_token(&setup_token_id, &new_credential.id, now)
                 .upsert_session(session.clone());
             Ok((next, (plaintext, session)))
         })
@@ -547,7 +579,7 @@ async fn pair_finish(
         .map_err(ApiError::from)?;
 
     tracing::info!(
-        credential_id = %linked_credential.id,
+        credential_id = %credential.id,
         setup_token_id = %body.setup_token_id,
         "paired new device; session minted"
     );
@@ -556,8 +588,8 @@ async fn pair_finish(
         StatusCode::CREATED,
         &plaintext_token,
         state.config.cookie_secure,
-        Json(PairFinishResponse {
-            credential_id: linked_credential.id,
+        Json(AuthFinishResponse {
+            credential_id: credential.id,
             csrf_token: minted_session.csrf_token,
         }),
     ))
@@ -567,7 +599,6 @@ async fn pair_finish(
 
 async fn logout(
     State(state): State<AppState>,
-    headers: HeaderMap,
     CsrfProtected(ctx): CsrfProtected,
 ) -> Result<impl IntoResponse, ApiError> {
     // Localhost has no session — nothing to end. Return 409 rather
@@ -577,30 +608,25 @@ async fn logout(
     // localhost callers; a request arriving here from localhost is
     // therefore either a buggy client or a probe. Treating it as a
     // conflict keeps the behaviour observable.
-    if matches!(ctx, AuthContext::Localhost) {
+    let AuthContext::Remote {
+        plaintext_token,
+        credential,
+        ..
+    } = ctx
+    else {
         return Err(ApiError::Conflict("localhost peer has no session to end"));
-    }
-
-    // Pull the cookie's plaintext so we can remove the matching
-    // session from the store. The `Authenticated` extractor already
-    // validated it; we re-read here because the session lookup keys
-    // off the plaintext, not off the already-resolved Session.
-    let cookie_value = headers
-        .get(header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(extract_session_token)
-        .ok_or(ApiError::Unauthorized)?;
+    };
 
     state
         .auth_store
-        .transact(move |s| Ok((s.remove_session(&cookie_value), ())))
+        .transact(move |s| Ok((s.remove_session(&plaintext_token), ())))
         .await
         .map_err(ApiError::from)?;
 
     let clear = build_clear_cookie(state.config.cookie_secure);
-    tracing::info!("logout succeeded; session removed");
-    Ok((
-        StatusCode::NO_CONTENT,
-        [(header::SET_COOKIE, clear)],
-    ))
+    tracing::info!(
+        credential_id = %credential.id,
+        "logout succeeded; session removed"
+    );
+    Ok((StatusCode::NO_CONTENT, [(header::SET_COOKIE, clear)]))
 }

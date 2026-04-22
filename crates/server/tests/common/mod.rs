@@ -5,6 +5,12 @@
 //! `tests/*.rs` file without each being compiled into its own test
 //! binary. Consumers declare `mod common;` at the top of each test
 //! file.
+//!
+//! The crate-level `#![allow(dead_code)]` is deliberate: each
+//! `tests/*.rs` is its own test binary, and a helper used by one
+//! binary appears unused to another. Without the blanket allow, every
+//! fixture would need to justify its compilation unit — noise with no
+//! corresponding safety benefit.
 
 #![allow(dead_code)]
 
@@ -13,7 +19,7 @@ use axum::{
     http::{header, request::Builder as RequestBuilder, Request},
 };
 use http_body_util::BodyExt;
-use katulong_auth::{AuthStore, Credential, WebAuthnService};
+use katulong_auth::{AuthStore, Credential, Session, WebAuthnService, SESSION_TTL};
 use katulong_server::state::{AppState, ServerConfig};
 use serde_json::Value;
 use std::net::SocketAddr;
@@ -77,4 +83,26 @@ pub fn json_body<T: serde::Serialize>(value: &T) -> Body {
 pub async fn body_json(resp: axum::response::Response) -> Value {
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
+}
+
+/// Seed an `AuthStore` with a credential + valid session for
+/// `credential_id`, and return the pair `(plaintext_cookie,
+/// csrf_token)` that a test can feed back into a CSRF-protected
+/// request. Both values are minted by the real `Session::mint` so
+/// the hashing + CSRF semantics are exercised end-to-end.
+pub async fn seeded_auth(state: &AppState, credential_id: &str) -> (String, String) {
+    let cred_id = credential_id.to_string();
+    state
+        .auth_store
+        .clone()
+        .transact(move |s| {
+            let credential = stub_credential(&cred_id);
+            let now = SystemTime::now();
+            let (plaintext, session) = Session::mint(cred_id.clone(), now, SESSION_TTL);
+            let csrf = session.csrf_token.clone();
+            let next = s.upsert_credential(credential).upsert_session(session);
+            Ok((next, (plaintext, csrf)))
+        })
+        .await
+        .unwrap()
 }

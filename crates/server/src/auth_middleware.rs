@@ -26,21 +26,37 @@ use std::time::SystemTime;
 /// The rich result produced when a request is authenticated.
 ///
 /// `Localhost` carries no session — the peer is this machine and that's
-/// the whole auth story. `Remote` carries both the session and the
-/// credential it was bound to, so handlers that need one or the other
-/// don't go back to the store.
+/// the whole auth story. `Remote` carries the session, the credential
+/// it was bound to, AND the plaintext session-token that unlocked
+/// them. Handlers that need to invalidate the session (logout) or echo
+/// the identity (e.g. `/api/me`) read from this context rather than
+/// re-parsing the cookie header.
 ///
-/// Clippy flags the size imbalance (Remote ≈ 240 bytes, Localhost 0)
-/// and suggests boxing `credential`. We decline: `Remote` is the common
-/// case on every authenticated remote request, and adding a heap
-/// allocation to the hot path to save zeroing 240 stack bytes on the
+/// Carrying `plaintext_token` closes a structural gap that the slice-6
+/// review flagged: `AuthState::remove_session` keys off the plaintext
+/// (it hashes internally) but `Session` only stores the hash. Before
+/// this field existed, the logout handler had to re-extract the
+/// cookie — duplicating work the extractor had already done.
+///
+/// Clippy flags the size imbalance (Remote ≈ 300 bytes, Localhost 0)
+/// and suggests boxing. We decline: `Remote` is the common case on
+/// every authenticated remote request, and adding a heap allocation
+/// to the hot path to save zeroing a few hundred stack bytes on the
 /// rare `Localhost` path is the wrong tradeoff for single-user
 /// katulong. If this ever shows up in a profile, revisit.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum AuthContext {
     Localhost,
-    Remote { session: Session, credential: Credential },
+    Remote {
+        session: Session,
+        credential: Credential,
+        /// Plaintext session-token as received from the client's
+        /// `Cookie` header. Preserved here so handlers can call
+        /// `AuthState::remove_session` without going back to the raw
+        /// header. Never logged.
+        plaintext_token: String,
+    },
 }
 
 impl AuthContext {
@@ -113,6 +129,7 @@ impl FromRequestParts<AppState> for Authenticated {
         Ok(Authenticated(AuthContext::Remote {
             session,
             credential,
+            plaintext_token: token,
         }))
     }
 }
