@@ -27,7 +27,7 @@ Rides on the same transport as a separate channel. The **host's** katulong rende
 This sidesteps the multi-tenancy trap: there is no guest session on the host to harden.
 
 ### Signaling
-The dorkyrobot.com managed-relay service from the paid-tunnel plan could do double duty as the signaling layer for establishing WebRTC peer links.
+A managed-relay service (see [`docs/service-plan.md`](service-plan.md)) could do double duty as the signaling layer for establishing WebRTC peer links.
 
 ## Security model — be honest about this
 
