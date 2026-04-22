@@ -152,6 +152,10 @@ function isAuthenticated(req) {
       const keyData = state.findApiKey(apiKey);
       if (keyData) {
         req._apiKeyAuth = true;
+        req._apiKeyId = keyData.id;
+        req._apiKeyScopes = Array.isArray(keyData.scopes) && keyData.scopes.length
+          ? [...keyData.scopes]
+          : ["full"];
         withStateLock((s) => {
           if (!s) return {};
           return { state: s.updateApiKeyActivity(keyData.id) };
@@ -229,7 +233,7 @@ pruneTimer.unref();
 
 // --- HTTP routes (assembled from lib/routes/) ---
 
-const { auth, csrf } = createMiddleware({ isAuthenticated, json });
+const { auth, csrf, requireScope } = createMiddleware({ isAuthenticated, json });
 
 // --- Plugins ---
 const { pluginRoutes, pluginWsHandlers, shutdownPlugins } = await loadPlugins({
@@ -308,7 +312,7 @@ const routes = [
     bridge,
     credentialLockout,
     RP_NAME, PORT,
-    auth, csrf,
+    auth, csrf, requireScope,
   }),
   ...createAppRoutes({
     json, parseJSON, readBody, isAuthenticated, sessionManager,
