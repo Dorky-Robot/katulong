@@ -28,6 +28,12 @@ pub enum AuthError {
 
     #[error("password-hash error: {0}")]
     Hash(String),
+
+    #[error("webauthn error: {0}")]
+    WebAuthn(String),
+
+    #[error("challenge not found or expired")]
+    ChallengeNotFound,
 }
 
 impl AuthError {

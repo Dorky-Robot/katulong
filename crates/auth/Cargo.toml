@@ -14,3 +14,7 @@ tempfile = { workspace = true }
 scrypt = { version = "0.11", default-features = false, features = ["simple"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 subtle = { version = "2", default-features = false }
+webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+base64 = "0.22"
