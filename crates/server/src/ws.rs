@@ -29,7 +29,7 @@
 //! the configured origin is the single authority.
 
 use crate::access::AccessMethod;
-use crate::auth_middleware::{AuthContext, Authenticated};
+use crate::auth_middleware::Authenticated;
 use crate::state::AppState;
 use axum::{
     extract::{
@@ -67,17 +67,30 @@ pub(crate) enum OriginCheck {
 /// unit-testable without a real HTTP stack.
 pub(crate) fn validate_origin(
     access: AccessMethod,
-    origin_header: Option<&str>,
+    origin: Option<&str>,
     public_origin: &str,
 ) -> OriginCheck {
     if matches!(access, AccessMethod::Localhost) {
         return OriginCheck::LocalhostExempt;
     }
-    match origin_header {
+    match origin {
         None => OriginCheck::Missing,
         Some(value) if value == public_origin => OriginCheck::Allowed,
         Some(_) => OriginCheck::Mismatch,
     }
+}
+
+/// Render an attacker-controlled string (like a rejected Origin
+/// value) safe for `tracing` emission: strip ASCII control
+/// characters that would corrupt text logs or inject structured
+/// fields in JSON formatters, cap at 256 chars. Used only at reject
+/// sites; the accept path never logs the Origin.
+fn sanitize_for_log(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| !c.is_ascii_control())
+        .take(256)
+        .collect()
 }
 
 /// Axum handler for `GET /ws`.
@@ -115,8 +128,13 @@ pub async fn ws_handler(
             (StatusCode::FORBIDDEN, "origin header required").into_response()
         }
         OriginCheck::Mismatch => {
+            // The Origin value is attacker-controlled; sanitize
+            // before logging so control characters can't corrupt
+            // text log lines or inject structured-field separators
+            // in JSON formatters.
+            let safe = sanitize_for_log(origin.unwrap_or(""));
             tracing::warn!(
-                origin = origin.unwrap_or(""),
+                origin = %safe,
                 expected = %state.config.public_origin,
                 "ws upgrade rejected: Origin mismatch"
             );
@@ -154,14 +172,6 @@ async fn serve_socket(mut socket: WebSocket) {
         }
     }
     let _ = socket.close().await;
-}
-
-/// `Authenticated` uses `AuthContext`; this helper is kept for future
-/// handlers that want to branch on the access mode without unwrapping
-/// the enum manually.
-#[allow(dead_code)]
-pub(crate) fn is_local_ctx(ctx: &AuthContext) -> bool {
-    matches!(ctx, AuthContext::Localhost)
 }
 
 #[cfg(test)]
@@ -209,6 +219,22 @@ mod tests {
             validate_origin(AccessMethod::Remote, Some(""), PUBLIC),
             OriginCheck::Mismatch,
             "empty Origin is a real value, not missing"
+        );
+    }
+
+    #[test]
+    fn sanitize_for_log_strips_control_chars_and_caps_length() {
+        assert_eq!(
+            sanitize_for_log("evil\r\n[WARN] faked=line"),
+            "evil[WARN] faked=line",
+            "newlines and carriage returns must be stripped — otherwise a crafted Origin can forge log lines"
+        );
+        assert_eq!(sanitize_for_log("plain"), "plain");
+        let huge = "x".repeat(1000);
+        assert_eq!(
+            sanitize_for_log(&huge).len(),
+            256,
+            "cap at 256 chars so an attacker can't flood logs with a megabyte Origin"
         );
     }
 

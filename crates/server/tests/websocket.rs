@@ -92,11 +92,11 @@ async fn ws_from_remote_with_mismatched_origin_is_forbidden() {
 }
 
 #[tokio::test]
-async fn ws_plain_get_without_upgrade_headers_fails_fast() {
-    // The WebSocketUpgrade extractor fails with 400 when WS headers
-    // are absent. We don't assert the exact status — just that the
-    // request rejects cleanly rather than silently succeeding. This
-    // covers the "plain HTTP probe on /ws" case.
+async fn ws_localhost_plain_get_without_upgrade_returns_client_error() {
+    // Localhost passes auth + origin (exempt), but without WS
+    // upgrade headers the handler's `Option<WebSocketUpgrade>` path
+    // returns 426 UPGRADE_REQUIRED. We accept any 4xx — the point
+    // is that a plain probe doesn't silently succeed.
     let (state, _dir) = ephemeral_state().await;
     let resp = app(state)
         .oneshot(
@@ -113,4 +113,27 @@ async fn ws_plain_get_without_upgrade_headers_fails_fast() {
         "expected 4xx for missing upgrade headers; got {}",
         resp.status()
     );
+}
+
+#[tokio::test]
+async fn ws_remote_authed_with_origin_but_no_upgrade_headers_returns_426() {
+    // Companion to the localhost test above: the remote-auth path,
+    // with matching Origin, but no WS upgrade headers. Origin check
+    // passes (Allowed); `Option<WebSocketUpgrade>` is None; handler
+    // returns 426 UPGRADE_REQUIRED rather than silently 200'ing.
+    let (state, _dir) = ephemeral_state().await;
+    let (cookie, _csrf) = seeded_auth(&state, "c1").await;
+    let resp = app(state)
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::GET)
+                .uri("/ws")
+                .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .header(header::ORIGIN, "https://katulong.test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
 }
