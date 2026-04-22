@@ -74,11 +74,19 @@ resolve_repo_root() {
   fi
   local main_root main_common cwd_top cwd_common
   main_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+  # Anchor every git call to an explicit -C <dir> so relative paths emitted
+  # by --git-common-dir (".git" in a main checkout, "../.git" from a subdir,
+  # absolute paths in linked worktrees) all resolve against the same base
+  # the subsequent `cd` normalization uses. Without anchoring, running from
+  # a main-checkout subdir emits "../.git" relative to the original cwd, but
+  # the normalization `cd "$cwd_top" && cd <path>` resolves it against the
+  # worktree toplevel — the two don't align and the cd lands nowhere,
+  # silently disabling worktree detection.
   main_common="$(git -C "$main_root" rev-parse --git-common-dir 2>/dev/null)" || { echo "$main_root"; return 0; }
-  main_common="$(cd "$main_root" && cd "$main_common" && pwd)"
+  main_common="$(cd "$main_root" && cd "$main_common" && pwd 2>/dev/null)" || { echo "$main_root"; return 0; }
   cwd_top="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "$main_root"; return 0; }
-  cwd_common="$(git rev-parse --git-common-dir 2>/dev/null)" || { echo "$main_root"; return 0; }
-  cwd_common="$(cd "$cwd_top" && cd "$cwd_common" && pwd)"
+  cwd_common="$(git -C "$cwd_top" rev-parse --git-common-dir 2>/dev/null)" || { echo "$main_root"; return 0; }
+  cwd_common="$(cd "$cwd_top" && cd "$cwd_common" && pwd 2>/dev/null)" || { echo "$main_root"; return 0; }
   if [[ "$main_common" == "$cwd_common" ]]; then
     echo "$cwd_top"
   else
