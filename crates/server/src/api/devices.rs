@@ -111,7 +111,11 @@ async fn revoke_device(
     // is a dedicated `AuthError` variant so the HTTP layer's mapping
     // is compiler-enforced rather than string-matched.
     let credential_id = id.clone();
-    state
+    // `transact` returns whether the credential actually existed —
+    // used below to decide whether to emit the revocation broadcast.
+    // Unknown id → no state change → no signal (no one has a
+    // live connection bound to an id that never existed).
+    let existed = state
         .auth_store
         .transact(move |s| {
             let target_exists = s.find_credential(&id).is_some();
@@ -121,10 +125,14 @@ async fn revoke_device(
             // `remove_credential` cascades to the credential's
             // sessions (slice 1+2 transition). Unknown id is a no-op
             // — idempotent DELETE.
-            Ok((s.remove_credential(&id), ()))
+            Ok((s.remove_credential(&id), target_exists))
         })
         .await
         .map_err(ApiError::from)?;
+
+    if existed {
+        state.revocations.emit(&credential_id);
+    }
 
     tracing::info!(
         credential_id = %credential_id,

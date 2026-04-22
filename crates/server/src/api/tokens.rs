@@ -181,12 +181,33 @@ async fn revoke_token(
     // as idempotent success (204). The caller can't tell "never
     // existed" from "already revoked," which is fine: both answers
     // mean "this id is not redeemable from here forward."
-    let id_for_log = id.clone();
-    state
+    //
+    // Revoking a token cascades (via `AuthState::remove_setup_token`)
+    // to removing the credential it paired and that credential's
+    // sessions. Any transport currently holding a connection bound
+    // to that credential needs the revocation broadcast, same as
+    // direct device-revoke. We read the paired credential id BEFORE
+    // the transact closure runs so we know what to emit afterwards.
+    let token_id = id.clone();
+    let paired_credential_id = state
         .auth_store
-        .transact(move |s| Ok((s.remove_setup_token(&id), ())))
+        .transact(move |s| {
+            let paired = s
+                .find_setup_token(&id)
+                .and_then(|t| t.credential_id.clone());
+            Ok((s.remove_setup_token(&id), paired))
+        })
         .await
         .map_err(ApiError::from)?;
-    tracing::info!(token_id = %id_for_log, "setup token revoked");
+
+    if let Some(ref cred_id) = paired_credential_id {
+        state.revocations.emit(cred_id);
+    }
+
+    tracing::info!(
+        token_id = %token_id,
+        paired_credential_id = paired_credential_id.as_deref().unwrap_or("none"),
+        "setup token revoked"
+    );
     Ok(StatusCode::NO_CONTENT)
 }
