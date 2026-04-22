@@ -10,6 +10,7 @@ pub mod api;
 pub mod auth_middleware;
 pub mod cookie;
 pub mod state;
+pub mod ws;
 
 use api::auth::auth_routes;
 use api::devices::device_routes;
@@ -67,6 +68,11 @@ pub fn app(state: AppState) -> Router {
         // Device (credential) management (list/revoke). Same
         // auth/CSRF shape as tokens.
         .merge(device_routes())
+        // PROTECTED: WebSocket upgrade. Auth via `Authenticated`,
+        // Origin validation via `ws::validate_origin` (deny-by-default
+        // on non-local connections). Slice 8 ships the transport only;
+        // slice 9 wires tmux/PTY into the message loop.
+        .route("/ws", get(ws::ws_handler))
         .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT))
         .with_state(state)
 }
