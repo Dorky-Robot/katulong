@@ -22,7 +22,7 @@ mod webauthn;
 
 pub use credential::Credential;
 pub use error::AuthError;
-pub use session::Session;
+pub use session::{Session, SESSION_TTL};
 pub use setup_token::{PlaintextToken, SetupToken};
 pub use state::AuthState;
 pub use store::AuthStore;
