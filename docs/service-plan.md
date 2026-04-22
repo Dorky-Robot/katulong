@@ -1,19 +1,19 @@
 # Service plan
 
-How the dorkyrobot.com offering relates to the open-source katulong
-project, and what the user experience looks like at each tier.
+How an eventual managed katulong offering would relate to the
+open-source project, and what the user experience looks like at each
+tier.
 
 ## Philosophy: protocol open, hub is product
 
 Katulong stays open-source and self-hostable. The federation
 primitives (scoped API keys, mint/consume) are a protocol — any
-operator can wire up their own hub. dorkyrobot.com runs an
-opinionated managed implementation of that protocol plus a tunnel
-relay for people who don't want to operate the infrastructure
-themselves.
+operator can wire up their own hub. A managed tier is just an
+opinionated implementation of that protocol plus a tunnel relay for
+people who don't want to operate the infrastructure themselves.
 
 Practical consequence: if a capability belongs in the protocol, it
-ships in katulong. The managed service is about convenience, not
+ships in katulong. A managed service is about convenience, not
 locked-away features.
 
 ## The ladder
@@ -29,9 +29,10 @@ capability:
    a long-lived process on any box you own. Same protocol as the
    managed tier — you run the infra.
 
-3. **Managed hub.** Hosted on dorkyrobot.com. One-passkey sign-in,
-   unified carousel across your instances, auto-enrolled via the
-   tunnel control plane.
+3. **Managed hub (hypothetical).** One-passkey sign-in, unified
+   carousel across your instances, auto-enrolled via the tunnel
+   control plane. Same protocol as Tier 2 — an operator runs it so
+   you don't have to.
 
 ## What the managed service does
 

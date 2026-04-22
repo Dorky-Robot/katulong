@@ -109,13 +109,13 @@ katulong fleet test-mint "https://$(hostname)" --key "$KEY" --json
 Or from the hub / your laptop, against the instance's public URL:
 
 ```sh
-katulong fleet test-mint https://katulong-og.example.com --key "$KEY"
+katulong fleet test-mint https://katulong.example.com --key "$KEY"
 ```
 
 Expected result:
 
 ```
-OK  https://katulong-og.example.com — mint + consume succeeded (redirect to /)
+OK  https://katulong.example.com — mint + consume succeeded (redirect to /)
 ```
 
 If it fails:
@@ -136,7 +136,7 @@ If it fails:
 
 Hand the hub operator (or your notes):
 
-- Instance public URL (e.g. `https://katulong-og.example.com`)
+- Instance public URL (e.g. `https://katulong.example.com`)
 - Key ID from step 2 (for rotation / auditing — safe to share)
 - Key material from step 2 (secret — transport via secure channel)
 

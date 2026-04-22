@@ -172,11 +172,11 @@ performing a mint + consume round-trip and reporting whether the
 instance returned a session cookie.
 
 ```bash
-katulong fleet test-mint https://katulong-og.example.com --key <key>
-katulong fleet test-mint https://katulong-og.example.com --json
+katulong fleet test-mint https://katulong.example.com --key <key>
+katulong fleet test-mint https://katulong.example.com --json
 
 # Or pass the key via env so it doesn't land in shell history.
-KATULONG_FLEET_KEY=<key> katulong fleet test-mint https://katulong-og.example.com
+KATULONG_FLEET_KEY=<key> katulong fleet test-mint https://katulong.example.com
 ```
 
 Exits 0 on success, 1 on failure. The `--json` output is structured for
