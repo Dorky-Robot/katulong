@@ -28,4 +28,16 @@ pub use state::AuthState;
 pub use store::AuthStore;
 pub use webauthn::{ChallengeId, VerifiedAuthentication, WebAuthnService};
 
+/// Re-export the webauthn-rs wire types the server crate needs to shape
+/// its HTTP request/response bodies. Keeping these behind the auth
+/// crate's facade means the server crate doesn't grow a direct
+/// dependency on `webauthn-rs` — if we ever swap the underlying library,
+/// the surface that changes is this file, not every handler.
+pub mod webauthn_wire {
+    pub use webauthn_rs::prelude::{
+        CreationChallengeResponse, PublicKeyCredential, RegisterPublicKeyCredential,
+        RequestChallengeResponse,
+    };
+}
+
 pub type Result<T> = std::result::Result<T, AuthError>;

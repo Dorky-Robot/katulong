@@ -6,10 +6,12 @@
 //! client.
 
 pub mod access;
+pub mod api;
 pub mod auth_middleware;
 pub mod cookie;
 pub mod state;
 
+use api::auth::auth_routes;
 use auth_middleware::Authenticated;
 use axum::{extract::DefaultBodyLimit, routing::get, Json, Router};
 use katulong_shared::{ServerMessage, PROTOCOL_VERSION};
@@ -54,6 +56,9 @@ pub fn app(state: AppState) -> Router {
         // extraction, store lookup) in a single round-trip.
         // Integration tests target this route.
         .route("/api/me", get(me))
+        // Auth ceremony routes. Each endpoint's public/protected
+        // status is documented on the route line inside the module.
+        .merge(auth_routes())
         .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT))
         .with_state(state)
 }
