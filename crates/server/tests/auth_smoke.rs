@@ -48,10 +48,9 @@ async fn remote_request_with_valid_cookie_is_authenticated() {
             .transact(|s| {
                 let credential = stub_credential("c1");
                 let now = SystemTime::now();
-                let sess = Session::mint("c1", now, SESSION_TTL);
-                let tok = sess.token.clone();
+                let (plaintext, sess) = Session::mint("c1", now, SESSION_TTL);
                 let next = s.upsert_credential(credential).upsert_session(sess);
-                Ok((next, tok))
+                Ok((next, plaintext))
             })
             .await
             .unwrap()
@@ -129,10 +128,9 @@ async fn expired_session_cookie_is_rejected() {
             let credential = stub_credential("c1");
             // Session created a long time ago and already expired.
             let expired_now = SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
-            let sess = Session::mint("c1", expired_now, Duration::from_secs(60));
-            let tok = sess.token.clone();
+            let (plaintext, sess) = Session::mint("c1", expired_now, Duration::from_secs(60));
             let next = s.upsert_credential(credential).upsert_session(sess);
-            Ok((next, tok))
+            Ok((next, plaintext))
         })
         .await
         .unwrap();

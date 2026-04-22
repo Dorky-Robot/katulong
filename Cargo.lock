@@ -1021,6 +1021,7 @@ dependencies = [
  "scrypt",
  "serde",
  "serde_json",
+ "sha2",
  "subtle",
  "tempfile",
  "thiserror",

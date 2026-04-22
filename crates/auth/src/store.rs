@@ -151,9 +151,9 @@ mod tests {
         }
     }
 
-    fn sess(token: &str, cred_id: &str) -> Session {
+    fn sess(plaintext_token: &str, cred_id: &str) -> Session {
         Session {
-            token: token.into(),
+            token_hash: crate::session::hash_session_token(plaintext_token),
             credential_id: cred_id.into(),
             csrf_token: "csrf".into(),
             created_at: SystemTime::UNIX_EPOCH,

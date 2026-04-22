@@ -1,7 +1,9 @@
+use crate::session::hash_session_token;
 use crate::{Credential, Session, SetupToken};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use subtle::ConstantTimeEq;
+use uuid::Uuid;
 
 /// Constant-time string equality. Used for every session-token comparison
 /// in this module — reads *and* writes — so byte-wise comparison timing
@@ -29,6 +31,21 @@ fn ct_eq_str(a: &str, b: &str) -> bool {
 pub struct AuthState {
     #[serde(default = "current_schema_version")]
     pub schema_version: u32,
+    /// Stable per-user WebAuthn user handle. `None` on a fresh install;
+    /// set on first-device registration and reused for every subsequent
+    /// device so the authenticator treats them as credentials for the
+    /// same user account. Generated on demand via
+    /// `AuthState::user_handle_or_init`.
+    ///
+    /// WebAuthn requires the user handle to be stable across
+    /// registrations for the same logical user — otherwise a
+    /// roaming passkey manager would treat each device pairing as a
+    /// fresh user and some clients show multiple entries. The previous
+    /// shape minted a new UUID per `register_start` call, which was
+    /// fine for single-device installs but would have produced visible
+    /// orphan entries once slice 6's pairing flow lands.
+    #[serde(default)]
+    pub user_handle: Option<Uuid>,
     #[serde(default)]
     pub credentials: Vec<Credential>,
     #[serde(default)]
@@ -47,6 +64,7 @@ impl Default for AuthState {
     fn default() -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
+            user_handle: None,
             credentials: Vec::new(),
             sessions: Vec::new(),
             setup_tokens: Vec::new(),
@@ -65,14 +83,23 @@ impl AuthState {
         self.credentials.iter().find(|c| c.id == id)
     }
 
-    pub fn find_session(&self, token: &str) -> Option<&Session> {
-        self.sessions.iter().find(|s| ct_eq_str(&s.token, token))
+    /// Look up a session by its plaintext token. Hashes the candidate
+    /// and constant-time compares against each stored `token_hash`.
+    /// `token` is the cookie value as received from the client — never
+    /// a stored hash. See `crate::session::hash_session_token` for the
+    /// single source of truth on the hashing.
+    pub fn find_session(&self, plaintext_token: &str) -> Option<&Session> {
+        let candidate = hash_session_token(plaintext_token);
+        self.sessions
+            .iter()
+            .find(|s| ct_eq_str(&s.token_hash, &candidate))
     }
 
     /// `find_session` plus an expiry check. Returns `None` if the session is
     /// missing or has already expired at `now`.
-    pub fn valid_session(&self, token: &str, now: SystemTime) -> Option<&Session> {
-        self.find_session(token).filter(|s| now < s.expires_at)
+    pub fn valid_session(&self, plaintext_token: &str, now: SystemTime) -> Option<&Session> {
+        self.find_session(plaintext_token)
+            .filter(|s| now < s.expires_at)
     }
 
     pub fn find_setup_token(&self, id: &str) -> Option<&SetupToken> {
@@ -114,6 +141,31 @@ impl AuthState {
 
     // ---------- Pure transitions ----------
 
+    /// Return the stable user handle, minting a fresh one if this
+    /// state hasn't seen a registration yet. Returns `(handle, state)`
+    /// — callers inside `AuthStore::transact` substitute the returned
+    /// `state` in the transition chain.
+    ///
+    /// Idempotent: calling on a state that already has a handle
+    /// returns the existing value and an unchanged state clone. The
+    /// handle is generated via the OS CSPRNG (through `Uuid::new_v4`);
+    /// 122 bits of entropy is comfortably past any collision concern.
+    pub fn user_handle_or_init(&self) -> (Uuid, Self) {
+        match self.user_handle {
+            Some(u) => (u, self.clone()),
+            None => {
+                let fresh = Uuid::new_v4();
+                (
+                    fresh,
+                    Self {
+                        user_handle: Some(fresh),
+                        ..self.clone()
+                    },
+                )
+            }
+        }
+    }
+
     /// Add or replace a credential by id.
     pub fn upsert_credential(&self, cred: Credential) -> Self {
         let mut credentials: Vec<Credential> = self
@@ -150,10 +202,12 @@ impl AuthState {
         }
     }
 
-    /// Add or replace a session by token (upsert — mirrors `upsert_credential`).
+    /// Add or replace a session by its stored hash (upsert — mirrors
+    /// `upsert_credential`). The `Session` argument already carries
+    /// `token_hash`; dedup works on that value.
     pub fn upsert_session(&self, session: Session) -> Self {
         let mut sessions = self.sessions.clone();
-        sessions.retain(|s| !ct_eq_str(&s.token, &session.token));
+        sessions.retain(|s| !ct_eq_str(&s.token_hash, &session.token_hash));
         sessions.push(session);
         Self {
             sessions,
@@ -161,12 +215,16 @@ impl AuthState {
         }
     }
 
-    pub fn remove_session(&self, token: &str) -> Self {
+    /// Remove a session identified by its plaintext token value (e.g.
+    /// the cookie the client presented). Hashes the candidate before
+    /// comparing so the stored state never has to hold the plaintext.
+    pub fn remove_session(&self, plaintext_token: &str) -> Self {
+        let target = hash_session_token(plaintext_token);
         Self {
             sessions: self
                 .sessions
                 .iter()
-                .filter(|s| !ct_eq_str(&s.token, token))
+                .filter(|s| !ct_eq_str(&s.token_hash, &target))
                 .cloned()
                 .collect(),
             ..self.clone()
@@ -191,13 +249,14 @@ impl AuthState {
     /// Sliding-expiry policy (when to also bump `expires_at`) lives with the
     /// caller; this transition only records the observation so tests stay
     /// straightforward and policy is free to evolve.
-    pub fn touch_session(&self, token: &str, now: SystemTime) -> Self {
+    pub fn touch_session(&self, plaintext_token: &str, now: SystemTime) -> Self {
+        let target = hash_session_token(plaintext_token);
         Self {
             sessions: self
                 .sessions
                 .iter()
                 .map(|s| {
-                    if ct_eq_str(&s.token, token) {
+                    if ct_eq_str(&s.token_hash, &target) {
                         Session {
                             last_activity_at: now,
                             ..s.clone()
@@ -212,13 +271,14 @@ impl AuthState {
     }
 
     /// Extend a session's expiry. No-op if the token isn't found.
-    pub fn renew_session(&self, token: &str, new_expires_at: SystemTime) -> Self {
+    pub fn renew_session(&self, plaintext_token: &str, new_expires_at: SystemTime) -> Self {
+        let target = hash_session_token(plaintext_token);
         Self {
             sessions: self
                 .sessions
                 .iter()
                 .map(|s| {
-                    if ct_eq_str(&s.token, token) {
+                    if ct_eq_str(&s.token_hash, &target) {
                         Session {
                             expires_at: new_expires_at,
                             ..s.clone()
@@ -392,9 +452,13 @@ mod tests {
         }
     }
 
-    fn sess(token: &str, cred_id: &str, expires_ms: u64) -> Session {
+    /// Build a test `Session` whose `token_hash` is SHA-256 of
+    /// `plaintext_token`. Tests that look up via `find_session` /
+    /// `remove_session` / `touch_session` pass the same `plaintext_token`
+    /// and the hashing round-trip works.
+    fn sess(plaintext_token: &str, cred_id: &str, expires_ms: u64) -> Session {
         Session {
-            token: token.into(),
+            token_hash: hash_session_token(plaintext_token),
             credential_id: cred_id.into(),
             csrf_token: "csrf".into(),
             created_at: epoch_plus(0),

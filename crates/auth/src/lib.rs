@@ -22,11 +22,11 @@ mod webauthn;
 
 pub use credential::Credential;
 pub use error::AuthError;
-pub use session::{Session, SESSION_TTL};
+pub use session::{Session, SessionTokenPlaintext, SESSION_TTL};
 pub use setup_token::{PlaintextToken, SetupToken};
 pub use state::AuthState;
 pub use store::AuthStore;
-pub use webauthn::{fresh_user_handle, ChallengeId, VerifiedAuthentication, WebAuthnService};
+pub use webauthn::{ChallengeId, VerifiedAuthentication, WebAuthnService};
 
 /// Re-export the webauthn-rs wire types the server crate needs to shape
 /// its HTTP request/response bodies. Keeping these behind the auth
@@ -35,8 +35,8 @@ pub use webauthn::{fresh_user_handle, ChallengeId, VerifiedAuthentication, WebAu
 /// the surface that changes is this file, not every handler.
 pub mod webauthn_wire {
     pub use webauthn_rs::prelude::{
-        CreationChallengeResponse, PublicKeyCredential, RegisterPublicKeyCredential,
-        RequestChallengeResponse,
+        AuthenticationResult, CreationChallengeResponse, PublicKeyCredential,
+        RegisterPublicKeyCredential, RequestChallengeResponse,
     };
 }
 

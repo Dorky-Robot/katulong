@@ -70,30 +70,29 @@ pub type ChallengeId = String;
 
 /// Materialised outcome of `finish_authentication`.
 ///
-/// `updated_credential` carries the `Passkey` blob rewritten with the
-/// counter/backup-state update produced by the authenticator. The caller
-/// MUST persist it via `AuthStore::transact(|s| Ok((s.upsert_credential(
-/// updated), ())))` before minting a session — without that write, the
-/// stored `public_key` blob's counter baseline never advances, and
-/// webauthn-rs's clone-detection monotonicity check (which compares
-/// incoming counters against the baseline INSIDE the stored blob) is
-/// silently inert for every subsequent login. `None` means the
-/// authenticator reported no change and the blob does not need to be
-/// rewritten (e.g., counterless synced passkeys with identical backup
-/// state) — this is the `Passkey::update_credential` returning
-/// `Some(false)` case, not an error.
+/// Carries the raw `AuthenticationResult` from webauthn-rs so the
+/// caller can apply it to the *live* `Credential` under
+/// `AuthStore::transact` — the previous shape pre-computed
+/// `updated_credential` from the caller's snapshot, which under
+/// concurrent double-submit could regress the counter baseline by
+/// writing back a pre-update blob. Now the caller does
+/// `cred.apply_authentication(&verified.result)?` INSIDE the transact
+/// closure, where `cred` is fetched from the live `&AuthState` under
+/// the mutex. That closes the race structurally.
 ///
-/// `#[must_use]` applies to the whole struct: forgetting to inspect
-/// `updated_credential` silently reopens the clone-detection gap this
-/// slice was built to close, so the compiler should warn if the whole
-/// value is dropped without a match.
-#[must_use = "updated_credential must be persisted via AuthStore or webauthn-rs clone-detection is inert"]
+/// `#[must_use]` applies to the whole struct: forgetting to invoke
+/// `apply_authentication` silently reopens the clone-detection gap.
+#[must_use = "result must be applied to the stored credential via Credential::apply_authentication within AuthStore::transact — otherwise webauthn-rs clone-detection is inert"]
 #[derive(Debug, Clone)]
 pub struct VerifiedAuthentication {
     pub credential_id: String,
     pub new_counter: u32,
     pub user_verified: bool,
-    pub updated_credential: Option<Credential>,
+    /// The raw webauthn-rs authentication assertion. Apply to the
+    /// stored credential via `Credential::apply_authentication` under
+    /// `AuthStore::transact` to persist the counter/backup-state
+    /// update.
+    pub result: AuthenticationResult,
 }
 
 /// Long-lived WebAuthn ceremony coordinator.
@@ -109,20 +108,6 @@ pub struct WebAuthnService {
     webauthn: Webauthn,
     pending_registrations: Mutex<HashMap<ChallengeId, (PasskeyRegistration, SystemTime)>>,
     pending_authentications: Mutex<HashMap<ChallengeId, (PasskeyAuthentication, SystemTime)>>,
-}
-
-/// Mint a fresh WebAuthn user handle.
-///
-/// Separated from `WebAuthnService::start_registration` so the caller
-/// can reuse a stable handle across subsequent-device registrations
-/// (slice 6) without forcing a new one per call. For slice 5 the
-/// first-device path is the only caller and a brand-new UUID is fine.
-///
-/// Owned by the auth crate so the server crate doesn't need a direct
-/// `uuid` dep — the concept "what is a user handle" lives with the
-/// ceremony that consumes it.
-pub fn fresh_user_handle() -> Uuid {
-    Uuid::new_v4()
 }
 
 impl WebAuthnService {
@@ -278,23 +263,27 @@ impl WebAuthnService {
 
     /// Finish an authentication ceremony.
     ///
-    /// Takes the caller's current credential set so we can look up the
-    /// stored `Passkey` by its cred-id, apply the counter/backup-state
-    /// update from the authenticator's assertion, and hand the refreshed
-    /// `Credential` back for the caller to persist. Without this refresh,
-    /// webauthn-rs's clone-detection baseline (stored inside the serialized
-    /// `Passkey` blob) never advances and monotonicity enforcement is
-    /// inert on every login after the first — a cloned authenticator could
-    /// then replay indefinitely.
+    /// Returns the raw `AuthenticationResult` inside
+    /// `VerifiedAuthentication.result` — the caller must apply it to
+    /// the *live* stored credential inside `AuthStore::transact` via
+    /// `Credential::apply_authentication`. That re-read-under-mutex is
+    /// what closes the counter-regression window: under concurrent
+    /// double-submit, two finish calls would otherwise both compute
+    /// `updated_credential` from their own pre-transact snapshots and
+    /// the second write would overwrite the first's counter advance.
     ///
-    /// `updated_credential` is `None` when `Passkey::update_credential`
-    /// reports no change (counterless synced passkeys with matching backup
-    /// state are the common case) — the caller can then skip the write.
+    /// Revocation during the challenge window is also checked at the
+    /// caller: if the credential has been deleted by the time
+    /// `transact` runs, the transact closure returns
+    /// `AuthError::StateConflict`. This function deliberately does NOT
+    /// look up the credential from a snapshot — the snapshot could be
+    /// stale by the time the caller runs transact, and doing the check
+    /// twice (here and in the closure) would introduce the same TOCTOU
+    /// pattern the reshape was meant to close.
     pub fn finish_authentication(
         &self,
         challenge_id: &str,
         response: &PublicKeyCredential,
-        credentials: &[Credential],
         now: SystemTime,
     ) -> Result<VerifiedAuthentication> {
         let (auth_state, expires_at) = self
@@ -312,32 +301,11 @@ impl WebAuthnService {
             .finish_passkey_authentication(response, &auth_state)
             .map_err(|e| AuthError::WebAuthn(e.to_string()))?;
 
-        let credential_id = encode_credential_id(result.cred_id());
-        let new_counter = result.counter();
-        let user_verified = result.user_verified();
-
-        // The stored credential must still exist for the assertion to be
-        // meaningful: `start_authentication` captured it in `auth_state`, and
-        // an admin revocation during the 5-minute challenge window (or any
-        // other deletion) means the passkey has been explicitly disallowed.
-        // Letting the ceremony succeed anyway would defeat revocation — the
-        // caller would mint a session against a credential the admin
-        // already pulled. Fail closed.
-        let cred = credentials
-            .iter()
-            .find(|c| c.id == credential_id)
-            .ok_or_else(|| {
-                AuthError::WebAuthn(
-                    "credential revoked or missing after successful ceremony".into(),
-                )
-            })?;
-        let updated_credential = apply_auth_result(cred, &result)?;
-
         Ok(VerifiedAuthentication {
-            credential_id,
-            new_counter,
-            user_verified,
-            updated_credential,
+            credential_id: encode_credential_id(result.cred_id()),
+            new_counter: result.counter(),
+            user_verified: result.user_verified(),
+            result,
         })
     }
 
@@ -358,44 +326,6 @@ impl WebAuthnService {
     }
 }
 
-/// Apply a WebAuthn authentication assertion to the stored `Passkey`
-/// blob and return the resulting `Credential` if anything changed.
-///
-/// `None` means the authenticator reported no counter / backup-state
-/// delta (common for counterless synced passkeys), so the caller should
-/// skip the write. `Some(updated)` means the `Passkey` advanced and the
-/// caller must upsert — failing to persist leaves clone-detection stuck
-/// at the previous baseline.
-fn apply_auth_result(
-    cred: &Credential,
-    result: &AuthenticationResult,
-) -> Result<Option<Credential>> {
-    let mut passkey = cred.to_passkey()?;
-    match passkey.update_credential(result) {
-        Some(true) => {
-            let material =
-                serde_json::to_vec(&passkey).map_err(|e| AuthError::WebAuthn(e.to_string()))?;
-            Ok(Some(Credential {
-                public_key: material,
-                counter: result.counter(),
-                ..cred.clone()
-            }))
-        }
-        // Cred id matched, nothing to update — counterless synced passkey
-        // with identical backup state. Safe no-op.
-        Some(false) => Ok(None),
-        // Cred id inside the blob doesn't match the result's cred id.
-        // The caller already looked up `cred` by the result's encoded
-        // cred id, so this means the stored blob disagrees with its
-        // own row — a data-integrity corruption. Fail loudly rather
-        // than silently skipping the counter update, because collapsing
-        // this into `Ok(None)` would leave clone-detection permanently
-        // inert for that credential with no operator-visible signal.
-        None => Err(AuthError::WebAuthn(
-            "credential blob cred_id mismatch; refusing to skip counter update".into(),
-        )),
-    }
-}
 
 /// Insert `(value, expires_at)` at `id`, first pruning expired entries
 /// and then refusing if the map is still at `MAX_PENDING_CHALLENGES`.
@@ -426,6 +356,44 @@ impl Credential {
     /// to hold the service to read its own blob.
     pub fn to_passkey(&self) -> Result<Passkey> {
         serde_json::from_slice(&self.public_key).map_err(|e| AuthError::WebAuthn(e.to_string()))
+    }
+
+    /// Apply a webauthn-rs `AuthenticationResult` to this credential,
+    /// returning `Some(updated)` if the blob changed (caller must
+    /// persist) or `None` if nothing changed (caller can skip the write).
+    ///
+    /// Designed to be called from inside an `AuthStore::transact`
+    /// closure with a credential fetched from the live state — that's
+    /// the TOCTOU-safe path. Calling against a stale snapshot and then
+    /// writing the result back risks regressing the counter under
+    /// concurrent double-submit.
+    ///
+    /// Returns `Err(AuthError::WebAuthn(...))` when the result's
+    /// cred-id doesn't match the credential's blob — that's a
+    /// storage-corruption signal (the row's `id` disagrees with the
+    /// cred-id baked into its serialized `Passkey`). Collapsing it
+    /// into `Ok(None)` would leave clone-detection permanently inert
+    /// for that credential with no operator-visible signal.
+    pub fn apply_authentication(
+        &self,
+        result: &AuthenticationResult,
+    ) -> Result<Option<Credential>> {
+        let mut passkey = self.to_passkey()?;
+        match passkey.update_credential(result) {
+            Some(true) => {
+                let material = serde_json::to_vec(&passkey)
+                    .map_err(|e| AuthError::WebAuthn(e.to_string()))?;
+                Ok(Some(Credential {
+                    public_key: material,
+                    counter: result.counter(),
+                    ..self.clone()
+                }))
+            }
+            Some(false) => Ok(None),
+            None => Err(AuthError::WebAuthn(
+                "credential blob cred_id mismatch; refusing to skip counter update".into(),
+            )),
+        }
     }
 }
 

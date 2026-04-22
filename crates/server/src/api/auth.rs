@@ -20,6 +20,7 @@
 
 use crate::access::AccessMethod;
 use crate::api::error::ApiError;
+use crate::api::extract::JsonBody;
 use crate::auth_middleware::Authenticated;
 use crate::cookie::build_set_cookie;
 use crate::state::AppState;
@@ -34,7 +35,7 @@ use katulong_auth::webauthn_wire::{
     CreationChallengeResponse, PublicKeyCredential, RegisterPublicKeyCredential,
     RequestChallengeResponse,
 };
-use katulong_auth::{fresh_user_handle, AuthError, ChallengeId, Session, SESSION_TTL};
+use katulong_auth::{AuthError, ChallengeId, Session, SESSION_TTL};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::time::SystemTime;
@@ -154,31 +155,47 @@ async fn register_start(
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
     let access = AccessMethod::classify(peer, host);
     if !matches!(access, AccessMethod::Localhost) {
-        return Err(ApiError::Forbidden(
-            "first-device registration must originate from localhost",
-        ));
+        // Generic "forbidden" — the descriptive variant would confirm
+        // to a remote scanner that this is a katulong instance with a
+        // first-device registration path gated on localhost. Operators
+        // needing detail can read the server log.
+        tracing::warn!("rejecting remote request to first-device registration");
+        return Err(ApiError::Forbidden("forbidden"));
     }
 
-    // Single snapshot for this handler: we use it both for the
-    // "no credentials yet" check and for the `excludeCredentials`
-    // argument. The authoritative re-check happens inside
-    // `register_finish`'s transact closure; this path is the
-    // fast-fail so the user doesn't do a whole biometric prompt only
-    // to be told "already initialised" at the end.
-    let snap = state.auth_store.snapshot().await;
-    if !snap.credentials.is_empty() {
-        return Err(ApiError::Conflict(
-            "instance already initialised; additional devices must pair via setup token",
-        ));
-    }
+    // Get-or-init the stable user handle AND enforce the "no
+    // credentials yet" invariant atomically. `user_handle_or_init`
+    // returns the existing handle on a fresh call for the same
+    // install (idempotent) or mints a fresh one on first use. Doing
+    // this inside `transact` means the handle persists before the
+    // ceremony runs, so `register_finish`'s transact closure reads
+    // the same value even if a second device later pairs in.
+    //
+    // This is the authoritative `credentials.is_empty()` check — the
+    // same re-check appears in `register_finish`'s transact closure
+    // to close the TOCTOU window between start and finish.
+    let (user_handle, credentials) = state
+        .auth_store
+        .transact(|s| {
+            if !s.credentials.is_empty() {
+                return Err(AuthError::StateConflict(
+                    "instance already initialised; additional devices must pair via setup token",
+                ));
+            }
+            let (uh, next) = s.user_handle_or_init();
+            let creds = next.credentials.clone();
+            Ok((next, (uh, creds)))
+        })
+        .await
+        .map_err(ApiError::from)?;
 
     let (id, ccr) = state
         .webauthn
         .start_registration(
-            fresh_user_handle(),
+            user_handle,
             "katulong",
             "Katulong",
-            &snap.credentials,
+            &credentials,
             SystemTime::now(),
         )
         .map_err(ApiError::from)?;
@@ -201,14 +218,17 @@ async fn register_finish(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    Json(body): Json<RegisterFinishRequest>,
+    JsonBody(body): JsonBody<RegisterFinishRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
     let access = AccessMethod::classify(peer, host);
     if !matches!(access, AccessMethod::Localhost) {
-        return Err(ApiError::Forbidden(
-            "first-device registration must originate from localhost",
-        ));
+        // Generic "forbidden" — the descriptive variant would confirm
+        // to a remote scanner that this is a katulong instance with a
+        // first-device registration path gated on localhost. Operators
+        // needing detail can read the server log.
+        tracing::warn!("rejecting remote request to first-device registration");
+        return Err(ApiError::Forbidden("forbidden"));
     }
 
     let now = SystemTime::now();
@@ -233,7 +253,7 @@ async fn register_finish(
     // finisher will see state already containing the first winner's
     // credential and bail out with StateConflict (→ 409).
     let credential_clone = credential.clone();
-    let session = state
+    let (plaintext_token, minted_session) = state
         .auth_store
         .transact(move |s| {
             if !s.credentials.is_empty() {
@@ -241,11 +261,11 @@ async fn register_finish(
                     "instance already initialised by a concurrent registration",
                 ));
             }
-            let session = Session::mint(credential_clone.id.clone(), now, SESSION_TTL);
+            let (plaintext, session) = Session::mint(credential_clone.id.clone(), now, SESSION_TTL);
             let next = s
                 .upsert_credential(credential_clone.clone())
                 .upsert_session(session.clone());
-            Ok((next, session))
+            Ok((next, (plaintext, session)))
         })
         .await
         .map_err(ApiError::from)?;
@@ -257,11 +277,11 @@ async fn register_finish(
 
     Ok(session_cookie_response(
         StatusCode::CREATED,
-        &session.token,
+        &plaintext_token,
         state.config.cookie_secure,
         Json(RegisterFinishResponse {
             credential_id: credential.id,
-            csrf_token: session.csrf_token,
+            csrf_token: minted_session.csrf_token,
         }),
     ))
 }
@@ -294,13 +314,12 @@ async fn login_start(
 /// mint a session cookie.
 async fn login_finish(
     State(state): State<AppState>,
-    Json(body): Json<LoginFinishRequest>,
+    JsonBody(body): JsonBody<LoginFinishRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let now = SystemTime::now();
-    let snap = state.auth_store.snapshot().await;
     let verified = state
         .webauthn
-        .finish_authentication(&body.challenge_id, &body.response, &snap.credentials, now)
+        .finish_authentication(&body.challenge_id, &body.response, now)
         .inspect_err(|e| {
             tracing::warn!(
                 challenge_id = %body.challenge_id,
@@ -310,30 +329,28 @@ async fn login_finish(
         })
         .map_err(ApiError::from)?;
 
-    // `updated_credential` is `Some` iff the authenticator reported a
-    // counter or backup-state change. Persisting it advances the
-    // monotonicity baseline inside the stored Passkey blob — see
-    // `VerifiedAuthentication` docs for why this MUST happen.
-    //
-    // A theoretical improvement: recompute `updated_credential` from
-    // the live credential inside `transact` rather than from `snap`,
-    // so two simultaneous logins can't regress each other's counter.
-    // Deferred to slice 6 alongside logout/revocation lifecycle work
-    // — the scenario requires two successful concurrent logins with
-    // the same passkey (rare; self-corrects on the next auth) and a
-    // cleaner fix wants `Credential::apply(&AuthenticationResult)`
-    // exposed, which is a bigger refactor than the risk justifies now.
+    // All state reads AND the counter update happen inside `transact`
+    // so there's no window for another login to regress the counter
+    // baseline under concurrent double-submit. Revocation during the
+    // challenge window also fails closed here: if the credential was
+    // deleted between `start_authentication` and this point, the
+    // lookup returns `None` and we surface `StateConflict` (→ 409)
+    // rather than minting a session against a pulled credential.
     let credential_id = verified.credential_id.clone();
-    let session = state
+    let (plaintext_token, minted_session) = state
         .auth_store
         .transact(move |s| {
-            let session = Session::mint(credential_id.clone(), now, SESSION_TTL);
+            let cred = s.find_credential(&credential_id).ok_or(
+                AuthError::StateConflict("credential revoked during authentication ceremony"),
+            )?;
+            let updated = cred.apply_authentication(&verified.result)?;
+            let (plaintext, session) = Session::mint(credential_id.clone(), now, SESSION_TTL);
             let mut next = s.clone();
-            if let Some(updated) = verified.updated_credential.clone() {
-                next = next.upsert_credential(updated);
+            if let Some(updated_cred) = updated {
+                next = next.upsert_credential(updated_cred);
             }
             next = next.upsert_session(session.clone());
-            Ok((next, session))
+            Ok((next, (plaintext, session)))
         })
         .await
         .map_err(ApiError::from)?;
@@ -345,11 +362,11 @@ async fn login_finish(
 
     Ok(session_cookie_response(
         StatusCode::OK,
-        &session.token,
+        &plaintext_token,
         state.config.cookie_secure,
         Json(LoginFinishResponse {
             credential_id: verified.credential_id,
-            csrf_token: session.csrf_token,
+            csrf_token: minted_session.csrf_token,
         }),
     ))
 }
