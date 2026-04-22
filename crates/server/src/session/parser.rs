@@ -112,8 +112,6 @@ pub enum Notification {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
-    #[error("not a notification (missing % prefix): {0:?}")]
-    NotNotification(String),
     #[error("malformed header: {0:?}")]
     MalformedHeader(String),
     #[error("field parse error: {0}")]

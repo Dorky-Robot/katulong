@@ -68,6 +68,7 @@ impl SessionManager {
         if !reply.ok {
             return Err(SessionError::TmuxRejected(reply.output));
         }
+        tracing::info!(session = %name, cols, rows, "session created");
         Ok(())
     }
 
@@ -108,10 +109,12 @@ impl SessionManager {
             if reply.output.contains("can't find session")
                 || reply.output.contains("session not found")
             {
+                tracing::info!(session = %name, "session destroy requested (not found; idempotent)");
                 return Ok(());
             }
             return Err(SessionError::TmuxRejected(reply.output));
         }
+        tracing::info!(session = %name, "session destroyed");
         Ok(())
     }
 
@@ -148,9 +151,17 @@ impl SessionManager {
     }
 }
 
+/// Errors returned by `SessionManager` operations.
+///
+/// **HTTP caller obligation.** `TmuxRejected` wraps tmux's raw
+/// stderr/stdout output. Do NOT forward that to an HTTP response
+/// body — it may contain socket paths, other session names, or
+/// internal tmux details. Log the content server-side and render
+/// a generic "session operation failed" to the client. Same shape
+/// as the `AuthError::Io` obligation from slice 1+2.
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
-    #[error("session name contains forbidden character: {0:?}")]
+    #[error("invalid session name: {0:?}")]
     InvalidName(String),
     #[error("tmux rejected command: {0}")]
     TmuxRejected(String),
@@ -164,8 +175,17 @@ pub enum SessionError {
 /// be misinterpreted depending on context. Whitespace and shell
 /// metacharacters also rejected — belt and suspenders, because the
 /// command is written as a single line without shell escaping.
+///
+/// **Leading-hyphen rule.** A name starting with `-` is rejected
+/// even though `-` is allowed mid-name. Without this check, a
+/// name like `-a` passed to `kill-session -t {name}` renders as
+/// `kill-session -t -a`, which tmux's `getopt` parser reads as
+/// two flags — and on some tmux versions `-a` means "kill all
+/// sessions except the attached one." An authenticated caller
+/// could then nuke every session by naming one `-a`. The allowlist
+/// alone didn't cover this argument-injection edge.
 fn validate_session_name(name: &str) -> Result<(), SessionError> {
-    if name.is_empty() {
+    if name.is_empty() || name.starts_with('-') {
         return Err(SessionError::InvalidName(name.to_string()));
     }
     for c in name.chars() {
@@ -211,6 +231,28 @@ mod tests {
     #[test]
     fn session_name_rejects_empty() {
         assert!(validate_session_name("").is_err());
+    }
+
+    #[test]
+    fn session_name_rejects_leading_hyphen() {
+        // Critical argument-injection guard: `kill-session -t -a`
+        // reads as two flags on tmux, with `-a` meaning "kill all
+        // other sessions." An authenticated caller passing name="-a"
+        // would otherwise destroy every session. See the doc on
+        // `validate_session_name` for the full reasoning.
+        for bad in ["-", "-a", "-bad", "-kill-everything"] {
+            assert!(
+                validate_session_name(bad).is_err(),
+                "name starting with hyphen {bad:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn session_name_permits_hyphen_mid_name() {
+        // Hyphens are fine anywhere except the first position.
+        assert!(validate_session_name("my-session").is_ok());
+        assert!(validate_session_name("a-b-c").is_ok());
     }
 
     #[test]

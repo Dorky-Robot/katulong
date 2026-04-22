@@ -66,8 +66,13 @@ pub enum TmuxError {
     Disconnected,
     #[error("parse error: {0}")]
     Parse(#[from] ParseError),
-    #[error("tmux command failed: {0}")]
-    CommandFailed(String),
+    /// The caller passed a malformed command string (embedded
+    /// newline/carriage return, invalid socket name, etc.). Fires
+    /// BEFORE any bytes reach tmux; distinct from
+    /// `SessionError::TmuxRejected`, which is what you get when
+    /// tmux itself refuses a well-formed command.
+    #[error("invalid tmux command: {0}")]
+    InvalidCommand(String),
 }
 
 /// Handle to a running tmux control-mode subprocess.
@@ -79,7 +84,7 @@ pub enum TmuxError {
 /// server.
 #[derive(Clone)]
 pub struct Tmux {
-    cmd_tx: mpsc::UnboundedSender<PendingCommand>,
+    cmd_tx: mpsc::UnboundedSender<OutgoingCommand>,
     /// Held so we can `kill` on explicit shutdown. Behind `Arc<Mutex>`
     /// because tasks may call `shutdown` concurrently; at most one
     /// will actually dispatch the kill.
@@ -89,8 +94,19 @@ pub struct Tmux {
     tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
 }
 
-struct PendingCommand {
+/// Sent over the command mpsc. Carries both what to write to
+/// tmux's stdin and where to deliver the eventual reply.
+struct OutgoingCommand {
     line: String,
+    reply: oneshot::Sender<Result<CommandReply, TmuxError>>,
+}
+
+/// Entry in the reader's pending-reply queue. The writer pushes
+/// one per outgoing command (after successfully writing the bytes
+/// to tmux's stdin); the reader pops in FIFO order on `%begin`.
+/// Does NOT carry the command text — the reader has no use for
+/// it, and avoiding the extra clone keeps the hot path lean.
+struct PendingReply {
     reply: oneshot::Sender<Result<CommandReply, TmuxError>>,
 }
 
@@ -98,20 +114,39 @@ impl Tmux {
     /// Spawn `tmux -C -L <socket_name> new-session -d -s <session>
     /// -x <cols> -y <rows>` and begin the reader/writer tasks.
     ///
-    /// `socket_name` must not be a path — tmux interprets `-L` as a
-    /// name under `/tmp/tmux-$UID/`. Use `dedicated_socket_name()`
-    /// for the convention.
+    /// `socket_name` is validated: alphanumeric + `-_` only, no
+    /// leading hyphen, no `/` (which would redirect tmux's socket
+    /// file to an attacker-controlled path). Use
+    /// `DEDICATED_SOCKET_NAME` for the production convention.
     ///
     /// Returns the client handle plus an mpsc receiver for
     /// asynchronous notifications (`%output`, `%window-close`,
-    /// ...). The caller is responsible for pumping that receiver;
-    /// if it's dropped, notifications are silently discarded.
+    /// ...).
+    ///
+    /// # Backpressure contract (IMPORTANT)
+    ///
+    /// The notification receiver is **unbounded**. The caller MUST
+    /// drain it continuously — every line of terminal output
+    /// produced by any pane tmux controls arrives as a
+    /// `Notification::Output` on this channel, which in active
+    /// terminal use means hundreds of events per second. An
+    /// unconsumed receiver will grow unboundedly and eventually
+    /// exhaust memory.
+    ///
+    /// Slice 9c's terminal handler is the intended consumer and
+    /// applies the bounded-ring-buffer + drop-oldest strategy
+    /// appropriate for display data. Unit tests and tools that
+    /// spawn a `Tmux` without consuming must call `shutdown()`
+    /// promptly to prevent buildup.
     pub async fn spawn(
         socket_name: &str,
         initial_session: &str,
         cols: u16,
         rows: u16,
     ) -> Result<(Self, mpsc::UnboundedReceiver<Notification>), TmuxError> {
+        validate_socket_name(socket_name)?;
+        validate_session_name_for_tmux(initial_session)?;
+
         let mut cmd = Command::new("tmux");
         cmd.arg("-L")
             .arg(socket_name)
@@ -135,37 +170,54 @@ impl Tmux {
         let mut child = cmd.spawn()?;
         let stdin = child.stdin.take().ok_or(TmuxError::Disconnected)?;
         let stdout = child.stdout.take().ok_or(TmuxError::Disconnected)?;
+        let stderr = child.stderr.take();
 
-        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<PendingCommand>();
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<OutgoingCommand>();
         let (notif_tx, notif_rx) = mpsc::unbounded_channel::<Notification>();
-        let pending: Arc<Mutex<VecDeque<PendingCommand>>> =
+        let pending: Arc<Mutex<VecDeque<PendingReply>>> =
             Arc::new(Mutex::new(VecDeque::new()));
 
         let reader_handle =
             tokio::spawn(run_reader(stdout, notif_tx, Arc::clone(&pending)));
         let writer_handle = tokio::spawn(run_writer(stdin, cmd_rx, pending));
+        // Drain stderr. If nobody reads, the pipe's 64 KB buffer
+        // fills, tmux blocks on write, and the control channel
+        // stalls indefinitely. Forward each line to `warn!` so
+        // operators see tmux diagnostics in the same log stream
+        // as everything else.
+        let mut tasks = vec![reader_handle, writer_handle];
+        if let Some(stderr) = stderr {
+            tasks.push(tokio::spawn(async move {
+                let mut reader = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    tracing::warn!(tmux.stderr = %line, "tmux stderr");
+                }
+            }));
+        }
 
         Ok((
             Self {
                 cmd_tx,
                 child: Arc::new(Mutex::new(Some(child))),
-                tasks: Arc::new(Mutex::new(vec![reader_handle, writer_handle])),
+                tasks: Arc::new(Mutex::new(tasks)),
             },
             notif_rx,
         ))
     }
 
     /// Send one command to tmux and await the reply. `line` must
-    /// not contain a newline — the writer appends `\n` itself.
+    /// not contain a newline or carriage return — the writer
+    /// appends `\n` itself, and injecting either would let the
+    /// caller smuggle a second command past the guard.
     pub async fn send_command(&self, line: &str) -> Result<CommandReply, TmuxError> {
-        if line.contains('\n') {
-            return Err(TmuxError::CommandFailed(
-                "command contains embedded newline".into(),
+        if line.contains('\n') || line.contains('\r') {
+            return Err(TmuxError::InvalidCommand(
+                "command contains embedded newline or carriage return".into(),
             ));
         }
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
-            .send(PendingCommand {
+            .send(OutgoingCommand {
                 line: line.to_string(),
                 reply,
             })
@@ -189,12 +241,57 @@ impl Tmux {
     }
 }
 
-/// Build the dedicated tmux socket name. Matches the Node
-/// implementation's `-L katulong` convention so a migrated install
-/// doesn't collide with the user's interactive tmux, and so staging
-/// instances can use per-worktree sockets like `stage-<branch>`.
-pub fn dedicated_socket_name() -> String {
-    "katulong".to_string()
+/// Default tmux socket name for production deployments. Matches
+/// the Node implementation's `-L katulong` convention so a migrated
+/// install doesn't collide with the operator's interactive tmux.
+/// Staging instances override this via their own per-worktree name
+/// (e.g. `stage-rewrite-rust-leptos`) when they spawn `Tmux`.
+pub const DEDICATED_SOCKET_NAME: &str = "katulong";
+
+/// Validate a tmux socket name. Same allowlist as session names
+/// but enforced here rather than in `SessionManager` because
+/// sockets are chosen at server startup from operator config, not
+/// user input — still, a misconfigured staging script could feed
+/// something path-like. Rejecting `/`, `..`, and control chars now
+/// forecloses the "tmux creates its socket file in an
+/// attacker-controlled location" class of bug before slice 9c+
+/// widens the caller surface.
+fn validate_socket_name(name: &str) -> Result<(), TmuxError> {
+    if name.is_empty() || name.starts_with('-') {
+        return Err(TmuxError::InvalidCommand(format!(
+            "invalid tmux socket name: {name:?}"
+        )));
+    }
+    for c in name.chars() {
+        let ok = c.is_ascii_alphanumeric() || c == '-' || c == '_';
+        if !ok {
+            return Err(TmuxError::InvalidCommand(format!(
+                "invalid tmux socket name: {name:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Same allowlist, applied to the `-s` argument of the initial
+/// `new-session`. Mirrors `SessionManager::validate_session_name`
+/// but lives here so `Tmux::spawn` can reject before any
+/// subprocess lifecycle setup happens.
+fn validate_session_name_for_tmux(name: &str) -> Result<(), TmuxError> {
+    if name.is_empty() || name.starts_with('-') {
+        return Err(TmuxError::InvalidCommand(format!(
+            "invalid tmux session name: {name:?}"
+        )));
+    }
+    for c in name.chars() {
+        let ok = c.is_ascii_alphanumeric() || c == '-' || c == '_';
+        if !ok {
+            return Err(TmuxError::InvalidCommand(format!(
+                "invalid tmux session name: {name:?}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// In-flight command reply being accumulated by the reader task.
@@ -209,7 +306,7 @@ struct InFlightReply {
 async fn run_reader(
     stdout: ChildStdout,
     notifications: mpsc::UnboundedSender<Notification>,
-    pending: Arc<Mutex<VecDeque<PendingCommand>>>,
+    pending: Arc<Mutex<VecDeque<PendingReply>>>,
 ) {
     let mut reader = BufReader::new(stdout).lines();
     // When we see `%begin`, we pop the next pending command's
@@ -282,38 +379,33 @@ async fn run_reader(
     }
 }
 
+/// Write one command line (and its trailing newline) to tmux's
+/// stdin, flushing afterwards. Returns any I/O error unwrapped so
+/// the caller can resolve the pending oneshot with the precise
+/// error value.
+async fn write_line(stdin: &mut ChildStdin, line: &str) -> std::io::Result<()> {
+    stdin.write_all(line.as_bytes()).await?;
+    stdin.write_all(b"\n").await?;
+    stdin.flush().await
+}
+
 async fn run_writer(
     mut stdin: ChildStdin,
-    mut cmd_rx: mpsc::UnboundedReceiver<PendingCommand>,
-    pending: Arc<Mutex<VecDeque<PendingCommand>>>,
+    mut cmd_rx: mpsc::UnboundedReceiver<OutgoingCommand>,
+    pending: Arc<Mutex<VecDeque<PendingReply>>>,
 ) {
     while let Some(cmd) = cmd_rx.recv().await {
-        // Register the pending command BEFORE writing, so that if
-        // tmux replies immediately on another task we don't race.
-        let line = cmd.line.clone();
-        let reply = cmd.reply;
-        pending.lock().await.push_back(PendingCommand {
-            line: line.clone(),
-            reply,
+        // Register the pending reply BEFORE writing, so a racing
+        // reader that sees `%begin` immediately after the flush
+        // already has the oneshot to resolve against.
+        pending.lock().await.push_back(PendingReply {
+            reply: cmd.reply,
         });
-        if let Err(e) = stdin.write_all(line.as_bytes()).await {
-            let popped = pending.lock().await.pop_back();
-            if let Some(p) = popped {
-                let _ = p.reply.send(Err(TmuxError::Io(e)));
-            }
-            break;
-        }
-        if let Err(e) = stdin.write_all(b"\n").await {
-            let popped = pending.lock().await.pop_back();
-            if let Some(p) = popped {
-                let _ = p.reply.send(Err(TmuxError::Io(e)));
-            }
-            break;
-        }
-        if let Err(e) = stdin.flush().await {
-            // Flush failed — best-effort resolve the just-queued cmd.
-            let popped = pending.lock().await.pop_back();
-            if let Some(p) = popped {
+        if let Err(e) = write_line(&mut stdin, &cmd.line).await {
+            // Writer failed — peel the entry we just pushed and
+            // resolve its oneshot with the I/O error, then bail
+            // out of the loop so `shutdown` can clean up.
+            if let Some(p) = pending.lock().await.pop_back() {
                 let _ = p.reply.send(Err(TmuxError::Io(e)));
             }
             break;
@@ -337,36 +429,64 @@ mod tests {
     async fn send_command_before_spawn_fails() {
         // Build a Tmux with a dead channel to exercise the
         // Disconnected path without needing a real tmux binary.
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded_channel::<OutgoingCommand>();
         let t = Tmux {
             cmd_tx: tx.clone(),
             child: Arc::new(Mutex::new(None)),
             tasks: Arc::new(Mutex::new(vec![])),
         };
         drop(tx);
-        drop(_rx);
+        drop(rx);
         let err = t.send_command("list-sessions").await.unwrap_err();
         assert!(matches!(err, TmuxError::Disconnected));
     }
 
-    #[test]
-    fn embedded_newline_is_rejected_without_hitting_tmux() {
+    #[tokio::test]
+    async fn embedded_newline_is_rejected_without_hitting_tmux() {
         // The write-a-newline guard must kick in before the mpsc
         // send — otherwise tmux would see a malformed partial
         // command.
-        tokio_test::block_on(async {
-            let (tx, _rx) = mpsc::unbounded_channel();
-            let t = Tmux {
-                cmd_tx: tx,
-                child: Arc::new(Mutex::new(None)),
-                tasks: Arc::new(Mutex::new(vec![])),
-            };
-            let err = t
-                .send_command("list-sessions\nkill-server")
-                .await
-                .unwrap_err();
-            assert!(matches!(err, TmuxError::CommandFailed(_)));
-        });
+        let (tx, _rx) = mpsc::unbounded_channel::<OutgoingCommand>();
+        let t = Tmux {
+            cmd_tx: tx,
+            child: Arc::new(Mutex::new(None)),
+            tasks: Arc::new(Mutex::new(vec![])),
+        };
+        let err = t
+            .send_command("list-sessions\nkill-server")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, TmuxError::InvalidCommand(_)));
+    }
+
+    #[tokio::test]
+    async fn embedded_carriage_return_is_rejected_without_hitting_tmux() {
+        // Companion guard: CR is also a command terminator in some
+        // parse paths. Reject symmetrically with LF.
+        let (tx, _rx) = mpsc::unbounded_channel::<OutgoingCommand>();
+        let t = Tmux {
+            cmd_tx: tx,
+            child: Arc::new(Mutex::new(None)),
+            tasks: Arc::new(Mutex::new(vec![])),
+        };
+        let err = t
+            .send_command("list-sessions\rkill-server")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, TmuxError::InvalidCommand(_)));
+    }
+
+    #[test]
+    fn socket_name_validator_rejects_path_like_and_leading_hyphen() {
+        assert!(validate_socket_name("katulong").is_ok());
+        assert!(validate_socket_name("stage-rewrite-rust-leptos").is_ok());
+        // Path-likes: rejecting `/` and `..` prevents tmux from
+        // creating its socket file in an attacker-controlled
+        // location if a future caller forwards config values.
+        assert!(validate_socket_name("../evil").is_err());
+        assert!(validate_socket_name("/tmp/evil").is_err());
+        assert!(validate_socket_name("").is_err());
+        assert!(validate_socket_name("-flag").is_err());
     }
 
     #[tokio::test]

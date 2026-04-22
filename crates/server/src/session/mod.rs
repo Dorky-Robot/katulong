@@ -11,4 +11,4 @@ pub mod parser;
 pub mod tmux;
 
 pub use manager::{SessionError, SessionManager};
-pub use tmux::{dedicated_socket_name, CommandReply, Tmux, TmuxError};
+pub use tmux::{CommandReply, Tmux, TmuxError, DEDICATED_SOCKET_NAME};
