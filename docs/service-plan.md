@@ -34,13 +34,20 @@ capability:
    control plane. Same protocol as Tier 2 — an operator runs it so
    you don't have to.
 
-## What the managed service does
+## What a managed service would do
+
+These are the capabilities a managed Tier 3 would offer — they are
+not implemented today and no managed tier ships in this repo. The
+sketch is included here so the open-source protocol decisions below
+(scope vocabulary, cookie scoping, RP ID rules) can be reviewed
+against the deployment shape they anticipate.
 
 - **Managed tunnel relay.** Stable inbound URL for a katulong
-  instance running on your own hardware — you provide the host,
-  we provide the address. We never see terminal content; the
-  cookie-authed WebSocket runs over TLS between your browser and
-  your instance.
+  instance running on the operator's own hardware — the operator
+  provides the host, the managed relay provides the address.
+  Terminal content would stay end-to-end between browser and
+  instance over a cookie-authed WebSocket; the relay terminates TLS
+  but does not see plaintext PTY output.
 - **Managed fleet hub.** A unified UI across multiple instances,
   authenticated with one passkey on the hub's own origin. Holds
   `mint-session`-scoped API keys for each registered instance so

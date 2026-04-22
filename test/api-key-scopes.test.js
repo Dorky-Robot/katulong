@@ -1,7 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { AuthState } from "../lib/auth-state.js";
-import { SCOPE_FULL, SCOPE_MINT_SESSION, DEFAULT_API_KEY_SCOPES } from "../lib/api-key-scopes.js";
+import {
+  SCOPE_FULL,
+  SCOPE_MINT_SESSION,
+  DEFAULT_API_KEY_SCOPES,
+  validateScopes,
+  normalizeScopes,
+} from "../lib/api-key-scopes.js";
 
 describe("API key scopes on AuthState", () => {
   it("addApiKey defaults to ['full'] when scopes omitted", () => {
@@ -81,6 +87,34 @@ describe("API key scopes on AuthState", () => {
     const found = state.findApiKey(key);
     assert.ok(found, "key should be found");
     assert.deepEqual(found.scopes, [SCOPE_MINT_SESSION]);
+  });
+
+  it("validateScopes rejects unknown scopes with the unknown list", () => {
+    const { valid, unknown } = validateScopes(["bogus", SCOPE_MINT_SESSION]);
+    assert.equal(valid, false);
+    assert.deepEqual(unknown, ["bogus"]);
+  });
+
+  it("validateScopes accepts omitted input as default scopes", () => {
+    const { valid, normalized } = validateScopes(undefined);
+    assert.equal(valid, true);
+    assert.deepEqual(normalized, [...DEFAULT_API_KEY_SCOPES]);
+  });
+
+  it("validateScopes accepts empty array as default scopes", () => {
+    const { valid, normalized } = validateScopes([]);
+    assert.equal(valid, true);
+    assert.deepEqual(normalized, [...DEFAULT_API_KEY_SCOPES]);
+  });
+
+  it("validateScopes rejects non-array input with a stringified unknown", () => {
+    const { valid, unknown } = validateScopes("full");
+    assert.equal(valid, false);
+    assert.deepEqual(unknown, ["full"]);
+  });
+
+  it("normalizeScopes drops unknown entries silently (data-model layer)", () => {
+    assert.deepEqual(normalizeScopes(["bogus", SCOPE_MINT_SESSION]), [SCOPE_MINT_SESSION]);
   });
 
   it("findApiKey backfills ['full'] for legacy records without scopes", () => {

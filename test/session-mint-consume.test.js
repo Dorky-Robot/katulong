@@ -23,8 +23,9 @@ process.on("exit", () => {
 
 const { AuthState } = await import("../lib/auth-state.js");
 const { SCOPE_MINT_SESSION, SCOPE_FULL } = await import("../lib/api-key-scopes.js");
+const { authenticateBearerKey } = await import("../lib/api-key-auth.js");
 const authRepo = await import("../lib/auth-repository.js");
-const { createAuthRoutes, _resetMintStateForTesting } = await import("../lib/routes/auth-routes.js");
+const { createAuthRoutes, _resetMintStateForTesting, _expireMintForTesting } = await import("../lib/routes/auth-routes.js");
 const { createMiddleware } = await import("../lib/routes/middleware.js");
 
 const ORIGIN = "https://example.com";
@@ -104,21 +105,18 @@ function json(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
-// isAuthenticated mirrors server.js Bearer path for tests.
+// isAuthenticated for tests — reuses the same Bearer resolver as server.js
+// so the test path cannot drift from production.
 function isAuthenticatedForTests(req) {
-  const header = req.headers.authorization;
-  if (header && header.startsWith("Bearer ")) {
-    const apiKey = header.slice(7);
-    const state = authRepo.loadState();
-    if (!state) return null;
-    const keyData = state.findApiKey(apiKey);
-    if (!keyData) return null;
-    req._apiKeyAuth = true;
-    req._apiKeyId = keyData.id;
-    req._apiKeyScopes = keyData.scopes || [SCOPE_FULL];
-    return { authenticated: true, sessionToken: null, credentialId: null, apiKeyId: keyData.id };
-  }
-  return null;
+  const result = authenticateBearerKey(req, authRepo.loadState());
+  if (result === null) return null; // Bearer header present but invalid
+  if (!result.matched) return null; // No Bearer header at all
+  return {
+    authenticated: true,
+    sessionToken: null,
+    credentialId: null,
+    apiKeyId: result.keyData.id,
+  };
 }
 
 before(async () => {
@@ -168,6 +166,7 @@ before(async () => {
     auth: middleware.auth,
     csrf: middleware.csrf,
     requireScope: middleware.requireScope,
+    requireBearerAuth: middleware.requireBearerAuth,
   });
 });
 
@@ -188,15 +187,15 @@ describe("POST /api/sessions/mint — scope enforcement", () => {
     assert.equal(res.statusCode, 401);
   });
 
-  it("rejects a full-scope key (default-deny on narrow-scope routes)", async () => {
+  it("accepts a full-scope key on a narrow-scope route (full-scope passes everywhere)", async () => {
     const route = findRoute(routes, "POST", "/api/sessions/mint");
     const req = makeReq({ method: "POST", url: "/api/sessions/mint", body: {}, apiKey: fullApiKey });
     const res = makeRes();
     await route.handler(req, res);
-    // Full-scope keys pass requireScope(). The 201 confirms they're accepted;
-    // this guards against a future regression where requireScope accidentally
-    // excludes "full".
-    assert.equal(res.statusCode, 201, "full-scope key should be accepted");
+    // Full-scope is the superset scope: any `requireScope(X)` route accepts
+    // both SCOPE_FULL and X. Guards against a regression where requireScope
+    // accidentally excludes the full scope from its accepted list.
+    assert.equal(res.statusCode, 201, "full-scope key should be accepted on a narrow-scope route");
   });
 
   it("accepts a mint-session-scoped key", async () => {
@@ -207,8 +206,10 @@ describe("POST /api/sessions/mint — scope enforcement", () => {
     assert.equal(res.statusCode, 201);
     const body = JSON.parse(res._body);
     assert.ok(body.consumeUrl, "consumeUrl in response");
-    assert.ok(body.consumeToken, "consumeToken in response");
     assert.ok(body.expiresAt > Date.now(), "expiresAt is in the future");
+    assert.equal(body.credentialId, CREDENTIAL_ID, "binding credential exposed for audit");
+    const parsed = new URL(body.consumeUrl);
+    assert.ok(parsed.searchParams.get("token"), "consumeUrl carries token");
   });
 
   it("rejects invalid returnTo (cross-origin)", async () => {
@@ -252,7 +253,9 @@ describe("GET /auth/consume — lifecycle", () => {
     const res = makeRes();
     await mintRoute.handler(req, res);
     assert.equal(res.statusCode, 201, `mint failed: ${res._body}`);
-    return JSON.parse(res._body);
+    const body = JSON.parse(res._body);
+    const url = new URL(body.consumeUrl);
+    return { ...body, consumeToken: url.searchParams.get("token") };
   }
 
   it("issues a session cookie and 302-redirects to /", async () => {
@@ -320,6 +323,59 @@ describe("GET /auth/consume — lifecycle", () => {
     const res = makeRes();
     await route.handler(req, res);
     assert.equal(res.statusCode, 400);
+  });
+
+  it("rejects an over-long consume token before Map lookup", async () => {
+    const route = findRoute(routes, "GET", "/auth/consume");
+    const bigToken = "a".repeat(200);
+    const req = makeReq({ method: "GET", url: `/auth/consume?token=${bigToken}` });
+    const res = makeRes();
+    await route.handler(req, res);
+    assert.equal(res.statusCode, 400);
+    const body = JSON.parse(res._body);
+    assert.ok(/too long/i.test(body.error), "error mentions over-length");
+  });
+
+  it("returns 410 when the pending token has expired", async () => {
+    const { consumeToken } = await mintConsumeToken();
+    _expireMintForTesting(consumeToken);
+    const route = findRoute(routes, "GET", "/auth/consume");
+    const req = makeReq({ method: "GET", url: `/auth/consume?token=${consumeToken}` });
+    const res = makeRes();
+    await route.handler(req, res);
+    assert.equal(res.statusCode, 410);
+  });
+});
+
+describe("POST /api/sessions/mint — Bearer-only enforcement", () => {
+  it("rejects cookie-authenticated requests with 403 Bearer-required", async () => {
+    // isAuthenticatedForTests fakes a cookie-auth success without
+    // setting _apiKeyAuth, matching how a browser session would present.
+    const fakeCookieAuth = (_req) => ({ authenticated: true, sessionToken: "fake", credentialId: null });
+    const mw = createMiddleware({ isAuthenticated: fakeCookieAuth, json });
+    const cookieRoutes = createAuthRoutes({
+      json,
+      parseJSON,
+      isAuthenticated: fakeCookieAuth,
+      storeChallenge: () => {},
+      consumeChallenge: () => false,
+      challengeStore: null,
+      credentialLockout: null,
+      bridge: { relay: () => {} },
+      RP_NAME: "Test",
+      PORT: 443,
+      auth: mw.auth,
+      csrf: mw.csrf,
+      requireScope: mw.requireScope,
+      requireBearerAuth: mw.requireBearerAuth,
+    });
+    const route = findRoute(cookieRoutes, "POST", "/api/sessions/mint");
+    const req = makeReq({ method: "POST", url: "/api/sessions/mint", body: {} });
+    const res = makeRes();
+    await route.handler(req, res);
+    assert.equal(res.statusCode, 403);
+    const body = JSON.parse(res._body);
+    assert.ok(/bearer/i.test(body.error), "error names Bearer requirement");
   });
 });
 

@@ -20,6 +20,7 @@ import { ConfigManager } from "./lib/config.js";
 
 import { CredentialLockout } from "./lib/credential-lockout.js";
 import { isLocalRequest, isLoopbackAddress } from "./lib/access-method.js";
+import { authenticateBearerKey } from "./lib/api-key-auth.js";
 import { serveStaticFile, clearFileCache, buildVendorHashes } from "./lib/static-files.js";
 import { createTransportBridge } from "./lib/transport-bridge.js";
 import { createSessionManager, checkTmux, cleanTmuxServerEnv, setTmuxKatulongEnv } from "./lib/session-manager.js";
@@ -144,26 +145,17 @@ function isAuthenticated(req) {
     return { authenticated: true, sessionToken: null, credentialId: null };
   }
   // API key auth via Bearer token
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    const apiKey = authHeader.slice(7);
-    const state = loadState();
-    if (state) {
-      const keyData = state.findApiKey(apiKey);
-      if (keyData) {
-        req._apiKeyAuth = true;
-        req._apiKeyId = keyData.id;
-        req._apiKeyScopes = Array.isArray(keyData.scopes) && keyData.scopes.length
-          ? [...keyData.scopes]
-          : ["full"];
-        withStateLock((s) => {
-          if (!s) return {};
-          return { state: s.updateApiKeyActivity(keyData.id) };
-        }).catch(() => {});
-        return { authenticated: true, sessionToken: null, credentialId: null, apiKeyId: keyData.id };
-      }
-    }
-    return null; // Invalid API key — don't fall through to cookie
+  const bearerResult = authenticateBearerKey(req, loadState());
+  if (bearerResult === null) {
+    return null; // Bearer header present but invalid — don't fall through to cookie
+  }
+  if (bearerResult.matched) {
+    const keyId = bearerResult.keyData.id;
+    withStateLock((s) => {
+      if (!s) return {};
+      return { state: s.updateApiKeyActivity(keyId) };
+    }).catch(() => {});
+    return { authenticated: true, sessionToken: null, credentialId: null, apiKeyId: keyId };
   }
 
   const cookies = parseCookies(req.headers.cookie);
@@ -233,7 +225,7 @@ pruneTimer.unref();
 
 // --- HTTP routes (assembled from lib/routes/) ---
 
-const { auth, csrf, requireScope } = createMiddleware({ isAuthenticated, json });
+const { auth, csrf, requireScope, requireBearerAuth } = createMiddleware({ isAuthenticated, json });
 
 // --- Plugins ---
 const { pluginRoutes, pluginWsHandlers, shutdownPlugins } = await loadPlugins({
@@ -312,7 +304,7 @@ const routes = [
     bridge,
     credentialLockout,
     RP_NAME, PORT,
-    auth, csrf, requireScope,
+    auth, csrf, requireScope, requireBearerAuth,
   }),
   ...createAppRoutes({
     json, parseJSON, readBody, isAuthenticated, sessionManager,
