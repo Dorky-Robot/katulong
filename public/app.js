@@ -47,6 +47,7 @@
     import { createClusterTileFactory } from "/lib/tiles/cluster-tile.js";
     import { createFileBrowserTileFactory } from "/lib/tiles/file-browser-tile.js";
     import { isImagePath } from "/lib/tiles/image-tile.js";
+    import { resolveFilePathForTile } from "/lib/tiles/resolve-file-for-tile.js";
     import { dispatchNotification } from "/lib/notify.js";
     import { createUiStore, loadFromStorage, EMPTY_STATE } from "/lib/ui-store.js";
     import { buildBootState } from "/lib/boot-state.js";
@@ -190,13 +191,9 @@
       let resolved = filePath;
       let worktreeLabel = null;
       try {
-        const q = `path=${encodeURIComponent(filePath)}` +
-          (sessionName ? `&session=${encodeURIComponent(sessionName)}` : "");
-        const res = await api.get(`/api/resolve-file?${q}`);
-        if (res && typeof res.absPath === "string" && res.absPath) {
-          resolved = res.absPath;
-          worktreeLabel = res.worktreeLabel || null;
-        }
+        const out = await resolveFilePathForTile(api, filePath, sessionName);
+        resolved = out.resolvedPath;
+        worktreeLabel = out.worktreeLabel;
       } catch {
         // Resolver unreachable (offline / server restart) — fall back to
         // naive cwd-relative join so the tile at least opens.
