@@ -1026,6 +1026,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tracing",
  "url",
  "uuid",
  "webauthn-rs",

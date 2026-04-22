@@ -41,6 +41,15 @@ pub enum ApiError {
     /// this action yet (e.g., login against a fresh install with no
     /// credentials).
     Conflict(&'static str),
+    /// Caller is asking to remove a credential that is the last one on
+    /// the instance, AND the caller is remote (not localhost). Allowing
+    /// the deletion would lock the user out of their own installation
+    /// over the tunnel — localhost access would still work, but
+    /// re-enabling remote access would require going back to the
+    /// first-device registration flow. Node hit this exact bug
+    /// (`f25855f`); the two-tier access model means the guard must
+    /// apply to remote callers only.
+    LastCredential,
     /// State-changing request reached us without an `X-Csrf-Token`
     /// header. Maps to 403 with code `csrf_missing`. Distinct from
     /// `CsrfMismatch` so a client can distinguish "never sent" from
@@ -77,6 +86,11 @@ impl ApiError {
                 "server busy; retry shortly".into(),
             ),
             Self::Conflict(why) => (StatusCode::CONFLICT, "conflict", (*why).into()),
+            Self::LastCredential => (
+                StatusCode::CONFLICT,
+                "last_credential",
+                "cannot remove the last remote-access credential from a non-localhost session".into(),
+            ),
             Self::CsrfMissing => (
                 StatusCode::FORBIDDEN,
                 "csrf_missing",
@@ -125,6 +139,7 @@ impl From<AuthError> for ApiError {
             AuthError::TooManyPendingChallenges => Self::RateLimited,
             AuthError::WebAuthn(_) => Self::Unauthorized,
             AuthError::StateConflict(msg) => Self::Conflict(msg),
+            AuthError::LastCredentialRemoval => Self::LastCredential,
             other => {
                 // Log the full chain for operators; the response body
                 // stays opaque via the unit variant.
