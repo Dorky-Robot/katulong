@@ -10,6 +10,8 @@
 import { createFileBrowserTileFactory } from "../tiles/file-browser-tile.js";
 import { isImagePath } from "../tiles/image-tile.js";
 import { findAdjacentPreviewToSwap } from "../selectors.js";
+import { resolveFilePathForTile } from "../tiles/resolve-file-for-tile.js";
+import { api } from "/lib/api-client.js";
 
 let factory = null;
 let _uiStore = null;
@@ -43,12 +45,33 @@ export const fileBrowserRenderer = {
   mount(el, { id, props, dispatch, ctx }) {
     if (!factory) throw new Error("fileBrowserRenderer.init() not called");
 
-    // --- File open: open a document or image tile adjacent to this browser ---
-    function onFileOpen(filePath) {
-      if (!_uiStore) return;
-      const state = _uiStore.getState();
+    // Awaits `/api/resolve-file` before opening, same pattern as
+    // `openFileInDocTile` in app.js (terminal file-link clicks + feed reply
+    // chips). File-browser click paths are already absolute, so the
+    // resolver doesn't change `absPath` here — but it still classifies the
+    // path against `git worktree list` and returns a `worktreeLabel` when
+    // the file lives in a sibling worktree. That label is what drives the
+    // worktree badge on the document/image tile; without this call the
+    // badge never appears for files opened via the file browser. See
+    // `docs/file-link-worktree-resolution.md`.
+    async function onFileOpen(filePath) {
+      if (!_uiStore || typeof filePath !== "string" || !filePath) return;
 
-      const isImage = isImagePath(filePath);
+      const sessionName = props.sessionName || null;
+      let resolvedPath = filePath;
+      let worktreeLabel = null;
+      try {
+        const out = await resolveFilePathForTile(api, filePath, sessionName);
+        resolvedPath = out.resolvedPath;
+        worktreeLabel = out.worktreeLabel;
+      } catch {
+        // Resolver unreachable (offline / server restart) — fall through
+        // with the raw (absolute) filePath so the tile still opens. The
+        // only loss is the worktree badge, which is a display hint.
+      }
+
+      const state = _uiStore.getState();
+      const isImage = isImagePath(resolvedPath);
       const previewType = isImage ? "image" : "document";
 
       // Swap semantics: if the column immediately to the right is a
@@ -61,8 +84,10 @@ export const fileBrowserRenderer = {
       // this browser tile. focus:true sets focusedId in the store;
       // tile-host reacts and tells the carousel to scroll to it.
       const tileId = `${isImage ? "img" : "doc"}-${Date.now().toString(36)}`;
+      const tileProps = { filePath: resolvedPath };
+      if (worktreeLabel) tileProps.worktreeLabel = worktreeLabel;
       _uiStore.addTile(
-        { id: tileId, type: previewType, props: { filePath } },
+        { id: tileId, type: previewType, props: tileProps },
         { focus: true, insertAfter: id },
       );
     }
