@@ -1,7 +1,7 @@
 use katulong_auth::{AuthStore, WebAuthnService};
 use katulong_server::session::{
     dims::{DEFAULT_COLS, DEFAULT_ROWS},
-    SessionManager, Tmux, DEDICATED_SOCKET_NAME,
+    OutputRouter, SessionManager, Tmux, DEDICATED_SOCKET_NAME,
 };
 use katulong_server::{app, state::AppState, state::ServerConfig};
 use std::net::SocketAddr;
@@ -30,35 +30,29 @@ async fn main() {
     // would accept WS upgrades that fail at Attach time, which is
     // worse operator UX than a startup panic pointing at the
     // missing binary.
-    //
-    // `notifs` is the async-notification receiver (tmux `%output`,
-    // `%window-close`, etc.). Per the `Tmux::spawn` contract this
-    // is UNBOUNDED — leaving it unconsumed would let any
-    // tmux-produced terminal output accumulate until the process
-    // OOMs. Slice 9e doesn't yet route output back over the
-    // transport (that's slice 9f), but a real shell attached to
-    // the initial session would already be producing output, so
-    // the receiver MUST be drained. The drop-all drain task below
-    // is the slice-9e placeholder; slice 9f replaces it with the
-    // per-connection output pump that forwards `%output` over the
-    // transport with coalescing (Node scars `d311168`/`066dab2`).
     let socket_name = std::env::var("KATULONG_TMUX_SOCKET")
         .unwrap_or_else(|_| DEDICATED_SOCKET_NAME.to_string());
     let initial_session = std::env::var("KATULONG_INITIAL_SESSION")
         .unwrap_or_else(|_| "main".to_string());
-    let (tmux, mut notifs) =
-        Tmux::spawn(&socket_name, &initial_session, DEFAULT_COLS, DEFAULT_ROWS)
-            .await
-            .expect("spawn tmux control-mode subprocess");
-    tokio::spawn(async move {
-        // Slice-9e drain: discard tmux notifications so the
-        // unbounded receiver can't grow toward OOM. Slice 9f
-        // replaces this task with the real output forwarder.
-        while notifs.recv().await.is_some() {}
-    });
+    let (tmux, notifs) = Tmux::spawn(&socket_name, &initial_session, DEFAULT_COLS, DEFAULT_ROWS)
+        .await
+        .expect("spawn tmux control-mode subprocess");
     let sessions = SessionManager::new(tmux);
+    let output_router = OutputRouter::new();
 
-    let state = AppState::new(auth_store, webauthn, config).with_sessions(sessions);
+    // The dispatcher task drains the (unbounded per `Tmux::spawn`
+    // contract) notification receiver and routes `%output`
+    // events through the router's decoder + per-pane fan-out.
+    // The task's non-blocking invariant lives inside
+    // `OutputRouter::spawn_dispatcher` itself — documented on
+    // the method and enforced by `dispatch`'s `try_send` path.
+    // Letting the tokio runtime abort the task on process exit
+    // is fine; we ignore the `JoinHandle`.
+    let _dispatcher = output_router.spawn_dispatcher(notifs);
+
+    let state = AppState::new(auth_store, webauthn, config)
+        .with_sessions(sessions)
+        .with_output_router(output_router);
 
     let addr: SocketAddr = "127.0.0.1:3000".parse().expect("valid bind address");
     let listener = tokio::net::TcpListener::bind(addr)

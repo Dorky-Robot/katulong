@@ -172,9 +172,17 @@ pub enum ServerMessage {
     },
     /// PTY output chunk. `seq` is a monotonic counter per
     /// connection that lets clients detect gaps after a reconnect
-    /// (Node scar `da6907f`). Slice 9e defines the variant; slice
+    /// (Node scar `da6907f`). Slice 9e defined the variant; slice
     /// 9f populates it from the tmux `%output` notification stream
     /// with coalescing (`d311168`/`066dab2`).
+    ///
+    /// **Seq contract: 1-based.** The first `Output` message on
+    /// a connection carries `seq = 1`; seq = 0 is reserved to
+    /// mean "no output produced yet" so a future reconnect
+    /// (slice 9g) can send `Attach { resume_from_seq: 0 }` to
+    /// request the full ring. Clients counting gaps should never
+    /// see a decrease; any decrease means the server restarted
+    /// (seq resets) and they must treat it as a hard reconnect.
     Output {
         #[serde(with = "serde_bytes")]
         data: Vec<u8>,

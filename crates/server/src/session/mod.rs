@@ -23,9 +23,12 @@
 pub mod dims;
 pub mod handler;
 pub mod manager;
+pub mod output;
 pub mod parser;
+pub mod router;
 pub mod tmux;
 
 pub use handler::serve_session;
 pub use manager::{SessionError, SessionManager};
+pub use router::OutputRouter;
 pub use tmux::{CommandReply, Tmux, TmuxError, DEDICATED_SOCKET_NAME};
