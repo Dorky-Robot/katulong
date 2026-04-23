@@ -25,6 +25,7 @@ pub mod handler;
 pub mod manager;
 pub mod output;
 pub mod parser;
+pub mod ring;
 pub mod router;
 pub mod tmux;
 

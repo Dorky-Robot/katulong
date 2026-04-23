@@ -1,5 +1,6 @@
 //! Dispatcher from the single global tmux `%output` stream to
-//! per-connection output pumps.
+//! per-connection output pumps, with per-pane history for
+//! reconnect replay (slice 9g).
 //!
 //! One tmux subprocess produces notifications for every pane on
 //! every session it hosts. A per-connection handler only cares
@@ -8,70 +9,63 @@
 //! notification to the right subscriber without forcing every
 //! handler to filter the whole stream itself.
 //!
+//! # Per-pane seq and the reconnect path (slice 9g)
+//!
+//! Each pane maintains:
+//! - An octal [`OctalDecoder`] whose carry survives subscriber
+//!   handoffs (the carry is about the tmux byte stream, not the
+//!   subscriber).
+//! - A byte [`RingBuffer`] of the last ~64 KiB, tagged with a
+//!   monotonic `total_written` that doubles as the wire `seq`.
+//! - The current subscriber's [`mpsc::Sender`], if any.
+//!
+//! `dispatch` decodes bytes, appends to the ring, and pushes an
+//! [`OutputChunk`] (`data` + `end_seq`) to the subscriber. The
+//! ring keeps bytes past the subscriber's wire buffer, so a
+//! client that drops and reconnects with
+//! `subscribe_with_resume(pane_id, after_seq)` gets a
+//! [`ReplaySlice`] describing what to hand the client before
+//! going live.
+//!
+//! The seq semantics are **per-pane, not per-connection**: two
+//! successive subscribers on the same pane see contiguous seqs,
+//! which is what makes the reconnect path useful. Pre-9g the
+//! docstring said "per-connection monotonic" — that's obsolete.
+//!
 //! # Ownership model
 //!
 //! `OutputRouter` is cheap to clone — internals are `Arc`. The
 //! dispatcher task spawned via [`OutputRouter::spawn_dispatcher`]
 //! holds one clone and calls [`OutputRouter::dispatch`] for every
 //! `%output` notification. Each WS connection handler holds
-//! another clone via `AppState` and calls
-//! [`OutputRouter::subscribe`] after its `Attach` succeeds.
+//! another clone via `AppState` and calls [`OutputRouter::subscribe`]
+//! (fresh attach) or [`OutputRouter::subscribe_with_resume`]
+//! (reconnect) after its `Attach` succeeds.
 //!
 //! # Attach-displaces-prior semantics (slice 9f)
 //!
-//! `subscribe(pane_id)` always succeeds. If a prior subscriber
-//! already held the pane, their `mpsc::Receiver` sees its
-//! channel close on the next `recv()` and the handler's loop
-//! treats that as `Action::Exit` (see `handler.rs`). This
-//! matches katulong's one-user-many-devices model: opening the
-//! app in a second browser tab smoothly takes over the terminal
-//! rather than refusing with an error the user has to
-//! troubleshoot. Slice 9h revisits this when multi-device
-//! fan-out lands — at that point the question "displace vs
-//! fan-out" is a product decision rather than a plumbing
-//! constraint.
-//!
-//! # Decoder ownership
-//!
-//! Each registered pane carries an [`OctalDecoder`]. The
-//! dispatcher task decodes bytes BEFORE fanning out to the
-//! subscriber, not after: when multi-device lands, every
-//! subscriber gets the same fully-decoded byte stream and the
-//! octal-carry state lives in exactly one place. The decoder's
-//! carry survives the attach-displaces-prior handoff because
-//! the decoder is keyed per-pane, not per-subscriber — a
-//! reconnecting client picks up mid-escape if the tmux wrap
-//! happened to land there.
+//! Subscribing always succeeds. If a prior subscriber already
+//! held the pane, their `mpsc::Receiver` sees its channel close
+//! on the next `recv()` and the handler's loop treats that as
+//! `Action::Exit`. This matches katulong's one-user-many-devices
+//! model: opening the app in a second browser tab smoothly takes
+//! over the terminal. Slice 9h revisits this when multi-device
+//! fan-out lands.
 //!
 //! # Backpressure
 //!
 //! The per-pane mpsc channel has a bounded capacity
-//! (`PER_PANE_BUFFER`). If the subscriber's handler falls behind
-//! (slow client, coalescer saturated, etc.), `try_send` fails
-//! and the dispatcher DROPS the bytes with a `warn!` log rather
-//! than backpressuring the whole tmux stream. Output loss is
-//! visible to the user as a terminal glitch, but the alternative
-//! — blocking the tmux reader task on one slow client —
-//! starves every other pane's output. Ring-buffer + resync in
-//! slice 9g is the proper fix for drops; until then, generous
-//! buffer depth + fast consumer keeps drops to pathological
-//! cases.
-//!
-//! # Stale-entry cleanup (panicked handler)
-//!
-//! If a handler task panics between `subscribe` and its
-//! explicit `unsubscribe` cleanup, the `mpsc::Receiver` drops
-//! but the `PaneState` (with its decoder carry) remains in the
-//! map. `dispatch`'s `TrySendError::Closed` branch prunes it on
-//! the next attempted send. For a quiet pane (no `%output`
-//! between the panic and a reconnect attempt), this means the
-//! `subscribe` call implicitly overwrites the stale entry —
-//! which is now ALWAYS correct under the replace-semantics
-//! above (it used to also matter for the old
-//! `AlreadyAttached` rejection path, which is gone).
+//! (`PER_PANE_BUFFER`). If the subscriber's handler falls behind,
+//! `try_send` fails and the dispatcher DROPS the bytes with a
+//! `warn!` log. Output loss is visible to the user as a terminal
+//! glitch, but the alternative — blocking the tmux reader task
+//! on one slow client — starves every other pane's output. The
+//! ring buffer still captures the dropped bytes, so a reconnect
+//! after a drop can resume cleanly via the gap path.
 
 use crate::session::output::OctalDecoder;
 use crate::session::parser::Notification;
+use crate::session::ring::{ReplaySlice, RingBuffer};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -84,6 +78,18 @@ use tokio::task::JoinHandle;
 /// without committing huge memory (each entry is a small `Vec`).
 const PER_PANE_BUFFER: usize = 256;
 
+/// A decoded output chunk with the byte-offset `seq` at which
+/// it ends. Subscribers track the highest `end_seq` they've
+/// seen; when the coalescer flushes, that value goes into the
+/// outbound `ServerMessage::Output.seq`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputChunk {
+    pub data: Vec<u8>,
+    /// `total_written` on the pane's ring AFTER appending `data`.
+    /// I.e., the seq of the last byte in this chunk, 1-based.
+    pub end_seq: u64,
+}
+
 /// Router between the global tmux notification stream and the
 /// per-pane subscribers. See the module doc.
 #[derive(Clone, Default)]
@@ -92,8 +98,19 @@ pub struct OutputRouter {
 }
 
 struct PaneState {
-    sender: mpsc::Sender<Vec<u8>>,
+    sender: Option<mpsc::Sender<OutputChunk>>,
     decoder: OctalDecoder,
+    ring: RingBuffer,
+}
+
+impl PaneState {
+    fn new() -> Self {
+        Self {
+            sender: None,
+            decoder: OctalDecoder::new(),
+            ring: RingBuffer::new(),
+        }
+    }
 }
 
 impl OutputRouter {
@@ -101,46 +118,119 @@ impl OutputRouter {
         Self::default()
     }
 
-    /// Subscribe to `pane_id`'s decoded byte stream. Always
-    /// succeeds — if a prior subscriber is already registered,
-    /// their sender is dropped (their `recv` yields `None` on the
-    /// next poll → handler exits via `Action::Exit`) and the new
-    /// subscriber takes over. The decoder's carry buffer survives
-    /// the swap because it's per-pane, not per-subscriber.
+    /// Subscribe to `pane_id`'s decoded byte stream for a fresh
+    /// attach (no resume). Always succeeds — if a prior
+    /// subscriber is already registered, their sender is dropped
+    /// (their `recv` yields `None` → old handler exits via
+    /// `Action::Exit`) and the new subscriber takes over. The
+    /// decoder's carry buffer AND the ring survive the swap
+    /// because they're per-pane, not per-subscriber.
     ///
-    /// See the "Attach-displaces-prior" section of the module
-    /// doc for the one-user-many-devices rationale.
-    pub fn subscribe(&self, pane_id: u32) -> mpsc::Receiver<Vec<u8>> {
+    /// Returns `(receiver, current_seq)` so the handler can echo
+    /// `current_seq` in its `Attached` response. The client
+    /// watches the seq progression from there.
+    pub fn subscribe(&self, pane_id: u32) -> (mpsc::Receiver<OutputChunk>, u64) {
         let mut panes = self.inner.lock().expect("output-router mutex poisoned");
         let (tx, rx) = mpsc::channel(PER_PANE_BUFFER);
-        match panes.get_mut(&pane_id) {
-            Some(existing) => {
-                // Replace the sender. The old sender drops when
-                // this assignment lands, which closes the old
-                // receiver and lets the old handler exit cleanly.
-                // KEEP the decoder: carry state is about the tmux
-                // byte stream, not about the subscriber.
-                existing.sender = tx;
-            }
-            None => {
-                panes.insert(
-                    pane_id,
-                    PaneState {
-                        sender: tx,
-                        decoder: OctalDecoder::new(),
-                    },
-                );
-            }
-        }
-        rx
+        let state = panes.entry(pane_id).or_insert_with(PaneState::new);
+        state.sender = Some(tx);
+        (rx, state.ring.total_written())
     }
 
-    /// Remove a pane's registration. Safe to call when no
-    /// subscriber is registered (no-op). Handlers MUST call this
-    /// on clean exit so the decoder's carry buffer doesn't leak.
-    /// On a panicked handler exit, `dispatch`'s stale-entry
-    /// pruning (see the module doc) eventually cleans up.
-    pub fn unsubscribe(&self, pane_id: u32) {
+    /// Subscribe AND resume — do both atomically under the
+    /// router's lock so nothing slips in between snapshot and
+    /// subscribe. Returns the receiver (for the live stream
+    /// going forward from the snapshot point) plus a
+    /// [`ReplaySlice`] describing what the client missed.
+    ///
+    /// The handler hands the replay bytes to the client BEFORE
+    /// draining the receiver, so from the client's perspective
+    /// bytes arrive in strict seq order without overlap.
+    ///
+    /// If `pane_id` isn't in the map yet, we insert it fresh
+    /// (empty ring → replay is `UpToDate` at seq 0 OR `Gap`
+    /// from 0 when the client's `after_seq` is positive but
+    /// the ring is empty — see the empty-ring semantics on
+    /// [`crate::session::ring::RingBuffer::replay_after`]).
+    ///
+    /// IMPORTANT: this DOES displace any prior subscriber on
+    /// the pane. Callers that need to validate the resume seq
+    /// before committing to the displace should use
+    /// [`OutputRouter::peek_resume`] first.
+    pub fn subscribe_with_resume(
+        &self,
+        pane_id: u32,
+        after_seq: u64,
+    ) -> (mpsc::Receiver<OutputChunk>, ReplaySlice) {
+        let mut panes = self.inner.lock().expect("output-router mutex poisoned");
+        let (tx, rx) = mpsc::channel(PER_PANE_BUFFER);
+        let state = panes.entry(pane_id).or_insert_with(PaneState::new);
+        let replay = state.ring.replay_after(after_seq);
+        state.sender = Some(tx);
+        (rx, replay)
+    }
+
+    /// Read-only snapshot of what [`OutputRouter::subscribe_with_resume`]
+    /// would return, WITHOUT installing a sender or creating a
+    /// pane entry. Used by the handler to validate a client's
+    /// `resume_from_seq` before displacing any prior subscriber
+    /// — a version-skew client claiming a future-seq would
+    /// otherwise kick an innocent prior subscriber on its way
+    /// to being rejected.
+    ///
+    /// If the pane has no entry yet, returns `ReplaySlice` as
+    /// if the ring were empty (total_written = 0).
+    pub fn peek_resume(&self, pane_id: u32, after_seq: u64) -> ReplaySlice {
+        let panes = self.inner.lock().expect("output-router mutex poisoned");
+        match panes.get(&pane_id) {
+            Some(state) => state.ring.replay_after(after_seq),
+            None => {
+                // Simulate what we'd see against a fresh
+                // PaneState without actually creating one.
+                if after_seq == 0 {
+                    ReplaySlice::UpToDate { end_seq: 0 }
+                } else {
+                    ReplaySlice::Future
+                }
+            }
+        }
+    }
+
+    /// Detach this subscriber but KEEP the pane's ring and
+    /// decoder so a reconnect can replay. This is the handler's
+    /// clean-exit path: a user who closes their browser tab and
+    /// reopens seconds later should resume seamlessly, which
+    /// requires the ring outliving the transport.
+    ///
+    /// The pane's decoder carry also survives. A reconnect that
+    /// lands mid-escape picks up the unchanged byte stream.
+    ///
+    /// Safe to call when no subscriber is registered (no-op).
+    ///
+    /// # Ring lifetime
+    ///
+    /// Pane entries created here persist until `evict(pane_id)`
+    /// is called explicitly, or the `OutputRouter` is dropped
+    /// on server shutdown. Slice 9g relies on this for
+    /// reconnect-replay; slice 9h plans to add tmux
+    /// `%window-close`-driven eviction so long-running servers
+    /// don't accumulate rings for destroyed panes. Until that
+    /// lands, a server restart IS the pane-eviction mechanism —
+    /// acceptable for single-user deployments.
+    pub fn clear_subscriber(&self, pane_id: u32) {
+        let mut panes = self.inner.lock().expect("output-router mutex poisoned");
+        if let Some(state) = panes.get_mut(&pane_id) {
+            state.sender = None;
+        }
+    }
+
+    /// Explicitly remove a pane's entry, wiping ring + decoder +
+    /// sender. Call this when the underlying tmux pane is known
+    /// to be gone (e.g., session destroyed), not for transport
+    /// disconnects. Slice 9h will wire this to tmux
+    /// `%window-close` notifications. Tests use it to reset
+    /// state between cases.
+    pub fn evict(&self, pane_id: u32) {
         let _ = self
             .inner
             .lock()
@@ -148,94 +238,65 @@ impl OutputRouter {
             .remove(&pane_id);
     }
 
-    /// Route a raw `%output <pane_id> <data>` notification to
-    /// its subscriber (if any). Decodes octal escapes, folds in
-    /// any carry from the previous dispatch to this pane, and
-    /// sends the resulting bytes via the per-pane mpsc.
+    /// Route a raw `%output <pane_id> <data>` notification.
+    /// Decodes octal escapes, appends the decoded bytes to the
+    /// pane's ring, and forwards an [`OutputChunk`] to the
+    /// subscriber (if any).
     ///
-    /// The input `raw` is expected to be tmux control-mode-
-    /// encoded text (the decoder handles `\\` and `\NNN`
-    /// escapes). A future non-tmux transport producing pre-
-    /// decoded bytes would bypass the router's dispatch, NOT
-    /// feed them in raw — the decoder would passthrough safely
-    /// only because it has a fast-path on "no backslash," and
-    /// relying on that is fragile. Keep `dispatch` for
-    /// tmux-encoded input.
+    /// If the pane isn't registered yet, we create a fresh
+    /// `PaneState` (empty ring, no sender) and append. This
+    /// means the ring accumulates history even before a client
+    /// first attaches — a client attaching to an existing
+    /// session will see whatever's already there. For 9g this
+    /// means the first Attach gets fresh state; for later
+    /// slices with long-lived tmux sessions, clients reconnect
+    /// into scrollback organically.
     ///
-    /// If no subscriber is registered, the notification is
-    /// dropped silently — tmux panes unrelated to any katulong
-    /// connection still produce output (e.g., the initial
-    /// session hosting a detached shell) and the router isn't
-    /// the right place to noise-log them.
+    /// Input `raw` is expected to be tmux control-mode-encoded
+    /// text.
     pub fn dispatch(&self, pane_id: u32, raw: &str) {
         let mut panes = self.inner.lock().expect("output-router mutex poisoned");
-        let Some(state) = panes.get_mut(&pane_id) else {
-            return;
-        };
+        let state = panes.entry(pane_id).or_insert_with(PaneState::new);
         let decoded = state.decoder.decode(raw);
         if decoded.is_empty() {
-            // Entire chunk was absorbed into the carry (a single
-            // trailing `\` for example). Nothing to dispatch
-            // yet; the next chunk will carry through.
+            // Entire chunk absorbed into the carry. Nothing to
+            // append or dispatch yet.
             return;
         }
-        if let Err(err) = state.sender.try_send(decoded) {
-            match err {
-                mpsc::error::TrySendError::Full(_) => {
-                    // Subscriber fell behind. Dropping here is a
-                    // visible glitch; blocking the dispatcher
-                    // would starve every other pane. Logged so
-                    // operators see the pressure.
+        state.ring.append(&decoded);
+        let end_seq = state.ring.total_written();
+        let chunk = OutputChunk {
+            data: decoded,
+            end_seq,
+        };
+        if let Some(sender) = state.sender.as_ref() {
+            match sender.try_send(chunk) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    // Subscriber fell behind. Bytes are still in
+                    // the ring — a reconnect can recover via
+                    // resume. Drop the live chunk with a warn.
                     tracing::warn!(
                         pane_id,
-                        "output dispatch dropped — subscriber queue full"
+                        "output dispatch dropped — subscriber queue full (ring retains)"
                     );
                 }
-                mpsc::error::TrySendError::Closed(_) => {
+                Err(mpsc::error::TrySendError::Closed(_)) => {
                     // Subscriber dropped their receiver without
-                    // calling unsubscribe (e.g., handler panic).
-                    // Remove the entry so future dispatches and
-                    // subscribes see a clean slate. A quiet pane
-                    // might not trigger this path until the next
-                    // `%output` arrives — a subscribe() call
-                    // before that would overwrite the stale
-                    // entry anyway (see `subscribe`).
-                    panes.remove(&pane_id);
+                    // unsubscribe (e.g., handler panic). Clear
+                    // the sender; KEEP the ring and decoder so
+                    // a reconnect still gets history. The
+                    // PaneState itself stays registered.
+                    state.sender = None;
                 }
             }
         }
     }
 
     /// Spawn the dispatcher task: a loop that drains `notifs`
-    /// (the `mpsc::UnboundedReceiver<Notification>` handed back
-    /// by `Tmux::spawn`) and routes each `%output` event through
-    /// `dispatch`. Returns the task's `JoinHandle` so the
-    /// caller can await shutdown; in practice `main.rs` lets
-    /// the runtime abort it on process exit.
-    ///
-    /// # Non-blocking invariant
-    ///
-    /// `Tmux::spawn` returns an UNBOUNDED receiver; if this
-    /// task ever blocks in `dispatch`, tmux notifications
-    /// accumulate toward OOM. `dispatch` is `try_send`-based
-    /// (drops on full subscriber rather than awaiting), so the
-    /// only way to block this task is synchronous contention
-    /// on the router's internal mutex. That critical section
-    /// is short (decoder step + try_send) even under slice 9h's
-    /// multi-subscriber fan-out — revisit if a profile ever
-    /// shows the dispatcher as the bottleneck.
-    ///
-    /// # Lifecycle
-    ///
-    /// The task exits when:
-    /// - `notifs` is closed (the `Tmux` client drops or
-    ///   shutdown completes), OR
-    /// - a `Notification::Exit` event fires (tmux's control
-    ///   connection tore down).
-    ///
-    /// On exit it logs and the task terminates; the router
-    /// continues to exist for any handlers that hold clones,
-    /// but nothing feeds it.
+    /// (the `mpsc::UnboundedReceiver<Notification>` from
+    /// `Tmux::spawn`) and routes each `%output` event through
+    /// `dispatch`. Returns the task's `JoinHandle`.
     pub fn spawn_dispatcher(
         &self,
         mut notifs: mpsc::UnboundedReceiver<Notification>,
@@ -252,9 +313,6 @@ impl OutputRouter {
                         break;
                     }
                     other => {
-                        // Other notifications aren't consumed
-                        // yet. Logged at trace so operators can
-                        // enable them selectively when diagnosing.
                         tracing::trace!(?other, "tmux notification (no consumer yet)");
                     }
                 }
@@ -263,9 +321,7 @@ impl OutputRouter {
     }
 
     /// Number of currently-registered panes. Test-only; not
-    /// exposed in release builds so callers can't build load-
-    /// bearing logic on it (the map's contents are a dispatch
-    /// implementation detail).
+    /// exposed in release builds.
     #[cfg(test)]
     pub fn registered_count(&self) -> usize {
         self.inner.lock().unwrap().len()
@@ -277,154 +333,240 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn subscribe_then_dispatch_delivers_bytes() {
+    async fn subscribe_returns_zero_seq_on_empty_pane() {
         let r = OutputRouter::new();
-        let mut rx = r.subscribe(0);
+        let (_rx, seq) = r.subscribe(0);
+        assert_eq!(seq, 0);
+    }
+
+    #[tokio::test]
+    async fn dispatch_delivers_output_chunk_with_end_seq() {
+        let r = OutputRouter::new();
+        let (mut rx, _) = r.subscribe(0);
         r.dispatch(0, "hello");
         let got = rx.recv().await.expect("bytes arrive");
-        assert_eq!(got, b"hello");
+        assert_eq!(got.data, b"hello");
+        assert_eq!(got.end_seq, 5);
+    }
+
+    #[tokio::test]
+    async fn consecutive_dispatches_produce_monotonic_seqs() {
+        let r = OutputRouter::new();
+        let (mut rx, _) = r.subscribe(0);
+        r.dispatch(0, "ab");
+        r.dispatch(0, "cd");
+        let c1 = rx.recv().await.unwrap();
+        let c2 = rx.recv().await.unwrap();
+        assert_eq!(c1.end_seq, 2);
+        assert_eq!(c2.end_seq, 4);
     }
 
     #[tokio::test]
     async fn dispatch_decodes_octal() {
         let r = OutputRouter::new();
-        let mut rx = r.subscribe(7);
+        let (mut rx, _) = r.subscribe(7);
         r.dispatch(7, r"\033[2J");
         let got = rx.recv().await.unwrap();
-        assert_eq!(got, &[0x1B, b'[', b'2', b'J']);
+        assert_eq!(got.data, &[0x1B, b'[', b'2', b'J']);
     }
 
     #[tokio::test]
     async fn dispatch_carries_partial_escape_across_calls() {
-        // The multi-device rationale lives or dies on the
-        // decoder state being held by the router, not by the
-        // subscriber. Split a `\342\226\210` mid-escape and
-        // confirm the second dispatch reassembles correctly.
         let r = OutputRouter::new();
-        let mut rx = r.subscribe(0);
+        let (mut rx, _) = r.subscribe(0);
         r.dispatch(0, r"\342\226\2");
         r.dispatch(0, "10");
         let first = rx.recv().await.unwrap();
         let second = rx.recv().await.unwrap();
-        let mut combined = first;
-        combined.extend(second);
+        let mut combined = first.data;
+        combined.extend(second.data);
         assert_eq!(combined, &[0xE2, 0x96, 0x88]);
     }
 
     #[tokio::test]
-    async fn second_subscribe_displaces_prior_and_closes_its_channel() {
-        // One-user-many-devices: a second attach should smoothly
-        // take over the pane, not error. The prior subscriber's
-        // receiver sees its channel close on next recv.
+    async fn second_subscribe_displaces_prior_but_preserves_ring() {
+        // One-user-many-devices: the second attach takes over.
+        // The ring survives the swap so the second subscriber
+        // could still request resume if they knew what they
+        // missed.
         let r = OutputRouter::new();
-        let mut first = r.subscribe(0);
-        let mut second = r.subscribe(0);
-        r.dispatch(0, "routed");
+        let (mut first, _) = r.subscribe(0);
+        r.dispatch(0, "abc"); // first sees it
+        let _first_chunk = first.recv().await.unwrap();
 
-        // Old subscriber: next recv yields None (closed).
+        let (mut second, baseline) = r.subscribe(0);
+        assert_eq!(baseline, 3, "seq baseline after 3 bytes");
         assert!(
             first.recv().await.is_none(),
             "prior subscription must close when replaced"
         );
-        // New subscriber: gets the bytes.
-        let got = second.recv().await.expect("new subscriber gets bytes");
-        assert_eq!(got, b"routed");
+        r.dispatch(0, "def");
+        let got = second.recv().await.unwrap();
+        assert_eq!(got.data, b"def");
+        assert_eq!(got.end_seq, 6);
     }
 
     #[tokio::test]
-    async fn displaced_keeps_decoder_carry() {
-        // The decoder is per-pane, not per-subscriber. When we
-        // replace the subscriber mid-escape, the partial escape
-        // must still resolve cleanly on the new subscriber's
-        // bytes.
+    async fn subscribe_with_resume_returns_in_range_bytes() {
         let r = OutputRouter::new();
-        let _old = r.subscribe(0);
-        r.dispatch(0, r"\342\226\2"); // carries one byte
-        let mut new_sub = r.subscribe(0);
-        r.dispatch(0, "10"); // completes the escape
-        // The "\342\226" part went to the old sub (now closed),
-        // dropped silently. The new sub sees only the completion.
-        let got = new_sub.recv().await.unwrap();
-        assert_eq!(got, &[0x88]);
+        // Seed the ring before any subscriber exists.
+        r.dispatch(0, "abcde");
+        let (mut rx, replay) = r.subscribe_with_resume(0, 2);
+        match replay {
+            ReplaySlice::InRange { data, end_seq } => {
+                assert_eq!(data, b"cde");
+                assert_eq!(end_seq, 5);
+            }
+            other => panic!("expected InRange, got {other:?}"),
+        }
+        // Live continues after the replay snapshot.
+        r.dispatch(0, "fg");
+        let chunk = rx.recv().await.unwrap();
+        assert_eq!(chunk.data, b"fg");
+        assert_eq!(chunk.end_seq, 7);
     }
 
     #[tokio::test]
-    async fn unsubscribe_allows_resubscribe() {
+    async fn subscribe_with_resume_up_to_date() {
         let r = OutputRouter::new();
-        let _rx1 = r.subscribe(0);
-        r.unsubscribe(0);
-        let _rx2 = r.subscribe(0);
-        assert_eq!(r.registered_count(), 1);
+        r.dispatch(0, "abc");
+        let (_rx, replay) = r.subscribe_with_resume(0, 3);
+        assert_eq!(replay, ReplaySlice::UpToDate { end_seq: 3 });
     }
 
     #[tokio::test]
-    async fn dispatch_with_no_subscriber_is_silent() {
-        // The initial tmux session hosts output unrelated to any
-        // connection — those panes must not log-spam the router.
+    async fn subscribe_with_resume_future_is_protocol_error() {
         let r = OutputRouter::new();
-        r.dispatch(42, "orphaned output");
-        assert_eq!(r.registered_count(), 0);
+        r.dispatch(0, "abc");
+        let (_rx, replay) = r.subscribe_with_resume(0, 999);
+        assert_eq!(replay, ReplaySlice::Future);
     }
 
     #[tokio::test]
-    async fn dispatch_prunes_closed_subscriber() {
+    async fn subscribe_with_resume_gap_returns_current_window() {
         let r = OutputRouter::new();
-        let rx = r.subscribe(5);
+        // Force a ring rollover by dispatching more than default
+        // capacity. Using a small dispatch repeatedly keeps the
+        // test fast.
+        for _ in 0..(crate::session::ring::DEFAULT_CAPACITY / 64 + 4) {
+            r.dispatch(0, &"x".repeat(64));
+        }
+        let (_rx, replay) = r.subscribe_with_resume(0, 0);
+        match replay {
+            ReplaySlice::Gap {
+                available_from_seq,
+                data: _,
+                end_seq: _,
+            } => {
+                assert!(
+                    available_from_seq > 0,
+                    "gap must report a positive oldest-available seq"
+                );
+            }
+            other => panic!("expected Gap, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn clear_subscriber_keeps_ring_for_reconnect() {
+        // Clean-close + reopen is the dominant mobile UX flow.
+        // The ring MUST outlive the transport so the reopen can
+        // resume seamlessly, not start fresh.
+        let r = OutputRouter::new();
+        let (_rx, _) = r.subscribe(0);
+        r.dispatch(0, "abc");
+        r.clear_subscriber(0);
+        let (_rx2, baseline) = r.subscribe(0);
+        assert_eq!(
+            baseline, 3,
+            "clear_subscriber must keep the ring so clean-close + reopen can resume"
+        );
+    }
+
+    #[tokio::test]
+    async fn evict_removes_pane_entirely() {
+        // Explicit eviction (for tmux-pane-gone signals, slice
+        // 9h) wipes the entire PaneState.
+        let r = OutputRouter::new();
+        let (_rx, _) = r.subscribe(0);
+        r.dispatch(0, "doomed");
+        r.evict(0);
+        let (_rx2, baseline) = r.subscribe(0);
+        assert_eq!(baseline, 0, "evict wipes the pane ring");
+    }
+
+    #[tokio::test]
+    async fn dispatch_preserves_ring_on_closed_subscriber() {
+        // Handler panic path: receiver dropped without
+        // unsubscribe. Next dispatch sees Closed; clears sender
+        // but KEEPS the ring + decoder. A reconnect resume can
+        // still use the history.
+        let r = OutputRouter::new();
+        let (rx, _) = r.subscribe(0);
         drop(rx);
-        r.dispatch(5, "posthumous"); // send fails → prune
-        assert_eq!(r.registered_count(), 0);
-        // Subscribe now succeeds again (with a fresh decoder).
-        let _rx = r.subscribe(5);
+        r.dispatch(0, "orphan");
+        let (_rx, baseline) = r.subscribe(0);
+        assert_eq!(
+            baseline, 6,
+            "ring must survive subscriber-closed dispatch so reconnect-resume works"
+        );
     }
 
     #[tokio::test]
-    async fn unsubscribe_is_idempotent() {
+    async fn dispatch_with_no_prior_subscriber_seeds_ring() {
+        // A dispatch before any subscribe creates the pane entry
+        // and seeds the ring. This is the "initial tmux session
+        // printing a prompt before the first client connects"
+        // path. The first subscriber then sees the baseline seq.
         let r = OutputRouter::new();
-        r.unsubscribe(99); // nothing registered — no-op
-        let _rx = r.subscribe(1);
-        r.unsubscribe(1);
-        r.unsubscribe(1); // already gone — no-op
+        r.dispatch(42, "prompt$ ");
+        let (_rx, baseline) = r.subscribe(42);
+        assert_eq!(baseline, 8);
+    }
+
+    #[tokio::test]
+    async fn clear_subscriber_is_idempotent() {
+        let r = OutputRouter::new();
+        r.clear_subscriber(99); // nothing registered — no-op
+        let (_rx, _) = r.subscribe(1);
+        r.clear_subscriber(1);
+        r.clear_subscriber(1); // already cleared — no-op
+    }
+
+    #[tokio::test]
+    async fn evict_is_idempotent() {
+        let r = OutputRouter::new();
+        r.evict(42);
+        r.evict(42);
     }
 
     #[tokio::test]
     async fn router_clones_share_state() {
-        // Dispatcher task and handler task each hold a clone of
-        // the same `OutputRouter`. Operations on one must be
-        // visible on the other.
         let r1 = OutputRouter::new();
         let r2 = r1.clone();
-        let mut rx = r1.subscribe(0);
+        let (mut rx, _) = r1.subscribe(0);
         r2.dispatch(0, "cross");
         let got = rx.recv().await.unwrap();
-        assert_eq!(got, b"cross");
+        assert_eq!(got.data, b"cross");
     }
 
     #[tokio::test]
-    async fn carry_only_output_does_not_dispatch_empty() {
-        // A chunk that is entirely absorbed into the carry
-        // (single `\`) must NOT send an empty Vec to the
-        // subscriber — we'd be telling the client "here's output"
-        // when really we're still waiting for the tail. Silence
-        // is the correct signal.
+    async fn carry_only_output_does_not_dispatch_or_seq_advance() {
+        // A chunk absorbed into the decoder carry must not emit
+        // an OutputChunk AND must not advance the ring (no bytes
+        // actually landed). Otherwise seq integrity breaks.
         let r = OutputRouter::new();
-        let mut rx = r.subscribe(0);
+        let (mut rx, _) = r.subscribe(0);
         r.dispatch(0, r"\");
-        // Nothing should be receivable yet.
-        let got = rx.try_recv();
-        assert!(
-            got.is_err(),
-            "dispatch that absorbed entirely into carry must send nothing; got {got:?}"
-        );
-        // Completing the escape delivers bytes.
-        r.dispatch(0, "033");
-        let bytes = rx.recv().await.unwrap();
-        assert_eq!(bytes, &[0x1B]);
+        assert!(rx.try_recv().is_err(), "carry-only dispatch sends nothing");
+        let (_rx2, seq) = r.subscribe(0);
+        assert_eq!(seq, 0, "carry-only must not advance ring");
     }
 
     #[tokio::test]
     async fn spawn_dispatcher_routes_output_and_exits_on_tmux_exit() {
         let r = OutputRouter::new();
-        let mut rx = r.subscribe(3);
+        let (mut rx, _) = r.subscribe(3);
         let (tx, notifs) = mpsc::unbounded_channel::<Notification>();
         let handle = r.spawn_dispatcher(notifs);
 
@@ -434,17 +576,54 @@ mod tests {
         })
         .unwrap();
         let got = rx.recv().await.unwrap();
-        assert_eq!(got, b"ping");
+        assert_eq!(got.data, b"ping");
 
-        // Non-routed notifications are logged but not forwarded.
-        tx.send(Notification::WindowClose { window_id: 0 }).unwrap();
-
-        // Exit notification terminates the dispatcher task.
         tx.send(Notification::Exit {
             reason: Some("test".into()),
         })
         .unwrap();
         handle.await.expect("dispatcher task joins cleanly");
+    }
+
+    #[tokio::test]
+    async fn peek_resume_does_not_displace_subscriber() {
+        // Round-1 correctness fix: peek must NEVER touch the
+        // sender. A version-skew probe calling peek with a
+        // bogus seq must leave the legitimate subscriber's
+        // channel unaffected.
+        let r = OutputRouter::new();
+        let (mut rx, _) = r.subscribe(0);
+        r.dispatch(0, "live");
+        let _ = r.peek_resume(0, 999_999); // bogus future-seq
+        // Prior subscription must still work.
+        let got = rx.recv().await.expect("subscriber survived peek");
+        assert_eq!(got.data, b"live");
+    }
+
+    #[tokio::test]
+    async fn peek_resume_on_empty_pane_with_after_zero_is_uptodate() {
+        // Server-restart path: a reconnecting client that kept
+        // its seq from before the restart will usually see an
+        // empty pane. We used to reject with Future; now we
+        // special-case empty + positive seq in peek_resume to
+        // treat it as "up to date at 0" for cold-pane /
+        // peek_resume(_, 0) and as Future for nonzero. The
+        // handler then converts Future on empty to a Gap
+        // replay (see handler tests).
+        let r = OutputRouter::new();
+        let slice = r.peek_resume(42, 0);
+        assert_eq!(slice, ReplaySlice::UpToDate { end_seq: 0 });
+    }
+
+    #[tokio::test]
+    async fn peek_resume_on_empty_pane_with_nonzero_is_future() {
+        // Intentional: only the handler decides that empty-pane
+        // + nonzero resume should fall back to Gap. The router
+        // itself returns Future to keep the peek API precise
+        // ("what does the ring say?").
+        let r = OutputRouter::new();
+        let slice = r.peek_resume(42, 100);
+        assert_eq!(slice, ReplaySlice::Future);
     }
 
     #[tokio::test]
