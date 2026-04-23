@@ -7,7 +7,7 @@
 //! their own mutexes. `AppState` itself is just a bundle of references.
 
 use crate::revocation::RevocationPublisher;
-use crate::session::SessionManager;
+use crate::session::{OutputRouter, SessionManager};
 use katulong_auth::{AuthStore, WebAuthnService};
 use std::sync::Arc;
 use tokio::sync::broadcast::Receiver;
@@ -55,6 +55,19 @@ pub struct AppState {
     /// the field `Option` rather than `Arc<SessionManager>` avoids
     /// forcing every auth integration test to stand up tmux.
     pub sessions: Option<Arc<SessionManager>>,
+    /// Output-fan-out router. Always present (it's cheap — an
+    /// `Arc<Mutex<HashMap>>` behind the clone) so handlers can
+    /// always call `subscribe`. In `None`-sessions test builds
+    /// it has no dispatcher populating it and every subscribe
+    /// yields an empty stream; in production the dispatcher task
+    /// spawned in `main.rs` feeds decoded tmux `%output` through
+    /// it. Kept outside the `Option<SessionManager>` field
+    /// deliberately: slice 9h's ring-buffer + reconnect-replay
+    /// will want the router alive across session-manager
+    /// restarts (if that ever becomes possible), and coupling
+    /// the two by wrapping them in one `Option` would force a
+    /// lifetime they don't share.
+    pub output_router: OutputRouter,
 }
 
 impl AppState {
@@ -68,6 +81,7 @@ impl AppState {
             config: Arc::new(config),
             revocations: RevocationPublisher::new(),
             sessions: None,
+            output_router: OutputRouter::new(),
         }
     }
 

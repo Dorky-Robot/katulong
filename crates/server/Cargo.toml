@@ -49,3 +49,8 @@ serde_bytes = "0.11"
 tempfile = { workspace = true }
 tower = { version = "0.4", features = ["util"] }
 http-body-util = "0.1"
+# `test-util` enables `#[tokio::test(start_paused = true)]` used by
+# the output coalescer's timer tests. `tokio`'s `full` feature
+# does NOT include it — `test-util` is explicitly test-only and
+# opting out of the production build is the point.
+tokio = { workspace = true, features = ["test-util"] }

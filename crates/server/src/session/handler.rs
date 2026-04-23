@@ -2,46 +2,75 @@
 //!
 //! `serve_session` consumes a `TransportHandle` and runs the
 //! terminal-session lifecycle against it: protocol handshake,
-//! session attach, revocation watch. It is transport-agnostic by
+//! session attach, output forwarding, input forwarding, resize
+//! gating, and revocation watch. It is transport-agnostic by
 //! construction — see `project_transport_agnostic` in project
 //! memory.
 //!
-//! # Slice 9e scope
+//! # What's in scope
 //!
-//! - Handshake gate: `Hello` (server) → `HelloAck` (client) →
-//!   `Attach` (client) → `Attached` (server).
-//! - Phase state machine enforces the order. Messages arriving in
-//!   the wrong phase trigger a typed `Error` and a clean transport
-//!   close, so the client sees "unexpected_message" rather than an
-//!   opaque drop.
-//! - `Resize` in the `Attached` phase forwards to `SessionManager`;
-//!   tmux clamps and issues `refresh-client -C`.
-//! - `Input` in the `Attached` phase is accepted and logged. Slice
-//!   9f wires the actual tmux write path (and the `Output`
-//!   producer) with coalescing.
-//! - Revocation watch: a `tokio::select!` over `handle.inbound` and
-//!   `state.subscribe_revocations()` closes the transport
-//!   immediately when the bound credential is revoked. Localhost
-//!   connections aren't bound to a credential and can't be
-//!   revoked — they exit only on peer disconnect.
+//! - **Handshake gate** (slice 9e): `Hello` (server) → `HelloAck`
+//!   (client) → `Attach` (client) → `Attached` (server). The
+//!   phase state machine enforces the order; messages arriving
+//!   in the wrong phase trigger a typed `Error` and clean close.
+//! - **Output forwarding** (slice 9f): after `Attached`, the
+//!   handler subscribes to `state.output_router` for its pane
+//!   and forwards decoded bytes through the coalescer to
+//!   `ServerMessage::Output { data, seq }`. `seq` is per-
+//!   connection-monotonic (Node scar `da6907f` — lets the
+//!   client detect gaps on reconnect).
+//! - **Output coalescing** (slice 9f): buffer bursts with a
+//!   2 ms idle / 16 ms cap schedule (Node scars
+//!   `d311168`/`066dab2`). Individual `%output` chunks below
+//!   the idle window fuse into one wire message; continuous
+//!   streams still flush every 16 ms.
+//! - **Input forwarding** (slice 9f): `ClientMessage::Input`
+//!   bytes go to `SessionManager::send_input`, which encodes
+//!   them as `send-keys -t %<pane_id> -H <hex>`. Binary-safe —
+//!   control chars, arrow keys, Ctrl-C all traverse correctly.
+//! - **Resize gating** (slice 9f): `ClientMessage::Resize`
+//!   applies immediately if no output landed within 50 ms;
+//!   otherwise defers until output has been idle for 50 ms OR
+//!   500 ms have elapsed (whichever is sooner). Node scar
+//!   `066dab2` — SIGWINCH mid-render interleaves old and new
+//!   paint sequences; the gate avoids that.
+//! - **Revocation watch**: `tokio::select!` over `handle.inbound`
+//!   and `state.subscribe_revocations()` closes the transport on
+//!   matching credential. Localhost connections have no
+//!   credential binding and are immune to revoke events.
+//!
+//! # Not in scope (deferred)
+//!
+//! - **Ring buffer + reconnect replay** (slice 9g): `seq` is
+//!   emitted but no history is kept. Slice 9g adds per-pane
+//!   ring storage and an `Attach { resume_from_seq }` variant
+//!   so a reconnecting client can rebuild state without a full
+//!   screen redraw.
+//! - **Multi-device output fan-out** (slice 9h): the router
+//!   rejects a second subscriber per pane. The octal decoder
+//!   already lives upstream of the fan-out (in the router), so
+//!   9h lifts the single-subscriber restriction without moving
+//!   state.
 //!
 //! # Why a state machine, not "just check in the match"
 //!
 //! The alternative is per-variant guards like `if !attached {
-//! return Err(unexpected) }` scattered through the main loop. That
-//! works but makes it easy to forget a guard on a newly-added
-//! variant (the future `Output` from an echo-tester, say). The
-//! phase enum forces every addition to be placed in a phase, and
-//! the unit tests below snap whenever a variant crosses phases
-//! without explicit consent.
+//! return Err(unexpected) }` scattered through the main loop.
+//! That works but makes it easy to forget a guard on a newly-
+//! added variant. The phase enum + `Action` values force every
+//! addition to be placed in a phase, and the unit tests below
+//! snap whenever a variant crosses phases without explicit
+//! consent.
 
 use crate::log_util::sanitize_for_log;
 use crate::revocation::RevocationEvent;
+use crate::session::output::Coalescer;
 use crate::state::AppState;
-use crate::transport::{
-    ClientMessage, ServerMessage, TransportHandle, PROTOCOL_VERSION,
-};
+use crate::transport::{ClientMessage, ServerMessage, TransportHandle, PROTOCOL_VERSION};
+use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 /// How long we wait between connection upgrade and receiving
 /// `HelloAck` before closing. WS-level keepalive keeps the socket
@@ -51,6 +80,29 @@ use tokio::sync::broadcast::error::RecvError;
 /// probing `/ws` with no cookie (shouldn't happen — auth gates the
 /// upgrade) or a half-open connection is reaped promptly.
 const HANDSHAKE_TIMEOUT_SECS: u64 = 10;
+
+/// Output-idle window before a pending resize can apply. Node
+/// scar `066dab2`: SIGWINCH arriving mid-render interleaves old
+/// partial-frame escapes with the new redraw, garbling TUI apps.
+/// Waiting 50 ms after the last output byte lets in-flight paints
+/// complete before the resize punches through.
+const RESIZE_GATE: Duration = Duration::from_millis(50);
+
+/// Cap on how long a pending resize can wait for output-idle.
+/// Without this, a continuous-output command like `tail -f` (which
+/// keeps resetting the idle window) starves resize forever. Same
+/// Node scar (`066dab2`): 500 ms is short enough to feel
+/// responsive yet long enough that any interactive TUI would have
+/// paused between frames.
+const RESIZE_MAX_DEFER: Duration = Duration::from_millis(500);
+
+/// Cap on the protocol-version string we echo back in error
+/// messages. Far shorter than the Origin cap in `ws.rs` because the
+/// version string is a short identifier (`"katulong/0.1"`) — if a
+/// client sends something larger, it's either buggy or crafted, and
+/// 32 chars is plenty to identify the prefix without letting an
+/// attacker flood logs with per-request megabyte payloads.
+const LOG_PROTOCOL_VERSION_MAX_LEN: usize = 32;
 
 /// Error codes emitted as `ServerMessage::Error.code`. Stable —
 /// clients and scripts key off these strings, so renames require a
@@ -75,6 +127,10 @@ pub mod error_code {
     /// Client didn't complete the handshake within
     /// `HANDSHAKE_TIMEOUT_SECS`. Connection closes.
     pub const HANDSHAKE_TIMEOUT: &str = "handshake_timeout";
+    /// Another connection is already bound to the requested
+    /// session's pane. Slice 9f enforces single-subscriber per
+    /// pane; slice 9h relaxes this with multi-device fan-out.
+    pub const SESSION_BUSY: &str = "session_busy";
     /// Connection was torn down server-side without the client
     /// having done anything wrong. Emitted when the bound
     /// credential is revoked, or when the revocation broadcast
@@ -96,6 +152,13 @@ pub mod error_code {
 
 /// Handshake phase. Advances on valid messages; any message that
 /// isn't valid for the current phase is a protocol violation.
+///
+/// The `Attached` variant is intentionally data-less: the session
+/// name and pane id live in the coordinator's `AttachedState`
+/// alongside async resources (the pane output receiver, the
+/// coalescer, the resize timer state) that can't sit in a
+/// clonable phase enum. The phase is the "protocol gate"; the
+/// I/O state is the "active work."
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Phase {
     /// Server has sent `Hello`; waiting for the client to ack with
@@ -104,9 +167,10 @@ enum Phase {
     /// Protocol version confirmed; waiting for the client to send
     /// `Attach` with a session name and dimensions.
     AwaitingAttach,
-    /// Transport is bound to `session`. `Input`/`Resize` are now
-    /// valid.
-    Attached { session: String },
+    /// Transport is bound to a tmux pane. `Input`/`Resize` are now
+    /// valid. The pane id + session name + output subscription
+    /// live in the coordinator's `AttachedState`.
+    Attached,
 }
 
 /// Action the phase machine tells the coordinator to take after
@@ -124,20 +188,18 @@ enum Action {
     /// implicit (no server message is sent for HelloAck — the
     /// client's next move is Attach). Just advance phase.
     AdvanceToAwaitingAttach,
-    /// Create/attach the tmux session, then send `Attached` with
-    /// the clamped dims.
+    /// Create/attach the tmux session, subscribe to its pane,
+    /// then send `Attached` with the clamped dims.
     DoAttach {
         session: String,
         cols: u16,
         rows: u16,
     },
-    /// Forward a resize to the session manager for the currently-
-    /// attached session.
-    DoResize {
-        session: String,
-        cols: u16,
-        rows: u16,
-    },
+    /// Forward client input bytes to the attached pane.
+    ForwardInput { data: Vec<u8> },
+    /// Queue a resize for the attached session — the coordinator
+    /// applies immediately or defers based on the resize gate.
+    QueueResize { cols: u16, rows: u16 },
     /// A protocol violation. Coordinator sends `Error` and closes.
     /// `code` is one of `error_code::*`; `message` is operator-
     /// visible and MUST NOT include client-controlled bytes raw
@@ -169,9 +231,6 @@ fn step(phase: &mut Phase, msg: ClientMessage) -> Action {
                     message: format!(
                         "server speaks {}, client acked {}",
                         PROTOCOL_VERSION,
-                        // bound on length defensively; don't let an
-                        // attacker-chosen version string blow up
-                        // log line size
                         sanitize_for_log(&protocol_version, LOG_PROTOCOL_VERSION_MAX_LEN),
                     ),
                 }
@@ -186,24 +245,10 @@ fn step(phase: &mut Phase, msg: ClientMessage) -> Action {
             }
         }
 
-        (Phase::Attached { session }, ClientMessage::Input { data: _ }) => {
-            // Slice 9e accepts Input to exercise the phase-gate but
-            // does NOT forward it to the PTY — slice 9f wires the
-            // tmux write path with coalescing. Logging at trace
-            // keeps the data payload out of default logs entirely.
-            tracing::trace!(
-                session = %session,
-                "session input accepted (forwarding wired in slice 9f)"
-            );
-            Action::Continue
-        }
+        (Phase::Attached, ClientMessage::Input { data }) => Action::ForwardInput { data },
 
-        (Phase::Attached { session }, ClientMessage::Resize { cols, rows }) => {
-            Action::DoResize {
-                session,
-                cols,
-                rows,
-            }
+        (Phase::Attached, ClientMessage::Resize { cols, rows }) => {
+            Action::QueueResize { cols, rows }
         }
 
         // Any other (phase, message) combination is a protocol
@@ -234,23 +279,79 @@ fn phase_name(phase: &Phase) -> &'static str {
     match phase {
         Phase::AwaitingHelloAck => "awaiting_hello_ack",
         Phase::AwaitingAttach => "awaiting_attach",
-        Phase::Attached { .. } => "attached",
+        Phase::Attached => "attached",
     }
 }
 
-/// Cap on the protocol-version string we echo back in error
-/// messages. Far shorter than the Origin cap in `ws.rs` because the
-/// version string is a short identifier (`"katulong/0.1"`) — if a
-/// client sends something larger, it's either buggy or crafted, and
-/// 32 chars is plenty to identify the prefix without letting an
-/// attacker flood logs with per-request megabyte payloads.
-const LOG_PROTOCOL_VERSION_MAX_LEN: usize = 32;
+/// Per-connection I/O state populated after a successful `Attach`.
+/// Holds every resource that can't sit in `Phase::Attached`
+/// (async receivers, timing state, mutable buffers).
+///
+/// Drop behavior is load-bearing: dropping `AttachedState` drops
+/// the `mpsc::Receiver`, which tells the router the subscriber is
+/// gone; the explicit `unsubscribe` call in `serve_session`'s
+/// cleanup removes the decoder too. Never return early from
+/// `serve_session` without passing through the cleanup path.
+struct AttachedState {
+    session: String,
+    pane_id: u32,
+    /// Decoded bytes from this pane's `%output` stream.
+    output_rx: mpsc::Receiver<Vec<u8>>,
+    /// Monotonic sequence number for each `ServerMessage::Output`
+    /// we emit. Increments per-emission, NOT per-byte — the
+    /// client reads `seq` to detect gaps after reconnect.
+    output_seq: u64,
+    /// Coalesces raw bytes from `output_rx` into chunky Output
+    /// messages. See `output::Coalescer` for timing.
+    coalescer: Coalescer,
+    /// When we last received bytes from `output_rx`. `None` until
+    /// the first chunk lands. Used by the resize gate — a resize
+    /// that arrives within `RESIZE_GATE` of this time defers.
+    last_output_at: Option<Instant>,
+    /// Resize queued while output was recent. `None` means no
+    /// resize waiting. The `queued_at` field lets us cap the
+    /// deferral at `RESIZE_MAX_DEFER`.
+    pending_resize: Option<PendingResize>,
+}
+
+struct PendingResize {
+    cols: u16,
+    rows: u16,
+    queued_at: Instant,
+}
+
+impl AttachedState {
+    /// When to flush the coalescer. `None` when no output is
+    /// buffered.
+    fn coalesce_deadline(&self) -> Option<Instant> {
+        self.coalescer.next_deadline()
+    }
+
+    /// When to apply a pending resize. `None` when no resize is
+    /// queued. The deadline is the earlier of:
+    /// - `last_output_at + RESIZE_GATE` (apply after output idle)
+    /// - `pending.queued_at + RESIZE_MAX_DEFER` (apply anyway)
+    ///
+    /// A pending resize with NO prior output (client resized
+    /// before the shell had a chance to print) resolves
+    /// immediately — use `queued_at` as both the "since output"
+    /// and the "max defer" reference, yielding a past deadline.
+    fn resize_deadline(&self) -> Option<Instant> {
+        let pending = self.pending_resize.as_ref()?;
+        let idle_target = self
+            .last_output_at
+            .map_or(pending.queued_at, |t| t + RESIZE_GATE);
+        let cap_target = pending.queued_at + RESIZE_MAX_DEFER;
+        Some(idle_target.min(cap_target))
+    }
+}
 
 /// The per-connection consumer loop, parameterised on the
-/// transport abstraction. `state` threads session manager + the
-/// revocation broadcast; `credential_id` is the credential this
-/// transport is bound to (from the auth extractor), or `None` for
-/// localhost-exempt connections which can't be revoked.
+/// transport abstraction. `state` threads session manager +
+/// revocation broadcast + output router; `credential_id` is the
+/// credential this transport is bound to (from the auth
+/// extractor), or `None` for localhost-exempt connections which
+/// can't be revoked.
 ///
 /// This function owns the `TransportHandle` for the connection's
 /// lifetime. When it returns, the outbound sender drops → the WS
@@ -263,9 +364,7 @@ pub async fn serve_session(
     let mut handle = handle;
 
     // Subscribe to revocation events BEFORE we touch anything else.
-    // See `revocation.rs` subscriber contract: a handler that
-    // validates first, then subscribes, misses any revocation that
-    // lands between the two calls.
+    // See `revocation.rs` subscriber contract.
     let mut revocations = state.subscribe_revocations();
 
     // Send the initial Hello. If this fails, the transport died
@@ -281,18 +380,20 @@ pub async fn serve_session(
     }
 
     let mut phase = Phase::AwaitingHelloAck;
-    let handshake_deadline =
-        tokio::time::Instant::now() + std::time::Duration::from_secs(HANDSHAKE_TIMEOUT_SECS);
+    let mut attached: Option<AttachedState> = None;
+    let handshake_deadline = Instant::now() + Duration::from_secs(HANDSHAKE_TIMEOUT_SECS);
 
     loop {
-        // The handshake timer only fires while we're still in the
-        // handshake phases. Once `Attached`, the timer is disabled
-        // (`tokio::select!`'s `biased` + guarded branch handles
-        // this explicitly).
+        // Guard flags for conditional select branches. Assigning
+        // to locals reads more clearly than inlining the matches
+        // in the select macro (and rustc has been known to
+        // misjudge `if matches!(...)` in select guards).
         let in_handshake = matches!(
             phase,
             Phase::AwaitingHelloAck | Phase::AwaitingAttach
         );
+        let coalesce_deadline = attached.as_ref().and_then(|a| a.coalesce_deadline());
+        let resize_deadline = attached.as_ref().and_then(|a| a.resize_deadline());
 
         let action = tokio::select! {
             biased;
@@ -304,27 +405,88 @@ pub async fn serve_session(
             revoke = revocations.recv() => handle_revoke(revoke, credential_id.as_deref()),
 
             // Handshake-timer branch: only active while we're
-            // still awaiting HelloAck or Attach. Once we've
-            // reached `Attached`, this branch is disabled.
+            // still awaiting HelloAck or Attach.
             _ = tokio::time::sleep_until(handshake_deadline), if in_handshake => Action::Close {
                 code: error_code::HANDSHAKE_TIMEOUT,
                 message: "client did not complete handshake in time".into(),
             },
 
+            // Coalescer flush: elapsed idle or cap deadline.
+            // Second priority after revoke so a single slow
+            // client can't stall a revocation.
+            _ = sleep_until_opt(coalesce_deadline), if coalesce_deadline.is_some() => {
+                Action::Continue  // handled below in post-select block
+            }
+
+            // Pending resize ready to apply.
+            _ = sleep_until_opt(resize_deadline), if resize_deadline.is_some() => {
+                Action::Continue  // handled below in post-select block
+            }
+
+            // Output from this pane. Only active when we're
+            // attached. Each `Some` is a Vec<u8> of decoded
+            // bytes from the router.
+            Some(bytes) = maybe_recv_output(attached.as_mut()) => {
+                if let Some(a) = attached.as_mut() {
+                    a.last_output_at = Some(Instant::now());
+                    a.coalescer.push(&bytes);
+                }
+                Action::Continue
+            }
+
             msg = handle.inbound.recv() => match msg {
                 None => Action::Exit,
                 Some(Err(err)) => {
-                    // Decoder/frame error from the transport. Stay
-                    // open — a single bad frame isn't a reason to
-                    // kick the user out; the Node scar `9dc7c78`
-                    // said validate at the boundary, which the
-                    // typed deserialize already does.
                     tracing::warn!(error = %err, "transport frame error; dropping");
                     Action::Continue
                 }
                 Some(Ok(msg)) => step(&mut phase, msg),
             },
         };
+
+        // Post-select: coalescer flush + resize flush are driven
+        // by deadlines, not `Action` values — the timer branches
+        // above just wake the loop, and we check here whether the
+        // deadline is actually past. This keeps the state machine
+        // decoupled from timer wake-up without needing a new
+        // Action variant per deadline kind.
+        if let Some(a) = attached.as_mut() {
+            let now = Instant::now();
+            if a.coalesce_deadline().is_some_and(|d| now >= d) && !a.coalescer.is_empty() {
+                let bytes = a.coalescer.take();
+                a.output_seq += 1;
+                if handle
+                    .send(ServerMessage::Output {
+                        data: bytes,
+                        seq: a.output_seq,
+                    })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            if a.resize_deadline().is_some_and(|d| now >= d) {
+                let pending = a
+                    .pending_resize
+                    .take()
+                    .expect("resize_deadline implies pending_resize is Some");
+                let sessions = state
+                    .sessions
+                    .as_deref()
+                    .expect("Attached phase implies sessions is Some");
+                if let Err(err) = sessions
+                    .resize_session(&a.session, pending.cols, pending.rows)
+                    .await
+                {
+                    tracing::warn!(
+                        session = %a.session,
+                        error = %err,
+                        "deferred resize failed; keeping transport open"
+                    );
+                }
+            }
+        }
 
         match action {
             Action::Continue => continue,
@@ -335,10 +497,8 @@ pub async fn serve_session(
                 }
             }
             Action::AdvanceToAwaitingAttach => {
-                // No server message for this transition — the
-                // client already has Hello, and the next expected
-                // message from them is Attach. Sending a dedicated
-                // "hello acknowledged" would be pure wire bloat.
+                // No server message; the client already has Hello
+                // and its next move is Attach.
                 continue;
             }
             Action::DoAttach {
@@ -346,19 +506,9 @@ pub async fn serve_session(
                 cols,
                 rows,
             } => {
-                // Clamp once here, BEFORE calling into
-                // SessionManager, so both the session-manager
-                // create call and the `Attached` response we send
-                // back to the client use identical values. The
-                // manager's `create_session` clamps again
-                // internally as a defense-in-depth belt — this
-                // handler-level clamp is the authoritative
-                // "coordinator clamps before dispatch" step.
-                // Without this, a 9999-cols request would reach
-                // `create_session` unclamped; one careless future
-                // refactor that drops the manager's internal
-                // clamp would mean tmux sees the raw value. Do it
-                // here too so the invariant survives that refactor.
+                // Clamp once at the coordinator before dispatch.
+                // SessionManager clamps internally too as
+                // defense-in-depth (see its docstring).
                 let (cols, rows) = crate::session::dims::clamp_dims(cols, rows);
                 let Some(sessions) = state.sessions.as_deref() else {
                     send_error_and_close(
@@ -369,11 +519,10 @@ pub async fn serve_session(
                     .await;
                     break;
                 };
-                match sessions.create_session(&session, cols, rows).await {
-                    Ok(()) => {
-                        phase = Phase::Attached {
-                            session: session.clone(),
-                        };
+                match try_attach(sessions, &state, &session, cols, rows).await {
+                    Ok(new_state) => {
+                        attached = Some(new_state);
+                        phase = Phase::Attached;
                         if handle
                             .send(ServerMessage::Attached {
                                 session,
@@ -386,10 +535,9 @@ pub async fn serve_session(
                             break;
                         }
                     }
-                    Err(err) => {
-                        let (code, message) = classify_session_error(&err);
+                    Err(AttachFailure { code, message, err }) => {
                         tracing::warn!(
-                            error = %err,
+                            error = err.as_deref().unwrap_or(""),
                             code = code,
                             "attach rejected"
                         );
@@ -398,30 +546,70 @@ pub async fn serve_session(
                     }
                 }
             }
-            Action::DoResize {
-                session,
-                cols,
-                rows,
-            } => {
-                // SAFETY: `sessions` must be `Some` to reach
-                // `Attached` phase; the only path to Attached is
-                // through a successful create_session above, which
-                // requires `state.sessions` to be Some.
+            Action::ForwardInput { data } => {
+                let a = attached
+                    .as_ref()
+                    .expect("Attached phase implies attached is Some");
                 let sessions = state
                     .sessions
                     .as_deref()
                     .expect("Attached phase implies sessions is Some");
-                if let Err(err) = sessions.resize_session(&session, cols, rows).await {
-                    // Resize failure on an already-attached session
-                    // is noisy but not fatal. Log and keep the
-                    // transport open; the client will try again on
-                    // the next layout event. Do NOT leak raw tmux
-                    // output to the client.
+                if let Err(err) = sessions.send_input(a.pane_id, &data).await {
+                    // Forwarding failure is operator-visible but
+                    // not a reason to close — a glitchy write may
+                    // be followed by success on the next input,
+                    // and closing would kick the user for tmux's
+                    // transient failure.
                     tracing::warn!(
-                        session = %session,
+                        pane_id = a.pane_id,
                         error = %err,
-                        "resize failed; keeping transport open"
+                        "input forward failed; keeping transport open"
                     );
+                }
+            }
+            Action::QueueResize { cols, rows } => {
+                let a = attached
+                    .as_mut()
+                    .expect("Attached phase implies attached is Some");
+                let (cols, rows) = crate::session::dims::clamp_dims(cols, rows);
+                let now = Instant::now();
+                let recent_output = a
+                    .last_output_at
+                    .is_some_and(|t| now.duration_since(t) < RESIZE_GATE);
+                if !recent_output {
+                    // No recent output — apply immediately. This
+                    // is the initial-attach path (no output yet)
+                    // and the quiet-shell path.
+                    a.pending_resize = None;
+                    let sessions = state
+                        .sessions
+                        .as_deref()
+                        .expect("Attached phase implies sessions is Some");
+                    if let Err(err) = sessions.resize_session(&a.session, cols, rows).await {
+                        tracing::warn!(
+                            session = %a.session,
+                            error = %err,
+                            "resize failed; keeping transport open"
+                        );
+                    }
+                } else {
+                    // Defer: stash and let the timer branch
+                    // pick it up. If a resize is already pending,
+                    // overwrite — the most recent client
+                    // dimensions win, and the queued_at stays at
+                    // the oldest time so the 500 ms max-defer cap
+                    // still applies from the first attempt (an
+                    // attacker-paced resize every 400 ms should
+                    // not extend the defer forever).
+                    let queued_at = a
+                        .pending_resize
+                        .as_ref()
+                        .map_or(now, |p| p.queued_at);
+                    a.pending_resize = Some(PendingResize {
+                        cols,
+                        rows,
+                        queued_at,
+                    });
                 }
             }
             Action::Close { code, message } => {
@@ -431,8 +619,91 @@ pub async fn serve_session(
         }
     }
 
+    // Cleanup: unsubscribe from the router so the decoder's
+    // carry buffer doesn't leak and the pane is available for a
+    // fresh connection. Safe to call even if we never attached.
+    if let Some(a) = attached {
+        state.output_router.unsubscribe(a.pane_id);
+    }
     // Drop the handle. The WS output pump sees the channel close
     // and shuts down the socket gracefully.
+}
+
+/// Helper: await a deadline if set, otherwise never resolve. Used
+/// in `tokio::select!` branches whose activation is guarded by a
+/// `.is_some()` condition — the `pending` branch never actually
+/// runs thanks to the guard, but its future still needs to be
+/// constructable.
+async fn sleep_until_opt(deadline: Option<Instant>) {
+    match deadline {
+        Some(d) => tokio::time::sleep_until(d).await,
+        None => std::future::pending::<()>().await,
+    }
+}
+
+/// Helper: read from the pane output receiver if we're attached,
+/// otherwise never resolve. Same guard-+-pending pattern as
+/// `sleep_until_opt`.
+async fn maybe_recv_output(attached: Option<&mut AttachedState>) -> Option<Vec<u8>> {
+    match attached {
+        Some(a) => a.output_rx.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Attach-result payload so the serve loop can branch cleanly on
+/// the several ways `DoAttach` can go wrong.
+struct AttachFailure {
+    code: &'static str,
+    message: String,
+    /// Original error rendered as a string for tracing; None when
+    /// the failure came from the router (no underlying error).
+    err: Option<String>,
+}
+
+async fn try_attach(
+    sessions: &crate::session::SessionManager,
+    state: &AppState,
+    session: &str,
+    cols: u16,
+    rows: u16,
+) -> Result<AttachedState, AttachFailure> {
+    sessions
+        .create_session(session, cols, rows)
+        .await
+        .map_err(|err| {
+            let (code, message) = classify_session_error(&err);
+            AttachFailure {
+                code,
+                message,
+                err: Some(err.to_string()),
+            }
+        })?;
+    let pane_id = sessions.query_default_pane(session).await.map_err(|err| {
+        let (code, message) = classify_session_error(&err);
+        AttachFailure {
+            code,
+            message,
+            err: Some(err.to_string()),
+        }
+    })?;
+    let output_rx = state
+        .output_router
+        .subscribe(pane_id)
+        .map_err(|err| AttachFailure {
+            code: error_code::SESSION_BUSY,
+            message: "session already attached".into(),
+            err: Some(err.to_string()),
+        })?;
+    Ok(AttachedState {
+        session: session.to_string(),
+        pane_id,
+        output_rx,
+        output_seq: 0,
+        coalescer: Coalescer::new(),
+        last_output_at: None,
+        pending_resize: None,
+    })
 }
 
 /// Decide whether a revocation event should tear down this
@@ -463,8 +734,6 @@ fn handle_revoke(
             }
             _ => Action::Continue,
         },
-        // Subscriber fell behind the broadcast buffer. `revocation.rs`
-        // subscriber contract: conservative close.
         Err(RecvError::Lagged(n)) => {
             tracing::warn!(
                 lagged_events = n,
@@ -476,13 +745,6 @@ fn handle_revoke(
                 message: "connection terminated".into(),
             }
         }
-        // Publisher dropped. Shouldn't happen in practice
-        // (AppState owns it for the server's lifetime), but if it
-        // does, we have no more revocation awareness — exit to be
-        // safe. `Exit` rather than `Close` because this only fires
-        // on process teardown, when there's no value in emitting a
-        // protocol-level close frame the runtime is about to tear
-        // down anyway.
         Err(RecvError::Closed) => Action::Exit,
     }
 }
@@ -520,11 +782,11 @@ fn classify_session_error(err: &crate::session::SessionError) -> (&'static str, 
 
 #[cfg(test)]
 mod tests {
-    //! State-machine tests. Transport-free and SessionManager-free:
-    //! we feed `step` directly with synthetic messages and assert
-    //! on the action it returns. Real-transport end-to-end tests
-    //! live under the `transport::websocket` and integration
-    //! modules.
+    //! State-machine tests. Transport-free and SessionManager-free
+    //! where possible; the I/O integration tests for the output/
+    //! input/resize paths live alongside their modules
+    //! (`output.rs`, `router.rs`, `manager.rs`) because the
+    //! integration points are small and directly testable.
 
     use super::*;
 
@@ -533,6 +795,8 @@ mod tests {
             protocol_version: PROTOCOL_VERSION.into(),
         }
     }
+
+    // ---------- Phase machine (unchanged from slice 9e) ----------
 
     #[test]
     fn hello_ack_advances_phase() {
@@ -557,11 +821,7 @@ mod tests {
             }
             other => panic!("expected close, got {other:?}"),
         }
-        assert_eq!(
-            phase,
-            Phase::AwaitingHelloAck,
-            "phase should not advance on mismatch"
-        );
+        assert_eq!(phase, Phase::AwaitingHelloAck);
     }
 
     #[test]
@@ -594,26 +854,17 @@ mod tests {
             },
         );
         match action {
-            Action::Close { code, .. } => {
-                assert_eq!(code, error_code::UNEXPECTED_MESSAGE);
-            }
+            Action::Close { code, .. } => assert_eq!(code, error_code::UNEXPECTED_MESSAGE),
             other => panic!("expected close, got {other:?}"),
         }
     }
 
     #[test]
     fn hello_ack_in_attached_phase_is_protocol_violation() {
-        // HelloAck is a one-shot; re-sending it later should be
-        // treated as out-of-phase. Otherwise a buggy client could
-        // hold the connection but never exercise the session.
-        let mut phase = Phase::Attached {
-            session: "s".into(),
-        };
+        let mut phase = Phase::Attached;
         let action = step(&mut phase, ack_v1());
         match action {
-            Action::Close { code, .. } => {
-                assert_eq!(code, error_code::UNEXPECTED_MESSAGE);
-            }
+            Action::Close { code, .. } => assert_eq!(code, error_code::UNEXPECTED_MESSAGE),
             other => panic!("expected close, got {other:?}"),
         }
     }
@@ -623,9 +874,7 @@ mod tests {
         for mut phase in [
             Phase::AwaitingHelloAck,
             Phase::AwaitingAttach,
-            Phase::Attached {
-                session: "s".into(),
-            },
+            Phase::Attached,
         ] {
             let before = phase.clone();
             let action = step(&mut phase, ClientMessage::Ping { nonce: 7 });
@@ -635,7 +884,7 @@ mod tests {
     }
 
     #[test]
-    fn attach_in_await_attach_phase_requests_attach_action() {
+    fn attach_in_await_attach_issues_do_attach() {
         let mut phase = Phase::AwaitingAttach;
         let action = step(
             &mut phase,
@@ -653,11 +902,12 @@ mod tests {
                 rows: 40,
             }
         );
-        // Step does NOT advance to Attached — the coordinator does
-        // that only after SessionManager::create_session succeeds.
-        // A bad session name that SessionManager rejects must not
-        // leave the machine in a silently-attached state.
-        assert_eq!(phase, Phase::AwaitingAttach);
+        assert_eq!(
+            phase,
+            Phase::AwaitingAttach,
+            "step does not advance to Attached — the coordinator does \
+             that only after SessionManager::create_session succeeds"
+        );
     }
 
     #[test]
@@ -672,32 +922,31 @@ mod tests {
             },
         );
         match action {
-            Action::Close { code, .. } => {
-                assert_eq!(code, error_code::UNEXPECTED_MESSAGE);
-            }
+            Action::Close { code, .. } => assert_eq!(code, error_code::UNEXPECTED_MESSAGE),
             other => panic!("expected close, got {other:?}"),
         }
     }
 
     #[test]
-    fn input_after_attached_is_accepted() {
-        let mut phase = Phase::Attached {
-            session: "main".into(),
-        };
+    fn input_after_attached_issues_forward() {
+        let mut phase = Phase::Attached;
         let action = step(
             &mut phase,
             ClientMessage::Input {
-                data: vec![0x41],
+                data: vec![0x41, 0x42],
             },
         );
-        assert_eq!(action, Action::Continue);
+        assert_eq!(
+            action,
+            Action::ForwardInput {
+                data: vec![0x41, 0x42],
+            }
+        );
     }
 
     #[test]
-    fn resize_after_attached_issues_resize_action() {
-        let mut phase = Phase::Attached {
-            session: "main".into(),
-        };
+    fn resize_after_attached_issues_queue_resize() {
+        let mut phase = Phase::Attached;
         let action = step(
             &mut phase,
             ClientMessage::Resize {
@@ -707,8 +956,7 @@ mod tests {
         );
         assert_eq!(
             action,
-            Action::DoResize {
-                session: "main".into(),
+            Action::QueueResize {
                 cols: 100,
                 rows: 30,
             }
@@ -717,8 +965,6 @@ mod tests {
 
     #[test]
     fn protocol_version_error_truncates_control_chars() {
-        // An attacker-controlled version string with embedded
-        // control characters must not corrupt operator logs.
         let mut phase = Phase::AwaitingHelloAck;
         let crafted = "evil\r\n[WARN] forged_line";
         let action = step(
@@ -738,6 +984,8 @@ mod tests {
         }
     }
 
+    // ---------- Revocation ----------
+
     #[test]
     fn revoke_matching_credential_closes_with_terminated_code() {
         let event = RevocationEvent {
@@ -745,15 +993,7 @@ mod tests {
         };
         let action = handle_revoke(Ok(event), Some("cred-1"));
         match action {
-            Action::Close { code, .. } => {
-                assert_eq!(
-                    code,
-                    error_code::CONNECTION_TERMINATED,
-                    "revocation must use the terminated code — distinct from \
-                     UNEXPECTED_MESSAGE so clients can tell 'prompt for auth' \
-                     apart from 'fix your message'"
-                );
-            }
+            Action::Close { code, .. } => assert_eq!(code, error_code::CONNECTION_TERMINATED),
             other => panic!("expected close, got {other:?}"),
         }
     }
@@ -763,60 +1003,36 @@ mod tests {
         let event = RevocationEvent {
             credential_id: "other-cred".into(),
         };
-        let action = handle_revoke(Ok(event), Some("cred-1"));
-        assert_eq!(action, Action::Continue);
+        assert_eq!(handle_revoke(Ok(event), Some("cred-1")), Action::Continue);
     }
 
     #[test]
     fn revoke_when_localhost_bound_continues() {
-        // Localhost connections have no credential binding and
-        // can't be revoked. Every incoming revoke event must be a
-        // no-op for them.
         let event = RevocationEvent {
             credential_id: "cred-1".into(),
         };
-        let action = handle_revoke(Ok(event), None);
-        assert_eq!(action, Action::Continue);
+        assert_eq!(handle_revoke(Ok(event), None), Action::Continue);
     }
 
     #[test]
     fn revoke_lagged_is_conservative_close_with_terminated_code() {
         let action = handle_revoke(Err(RecvError::Lagged(3)), Some("cred-1"));
         match action {
-            Action::Close { code, .. } => {
-                assert_eq!(
-                    code,
-                    error_code::CONNECTION_TERMINATED,
-                    "lagged broadcast shares the client-visible code with \
-                     revocation — the cause-distinction lives in tracing, \
-                     not on the wire"
-                );
-            }
+            Action::Close { code, .. } => assert_eq!(code, error_code::CONNECTION_TERMINATED),
             other => panic!("expected close on lagged, got {other:?}"),
         }
     }
 
     #[test]
     fn revoke_publisher_closed_exits_silently() {
-        // Publisher dropped means AppState is being torn down
-        // — the process is exiting. There's no value in emitting
-        // a protocol-level Error frame when the runtime is about
-        // to shut down; the `Exit` action drops the handle and
-        // lets the transport close with the socket.
-        let action = handle_revoke(Err(RecvError::Closed), Some("cred-1"));
-        assert_eq!(action, Action::Exit);
+        assert_eq!(
+            handle_revoke(Err(RecvError::Closed), Some("cred-1")),
+            Action::Exit,
+        );
     }
 
     #[test]
     fn error_codes_are_distinct() {
-        // Forward-safety: all `error_code::*` constants must
-        // carry distinct values. Two same-valued codes would
-        // silently collapse two different operator-visible
-        // causes into one log line and break clients that key
-        // off the specific code. Regressions here are easy to
-        // introduce (copy-paste a constant, forget to change the
-        // value) and impossible to catch at compile time — hence
-        // a dedicated test.
         let all = [
             error_code::PROTOCOL_VERSION_MISMATCH,
             error_code::UNEXPECTED_MESSAGE,
@@ -824,13 +1040,90 @@ mod tests {
             error_code::SESSION_ERROR,
             error_code::NO_SESSION_MANAGER,
             error_code::HANDSHAKE_TIMEOUT,
+            error_code::SESSION_BUSY,
             error_code::CONNECTION_TERMINATED,
         ];
         let set: std::collections::HashSet<&str> = all.iter().copied().collect();
-        assert_eq!(
-            set.len(),
-            all.len(),
-            "duplicate error code in `error_code::*`: {all:?}"
-        );
+        assert_eq!(set.len(), all.len(), "duplicate error code: {all:?}");
+    }
+
+    // ---------- Resize gate deadline math (pure, no runtime) ----------
+
+    fn attached_state_for_gate_tests() -> AttachedState {
+        // Build a minimal AttachedState by hand — output_rx is
+        // required by the struct but the gate-math helpers don't
+        // touch it.
+        let (_tx, rx) = mpsc::channel(1);
+        AttachedState {
+            session: "s".into(),
+            pane_id: 0,
+            output_rx: rx,
+            output_seq: 0,
+            coalescer: Coalescer::new(),
+            last_output_at: None,
+            pending_resize: None,
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resize_deadline_none_when_no_pending() {
+        let a = attached_state_for_gate_tests();
+        assert_eq!(a.resize_deadline(), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resize_deadline_immediate_when_no_prior_output() {
+        // A pending resize with no prior output: idle-target ==
+        // queued_at, cap-target == queued_at + 500ms. min is
+        // queued_at (in the past by the time we check, in real
+        // time). Deadline is "already elapsed", so the resize
+        // flushes on the very next select iteration.
+        let mut a = attached_state_for_gate_tests();
+        let now = Instant::now();
+        a.pending_resize = Some(PendingResize {
+            cols: 80,
+            rows: 24,
+            queued_at: now,
+        });
+        assert_eq!(a.resize_deadline(), Some(now));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resize_deadline_picks_idle_target_under_cap() {
+        // Output landed t=0, resize queued at t=10ms. Idle target
+        // is t=50ms (output+50). Cap target is t=510ms (queued+500).
+        // min = idle, 50ms.
+        let mut a = attached_state_for_gate_tests();
+        let t0 = Instant::now();
+        a.last_output_at = Some(t0);
+        tokio::time::advance(Duration::from_millis(10)).await;
+        let queued = Instant::now();
+        a.pending_resize = Some(PendingResize {
+            cols: 80,
+            rows: 24,
+            queued_at: queued,
+        });
+        assert_eq!(a.resize_deadline(), Some(t0 + RESIZE_GATE));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resize_deadline_picks_cap_when_idle_would_starve() {
+        // Simulating `tail -f`: output keeps landing, so
+        // last_output_at stays recent. If the idle-target
+        // perpetually resets further than the cap, cap wins.
+        // Here we fake it by setting last_output_at FAR in the
+        // future relative to queued_at, so idle-target (far +
+        // 50ms) is beyond cap-target (queued + 500ms).
+        let mut a = attached_state_for_gate_tests();
+        let queued = Instant::now();
+        a.pending_resize = Some(PendingResize {
+            cols: 80,
+            rows: 24,
+            queued_at: queued,
+        });
+        // Pretend an output burst landed 600ms "after" queued
+        // (tail -f scenario) — its GATE-offset is beyond the cap.
+        a.last_output_at = Some(queued + Duration::from_millis(600));
+        assert_eq!(a.resize_deadline(), Some(queued + RESIZE_MAX_DEFER));
     }
 }

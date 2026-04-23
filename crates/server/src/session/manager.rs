@@ -129,6 +129,15 @@ impl SessionManager {
     /// explicit client events (attach, detach, window-resize) — do
     /// NOT call on every keystroke (SIGWINCH storms garble TUI
     /// apps; see `dims.rs`).
+    ///
+    /// **tmux command choice.** `refresh-client -C` is synchronous
+    /// in control mode: it processes in-band with the command
+    /// stream, so the new window size takes effect before any
+    /// subsequent `%output`. `resize-window` (the async
+    /// alternative) races with the output stream and flips tmux's
+    /// `window-size` to `manual`, breaking subsequent
+    /// `refresh-client -C`s. Node scar `09c0542` says stay in-band
+    /// for operations that must be ordered relative to output.
     pub async fn resize_session(
         &self,
         name: &str,
@@ -143,6 +152,76 @@ impl SessionManager {
             cols = cols,
             rows = rows
         );
+        let reply = self.tmux.send_command(&cmd).await?;
+        if !reply.ok {
+            return Err(SessionError::TmuxRejected(reply.output));
+        }
+        Ok(())
+    }
+
+    /// Look up the default pane id for `session`. Returns the
+    /// numeric pane id (tmux's `%N` with the `%` stripped) that
+    /// the output router keys off. For a session freshly created
+    /// by `create_session`, the first `list-panes` result IS the
+    /// default pane, because tmux creates the session with a
+    /// single window hosting a single pane.
+    ///
+    /// Called exactly once per `Attach` — the session-to-pane
+    /// mapping can change if the user runs tmux commands that
+    /// create windows/panes, but katulong's current single-pane-
+    /// per-session assumption (session 9h will revisit) means
+    /// we resolve once at attach time.
+    pub async fn query_default_pane(&self, session: &str) -> Result<u32, SessionError> {
+        validate_session_name(session)?;
+        let cmd = format!("list-panes -t {session} -F '#{{pane_id}}'");
+        let reply = self.tmux.send_command(&cmd).await?;
+        if !reply.ok {
+            return Err(SessionError::TmuxRejected(reply.output));
+        }
+        let first = reply.output.lines().next().unwrap_or("").trim();
+        let rest = first.strip_prefix('%').ok_or_else(|| {
+            SessionError::TmuxRejected(format!("unexpected pane-id reply: {first:?}"))
+        })?;
+        rest.parse::<u32>().map_err(|_| {
+            SessionError::TmuxRejected(format!("invalid pane-id in reply: {first:?}"))
+        })
+    }
+
+    /// Forward client keystroke bytes to a specific pane as
+    /// `send-keys -t %<pane_id> -H <hex-pairs>`. `-H` takes
+    /// space-separated two-digit hex values, so every byte
+    /// (including control chars like Ctrl-C `0x03` or arrow keys
+    /// `1b 5b 41`) rides through without shell quoting or
+    /// encoding loss.
+    ///
+    /// **Why `send-keys -H` and not stdin write.** tmux in
+    /// control mode exposes stdin for COMMANDS, not for pane
+    /// data — there's no other supported channel from our side
+    /// to the pane. `send-keys -H` is explicitly binary-safe and
+    /// tmux has shipped it since 2.4. Alternatives considered:
+    /// `-l` (literal text) mangles control chars; `paste-buffer`
+    /// requires a second command per paste and is paste-flavored
+    /// (hits paste bracketing).
+    ///
+    /// Empty input is a no-op — we don't bother tmux for zero
+    /// bytes. Slice 9g/9h considerations: large pastes (up to
+    /// the 64 KiB frame cap) encode to ~192 KiB command lines
+    /// (3× hex overhead); tmux accepts multi-hundred-KB command
+    /// strings in practice, but truly enormous pastes should be
+    /// fragmented client-side. The existing client-side
+    /// fragmentation implied by `MAX_INBOUND_FRAME_BYTES`
+    /// handles this.
+    pub async fn send_input(&self, pane_id: u32, data: &[u8]) -> Result<(), SessionError> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        // Pre-size the string: "send-keys -t %<id> -H" + 3 chars/byte.
+        let mut cmd = String::with_capacity(32 + data.len() * 3);
+        use std::fmt::Write;
+        write!(&mut cmd, "send-keys -t %{pane_id} -H").expect("writing to String never fails");
+        for b in data {
+            write!(&mut cmd, " {b:02x}").expect("writing to String never fails");
+        }
         let reply = self.tmux.send_command(&cmd).await?;
         if !reply.ok {
             return Err(SessionError::TmuxRejected(reply.output));
