@@ -35,6 +35,15 @@ futures = { version = "0.3", default-features = false, features = ["std"] }
 # envelopes, tokens, devices) still speaks JSON — CBOR is
 # session-layer only.
 ciborium = "0.2"
+# `serde_bytes` forces `Vec<u8>` fields on `Input`/`Output` messages
+# to serialize as CBOR byte-strings (major type 2) instead of arrays
+# of small integers. Without this annotation a 1 KiB keystroke/paste
+# payload would encode as ~1–2 KiB of integer-element overhead; with
+# it, bytes ride the wire literally. Serde's default for `Vec<u8>` is
+# array-of-int because it has to pick a portable default across
+# codecs — we pick byte-string explicitly because CBOR supports it
+# and we're not using any other codec for session I/O.
+serde_bytes = "0.11"
 
 [dev-dependencies]
 tempfile = { workspace = true }

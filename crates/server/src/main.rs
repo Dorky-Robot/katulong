@@ -1,4 +1,8 @@
 use katulong_auth::{AuthStore, WebAuthnService};
+use katulong_server::session::{
+    dims::{DEFAULT_COLS, DEFAULT_ROWS},
+    SessionManager, Tmux, DEDICATED_SOCKET_NAME,
+};
 use katulong_server::{app, state::AppState, state::ServerConfig};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -18,7 +22,37 @@ async fn main() {
         .expect("open auth store");
     let webauthn = WebAuthnService::new(&config.rp_id, &config.rp_name, &config.public_origin)
         .expect("build WebAuthn service");
-    let state = AppState::new(auth_store, webauthn, config);
+
+    // Spawn the tmux control-mode subprocess once at startup. Every
+    // WS session shares it: tmux itself multiplexes across sessions,
+    // so one subprocess is enough. Bailing on failure is correct —
+    // without tmux katulong has no terminal surface; running anyway
+    // would accept WS upgrades that fail at Attach time, which is
+    // worse operator UX than a startup panic pointing at the
+    // missing binary.
+    //
+    // `_notifs` is the async-notification receiver (tmux `%output`,
+    // `%window-close`, etc.). Slice 9f consumes it to forward PTY
+    // output over the transport; slice 9e has no consumer yet, so
+    // we let it buffer. Per the `Tmux::spawn` contract this is
+    // UNBOUNDED — if we left it here long-term, any tmux-produced
+    // output would fill memory. That's fine for 9e because no
+    // session has started to produce output yet (no client has
+    // sent `Attach` through the new message variants + no PTY has
+    // been driven), but 9f MUST route this channel into a consumer
+    // before it enables output routing. Dropping the receiver
+    // instead would silently drop notifications — keep the binding
+    // so slice 9f has something concrete to replace.
+    let socket_name = std::env::var("KATULONG_TMUX_SOCKET")
+        .unwrap_or_else(|_| DEDICATED_SOCKET_NAME.to_string());
+    let initial_session = std::env::var("KATULONG_INITIAL_SESSION")
+        .unwrap_or_else(|_| "main".to_string());
+    let (tmux, _notifs) = Tmux::spawn(&socket_name, &initial_session, DEFAULT_COLS, DEFAULT_ROWS)
+        .await
+        .expect("spawn tmux control-mode subprocess");
+    let sessions = SessionManager::new(tmux);
+
+    let state = AppState::new(auth_store, webauthn, config).with_sessions(sessions);
 
     let addr: SocketAddr = "127.0.0.1:3000".parse().expect("valid bind address");
     let listener = tokio::net::TcpListener::bind(addr)

@@ -7,6 +7,7 @@
 //! their own mutexes. `AppState` itself is just a bundle of references.
 
 use crate::revocation::RevocationPublisher;
+use crate::session::SessionManager;
 use katulong_auth::{AuthStore, WebAuthnService};
 use std::sync::Arc;
 use tokio::sync::broadcast::Receiver;
@@ -43,16 +44,40 @@ pub struct AppState {
     /// subscribers call `state.subscribe_revocations()` at the
     /// start of their connection loop.
     pub revocations: RevocationPublisher,
+    /// Handle to the terminal session layer. `None` in tests that
+    /// don't need a real tmux subprocess (auth-only routes); `Some`
+    /// when `main.rs` has successfully spawned tmux at startup.
+    ///
+    /// The session handler (`session::handler::serve_session`)
+    /// surfaces a `no_session_manager` protocol error if a client
+    /// tries to `Attach` when this is `None`. That's a clear
+    /// misconfiguration signal rather than a silent hang — keeping
+    /// the field `Option` rather than `Arc<SessionManager>` avoids
+    /// forcing every auth integration test to stand up tmux.
+    pub sessions: Option<Arc<SessionManager>>,
 }
 
 impl AppState {
+    /// Construct an `AppState` with no session manager. Suitable for
+    /// tests that exercise auth/HTTP paths only. Production startup
+    /// in `main.rs` chains `.with_sessions(...)` on top.
     pub fn new(auth_store: AuthStore, webauthn: WebAuthnService, config: ServerConfig) -> Self {
         Self {
             auth_store: Arc::new(auth_store),
             webauthn: Arc::new(webauthn),
             config: Arc::new(config),
             revocations: RevocationPublisher::new(),
+            sessions: None,
         }
+    }
+
+    /// Attach a running `SessionManager` to this state. Called once
+    /// at startup from `main.rs` after tmux spawns successfully.
+    /// Moving rather than cloning reinforces "there's one session
+    /// layer per server process."
+    pub fn with_sessions(mut self, sessions: SessionManager) -> Self {
+        self.sessions = Some(Arc::new(sessions));
+        self
     }
 
     /// Subscribe to credential-revocation events. Transport-agnostic

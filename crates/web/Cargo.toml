@@ -9,6 +9,5 @@ name = "katulong-web"
 path = "src/main.rs"
 
 [dependencies]
-katulong-shared = { path = "../shared" }
 leptos = { workspace = true }
 console_error_panic_hook = "0.1"
