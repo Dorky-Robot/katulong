@@ -35,6 +35,7 @@
 //! the unit tests below snap whenever a variant crosses phases
 //! without explicit consent.
 
+use crate::log_util::sanitize_for_log;
 use crate::revocation::RevocationEvent;
 use crate::state::AppState;
 use crate::transport::{
@@ -74,6 +75,23 @@ pub mod error_code {
     /// Client didn't complete the handshake within
     /// `HANDSHAKE_TIMEOUT_SECS`. Connection closes.
     pub const HANDSHAKE_TIMEOUT: &str = "handshake_timeout";
+    /// Connection was torn down server-side without the client
+    /// having done anything wrong. Emitted when the bound
+    /// credential is revoked, or when the revocation broadcast
+    /// subscriber falls behind (`Lagged`) and we conservatively
+    /// close rather than risk missing a real revoke.
+    ///
+    /// **Why not dedicate codes per cause?** An operator-side
+    /// distinction between "revoked" and "lagged" is useful in
+    /// logs, but exposing it on the wire leaks "yes, your
+    /// credential was revoked" to whoever holds the socket. We
+    /// reuse this code for both, and the per-cause detail lives
+    /// only in the server's tracing output (see `handle_revoke`).
+    /// Clients key off this code to know that **auto-reconnect
+    /// without fresh auth is futile** — distinct from
+    /// `UNEXPECTED_MESSAGE`, which is a "fix your message" retry
+    /// signal.
+    pub const CONNECTION_TERMINATED: &str = "connection_terminated";
 }
 
 /// Handshake phase. Advances on valid messages; any message that
@@ -154,7 +172,7 @@ fn step(phase: &mut Phase, msg: ClientMessage) -> Action {
                         // bound on length defensively; don't let an
                         // attacker-chosen version string blow up
                         // log line size
-                        truncate_for_log(&protocol_version, 32),
+                        sanitize_for_log(&protocol_version, LOG_PROTOCOL_VERSION_MAX_LEN),
                     ),
                 }
             }
@@ -220,12 +238,13 @@ fn phase_name(phase: &Phase) -> &'static str {
     }
 }
 
-fn truncate_for_log(s: &str, max: usize) -> String {
-    s.chars()
-        .filter(|c| !c.is_ascii_control())
-        .take(max)
-        .collect()
-}
+/// Cap on the protocol-version string we echo back in error
+/// messages. Far shorter than the Origin cap in `ws.rs` because the
+/// version string is a short identifier (`"katulong/0.1"`) — if a
+/// client sends something larger, it's either buggy or crafted, and
+/// 32 chars is plenty to identify the prefix without letting an
+/// attacker flood logs with per-request megabyte payloads.
+const LOG_PROTOCOL_VERSION_MAX_LEN: usize = 32;
 
 /// The per-connection consumer loop, parameterised on the
 /// transport abstraction. `state` threads session manager + the
@@ -327,6 +346,20 @@ pub async fn serve_session(
                 cols,
                 rows,
             } => {
+                // Clamp once here, BEFORE calling into
+                // SessionManager, so both the session-manager
+                // create call and the `Attached` response we send
+                // back to the client use identical values. The
+                // manager's `create_session` clamps again
+                // internally as a defense-in-depth belt — this
+                // handler-level clamp is the authoritative
+                // "coordinator clamps before dispatch" step.
+                // Without this, a 9999-cols request would reach
+                // `create_session` unclamped; one careless future
+                // refactor that drops the manager's internal
+                // clamp would mean tmux sees the raw value. Do it
+                // here too so the invariant survives that refactor.
+                let (cols, rows) = crate::session::dims::clamp_dims(cols, rows);
                 let Some(sessions) = state.sessions.as_deref() else {
                     send_error_and_close(
                         &handle,
@@ -338,8 +371,6 @@ pub async fn serve_session(
                 };
                 match sessions.create_session(&session, cols, rows).await {
                     Ok(()) => {
-                        let (cols, rows) =
-                            crate::session::dims::clamp_dims(cols, rows);
                         phase = Phase::Attached {
                             session: session.clone(),
                         };
@@ -407,36 +438,51 @@ pub async fn serve_session(
 /// Decide whether a revocation event should tear down this
 /// connection. `credential_id` is the one this transport is bound
 /// to (from auth).
+///
+/// Every close path uses the `CONNECTION_TERMINATED` wire code so
+/// the client can't distinguish "revoked" from "lagged" — that
+/// distinction leaks revocation state to whoever holds the socket.
+/// The actual cause is emitted as a structured tracing field, so
+/// operators can tell from logs which branch fired.
 fn handle_revoke(
     revoke: Result<RevocationEvent, RecvError>,
     bound_credential: Option<&str>,
 ) -> Action {
     match revoke {
         Ok(event) => match bound_credential {
-            Some(mine) if mine == event.credential_id => Action::Close {
-                code: error_code::UNEXPECTED_MESSAGE,
-                // Credential was revoked — the client shouldn't
-                // see a detailed rationale beyond "connection
-                // closed." We reuse the generic UNEXPECTED code
-                // because the client's next action (prompt for
-                // reauth) is the same. A dedicated code here would
-                // leak "yes, your exact credential was revoked"
-                // to any party holding the socket, which is
-                // information we don't owe them.
-                message: "connection terminated".into(),
-            },
+            Some(mine) if mine == event.credential_id => {
+                tracing::info!(
+                    credential_id = %event.credential_id,
+                    cause = "credential_revoked",
+                    "session connection terminating"
+                );
+                Action::Close {
+                    code: error_code::CONNECTION_TERMINATED,
+                    message: "connection terminated".into(),
+                }
+            }
             _ => Action::Continue,
         },
         // Subscriber fell behind the broadcast buffer. `revocation.rs`
         // subscriber contract: conservative close.
-        Err(RecvError::Lagged(_)) => Action::Close {
-            code: error_code::UNEXPECTED_MESSAGE,
-            message: "connection terminated".into(),
-        },
+        Err(RecvError::Lagged(n)) => {
+            tracing::warn!(
+                lagged_events = n,
+                cause = "broadcast_lagged",
+                "session connection terminating (conservative close)"
+            );
+            Action::Close {
+                code: error_code::CONNECTION_TERMINATED,
+                message: "connection terminated".into(),
+            }
+        }
         // Publisher dropped. Shouldn't happen in practice
         // (AppState owns it for the server's lifetime), but if it
         // does, we have no more revocation awareness — exit to be
-        // safe.
+        // safe. `Exit` rather than `Close` because this only fires
+        // on process teardown, when there's no value in emitting a
+        // protocol-level close frame the runtime is about to tear
+        // down anyway.
         Err(RecvError::Closed) => Action::Exit,
     }
 }
@@ -693,13 +739,21 @@ mod tests {
     }
 
     #[test]
-    fn revoke_matching_credential_closes() {
+    fn revoke_matching_credential_closes_with_terminated_code() {
         let event = RevocationEvent {
             credential_id: "cred-1".into(),
         };
         let action = handle_revoke(Ok(event), Some("cred-1"));
         match action {
-            Action::Close { .. } => {}
+            Action::Close { code, .. } => {
+                assert_eq!(
+                    code,
+                    error_code::CONNECTION_TERMINATED,
+                    "revocation must use the terminated code — distinct from \
+                     UNEXPECTED_MESSAGE so clients can tell 'prompt for auth' \
+                     apart from 'fix your message'"
+                );
+            }
             other => panic!("expected close, got {other:?}"),
         }
     }
@@ -726,11 +780,57 @@ mod tests {
     }
 
     #[test]
-    fn revoke_lagged_is_conservative_close() {
+    fn revoke_lagged_is_conservative_close_with_terminated_code() {
         let action = handle_revoke(Err(RecvError::Lagged(3)), Some("cred-1"));
         match action {
-            Action::Close { .. } => {}
+            Action::Close { code, .. } => {
+                assert_eq!(
+                    code,
+                    error_code::CONNECTION_TERMINATED,
+                    "lagged broadcast shares the client-visible code with \
+                     revocation — the cause-distinction lives in tracing, \
+                     not on the wire"
+                );
+            }
             other => panic!("expected close on lagged, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn revoke_publisher_closed_exits_silently() {
+        // Publisher dropped means AppState is being torn down
+        // — the process is exiting. There's no value in emitting
+        // a protocol-level Error frame when the runtime is about
+        // to shut down; the `Exit` action drops the handle and
+        // lets the transport close with the socket.
+        let action = handle_revoke(Err(RecvError::Closed), Some("cred-1"));
+        assert_eq!(action, Action::Exit);
+    }
+
+    #[test]
+    fn error_codes_are_distinct() {
+        // Forward-safety: all `error_code::*` constants must
+        // carry distinct values. Two same-valued codes would
+        // silently collapse two different operator-visible
+        // causes into one log line and break clients that key
+        // off the specific code. Regressions here are easy to
+        // introduce (copy-paste a constant, forget to change the
+        // value) and impossible to catch at compile time — hence
+        // a dedicated test.
+        let all = [
+            error_code::PROTOCOL_VERSION_MISMATCH,
+            error_code::UNEXPECTED_MESSAGE,
+            error_code::INVALID_SESSION,
+            error_code::SESSION_ERROR,
+            error_code::NO_SESSION_MANAGER,
+            error_code::HANDSHAKE_TIMEOUT,
+            error_code::CONNECTION_TERMINATED,
+        ];
+        let set: std::collections::HashSet<&str> = all.iter().copied().collect();
+        assert_eq!(
+            set.len(),
+            all.len(),
+            "duplicate error code in `error_code::*`: {all:?}"
+        );
     }
 }

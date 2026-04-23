@@ -31,25 +31,31 @@ async fn main() {
     // worse operator UX than a startup panic pointing at the
     // missing binary.
     //
-    // `_notifs` is the async-notification receiver (tmux `%output`,
-    // `%window-close`, etc.). Slice 9f consumes it to forward PTY
-    // output over the transport; slice 9e has no consumer yet, so
-    // we let it buffer. Per the `Tmux::spawn` contract this is
-    // UNBOUNDED — if we left it here long-term, any tmux-produced
-    // output would fill memory. That's fine for 9e because no
-    // session has started to produce output yet (no client has
-    // sent `Attach` through the new message variants + no PTY has
-    // been driven), but 9f MUST route this channel into a consumer
-    // before it enables output routing. Dropping the receiver
-    // instead would silently drop notifications — keep the binding
-    // so slice 9f has something concrete to replace.
+    // `notifs` is the async-notification receiver (tmux `%output`,
+    // `%window-close`, etc.). Per the `Tmux::spawn` contract this
+    // is UNBOUNDED — leaving it unconsumed would let any
+    // tmux-produced terminal output accumulate until the process
+    // OOMs. Slice 9e doesn't yet route output back over the
+    // transport (that's slice 9f), but a real shell attached to
+    // the initial session would already be producing output, so
+    // the receiver MUST be drained. The drop-all drain task below
+    // is the slice-9e placeholder; slice 9f replaces it with the
+    // per-connection output pump that forwards `%output` over the
+    // transport with coalescing (Node scars `d311168`/`066dab2`).
     let socket_name = std::env::var("KATULONG_TMUX_SOCKET")
         .unwrap_or_else(|_| DEDICATED_SOCKET_NAME.to_string());
     let initial_session = std::env::var("KATULONG_INITIAL_SESSION")
         .unwrap_or_else(|_| "main".to_string());
-    let (tmux, _notifs) = Tmux::spawn(&socket_name, &initial_session, DEFAULT_COLS, DEFAULT_ROWS)
-        .await
-        .expect("spawn tmux control-mode subprocess");
+    let (tmux, mut notifs) =
+        Tmux::spawn(&socket_name, &initial_session, DEFAULT_COLS, DEFAULT_ROWS)
+            .await
+            .expect("spawn tmux control-mode subprocess");
+    tokio::spawn(async move {
+        // Slice-9e drain: discard tmux notifications so the
+        // unbounded receiver can't grow toward OOM. Slice 9f
+        // replaces this task with the real output forwarder.
+        while notifs.recv().await.is_some() {}
+    });
     let sessions = SessionManager::new(tmux);
 
     let state = AppState::new(auth_store, webauthn, config).with_sessions(sessions);

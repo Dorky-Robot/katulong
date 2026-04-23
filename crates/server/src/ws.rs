@@ -34,6 +34,7 @@
 
 use crate::access::AccessMethod;
 use crate::auth_middleware::Authenticated;
+use crate::log_util::sanitize_for_log;
 use crate::session::serve_session;
 use crate::state::AppState;
 use crate::transport::websocket::into_transport;
@@ -83,18 +84,12 @@ pub(crate) fn validate_origin(
     }
 }
 
-/// Render an attacker-controlled string (like a rejected Origin
-/// value) safe for `tracing` emission: strip ASCII control
-/// characters that would corrupt text logs or inject structured
-/// fields in JSON formatters, cap at 256 chars. Used only at reject
-/// sites; the accept path never logs the Origin.
-fn sanitize_for_log(value: &str) -> String {
-    value
-        .chars()
-        .filter(|c| !c.is_ascii_control())
-        .take(256)
-        .collect()
-}
+/// Cap on Origin values emitted to logs at reject sites. Longer
+/// than the 32-char cap on protocol-version strings because an
+/// operator diagnosing a legitimate Origin mismatch benefits from
+/// seeing most of the full URL. Shared sanitizer lives in
+/// `crate::log_util`.
+const LOG_ORIGIN_MAX_LEN: usize = 256;
 
 /// Axum handler for `GET /ws`.
 ///
@@ -156,7 +151,7 @@ pub async fn ws_handler(
             // before logging so control characters can't corrupt
             // text log lines or inject structured-field separators
             // in JSON formatters.
-            let safe = sanitize_for_log(origin.unwrap_or(""));
+            let safe = sanitize_for_log(origin.unwrap_or(""), LOG_ORIGIN_MAX_LEN);
             tracing::warn!(
                 origin = %safe,
                 expected = %state.config.public_origin,
@@ -212,22 +207,6 @@ mod tests {
             validate_origin(AccessMethod::Remote, Some(""), PUBLIC),
             OriginCheck::Mismatch,
             "empty Origin is a real value, not missing"
-        );
-    }
-
-    #[test]
-    fn sanitize_for_log_strips_control_chars_and_caps_length() {
-        assert_eq!(
-            sanitize_for_log("evil\r\n[WARN] faked=line"),
-            "evil[WARN] faked=line",
-            "newlines and carriage returns must be stripped — otherwise a crafted Origin can forge log lines"
-        );
-        assert_eq!(sanitize_for_log("plain"), "plain");
-        let huge = "x".repeat(1000);
-        assert_eq!(
-            sanitize_for_log(&huge).len(),
-            256,
-            "cap at 256 chars so an attacker can't flood logs with a megabyte Origin"
         );
     }
 

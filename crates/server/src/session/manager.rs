@@ -43,6 +43,12 @@ impl SessionManager {
     /// `cols`/`rows` are clamped via `dims::clamp_dims` before
     /// reaching tmux — we never ask tmux to create a 10000-column
     /// session because the client lied about its window size.
+    /// The `session::handler` coordinator clamps again before
+    /// calling here; that's intentional belt-and-suspenders, NOT
+    /// redundancy to delete. Defense in depth: if a future caller
+    /// (CLI, admin API, tests) forgets to clamp, this internal
+    /// clamp keeps tmux safe. Since `clamp_dims` is idempotent,
+    /// the double call has no observable effect.
     ///
     /// `name` must be a tmux-safe session identifier: no spaces, no
     /// colons, no periods, no dollar-signs (which tmux interprets as
@@ -169,6 +175,15 @@ pub enum SessionError {
     Tmux(#[from] TmuxError),
 }
 
+/// Hard cap on session-name length. tmux itself accepts names up
+/// to `PATH_MAX`-ish, but no legitimate katulong session needs
+/// anywhere near that. Clipping to 64 bytes keeps the error path
+/// cheap (no multi-KiB `format!` allocations for tmux commands we
+/// know will fail) and keeps log lines readable when a bad name
+/// gets rejected. An authenticated client could still burn a
+/// round trip per attempted `Attach`, but not arbitrary memory.
+const MAX_SESSION_NAME_LEN: usize = 64;
+
 /// Reject session names that would confuse tmux's target parser.
 /// tmux uses `:` as window separator, `.` as pane separator, and
 /// `$`/`@`/`%` as id prefixes; a name containing any of those can
@@ -184,8 +199,11 @@ pub enum SessionError {
 /// sessions except the attached one." An authenticated caller
 /// could then nuke every session by naming one `-a`. The allowlist
 /// alone didn't cover this argument-injection edge.
+///
+/// **Length cap.** Names over `MAX_SESSION_NAME_LEN` bytes fail
+/// validation — see the constant's doc for the rationale.
 fn validate_session_name(name: &str) -> Result<(), SessionError> {
-    if name.is_empty() || name.starts_with('-') {
+    if name.is_empty() || name.starts_with('-') || name.len() > MAX_SESSION_NAME_LEN {
         return Err(SessionError::InvalidName(name.to_string()));
     }
     for c in name.chars() {
@@ -253,6 +271,17 @@ mod tests {
         // Hyphens are fine anywhere except the first position.
         assert!(validate_session_name("my-session").is_ok());
         assert!(validate_session_name("a-b-c").is_ok());
+    }
+
+    #[test]
+    fn session_name_rejects_oversize() {
+        // Authenticated callers could otherwise ask the manager to
+        // allocate multi-KiB tmux command strings per Attach
+        // attempt. Cap at `MAX_SESSION_NAME_LEN`.
+        let at_limit = "a".repeat(MAX_SESSION_NAME_LEN);
+        assert!(validate_session_name(&at_limit).is_ok());
+        let over_limit = "a".repeat(MAX_SESSION_NAME_LEN + 1);
+        assert!(validate_session_name(&over_limit).is_err());
     }
 
     #[test]
