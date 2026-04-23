@@ -31,11 +31,11 @@
 use crate::access::AccessMethod;
 use crate::auth_middleware::Authenticated;
 use crate::state::AppState;
+use crate::transport::{
+    websocket::into_transport, ClientMessage, ServerMessage, TransportHandle, PROTOCOL_VERSION,
+};
 use axum::{
-    extract::{
-        ws::{Message, WebSocket},
-        ConnectInfo, State, WebSocketUpgrade,
-    },
+    extract::{ws::WebSocket, ConnectInfo, State, WebSocketUpgrade},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -116,7 +116,28 @@ pub async fn ws_handler(
 
     match validate_origin(access, origin, &state.config.public_origin) {
         OriginCheck::LocalhostExempt | OriginCheck::Allowed => match upgrade {
-            Some(u) => u.on_upgrade(serve_socket),
+            Some(u) => {
+                // Capture state here so slice 9d can thread it
+                // into `serve_session` as a body change, not a
+                // call-site + signature rework. The auth
+                // `AuthContext` would also be captured here in
+                // 9d — the extractor's lifetime ends when the
+                // handler returns, and the terminal layer needs
+                // credential id for revocation matching.
+                let state_for_session = state.clone();
+                u.on_upgrade(|ws: WebSocket| async move {
+                    // Hand the raw socket to the transport adapter
+                    // immediately; from here on the consumer sees
+                    // only the abstraction. A future WebRTC
+                    // upgrade path would swap in a different
+                    // adapter without this handler changing.
+                    // `_pumps` is intentionally ignored — both
+                    // tasks observe channel closure and exit
+                    // cleanly when serve_session drops the handle.
+                    let (handle, _pumps) = into_transport(ws);
+                    serve_session(state_for_session, handle).await;
+                })
+            }
             None => (
                 StatusCode::UPGRADE_REQUIRED,
                 "websocket upgrade headers required",
@@ -143,35 +164,70 @@ pub async fn ws_handler(
     }
 }
 
-/// Per-connection message loop.
+/// Per-connection consumer loop.
 ///
-/// Minimal for this slice: bounce `Ping` → `Pong`, close on `Close`
-/// or any error, ignore other message kinds. Slice 9 replaces this
-/// with tmux/PTY wiring. Keeping the shape here means the route is
-/// already plumbed by the time terminal work lands — no auth/origin
-/// re-work needed.
-async fn serve_socket(mut socket: WebSocket) {
-    while let Some(frame) = socket.recv().await {
-        let Ok(msg) = frame else {
-            // Protocol error or peer hung up. Bail without trying to
-            // send anything else — the socket is in an indeterminate
-            // state.
-            break;
-        };
+/// The WS frame plumbing lives in `transport::websocket`; this
+/// function consumes the resulting `TransportHandle`. By design it
+/// does NOT import `axum::ws` types — when the WebRTC transport
+/// slice lands, the same loop runs unchanged against a
+/// `TransportHandle` whose pumps speak DataChannel.
+///
+/// `state` is threaded through for slice 9d's use (session manager
+/// access, revocation subscription). Slice 9c ignores it aside from
+/// holding the handle alive, but the parameter exists now so 9d is
+/// a body-only change rather than also reworking the call site.
+///
+/// # SECURITY (slice-9d obligation)
+///
+/// This loop does NOT yet subscribe to
+/// `state.subscribe_revocations()`. An active connection whose
+/// bound credential is revoked between `Authenticated` extractor
+/// and now will continue streaming until the client disconnects.
+/// Slice 9d MUST wire the revocation channel via a
+/// `tokio::select!` between `handle.inbound.recv()` and the
+/// revocation receiver; on a matching credential id, close the
+/// transport via `handle.outbound` drop. Until then, an attacker
+/// who has captured a session cookie cannot be evicted in
+/// real time — only the next auth-required HTTP request will see
+/// the cascade.
+///
+/// Slice-9c behavior (placeholder until slice 9d wires the terminal):
+/// - Send `Hello` immediately so the client sees the connection is
+///   alive + knows the protocol version.
+/// - Respond to app-level `Ping { nonce }` with `Pong { nonce }`.
+/// - Exit cleanly on peer disconnect (`inbound` channel closes).
+/// - Log-and-continue on decode errors — the transport stays open;
+///   a single malformed frame from a glitchy client doesn't
+///   terminate the whole session. The Node scar `9dc7c78` said
+///   validate at the boundary; the typed deserialization already
+///   fails closed, this layer just reports it.
+async fn serve_session(_state: AppState, handle: TransportHandle) {
+    let mut handle = handle;
+    if handle
+        .send(ServerMessage::Hello {
+            protocol_version: PROTOCOL_VERSION.to_string(),
+        })
+        .await
+        .is_err()
+    {
+        // Transport closed before we could even send hello. Bail.
+        return;
+    }
+    while let Some(msg) = handle.inbound.recv().await {
         match msg {
-            Message::Ping(payload) => {
-                if socket.send(Message::Pong(payload)).await.is_err() {
+            Ok(ClientMessage::Ping { nonce }) => {
+                if handle.send(ServerMessage::Pong { nonce }).await.is_err() {
                     break;
                 }
             }
-            Message::Close(_) => break,
-            // `Pong` is auto-handled by the client library; we just
-            // drop it. `Text`/`Binary` land here too — slice 9 adds
-            // the protocol parser that interprets them.
-            _ => {}
+            Err(err) => {
+                // Decoder/frame error. Log the operator-visible
+                // detail but keep the connection — a single bad
+                // frame isn't a reason to kick the user out.
+                tracing::warn!(error = %err, "transport frame error; dropping");
+            }
         }
     }
-    let _ = socket.close().await;
 }
 
 #[cfg(test)]

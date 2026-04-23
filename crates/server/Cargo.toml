@@ -23,6 +23,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 subtle = { version = "2", default-features = false }
 thiserror = { workspace = true }
+# `futures::{SinkExt, StreamExt}` for splitting the axum WebSocket
+# into read/write halves in transport::websocket. axum re-exports
+# the stream trait but not the sink combinators we need.
+futures = { version = "0.3", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
