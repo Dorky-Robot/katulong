@@ -20,7 +20,6 @@ use api::devices::device_routes;
 use api::tokens::token_routes;
 use auth_middleware::Authenticated;
 use axum::{extract::DefaultBodyLimit, routing::get, Json, Router};
-use katulong_shared::{ServerMessage, PROTOCOL_VERSION};
 use serde_json::json;
 use state::AppState;
 
@@ -49,14 +48,11 @@ const REQUEST_BODY_LIMIT: usize = 1024 * 1024;
 /// `isPublicPath()`; we enforce it socially instead, which means the
 /// comments ARE the contract.
 ///
-/// Currently public: `/health` (k8s/uptime probe, returns static "ok"),
-/// `/api/hello` (protocol-version handshake, no state exposed).
+/// Currently public: `/health` (k8s/uptime probe, returns static "ok").
 pub fn app(state: AppState) -> Router {
     Router::new()
         // PUBLIC: liveness probe. Returns static "ok".
         .route("/health", get(health))
-        // PUBLIC: protocol-version handshake. Exposes no state.
-        .route("/api/hello", get(hello))
         // PROTECTED: smoke-test endpoint that exercises the full
         // auth extractor chain (access classification, cookie
         // extraction, store lookup) in a single round-trip.
@@ -71,10 +67,10 @@ pub fn app(state: AppState) -> Router {
         // Device (credential) management (list/revoke). Same
         // auth/CSRF shape as tokens.
         .merge(device_routes())
-        // PROTECTED: WebSocket upgrade. Auth via `Authenticated`,
-        // Origin validation via `ws::validate_origin` (deny-by-default
-        // on non-local connections). Slice 8 ships the transport only;
-        // slice 9 wires tmux/PTY into the message loop.
+        // PROTECTED: WebSocket upgrade → `TransportHandle`.
+        // Auth + Origin validation at upgrade time; the consumer
+        // loop runs against the transport abstraction so WebRTC
+        // (later slice) can drop in without touching this line.
         .route("/ws", get(ws::ws_handler))
         .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT))
         .with_state(state)
@@ -82,12 +78,6 @@ pub fn app(state: AppState) -> Router {
 
 async fn health() -> &'static str {
     "ok"
-}
-
-async fn hello() -> Json<ServerMessage> {
-    Json(ServerMessage::Hello {
-        protocol_version: PROTOCOL_VERSION.to_string(),
-    })
 }
 
 async fn me(Authenticated(ctx): Authenticated) -> Json<serde_json::Value> {

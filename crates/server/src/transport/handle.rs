@@ -33,6 +33,16 @@
 //!    the handle without explicit close is fine too (pump tasks
 //!    observe the channels closing and exit), but `close().await`
 //!    is the graceful path that sends a proper close frame.
+//! 4. **Drain-before-close on transport swap.** When the consumer
+//!    replaces a handle during upgrade, the old handle's `outbound`
+//!    sender must NOT be force-closed before the output pump has
+//!    drained whatever's buffered (up to 64 messages). The current
+//!    implementation achieves this implicitly: dropping the old
+//!    `TransportHandle` drops its `outbound` sender, the pump's
+//!    `outbound.recv().await` keeps yielding until the channel is
+//!    empty, THEN yields `None`. Any future `close().await` method
+//!    added here must preserve this — or it will silently drop
+//!    terminal output that was in flight at swap time.
 
 use super::message::{ClientMessage, ServerMessage};
 use tokio::sync::mpsc;
@@ -40,14 +50,15 @@ use tokio::sync::mpsc;
 /// Which wire protocol is currently carrying data. Surfaced to the
 /// client as a 3-state connection indicator (disconnected / relay /
 /// direct — per Node scar `2c06a8b`). For slice 9c only
-/// `WebSocket` exists; `WebRtc` lands with the upgrade path in a
-/// later slice.
+/// `WebSocket` exists. The `WebRtc` variant will land in the same
+/// slice that ships the WebRTC transport implementation — adding
+/// it speculatively here produces compile-time noise at match
+/// sites (dead-code lint) without any enforcement benefit, since
+/// there are no match-exhaustive sites yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransportKind {
     WebSocket,
-    #[allow(dead_code)] // exists so consumers can match exhaustively; populated in a later slice
-    WebRtc,
 }
 
 /// Errors observed on the transport pump tasks. Delivered through

@@ -116,15 +116,28 @@ pub async fn ws_handler(
 
     match validate_origin(access, origin, &state.config.public_origin) {
         OriginCheck::LocalhostExempt | OriginCheck::Allowed => match upgrade {
-            Some(u) => u.on_upgrade(|ws: WebSocket| async move {
-                // Hand the raw socket to the transport adapter
-                // immediately; from here on the consumer sees only
-                // the abstraction. A future WebRTC upgrade path
-                // would swap in a different adapter without this
-                // handler changing.
-                let handle = into_transport(ws);
-                serve_session(handle).await;
-            }),
+            Some(u) => {
+                // Capture state here so slice 9d can thread it
+                // into `serve_session` as a body change, not a
+                // call-site + signature rework. The auth
+                // `AuthContext` would also be captured here in
+                // 9d — the extractor's lifetime ends when the
+                // handler returns, and the terminal layer needs
+                // credential id for revocation matching.
+                let state_for_session = state.clone();
+                u.on_upgrade(|ws: WebSocket| async move {
+                    // Hand the raw socket to the transport adapter
+                    // immediately; from here on the consumer sees
+                    // only the abstraction. A future WebRTC
+                    // upgrade path would swap in a different
+                    // adapter without this handler changing.
+                    // `_pumps` is intentionally ignored — both
+                    // tasks observe channel closure and exit
+                    // cleanly when serve_session drops the handle.
+                    let (handle, _pumps) = into_transport(ws);
+                    serve_session(state_for_session, handle).await;
+                })
+            }
             None => (
                 StatusCode::UPGRADE_REQUIRED,
                 "websocket upgrade headers required",
@@ -155,9 +168,28 @@ pub async fn ws_handler(
 ///
 /// The WS frame plumbing lives in `transport::websocket`; this
 /// function consumes the resulting `TransportHandle`. By design it
-/// does NOT import `axum::ws` types — when slice 9e adds a
-/// `WebRtcTransport`, the same loop runs unchanged against a
+/// does NOT import `axum::ws` types — when the WebRTC transport
+/// slice lands, the same loop runs unchanged against a
 /// `TransportHandle` whose pumps speak DataChannel.
+///
+/// `state` is threaded through for slice 9d's use (session manager
+/// access, revocation subscription). Slice 9c ignores it aside from
+/// holding the handle alive, but the parameter exists now so 9d is
+/// a body-only change rather than also reworking the call site.
+///
+/// # SECURITY (slice-9d obligation)
+///
+/// This loop does NOT yet subscribe to
+/// `state.subscribe_revocations()`. An active connection whose
+/// bound credential is revoked between `Authenticated` extractor
+/// and now will continue streaming until the client disconnects.
+/// Slice 9d MUST wire the revocation channel via a
+/// `tokio::select!` between `handle.inbound.recv()` and the
+/// revocation receiver; on a matching credential id, close the
+/// transport via `handle.outbound` drop. Until then, an attacker
+/// who has captured a session cookie cannot be evicted in
+/// real time — only the next auth-required HTTP request will see
+/// the cascade.
 ///
 /// Slice-9c behavior (placeholder until slice 9d wires the terminal):
 /// - Send `Hello` immediately so the client sees the connection is
@@ -169,7 +201,7 @@ pub async fn ws_handler(
 ///   terminate the whole session. The Node scar `9dc7c78` said
 ///   validate at the boundary; the typed deserialization already
 ///   fails closed, this layer just reports it.
-async fn serve_session(handle: TransportHandle) {
+async fn serve_session(_state: AppState, handle: TransportHandle) {
     let mut handle = handle;
     if handle
         .send(ServerMessage::Hello {

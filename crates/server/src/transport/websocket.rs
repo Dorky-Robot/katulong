@@ -26,6 +26,7 @@
 use super::handle::{TransportError, TransportHandle, TransportKind};
 use super::message::{ClientMessage, ServerMessage};
 use axum::extract::ws::{Message, WebSocket};
+use tokio::task::JoinHandle;
 
 /// Outbound buffer depth. If the consumer produces messages faster
 /// than the WS pump can drain, backpressure kicks in at this
@@ -42,15 +43,43 @@ const OUTBOUND_BUFFER: usize = 64;
 /// alternative is an unbounded channel growing toward OOM.
 const INBOUND_BUFFER: usize = 64;
 
-/// Take ownership of a `WebSocket` and return the transport handle
-/// plus two `JoinHandle`s — consumer typically waits on them via
-/// a shutdown path or ignores them to let them run in the
-/// background until the socket closes naturally.
+/// Hard size cap on an individual inbound text frame, applied
+/// BEFORE the frame reaches `serde_json::from_str`. Without this,
+/// an authenticated attacker could push multi-megabyte frames
+/// through a connection that's already past the auth gate; the
+/// axum `DefaultBodyLimit` layer covers HTTP bodies, not WS
+/// frames once upgrade has completed. 64 KiB is well above any
+/// slice-9c message (`Ping { nonce: u64 }` is ~30 bytes) and
+/// still comfortably above the slice-9d terminal messages
+/// envisioned so far (input keystroke, resize, session-id
+/// strings). A future `InputBytes` variant for terminal paste
+/// would need its own limit decision documented alongside the
+/// type — this constant stays as the catch-all for everything
+/// else.
+const MAX_INBOUND_FRAME_BYTES: usize = 64 * 1024;
+
+/// The pump tasks spawned by `into_transport`. Returned alongside
+/// the handle so consumers can `await` them for a graceful
+/// shutdown (after dropping the handle) — or ignore them and let
+/// the tokio runtime abort on shutdown. Not holding onto these is
+/// safe: both pumps observe their channels closing when the handle
+/// drops and exit on their own.
+pub struct TransportPumps {
+    pub input: JoinHandle<()>,
+    pub output: JoinHandle<()>,
+}
+
+/// Take ownership of a `WebSocket`, return the transport handle
+/// plus the pump task handles. Most consumers ignore the pumps
+/// (drop the `TransportPumps` — the tasks stay alive until the
+/// channels close); a future proactive shutdown path (e.g.,
+/// session revocation wanting to rip the transport down
+/// immediately) can drop the handle and await the pumps for a
+/// clean teardown.
 ///
-/// The handle is returned already carrying `TransportKind::WebSocket`.
-/// Consumers that want to distinguish transports for logging or UI
-/// read `handle.kind`.
-pub fn into_transport(ws: WebSocket) -> TransportHandle {
+/// The handle carries `TransportKind::WebSocket`. Consumers that
+/// want to log transport kind read `handle.kind`.
+pub fn into_transport(ws: WebSocket) -> (TransportHandle, TransportPumps) {
     let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel::<ServerMessage>(OUTBOUND_BUFFER);
     let (inbound_tx, inbound_rx) =
         tokio::sync::mpsc::channel::<Result<ClientMessage, TransportError>>(INBOUND_BUFFER);
@@ -60,14 +89,17 @@ pub fn into_transport(ws: WebSocket) -> TransportHandle {
         ws.split()
     };
 
-    tokio::spawn(input_pump(ws_rx, inbound_tx));
-    tokio::spawn(output_pump(ws_tx, outbound_rx));
+    let input = tokio::spawn(input_pump(ws_rx, inbound_tx));
+    let output = tokio::spawn(output_pump(ws_tx, outbound_rx));
 
-    TransportHandle {
-        inbound: inbound_rx,
-        outbound: outbound_tx,
-        kind: TransportKind::WebSocket,
-    }
+    (
+        TransportHandle {
+            inbound: inbound_rx,
+            outbound: outbound_tx,
+            kind: TransportKind::WebSocket,
+        },
+        TransportPumps { input, output },
+    )
 }
 
 async fn input_pump(
@@ -77,10 +109,20 @@ async fn input_pump(
     use futures::StreamExt;
     while let Some(frame) = ws_rx.next().await {
         let decoded = match frame {
-            Ok(Message::Text(text)) => match serde_json::from_str::<ClientMessage>(&text) {
-                Ok(m) => Ok(m),
-                Err(e) => Err(TransportError::DecodeFailed(e.to_string())),
-            },
+            Ok(Message::Text(text)) => {
+                if text.len() > MAX_INBOUND_FRAME_BYTES {
+                    Err(TransportError::DecodeFailed(format!(
+                        "frame too large: {} bytes exceeds {} byte limit",
+                        text.len(),
+                        MAX_INBOUND_FRAME_BYTES
+                    )))
+                } else {
+                    match serde_json::from_str::<ClientMessage>(&text) {
+                        Ok(m) => Ok(m),
+                        Err(e) => Err(TransportError::DecodeFailed(e.to_string())),
+                    }
+                }
+            }
             Ok(Message::Binary(_)) => Err(TransportError::UnexpectedBinary),
             Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {
                 // WS-level keepalive. axum auto-responds to Ping;
@@ -121,4 +163,28 @@ async fn output_pump(
         }
     }
     let _ = ws_tx.close().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_inbound_frame_bytes_is_generous_vs_current_messages() {
+        // Paranoia test: the cap must sit comfortably above the
+        // largest `ClientMessage` today. Ping serializes to ~30
+        // bytes; 64 KiB is 2000x that. If slice 9d adds a variant
+        // that could legitimately approach this limit, this test
+        // is the signal to document an explicit limit on THAT
+        // variant rather than just bumping the global cap.
+        let ping = ClientMessage::Ping { nonce: u64::MAX };
+        let s = serde_json::to_string(&ping).unwrap();
+        assert!(
+            s.len() < MAX_INBOUND_FRAME_BYTES / 100,
+            "max frame bytes must leave 100x headroom over current \
+             messages; Ping serialized to {} bytes vs cap {}",
+            s.len(),
+            MAX_INBOUND_FRAME_BYTES
+        );
+    }
 }

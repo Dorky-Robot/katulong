@@ -57,8 +57,19 @@ pub enum ClientMessage {
 /// an unknown `type` field as a forward-compat signal and log but
 /// don't reject — we want server → client additions to be
 /// deployable without client pinning.
+///
+/// **Asymmetry with `ClientMessage`.** `deny_unknown_fields` is
+/// deliberately OMITTED here. The strict boundary is INBOUND: the
+/// server rejects unknown client input because that's untrusted
+/// data. Outbound messages from the server are produced by our
+/// own code; relaxing this direction lets older Rust clients
+/// (tests, migration tools, federation relays) deserialize
+/// newer-server output without hard-failing on fields they don't
+/// understand. The forward-compat policy in the struct's doc
+/// matches the serde attributes structurally, not just
+/// aspirationally.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
     /// Sent immediately after a successful transport upgrade.
     /// Tells the client the connection is live and which protocol
