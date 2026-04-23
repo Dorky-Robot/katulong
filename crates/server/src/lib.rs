@@ -12,6 +12,7 @@ pub mod cookie;
 pub mod revocation;
 pub mod session;
 pub mod state;
+pub mod transport;
 pub mod ws;
 
 use api::auth::auth_routes;
