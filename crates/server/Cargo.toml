@@ -27,6 +27,14 @@ thiserror = { workspace = true }
 # into read/write halves in transport::websocket. axum re-exports
 # the stream trait but not the sink combinators we need.
 futures = { version = "0.3", default-features = false, features = ["std"] }
+# CBOR wire format for session I/O. Uniform binary over both WS and
+# WebRTC DataChannel; no base64 overhead, self-describing for
+# schema evolution. `ciborium` is pure Rust, well-maintained, and
+# integrates with serde (same derives as serde_json). `serde_json`
+# stays in the dep tree because the HTTP API (cookies, error
+# envelopes, tokens, devices) still speaks JSON — CBOR is
+# session-layer only.
+ciborium = "0.2"
 
 [dev-dependencies]
 tempfile = { workspace = true }

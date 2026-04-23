@@ -7,6 +7,20 @@
 //! session/terminal handler (slice 9d+) consumes a `TransportHandle`
 //! and doesn't know or care what pumps it.
 //!
+//! # Encoding convention (binding for all implementations)
+//!
+//! While `TransportHandle` moves typed `ClientMessage` /
+//! `ServerMessage` values (encoding-agnostic at the handle
+//! boundary), every wire implementation MUST encode them as CBOR.
+//! WS uses binary frames carrying CBOR; WebRTC DataChannel will
+//! use the same; any future transport (raw TLS, QUIC, whatever)
+//! picks up the same convention. This keeps tooling, test
+//! fixtures, and operator debugging uniform across transports —
+//! see slice 9d's module doc in `transport/websocket.rs` for the
+//! full rationale. If a future transport has a structural reason
+//! to diverge, revisit this invariant explicitly; don't quietly
+//! pick a different codec.
+//!
 //! See project memory `project_transport_agnostic` for the full
 //! rationale. The short version: Node shipped WebRTC twice. The
 //! first attempt (`d844862`) scattered `ws.send`/`dc.send` across
@@ -71,9 +85,13 @@ pub enum TransportError {
     /// decides whether to close on decode failure.
     #[error("malformed client message: {0}")]
     DecodeFailed(String),
-    /// Peer sent a binary frame when we only accept text.
-    #[error("binary frames are not accepted")]
-    UnexpectedBinary,
+    /// Peer sent a text frame when we accept only CBOR-encoded
+    /// binary. Distinct from `DecodeFailed` because a text frame
+    /// is the right-shape-wrong-encoding case — often a
+    /// wrong-client-version probe rather than corruption. The WS
+    /// impl rejects text frames without attempting to decode.
+    #[error("text frames are not accepted; protocol is CBOR over binary frames")]
+    UnexpectedText,
     /// Underlying I/O error from the transport. After this, the
     /// inbound channel closes.
     #[error("transport I/O: {0}")]
