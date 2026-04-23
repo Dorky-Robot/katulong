@@ -71,9 +71,13 @@ pub enum TransportError {
     /// decides whether to close on decode failure.
     #[error("malformed client message: {0}")]
     DecodeFailed(String),
-    /// Peer sent a binary frame when we only accept text.
-    #[error("binary frames are not accepted")]
-    UnexpectedBinary,
+    /// Peer sent a text frame when we accept only CBOR-encoded
+    /// binary. Distinct from `DecodeFailed` because a text frame
+    /// is the right-shape-wrong-encoding case — often a
+    /// wrong-client-version probe rather than corruption. The WS
+    /// impl rejects text frames without attempting to decode.
+    #[error("text frames are not accepted; protocol is CBOR over binary frames")]
+    UnexpectedText,
     /// Underlying I/O error from the transport. After this, the
     /// inbound channel closes.
     #[error("transport I/O: {0}")]

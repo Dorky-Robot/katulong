@@ -1037,6 +1037,7 @@ name = "katulong-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "ciborium",
  "futures",
  "http-body-util",
  "katulong-auth",
