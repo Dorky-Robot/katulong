@@ -30,7 +30,17 @@
       "Bash(sipag --help)",
       "Bash(sipag board:*)",
       "Bash(bin/katulong-stage stop:*)",
-      "Bash(bin/katulong-stage start:*)"
+      "Bash(bin/katulong-stage start:*)",
+      "Bash(diwa search *)",
+      "Bash(/Users/felixflores/Projects/dorky_robot/katulong-git-info/bin/katulong-stage start *)",
+      "Bash(tunnels list *)",
+      "Bash(tunnels route *)",
+      "Bash(tunnels show *)",
+      "Bash(jq '. + {stage: {domain: \"felixflor.es\"}}' ~/.katulong/config.json)",
+      "Bash(mv ~/.katulong/config.json.tmp ~/.katulong/config.json)",
+      "Bash(KATULONG_DATA_DIR=/tmp/katulong-stage/katulong-git-info/data /Users/felixflores/Projects/dorky_robot/katulong-git-info/bin/katulong setup-token *)",
+      "Bash(/Users/felixflores/Projects/dorky_robot/katulong-git-info/bin/katulong --help)",
+      "Bash(KATULONG_DATA_DIR=/tmp/katulong-stage/katulong-git-info/data /Users/felixflores/Projects/dorky_robot/katulong-git-info/bin/katulong token *)"
     ]
   }
 }
