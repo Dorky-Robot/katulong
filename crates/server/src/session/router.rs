@@ -108,6 +108,19 @@ const PER_PANE_BUFFER: usize = 256;
 /// rejecting them keeps memory bounded under misuse.
 pub const MAX_SUBSCRIBERS_PER_PANE: usize = 16;
 
+/// Defense-in-depth cap on distinct panes the router will
+/// track. The router's HashMap auto-creates a `PaneState` (with
+/// a 256 KiB ring) for any `pane_id` it sees — from tmux
+/// `%output` notifications AND from handler `subscribe` /
+/// `subscribe_with_resume` calls. Neither side is supposed to
+/// produce attacker-controlled `pane_id` values, but a parser
+/// bug OR a crafted tmux escape that somehow injects a spurious
+/// `%output` line could otherwise grow the map unboundedly. At
+/// 128 panes × 256 KiB ring = 32 MiB, which is plenty of
+/// headroom for any legitimate single-user katulong workload
+/// (the 16-pane dims.rs example uses 4 MiB).
+const MAX_PANES: usize = 128;
+
 /// Identifier for a registered subscriber. Monotonically
 /// increasing per-router; overflow is not a practical concern
 /// at single-user scale. Returned from `subscribe` so the
@@ -142,6 +155,13 @@ pub enum SubscribeError {
         active: usize,
         max: usize,
     },
+    /// The router is already tracking `MAX_PANES` distinct
+    /// panes; creating a new entry for this pane would exceed
+    /// the defense-in-depth cap. Fires only for a previously-
+    /// unseen `pane_id`; existing panes still accept new
+    /// subscribers up to the per-pane cap.
+    #[error("router pane capacity reached; cannot register new pane %{pane_id}")]
+    RouterAtCapacity { pane_id: u32 },
 }
 
 /// A decoded output chunk with the byte-offset `seq` at which
@@ -197,20 +217,31 @@ impl OutputRouter {
         SubscriberId(self.next_subscriber_id.fetch_add(1, Ordering::Relaxed))
     }
 
-    /// Subscribe to `pane_id`'s decoded byte stream for a fresh
-    /// attach (no resume). Returns `(receiver, subscriber_id,
-    /// baseline_seq)` so the handler can (a) hand its
-    /// `subscriber_id` to `clear_subscriber` at cleanup, (b)
-    /// echo `baseline_seq` in `Attached.last_seq`.
+    /// Shared subscribe body. Held by the router lock, runs the
+    /// pane-cap + subscriber-cap checks, mints an id, appends a
+    /// subscriber, and reads the ring slice corresponding to
+    /// `after_seq`. Callers that don't want replay pass
+    /// `None` (and get back `ReplaySlice::Fresh`); callers that
+    /// do pass `Some(N)` and match on the slice variants.
     ///
-    /// Fails if the pane already has [`MAX_SUBSCRIBERS_PER_PANE`]
-    /// active subscribers. Returns `SubscribeError::Oversubscribed`;
-    /// caller closes the connection with `session_oversubscribed`.
-    pub fn subscribe(
+    /// Private: callers go through [`OutputRouter::subscribe`] or
+    /// [`OutputRouter::subscribe_with_resume`], which share this
+    /// body. Keeping them as distinct public methods preserves
+    /// the shape of each call at the handler site — fresh attach
+    /// vs reconnect — while the shared body catches any future
+    /// cap-check or channel-setup drift in one place.
+    fn do_subscribe(
         &self,
         pane_id: u32,
-    ) -> Result<(mpsc::Receiver<Arc<OutputChunk>>, SubscriberId, u64), SubscribeError> {
+        after_seq: Option<u64>,
+    ) -> Result<(mpsc::Receiver<Arc<OutputChunk>>, SubscriberId, ReplaySlice), SubscribeError>
+    {
         let mut panes = self.inner.lock().expect("output-router mutex poisoned");
+        // Pane-namespace cap: reject NEW panes once we're at
+        // MAX_PANES. Existing panes still accept subscribers.
+        if !panes.contains_key(&pane_id) && panes.len() >= MAX_PANES {
+            return Err(SubscribeError::RouterAtCapacity { pane_id });
+        }
         let state = panes.entry(pane_id).or_insert_with(PaneState::new);
         if state.subscribers.len() >= MAX_SUBSCRIBERS_PER_PANE {
             return Err(SubscribeError::Oversubscribed {
@@ -221,8 +252,37 @@ impl OutputRouter {
         }
         let (tx, rx) = mpsc::channel(PER_PANE_BUFFER);
         let id = self.mint_id();
+        let replay = match after_seq {
+            Some(n) => state.ring.replay_after(n),
+            None => ReplaySlice::Fresh {
+                end_seq: state.ring.total_written(),
+            },
+        };
         state.subscribers.push(Subscriber { id, sender: tx });
-        Ok((rx, id, state.ring.total_written()))
+        Ok((rx, id, replay))
+    }
+
+    /// Subscribe to `pane_id`'s decoded byte stream for a fresh
+    /// attach (no resume). Returns `(receiver, subscriber_id,
+    /// baseline_seq)` so the handler can (a) hand its
+    /// `subscriber_id` to `clear_subscriber` at cleanup, (b)
+    /// echo `baseline_seq` in `Attached.last_seq`.
+    ///
+    /// Fails if the pane already has [`MAX_SUBSCRIBERS_PER_PANE`]
+    /// active subscribers OR if registering a new pane would
+    /// exceed the router's pane-namespace cap.
+    pub fn subscribe(
+        &self,
+        pane_id: u32,
+    ) -> Result<(mpsc::Receiver<Arc<OutputChunk>>, SubscriberId, u64), SubscribeError> {
+        let (rx, id, replay) = self.do_subscribe(pane_id, None)?;
+        let baseline = match replay {
+            ReplaySlice::Fresh { end_seq } => end_seq,
+            // do_subscribe(None) only ever returns Fresh. The
+            // exhaustive match guards against future refactors.
+            _ => unreachable!("do_subscribe(None) returns ReplaySlice::Fresh"),
+        };
+        Ok((rx, id, baseline))
     }
 
     /// Subscribe AND resume — atomic snapshot + append under
@@ -238,20 +298,7 @@ impl OutputRouter {
         (mpsc::Receiver<Arc<OutputChunk>>, SubscriberId, ReplaySlice),
         SubscribeError,
     > {
-        let mut panes = self.inner.lock().expect("output-router mutex poisoned");
-        let state = panes.entry(pane_id).or_insert_with(PaneState::new);
-        if state.subscribers.len() >= MAX_SUBSCRIBERS_PER_PANE {
-            return Err(SubscribeError::Oversubscribed {
-                pane_id,
-                active: state.subscribers.len(),
-                max: MAX_SUBSCRIBERS_PER_PANE,
-            });
-        }
-        let (tx, rx) = mpsc::channel(PER_PANE_BUFFER);
-        let id = self.mint_id();
-        let replay = state.ring.replay_after(after_seq);
-        state.subscribers.push(Subscriber { id, sender: tx });
-        Ok((rx, id, replay))
+        self.do_subscribe(pane_id, Some(after_seq))
     }
 
     /// Read-only snapshot of what [`OutputRouter::subscribe_with_resume`]
@@ -308,6 +355,28 @@ impl OutputRouter {
             .remove(&pane_id);
     }
 
+    /// Evict EVERY registered pane. Called by the dispatcher
+    /// task when tmux control-mode exits, so every connected
+    /// handler sees its `output_rx` close and wakes to
+    /// `Action::Exit` instead of hanging forever on a
+    /// `recv().await` that will never resolve.
+    ///
+    /// Without this, the handlers' `output_rx` channels would
+    /// stay alive as long as any `OutputRouter` clone holds the
+    /// shared `Arc<Mutex<HashMap>>` (which every handler does
+    /// via `AppState`) — the dispatcher dropping its clone
+    /// doesn't close the per-pane senders stored inside the
+    /// map. Draining the map here drops every `Sender`, which
+    /// closes every `Receiver`.
+    pub fn evict_all(&self) {
+        let mut panes = self.inner.lock().expect("output-router mutex poisoned");
+        let count = panes.len();
+        panes.clear();
+        if count > 0 {
+            tracing::info!(panes = count, "output router evicted all panes");
+        }
+    }
+
     /// Route a raw `%output <pane_id> <data>` notification.
     /// Decodes octal escapes, appends to the pane's ring, and
     /// fans the decoded bytes out to every registered
@@ -320,6 +389,20 @@ impl OutputRouter {
     /// count — `OutputChunk` wraps in `Arc` for the fan-out.
     pub fn dispatch(&self, pane_id: u32, raw: &str) {
         let mut panes = self.inner.lock().expect("output-router mutex poisoned");
+        // Defense-in-depth: don't auto-create a PaneState for a
+        // previously-unseen pane if we're at MAX_PANES. The
+        // notification is dropped silently with a rate-limited
+        // warn; production tmux never emits pane_ids we haven't
+        // already registered via subscribe, so this branch
+        // firing is a parser-bug signal.
+        if !panes.contains_key(&pane_id) && panes.len() >= MAX_PANES {
+            tracing::warn!(
+                pane_id,
+                panes = panes.len(),
+                "dropping %output for unseen pane — router at MAX_PANES"
+            );
+            return;
+        }
         let state = panes.entry(pane_id).or_insert_with(PaneState::new);
         let decoded = state.decoder.decode(raw);
         if decoded.is_empty() {
@@ -355,6 +438,17 @@ impl OutputRouter {
     }
 
     /// Spawn the dispatcher task. See module doc.
+    ///
+    /// When the task exits (either tmux's `%exit` notification
+    /// or the notification sender being dropped), it calls
+    /// [`OutputRouter::evict_all`] so every attached handler
+    /// sees its `output_rx` close and wakes to a clean
+    /// `Action::Exit`. Without this, the per-pane senders would
+    /// stay alive as long as any handler held an `OutputRouter`
+    /// clone via `AppState` — handlers would freeze on
+    /// `output_rx.recv()` waiting for bytes that will never
+    /// arrive. A correctness reviewer called this out as a HIGH
+    /// bug on the first round of slice 9h; this is the fix.
     pub fn spawn_dispatcher(
         &self,
         mut notifs: mpsc::UnboundedReceiver<Notification>,
@@ -375,6 +469,9 @@ impl OutputRouter {
                     }
                 }
             }
+            // Dispatcher ending — propagate the shutdown signal
+            // to every attached handler by evicting every pane.
+            router.evict_all();
         })
     }
 
@@ -667,6 +764,9 @@ mod tests {
                 assert_eq!(active, MAX_SUBSCRIBERS_PER_PANE);
                 assert_eq!(max, MAX_SUBSCRIBERS_PER_PANE);
             }
+            SubscribeError::RouterAtCapacity { .. } => {
+                panic!("per-pane cap should hit before router-namespace cap in this test")
+            }
         }
         // The cap must not invalidate existing subscriptions.
         assert_eq!(r.subscriber_count(0), MAX_SUBSCRIBERS_PER_PANE);
@@ -758,5 +858,107 @@ mod tests {
         let handle = r.spawn_dispatcher(notifs);
         drop(tx);
         handle.await.expect("dispatcher exits on sender drop");
+    }
+
+    // ---------- Shutdown propagation (slice 9h round-1) ----------
+
+    #[tokio::test]
+    async fn evict_all_closes_every_subscriber_receiver() {
+        // Core claim: after evict_all, every attached handler's
+        // receiver sees its channel close on the next recv.
+        // This is the fix for the "tmux exits, handlers hang"
+        // bug — without evict_all, dispatcher dropping its
+        // clone leaves per-pane senders alive in the shared
+        // Arc<Mutex<HashMap>>.
+        let r = OutputRouter::new();
+        let (mut a, _ida, _) = r.subscribe(0).unwrap();
+        let (mut b, _idb, _) = r.subscribe(1).unwrap();
+        let (mut c, _idc, _) = r.subscribe(0).unwrap();
+
+        r.evict_all();
+        assert!(a.recv().await.is_none(), "a closed");
+        assert!(b.recv().await.is_none(), "b closed");
+        assert!(c.recv().await.is_none(), "c on shared pane closed");
+        assert_eq!(r.registered_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn dispatcher_on_notifs_close_triggers_evict_all() {
+        // End-to-end: subscribe → start dispatcher → tmux exit
+        // → subscriber sees None. Proves the wiring between
+        // spawn_dispatcher's shutdown path and evict_all.
+        let r = OutputRouter::new();
+        let (mut rx, _id, _) = r.subscribe(0).unwrap();
+        let (tx, notifs) = mpsc::unbounded_channel::<Notification>();
+        let handle = r.spawn_dispatcher(notifs);
+        tx.send(Notification::Exit {
+            reason: Some("tmux died".into()),
+        })
+        .unwrap();
+        handle.await.unwrap();
+        assert!(
+            rx.recv().await.is_none(),
+            "subscriber's recv must yield None after dispatcher-driven evict_all"
+        );
+    }
+
+    #[tokio::test]
+    async fn router_rejects_subscribe_at_max_panes() {
+        // Defense-in-depth: a fresh pane cannot register once
+        // MAX_PANES is reached. Existing panes still accept
+        // new subscribers.
+        let r = OutputRouter::new();
+        // Fill the router with MAX_PANES distinct panes.
+        let mut keep = Vec::new();
+        for pane_id in 0..(MAX_PANES as u32) {
+            let (rx, _id, _) = r.subscribe(pane_id).unwrap();
+            keep.push(rx);
+        }
+        // A new pane_id beyond the cap is rejected.
+        let err = r.subscribe(MAX_PANES as u32).unwrap_err();
+        assert!(matches!(err, SubscribeError::RouterAtCapacity { .. }));
+        // Existing panes still work.
+        let (_rx, _id, _) = r
+            .subscribe(0)
+            .expect("existing panes still accept subscribers past MAX_PANES");
+    }
+
+    #[tokio::test]
+    async fn dispatch_drops_unseen_panes_at_max_panes() {
+        // Parser-bug / phantom-pane injection: dispatch for an
+        // unseen pane_id must NOT grow the map past MAX_PANES.
+        let r = OutputRouter::new();
+        let mut keep = Vec::new();
+        for pane_id in 0..(MAX_PANES as u32) {
+            let (rx, _id, _) = r.subscribe(pane_id).unwrap();
+            keep.push(rx);
+        }
+        let before = r.registered_count();
+        r.dispatch(MAX_PANES as u32 + 500, "phantom");
+        assert_eq!(
+            r.registered_count(),
+            before,
+            "dispatch must not create a new pane past MAX_PANES"
+        );
+    }
+
+    // ---------- Subscribe-body dedup canary ----------
+
+    #[tokio::test]
+    async fn subscribe_fresh_and_resume_share_cap_logic() {
+        // Round-1 dedup: both public methods now delegate to
+        // do_subscribe and enforce the same pane-namespace cap.
+        // This test holds the contract.
+        let r = OutputRouter::new();
+        let mut keep = Vec::new();
+        for pane_id in 0..(MAX_PANES as u32) {
+            let (rx, _id, _) = r.subscribe(pane_id).unwrap();
+            keep.push(rx);
+        }
+        // Resume path also rejects a new pane past the cap.
+        let err = r
+            .subscribe_with_resume(MAX_PANES as u32, 0)
+            .unwrap_err();
+        assert!(matches!(err, SubscribeError::RouterAtCapacity { .. }));
     }
 }

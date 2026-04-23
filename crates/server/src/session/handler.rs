@@ -41,16 +41,23 @@
 //!
 //! # Not in scope (deferred)
 //!
-//! - **Multi-device output fan-out** (slice 9h): the router
-//!   replaces on a second subscribe (attach-displaces-prior)
-//!   rather than fanning out. Slice 9h needs a product
-//!   decision on replace-vs-fanout for simultaneous devices.
-//! - **Pane eviction on tmux-pane-gone** (slice 9h): today a
+//! - **Pane eviction on tmux-pane-gone**: today a
 //!   `clear_subscriber` keeps the ring alive indefinitely; a
-//!   server restart is the wipe mechanism. Wiring `%window-
-//!   close`/`%pane-close` notifications into
-//!   `OutputRouter::evict` closes the long-running-server
-//!   leak path.
+//!   server restart or the dispatcher's `evict_all` on tmux
+//!   exit is the wipe mechanism. Wiring `%window-close`/
+//!   `%pane-close` notifications into `OutputRouter::evict`
+//!   closes the long-running-server leak path. **Fan-out
+//!   amplifies urgency**: a zombie pane now occupies one of
+//!   the 16 subscriber slots per pane (actually, it occupies
+//!   zero slots after `clear_subscriber` runs — but the ring
+//!   sits at 256 KiB, and with `MAX_PANES = 128` unevicted
+//!   zombies could in theory reach the pane-namespace cap
+//!   and block new attaches).
+//! - **Per-credential subscriber cap**: the 16-subscriber cap
+//!   is per-pane, not per-credential. One stolen cookie with
+//!   16 concurrent WS connections can block any new attach
+//!   on a pane until it disconnects. Low priority for a
+//!   single-user install; required before multi-credential.
 //! - **Session-creation rate cap**: an authenticated client can
 //!   create unbounded tmux sessions, each allocating a ring.
 //!   Tracked as a separate hardening ticket.
@@ -146,6 +153,15 @@ pub mod error_code {
     /// prompt the user if they want to disconnect one of their
     /// other devices.
     pub const SESSION_OVERSUBSCRIBED: &str = "session_oversubscribed";
+    /// Attach rejected because the router is tracking as many
+    /// distinct panes as its defense-in-depth cap allows (see
+    /// `router::MAX_PANES`). A conforming client can't
+    /// naturally reach this — it fires only if tmux has been
+    /// wildly churning panes or a parser bug is creating
+    /// phantom pane ids. Exposed as a wire code so operators
+    /// see it in logs and clients surface a clear message
+    /// rather than a generic "session failed."
+    pub const ROUTER_AT_CAPACITY: &str = "router_at_capacity";
     /// Connection was torn down server-side without the client
     /// having done anything wrong. Emitted when the bound
     /// credential is revoked, or when the revocation broadcast
@@ -871,8 +887,12 @@ async fn try_attach(
                         })
                     }
                 }
-                _peek => {
-                    // Any non-Future peek is safe to commit.
+                // InRange | UpToDate | Gap — safe to commit.
+                // `Fresh` never comes back from `peek_resume`
+                // with `after_seq > 0` (that path goes to
+                // `Future` against empty panes and is caught
+                // above).
+                _ => {
                     // Subscribe-with-resume does the same work
                     // under the router lock, so the replay we
                     // actually return is authoritative (no
@@ -899,25 +919,31 @@ async fn try_attach(
                             ),
                         });
                     }
-                    let last_seq = match &replay {
-                        ReplaySlice::Fresh { end_seq } => *end_seq,
-                        ReplaySlice::InRange { end_seq, .. } => *end_seq,
-                        ReplaySlice::UpToDate { end_seq } => *end_seq,
-                        ReplaySlice::Gap { end_seq, .. } => *end_seq,
-                        ReplaySlice::Future => unreachable!("just checked above"),
-                    };
-                    Ok(AttachOutcome {
+                    let outcome = AttachOutcome {
                         replay,
                         new_state: AttachedState {
                             session: session.to_string(),
                             pane_id,
                             subscriber_id,
                             output_rx: rx,
-                            last_seen_seq: last_seq,
+                            // Seeded below after construction so
+                            // `outcome.last_seq()` is the single
+                            // source of truth (accessor reads
+                            // the end_seq from the `replay`
+                            // variant).
+                            last_seen_seq: 0,
                             coalescer: Coalescer::new(),
                             last_output_at: None,
                             pending_resize: None,
                         },
+                    };
+                    let baseline = outcome.last_seq();
+                    Ok(AttachOutcome {
+                        new_state: AttachedState {
+                            last_seen_seq: baseline,
+                            ..outcome.new_state
+                        },
+                        ..outcome
                     })
                 }
             }
@@ -1065,6 +1091,11 @@ fn to_subscribe_failure(err: SubscribeError) -> AttachFailure {
             err: format!(
                 "pane {pane_id} has {active}/{max} subscribers"
             ),
+        },
+        SubscribeError::RouterAtCapacity { pane_id } => AttachFailure {
+            code: error_code::ROUTER_AT_CAPACITY,
+            message: "server at pane capacity; try again later".into(),
+            err: format!("cannot register new pane {pane_id}: router at MAX_PANES"),
         },
     }
 }
@@ -1379,6 +1410,7 @@ mod tests {
             error_code::HANDSHAKE_TIMEOUT,
             error_code::INVALID_RESUME,
             error_code::SESSION_OVERSUBSCRIBED,
+            error_code::ROUTER_AT_CAPACITY,
             error_code::CONNECTION_TERMINATED,
         ];
         let set: std::collections::HashSet<&str> = all.iter().copied().collect();
