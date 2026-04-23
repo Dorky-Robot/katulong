@@ -127,10 +127,6 @@ pub mod error_code {
     /// Client didn't complete the handshake within
     /// `HANDSHAKE_TIMEOUT_SECS`. Connection closes.
     pub const HANDSHAKE_TIMEOUT: &str = "handshake_timeout";
-    /// Another connection is already bound to the requested
-    /// session's pane. Slice 9f enforces single-subscriber per
-    /// pane; slice 9h relaxes this with multi-device fan-out.
-    pub const SESSION_BUSY: &str = "session_busy";
     /// Connection was torn down server-side without the client
     /// having done anything wrong. Emitted when the bound
     /// credential is revoked, or when the revocation broadcast
@@ -423,16 +419,28 @@ pub async fn serve_session(
                 Action::Continue  // handled below in post-select block
             }
 
-            // Output from this pane. Only active when we're
-            // attached. Each `Some` is a Vec<u8> of decoded
-            // bytes from the router.
-            Some(bytes) = maybe_recv_output(attached.as_mut()) => {
-                if let Some(a) = attached.as_mut() {
-                    a.last_output_at = Some(Instant::now());
-                    a.coalescer.push(&bytes);
+            // Output from this pane. `maybe_recv_output` yields
+            // `None` if the output channel closed (displacing
+            // attach from another connection, or dispatcher
+            // pruned us after a panic) — that MUST be a clean
+            // exit, otherwise the loop sits forever on a dead
+            // channel.
+            bytes_opt = maybe_recv_output(attached.as_mut()) => match bytes_opt {
+                Some(bytes) => {
+                    if let Some(a) = attached.as_mut() {
+                        a.last_output_at = Some(Instant::now());
+                        a.coalescer.push(&bytes);
+                    }
+                    Action::Continue
                 }
-                Action::Continue
-            }
+                None => {
+                    tracing::info!(
+                        cause = "output_channel_closed",
+                        "session connection terminating"
+                    );
+                    Action::Exit
+                }
+            },
 
             msg = handle.inbound.recv() => match msg {
                 None => Action::Exit,
@@ -471,10 +479,7 @@ pub async fn serve_session(
                     .pending_resize
                     .take()
                     .expect("resize_deadline implies pending_resize is Some");
-                let sessions = state
-                    .sessions
-                    .as_deref()
-                    .expect("Attached phase implies sessions is Some");
+                let sessions = require_sessions(&state);
                 if let Err(err) = sessions
                     .resize_session(&a.session, pending.cols, pending.rows)
                     .await
@@ -537,7 +542,7 @@ pub async fn serve_session(
                     }
                     Err(AttachFailure { code, message, err }) => {
                         tracing::warn!(
-                            error = err.as_deref().unwrap_or(""),
+                            error = %err,
                             code = code,
                             "attach rejected"
                         );
@@ -550,10 +555,7 @@ pub async fn serve_session(
                 let a = attached
                     .as_ref()
                     .expect("Attached phase implies attached is Some");
-                let sessions = state
-                    .sessions
-                    .as_deref()
-                    .expect("Attached phase implies sessions is Some");
+                let sessions = require_sessions(&state);
                 if let Err(err) = sessions.send_input(a.pane_id, &data).await {
                     // Forwarding failure is operator-visible but
                     // not a reason to close — a glitchy write may
@@ -561,7 +563,9 @@ pub async fn serve_session(
                     // and closing would kick the user for tmux's
                     // transient failure.
                     tracing::warn!(
+                        session = %a.session,
                         pane_id = a.pane_id,
+                        credential = credential_id.as_deref().unwrap_or("localhost"),
                         error = %err,
                         "input forward failed; keeping transport open"
                     );
@@ -581,10 +585,7 @@ pub async fn serve_session(
                     // is the initial-attach path (no output yet)
                     // and the quiet-shell path.
                     a.pending_resize = None;
-                    let sessions = state
-                        .sessions
-                        .as_deref()
-                        .expect("Attached phase implies sessions is Some");
+                    let sessions = require_sessions(&state);
                     if let Err(err) = sessions.resize_session(&a.session, cols, rows).await {
                         tracing::warn!(
                             session = %a.session,
@@ -656,9 +657,8 @@ async fn maybe_recv_output(attached: Option<&mut AttachedState>) -> Option<Vec<u
 struct AttachFailure {
     code: &'static str,
     message: String,
-    /// Original error rendered as a string for tracing; None when
-    /// the failure came from the router (no underlying error).
-    err: Option<String>,
+    /// Original error rendered as a string for tracing.
+    err: String,
 }
 
 async fn try_attach(
@@ -668,33 +668,31 @@ async fn try_attach(
     cols: u16,
     rows: u16,
 ) -> Result<AttachedState, AttachFailure> {
-    sessions
-        .create_session(session, cols, rows)
-        .await
-        .map_err(|err| {
-            let (code, message) = classify_session_error(&err);
-            AttachFailure {
-                code,
-                message,
-                err: Some(err.to_string()),
-            }
-        })?;
-    let pane_id = sessions.query_default_pane(session).await.map_err(|err| {
+    // Single failure-mapping closure — the two session-manager
+    // calls below share identical "classify + stash err.to_string()"
+    // shape, and this closure is the one place that knows which
+    // fields `AttachFailure` carries.
+    let to_failure = |err: crate::session::SessionError| {
         let (code, message) = classify_session_error(&err);
         AttachFailure {
             code,
             message,
-            err: Some(err.to_string()),
+            err: err.to_string(),
         }
-    })?;
-    let output_rx = state
-        .output_router
-        .subscribe(pane_id)
-        .map_err(|err| AttachFailure {
-            code: error_code::SESSION_BUSY,
-            message: "session already attached".into(),
-            err: Some(err.to_string()),
-        })?;
+    };
+    sessions
+        .create_session(session, cols, rows)
+        .await
+        .map_err(to_failure)?;
+    let pane_id = sessions
+        .query_default_pane(session)
+        .await
+        .map_err(to_failure)?;
+    // `subscribe` is infallible under the attach-displaces-prior
+    // semantics (slice 9f). If another connection had this pane
+    // bound, its subscriber's channel closes on the next recv
+    // and its handler exits via `Action::Exit`.
+    let output_rx = state.output_router.subscribe(pane_id);
     Ok(AttachedState {
         session: session.to_string(),
         pane_id,
@@ -704,6 +702,19 @@ async fn try_attach(
         last_output_at: None,
         pending_resize: None,
     })
+}
+
+/// Get the `SessionManager` out of `AppState`, panicking if it's
+/// `None`. Safe ONLY for call sites that have already verified
+/// we're in `Phase::Attached` — the attach path required
+/// `sessions` to be `Some` to reach `Attached` at all, and the
+/// field never transitions back to `None`. Extracted from three
+/// repeated `.expect(...)` sites in the main loop.
+fn require_sessions(state: &AppState) -> &crate::session::SessionManager {
+    state
+        .sessions
+        .as_deref()
+        .expect("Attached phase implies sessions is Some")
 }
 
 /// Decide whether a revocation event should tear down this
@@ -1040,7 +1051,6 @@ mod tests {
             error_code::SESSION_ERROR,
             error_code::NO_SESSION_MANAGER,
             error_code::HANDSHAKE_TIMEOUT,
-            error_code::SESSION_BUSY,
             error_code::CONNECTION_TERMINATED,
         ];
         let set: std::collections::HashSet<&str> = all.iter().copied().collect();

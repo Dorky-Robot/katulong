@@ -30,5 +30,5 @@ pub mod tmux;
 
 pub use handler::serve_session;
 pub use manager::{SessionError, SessionManager};
-pub use router::{OutputRouter, RouterError};
+pub use router::OutputRouter;
 pub use tmux::{CommandReply, Tmux, TmuxError, DEDICATED_SOCKET_NAME};

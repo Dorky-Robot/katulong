@@ -94,6 +94,24 @@ impl AppState {
         self
     }
 
+    /// Override the default-constructed `OutputRouter` with the
+    /// one fed by the tmux dispatcher task. `AppState::new`
+    /// constructs an empty router so tests that never wire tmux
+    /// can still call `.subscribe` on it (and get an empty
+    /// stream); production startup replaces it with the router
+    /// whose clone is handed to the dispatcher task.
+    ///
+    /// The two-step "default + override" shape matches
+    /// `with_sessions`; using struct-update syntax at the call
+    /// site works but silently throws away the default router
+    /// allocation, which an architecture review round flagged
+    /// as a latent surprise ("new() promises a valid state
+    /// then callers stomp one field").
+    pub fn with_output_router(mut self, router: OutputRouter) -> Self {
+        self.output_router = router;
+        self
+    }
+
     /// Subscribe to credential-revocation events. Transport-agnostic
     /// — the returned receiver delivers the same events to a WS
     /// handler or a future WebRTC peer connection. Subscribers

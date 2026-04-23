@@ -260,14 +260,6 @@ impl OctalDecoder {
         out
     }
 
-    /// Return any bytes still in the carry buffer and clear it.
-    /// Called at shutdown / detach so trailing malformed escapes
-    /// don't vanish silently. In well-formed tmux output the
-    /// carry is empty between complete escape sequences.
-    pub fn take_carry(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.carry)
-    }
-
     #[cfg(test)]
     pub fn carry_len(&self) -> usize {
         self.carry.len()
@@ -362,14 +354,6 @@ mod tests {
         let mut d = OctalDecoder::new();
         // Shouldn't arise from tmux, but must not corrupt output.
         assert_eq!(d.decode(r"\x"), b"\\x");
-    }
-
-    #[test]
-    fn take_carry_drains_leftover() {
-        let mut d = OctalDecoder::new();
-        let _ = d.decode("end\\");
-        assert_eq!(d.take_carry(), b"\\");
-        assert_eq!(d.carry_len(), 0);
     }
 
     #[test]

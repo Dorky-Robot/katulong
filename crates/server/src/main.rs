@@ -1,7 +1,6 @@
 use katulong_auth::{AuthStore, WebAuthnService};
 use katulong_server::session::{
     dims::{DEFAULT_COLS, DEFAULT_ROWS},
-    parser::Notification,
     OutputRouter, SessionManager, Tmux, DEDICATED_SOCKET_NAME,
 };
 use katulong_server::{app, state::AppState, state::ServerConfig};
@@ -35,47 +34,25 @@ async fn main() {
         .unwrap_or_else(|_| DEDICATED_SOCKET_NAME.to_string());
     let initial_session = std::env::var("KATULONG_INITIAL_SESSION")
         .unwrap_or_else(|_| "main".to_string());
-    let (tmux, mut notifs) =
-        Tmux::spawn(&socket_name, &initial_session, DEFAULT_COLS, DEFAULT_ROWS)
-            .await
-            .expect("spawn tmux control-mode subprocess");
+    let (tmux, notifs) = Tmux::spawn(&socket_name, &initial_session, DEFAULT_COLS, DEFAULT_ROWS)
+        .await
+        .expect("spawn tmux control-mode subprocess");
     let sessions = SessionManager::new(tmux);
     let output_router = OutputRouter::new();
 
-    // Dispatcher task: drain the (unbounded per `Tmux::spawn`
-    // contract) notification receiver, route `%output` events
-    // through the router's decoder + per-pane fan-out, and log
-    // anything else. MUST keep up: if this task blocks, the
-    // unbounded `notifs` grows toward OOM. The router's
-    // `dispatch` is non-blocking (try_send drops on full
-    // subscriber — better a visible terminal glitch than a
-    // globally-stalled tmux stream; see router.rs).
-    let dispatcher_router = output_router.clone();
-    tokio::spawn(async move {
-        while let Some(notif) = notifs.recv().await {
-            match notif {
-                Notification::Output { pane_id, data } => {
-                    dispatcher_router.dispatch(pane_id, &data);
-                }
-                Notification::Exit { reason } => {
-                    tracing::warn!(?reason, "tmux control-mode exited");
-                    break;
-                }
-                other => {
-                    // Other notifications (session-changed,
-                    // window-close, ...) aren't consumed yet.
-                    // Logged at trace so operators can enable
-                    // them selectively when diagnosing.
-                    tracing::trace!(?other, "tmux notification (no consumer yet)");
-                }
-            }
-        }
-    });
+    // The dispatcher task drains the (unbounded per `Tmux::spawn`
+    // contract) notification receiver and routes `%output`
+    // events through the router's decoder + per-pane fan-out.
+    // The task's non-blocking invariant lives inside
+    // `OutputRouter::spawn_dispatcher` itself — documented on
+    // the method and enforced by `dispatch`'s `try_send` path.
+    // Letting the tokio runtime abort the task on process exit
+    // is fine; we ignore the `JoinHandle`.
+    let _dispatcher = output_router.spawn_dispatcher(notifs);
 
-    let state = AppState {
-        output_router,
-        ..AppState::new(auth_store, webauthn, config).with_sessions(sessions)
-    };
+    let state = AppState::new(auth_store, webauthn, config)
+        .with_sessions(sessions)
+        .with_output_router(output_router);
 
     let addr: SocketAddr = "127.0.0.1:3000".parse().expect("valid bind address");
     let listener = tokio::net::TcpListener::bind(addr)

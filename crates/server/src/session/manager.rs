@@ -166,11 +166,21 @@ impl SessionManager {
     /// default pane, because tmux creates the session with a
     /// single window hosting a single pane.
     ///
-    /// Called exactly once per `Attach` — the session-to-pane
-    /// mapping can change if the user runs tmux commands that
-    /// create windows/panes, but katulong's current single-pane-
-    /// per-session assumption (session 9h will revisit) means
-    /// we resolve once at attach time.
+    /// **Single-pane assumption, load-bearing for slice 9f.**
+    /// This function calls `list-panes -t <session> -F
+    /// '#{pane_id}'` and takes the FIRST line of output as the
+    /// canonical pane. That's correct for a freshly-created
+    /// session with one pane, and for reconnects to an existing
+    /// single-pane session. It is SILENTLY WRONG if a user has
+    /// run `split-window` or `new-window` — the first pane tmux
+    /// lists is not necessarily the one the user is typing in.
+    /// Slice 9h is the right place to decide the product
+    /// semantics here (follow active pane? let the client pick?
+    /// expose multiple pane streams?); until then, multi-pane
+    /// tmux sessions under katulong will show output from the
+    /// wrong pane. If this is ever surfaced to the UI it should
+    /// be a conscious choice, not an accidental artifact of
+    /// `lines().next()`.
     pub async fn query_default_pane(&self, session: &str) -> Result<u32, SessionError> {
         validate_session_name(session)?;
         let cmd = format!("list-panes -t {session} -F '#{{pane_id}}'");
