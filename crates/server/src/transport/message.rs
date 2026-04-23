@@ -46,10 +46,10 @@ pub const PROTOCOL_VERSION: &str = "katulong/0.1";
 
 /// Messages sent by the client to the server.
 ///
-/// Deserialized from each inbound JSON text frame. Binary frames
-/// are rejected by the transport layer (no binary protocol variants
-/// exist yet; slice 9d may add `InputBytes` if terminal paste
-/// warrants it).
+/// Deserialized from each inbound CBOR binary frame. Text frames
+/// are rejected by the transport layer. Byte payloads (terminal
+/// input, future image paste) carry directly via CBOR's byte-
+/// string type — no base64 wrapper needed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ClientMessage {
@@ -62,10 +62,22 @@ pub enum ClientMessage {
 
 /// Messages sent by the server to the client.
 ///
-/// Serialized as JSON text frames. Clients treat any message with
+/// Serialized as CBOR binary frames. Clients treat any message with
 /// an unknown `type` field as a forward-compat signal and log but
 /// don't reject — we want server → client additions to be
 /// deployable without client pinning.
+///
+/// **Slice-9e note on byte-heavy variants.** When `Output { data:
+/// Vec<u8>, ... }` lands, CBOR encodes it as a map with a byte-
+/// string field — low overhead per frame (the `type` key + map
+/// structure is a few bytes). That's fine IF the session layer
+/// coalesces output into chunks above ~256 bytes before sending.
+/// If it forwards one-escape-per-frame from tmux, the map-per-
+/// message overhead becomes measurable. The existing
+/// `d311168`/`066dab2` Node scars (2 ms idle / 16 ms cap
+/// coalescing) are the right defense; they sit in the session
+/// layer, not here. Just: don't let 9e ship an uncoalesced
+/// per-frame-per-escape output path and blame the encoding.
 ///
 /// **Asymmetry with `ClientMessage`.** `deny_unknown_fields` is
 /// deliberately OMITTED here. The strict boundary is INBOUND: the

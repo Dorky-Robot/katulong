@@ -149,6 +149,10 @@ async fn input_pump(
             // Text frames are rejected: CBOR is the sole wire format.
             // A client sending text is either wrong-version or
             // probing; reject cleanly and let the consumer decide.
+            // This rejection is permanent — if a future debug
+            // surface wants human-readable wire traffic, it lives
+            // as a separate HTTP route (e.g. `/api/debug/ws-trace`),
+            // not as a mode flag on the session transport.
             Ok(Message::Text(_)) => Err(TransportError::UnexpectedText),
             Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {
                 // WS-level keepalive. axum auto-responds to Ping;
@@ -222,6 +226,17 @@ mod tests {
         // benefit we're trading JSON readability for actually
         // shows up. If this ever fails, CBOR encoding changed
         // behavior and the trade needs re-examination.
+        //
+        // NOTE: CBOR integer encoding scales with the magnitude
+        // of the value (a 1-byte header + up to 8 payload bytes
+        // for u64::MAX). JSON encodes integers as ASCII digits
+        // (20 chars for u64::MAX). At `nonce: 42` CBOR is
+        // unambiguously smaller; for very large nonces CBOR's
+        // 9-byte integer vs JSON's 20-char digit string still
+        // favors CBOR, but the margin shrinks. Keep the test
+        // value small so the assertion stays a clean statement
+        // about the encoding's typical shape, not a claim about
+        // every u64 value.
         let ping = ClientMessage::Ping { nonce: 42 };
         let mut cbor = Vec::new();
         ciborium::ser::into_writer(&ping, &mut cbor).unwrap();
