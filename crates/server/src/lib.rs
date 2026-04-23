@@ -9,6 +9,7 @@ pub mod access;
 pub mod api;
 pub mod auth_middleware;
 pub mod cookie;
+pub mod log_util;
 pub mod revocation;
 pub mod session;
 pub mod state;

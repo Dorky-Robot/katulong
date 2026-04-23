@@ -1,4 +1,3 @@
-use katulong_shared::PROTOCOL_VERSION;
 use leptos::*;
 
 fn main() {
@@ -12,7 +11,6 @@ fn App() -> impl IntoView {
         <main>
             <h1>"katulong"</h1>
             <p>"Rust + Leptos rewrite — hello world"</p>
-            <p>{format!("Protocol version: {PROTOCOL_VERSION}")}</p>
         </main>
     }
 }
