@@ -189,19 +189,26 @@ pub enum ServerMessage {
         rows: u16,
         last_seq: u64,
     },
-    /// PTY output chunk. `seq` is a monotonic counter per
-    /// connection that lets clients detect gaps after a reconnect
-    /// (Node scar `da6907f`). Slice 9e defined the variant; slice
-    /// 9f populates it from the tmux `%output` notification stream
-    /// with coalescing (`d311168`/`066dab2`).
+    /// PTY output chunk. `seq` is the pane's `total_written`
+    /// (cumulative decoded byte offset) at the end of this
+    /// chunk — a per-PANE monotonic counter that continues
+    /// across subscriber displace/reconnect boundaries. Node
+    /// scar `da6907f` is the motivation; the Rust port uses
+    /// byte-level instead of message-level offsets for
+    /// unambiguous reconnect semantics. Slice 9e defined the
+    /// variant; slice 9f populated it via per-pane dispatch;
+    /// slice 9g made the counter pane-global (not per-
+    /// connection) so `Attach { resume_from_seq }` has a
+    /// stable reference point.
     ///
-    /// **Seq contract: 1-based.** The first `Output` message on
-    /// a connection carries `seq = 1`; seq = 0 is reserved to
-    /// mean "no output produced yet" so a future reconnect
-    /// (slice 9g) can send `Attach { resume_from_seq: 0 }` to
-    /// request the full ring. Clients counting gaps should never
-    /// see a decrease; any decrease means the server restarted
-    /// (seq resets) and they must treat it as a hard reconnect.
+    /// **Seq contract.** `seq` is 1-based at the first-byte
+    /// level: the first outbound byte of a pane carries
+    /// `end_seq = 1`; seq = 0 is reserved to mean "no output
+    /// produced yet" (used in `Attached.last_seq` on a cold
+    /// pane). Clients counting gaps see monotonic progress
+    /// across reconnect as long as the server process has not
+    /// restarted; a decrease means a fresh server instance
+    /// and the client must treat it as a hard reset.
     Output {
         #[serde(with = "serde_bytes")]
         data: Vec<u8>,

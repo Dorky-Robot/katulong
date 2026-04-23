@@ -41,16 +41,19 @@
 //!
 //! # Not in scope (deferred)
 //!
-//! - **Ring buffer + reconnect replay** (slice 9g): `seq` is
-//!   emitted but no history is kept. Slice 9g adds per-pane
-//!   ring storage and an `Attach { resume_from_seq }` variant
-//!   so a reconnecting client can rebuild state without a full
-//!   screen redraw.
 //! - **Multi-device output fan-out** (slice 9h): the router
-//!   rejects a second subscriber per pane. The octal decoder
-//!   already lives upstream of the fan-out (in the router), so
-//!   9h lifts the single-subscriber restriction without moving
-//!   state.
+//!   replaces on a second subscribe (attach-displaces-prior)
+//!   rather than fanning out. Slice 9h needs a product
+//!   decision on replace-vs-fanout for simultaneous devices.
+//! - **Pane eviction on tmux-pane-gone** (slice 9h): today a
+//!   `clear_subscriber` keeps the ring alive indefinitely; a
+//!   server restart is the wipe mechanism. Wiring `%window-
+//!   close`/`%pane-close` notifications into
+//!   `OutputRouter::evict` closes the long-running-server
+//!   leak path.
+//! - **Session-creation rate cap**: an authenticated client can
+//!   create unbounded tmux sessions, each allocating a ring.
+//!   Tracked as a separate hardening ticket.
 //!
 //! # Why a state machine, not "just check in the match"
 //!
@@ -556,12 +559,10 @@ pub async fn serve_session(
                 let attach_outcome =
                     try_attach(sessions, &state, &session, cols, rows, resume_from_seq).await;
                 match attach_outcome {
-                    Ok(AttachOutcome {
-                        new_state,
-                        last_seq,
-                        replay,
-                    }) => {
-                        attached = Some(new_state);
+                    Ok(outcome) => {
+                        let last_seq = outcome.last_seq();
+                        let replay = outcome.replay;
+                        attached = Some(outcome.new_state);
                         phase = Phase::Attached;
                         if handle
                             .send(ServerMessage::Attached {
@@ -579,12 +580,13 @@ pub async fn serve_session(
                         // AFTER Attached so the client's clear-
                         // on-OutputGap logic fires in the right
                         // order.
-                        if !send_replay(&handle, replay).await {
+                        if send_replay(&handle, replay).await.is_err() {
                             break;
                         }
                     }
                     Err(AttachFailure { code, message, err }) => {
                         tracing::warn!(
+                            credential = credential_id.as_deref().unwrap_or("localhost"),
                             error = %err,
                             code = code,
                             "attach rejected"
@@ -663,11 +665,14 @@ pub async fn serve_session(
         }
     }
 
-    // Cleanup: unsubscribe from the router so the decoder's
-    // carry buffer doesn't leak and the pane is available for a
-    // fresh connection. Safe to call even if we never attached.
+    // Cleanup: detach the subscriber, but KEEP the pane's ring
+    // and decoder. The dominant "close tab, reopen seconds
+    // later" UX flow depends on the ring outliving the
+    // transport. Tmux-pane-gone eviction is slice 9h's
+    // concern; a server restart is currently the pane-wipe
+    // mechanism. Safe to call even if we never attached.
     if let Some(a) = attached {
-        state.output_router.unsubscribe(a.pane_id);
+        state.output_router.clear_subscriber(a.pane_id);
     }
     // Drop the handle. The WS output pump sees the channel close
     // and shuts down the socket gracefully.
@@ -704,40 +709,33 @@ struct AttachFailure {
     err: String,
 }
 
-/// Successful attach outcome. Bundles everything the coordinator
-/// needs to (a) transition into `Phase::Attached`, (b) echo a
-/// correct `Attached.last_seq`, and (c) emit any pre-live replay
-/// the client asked for.
+/// Successful attach outcome. The `replay` carries `end_seq`
+/// which the coordinator reads for `Attached.last_seq` — keeping
+/// it in one place avoids the redundant-field maintenance trap
+/// that code-quality review flagged on the pre-round-1 design.
 struct AttachOutcome {
     new_state: AttachedState,
-    last_seq: u64,
-    replay: ReplayAction,
+    replay: ReplaySlice,
 }
 
-/// What the coordinator should emit between `Attached` and the
-/// first live `Output` frame.
-enum ReplayAction {
-    /// Fresh attach (client didn't send `resume_from_seq`). No
-    /// catch-up bytes; drop straight to live.
-    None,
-    /// Client sent `resume_from_seq = N`. `bytes` is what the
-    /// ring can replay; send it as one `ServerMessage::Output`
-    /// with `seq = end_seq`. Empty `bytes` (client was up-to-
-    /// date) still results in no output message.
-    InRange { bytes: Vec<u8>, end_seq: u64 },
-    /// Client's resume point is older than the oldest byte in
-    /// the ring. Emit `ServerMessage::OutputGap` so the client
-    /// clears its terminal, then `Output` with the current ring
-    /// contents. `bytes` may be the full ring.
-    Gap {
-        available_from_seq: u64,
-        bytes: Vec<u8>,
-        end_seq: u64,
-    },
-    /// Client claimed a resume seq beyond what the server has
-    /// ever produced. A real bug or a deliberate probe. The
-    /// coordinator falls through to the close path.
-    Future,
+impl AttachOutcome {
+    /// Pane's `total_written` at attach time, echoed in
+    /// `Attached.last_seq`. Derived from whichever variant
+    /// `replay` is — every variant carries the end-of-stream
+    /// seq.
+    fn last_seq(&self) -> u64 {
+        match &self.replay {
+            ReplaySlice::Fresh { end_seq } => *end_seq,
+            ReplaySlice::InRange { end_seq, .. } => *end_seq,
+            ReplaySlice::UpToDate { end_seq } => *end_seq,
+            ReplaySlice::Gap { end_seq, .. } => *end_seq,
+            // Future never reaches AttachOutcome — try_attach
+            // rejects it before constructing one. The
+            // exhaustive match is for type-system
+            // completeness; the value doesn't matter.
+            ReplaySlice::Future => 0,
+        }
+    }
 }
 
 async fn try_attach(
@@ -765,132 +763,192 @@ async fn try_attach(
         .await
         .map_err(to_failure)?;
 
-    // Subscribe. If resume was requested, fold the snapshot and
-    // the subscribe into the same router-lock operation so no
-    // dispatch slips between the snapshot seq and the
-    // subscriber's first delivered chunk.
-    let (output_rx, replay, last_seq) = match resume_from_seq {
+    match resume_from_seq {
         None => {
+            // Fresh attach. No peek needed — the client isn't
+            // claiming any prior state, so we can't reject it.
             let (rx, baseline) = state.output_router.subscribe(pane_id);
-            (rx, ReplayAction::None, baseline)
+            Ok(AttachOutcome {
+                replay: ReplaySlice::Fresh { end_seq: baseline },
+                new_state: AttachedState {
+                    session: session.to_string(),
+                    pane_id,
+                    output_rx: rx,
+                    last_seen_seq: baseline,
+                    coalescer: Coalescer::new(),
+                    last_output_at: None,
+                    pending_resize: None,
+                },
+            })
         }
         Some(after_seq) => {
-            let (rx, slice) = state
-                .output_router
-                .subscribe_with_resume(pane_id, after_seq);
-            match slice {
-                ReplaySlice::InRange { data, end_seq } => (
-                    rx,
-                    ReplayAction::InRange {
-                        bytes: data,
-                        end_seq,
-                    },
-                    end_seq,
-                ),
-                ReplaySlice::UpToDate { end_seq } => (
-                    rx,
-                    ReplayAction::InRange {
-                        bytes: Vec::new(),
-                        end_seq,
-                    },
-                    end_seq,
-                ),
-                ReplaySlice::Gap {
-                    available_from_seq,
-                    data,
-                    end_seq,
-                } => (
-                    rx,
-                    ReplayAction::Gap {
-                        available_from_seq,
-                        bytes: data,
-                        end_seq,
-                    },
-                    end_seq,
-                ),
-                ReplaySlice::Future => (rx, ReplayAction::Future, 0),
+            // PEEK first so we can reject a bogus resume-seq
+            // WITHOUT displacing any prior subscriber. Two
+            // reviews flagged the prior "subscribe-first,
+            // check-after" version: a version-skew client
+            // claiming a future-seq kicked innocent clients on
+            // its way to being rejected, and then the cleanup
+            // `unsubscribe` wiped the pane's ring. Peek-then-
+            // commit closes both bugs.
+            match state.output_router.peek_resume(pane_id, after_seq) {
+                ReplaySlice::Future => {
+                    // Future from peek could mean either:
+                    // (a) the pane has real output and the
+                    //     client's seq is beyond it (true
+                    //     protocol violation — reject), OR
+                    // (b) the pane is empty (total_written==0)
+                    //     and the client is holding a seq from
+                    //     a previous server instance — treat
+                    //     kindly as a server-restart reconnect,
+                    //     send a Gap-from-0 so the client
+                    //     clears its stale terminal and
+                    //     starts fresh.
+                    //
+                    // Disambiguate by checking the pane's
+                    // actual total_written via peek_resume(0).
+                    // Empty pane → UpToDate { end_seq: 0 } →
+                    // restart case; non-empty → peek would
+                    // return InRange/Gap/UpToDate for 0, which
+                    // means (a): client really is claiming a
+                    // seq beyond existing output.
+                    let zero_peek = state.output_router.peek_resume(pane_id, 0);
+                    if matches!(zero_peek, ReplaySlice::UpToDate { end_seq: 0 }) {
+                        // Restart case: commit as Gap-from-0
+                        // with empty data. Client clears its
+                        // terminal; fresh live output follows
+                        // as normal.
+                        let (rx, _baseline) = state.output_router.subscribe(pane_id);
+                        Ok(AttachOutcome {
+                            replay: ReplaySlice::Gap {
+                                available_from_seq: 0,
+                                data: Vec::new(),
+                                end_seq: 0,
+                            },
+                            new_state: AttachedState {
+                                session: session.to_string(),
+                                pane_id,
+                                output_rx: rx,
+                                last_seen_seq: 0,
+                                coalescer: Coalescer::new(),
+                                last_output_at: None,
+                                pending_resize: None,
+                            },
+                        })
+                    } else {
+                        // Real future-seq claim: reject without
+                        // touching the subscriber.
+                        Err(AttachFailure {
+                            code: error_code::INVALID_RESUME,
+                            message: "resume_from_seq is beyond server's output counter"
+                                .into(),
+                            err: format!(
+                                "client resume seq {after_seq} > pane total_written for pane {pane_id}"
+                            ),
+                        })
+                    }
+                }
+                _peek => {
+                    // Any non-Future peek is safe to commit.
+                    // Subscribe-with-resume now does the same
+                    // work under the router lock, so the replay
+                    // we actually return is authoritative
+                    // (no dispatch slipped between peek and
+                    // commit because we re-read under the lock).
+                    let (rx, replay) =
+                        state.output_router.subscribe_with_resume(pane_id, after_seq);
+                    // Under normal execution the second read
+                    // matches the peek. The paranoid second
+                    // Future check here is defensive against a
+                    // pane being evicted between calls — it
+                    // can't happen in slice 9g (no eviction
+                    // path) but slice 9h may add one.
+                    if matches!(replay, ReplaySlice::Future) {
+                        state.output_router.clear_subscriber(pane_id);
+                        return Err(AttachFailure {
+                            code: error_code::INVALID_RESUME,
+                            message: "resume_from_seq is beyond server's output counter"
+                                .into(),
+                            err: format!(
+                                "pane {pane_id} raced between peek and commit (evicted?)"
+                            ),
+                        });
+                    }
+                    let last_seq = match &replay {
+                        ReplaySlice::Fresh { end_seq } => *end_seq,
+                        ReplaySlice::InRange { end_seq, .. } => *end_seq,
+                        ReplaySlice::UpToDate { end_seq } => *end_seq,
+                        ReplaySlice::Gap { end_seq, .. } => *end_seq,
+                        ReplaySlice::Future => unreachable!("just checked above"),
+                    };
+                    Ok(AttachOutcome {
+                        replay,
+                        new_state: AttachedState {
+                            session: session.to_string(),
+                            pane_id,
+                            output_rx: rx,
+                            last_seen_seq: last_seq,
+                            coalescer: Coalescer::new(),
+                            last_output_at: None,
+                            pending_resize: None,
+                        },
+                    })
+                }
             }
         }
-    };
-
-    // Reject a future-seq claim after we've already subscribed —
-    // we own the subscription now, but we refuse to proceed.
-    // Unsubscribing so the pane state doesn't carry a dangling
-    // sender against a never-used receiver.
-    if matches!(replay, ReplayAction::Future) {
-        state.output_router.unsubscribe(pane_id);
-        return Err(AttachFailure {
-            code: error_code::INVALID_RESUME,
-            message: "resume_from_seq is beyond server's output counter".into(),
-            err: format!("client resume seq > pane total_written for pane {pane_id}"),
-        });
     }
-
-    Ok(AttachOutcome {
-        last_seq,
-        replay,
-        new_state: AttachedState {
-            session: session.to_string(),
-            pane_id,
-            output_rx,
-            // Seed with the current snapshot so the first live
-            // flush reports a seq ≥ `last_seq`. Without this,
-            // a flush BEFORE any live chunk lands would report
-            // seq=0, breaking monotonicity.
-            last_seen_seq: last_seq,
-            coalescer: Coalescer::new(),
-            last_output_at: None,
-            pending_resize: None,
-        },
-    })
 }
 
 /// Emit `OutputGap` + replay `Output` frames between `Attached`
-/// and the first live flush. Returns `false` if the transport is
-/// already gone — caller breaks the serve loop.
-async fn send_replay(handle: &TransportHandle, replay: ReplayAction) -> bool {
+/// and the first live flush. Returns `Err(())` if the transport
+/// is already gone — caller breaks the serve loop.
+async fn send_replay(
+    handle: &TransportHandle,
+    replay: ReplaySlice,
+) -> Result<(), ()> {
     match replay {
-        ReplayAction::None | ReplayAction::Future => true,
-        ReplayAction::InRange { bytes, end_seq } => {
-            if bytes.is_empty() {
-                return true;
+        // Nothing to emit — fresh attach, up-to-date reconnect,
+        // or defensive Future (rejected earlier; shouldn't
+        // reach here).
+        ReplaySlice::Fresh { .. }
+        | ReplaySlice::UpToDate { .. }
+        | ReplaySlice::Future => Ok(()),
+        ReplaySlice::InRange { data, end_seq } => {
+            if data.is_empty() {
+                return Ok(());
             }
             handle
                 .send(ServerMessage::Output {
-                    data: bytes,
+                    data,
                     seq: end_seq,
                 })
                 .await
-                .is_ok()
+                .map_err(|_| ())
         }
-        ReplayAction::Gap {
+        ReplaySlice::Gap {
             available_from_seq,
-            bytes,
+            data,
             end_seq,
         } => {
             // Order matters: OutputGap first so the client
             // clears its terminal before applying the replay
             // bytes. If either send fails, caller closes.
-            if handle
+            handle
                 .send(ServerMessage::OutputGap {
                     available_from_seq,
                     last_seq: end_seq,
                 })
                 .await
-                .is_err()
-            {
-                return false;
-            }
-            if bytes.is_empty() {
-                return true;
+                .map_err(|_| ())?;
+            if data.is_empty() {
+                return Ok(());
             }
             handle
                 .send(ServerMessage::Output {
-                    data: bytes,
+                    data,
                     seq: end_seq,
                 })
                 .await
-                .is_ok()
+                .map_err(|_| ())
         }
     }
 }
@@ -1356,5 +1414,113 @@ mod tests {
         // (tail -f scenario) — its GATE-offset is beyond the cap.
         a.last_output_at = Some(queued + Duration::from_millis(600));
         assert_eq!(a.resize_deadline(), Some(queued + RESIZE_MAX_DEFER));
+    }
+
+    // ---------- Replay & send ordering ----------
+
+    /// In-memory test harness that captures every ServerMessage
+    /// the handler sends. Avoids the WS pump plus CBOR
+    /// round-tripping — we're testing send-order invariants, not
+    /// the transport layer.
+    fn capture_handle() -> (TransportHandle, mpsc::Receiver<ServerMessage>) {
+        let (outbound_tx, outbound_rx) =
+            tokio::sync::mpsc::channel::<ServerMessage>(16);
+        let (_inbound_tx, inbound_rx) = tokio::sync::mpsc::channel::<
+            Result<ClientMessage, crate::transport::TransportError>,
+        >(16);
+        let handle = TransportHandle {
+            inbound: inbound_rx,
+            outbound: outbound_tx,
+            kind: crate::transport::TransportKind::WebSocket,
+        };
+        (handle, outbound_rx)
+    }
+
+    #[tokio::test]
+    async fn send_replay_fresh_sends_nothing() {
+        let (h, mut rx) = capture_handle();
+        send_replay(&h, ReplaySlice::Fresh { end_seq: 0 })
+            .await
+            .expect("fresh is ok");
+        assert!(rx.try_recv().is_err(), "Fresh must emit no messages");
+    }
+
+    #[tokio::test]
+    async fn send_replay_in_range_sends_one_output() {
+        let (h, mut rx) = capture_handle();
+        send_replay(
+            &h,
+            ReplaySlice::InRange {
+                data: b"resume-bytes".to_vec(),
+                end_seq: 12,
+            },
+        )
+        .await
+        .unwrap();
+        match rx.recv().await.unwrap() {
+            ServerMessage::Output { data, seq } => {
+                assert_eq!(data, b"resume-bytes");
+                assert_eq!(seq, 12);
+            }
+            other => panic!("expected Output, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err(), "only one message expected");
+    }
+
+    #[tokio::test]
+    async fn send_replay_gap_sends_output_gap_before_output() {
+        // Order matters: the client's clear-terminal handler
+        // MUST fire before the replay bytes are applied.
+        // Regressing this ordering silently re-corrupts the
+        // terminal across reconnect gaps — this test is the
+        // canary.
+        let (h, mut rx) = capture_handle();
+        send_replay(
+            &h,
+            ReplaySlice::Gap {
+                available_from_seq: 100,
+                data: b"tail-bytes".to_vec(),
+                end_seq: 150,
+            },
+        )
+        .await
+        .unwrap();
+        match rx.recv().await.unwrap() {
+            ServerMessage::OutputGap {
+                available_from_seq,
+                last_seq,
+            } => {
+                assert_eq!(available_from_seq, 100);
+                assert_eq!(last_seq, 150);
+            }
+            other => panic!("first must be OutputGap, got {other:?}"),
+        }
+        match rx.recv().await.unwrap() {
+            ServerMessage::Output { data, seq } => {
+                assert_eq!(data, b"tail-bytes");
+                assert_eq!(seq, 150);
+            }
+            other => panic!("second must be Output, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn send_replay_gap_with_empty_data_sends_gap_only() {
+        let (h, mut rx) = capture_handle();
+        send_replay(
+            &h,
+            ReplaySlice::Gap {
+                available_from_seq: 0,
+                data: Vec::new(),
+                end_seq: 0,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            rx.recv().await.unwrap(),
+            ServerMessage::OutputGap { .. }
+        ));
+        assert!(rx.try_recv().is_err(), "no Output after empty-data Gap");
     }
 }

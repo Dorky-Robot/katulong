@@ -148,7 +148,15 @@ impl OutputRouter {
     /// bytes arrive in strict seq order without overlap.
     ///
     /// If `pane_id` isn't in the map yet, we insert it fresh
-    /// (empty ring → replay is `UpToDate` at seq 0).
+    /// (empty ring → replay is `UpToDate` at seq 0 OR `Gap`
+    /// from 0 when the client's `after_seq` is positive but
+    /// the ring is empty — see the empty-ring semantics on
+    /// [`crate::session::ring::RingBuffer::replay_after`]).
+    ///
+    /// IMPORTANT: this DOES displace any prior subscriber on
+    /// the pane. Callers that need to validate the resume seq
+    /// before committing to the displace should use
+    /// [`OutputRouter::peek_resume`] first.
     pub fn subscribe_with_resume(
         &self,
         pane_id: u32,
@@ -162,10 +170,67 @@ impl OutputRouter {
         (rx, replay)
     }
 
-    /// Remove a pane's registration. Drops the sender, decoder,
-    /// and ring. Safe to call when no subscriber is registered
-    /// (no-op). Handlers MUST call this on clean exit.
-    pub fn unsubscribe(&self, pane_id: u32) {
+    /// Read-only snapshot of what [`OutputRouter::subscribe_with_resume`]
+    /// would return, WITHOUT installing a sender or creating a
+    /// pane entry. Used by the handler to validate a client's
+    /// `resume_from_seq` before displacing any prior subscriber
+    /// — a version-skew client claiming a future-seq would
+    /// otherwise kick an innocent prior subscriber on its way
+    /// to being rejected.
+    ///
+    /// If the pane has no entry yet, returns `ReplaySlice` as
+    /// if the ring were empty (total_written = 0).
+    pub fn peek_resume(&self, pane_id: u32, after_seq: u64) -> ReplaySlice {
+        let panes = self.inner.lock().expect("output-router mutex poisoned");
+        match panes.get(&pane_id) {
+            Some(state) => state.ring.replay_after(after_seq),
+            None => {
+                // Simulate what we'd see against a fresh
+                // PaneState without actually creating one.
+                if after_seq == 0 {
+                    ReplaySlice::UpToDate { end_seq: 0 }
+                } else {
+                    ReplaySlice::Future
+                }
+            }
+        }
+    }
+
+    /// Detach this subscriber but KEEP the pane's ring and
+    /// decoder so a reconnect can replay. This is the handler's
+    /// clean-exit path: a user who closes their browser tab and
+    /// reopens seconds later should resume seamlessly, which
+    /// requires the ring outliving the transport.
+    ///
+    /// The pane's decoder carry also survives. A reconnect that
+    /// lands mid-escape picks up the unchanged byte stream.
+    ///
+    /// Safe to call when no subscriber is registered (no-op).
+    ///
+    /// # Ring lifetime
+    ///
+    /// Pane entries created here persist until `evict(pane_id)`
+    /// is called explicitly, or the `OutputRouter` is dropped
+    /// on server shutdown. Slice 9g relies on this for
+    /// reconnect-replay; slice 9h plans to add tmux
+    /// `%window-close`-driven eviction so long-running servers
+    /// don't accumulate rings for destroyed panes. Until that
+    /// lands, a server restart IS the pane-eviction mechanism —
+    /// acceptable for single-user deployments.
+    pub fn clear_subscriber(&self, pane_id: u32) {
+        let mut panes = self.inner.lock().expect("output-router mutex poisoned");
+        if let Some(state) = panes.get_mut(&pane_id) {
+            state.sender = None;
+        }
+    }
+
+    /// Explicitly remove a pane's entry, wiping ring + decoder +
+    /// sender. Call this when the underlying tmux pane is known
+    /// to be gone (e.g., session destroyed), not for transport
+    /// disconnects. Slice 9h will wire this to tmux
+    /// `%window-close` notifications. Tests use it to reset
+    /// state between cases.
+    pub fn evict(&self, pane_id: u32) {
         let _ = self
             .inner
             .lock()
@@ -403,17 +468,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsubscribe_clears_ring() {
-        // Explicit clean unsubscribe wipes pane state — a fresh
-        // subscribe starts the ring from zero. (Panicked
-        // subscriber's half-state keeps the ring; see
-        // `dispatch_preserves_ring_on_closed_subscriber`.)
+    async fn clear_subscriber_keeps_ring_for_reconnect() {
+        // Clean-close + reopen is the dominant mobile UX flow.
+        // The ring MUST outlive the transport so the reopen can
+        // resume seamlessly, not start fresh.
         let r = OutputRouter::new();
         let (_rx, _) = r.subscribe(0);
         r.dispatch(0, "abc");
-        r.unsubscribe(0);
+        r.clear_subscriber(0);
         let (_rx2, baseline) = r.subscribe(0);
-        assert_eq!(baseline, 0, "unsubscribe wipes ring");
+        assert_eq!(
+            baseline, 3,
+            "clear_subscriber must keep the ring so clean-close + reopen can resume"
+        );
+    }
+
+    #[tokio::test]
+    async fn evict_removes_pane_entirely() {
+        // Explicit eviction (for tmux-pane-gone signals, slice
+        // 9h) wipes the entire PaneState.
+        let r = OutputRouter::new();
+        let (_rx, _) = r.subscribe(0);
+        r.dispatch(0, "doomed");
+        r.evict(0);
+        let (_rx2, baseline) = r.subscribe(0);
+        assert_eq!(baseline, 0, "evict wipes the pane ring");
     }
 
     #[tokio::test]
@@ -446,12 +525,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsubscribe_is_idempotent() {
+    async fn clear_subscriber_is_idempotent() {
         let r = OutputRouter::new();
-        r.unsubscribe(99); // nothing registered — no-op
+        r.clear_subscriber(99); // nothing registered — no-op
         let (_rx, _) = r.subscribe(1);
-        r.unsubscribe(1);
-        r.unsubscribe(1); // already gone — no-op
+        r.clear_subscriber(1);
+        r.clear_subscriber(1); // already cleared — no-op
+    }
+
+    #[tokio::test]
+    async fn evict_is_idempotent() {
+        let r = OutputRouter::new();
+        r.evict(42);
+        r.evict(42);
     }
 
     #[tokio::test]
@@ -497,6 +583,47 @@ mod tests {
         })
         .unwrap();
         handle.await.expect("dispatcher task joins cleanly");
+    }
+
+    #[tokio::test]
+    async fn peek_resume_does_not_displace_subscriber() {
+        // Round-1 correctness fix: peek must NEVER touch the
+        // sender. A version-skew probe calling peek with a
+        // bogus seq must leave the legitimate subscriber's
+        // channel unaffected.
+        let r = OutputRouter::new();
+        let (mut rx, _) = r.subscribe(0);
+        r.dispatch(0, "live");
+        let _ = r.peek_resume(0, 999_999); // bogus future-seq
+        // Prior subscription must still work.
+        let got = rx.recv().await.expect("subscriber survived peek");
+        assert_eq!(got.data, b"live");
+    }
+
+    #[tokio::test]
+    async fn peek_resume_on_empty_pane_with_after_zero_is_uptodate() {
+        // Server-restart path: a reconnecting client that kept
+        // its seq from before the restart will usually see an
+        // empty pane. We used to reject with Future; now we
+        // special-case empty + positive seq in peek_resume to
+        // treat it as "up to date at 0" for cold-pane /
+        // peek_resume(_, 0) and as Future for nonzero. The
+        // handler then converts Future on empty to a Gap
+        // replay (see handler tests).
+        let r = OutputRouter::new();
+        let slice = r.peek_resume(42, 0);
+        assert_eq!(slice, ReplaySlice::UpToDate { end_seq: 0 });
+    }
+
+    #[tokio::test]
+    async fn peek_resume_on_empty_pane_with_nonzero_is_future() {
+        // Intentional: only the handler decides that empty-pane
+        // + nonzero resume should fall back to Gap. The router
+        // itself returns Future to keep the peek API precise
+        // ("what does the ring say?").
+        let r = OutputRouter::new();
+        let slice = r.peek_resume(42, 100);
+        assert_eq!(slice, ReplaySlice::Future);
     }
 
     #[tokio::test]

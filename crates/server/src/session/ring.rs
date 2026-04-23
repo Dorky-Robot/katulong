@@ -23,14 +23,21 @@
 //!
 //! # Capacity tuning
 //!
-//! 64 KiB per pane. Rationale:
-//! - Plenty for a full 200×60 screen worth of text output
-//!   (~12 KiB of plain chars; up to ~30 KiB with a bunch of
-//!   SGR escapes).
-//! - Well below any memory concern for a single-user install:
-//!   even 10 concurrent panes = 640 KiB.
-//! - Matches the 64 KiB WS frame cap so a replay always fits
-//!   in one `ServerMessage::Output`.
+//! 256 KiB per pane. Rationale:
+//! - The relevant content for reconnect is what happened AFTER
+//!   the disconnect, not just the current screen. A fast log
+//!   stream or compile can exhaust 64 KiB in seconds; at 256
+//!   KiB a typical mobile-away-then-back flow stays inside the
+//!   in-range path rather than falling to the gap path.
+//! - Low memory footprint even so: 10 concurrent panes = 2.5
+//!   MiB. Acceptable on any machine capable of running a
+//!   terminal multiplexer.
+//! - The 64 KiB WS frame cap doesn't constrain replay: the
+//!   replay `Output` fires independently of the live coalesce
+//!   frame budget and can carry the full ring in multiple
+//!   frames if needed. (Slice 9g ships one frame per replay;
+//!   if a future client ever reports frame-too-large it splits
+//!   deterministically.)
 //!
 //! Sizing is per-pane, NOT per-connection — the router's
 //! attach-displaces-prior semantics mean a reconnecting client
@@ -50,12 +57,24 @@
 use std::collections::VecDeque;
 
 /// Default capacity per pane. Consts so tests can override via
-/// `with_capacity`.
-pub const DEFAULT_CAPACITY: usize = 64 * 1024;
+/// `with_capacity`. See module doc for the 256 KiB rationale.
+pub const DEFAULT_CAPACITY: usize = 256 * 1024;
 
 /// A replay request result.
+///
+/// The single result type for every replay path: both the ring's
+/// `replay_after` and the handler's attach coordinator match on
+/// these variants. A pre-round-1 version of this PR had a
+/// parallel `ReplayAction` type in the handler that did nothing
+/// except rename fields; code-quality and architecture reviews
+/// both flagged the duplication.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReplaySlice {
+    /// Client didn't request resume (fresh attach). `end_seq`
+    /// is the pane's current `total_written`; the handler
+    /// echoes it in `Attached.last_seq` but emits no replay
+    /// output.
+    Fresh { end_seq: u64 },
     /// Everything the client requested is still in the ring.
     /// `data` is the bytes from `after_seq` (exclusive) through
     /// `end_seq` (inclusive by byte count — i.e., `end_seq` is
@@ -76,6 +95,13 @@ pub enum ReplaySlice {
     /// The client sent `after_seq > total_written` — they claim
     /// to have more bytes than we ever produced. Treat as a
     /// protocol violation; the handler closes the connection.
+    ///
+    /// NOTE: an empty pane (`total_written == 0`) with a
+    /// positive `after_seq` is ALSO `Future` from the ring's
+    /// local perspective, but the handler special-cases this
+    /// because a cold pane combined with a resume request is
+    /// almost always "server restarted, client held onto its
+    /// seq." See `handler::try_attach`.
     Future,
     /// The client is already up-to-date (`after_seq ==
     /// total_written`). Nothing to replay; caller proceeds
