@@ -65,6 +65,8 @@
 use crate::log_util::sanitize_for_log;
 use crate::revocation::RevocationEvent;
 use crate::session::output::Coalescer;
+use crate::session::ring::ReplaySlice;
+use crate::session::router::OutputChunk;
 use crate::state::AppState;
 use crate::transport::{ClientMessage, ServerMessage, TransportHandle, PROTOCOL_VERSION};
 use std::time::Duration;
@@ -127,6 +129,13 @@ pub mod error_code {
     /// Client didn't complete the handshake within
     /// `HANDSHAKE_TIMEOUT_SECS`. Connection closes.
     pub const HANDSHAKE_TIMEOUT: &str = "handshake_timeout";
+    /// Client sent `Attach { resume_from_seq: Some(N) }` with
+    /// `N` larger than the pane's `total_written`. A
+    /// correctly-implemented client cannot reach this — the seq
+    /// only ever comes from a prior `Attached.last_seq` or
+    /// `Output.seq`, both of which the server assigned. Closing
+    /// on mismatch catches version-skew or client bugs early.
+    pub const INVALID_RESUME: &str = "invalid_resume";
     /// Connection was torn down server-side without the client
     /// having done anything wrong. Emitted when the bound
     /// credential is revoked, or when the revocation broadcast
@@ -185,11 +194,15 @@ enum Action {
     /// client's next move is Attach). Just advance phase.
     AdvanceToAwaitingAttach,
     /// Create/attach the tmux session, subscribe to its pane,
-    /// then send `Attached` with the clamped dims.
+    /// then send `Attached` with the clamped dims. If
+    /// `resume_from_seq` is `Some(N)` the coordinator asks the
+    /// router for a replay slice and emits `OutputGap` +
+    /// replay `Output` before going live.
     DoAttach {
         session: String,
         cols: u16,
         rows: u16,
+        resume_from_seq: Option<u64>,
     },
     /// Forward client input bytes to the attached pane.
     ForwardInput { data: Vec<u8> },
@@ -233,13 +246,20 @@ fn step(phase: &mut Phase, msg: ClientMessage) -> Action {
             }
         }
 
-        (Phase::AwaitingAttach, ClientMessage::Attach { session, cols, rows }) => {
-            Action::DoAttach {
+        (
+            Phase::AwaitingAttach,
+            ClientMessage::Attach {
                 session,
                 cols,
                 rows,
-            }
-        }
+                resume_from_seq,
+            },
+        ) => Action::DoAttach {
+            session,
+            cols,
+            rows,
+            resume_from_seq,
+        },
 
         (Phase::Attached, ClientMessage::Input { data }) => Action::ForwardInput { data },
 
@@ -291,12 +311,18 @@ fn phase_name(phase: &Phase) -> &'static str {
 struct AttachedState {
     session: String,
     pane_id: u32,
-    /// Decoded bytes from this pane's `%output` stream.
-    output_rx: mpsc::Receiver<Vec<u8>>,
-    /// Monotonic sequence number for each `ServerMessage::Output`
-    /// we emit. Increments per-emission, NOT per-byte — the
-    /// client reads `seq` to detect gaps after reconnect.
-    output_seq: u64,
+    /// Decoded bytes + end-of-chunk seq from this pane's
+    /// `%output` stream. The router assigns `end_seq` per
+    /// dispatch (pane-global, not per-connection), so the seq
+    /// keeps advancing monotonically across the displace-
+    /// subscribe boundary.
+    output_rx: mpsc::Receiver<OutputChunk>,
+    /// Highest `end_seq` we've seen come out of `output_rx`.
+    /// When the coalescer flushes, this becomes the outbound
+    /// `ServerMessage::Output.seq`. Starts at the router's
+    /// `last_seq` snapshot at attach time so a reconnect with
+    /// replay doesn't emit seqs below the replay's `last_seq`.
+    last_seen_seq: u64,
     /// Coalesces raw bytes from `output_rx` into chunky Output
     /// messages. See `output::Coalescer` for timing.
     coalescer: Coalescer,
@@ -425,11 +451,12 @@ pub async fn serve_session(
             // pruned us after a panic) — that MUST be a clean
             // exit, otherwise the loop sits forever on a dead
             // channel.
-            bytes_opt = maybe_recv_output(attached.as_mut()) => match bytes_opt {
-                Some(bytes) => {
+            chunk_opt = maybe_recv_output(attached.as_mut()) => match chunk_opt {
+                Some(chunk) => {
                     if let Some(a) = attached.as_mut() {
                         a.last_output_at = Some(Instant::now());
-                        a.coalescer.push(&bytes);
+                        a.coalescer.push(&chunk.data);
+                        a.last_seen_seq = chunk.end_seq;
                     }
                     Action::Continue
                 }
@@ -462,12 +489,13 @@ pub async fn serve_session(
             let now = Instant::now();
             if a.coalesce_deadline().is_some_and(|d| now >= d) && !a.coalescer.is_empty() {
                 let bytes = a.coalescer.take();
-                a.output_seq += 1;
+                // `last_seen_seq` already equals the end-seq of
+                // the most recent chunk we folded into the
+                // coalescer — by construction that's the end-seq
+                // of the flushed batch's last byte.
+                let seq = a.last_seen_seq;
                 if handle
-                    .send(ServerMessage::Output {
-                        data: bytes,
-                        seq: a.output_seq,
-                    })
+                    .send(ServerMessage::Output { data: bytes, seq })
                     .await
                     .is_err()
                 {
@@ -510,6 +538,7 @@ pub async fn serve_session(
                 session,
                 cols,
                 rows,
+                resume_from_seq,
             } => {
                 // Clamp once at the coordinator before dispatch.
                 // SessionManager clamps internally too as
@@ -524,8 +553,14 @@ pub async fn serve_session(
                     .await;
                     break;
                 };
-                match try_attach(sessions, &state, &session, cols, rows).await {
-                    Ok(new_state) => {
+                let attach_outcome =
+                    try_attach(sessions, &state, &session, cols, rows, resume_from_seq).await;
+                match attach_outcome {
+                    Ok(AttachOutcome {
+                        new_state,
+                        last_seq,
+                        replay,
+                    }) => {
                         attached = Some(new_state);
                         phase = Phase::Attached;
                         if handle
@@ -533,10 +568,18 @@ pub async fn serve_session(
                                 session,
                                 cols,
                                 rows,
+                                last_seq,
                             })
                             .await
                             .is_err()
                         {
+                            break;
+                        }
+                        // Replay any missed bytes. Must happen
+                        // AFTER Attached so the client's clear-
+                        // on-OutputGap logic fires in the right
+                        // order.
+                        if !send_replay(&handle, replay).await {
                             break;
                         }
                     }
@@ -645,7 +688,7 @@ async fn sleep_until_opt(deadline: Option<Instant>) {
 /// Helper: read from the pane output receiver if we're attached,
 /// otherwise never resolve. Same guard-+-pending pattern as
 /// `sleep_until_opt`.
-async fn maybe_recv_output(attached: Option<&mut AttachedState>) -> Option<Vec<u8>> {
+async fn maybe_recv_output(attached: Option<&mut AttachedState>) -> Option<OutputChunk> {
     match attached {
         Some(a) => a.output_rx.recv().await,
         None => std::future::pending().await,
@@ -661,17 +704,50 @@ struct AttachFailure {
     err: String,
 }
 
+/// Successful attach outcome. Bundles everything the coordinator
+/// needs to (a) transition into `Phase::Attached`, (b) echo a
+/// correct `Attached.last_seq`, and (c) emit any pre-live replay
+/// the client asked for.
+struct AttachOutcome {
+    new_state: AttachedState,
+    last_seq: u64,
+    replay: ReplayAction,
+}
+
+/// What the coordinator should emit between `Attached` and the
+/// first live `Output` frame.
+enum ReplayAction {
+    /// Fresh attach (client didn't send `resume_from_seq`). No
+    /// catch-up bytes; drop straight to live.
+    None,
+    /// Client sent `resume_from_seq = N`. `bytes` is what the
+    /// ring can replay; send it as one `ServerMessage::Output`
+    /// with `seq = end_seq`. Empty `bytes` (client was up-to-
+    /// date) still results in no output message.
+    InRange { bytes: Vec<u8>, end_seq: u64 },
+    /// Client's resume point is older than the oldest byte in
+    /// the ring. Emit `ServerMessage::OutputGap` so the client
+    /// clears its terminal, then `Output` with the current ring
+    /// contents. `bytes` may be the full ring.
+    Gap {
+        available_from_seq: u64,
+        bytes: Vec<u8>,
+        end_seq: u64,
+    },
+    /// Client claimed a resume seq beyond what the server has
+    /// ever produced. A real bug or a deliberate probe. The
+    /// coordinator falls through to the close path.
+    Future,
+}
+
 async fn try_attach(
     sessions: &crate::session::SessionManager,
     state: &AppState,
     session: &str,
     cols: u16,
     rows: u16,
-) -> Result<AttachedState, AttachFailure> {
-    // Single failure-mapping closure — the two session-manager
-    // calls below share identical "classify + stash err.to_string()"
-    // shape, and this closure is the one place that knows which
-    // fields `AttachFailure` carries.
+    resume_from_seq: Option<u64>,
+) -> Result<AttachOutcome, AttachFailure> {
     let to_failure = |err: crate::session::SessionError| {
         let (code, message) = classify_session_error(&err);
         AttachFailure {
@@ -688,20 +764,135 @@ async fn try_attach(
         .query_default_pane(session)
         .await
         .map_err(to_failure)?;
-    // `subscribe` is infallible under the attach-displaces-prior
-    // semantics (slice 9f). If another connection had this pane
-    // bound, its subscriber's channel closes on the next recv
-    // and its handler exits via `Action::Exit`.
-    let output_rx = state.output_router.subscribe(pane_id);
-    Ok(AttachedState {
-        session: session.to_string(),
-        pane_id,
-        output_rx,
-        output_seq: 0,
-        coalescer: Coalescer::new(),
-        last_output_at: None,
-        pending_resize: None,
+
+    // Subscribe. If resume was requested, fold the snapshot and
+    // the subscribe into the same router-lock operation so no
+    // dispatch slips between the snapshot seq and the
+    // subscriber's first delivered chunk.
+    let (output_rx, replay, last_seq) = match resume_from_seq {
+        None => {
+            let (rx, baseline) = state.output_router.subscribe(pane_id);
+            (rx, ReplayAction::None, baseline)
+        }
+        Some(after_seq) => {
+            let (rx, slice) = state
+                .output_router
+                .subscribe_with_resume(pane_id, after_seq);
+            match slice {
+                ReplaySlice::InRange { data, end_seq } => (
+                    rx,
+                    ReplayAction::InRange {
+                        bytes: data,
+                        end_seq,
+                    },
+                    end_seq,
+                ),
+                ReplaySlice::UpToDate { end_seq } => (
+                    rx,
+                    ReplayAction::InRange {
+                        bytes: Vec::new(),
+                        end_seq,
+                    },
+                    end_seq,
+                ),
+                ReplaySlice::Gap {
+                    available_from_seq,
+                    data,
+                    end_seq,
+                } => (
+                    rx,
+                    ReplayAction::Gap {
+                        available_from_seq,
+                        bytes: data,
+                        end_seq,
+                    },
+                    end_seq,
+                ),
+                ReplaySlice::Future => (rx, ReplayAction::Future, 0),
+            }
+        }
+    };
+
+    // Reject a future-seq claim after we've already subscribed —
+    // we own the subscription now, but we refuse to proceed.
+    // Unsubscribing so the pane state doesn't carry a dangling
+    // sender against a never-used receiver.
+    if matches!(replay, ReplayAction::Future) {
+        state.output_router.unsubscribe(pane_id);
+        return Err(AttachFailure {
+            code: error_code::INVALID_RESUME,
+            message: "resume_from_seq is beyond server's output counter".into(),
+            err: format!("client resume seq > pane total_written for pane {pane_id}"),
+        });
+    }
+
+    Ok(AttachOutcome {
+        last_seq,
+        replay,
+        new_state: AttachedState {
+            session: session.to_string(),
+            pane_id,
+            output_rx,
+            // Seed with the current snapshot so the first live
+            // flush reports a seq ≥ `last_seq`. Without this,
+            // a flush BEFORE any live chunk lands would report
+            // seq=0, breaking monotonicity.
+            last_seen_seq: last_seq,
+            coalescer: Coalescer::new(),
+            last_output_at: None,
+            pending_resize: None,
+        },
     })
+}
+
+/// Emit `OutputGap` + replay `Output` frames between `Attached`
+/// and the first live flush. Returns `false` if the transport is
+/// already gone — caller breaks the serve loop.
+async fn send_replay(handle: &TransportHandle, replay: ReplayAction) -> bool {
+    match replay {
+        ReplayAction::None | ReplayAction::Future => true,
+        ReplayAction::InRange { bytes, end_seq } => {
+            if bytes.is_empty() {
+                return true;
+            }
+            handle
+                .send(ServerMessage::Output {
+                    data: bytes,
+                    seq: end_seq,
+                })
+                .await
+                .is_ok()
+        }
+        ReplayAction::Gap {
+            available_from_seq,
+            bytes,
+            end_seq,
+        } => {
+            // Order matters: OutputGap first so the client
+            // clears its terminal before applying the replay
+            // bytes. If either send fails, caller closes.
+            if handle
+                .send(ServerMessage::OutputGap {
+                    available_from_seq,
+                    last_seq: end_seq,
+                })
+                .await
+                .is_err()
+            {
+                return false;
+            }
+            if bytes.is_empty() {
+                return true;
+            }
+            handle
+                .send(ServerMessage::Output {
+                    data: bytes,
+                    seq: end_seq,
+                })
+                .await
+                .is_ok()
+        }
+    }
 }
 
 /// Get the `SessionManager` out of `AppState`, panicking if it's
@@ -903,6 +1094,7 @@ mod tests {
                 session: "main".into(),
                 cols: 120,
                 rows: 40,
+                resume_from_seq: None,
             },
         );
         assert_eq!(
@@ -911,6 +1103,7 @@ mod tests {
                 session: "main".into(),
                 cols: 120,
                 rows: 40,
+                resume_from_seq: None,
             }
         );
         assert_eq!(
@@ -918,6 +1111,32 @@ mod tests {
             Phase::AwaitingAttach,
             "step does not advance to Attached — the coordinator does \
              that only after SessionManager::create_session succeeds"
+        );
+    }
+
+    #[test]
+    fn attach_with_resume_carries_seq_to_action() {
+        // Forward-safety: if the pattern match on Attach ever
+        // loses the resume_from_seq field, the coordinator would
+        // silently default to fresh-attach for every reconnect.
+        let mut phase = Phase::AwaitingAttach;
+        let action = step(
+            &mut phase,
+            ClientMessage::Attach {
+                session: "main".into(),
+                cols: 80,
+                rows: 24,
+                resume_from_seq: Some(42),
+            },
+        );
+        assert_eq!(
+            action,
+            Action::DoAttach {
+                session: "main".into(),
+                cols: 80,
+                rows: 24,
+                resume_from_seq: Some(42),
+            }
         );
     }
 
@@ -930,6 +1149,7 @@ mod tests {
                 session: "main".into(),
                 cols: 80,
                 rows: 24,
+                resume_from_seq: None,
             },
         );
         match action {
@@ -1051,6 +1271,7 @@ mod tests {
             error_code::SESSION_ERROR,
             error_code::NO_SESSION_MANAGER,
             error_code::HANDSHAKE_TIMEOUT,
+            error_code::INVALID_RESUME,
             error_code::CONNECTION_TERMINATED,
         ];
         let set: std::collections::HashSet<&str> = all.iter().copied().collect();
@@ -1068,7 +1289,7 @@ mod tests {
             session: "s".into(),
             pane_id: 0,
             output_rx: rx,
-            output_seq: 0,
+            last_seen_seq: 0,
             coalescer: Coalescer::new(),
             last_output_at: None,
             pending_resize: None,

@@ -102,10 +102,21 @@ pub enum ClientMessage {
     /// once after `HelloAck`. The server creates the session if it
     /// doesn't exist (or attaches to the existing one) and replies
     /// with `Attached`.
+    ///
+    /// `resume_from_seq`: reconnect hint. Absent (or `None`) means
+    /// "fresh attach — I have no prior state." `Some(N)` means "I
+    /// last received bytes through seq N; please replay bytes
+    /// `(N..last_seq]` if you still have them." If the server's
+    /// ring has lost bytes below `N`, it emits `OutputGap` before
+    /// the replay so the client clears its terminal first. Omit
+    /// on first attach; echo the seq from `Attached.last_seq` on
+    /// reconnect.
     Attach {
         session: String,
         cols: u16,
         rows: u16,
+        #[serde(default)]
+        resume_from_seq: Option<u64>,
     },
 
     /// Keystroke / paste input destined for the PTY. Only valid
@@ -163,12 +174,20 @@ pub enum ServerMessage {
     Pong { nonce: u64 },
     /// Confirms that this transport is bound to `session`, which
     /// has been resized to the clamped `cols`/`rows`. The client
-    /// should use these (not what it requested) as the authoritative
-    /// dimensions for its local renderer.
+    /// should use these (not what it requested) as the
+    /// authoritative dimensions for its local renderer.
+    ///
+    /// `last_seq` is the pane's current `total_written` — the
+    /// byte counter the ring is at when this `Attached` ships.
+    /// A fresh-attach client seeds its local seq from here. A
+    /// reconnect client uses it as the upper bound of the
+    /// replay they're about to receive. `0` on a fresh pane
+    /// (no output ever produced).
     Attached {
         session: String,
         cols: u16,
         rows: u16,
+        last_seq: u64,
     },
     /// PTY output chunk. `seq` is a monotonic counter per
     /// connection that lets clients detect gaps after a reconnect
@@ -198,6 +217,22 @@ pub enum ServerMessage {
     /// code stays stable across releases so scripts and client
     /// error classifiers key off it.
     Error { code: String, message: String },
+    /// Reconnect replay had a gap: the client's `resume_from_seq`
+    /// was older than the oldest byte still in the pane's ring.
+    /// `available_from_seq` is the oldest byte we can replay (>
+    /// the client's request); `last_seq` matches `Attached.last_seq`
+    /// for convenience.
+    ///
+    /// The client MUST clear its terminal / restart its renderer
+    /// before applying any subsequent `Output` — cursor positions
+    /// and in-flight escape sequences from the lost window can't
+    /// be inferred. Sent between `Attached` and the first replay
+    /// `Output` so the client's clear-before-apply order is
+    /// unambiguous.
+    OutputGap {
+        available_from_seq: u64,
+        last_seq: u64,
+    },
 }
 
 #[cfg(test)]
@@ -251,15 +286,49 @@ mod tests {
     }
 
     #[test]
-    fn client_attach_serde_roundtrip() {
+    fn client_attach_fresh_serde_roundtrip() {
         let m = ClientMessage::Attach {
             session: "main".into(),
             cols: 120,
             rows: 40,
+            resume_from_seq: None,
         };
         let s = to_string(&m).unwrap();
         assert!(s.contains(r#""type":"attach""#));
         assert_eq!(from_str::<ClientMessage>(&s).unwrap(), m);
+    }
+
+    #[test]
+    fn client_attach_resume_serde_roundtrip() {
+        let m = ClientMessage::Attach {
+            session: "main".into(),
+            cols: 80,
+            rows: 24,
+            resume_from_seq: Some(12345),
+        };
+        let s = to_string(&m).unwrap();
+        assert!(s.contains(r#""resume_from_seq":12345"#));
+        assert_eq!(from_str::<ClientMessage>(&s).unwrap(), m);
+    }
+
+    #[test]
+    fn client_attach_missing_resume_field_defaults_to_none() {
+        // Forward-compat: an older client that doesn't know
+        // about reconnect deserialises cleanly. `#[serde(default)]`
+        // on `Option` fills in `None`.
+        let m: ClientMessage = from_str(
+            r#"{"type":"attach","session":"main","cols":80,"rows":24}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            m,
+            ClientMessage::Attach {
+                session: "main".into(),
+                cols: 80,
+                rows: 24,
+                resume_from_seq: None,
+            }
+        );
     }
 
     #[test]
@@ -268,9 +337,23 @@ mod tests {
             session: "main".into(),
             cols: 120,
             rows: 40,
+            last_seq: 42,
         };
         let s = to_string(&m).unwrap();
         assert!(s.contains(r#""type":"attached""#));
+        assert!(s.contains(r#""last_seq":42"#));
+        assert_eq!(from_str::<ServerMessage>(&s).unwrap(), m);
+    }
+
+    #[test]
+    fn server_output_gap_serde_roundtrip() {
+        let m = ServerMessage::OutputGap {
+            available_from_seq: 100,
+            last_seq: 500,
+        };
+        let s = to_string(&m).unwrap();
+        assert!(s.contains(r#""type":"output_gap""#));
+        assert!(s.contains(r#""available_from_seq":100"#));
         assert_eq!(from_str::<ServerMessage>(&s).unwrap(), m);
     }
 
