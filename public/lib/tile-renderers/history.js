@@ -69,8 +69,9 @@ export const historyRenderer = {
   },
 
   mount(el, { props }) {
+    if (!_getSessionStore) throw new Error("historyRenderer.init() not called");
     const sessionName = props?.sessionName || null;
-    const store = _getSessionStore ? _getSessionStore() : null;
+    const store = _getSessionStore();
 
     const root = document.createElement("div");
     root.className = "history-tile-root";
