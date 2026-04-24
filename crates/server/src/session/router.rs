@@ -87,7 +87,7 @@
 use crate::session::output::OctalDecoder;
 use crate::session::parser::Notification;
 use crate::session::ring::{ReplaySlice, RingBuffer};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -345,8 +345,10 @@ impl OutputRouter {
     /// Explicitly remove a pane's entry, wiping ring + decoder
     /// plus all subscribers. Call when the underlying tmux pane
     /// is known to be gone (e.g., session destroyed), not for
-    /// transport disconnects. Slice 9h+ will wire this to
-    /// tmux-pane-close notifications.
+    /// transport disconnects. Slice 9i reaches this path via
+    /// [`OutputRouter::retain_panes`] driven by
+    /// `SessionManager::reconcile_router` on tmux
+    /// `%window-close` / `%unlinked-window-close` notifications.
     pub fn evict(&self, pane_id: u32) {
         let _ = self
             .inner
@@ -375,6 +377,29 @@ impl OutputRouter {
         if count > 0 {
             tracing::info!(panes = count, "output router evicted all panes");
         }
+    }
+
+    /// Retain only the panes whose id is in `keep`; evict the
+    /// rest. Returns how many panes were evicted so the caller
+    /// can log a single summary line per reconcile pass.
+    ///
+    /// Intended caller: `SessionManager::reconcile_router`, which
+    /// queries tmux for the current set of live pane ids and
+    /// hands that set here. Any router-registered pane that tmux
+    /// no longer reports is a zombie (its underlying window
+    /// closed) and its ring is safe to drop.
+    ///
+    /// Eviction is the same drop-all-subscribers +
+    /// drop-ring-and-decoder path as [`OutputRouter::evict`]:
+    /// every subscriber's receiver closes on its next `recv()`,
+    /// and their handlers exit via `Action::Exit`. Safe to call
+    /// with a `keep` set that contains pane ids the router never
+    /// registered — extras are ignored.
+    pub fn retain_panes(&self, keep: &HashSet<u32>) -> usize {
+        let mut panes = self.inner.lock().expect("output-router mutex poisoned");
+        let before = panes.len();
+        panes.retain(|pane_id, _| keep.contains(pane_id));
+        before - panes.len()
     }
 
     /// Route a raw `%output <pane_id> <data>` notification.
@@ -449,9 +474,27 @@ impl OutputRouter {
     /// `output_rx.recv()` waiting for bytes that will never
     /// arrive. A correctness reviewer called this out as a HIGH
     /// bug on the first round of slice 9h; this is the fix.
+    ///
+    /// # Slice 9i: reconcile on window-close
+    ///
+    /// On `%window-close` / `%unlinked-window-close`, the
+    /// dispatcher fires off `sessions.reconcile_router(&router)`
+    /// as a detached tokio task. The reconcile queries tmux for
+    /// its current set of live pane ids and evicts any router-
+    /// registered pane tmux no longer reports — closing the
+    /// long-running-server ring leak path.
+    ///
+    /// Fire-and-forget is deliberate: reconcile makes a tmux
+    /// round-trip, and blocking the notification loop on it
+    /// would back-pressure `%output` events behind cleanup
+    /// work. A failed reconcile logs and moves on; the next
+    /// close event will try again. Multiple reconciles
+    /// queueing up is self-compensating — each one is
+    /// idempotent (it sets the keep-set, doesn't append to it).
     pub fn spawn_dispatcher(
         &self,
         mut notifs: mpsc::UnboundedReceiver<Notification>,
+        sessions: crate::session::SessionManager,
     ) -> JoinHandle<()> {
         let router = self.clone();
         tokio::spawn(async move {
@@ -463,6 +506,52 @@ impl OutputRouter {
                     Notification::Exit { reason } => {
                         tracing::warn!(?reason, "tmux control-mode exited");
                         break;
+                    }
+                    Notification::WindowClose { .. }
+                    | Notification::UnlinkedWindowClose { .. }
+                    | Notification::SessionsChanged => {
+                        // Any of these can signal that a pane the
+                        // router is tracking has gone away. We
+                        // don't trust the specific event — some
+                        // versions of tmux prefer one code path
+                        // over another depending on whether the
+                        // CM client was attached to the dying
+                        // session. SessionsChanged fires on every
+                        // session add/remove and is the most
+                        // reliable "something changed, re-check"
+                        // signal; window-close variants are
+                        // kept for faster reaction on the hot
+                        // path. Reconcile is idempotent, so a
+                        // cascade of events (close → sessions-
+                        // changed) just does the same work twice.
+                        //
+                        // Known debt: each event fires its own
+                        // `tokio::spawn`. Under a pathological
+                        // event storm (e.g., a user-run script
+                        // opening + closing many sessions in a
+                        // tight loop), this produces one spawn
+                        // per event with no coalescing. Future
+                        // fix: a single-buffer `tokio::sync::Notify`
+                        // drained by a dedicated worker task.
+                        // Acceptable for single-user scale since
+                        // each task is a lightweight tmux round-
+                        // trip and idempotent under concurrency.
+                        //
+                        // Logging: `reconcile_router` owns the
+                        // success info! (it has access to the
+                        // `live_panes` count). We only log failures
+                        // here — the failure message names this
+                        // notification arm as context.
+                        let sessions = sessions.clone();
+                        let router = router.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = sessions.reconcile_router(&router).await {
+                                tracing::warn!(
+                                    error = %e,
+                                    "reconcile_router failed; next event will retry"
+                                );
+                            }
+                        });
                     }
                     other => {
                         tracing::trace!(?other, "tmux notification (no consumer yet)");
@@ -495,8 +584,20 @@ impl OutputRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::{SessionManager, Tmux};
 
-    // ---------- Single-subscriber parity (carried forward from 9g) ----------
+    /// A `SessionManager` backed by a dead Tmux channel. Calls
+    /// to `reconcile_router` will fail with `TmuxError::Disconnected`
+    /// — which is exactly what we want for tests that exercise
+    /// the dispatcher's notification loop without pulling in a
+    /// real tmux subprocess. The dispatcher's fire-and-forget
+    /// reconcile path logs the error and moves on, so these
+    /// tests still observe the loop's behavior correctly.
+    fn dead_sessions() -> SessionManager {
+        SessionManager::new(Tmux::dead_for_tests())
+    }
+
+    // ---------- Single-subscriber core behaviour ----------
 
     #[tokio::test]
     async fn subscribe_returns_zero_seq_on_empty_pane() {
@@ -687,7 +788,7 @@ mod tests {
         assert_eq!(r.peek_resume(42, 100), ReplaySlice::Future);
     }
 
-    // ---------- Multi-device fan-out (slice 9h) ----------
+    // ---------- Multi-device fan-out ----------
 
     #[tokio::test]
     async fn two_subscribers_both_receive_the_same_bytes() {
@@ -834,7 +935,7 @@ mod tests {
         let r = OutputRouter::new();
         let (mut rx, _id, _) = r.subscribe(3).unwrap();
         let (tx, notifs) = mpsc::unbounded_channel::<Notification>();
-        let handle = r.spawn_dispatcher(notifs);
+        let handle = r.spawn_dispatcher(notifs, dead_sessions());
 
         tx.send(Notification::Output {
             pane_id: 3,
@@ -855,12 +956,12 @@ mod tests {
     async fn spawn_dispatcher_exits_when_notifs_closes() {
         let r = OutputRouter::new();
         let (tx, notifs) = mpsc::unbounded_channel::<Notification>();
-        let handle = r.spawn_dispatcher(notifs);
+        let handle = r.spawn_dispatcher(notifs, dead_sessions());
         drop(tx);
         handle.await.expect("dispatcher exits on sender drop");
     }
 
-    // ---------- Shutdown propagation (slice 9h round-1) ----------
+    // ---------- Dispatcher-exit shutdown propagation ----------
 
     #[tokio::test]
     async fn evict_all_closes_every_subscriber_receiver() {
@@ -890,7 +991,7 @@ mod tests {
         let r = OutputRouter::new();
         let (mut rx, _id, _) = r.subscribe(0).unwrap();
         let (tx, notifs) = mpsc::unbounded_channel::<Notification>();
-        let handle = r.spawn_dispatcher(notifs);
+        let handle = r.spawn_dispatcher(notifs, dead_sessions());
         tx.send(Notification::Exit {
             reason: Some("tmux died".into()),
         })
@@ -900,6 +1001,162 @@ mod tests {
             rx.recv().await.is_none(),
             "subscriber's recv must yield None after dispatcher-driven evict_all"
         );
+    }
+
+    // ---------- Pane eviction / reconcile ----------
+
+    #[tokio::test]
+    async fn retain_panes_evicts_panes_not_in_keep_set() {
+        // Core claim: panes absent from `keep` are evicted
+        // (subscribers' recv yields None), panes present stay
+        // live. This is the mechanism SessionManager uses on
+        // %window-close to prune zombie panes against tmux's
+        // current set of live panes.
+        let r = OutputRouter::new();
+        let (mut live, _id_l, _) = r.subscribe(1).unwrap();
+        let (mut zombie, _id_z, _) = r.subscribe(2).unwrap();
+        let keep: HashSet<u32> = [1].into_iter().collect();
+
+        let evicted = r.retain_panes(&keep);
+        assert_eq!(evicted, 1);
+        assert_eq!(r.registered_count(), 1);
+        assert!(zombie.recv().await.is_none(), "zombie pane closed");
+        // Live pane still receives.
+        r.dispatch(1, "alive");
+        let got = live.recv().await.expect("live pane still flows");
+        assert_eq!(got.data, b"alive");
+    }
+
+    #[tokio::test]
+    async fn retain_panes_with_empty_keep_set_evicts_everything() {
+        // Equivalent to evict_all but takes the explicit-set
+        // path. Verifies that an edge-case reconcile against a
+        // tmux reporting zero panes does the right thing.
+        let r = OutputRouter::new();
+        let (mut a, _id_a, _) = r.subscribe(1).unwrap();
+        let (mut b, _id_b, _) = r.subscribe(2).unwrap();
+
+        let evicted = r.retain_panes(&HashSet::new());
+        assert_eq!(evicted, 2);
+        assert!(a.recv().await.is_none());
+        assert!(b.recv().await.is_none());
+        assert_eq!(r.registered_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn retain_panes_keeps_all_when_superset() {
+        // A `keep` set larger than what's registered must not
+        // evict anything. Covers the common case where tmux
+        // reports more live panes than the router is tracking
+        // (other sessions nobody's attached to).
+        let r = OutputRouter::new();
+        let (mut rx, _id, _) = r.subscribe(5).unwrap();
+        let keep: HashSet<u32> = [1, 2, 5, 7, 99].into_iter().collect();
+
+        let evicted = r.retain_panes(&keep);
+        assert_eq!(evicted, 0);
+        assert_eq!(r.registered_count(), 1);
+        r.dispatch(5, "still-here");
+        assert_eq!(rx.recv().await.unwrap().data, b"still-here");
+    }
+
+    #[tokio::test]
+    async fn retain_panes_on_empty_router_is_noop() {
+        let r = OutputRouter::new();
+        let keep: HashSet<u32> = [1, 2, 3].into_iter().collect();
+        assert_eq!(r.retain_panes(&keep), 0);
+        assert_eq!(r.registered_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn retain_panes_closes_all_subscribers_on_evicted_pane() {
+        // Fan-out interaction: when a pane has multiple
+        // subscribers (phone + laptop attached to the same
+        // session), eviction must close ALL of them. Otherwise
+        // one device would silently freeze while the other
+        // continues — worse UX than a clean disconnect.
+        let r = OutputRouter::new();
+        let (mut phone, _ip, _) = r.subscribe(7).unwrap();
+        let (mut laptop, _il, _) = r.subscribe(7).unwrap();
+
+        r.retain_panes(&HashSet::new());
+        assert!(phone.recv().await.is_none());
+        assert!(laptop.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn dispatcher_handles_window_close_without_wedging() {
+        // Slice 9i wiring: the WindowClose arm fires a detached
+        // reconcile task. With a dead SessionManager the reconcile
+        // fails (logged + dropped), and the dispatcher loop MUST
+        // continue processing subsequent Output. Regression guard
+        // against accidentally awaiting the reconcile on the hot
+        // path, which would make a flaky tmux freeze all output.
+        let r = OutputRouter::new();
+        let (mut rx, _id, _) = r.subscribe(7).unwrap();
+        let (tx, notifs) = mpsc::unbounded_channel::<Notification>();
+        let handle = r.spawn_dispatcher(notifs, dead_sessions());
+
+        tx.send(Notification::WindowClose { window_id: 42 })
+            .unwrap();
+        tx.send(Notification::Output {
+            pane_id: 7,
+            data: "alive".into(),
+        })
+        .unwrap();
+        let got = rx.recv().await.expect("output still flows after WindowClose");
+        assert_eq!(got.data, b"alive");
+
+        drop(tx);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dispatcher_handles_sessions_changed_without_wedging() {
+        // SessionsChanged is the catch-all reconcile trigger —
+        // fires on add AND remove, so it costs a tmux round-trip
+        // even when a session was just created. Verify the
+        // dispatcher loop survives the spawned reconcile on this
+        // arm the same way it does for window-close.
+        let r = OutputRouter::new();
+        let (mut rx, _id, _) = r.subscribe(11).unwrap();
+        let (tx, notifs) = mpsc::unbounded_channel::<Notification>();
+        let handle = r.spawn_dispatcher(notifs, dead_sessions());
+
+        tx.send(Notification::SessionsChanged).unwrap();
+        tx.send(Notification::Output {
+            pane_id: 11,
+            data: "ok".into(),
+        })
+        .unwrap();
+        let got = rx.recv().await.unwrap();
+        assert_eq!(got.data, b"ok");
+
+        drop(tx);
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dispatcher_handles_unlinked_window_close_without_wedging() {
+        // Same contract for the tmux 3.3+ alternate notification
+        // shape. Both arms route to the same reconcile path.
+        let r = OutputRouter::new();
+        let (mut rx, _id, _) = r.subscribe(3).unwrap();
+        let (tx, notifs) = mpsc::unbounded_channel::<Notification>();
+        let handle = r.spawn_dispatcher(notifs, dead_sessions());
+
+        tx.send(Notification::UnlinkedWindowClose { window_id: 9 })
+            .unwrap();
+        tx.send(Notification::Output {
+            pane_id: 3,
+            data: "still-here".into(),
+        })
+        .unwrap();
+        let got = rx.recv().await.unwrap();
+        assert_eq!(got.data, b"still-here");
+
+        drop(tx);
+        handle.await.unwrap();
     }
 
     #[tokio::test]

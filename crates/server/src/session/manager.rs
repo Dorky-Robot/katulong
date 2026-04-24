@@ -22,7 +22,9 @@
 //! onto the subprocess's stdin. There's no in-memory cache to race.
 
 use super::dims::{clamp_dims, DEFAULT_COLS, DEFAULT_ROWS};
+use super::router::OutputRouter;
 use super::tmux::{Tmux, TmuxError};
+use std::collections::HashSet;
 
 /// Public handle to the session layer. Construct with `new` at
 /// server startup; clone into every handler that needs to touch
@@ -161,26 +163,26 @@ impl SessionManager {
 
     /// Look up the default pane id for `session`. Returns the
     /// numeric pane id (tmux's `%N` with the `%` stripped) that
-    /// the output router keys off. For a session freshly created
-    /// by `create_session`, the first `list-panes` result IS the
-    /// default pane, because tmux creates the session with a
-    /// single window hosting a single pane.
+    /// the output router keys off.
     ///
-    /// **Single-pane assumption, load-bearing for slice 9f.**
-    /// This function calls `list-panes -t <session> -F
-    /// '#{pane_id}'` and takes the FIRST line of output as the
-    /// canonical pane. That's correct for a freshly-created
-    /// session with one pane, and for reconnects to an existing
-    /// single-pane session. It is SILENTLY WRONG if a user has
-    /// run `split-window` or `new-window` — the first pane tmux
-    /// lists is not necessarily the one the user is typing in.
-    /// Slice 9h is the right place to decide the product
-    /// semantics here (follow active pane? let the client pick?
-    /// expose multiple pane streams?); until then, multi-pane
-    /// tmux sessions under katulong will show output from the
-    /// wrong pane. If this is ever surfaced to the UI it should
-    /// be a conscious choice, not an accidental artifact of
-    /// `lines().next()`.
+    /// # Product invariant: one pane per tile, always
+    ///
+    /// Katulong's tile model is 1:1:1:1 — one tile = one tmux
+    /// session = one tmux window = one tmux pane. Splits inside
+    /// a tile are not a feature; the tile manager handles
+    /// side-by-side layout by composing independent tiles, each
+    /// with its own tmux session. A user who runs `split-window`
+    /// or `new-window` from inside their katulong shell creates
+    /// panes tmux can see but the router doesn't — those panes
+    /// receive no I/O from katulong.
+    ///
+    /// So "the default pane" is just "the one pane this session
+    /// has." We run `list-panes -t <session> -F '#{pane_id}'`
+    /// and take the first line because under the invariant
+    /// there's only one line. If tmux ever reports multiple,
+    /// that's a bug state (e.g., a user-run `split-window`);
+    /// handling it is out of scope — the katulong UX should
+    /// prevent or reset that state, not patch around it here.
     pub async fn query_default_pane(&self, session: &str) -> Result<u32, SessionError> {
         validate_session_name(session)?;
         let cmd = format!("list-panes -t {session} -F '#{{pane_id}}'");
@@ -239,6 +241,73 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Query tmux for the set of currently-live pane ids across
+    /// every session it hosts. Runs `list-panes -a -F '#{pane_id}'`
+    /// and parses the `%N` replies into a `HashSet<u32>`.
+    ///
+    /// Slice 9i uses this to reconcile the output router against
+    /// tmux's view of reality. Tmux doesn't emit a per-pane close
+    /// notification — only `%window-close @N` — and from window-
+    /// id alone the router can't tell which panes were in that
+    /// window. Re-querying the live set sidesteps the mapping
+    /// problem: anything the router has that tmux no longer
+    /// reports is a zombie.
+    pub async fn list_live_panes(&self) -> Result<HashSet<u32>, SessionError> {
+        let reply = self
+            .tmux
+            .send_command("list-panes -a -F '#{pane_id}'")
+            .await?;
+        if !reply.ok {
+            return Err(SessionError::TmuxRejected(reply.output));
+        }
+        parse_pane_id_list(&reply.output)
+    }
+
+    /// Reconcile `router` against tmux's current set of live
+    /// panes. Any pane registered on the router that tmux no
+    /// longer reports gets evicted — its ring dropped, its
+    /// subscribers' receivers closed, its handlers woken to
+    /// `Action::Exit`. Returns the number of panes evicted.
+    ///
+    /// **Eviction driver (slice 9i).** The dispatcher calls this
+    /// on `%window-close` / `%unlinked-window-close`
+    /// notifications. Tmux emits window-level closures only
+    /// (there's no `%pane-close`), so the pane→window mapping
+    /// is reconstructed by querying tmux rather than tracked
+    /// in Rust memory — consistent with the SessionManager's
+    /// stateless design ("tmux is the source of truth").
+    ///
+    /// Fire-and-forget semantics from the dispatcher: on Err we
+    /// log and move on. The next window-close event will try
+    /// again; the router's `MAX_PANES` cap bounds the memory
+    /// cost of any individual stale entry in the meantime.
+    pub async fn reconcile_router(
+        &self,
+        router: &OutputRouter,
+    ) -> Result<usize, SessionError> {
+        // TOCTOU note: `list_live_panes` is an async tmux round-
+        // trip; `retain_panes` runs later under the router lock.
+        // A handler that calls `router.subscribe(P)` for a pane P
+        // created between the query and the retain will see its
+        // subscriber evicted immediately if P wasn't in `live`.
+        // The subscriber's `output_rx` closes and the handler
+        // wakes to `Action::Exit`; the client reconnects and the
+        // pane is alive on the reconnect path. At katulong scale
+        // (one or a few concurrent connections) the window is
+        // narrow and the failure is self-healing — the pane is
+        // still live in tmux, so the reconnect succeeds cleanly.
+        let live = self.list_live_panes().await?;
+        let evicted = router.retain_panes(&live);
+        if evicted > 0 {
+            tracing::info!(
+                evicted,
+                live_panes = live.len(),
+                "reconciled output router against tmux live panes"
+            );
+        }
+        Ok(evicted)
+    }
+
     /// Default dimensions the session manager uses for new sessions
     /// when the client hasn't reported a real window size yet.
     pub fn default_dims() -> (u16, u16) {
@@ -248,18 +317,32 @@ impl SessionManager {
 
 /// Errors returned by `SessionManager` operations.
 ///
-/// **HTTP caller obligation.** `TmuxRejected` wraps tmux's raw
-/// stderr/stdout output. Do NOT forward that to an HTTP response
-/// body — it may contain socket paths, other session names, or
-/// internal tmux details. Log the content server-side and render
-/// a generic "session operation failed" to the client. Same shape
-/// as the `AuthError::Io` obligation from slice 1+2.
+/// **HTTP caller obligation.** `TmuxRejected` and `MalformedReply`
+/// both wrap raw tmux output. Do NOT forward either to an HTTP
+/// response body — they may contain socket paths, other session
+/// names, or internal tmux details. Log the content server-side
+/// and render a generic "session operation failed" to the
+/// client. Same shape as the `AuthError::Io` obligation from
+/// slice 1+2.
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
     #[error("invalid session name: {0:?}")]
     InvalidName(String),
+    /// tmux acknowledged the command but reported an error
+    /// (`%error` or `reply.ok == false`). Wraps the stderr/stdout
+    /// payload. This is the "tmux said no" path.
     #[error("tmux rejected command: {0}")]
     TmuxRejected(String),
+    /// tmux acknowledged the command successfully but the reply
+    /// payload didn't match the format we asked for (e.g., a
+    /// line in `list-panes -F '#{pane_id}'` output that's not a
+    /// `%N` value). Distinct from `TmuxRejected` so callers and
+    /// log scanners can tell "tmux said no" apart from "we
+    /// couldn't parse tmux's answer." The latter usually
+    /// indicates a tmux version or locale change on the host —
+    /// actionable differently from a command rejection.
+    #[error("tmux reply did not match expected format: {0}")]
+    MalformedReply(String),
     #[error("tmux error: {0}")]
     Tmux(#[from] TmuxError),
 }
@@ -302,6 +385,37 @@ fn validate_session_name(name: &str) -> Result<(), SessionError> {
         }
     }
     Ok(())
+}
+
+/// Parse a `%N\n%M\n...` block (tmux's `list-panes -F '#{pane_id}'`
+/// output shape) into a set of numeric pane ids. Blank lines are
+/// tolerated (trailing newline). Anything else that doesn't start
+/// with `%` or fails to parse as u32 is rejected with
+/// `SessionError::MalformedReply` — the command succeeded, but the
+/// reply shape is wrong. Distinct from `TmuxRejected` (which means
+/// tmux said no to the command itself).
+///
+/// We don't silently skip malformed lines because that could mask
+/// a parser bug that leaves the router out of sync with tmux.
+/// The hard-fail blast radius is one reconcile pass skipped: the
+/// next `%window-close` / `%sessions-changed` event re-runs the
+/// reconcile, and `MAX_PANES` bounds the interim memory cost.
+fn parse_pane_id_list(raw: &str) -> Result<HashSet<u32>, SessionError> {
+    let mut out = HashSet::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let rest = line.strip_prefix('%').ok_or_else(|| {
+            SessionError::MalformedReply(format!("expected %N pane-id, got: {line:?}"))
+        })?;
+        let id = rest.parse::<u32>().map_err(|_| {
+            SessionError::MalformedReply(format!("pane-id not numeric: {line:?}"))
+        })?;
+        out.insert(id);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -380,4 +494,75 @@ mod tests {
             (DEFAULT_COLS, DEFAULT_ROWS)
         );
     }
+
+    // ---------- pane-id list parser ----------
+
+    #[test]
+    fn parse_pane_id_list_accepts_single_line() {
+        let got = parse_pane_id_list("%3").unwrap();
+        assert_eq!(got, [3].into_iter().collect());
+    }
+
+    #[test]
+    fn parse_pane_id_list_accepts_multi_line() {
+        let got = parse_pane_id_list("%1\n%5\n%42").unwrap();
+        assert_eq!(got, [1, 5, 42].into_iter().collect());
+    }
+
+    #[test]
+    fn parse_pane_id_list_tolerates_trailing_newline() {
+        // tmux replies typically end with a newline. Skipping
+        // empty lines prevents a spurious TmuxRejected on that.
+        let got = parse_pane_id_list("%7\n").unwrap();
+        assert_eq!(got, [7].into_iter().collect());
+    }
+
+    #[test]
+    fn parse_pane_id_list_deduplicates() {
+        // tmux shouldn't emit duplicates, but HashSet dedup means
+        // we don't have to think about it.
+        let got = parse_pane_id_list("%1\n%1\n%2").unwrap();
+        assert_eq!(got, [1, 2].into_iter().collect());
+    }
+
+    #[test]
+    fn parse_pane_id_list_empty_input_is_empty_set() {
+        // If tmux reports no panes (server restart, all sessions
+        // dead mid-reconcile), retain_panes(&empty) evicts every
+        // zombie — exactly what we want.
+        assert!(parse_pane_id_list("").unwrap().is_empty());
+        assert!(parse_pane_id_list("\n").unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_pane_id_list_rejects_missing_percent_prefix() {
+        // Don't silently skip malformed lines — that could mask a
+        // parser bug that leaves zombies in the router. Distinct
+        // variant from TmuxRejected so log scanners can tell
+        // "tmux said no" apart from "we failed to parse tmux's
+        // reply."
+        let err = parse_pane_id_list("3\n%5").unwrap_err();
+        assert!(
+            matches!(err, SessionError::MalformedReply(_)),
+            "malformed reply must be MalformedReply, not TmuxRejected: {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_pane_id_list_rejects_non_numeric_id() {
+        let err = parse_pane_id_list("%abc").unwrap_err();
+        assert!(matches!(err, SessionError::MalformedReply(_)));
+    }
+
+    // Live-tmux integration coverage is deferred: `Tmux::spawn`
+    // uses `tmux -C new-session -d` which exits the CM client
+    // immediately after creating the session (empirically
+    // reproduced on tmux 3.6a — see the existing
+    // `tmux_roundtrip` ignored test with the same limitation).
+    // Wiring an `attach -t` style CM that stays alive is a
+    // separate, broader concern; the unit coverage here
+    // (`retain_panes`, `parse_pane_id_list`, dispatcher-wiring
+    // tests in router.rs) exercises every decision slice 9i
+    // makes. An end-to-end test lands when the tmux spawn
+    // lifetime issue is fixed in its own slice.
 }

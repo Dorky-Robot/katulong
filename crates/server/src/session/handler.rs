@@ -1107,10 +1107,13 @@ fn classify_session_error(err: &crate::session::SessionError) -> (&'static str, 
             error_code::INVALID_SESSION,
             "invalid session name".into(),
         ),
-        SessionError::TmuxRejected(_) | SessionError::Tmux(_) => (
+        SessionError::TmuxRejected(_)
+        | SessionError::MalformedReply(_)
+        | SessionError::Tmux(_) => (
             error_code::SESSION_ERROR,
             // Do NOT embed raw tmux output in the client message.
             // The `SessionManager` doc calls this out explicitly
+            // for both `TmuxRejected` and `MalformedReply`
             // (socket paths, other session names, internal
             // diagnostics). A generic client-facing string is
             // enough; operators have the tracing field.
