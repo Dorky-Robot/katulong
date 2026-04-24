@@ -213,9 +213,10 @@ describe("reconcilePaneCwd", () => {
 });
 
 describe("reconcilePaneGit", () => {
-  function makeSession(initialMeta = {}) {
+  function makeSession(initialMeta = {}, { alive = true } = {}) {
     return {
       name: "work",
+      alive,
       meta: initialMeta,
       setMeta(ns, val) {
         if (val == null) delete this.meta[ns];
@@ -289,5 +290,14 @@ describe("reconcilePaneGit", () => {
       cwd: "/c",
       startedAt: 1,
     });
+  });
+
+  it("skips setMeta when session dies during git probe", async () => {
+    const session = makeSession({ pane: { cwd: "/a" } });
+    // Probe flips the session to dead mid-await, mirroring a tmux kill.
+    const probe = async () => { session.alive = false; return GIT; };
+    const changed = await reconcilePaneGit(session, "/a", { getGitInfo: probe });
+    assert.equal(changed, false);
+    assert.equal(session.meta.pane.git, undefined);
   });
 });

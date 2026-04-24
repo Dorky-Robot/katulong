@@ -15,22 +15,25 @@
  *                          history tile with no active terminal).
  */
 
-let _getSessionStore = null;
+import { escapeHtml, formatRelativeTime } from "/lib/utils.js";
 
-function escapeHtml(str) {
-  const el = document.createElement("span");
-  el.textContent = String(str ?? "");
-  return el.innerHTML;
-}
+// Module-scoped dep stash; populated by `init()` at renderer-registry
+// boot. Mirrors fileBrowserRenderer / clusterRenderer / terminalRenderer,
+// which all stash deps at module scope for the same reason: the renderer
+// protocol separates init (dep injection) from mount (per-instance).
+let _getSessionStore = null;
 
 function formatRelative(at) {
   if (!Number.isFinite(at)) return "";
+  // Sub-minute precision matters for history — "just now" vs "30s ago"
+  // is the difference between "still the current task" and "just
+  // finished it." The shared formatRelativeTime collapses everything
+  // under a minute to "Just now," so we handle short windows inline
+  // and delegate the longer ones.
   const diff = Date.now() - at;
   if (diff < 15_000) return "just now";
   if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return `${Math.floor(diff / 86_400_000)}d ago`;
+  return formatRelativeTime(at);
 }
 
 function findSession(store, name) {
@@ -153,6 +156,10 @@ export const historyRenderer = {
       focus() {},
       blur() {},
       resize() {},
+      // This renderer has no inner tile adapter to hand back (it's a
+      // pure read-only view). Present in the return shape so callers
+      // can destructure `tile` without getting `undefined`.
+      tile: null,
     };
   },
 };

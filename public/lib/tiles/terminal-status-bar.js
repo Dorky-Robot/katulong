@@ -17,11 +17,7 @@
  * flat avoids a structural refactor of the terminalPool container.
  */
 
-function escapeHtml(str) {
-  const el = document.createElement("span");
-  el.textContent = String(str);
-  return el.innerHTML;
-}
+import { escapeHtml } from "/lib/utils.js";
 
 function shortenHome(path) {
   if (typeof path !== "string" || !path) return "";
@@ -46,10 +42,6 @@ function compactPath(shown, maxLen = 48) {
   return candidate.length < shown.length ? candidate : shown;
 }
 
-/**
- * @param {object} [opts]
- * @param {string} [opts.home]  override $HOME detection (for tests)
- */
 export function createTerminalStatusBar() {
   let rootEl = null;
   let state = { pane: null, agent: null };
@@ -83,9 +75,10 @@ export function createTerminalStatusBar() {
       pills.push(pill("ph-folder", shown, "term-status-folder"));
     }
 
-    if (git?.branch || (git && git.branch === null)) {
-      const branchText = git.branch || "detached";
-      pills.push(pill("ph-git-branch", branchText, "term-status-branch"));
+    // Any git data → render the branch pill. `branch` is null on detached
+    // HEAD, which we show as "detached" rather than hiding the pill.
+    if (git) {
+      pills.push(pill("ph-git-branch", git.branch ?? "detached", "term-status-branch"));
     }
 
     if (git?.worktree) {

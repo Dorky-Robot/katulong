@@ -53,8 +53,7 @@ export function createTerminalTileFactory(deps) {
       /** Update the session name after a tab rename. The carousel calls
        *  this from renameCard() so that subsequent lookups (findCard,
        *  serialize, etc.) see the new name instead of the original.
-       *  The watcher polls by id and needs no update; the back tile
-       *  still tracks the friendly name for display. */
+       *  The watcher polls by id and needs no update. */
       setSessionName(newName) {
         currentSessionName = newName;
       },
