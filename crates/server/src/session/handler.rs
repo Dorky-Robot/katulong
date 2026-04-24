@@ -41,16 +41,23 @@
 //!
 //! # Not in scope (deferred)
 //!
-//! - **Multi-device output fan-out** (slice 9h): the router
-//!   replaces on a second subscribe (attach-displaces-prior)
-//!   rather than fanning out. Slice 9h needs a product
-//!   decision on replace-vs-fanout for simultaneous devices.
-//! - **Pane eviction on tmux-pane-gone** (slice 9h): today a
+//! - **Pane eviction on tmux-pane-gone**: today a
 //!   `clear_subscriber` keeps the ring alive indefinitely; a
-//!   server restart is the wipe mechanism. Wiring `%window-
-//!   close`/`%pane-close` notifications into
-//!   `OutputRouter::evict` closes the long-running-server
-//!   leak path.
+//!   server restart or the dispatcher's `evict_all` on tmux
+//!   exit is the wipe mechanism. Wiring `%window-close`/
+//!   `%pane-close` notifications into `OutputRouter::evict`
+//!   closes the long-running-server leak path. **Fan-out
+//!   amplifies urgency**: a zombie pane now occupies one of
+//!   the 16 subscriber slots per pane (actually, it occupies
+//!   zero slots after `clear_subscriber` runs — but the ring
+//!   sits at 256 KiB, and with `MAX_PANES = 128` unevicted
+//!   zombies could in theory reach the pane-namespace cap
+//!   and block new attaches).
+//! - **Per-credential subscriber cap**: the 16-subscriber cap
+//!   is per-pane, not per-credential. One stolen cookie with
+//!   16 concurrent WS connections can block any new attach
+//!   on a pane until it disconnects. Low priority for a
+//!   single-user install; required before multi-credential.
 //! - **Session-creation rate cap**: an authenticated client can
 //!   create unbounded tmux sessions, each allocating a ring.
 //!   Tracked as a separate hardening ticket.
@@ -69,9 +76,10 @@ use crate::log_util::sanitize_for_log;
 use crate::revocation::RevocationEvent;
 use crate::session::output::Coalescer;
 use crate::session::ring::ReplaySlice;
-use crate::session::router::OutputChunk;
+use crate::session::router::{OutputChunk, SubscribeError, SubscriberId};
 use crate::state::AppState;
 use crate::transport::{ClientMessage, ServerMessage, TransportHandle, PROTOCOL_VERSION};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
@@ -139,6 +147,21 @@ pub mod error_code {
     /// `Output.seq`, both of which the server assigned. Closing
     /// on mismatch catches version-skew or client bugs early.
     pub const INVALID_RESUME: &str = "invalid_resume";
+    /// Attach rejected because the pane already has the maximum
+    /// number of concurrent subscribers (slice 9h multi-device
+    /// fan-out cap). Clients should close the connection and
+    /// prompt the user if they want to disconnect one of their
+    /// other devices.
+    pub const SESSION_OVERSUBSCRIBED: &str = "session_oversubscribed";
+    /// Attach rejected because the router is tracking as many
+    /// distinct panes as its defense-in-depth cap allows (see
+    /// `router::MAX_PANES`). A conforming client can't
+    /// naturally reach this — it fires only if tmux has been
+    /// wildly churning panes or a parser bug is creating
+    /// phantom pane ids. Exposed as a wire code so operators
+    /// see it in logs and clients surface a clear message
+    /// rather than a generic "session failed."
+    pub const ROUTER_AT_CAPACITY: &str = "router_at_capacity";
     /// Connection was torn down server-side without the client
     /// having done anything wrong. Emitted when the bound
     /// credential is revoked, or when the revocation broadcast
@@ -314,12 +337,17 @@ fn phase_name(phase: &Phase) -> &'static str {
 struct AttachedState {
     session: String,
     pane_id: u32,
+    /// This subscriber's id, handed back by the router on
+    /// subscribe. Used at cleanup to remove ONLY this
+    /// connection's sender from the pane's fan-out list,
+    /// leaving sibling subscribers (multi-device) untouched.
+    subscriber_id: SubscriberId,
     /// Decoded bytes + end-of-chunk seq from this pane's
-    /// `%output` stream. The router assigns `end_seq` per
-    /// dispatch (pane-global, not per-connection), so the seq
-    /// keeps advancing monotonically across the displace-
-    /// subscribe boundary.
-    output_rx: mpsc::Receiver<OutputChunk>,
+    /// `%output` stream. The router fans out an `Arc<OutputChunk>`
+    /// per dispatch so every subscriber gets the same bytes
+    /// without per-subscriber allocation; the handler only
+    /// reads through the Arc, never mutates.
+    output_rx: mpsc::Receiver<Arc<OutputChunk>>,
     /// Highest `end_seq` we've seen come out of `output_rx`.
     /// When the coalescer flushes, this becomes the outbound
     /// `ServerMessage::Output.seq`. Starts at the router's
@@ -665,14 +693,16 @@ pub async fn serve_session(
         }
     }
 
-    // Cleanup: detach the subscriber, but KEEP the pane's ring
-    // and decoder. The dominant "close tab, reopen seconds
-    // later" UX flow depends on the ring outliving the
-    // transport. Tmux-pane-gone eviction is slice 9h's
-    // concern; a server restart is currently the pane-wipe
-    // mechanism. Safe to call even if we never attached.
+    // Cleanup: detach THIS subscriber, but keep the pane's
+    // ring, decoder, and sibling subscribers alive. Slice 9h:
+    // `clear_subscriber` takes the SubscriberId so only this
+    // connection's sender is removed. Multi-device sessions
+    // (phone + laptop) keep flowing for the other devices
+    // when one closes its transport.
     if let Some(a) = attached {
-        state.output_router.clear_subscriber(a.pane_id);
+        state
+            .output_router
+            .clear_subscriber(a.pane_id, a.subscriber_id);
     }
     // Drop the handle. The WS output pump sees the channel close
     // and shuts down the socket gracefully.
@@ -693,7 +723,9 @@ async fn sleep_until_opt(deadline: Option<Instant>) {
 /// Helper: read from the pane output receiver if we're attached,
 /// otherwise never resolve. Same guard-+-pending pattern as
 /// `sleep_until_opt`.
-async fn maybe_recv_output(attached: Option<&mut AttachedState>) -> Option<OutputChunk> {
+async fn maybe_recv_output(
+    attached: Option<&mut AttachedState>,
+) -> Option<Arc<OutputChunk>> {
     match attached {
         Some(a) => a.output_rx.recv().await,
         None => std::future::pending().await,
@@ -767,12 +799,16 @@ async fn try_attach(
         None => {
             // Fresh attach. No peek needed — the client isn't
             // claiming any prior state, so we can't reject it.
-            let (rx, baseline) = state.output_router.subscribe(pane_id);
+            let (rx, subscriber_id, baseline) = state
+                .output_router
+                .subscribe(pane_id)
+                .map_err(to_subscribe_failure)?;
             Ok(AttachOutcome {
                 replay: ReplaySlice::Fresh { end_seq: baseline },
                 new_state: AttachedState {
                     session: session.to_string(),
                     pane_id,
+                    subscriber_id,
                     output_rx: rx,
                     last_seen_seq: baseline,
                     coalescer: Coalescer::new(),
@@ -817,7 +853,10 @@ async fn try_attach(
                         // with empty data. Client clears its
                         // terminal; fresh live output follows
                         // as normal.
-                        let (rx, _baseline) = state.output_router.subscribe(pane_id);
+                        let (rx, subscriber_id, _baseline) = state
+                            .output_router
+                            .subscribe(pane_id)
+                            .map_err(to_subscribe_failure)?;
                         Ok(AttachOutcome {
                             replay: ReplaySlice::Gap {
                                 available_from_seq: 0,
@@ -827,6 +866,7 @@ async fn try_attach(
                             new_state: AttachedState {
                                 session: session.to_string(),
                                 pane_id,
+                                subscriber_id,
                                 output_rx: rx,
                                 last_seen_seq: 0,
                                 coalescer: Coalescer::new(),
@@ -847,23 +887,29 @@ async fn try_attach(
                         })
                     }
                 }
-                _peek => {
-                    // Any non-Future peek is safe to commit.
-                    // Subscribe-with-resume now does the same
-                    // work under the router lock, so the replay
-                    // we actually return is authoritative
-                    // (no dispatch slipped between peek and
-                    // commit because we re-read under the lock).
-                    let (rx, replay) =
-                        state.output_router.subscribe_with_resume(pane_id, after_seq);
-                    // Under normal execution the second read
-                    // matches the peek. The paranoid second
-                    // Future check here is defensive against a
-                    // pane being evicted between calls — it
-                    // can't happen in slice 9g (no eviction
-                    // path) but slice 9h may add one.
+                // InRange | UpToDate | Gap — safe to commit.
+                // `Fresh` never comes back from `peek_resume`
+                // with `after_seq > 0` (that path goes to
+                // `Future` against empty panes and is caught
+                // above).
+                _ => {
+                    // Subscribe-with-resume does the same work
+                    // under the router lock, so the replay we
+                    // actually return is authoritative (no
+                    // dispatch slipped between peek and commit
+                    // because we re-read under the lock).
+                    let (rx, subscriber_id, replay) = state
+                        .output_router
+                        .subscribe_with_resume(pane_id, after_seq)
+                        .map_err(to_subscribe_failure)?;
+                    // Paranoid second Future check — defensive
+                    // against a pane being evicted between
+                    // peek and commit. Can't happen in 9g/9h
+                    // yet (no live eviction path), but the
+                    // subscribe already succeeded so we must
+                    // clean up this subscriber before rejecting.
                     if matches!(replay, ReplaySlice::Future) {
-                        state.output_router.clear_subscriber(pane_id);
+                        state.output_router.clear_subscriber(pane_id, subscriber_id);
                         return Err(AttachFailure {
                             code: error_code::INVALID_RESUME,
                             message: "resume_from_seq is beyond server's output counter"
@@ -873,24 +919,31 @@ async fn try_attach(
                             ),
                         });
                     }
-                    let last_seq = match &replay {
-                        ReplaySlice::Fresh { end_seq } => *end_seq,
-                        ReplaySlice::InRange { end_seq, .. } => *end_seq,
-                        ReplaySlice::UpToDate { end_seq } => *end_seq,
-                        ReplaySlice::Gap { end_seq, .. } => *end_seq,
-                        ReplaySlice::Future => unreachable!("just checked above"),
-                    };
-                    Ok(AttachOutcome {
+                    let outcome = AttachOutcome {
                         replay,
                         new_state: AttachedState {
                             session: session.to_string(),
                             pane_id,
+                            subscriber_id,
                             output_rx: rx,
-                            last_seen_seq: last_seq,
+                            // Seeded below after construction so
+                            // `outcome.last_seq()` is the single
+                            // source of truth (accessor reads
+                            // the end_seq from the `replay`
+                            // variant).
+                            last_seen_seq: 0,
                             coalescer: Coalescer::new(),
                             last_output_at: None,
                             pending_resize: None,
                         },
+                    };
+                    let baseline = outcome.last_seq();
+                    Ok(AttachOutcome {
+                        new_state: AttachedState {
+                            last_seen_seq: baseline,
+                            ..outcome.new_state
+                        },
+                        ..outcome
                     })
                 }
             }
@@ -1019,6 +1072,32 @@ async fn send_error_and_close(handle: &TransportHandle, code: &str, message: Str
             message,
         })
         .await;
+}
+
+/// Map a router `SubscribeError` into a handler `AttachFailure`
+/// with the matching wire error code. Only one variant today
+/// (`Oversubscribed`); kept in a dedicated helper so adding
+/// future subscribe error variants doesn't scatter mapping
+/// logic across the attach arms.
+fn to_subscribe_failure(err: SubscribeError) -> AttachFailure {
+    match err {
+        SubscribeError::Oversubscribed {
+            pane_id,
+            active,
+            max,
+        } => AttachFailure {
+            code: error_code::SESSION_OVERSUBSCRIBED,
+            message: "too many devices attached to this session".into(),
+            err: format!(
+                "pane {pane_id} has {active}/{max} subscribers"
+            ),
+        },
+        SubscribeError::RouterAtCapacity { pane_id } => AttachFailure {
+            code: error_code::ROUTER_AT_CAPACITY,
+            message: "server at pane capacity; try again later".into(),
+            err: format!("cannot register new pane {pane_id}: router at MAX_PANES"),
+        },
+    }
 }
 
 fn classify_session_error(err: &crate::session::SessionError) -> (&'static str, String) {
@@ -1330,6 +1409,8 @@ mod tests {
             error_code::NO_SESSION_MANAGER,
             error_code::HANDSHAKE_TIMEOUT,
             error_code::INVALID_RESUME,
+            error_code::SESSION_OVERSUBSCRIBED,
+            error_code::ROUTER_AT_CAPACITY,
             error_code::CONNECTION_TERMINATED,
         ];
         let set: std::collections::HashSet<&str> = all.iter().copied().collect();
@@ -1339,13 +1420,14 @@ mod tests {
     // ---------- Resize gate deadline math (pure, no runtime) ----------
 
     fn attached_state_for_gate_tests() -> AttachedState {
-        // Build a minimal AttachedState by hand — output_rx is
-        // required by the struct but the gate-math helpers don't
-        // touch it.
+        // Build a minimal AttachedState by hand — output_rx +
+        // subscriber_id are required by the struct but the
+        // gate-math helpers don't touch them.
         let (_tx, rx) = mpsc::channel(1);
         AttachedState {
             session: "s".into(),
             pane_id: 0,
+            subscriber_id: SubscriberId::testing(0),
             output_rx: rx,
             last_seen_seq: 0,
             coalescer: Coalescer::new(),
