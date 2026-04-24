@@ -48,7 +48,7 @@ async fn main() {
     // the method and enforced by `dispatch`'s `try_send` path.
     // Letting the tokio runtime abort the task on process exit
     // is fine; we ignore the `JoinHandle`.
-    let _dispatcher = output_router.spawn_dispatcher(notifs);
+    let _dispatcher = output_router.spawn_dispatcher(notifs, sessions.clone());
 
     let state = AppState::new(auth_store, webauthn, config)
         .with_sessions(sessions)

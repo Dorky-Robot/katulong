@@ -205,6 +205,22 @@ impl Tmux {
         ))
     }
 
+    /// Construct a `Tmux` handle with no live subprocess behind
+    /// it — every `send_command` immediately fails with
+    /// `TmuxError::Disconnected`. Exposed so tests in adjacent
+    /// modules (router, manager) can build a `SessionManager`
+    /// for wiring tests without spawning a real tmux binary.
+    #[cfg(test)]
+    pub fn dead_for_tests() -> Self {
+        let (cmd_tx, _rx) = mpsc::unbounded_channel::<OutgoingCommand>();
+        drop(_rx);
+        Self {
+            cmd_tx,
+            child: Arc::new(Mutex::new(None)),
+            tasks: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
     /// Send one command to tmux and await the reply. `line` must
     /// not contain a newline or carriage return — the writer
     /// appends `\n` itself, and injecting either would let the
