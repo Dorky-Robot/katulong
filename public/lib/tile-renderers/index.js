@@ -19,6 +19,7 @@ import { feedRenderer } from "./feed.js";
 import { localhostBrowserRenderer } from "./localhost-browser.js";
 import { progressRenderer } from "./progress.js";
 import { imageRenderer } from "./image.js";
+import { historyRenderer } from "./history.js";
 
 const renderers = new Map();
 
@@ -54,6 +55,7 @@ export function initRenderers({ terminalPool, createTerminalTile, uiStore, getSe
   localhostBrowserRenderer.init({});
   progressRenderer.init({});
   imageRenderer.init({});
+  historyRenderer.init({ getSessionStore });
 }
 
 // Register built-in renderers
@@ -65,3 +67,4 @@ registerRenderer(feedRenderer);
 registerRenderer(localhostBrowserRenderer);
 registerRenderer(progressRenderer);
 registerRenderer(imageRenderer);
+registerRenderer(historyRenderer);

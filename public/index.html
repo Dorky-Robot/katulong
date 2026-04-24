@@ -402,6 +402,182 @@
       color: var(--text-muted, #a6adc8);
     }
     .db-process-item i { font-size: 16px; opacity: 0.7; }
+    .db-project-info {
+      display: flex;
+      flex-wrap: wrap;
+      font-size: var(--text-sm, 14px);
+      color: var(--text-muted, #a6adc8);
+      min-width: 0;
+    }
+    .db-project-item {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-xs, 4px);
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .db-project-item i { font-size: 16px; opacity: 0.7; }
+    .db-project-name { color: var(--text, #cdd6f4); font-weight: var(--font-semibold, 600); }
+    .db-project-sep { color: var(--text-dim, #6c7086); margin: 0 var(--space-xs, 4px); }
+    .db-project-branch { color: var(--text-muted, #a6adc8); font-family: var(--font-mono, ui-monospace, monospace); }
+    .db-project-worktree {
+      margin-left: var(--space-xs, 4px);
+      padding: 0 var(--space-xs, 4px);
+      border: 1px solid var(--border, #45475a);
+      border-radius: var(--radius-sm, 4px);
+      font-size: var(--text-xs, 12px);
+      color: var(--text-dim, #6c7086);
+    }
+    .db-project-dim { color: var(--text-dim, #6c7086); font-style: italic; }
+
+    /* ── Terminal tile bottom status bar (Warp-style) ───────────── */
+    .term-status-bar {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-xs, 4px);
+      padding: 6px 10px;
+      background: linear-gradient(to top, rgba(17, 17, 27, 0.88), rgba(17, 17, 27, 0.72) 70%, rgba(17, 17, 27, 0));
+      pointer-events: none;
+      z-index: 5;
+      font-size: var(--text-xs, 12px);
+      line-height: 1;
+    }
+    .term-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(49, 50, 68, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      color: var(--text, #cdd6f4);
+      pointer-events: auto;
+      max-width: 60%;
+      overflow: hidden;
+    }
+    .term-status-pill i {
+      font-size: 13px;
+      opacity: 0.85;
+      color: var(--text-dim, #a6adc8);
+      flex: 0 0 auto;
+    }
+    .term-status-pill-text {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .term-status-branch {
+      font-family: var(--font-mono, ui-monospace, monospace);
+      color: #a6e3a1;
+    }
+    .term-status-branch i { color: #a6e3a1; }
+    .term-status-worktree {
+      background: rgba(250, 179, 135, 0.14);
+      border-color: rgba(250, 179, 135, 0.35);
+      color: #fab387;
+    }
+    .term-status-agent {
+      background: rgba(137, 180, 250, 0.14);
+      border-color: rgba(137, 180, 250, 0.35);
+      color: #89b4fa;
+    }
+    .term-status-agent i { color: #89b4fa; }
+
+    /* ── History tile ───────────────────────────────────────────── */
+    .history-tile-root {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg, #1e1e2e);
+      color: var(--text, #cdd6f4);
+      font-size: var(--text-sm, 14px);
+    }
+    .history-tile-header {
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm, 8px);
+      padding: var(--space-md, 12px) var(--space-lg, 16px);
+      border-bottom: 1px solid var(--border, #45475a);
+      background: var(--bg-surface, #313244);
+    }
+    .history-tile-header i {
+      font-size: 18px;
+      color: var(--accent, #89b4fa);
+    }
+    .history-tile-title {
+      flex: 1;
+      font-weight: var(--font-semibold, 600);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .history-tile-count {
+      font-size: var(--text-xs, 12px);
+      color: var(--text-dim, #6c7086);
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .history-tile-list {
+      list-style: none;
+      margin: 0;
+      padding: var(--space-sm, 8px) 0;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .history-tile-row {
+      padding: var(--space-sm, 8px) var(--space-lg, 16px);
+      border-left: 2px solid transparent;
+    }
+    .history-tile-row:first-child {
+      border-left-color: var(--accent, #89b4fa);
+    }
+    .history-tile-row + .history-tile-row {
+      border-top: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .history-tile-row-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: var(--space-sm, 8px);
+      margin-bottom: 2px;
+    }
+    .history-tile-row-title {
+      font-weight: var(--font-semibold, 600);
+      color: var(--text, #cdd6f4);
+    }
+    .history-tile-row-ago {
+      font-size: var(--text-xs, 12px);
+      color: var(--text-dim, #6c7086);
+      white-space: nowrap;
+    }
+    .history-tile-row-body {
+      color: var(--text-muted, #a6adc8);
+      font-size: var(--text-sm, 14px);
+      line-height: 1.4;
+    }
+    .history-tile-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-sm, 8px);
+      padding: var(--space-xl, 24px);
+      color: var(--text-dim, #6c7086);
+      text-align: center;
+      flex: 1;
+    }
+    .history-tile-empty i {
+      font-size: 32px;
+      opacity: 0.5;
+    }
     .db-actions {
       display: flex;
       gap: var(--space-sm, 8px);

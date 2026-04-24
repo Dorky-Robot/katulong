@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  isClaudeCommand, reconcileAgentPresence, reconcilePaneCwd,
+  isClaudeCommand, reconcileAgentPresence, reconcilePaneCwd, reconcilePaneGit,
 } from "../lib/session-child-counter.js";
 import { detectAgent } from "../lib/agent-presence.js";
 
@@ -200,5 +200,104 @@ describe("reconcilePaneCwd", () => {
       startedAt: 1,
     });
     assert.equal(session.meta.pane.cwd, "/shell/dir");
+  });
+
+  it("preserves meta.pane.git when cwd updates (cross-field merge)", () => {
+    const session = makeSession({
+      pane: { cwd: "/a", git: { project: "repo", branch: "main", worktree: null } },
+    });
+    reconcilePaneCwd(session, "/b");
+    assert.equal(session.meta.pane.cwd, "/b");
+    assert.deepEqual(session.meta.pane.git, { project: "repo", branch: "main", worktree: null });
+  });
+});
+
+describe("reconcilePaneGit", () => {
+  function makeSession(initialMeta = {}, { alive = true } = {}) {
+    return {
+      name: "work",
+      alive,
+      meta: initialMeta,
+      setMeta(ns, val) {
+        if (val == null) delete this.meta[ns];
+        else this.meta[ns] = val;
+      },
+    };
+  }
+
+  const GIT = { project: "repo", branch: "main", worktree: null };
+  const stubProbe = (result) => async () => result;
+
+  it("writes meta.pane.git on first observation", async () => {
+    const session = makeSession({ pane: { cwd: "/a" } });
+    const changed = await reconcilePaneGit(session, "/a", { getGitInfo: stubProbe(GIT) });
+    assert.equal(changed, true);
+    assert.deepEqual(session.meta.pane.git, GIT);
+    assert.equal(session.meta.pane.cwd, "/a");
+  });
+
+  it("no-ops when git info is unchanged", async () => {
+    const session = makeSession({ pane: { cwd: "/a", git: GIT } });
+    let written = 0;
+    const orig = session.setMeta.bind(session);
+    session.setMeta = (ns, val) => { written += 1; return orig(ns, val); };
+    const changed = await reconcilePaneGit(session, "/a", { getGitInfo: stubProbe(GIT) });
+    assert.equal(changed, false);
+    assert.equal(written, 0);
+  });
+
+  it("writes when branch flips in place (git checkout)", async () => {
+    const session = makeSession({ pane: { cwd: "/a", git: GIT } });
+    const next = { project: "repo", branch: "feat", worktree: null };
+    const changed = await reconcilePaneGit(session, "/a", { getGitInfo: stubProbe(next) });
+    assert.equal(changed, true);
+    assert.equal(session.meta.pane.git.branch, "feat");
+  });
+
+  it("clears meta.pane.git when cwd is not a git repo", async () => {
+    const session = makeSession({ pane: { cwd: "/a", git: GIT } });
+    const changed = await reconcilePaneGit(session, "/a", { getGitInfo: stubProbe(null) });
+    assert.equal(changed, true);
+    assert.equal(session.meta.pane.git, null);
+    assert.equal(session.meta.pane.cwd, "/a");
+  });
+
+  it("no-ops when git info is null and already null", async () => {
+    const session = makeSession({ pane: { cwd: "/a", git: null } });
+    let written = 0;
+    const orig = session.setMeta.bind(session);
+    session.setMeta = (ns, val) => { written += 1; return orig(ns, val); };
+    const changed = await reconcilePaneGit(session, "/a", { getGitInfo: stubProbe(null) });
+    assert.equal(changed, false);
+    assert.equal(written, 0);
+  });
+
+  it("clears git when paneCwd becomes null", async () => {
+    const session = makeSession({ pane: { cwd: "/a", git: GIT } });
+    const changed = await reconcilePaneGit(session, null, { getGitInfo: stubProbe(GIT) });
+    assert.equal(changed, true);
+    assert.equal(session.meta.pane.git, null);
+  });
+
+  it("does not touch meta.claude", async () => {
+    const session = makeSession({
+      claude: { uuid: "11111111-2222-3333-4444-555555555555", cwd: "/c", startedAt: 1 },
+      pane: { cwd: "/a" },
+    });
+    await reconcilePaneGit(session, "/a", { getGitInfo: stubProbe(GIT) });
+    assert.deepEqual(session.meta.claude, {
+      uuid: "11111111-2222-3333-4444-555555555555",
+      cwd: "/c",
+      startedAt: 1,
+    });
+  });
+
+  it("skips setMeta when session dies during git probe", async () => {
+    const session = makeSession({ pane: { cwd: "/a" } });
+    // Probe flips the session to dead mid-await, mirroring a tmux kill.
+    const probe = async () => { session.alive = false; return GIT; };
+    const changed = await reconcilePaneGit(session, "/a", { getGitInfo: probe });
+    assert.equal(changed, false);
+    assert.equal(session.meta.pane.git, undefined);
   });
 });

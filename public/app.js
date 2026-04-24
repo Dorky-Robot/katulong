@@ -825,6 +825,7 @@
       onFilesClick: () => openFileBrowserTile(),
       onUploadClick: () => triggerImageUpload(),
       onSettingsClick: () => modals.open('settings'),
+      onHistoryClick: () => openHistoryTile(),
     });
 
     // Context detection for the joystick's contextual slot. Each entry maps
@@ -1983,6 +1984,19 @@
       const tileId = `feed-${Date.now().toString(36)}`;
       uiStore.addTile(
         { id: tileId, type: "feed", props: {} },
+        { focus: true, insertAt: "afterFocus" },
+      );
+      if (isOverlayViewport()) setOverlaySidebar(false);
+    }
+
+    /** Open a history tile bound to the currently active terminal session.
+     *  When no terminal is focused, opens a no-session variant that
+     *  prompts the user to pick one first. */
+    function openHistoryTile() {
+      const sessionName = getActiveSessionName() || null;
+      const tileId = `history-${Date.now().toString(36)}`;
+      uiStore.addTile(
+        { id: tileId, type: "history", props: { sessionName } },
         { focus: true, insertAt: "afterFocus" },
       );
       if (isOverlayViewport()) setOverlaySidebar(false);

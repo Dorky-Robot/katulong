@@ -121,6 +121,94 @@ describe("createSessionSummarizer", () => {
     s.stop();
   });
 
+  it("appends each distinct summary to meta.summaryHistory", async () => {
+    const session = makeFakeSession({
+      name: "kat_hist",
+      buffer: "first buffer content\n".repeat(30),
+    });
+    const mgr = makeFakeManager([session]);
+
+    let callCount = 0;
+    const responses = [
+      '{"title":"Phase A","summary":"Doing phase A."}',
+      '{"title":"Phase B","summary":"Doing phase B."}',
+    ];
+    const callOllama = async () => responses[callCount++] ?? responses[responses.length - 1];
+
+    const s = createSessionSummarizer({ sessionManager: mgr, callOllama, minContentChars: 100 });
+
+    // First cycle → Phase A appended.
+    await s.runOnce();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    assert.ok(Array.isArray(session.meta.summaryHistory));
+    assert.strictEqual(session.meta.summaryHistory.length, 1);
+    assert.strictEqual(session.meta.summaryHistory[0].title, "Phase A");
+    assert.ok(Number.isFinite(session.meta.summaryHistory[0].at));
+
+    // Mutate the window so the hash changes, then second cycle → Phase B appended.
+    session.pullTail = (n) => ({ data: ("second content\n".repeat(50)).slice(-n), cursor: 0 });
+    await s.runOnce();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    assert.strictEqual(session.meta.summaryHistory.length, 2);
+    assert.strictEqual(session.meta.summaryHistory[1].title, "Phase B");
+
+    s.stop();
+  });
+
+  it("does not append duplicate summaries back-to-back", async () => {
+    const session = makeFakeSession({
+      name: "kat_dupe_hist",
+      buffer: "stable buffer\n".repeat(30),
+    });
+    const mgr = makeFakeManager([session]);
+    // Ollama returns identical content both times. Hash-dedup should
+    // skip the second call entirely, but even if a future change makes
+    // it call again, duplicate-guard in summaryHistory must prevent
+    // duplicate entries.
+    const callOllama = okOllama('{"title":"Same","summary":"Same summary."}');
+
+    const s = createSessionSummarizer({ sessionManager: mgr, callOllama, minContentChars: 100 });
+    await s.runOnce();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    await s.runOnce();
+    await new Promise((r) => setImmediate(r));
+
+    assert.strictEqual(session.meta.summaryHistory.length, 1);
+    s.stop();
+  });
+
+  it("caps meta.summaryHistory at MAX_HISTORY_ENTRIES (ring behaviour)", async () => {
+    const session = makeFakeSession({
+      name: "kat_cap",
+      buffer: "seed content\n".repeat(30),
+    });
+    const mgr = makeFakeManager([session]);
+
+    // Pre-seed history near the cap so the test doesn't need 40+ cycles.
+    const seed = [];
+    for (let i = 0; i < 40; i += 1) {
+      seed.push({ title: `old ${i}`, summary: `s ${i}`, at: i });
+    }
+    session.meta.summaryHistory = seed;
+
+    const callOllama = okOllama('{"title":"Fresh","summary":"Fresh summary."}');
+    const s = createSessionSummarizer({ sessionManager: mgr, callOllama, minContentChars: 100 });
+    await s.runOnce();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    assert.strictEqual(session.meta.summaryHistory.length, 40);
+    // Oldest pushed out, newest landed at the tail.
+    assert.strictEqual(session.meta.summaryHistory[0].title, "old 1");
+    assert.strictEqual(session.meta.summaryHistory[39].title, "Fresh");
+    s.stop();
+  });
+
   it("skips sessions below minContentChars", async () => {
     const session = makeFakeSession({ name: "kat_tiny", buffer: "$ " });
     const mgr = makeFakeManager([session]);

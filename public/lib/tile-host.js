@@ -26,6 +26,7 @@ import { selectClusterView } from "./selectors.js";
 const DEFAULT_CARD_WIDTHS = {
   "file-browser": 420,
   "feed": 380,
+  "history": 380,
 };
 
 function defaultCardWidthForType(type) {

@@ -7,9 +7,9 @@
  * thin adapter that speaks the tile interface.
  */
 
-import { createDashboardBackTile } from "./dashboard-back-tile.js";
 import { createSessionStatusWatcher } from "../session-status-watcher.js";
 import { resolveSessionId } from "../api-client.js";
+import { createTerminalStatusBar } from "./terminal-status-bar.js";
 
 /**
  * Create the terminal tile factory. Call once at startup with shared deps,
@@ -35,14 +35,13 @@ export function createTerminalTileFactory(deps) {
     let currentSessionName = sessionName;
     let mounted = false;
     let container = null;
-    let backTile = null;
+    let statusBar = null;
     let watcher = null;
     let watcherUnsubscribe = null;
-    let autoFlipTimer = null;
     // `destroyed` guards against async callbacks landing after unmount.
-    // The watcher has its own `destroyed` guard for its fetches, but the
-    // 1.5s auto-flip debounce is owned by this tile and needs its own
-    // guard so a timeout callback can't touch a stale carousel ref.
+    // The watcher has its own `destroyed` guard for its fetches; this
+    // flag covers anything that could race against it (e.g. a status
+    // event arriving after unmount).
     let destroyed = false;
 
     const tile = {
@@ -54,14 +53,12 @@ export function createTerminalTileFactory(deps) {
       /** Update the session name after a tab rename. The carousel calls
        *  this from renameCard() so that subsequent lookups (findCard,
        *  serialize, etc.) see the new name instead of the original.
-       *  The watcher polls by id and needs no update; the back tile
-       *  still tracks the friendly name for display. */
+       *  The watcher polls by id and needs no update. */
       setSessionName(newName) {
         currentSessionName = newName;
-        backTile?.setSessionName(newName);
       },
 
-      mount(el, ctx) {
+      mount(el) {
         container = el;
         destroyed = false;
         const entry = terminalPool.getOrCreate(currentSessionName);
@@ -70,64 +67,41 @@ export function createTerminalTileFactory(deps) {
         el.appendChild(entry.container);
         mounted = true;
 
+        // Warp-style bottom widget strip. Attached as a sibling of the
+        // terminal pool entry so the pool's xterm lifecycle is untouched;
+        // CSS anchors the bar to the bottom of the tile card.
+        statusBar = createTerminalStatusBar();
+        statusBar.mount(el);
+
         // ── Shared status watcher ──────────────────────────────────
         // Status polling is keyed on the immutable session id, not the
         // friendly name — the id is resolved asynchronously at mount
-        // and doesn't change on rename. Back tile + auto-flip wiring
-        // wait until the id is known; if resolution fails (session was
-        // killed externally between persist and mount) the tile stays
-        // in its "no status" baseline state, which is harmless — the
-        // terminal pool still shows the last known screen.
-        const faceStack = ctx?.faceStack;
+        // and doesn't change on rename. If resolution fails (session
+        // was killed externally between persist and mount) the tile
+        // stays in its "no status" baseline state; the status bar
+        // simply stays hidden until a status event lands.
         resolveSessionId(currentSessionName).then((sessionId) => {
           if (destroyed) return;
           watcher = createSessionStatusWatcher({ sessionId });
-
-          if (faceStack) {
-            backTile = createDashboardBackTile({
-              sessionName: currentSessionName,
-              sessionId,
-              watcher,
-            });
-            faceStack.setSecondary(backTile);
-          }
-
-          // ── Auto-flip on child process exit ────────────────────────
-          // When the watcher reports a had-children → no-children
-          // transition, schedule a 1.5s debounce then re-poll and flip
-          // if still idle. The debounce absorbs brief pauses between
-          // commands. The watcher's own destroyed guard covers the fetch
-          // side; the `destroyed` flag here covers the setTimeout side.
           watcherUnsubscribe = watcher.subscribe((event) => {
             if (destroyed) return;
-            if (!event.transitions?.idle) return;
-            if (!faceStack || faceStack.isShowingSecondary()) return;
-            if (autoFlipTimer) clearTimeout(autoFlipTimer);
-            autoFlipTimer = setTimeout(() => {
-              if (destroyed) return;
-              if (faceStack.isShowingSecondary()) return;
-              // Re-check via an immediate poll so we don't flip on a
-              // momentary pause between commands. If that poll reports
-              // child processes are back, the flip is cancelled.
-              watcher.poll().then(() => {
-                if (destroyed) return;
-                if (faceStack.isShowingSecondary()) return;
-                if (backTile?.addEvent) backTile.addEvent("Agent work completed");
-                faceStack.showSecondary(true);
-              }).catch(() => {});
-            }, 1500);
+            if (event.status) statusBar?.updateFromStatus(event.status);
           });
+          // Eager first poll so the bar lights up immediately instead
+          // of waiting one full interval for the first pane snapshot.
+          watcher.poll().catch(() => {});
         }).catch(() => { /* session missing — baseline state is fine */ });
       },
 
       unmount() {
         if (!mounted) return;
         destroyed = true;
-        if (autoFlipTimer) { clearTimeout(autoFlipTimer); autoFlipTimer = null; }
         watcherUnsubscribe?.();
         watcherUnsubscribe = null;
         watcher?.destroy();
         watcher = null;
+        statusBar?.unmount();
+        statusBar = null;
         terminalPool.unprotect(currentSessionName);
         const entry = terminalPool.get(currentSessionName);
         if (entry) {
@@ -140,7 +114,6 @@ export function createTerminalTileFactory(deps) {
         }
         mounted = false;
         container = null;
-        backTile = null;
       },
 
       focus() {

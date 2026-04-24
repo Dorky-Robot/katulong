@@ -18,6 +18,7 @@ export function createJoystickManager(options = {}) {
   let _onFilesClick = null;
   let _onUploadClick = null;
   let _onSettingsClick = null;
+  let _onHistoryClick = null;
   let _context = null;
   let dotEl = null;
 
@@ -45,6 +46,9 @@ export function createJoystickManager(options = {}) {
     }
     if (_onFilesClick) {
       island.appendChild(actionBtn("folder-open", "Files", _onFilesClick));
+    }
+    if (_onHistoryClick) {
+      island.appendChild(actionBtn("clock-counter-clockwise", "History", _onHistoryClick));
     }
     if (_context) {
       island.appendChild(actionBtn(_context.icon, _context.label, _context.action, _context.className || ""));
@@ -78,10 +82,11 @@ export function createJoystickManager(options = {}) {
       // No gesture handling needed — just buttons
     },
 
-    setActions({ onFilesClick, onUploadClick, onSettingsClick }) {
+    setActions({ onFilesClick, onUploadClick, onSettingsClick, onHistoryClick }) {
       _onFilesClick = onFilesClick;
       _onUploadClick = onUploadClick;
       _onSettingsClick = onSettingsClick;
+      _onHistoryClick = onHistoryClick;
       buildButtons();
     },
 
