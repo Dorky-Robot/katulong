@@ -524,19 +524,32 @@ impl OutputRouter {
                         // path. Reconcile is idempotent, so a
                         // cascade of events (close → sessions-
                         // changed) just does the same work twice.
+                        //
+                        // Known debt: each event fires its own
+                        // `tokio::spawn`. Under a pathological
+                        // event storm (e.g., a user-run script
+                        // opening + closing many sessions in a
+                        // tight loop), this produces one spawn
+                        // per event with no coalescing. Future
+                        // fix: a single-buffer `tokio::sync::Notify`
+                        // drained by a dedicated worker task.
+                        // Acceptable for single-user scale since
+                        // each task is a lightweight tmux round-
+                        // trip and idempotent under concurrency.
+                        //
+                        // Logging: `reconcile_router` owns the
+                        // success info! (it has access to the
+                        // `live_panes` count). We only log failures
+                        // here — the failure message names this
+                        // notification arm as context.
                         let sessions = sessions.clone();
                         let router = router.clone();
                         tokio::spawn(async move {
-                            match sessions.reconcile_router(&router).await {
-                                Ok(0) => {}
-                                Ok(n) => tracing::info!(
-                                    evicted = n,
-                                    "reconciled router after tmux lifecycle event"
-                                ),
-                                Err(e) => tracing::warn!(
+                            if let Err(e) = sessions.reconcile_router(&router).await {
+                                tracing::warn!(
                                     error = %e,
                                     "reconcile_router failed; next event will retry"
-                                ),
+                                );
                             }
                         });
                     }
@@ -584,7 +597,7 @@ mod tests {
         SessionManager::new(Tmux::dead_for_tests())
     }
 
-    // ---------- Single-subscriber parity (carried forward from 9g) ----------
+    // ---------- Single-subscriber core behaviour ----------
 
     #[tokio::test]
     async fn subscribe_returns_zero_seq_on_empty_pane() {
@@ -775,7 +788,7 @@ mod tests {
         assert_eq!(r.peek_resume(42, 100), ReplaySlice::Future);
     }
 
-    // ---------- Multi-device fan-out (slice 9h) ----------
+    // ---------- Multi-device fan-out ----------
 
     #[tokio::test]
     async fn two_subscribers_both_receive_the_same_bytes() {
@@ -948,7 +961,7 @@ mod tests {
         handle.await.expect("dispatcher exits on sender drop");
     }
 
-    // ---------- Shutdown propagation (slice 9h round-1) ----------
+    // ---------- Dispatcher-exit shutdown propagation ----------
 
     #[tokio::test]
     async fn evict_all_closes_every_subscriber_receiver() {
@@ -990,7 +1003,7 @@ mod tests {
         );
     }
 
-    // ---------- Retain-panes / reconcile (slice 9i) ----------
+    // ---------- Pane eviction / reconcile ----------
 
     #[tokio::test]
     async fn retain_panes_evicts_panes_not_in_keep_set() {

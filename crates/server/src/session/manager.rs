@@ -285,6 +285,17 @@ impl SessionManager {
         &self,
         router: &OutputRouter,
     ) -> Result<usize, SessionError> {
+        // TOCTOU note: `list_live_panes` is an async tmux round-
+        // trip; `retain_panes` runs later under the router lock.
+        // A handler that calls `router.subscribe(P)` for a pane P
+        // created between the query and the retain will see its
+        // subscriber evicted immediately if P wasn't in `live`.
+        // The subscriber's `output_rx` closes and the handler
+        // wakes to `Action::Exit`; the client reconnects and the
+        // pane is alive on the reconnect path. At katulong scale
+        // (one or a few concurrent connections) the window is
+        // narrow and the failure is self-healing — the pane is
+        // still live in tmux, so the reconnect succeeds cleanly.
         let live = self.list_live_panes().await?;
         let evicted = router.retain_panes(&live);
         if evicted > 0 {
@@ -306,18 +317,32 @@ impl SessionManager {
 
 /// Errors returned by `SessionManager` operations.
 ///
-/// **HTTP caller obligation.** `TmuxRejected` wraps tmux's raw
-/// stderr/stdout output. Do NOT forward that to an HTTP response
-/// body — it may contain socket paths, other session names, or
-/// internal tmux details. Log the content server-side and render
-/// a generic "session operation failed" to the client. Same shape
-/// as the `AuthError::Io` obligation from slice 1+2.
+/// **HTTP caller obligation.** `TmuxRejected` and `MalformedReply`
+/// both wrap raw tmux output. Do NOT forward either to an HTTP
+/// response body — they may contain socket paths, other session
+/// names, or internal tmux details. Log the content server-side
+/// and render a generic "session operation failed" to the
+/// client. Same shape as the `AuthError::Io` obligation from
+/// slice 1+2.
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
     #[error("invalid session name: {0:?}")]
     InvalidName(String),
+    /// tmux acknowledged the command but reported an error
+    /// (`%error` or `reply.ok == false`). Wraps the stderr/stdout
+    /// payload. This is the "tmux said no" path.
     #[error("tmux rejected command: {0}")]
     TmuxRejected(String),
+    /// tmux acknowledged the command successfully but the reply
+    /// payload didn't match the format we asked for (e.g., a
+    /// line in `list-panes -F '#{pane_id}'` output that's not a
+    /// `%N` value). Distinct from `TmuxRejected` so callers and
+    /// log scanners can tell "tmux said no" apart from "we
+    /// couldn't parse tmux's answer." The latter usually
+    /// indicates a tmux version or locale change on the host —
+    /// actionable differently from a command rejection.
+    #[error("tmux reply did not match expected format: {0}")]
+    MalformedReply(String),
     #[error("tmux error: {0}")]
     Tmux(#[from] TmuxError),
 }
@@ -349,31 +374,6 @@ const MAX_SESSION_NAME_LEN: usize = 64;
 ///
 /// **Length cap.** Names over `MAX_SESSION_NAME_LEN` bytes fail
 /// validation — see the constant's doc for the rationale.
-/// Parse a `%N\n%M\n...` block (tmux's `list-panes -F '#{pane_id}'`
-/// output shape) into a set of numeric pane ids. Blank lines are
-/// tolerated (trailing newline); anything else that doesn't start
-/// with `%` or fails to parse as u32 is rejected with
-/// `SessionError::TmuxRejected` — we don't silently skip
-/// malformed lines because that could mask a parser bug that
-/// leaves the router out of sync with tmux.
-fn parse_pane_id_list(raw: &str) -> Result<HashSet<u32>, SessionError> {
-    let mut out = HashSet::new();
-    for line in raw.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let rest = line.strip_prefix('%').ok_or_else(|| {
-            SessionError::TmuxRejected(format!("unexpected pane-id reply: {line:?}"))
-        })?;
-        let id = rest.parse::<u32>().map_err(|_| {
-            SessionError::TmuxRejected(format!("invalid pane-id in reply: {line:?}"))
-        })?;
-        out.insert(id);
-    }
-    Ok(out)
-}
-
 fn validate_session_name(name: &str) -> Result<(), SessionError> {
     if name.is_empty() || name.starts_with('-') || name.len() > MAX_SESSION_NAME_LEN {
         return Err(SessionError::InvalidName(name.to_string()));
@@ -385,6 +385,37 @@ fn validate_session_name(name: &str) -> Result<(), SessionError> {
         }
     }
     Ok(())
+}
+
+/// Parse a `%N\n%M\n...` block (tmux's `list-panes -F '#{pane_id}'`
+/// output shape) into a set of numeric pane ids. Blank lines are
+/// tolerated (trailing newline). Anything else that doesn't start
+/// with `%` or fails to parse as u32 is rejected with
+/// `SessionError::MalformedReply` — the command succeeded, but the
+/// reply shape is wrong. Distinct from `TmuxRejected` (which means
+/// tmux said no to the command itself).
+///
+/// We don't silently skip malformed lines because that could mask
+/// a parser bug that leaves the router out of sync with tmux.
+/// The hard-fail blast radius is one reconcile pass skipped: the
+/// next `%window-close` / `%sessions-changed` event re-runs the
+/// reconcile, and `MAX_PANES` bounds the interim memory cost.
+fn parse_pane_id_list(raw: &str) -> Result<HashSet<u32>, SessionError> {
+    let mut out = HashSet::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let rest = line.strip_prefix('%').ok_or_else(|| {
+            SessionError::MalformedReply(format!("expected %N pane-id, got: {line:?}"))
+        })?;
+        let id = rest.parse::<u32>().map_err(|_| {
+            SessionError::MalformedReply(format!("pane-id not numeric: {line:?}"))
+        })?;
+        out.insert(id);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -464,7 +495,7 @@ mod tests {
         );
     }
 
-    // ---------- parse_pane_id_list (slice 9i) ----------
+    // ---------- pane-id list parser ----------
 
     #[test]
     fn parse_pane_id_list_accepts_single_line() {
@@ -506,15 +537,21 @@ mod tests {
     #[test]
     fn parse_pane_id_list_rejects_missing_percent_prefix() {
         // Don't silently skip malformed lines — that could mask a
-        // parser bug that leaves zombies in the router.
+        // parser bug that leaves zombies in the router. Distinct
+        // variant from TmuxRejected so log scanners can tell
+        // "tmux said no" apart from "we failed to parse tmux's
+        // reply."
         let err = parse_pane_id_list("3\n%5").unwrap_err();
-        assert!(matches!(err, SessionError::TmuxRejected(_)));
+        assert!(
+            matches!(err, SessionError::MalformedReply(_)),
+            "malformed reply must be MalformedReply, not TmuxRejected: {err:?}"
+        );
     }
 
     #[test]
     fn parse_pane_id_list_rejects_non_numeric_id() {
         let err = parse_pane_id_list("%abc").unwrap_err();
-        assert!(matches!(err, SessionError::TmuxRejected(_)));
+        assert!(matches!(err, SessionError::MalformedReply(_)));
     }
 
     // Live-tmux integration coverage is deferred: `Tmux::spawn`
