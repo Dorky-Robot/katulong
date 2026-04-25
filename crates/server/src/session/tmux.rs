@@ -449,12 +449,176 @@ fn validate_session_name_for_tmux(name: &str) -> Result<(), TmuxError> {
 }
 
 /// In-flight command reply being accumulated by the reader task.
-/// `payload` grows with each `Notification::Payload` seen after
-/// `%begin`; when `%end`/`%error` lands, the stored reply channel
-/// gets the final `CommandReply`.
+/// In the FP-leaning reader split (slice 9k), the payload lives
+/// inside [`ProtocolState::InFlight`], not on this struct — the
+/// only thing the imperative shell needs to retain across
+/// `%begin`/`%end` is the oneshot sender, since that's the
+/// resource (a moved-once channel handle) the pure state machine
+/// can't own.
 struct InFlightReply {
-    payload: Vec<String>,
     reply: oneshot::Sender<Result<CommandReply, TmuxError>>,
+}
+
+/// # Reader protocol state machine (pure core)
+///
+/// The reader's job — parse tmux's CM stdout, group `%begin` /
+/// `%end` framing into command replies, and forward async
+/// notifications — is a state machine with three discrete
+/// states. We model it as `enum ProtocolState` so every
+/// transition is captured by the [`step`] function, exhaustively
+/// type-checked at compile time, and unit-testable without
+/// spawning subprocesses or holding mutexes.
+///
+/// Side effects ([`Effect`]) are described as values returned
+/// from `step`; the imperative shell ([`run_reader`]) executes
+/// them. This is the "functional core, imperative shell"
+/// pattern: the protocol logic is pure, the IO is a thin loop
+/// that calls the pure function and runs its outputs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProtocolState {
+    /// Initial state immediately after spawn. tmux emits one
+    /// orphan `%begin`/`%end` pair at attach time before
+    /// processing any user command; while warming we drop those
+    /// rather than consume pending command slots. Transitions to
+    /// [`ProtocolState::Ready`] on EITHER:
+    ///   - the first `%end` / `%error` (handshake closing), OR
+    ///   - `%session-changed` (tmux's primary attach-completion
+    ///     signal).
+    Warming,
+    /// Accepting commands. `%begin` pops a pending reply slot
+    /// and transitions to [`ProtocolState::InFlight`].
+    Ready,
+    /// `%begin` received; accumulating payload lines until
+    /// `%end` or `%error` closes the reply. The `payload` Vec
+    /// holds the raw lines (UTF-8) collected so far, in order.
+    InFlight { payload: Vec<String> },
+}
+
+/// Side effects the [`step`] function describes. The imperative
+/// shell interprets each variant against its real resources
+/// (oneshot senders, mpsc channels, the pending FIFO).
+#[derive(Debug, PartialEq, Eq)]
+enum Effect {
+    /// Forward an async notification to the consumer's channel.
+    EmitNotif(Notification),
+    /// Pop the oldest entry from the pending FIFO and bind its
+    /// oneshot as the active in-flight reply slot. If pending is
+    /// empty (stream desync), the shell logs a warn and the
+    /// subsequent CompleteReply silently drops.
+    BindNextReply,
+    /// Resolve the active in-flight reply slot with the given
+    /// success bit and accumulated payload. The shell joins the
+    /// payload Vec with `\n` and sends the resulting `CommandReply`
+    /// on the oneshot.
+    CompleteReply { ok: bool, payload: Vec<String> },
+    /// Emit a tracing line at trace level (best-effort
+    /// observability for warm-up / discarded-payload paths).
+    LogTrace(&'static str),
+    /// Emit a tracing line at warn level (stream-desync paths
+    /// the operator should see).
+    LogWarn(&'static str),
+}
+
+/// Pure transition function — `(state, parsed_notif, raw_line)
+/// → (next_state, effects)`. No IO, no mutation, no async. Every
+/// (state, notification) pair has an explicit branch; the
+/// compiler enforces exhaustiveness.
+///
+/// `raw` is the original stdout line (pre-parse), needed because
+/// `Notification::Unknown` and lines parsed as `Payload` both
+/// represent command output that should be re-accumulated as the
+/// raw text — the parsed values strip the leading `%` from
+/// `Unknown`, so we can't reconstruct the raw line from the
+/// `Notification` alone.
+///
+/// Security note: tmux wraps every byte from a user pane in a
+/// `%output %P data` envelope. A user typing literal text like
+/// `%end 0 0 0` into their shell does NOT produce a bare `%end`
+/// line on the CM stdout — it arrives as `%output %N %end 0 0 0`,
+/// which parses as `Notification::Output` and routes through the
+/// EmitNotif branch (any state). The framing remains unforgeable
+/// from user input, which keeps the InFlight termination branches
+/// (matching `%end` / `%error`) safe even in Path 1's
+/// per-session CM model.
+fn step(
+    state: ProtocolState,
+    parsed: Notification,
+    raw: String,
+) -> (ProtocolState, Vec<Effect>) {
+    use Effect::*;
+    use Notification as N;
+    use ProtocolState::*;
+
+    match (state, parsed) {
+        // ===== Warming → Ready =====
+        // Two paths to flip ready:
+        //   (a) the first orphan `%end` / `%error` (the warm-up
+        //       handshake pair closing).
+        //   (b) `%session-changed` (tmux's primary signal).
+        // Both kept for belt-and-suspenders against tmux versions
+        // that might omit or reorder the signals.
+        (Warming, N::Begin { .. }) => (
+            Warming,
+            vec![LogTrace("orphan %begin during attach warm-up; ignored")],
+        ),
+        (Warming, N::End { .. }) | (Warming, N::Error { .. }) => (
+            Ready,
+            vec![LogTrace("warm-up handshake closed; protocol ready")],
+        ),
+        (Warming, n @ N::SessionChanged { .. }) => (Ready, vec![EmitNotif(n)]),
+
+        // ===== Ready: framing =====
+        (Ready, N::Begin { .. }) => (
+            InFlight { payload: Vec::new() },
+            vec![BindNextReply],
+        ),
+        (Ready, N::End { .. }) | (Ready, N::Error { .. }) => (
+            Ready,
+            vec![LogWarn("tmux %end/%error with no open command; stream out of sync")],
+        ),
+
+        // ===== InFlight: payload accumulation =====
+        // Both `Payload` (line didn't start with `%`) and
+        // `Unknown` (line started with `%` but isn't a known
+        // keyword — the `%1` from `list-panes -F '#{pane_id}'`
+        // case) get pushed as the raw line. The parser strips
+        // the `%` from Unknown, so we use `raw` to preserve the
+        // original byte sequence.
+        (InFlight { mut payload }, N::Payload(_)) | (InFlight { mut payload }, N::Unknown { .. }) => {
+            payload.push(raw);
+            (InFlight { payload }, vec![])
+        }
+        (InFlight { payload }, N::End { .. }) => (
+            Ready,
+            vec![CompleteReply { ok: true, payload }],
+        ),
+        (InFlight { payload }, N::Error { .. }) => (
+            Ready,
+            vec![CompleteReply { ok: false, payload }],
+        ),
+        (state @ InFlight { .. }, N::Begin { .. }) => (
+            state,
+            vec![LogWarn("nested %begin while a reply is in-flight; protocol error")],
+        ),
+
+        // ===== Payload outside InFlight: discard =====
+        (state @ Warming, N::Payload(_)) | (state @ Ready, N::Payload(_)) => (
+            state,
+            vec![LogTrace("payload line outside %begin/%end; discarded")],
+        ),
+
+        // ===== Async notifications: always emit =====
+        // Lifecycle/async notifs (`%output`, `%window-close`,
+        // `%unlinked-window-close`, `%sessions-changed`,
+        // `%session-renamed`, `%window-add`, `%window-renamed`,
+        // `%exit`, `%unknown`) route to the notification channel
+        // regardless of state. Folding them into an in-flight
+        // reply's payload would silently break the dispatcher's
+        // reconcile path under Path 1's per-session CM model
+        // where lifecycle events from one session can interleave
+        // with another session's command reply.
+        (state, n) => (state, vec![EmitNotif(n)]),
+    }
 }
 
 /// Best-effort tear-down of a tmux server we just created in
@@ -475,136 +639,38 @@ async fn kill_orphan_server(socket_name: &str) {
         .await;
 }
 
+/// Imperative shell driving the pure [`step`] state machine.
+/// Reads stdout lines, calls `step` for each, and interprets the
+/// returned [`Effect`]s against the real resources (oneshot
+/// senders held in `current_reply`, the `pending` FIFO, the
+/// notification channel).
+///
+/// The shell holds nothing the state machine could own:
+/// `current_reply` is just the oneshot sender for the active
+/// in-flight reply (the moved-once channel handle the pure core
+/// can't carry through a `Vec<Effect>` without consuming it
+/// every step).
 async fn run_reader(
     stdout: ChildStdout,
     notifications: mpsc::UnboundedSender<Notification>,
     pending: Arc<Mutex<VecDeque<PendingReply>>>,
 ) {
     let mut reader = BufReader::new(stdout).lines();
-    // When we see `%begin`, we pop the next pending command's
-    // oneshot (already FIFO-ordered) and start collecting payload
-    // lines into `current.payload`. `%end` or `%error` resolves
-    // the oneshot.
-    let mut current: Option<InFlightReply> = None;
-
-    // # `tmux_ready` warm-up gate
-    //
-    // tmux's CM emits a `%begin <time> <num> 0` / `%end ...` pair
-    // at attach time, BEFORE it processes any command we send. If
-    // the writer task pushed a pending reply slot during that
-    // window, the reader would pop it for the orphan startup pair
-    // and resolve our user command with empty payload.
-    //
-    // tmux's primary attach-completion signal is
-    // `%session-changed`. Belt-and-suspenders fallback: the orphan
-    // pair is exactly one — we also flip ready once we've seen the
-    // first warm-up `%end`. That way, even if a tmux version ever
-    // omits or reorders `%session-changed`, we don't hang every
-    // subsequent `send_command` waiting for a signal that never
-    // arrives.
-    let mut tmux_ready = false;
+    let mut state = ProtocolState::Warming;
+    let mut current_reply: Option<InFlightReply> = None;
 
     while let Ok(Some(line)) = reader.next_line().await {
-        let n = match parse(&line) {
+        let parsed = match parse(&line) {
             Ok(n) => n,
             Err(e) => {
                 tracing::warn!(error = %e, line = %line, "tmux parse error; dropping line");
                 continue;
             }
         };
-        match n {
-            // ---- Reply framing ----
-            //
-            // `%begin` / `%end` / `%error` are the framing
-            // markers. While `tmux_ready` is false they're orphans
-            // from the attach handshake; once ready they pair with
-            // pending command slots.
-            Notification::Begin { .. } => {
-                if !tmux_ready {
-                    tracing::trace!("tmux %begin during attach warm-up; ignoring");
-                } else if let Some(cmd) = pending.lock().await.pop_front() {
-                    current = Some(InFlightReply {
-                        payload: Vec::new(),
-                        reply: cmd.reply,
-                    });
-                } else {
-                    tracing::warn!(
-                        "tmux %begin with no pending command — stream out of sync; discarding reply"
-                    );
-                    current = None;
-                }
-            }
-            Notification::End { .. } | Notification::Error { .. } => {
-                let is_error = matches!(n, Notification::Error { .. });
-                if !tmux_ready {
-                    // First warm-up `%end` → flip ready. The
-                    // attach handshake's pair has now closed and
-                    // the next `%begin` must belong to a real
-                    // command.
-                    tracing::trace!("tmux %end/%error during attach warm-up; ignoring");
-                    tmux_ready = true;
-                } else if let Some(in_flight) = current.take() {
-                    let r = CommandReply {
-                        ok: !is_error,
-                        output: in_flight.payload.join("\n"),
-                    };
-                    let _ = in_flight.reply.send(Ok(r));
-                } else {
-                    tracing::warn!(
-                        "tmux %end/%error with no open command — stream out of sync"
-                    );
-                }
-            }
-            // ---- Payload accumulation ----
-            //
-            // Lines that don't start with `%` (parsed as Payload)
-            // and lines that DO start with `%` but aren't a known
-            // notification keyword (parsed as Unknown) both land
-            // here when a command reply is in flight. tmux command
-            // output can include both — `list-panes -F '#{pane_id}'`
-            // emits lines like `%1` which parse as Unknown.
-            //
-            // Security note: tmux wraps user-pane bytes in
-            // `%output %P data` envelopes, so a user typing
-            // `%end 0 0 0` into their shell does NOT produce a
-            // bare `%end` line on the CM stdout — it arrives as
-            // `%output %N %end 0 0 0`, which parses as
-            // `Notification::Output` and never reaches this
-            // termination branch. The framing remains
-            // unforgeable from user input.
-            Notification::Payload(_) | Notification::Unknown { .. }
-                if current.is_some() =>
-            {
-                if let Some(in_flight) = current.as_mut() {
-                    in_flight.payload.push(line);
-                }
-            }
-            Notification::Payload(p) => {
-                tracing::trace!(payload = %p, "tmux payload outside begin/end; discarded");
-            }
-            // ---- Async notifications ----
-            //
-            // Lifecycle and async events that arrive between
-            // `%begin` and `%end` route to the notification
-            // channel REGARDLESS of in-flight state. The
-            // dispatcher relies on these (`%sessions-changed`,
-            // `%window-close`, `%unlinked-window-close`) to
-            // trigger reconcile, and folding them into a reply's
-            // payload would silently break that path under
-            // concurrent activity (e.g., once Path 1 per-session
-            // CMs land on the same tmux server).
-            other => {
-                // First `%session-changed` is tmux's primary
-                // attach-completion signal — set tmux_ready true
-                // even before a `%end` arrives.
-                if matches!(other, Notification::SessionChanged { .. }) {
-                    tmux_ready = true;
-                }
-                // Async notifications. Drop on the floor if no
-                // one's listening — that's the mpsc semantics and
-                // the consumer's responsibility to keep up.
-                let _ = notifications.send(other);
-            }
+        let (next_state, effects) = step(state, parsed, line);
+        state = next_state;
+        for effect in effects {
+            apply_effect(effect, &mut current_reply, &pending, &notifications).await;
         }
     }
 
@@ -613,8 +679,51 @@ async fn run_reader(
     while let Some(cmd) = pending.pop_front() {
         let _ = cmd.reply.send(Err(TmuxError::Disconnected));
     }
-    if let Some(in_flight) = current.take() {
+    if let Some(in_flight) = current_reply.take() {
         let _ = in_flight.reply.send(Err(TmuxError::Disconnected));
+    }
+}
+
+/// Execute one [`Effect`] against the shell's mutable resources.
+/// Each variant maps to a small, well-defined IO operation.
+async fn apply_effect(
+    effect: Effect,
+    current_reply: &mut Option<InFlightReply>,
+    pending: &Arc<Mutex<VecDeque<PendingReply>>>,
+    notifications: &mpsc::UnboundedSender<Notification>,
+) {
+    match effect {
+        Effect::EmitNotif(n) => {
+            // Drop on the floor if no one's listening — that's
+            // the mpsc semantics; the consumer is responsible
+            // for keeping up.
+            let _ = notifications.send(n);
+        }
+        Effect::BindNextReply => {
+            if let Some(cmd) = pending.lock().await.pop_front() {
+                *current_reply = Some(InFlightReply { reply: cmd.reply });
+            } else {
+                tracing::warn!(
+                    "tmux %begin with no pending command — stream out of sync; discarding reply"
+                );
+                *current_reply = None;
+            }
+        }
+        Effect::CompleteReply { ok, payload } => {
+            if let Some(in_flight) = current_reply.take() {
+                let r = CommandReply {
+                    ok,
+                    output: payload.join("\n"),
+                };
+                let _ = in_flight.reply.send(Ok(r));
+            }
+            // No active reply slot means the corresponding
+            // BindNextReply hit an empty pending queue (already
+            // logged). Silently dropping is the right behavior
+            // here — the warning came at bind time.
+        }
+        Effect::LogTrace(msg) => tracing::trace!("{}", msg),
+        Effect::LogWarn(msg) => tracing::warn!("{}", msg),
     }
 }
 
@@ -663,6 +772,236 @@ async fn run_writer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---------- Pure protocol state-machine (slice 9k FP core) ----------
+
+    fn n_begin() -> Notification {
+        Notification::Begin {
+            time: 0,
+            num: 0,
+            flags: 0,
+        }
+    }
+    fn n_end() -> Notification {
+        Notification::End {
+            time: 0,
+            num: 0,
+            flags: 0,
+        }
+    }
+    fn n_error() -> Notification {
+        Notification::Error {
+            time: 0,
+            num: 0,
+            flags: 0,
+        }
+    }
+    fn n_session_changed() -> Notification {
+        Notification::SessionChanged {
+            session_id: 0,
+            name: "main".into(),
+        }
+    }
+
+    #[test]
+    fn warming_drops_orphan_begin() {
+        // Attach handshake's `%begin` arrives while warming —
+        // must not consume a pending reply slot. Stays Warming.
+        let (state, effects) = step(ProtocolState::Warming, n_begin(), "%begin 0 0 0".into());
+        assert_eq!(state, ProtocolState::Warming);
+        assert!(matches!(effects.as_slice(), [Effect::LogTrace(_)]));
+    }
+
+    #[test]
+    fn warming_to_ready_on_first_end() {
+        // Belt-and-suspenders fallback: if `%session-changed`
+        // never arrives, the orphan `%end` flips us ready
+        // anyway. Closes the HIGH-severity hang risk reviewers
+        // flagged on PR #652.
+        let (state, _) = step(ProtocolState::Warming, n_end(), "%end 0 0 0".into());
+        assert_eq!(state, ProtocolState::Ready);
+    }
+
+    #[test]
+    fn warming_to_ready_on_first_error() {
+        // tmux versions with quirky startup might emit %error
+        // for the orphan handshake. Same fallback behavior.
+        let (state, _) = step(ProtocolState::Warming, n_error(), "%error 0 0 0".into());
+        assert_eq!(state, ProtocolState::Ready);
+    }
+
+    #[test]
+    fn warming_to_ready_on_session_changed() {
+        // tmux's primary attach-completion signal — flips ready
+        // AND emits the notification.
+        let (state, effects) = step(
+            ProtocolState::Warming,
+            n_session_changed(),
+            "%session-changed $0 main".into(),
+        );
+        assert_eq!(state, ProtocolState::Ready);
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::EmitNotif(Notification::SessionChanged { .. })]
+        ));
+    }
+
+    #[test]
+    fn ready_begins_inflight_and_binds_reply() {
+        let (state, effects) = step(ProtocolState::Ready, n_begin(), "%begin 1 1 0".into());
+        assert!(matches!(state, ProtocolState::InFlight { .. }));
+        if let ProtocolState::InFlight { payload } = state {
+            assert!(payload.is_empty());
+        }
+        assert!(matches!(effects.as_slice(), [Effect::BindNextReply]));
+    }
+
+    #[test]
+    fn ready_with_orphan_end_is_warning() {
+        // %end arriving outside an in-flight reply means the
+        // pending FIFO got out of sync. Don't crash — just warn.
+        let (state, effects) = step(ProtocolState::Ready, n_end(), "%end 0 0 0".into());
+        assert_eq!(state, ProtocolState::Ready);
+        assert!(matches!(effects.as_slice(), [Effect::LogWarn(_)]));
+    }
+
+    #[test]
+    fn inflight_payload_accumulates_raw_lines() {
+        // Both Payload and Unknown push the RAW line — Unknown
+        // strips the leading `%` from the parsed value, so we
+        // need the raw text to preserve `list-panes -F` output
+        // shapes like `%1`.
+        let s0 = ProtocolState::InFlight {
+            payload: vec![],
+        };
+        let (s1, e1) = step(s0, Notification::Payload("plain".into()), "plain".into());
+        assert!(e1.is_empty());
+        let (s2, e2) = step(
+            s1,
+            Notification::Unknown {
+                keyword: "1".into(),
+                rest: "".into(),
+            },
+            "%1".into(),
+        );
+        assert!(e2.is_empty());
+        if let ProtocolState::InFlight { payload } = s2 {
+            assert_eq!(payload, vec!["plain".to_string(), "%1".to_string()]);
+        } else {
+            panic!("expected InFlight");
+        }
+    }
+
+    #[test]
+    fn inflight_end_completes_with_ok_true() {
+        let s0 = ProtocolState::InFlight {
+            payload: vec!["%5".into()],
+        };
+        let (state, effects) = step(s0, n_end(), "%end 0 0 0".into());
+        assert_eq!(state, ProtocolState::Ready);
+        match effects.as_slice() {
+            [Effect::CompleteReply { ok: true, payload }] => {
+                assert_eq!(payload, &vec!["%5".to_string()]);
+            }
+            other => panic!("expected CompleteReply ok=true, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inflight_error_completes_with_ok_false() {
+        let s0 = ProtocolState::InFlight {
+            payload: vec!["err line".into()],
+        };
+        let (state, effects) = step(s0, n_error(), "%error 0 0 0".into());
+        assert_eq!(state, ProtocolState::Ready);
+        match effects.as_slice() {
+            [Effect::CompleteReply { ok: false, payload }] => {
+                assert_eq!(payload, &vec!["err line".to_string()]);
+            }
+            other => panic!("expected CompleteReply ok=false, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inflight_nested_begin_warns_and_holds_state() {
+        // tmux shouldn't emit %begin while another reply is
+        // in-flight. If it does, log a warn and don't blow away
+        // the existing payload.
+        let s0 = ProtocolState::InFlight {
+            payload: vec!["existing".into()],
+        };
+        let (state, effects) = step(s0, n_begin(), "%begin 2 2 0".into());
+        match state {
+            ProtocolState::InFlight { payload } => {
+                assert_eq!(payload, vec!["existing".to_string()]);
+            }
+            other => panic!("expected InFlight to be preserved, got {other:?}"),
+        }
+        assert!(matches!(effects.as_slice(), [Effect::LogWarn(_)]));
+    }
+
+    #[test]
+    fn lifecycle_notif_emits_regardless_of_state() {
+        // Slice 9k MEDIUM finding from PR #652: lifecycle notifs
+        // (%sessions-changed, %window-close, etc.) must always
+        // route to the notification channel even mid-reply, so
+        // the dispatcher's reconcile path keeps working under
+        // Path 1's per-session CMs.
+        for state in [
+            ProtocolState::Warming,
+            ProtocolState::Ready,
+            ProtocolState::InFlight { payload: vec![] },
+        ] {
+            let (_, effects) = step(
+                state,
+                Notification::SessionsChanged,
+                "%sessions-changed".into(),
+            );
+            assert!(
+                matches!(
+                    effects.as_slice(),
+                    [Effect::EmitNotif(Notification::SessionsChanged)]
+                ),
+                "SessionsChanged must emit in every state"
+            );
+        }
+    }
+
+    #[test]
+    fn window_close_emits_in_flight() {
+        // Concrete check for the dispatcher's reconcile triggers
+        // arriving mid-reply.
+        let s0 = ProtocolState::InFlight {
+            payload: vec!["partial".into()],
+        };
+        let (state, effects) = step(
+            s0,
+            Notification::WindowClose { window_id: 5 },
+            "%window-close @5".into(),
+        );
+        // State preserved (still in-flight).
+        if let ProtocolState::InFlight { payload } = state {
+            assert_eq!(payload, vec!["partial".to_string()]);
+        } else {
+            panic!("expected InFlight preserved");
+        }
+        // WindowClose forwarded to notif channel.
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::EmitNotif(Notification::WindowClose { window_id: 5 })]
+        ));
+    }
+
+    #[test]
+    fn payload_outside_inflight_is_discarded() {
+        let (state, effects) = step(
+            ProtocolState::Ready,
+            Notification::Payload("orphan".into()),
+            "orphan".into(),
+        );
+        assert_eq!(state, ProtocolState::Ready);
+        assert!(matches!(effects.as_slice(), [Effect::LogTrace(_)]));
+    }
 
     #[tokio::test]
     async fn send_command_before_spawn_fails() {
