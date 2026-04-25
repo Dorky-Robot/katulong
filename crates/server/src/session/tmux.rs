@@ -1,9 +1,56 @@
 //! tmux control-mode client.
 //!
-//! Owns one long-running `tmux -C -L <socket>` subprocess and
-//! speaks the protocol parsed by `super::parser`. Commands are
-//! sent via the subprocess's stdin; replies and asynchronous
-//! notifications arrive on stdout.
+//! Owns one long-running `tmux -C -L <socket> attach-session`
+//! subprocess and speaks the protocol parsed by `super::parser`.
+//! Commands are sent via the subprocess's stdin; replies and
+//! asynchronous notifications arrive on stdout.
+//!
+//! # Why `attach-session`, not `new-session -d`
+//!
+//! Tmux control mode invoked as `tmux -C new-session -d ...`
+//! runs the new-session command and then exits the CM client
+//! immediately, because `-d` means detached and the CM has
+//! nothing to attach to. This was the original spawn shape and
+//! it was silently broken — the CM emitted its initial
+//! `%sessions-changed` then `%exit` before any caller could
+//! send a follow-up command. Empirically reproduced on tmux
+//! 3.6a.
+//!
+//! The Node katulong implementation uses the proven pattern
+//! captured by diwa as commit `a7519f5` ("tmux control mode
+//! does not replay screen content on attach"): a CM is spawned
+//! with `-C attach-session -t <existing>`. As long as the
+//! attached session exists, the CM stays alive and accepts
+//! commands.
+//!
+//! `Tmux::spawn` therefore does TWO things:
+//! 1. Synchronously runs `tmux -L <socket> new-session -d -s
+//!    <init> -x <cols> -y <rows> "cat"` to start the tmux
+//!    server and a "keepalive" session whose only pane runs
+//!    `cat`. `cat` blocks on its pty stdin (which never
+//!    receives EOF), consuming zero CPU.
+//! 2. Spawns the long-lived CM child via
+//!    `tmux -L <socket> -C attach-session -t <init>` and hooks
+//!    reader/writer/stderr tasks to its pipes.
+//!
+//! # Visible-output scope: caveat
+//!
+//! A CM client only receives `%output` notifications for panes
+//! in the session it is attached to. The initial keepalive
+//! session is the only thing this CM sees output for, and that
+//! pane runs `cat` — no useful bytes. Commands like
+//! `list-panes -a`, `new-session`, `kill-session`, and global
+//! lifecycle events (`%sessions-changed`,
+//! `%unlinked-window-close`) DO span every session on the tmux
+//! server, so this single CM is sufficient for slice 9i's
+//! reconcile path.
+//!
+//! Routing `%output` for user-facing tiles (each in its own
+//! tmux session) requires per-session CM clients — the path
+//! the Node implementation took (see Node scars in diwa under
+//! "control mode + attach-session"). That's a Path 1 follow-on
+//! slice; this slice unblocks command-side integration tests
+//! and the slice 9i reconcile model.
 //!
 //! The client's job splits into three asynchronous pieces:
 //!
@@ -111,13 +158,18 @@ struct PendingReply {
 }
 
 impl Tmux {
-    /// Spawn `tmux -C -L <socket_name> new-session -d -s <session>
-    /// -x <cols> -y <rows>` and begin the reader/writer tasks.
+    /// Start the tmux server with a detached keepalive session,
+    /// then spawn a long-lived `tmux -C attach-session` child as
+    /// the control-mode client. See the module-level "Why
+    /// `attach-session`, not `new-session -d`" section for the
+    /// rationale.
     ///
     /// `socket_name` is validated: alphanumeric + `-_` only, no
     /// leading hyphen, no `/` (which would redirect tmux's socket
     /// file to an attacker-controlled path). Use
     /// `DEDICATED_SOCKET_NAME` for the production convention.
+    /// `initial_session` is the keepalive session's name; treat
+    /// it as a tmux-internal name, not a user-facing tile name.
     ///
     /// Returns the client handle plus an mpsc receiver for
     /// asynchronous notifications (`%output`, `%window-close`,
@@ -147,10 +199,19 @@ impl Tmux {
         validate_socket_name(socket_name)?;
         validate_session_name_for_tmux(initial_session)?;
 
-        let mut cmd = Command::new("tmux");
-        cmd.arg("-L")
+        // Step 1: start the tmux server and a detached keepalive
+        // session synchronously. `new-session -d ... cat` creates
+        // the session with one pane running `cat`, which blocks
+        // on its pty stdin forever (zero CPU). We wait for this
+        // command to exit successfully — that's our signal that
+        // the tmux server is up and the session exists.
+        //
+        // We don't keep this subprocess as a Tmux child handle;
+        // it's a one-shot "create the server" exec that returns
+        // once the work is done.
+        let init_status = Command::new("tmux")
+            .arg("-L")
             .arg(socket_name)
-            .arg("-C")
             .arg("new-session")
             .arg("-d")
             .arg("-s")
@@ -158,7 +219,33 @@ impl Tmux {
             .arg("-x")
             .arg(cols.to_string())
             .arg("-y")
-            .arg(rows.to_string());
+            .arg(rows.to_string())
+            .arg("cat")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .await?;
+        if !init_status.status.success() {
+            let stderr = String::from_utf8_lossy(&init_status.stderr).into_owned();
+            return Err(TmuxError::InvalidCommand(format!(
+                "tmux new-session failed: {stderr}"
+            )));
+        }
+
+        // Step 2: spawn the long-lived CM client attached to the
+        // keepalive session. `-C attach-session` is the pattern
+        // that keeps the CM alive: the client stays connected as
+        // long as the attached session exists. `cat` in the
+        // keepalive session never exits, so the CM never gets a
+        // `%session-changed`/`%exit` from session death.
+        let mut cmd = Command::new("tmux");
+        cmd.arg("-L")
+            .arg(socket_name)
+            .arg("-C")
+            .arg("attach-session")
+            .arg("-t")
+            .arg(initial_session);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -244,6 +331,24 @@ impl Tmux {
     /// Kill the tmux subprocess and wait for the reader/writer
     /// tasks to finish. Idempotent — calling twice is safe; the
     /// second call no-ops.
+    ///
+    /// # KNOWN GAP — tmux 3.6a UAF on abrupt CM child kill
+    ///
+    /// Per Node scar `33feed2`: tmux 3.6a has a use-after-free
+    /// in `control_notify_client_detached` that triggers when a
+    /// `tmux -C` child dies abruptly (e.g. SIGTERM/SIGKILL),
+    /// causing the tmux server to segfault and take EVERY
+    /// session with it. The fix walks tmux's normal detach path
+    /// by writing `detach-client\n` on stdin first, waiting for
+    /// the CM to close cleanly, THEN running `kill-session`.
+    /// An unref'd 2-second watchdog SIGKILLs as last resort.
+    ///
+    /// The current code uses `start_kill` directly. That's the
+    /// abrupt path. Today this only fires in test cleanup and
+    /// process-shutdown paths where tmux dying is acceptable;
+    /// production code never calls `shutdown` on a still-live
+    /// instance. Track adding the in-band `detach-client` dance
+    /// before this becomes user-visible.
     pub async fn shutdown(&self) {
         if let Some(mut child) = self.child.lock().await.take() {
             let _ = child.start_kill();
@@ -331,6 +436,17 @@ async fn run_reader(
     // the oneshot.
     let mut current: Option<InFlightReply> = None;
 
+    // tmux's CM emits a `%begin <time> <num> 0` / `%end ...` pair
+    // at attach time, BEFORE it processes any command we send. If
+    // the writer task pushes a pending reply slot during that
+    // window, the reader would pop it for the orphan startup pair
+    // and resolve our user command with an empty payload. Tmux
+    // signals attach completion via `%session-changed`, so we
+    // treat any `%begin`/`%end` BEFORE that as orphans and drop
+    // them without consuming pending. Once `tmux_ready` flips, the
+    // reader behaves normally.
+    let mut tmux_ready = false;
+
     while let Ok(Some(line)) = reader.next_line().await {
         let n = match parse(&line) {
             Ok(n) => n,
@@ -339,7 +455,43 @@ async fn run_reader(
                 continue;
             }
         };
+        // While a command reply is in flight, tmux's `%begin` /
+        // `%end` framing wins over the leading-`%` heuristic.
+        // Tmux command payloads can themselves start with `%`
+        // (e.g. `list-panes -F '#{pane_id}'` returns `%N` per
+        // line). The parser treats those as `Notification::
+        // Unknown`, but inside a command reply they're payload.
+        // Only `%end` and `%error` terminate the in-flight
+        // reply; everything else gets pushed as raw payload.
+        //
+        // Caveat: this means async notifications that arrive
+        // between `%begin` and `%end` (uncommon but allowed by
+        // tmux's protocol) get folded into the reply payload
+        // instead of routing to the notification channel. For
+        // katulong's CM-attached-to-keepalive setup, the
+        // attached pane is `cat` and emits no `%output`, so
+        // interleaving doesn't happen in practice. If it ever
+        // does, the right fix is allowlisting specific async
+        // notifications even inside reply blocks.
+        if current.is_some()
+            && !matches!(
+                n,
+                Notification::End { .. } | Notification::Error { .. }
+            )
+        {
+            if let Some(in_flight) = current.as_mut() {
+                in_flight.payload.push(line);
+            }
+            continue;
+        }
         match n {
+            Notification::Begin { .. } if !tmux_ready => {
+                // Orphan begin from tmux's attach handshake — drop.
+                tracing::trace!("tmux %begin during attach warm-up; ignoring");
+            }
+            Notification::End { .. } | Notification::Error { .. } if !tmux_ready => {
+                tracing::trace!("tmux %end/%error during attach warm-up; ignoring");
+            }
             Notification::Begin { .. } => {
                 // Pop the oldest pending command — tmux replies in
                 // the order commands were submitted.
@@ -377,6 +529,15 @@ async fn run_reader(
                 }
             }
             other => {
+                // tmux signals attach completion via
+                // `%session-changed`. Until we see it, the reader
+                // is in attach warm-up mode and treats any
+                // `%begin`/`%end` as orphans. After it lands, the
+                // reader pairs `%begin` to pending command slots
+                // normally.
+                if matches!(other, Notification::SessionChanged { .. }) {
+                    tmux_ready = true;
+                }
                 // Async notification. Drop on the floor if no one's
                 // listening — that's the mpsc semantics and the
                 // consumer's responsibility to keep up.
