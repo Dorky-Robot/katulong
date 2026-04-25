@@ -77,14 +77,11 @@
 //! `kill-server` anywhere zapped both. A dedicated socket isolates
 //! katulong's tmux state.
 //!
-//! # Slice 9b scope
+//! # Live-tmux tests
 //!
-//! This slice ships the client type and its protocol handling.
-//! Slice 9c wires it into `SessionManager` and exposes it through
-//! `AppState`. The integration test that actually spawns tmux is
-//! marked `#[ignore]` so CI without tmux installed still passes;
-//! developers run it manually with `cargo test -- --ignored
-//! tmux_roundtrip`.
+//! Integration tests that actually spawn a tmux subprocess are
+//! `#[ignore]`-gated so CI without tmux installed still passes;
+//! developers run them with `cargo test -- --ignored`.
 
 use super::parser::{parse, Notification, ParseError};
 use std::collections::VecDeque;
@@ -220,7 +217,7 @@ impl Tmux {
             .arg(cols.to_string())
             .arg("-y")
             .arg(rows.to_string())
-            .arg("cat")
+            .arg(KEEPALIVE_PANE_CMD)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -254,9 +251,34 @@ impl Tmux {
             // escape sequences into tmux on terminal resizes.
             .kill_on_drop(true);
 
-        let mut child = cmd.spawn()?;
-        let stdin = child.stdin.take().ok_or(TmuxError::Disconnected)?;
-        let stdout = child.stdout.take().ok_or(TmuxError::Disconnected)?;
+        // From here on, any error must clean up the tmux server
+        // we created in step 1 — otherwise a failed spawn leaves
+        // the server running with an orphaned keepalive session,
+        // and the next `Tmux::spawn` against the same socket
+        // hits `new-session: session already exists`.
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                kill_orphan_server(socket_name).await;
+                return Err(TmuxError::Io(e));
+            }
+        };
+        let stdin = match child.stdin.take() {
+            Some(s) => s,
+            None => {
+                let _ = child.start_kill();
+                kill_orphan_server(socket_name).await;
+                return Err(TmuxError::Disconnected);
+            }
+        };
+        let stdout = match child.stdout.take() {
+            Some(s) => s,
+            None => {
+                let _ = child.start_kill();
+                kill_orphan_server(socket_name).await;
+                return Err(TmuxError::Disconnected);
+            }
+        };
         let stderr = child.stderr.take();
 
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<OutgoingCommand>();
@@ -328,6 +350,9 @@ impl Tmux {
         rx.await.map_err(|_| TmuxError::Disconnected)?
     }
 
+    // TODO(shutdown-safety): add in-band detach-client dance
+    // before kill to avoid the tmux 3.6a UAF; see KNOWN GAP in
+    // the doc below.
     /// Kill the tmux subprocess and wait for the reader/writer
     /// tasks to finish. Idempotent — calling twice is safe; the
     /// second call no-ops.
@@ -368,6 +393,14 @@ impl Tmux {
 /// Staging instances override this via their own per-worktree name
 /// (e.g. `stage-rewrite-rust-leptos`) when they spawn `Tmux`.
 pub const DEDICATED_SOCKET_NAME: &str = "katulong";
+
+/// Command run in the keepalive session's pane to keep the CM
+/// client attached. `cat` blocks on its pty stdin (which never
+/// receives EOF), consuming zero CPU and emitting no `%output`.
+/// Named so the choice is grep-able from the spawn site, and so
+/// any future swap (e.g. to `sleep infinity` or a `tmux set-option
+/// remain-on-exit on` no-command session) lands in one place.
+const KEEPALIVE_PANE_CMD: &str = "cat";
 
 /// Validate a tmux socket name. Same allowlist as session names
 /// but enforced here rather than in `SessionManager` because
@@ -424,6 +457,24 @@ struct InFlightReply {
     reply: oneshot::Sender<Result<CommandReply, TmuxError>>,
 }
 
+/// Best-effort tear-down of a tmux server we just created in
+/// `Tmux::spawn`'s step 1 but failed to attach to in step 2.
+/// Without this, a failed spawn leaves the server running and
+/// the next `Tmux::spawn` against the same socket hits
+/// `new-session: session already exists`. Invoked from spawn's
+/// error paths only — never on the happy path.
+async fn kill_orphan_server(socket_name: &str) {
+    let _ = Command::new("tmux")
+        .arg("-L")
+        .arg(socket_name)
+        .arg("kill-server")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .await;
+}
+
 async fn run_reader(
     stdout: ChildStdout,
     notifications: mpsc::UnboundedSender<Notification>,
@@ -436,15 +487,21 @@ async fn run_reader(
     // the oneshot.
     let mut current: Option<InFlightReply> = None;
 
+    // # `tmux_ready` warm-up gate
+    //
     // tmux's CM emits a `%begin <time> <num> 0` / `%end ...` pair
     // at attach time, BEFORE it processes any command we send. If
-    // the writer task pushes a pending reply slot during that
+    // the writer task pushed a pending reply slot during that
     // window, the reader would pop it for the orphan startup pair
-    // and resolve our user command with an empty payload. Tmux
-    // signals attach completion via `%session-changed`, so we
-    // treat any `%begin`/`%end` BEFORE that as orphans and drop
-    // them without consuming pending. Once `tmux_ready` flips, the
-    // reader behaves normally.
+    // and resolve our user command with empty payload.
+    //
+    // tmux's primary attach-completion signal is
+    // `%session-changed`. Belt-and-suspenders fallback: the orphan
+    // pair is exactly one — we also flip ready once we've seen the
+    // first warm-up `%end`. That way, even if a tmux version ever
+    // omits or reorders `%session-changed`, we don't hang every
+    // subsequent `send_command` waiting for a signal that never
+    // arrives.
     let mut tmux_ready = false;
 
     while let Ok(Some(line)) = reader.next_line().await {
@@ -455,47 +512,17 @@ async fn run_reader(
                 continue;
             }
         };
-        // While a command reply is in flight, tmux's `%begin` /
-        // `%end` framing wins over the leading-`%` heuristic.
-        // Tmux command payloads can themselves start with `%`
-        // (e.g. `list-panes -F '#{pane_id}'` returns `%N` per
-        // line). The parser treats those as `Notification::
-        // Unknown`, but inside a command reply they're payload.
-        // Only `%end` and `%error` terminate the in-flight
-        // reply; everything else gets pushed as raw payload.
-        //
-        // Caveat: this means async notifications that arrive
-        // between `%begin` and `%end` (uncommon but allowed by
-        // tmux's protocol) get folded into the reply payload
-        // instead of routing to the notification channel. For
-        // katulong's CM-attached-to-keepalive setup, the
-        // attached pane is `cat` and emits no `%output`, so
-        // interleaving doesn't happen in practice. If it ever
-        // does, the right fix is allowlisting specific async
-        // notifications even inside reply blocks.
-        if current.is_some()
-            && !matches!(
-                n,
-                Notification::End { .. } | Notification::Error { .. }
-            )
-        {
-            if let Some(in_flight) = current.as_mut() {
-                in_flight.payload.push(line);
-            }
-            continue;
-        }
         match n {
-            Notification::Begin { .. } if !tmux_ready => {
-                // Orphan begin from tmux's attach handshake — drop.
-                tracing::trace!("tmux %begin during attach warm-up; ignoring");
-            }
-            Notification::End { .. } | Notification::Error { .. } if !tmux_ready => {
-                tracing::trace!("tmux %end/%error during attach warm-up; ignoring");
-            }
+            // ---- Reply framing ----
+            //
+            // `%begin` / `%end` / `%error` are the framing
+            // markers. While `tmux_ready` is false they're orphans
+            // from the attach handshake; once ready they pair with
+            // pending command slots.
             Notification::Begin { .. } => {
-                // Pop the oldest pending command — tmux replies in
-                // the order commands were submitted.
-                if let Some(cmd) = pending.lock().await.pop_front() {
+                if !tmux_ready {
+                    tracing::trace!("tmux %begin during attach warm-up; ignoring");
+                } else if let Some(cmd) = pending.lock().await.pop_front() {
                     current = Some(InFlightReply {
                         payload: Vec::new(),
                         reply: cmd.reply,
@@ -507,16 +534,16 @@ async fn run_reader(
                     current = None;
                 }
             }
-            Notification::Payload(p) => {
-                if let Some(in_flight) = current.as_mut() {
-                    in_flight.payload.push(p);
-                } else {
-                    tracing::trace!(payload = %p, "tmux payload outside begin/end; discarded");
-                }
-            }
             Notification::End { .. } | Notification::Error { .. } => {
                 let is_error = matches!(n, Notification::Error { .. });
-                if let Some(in_flight) = current.take() {
+                if !tmux_ready {
+                    // First warm-up `%end` → flip ready. The
+                    // attach handshake's pair has now closed and
+                    // the next `%begin` must belong to a real
+                    // command.
+                    tracing::trace!("tmux %end/%error during attach warm-up; ignoring");
+                    tmux_ready = true;
+                } else if let Some(in_flight) = current.take() {
                     let r = CommandReply {
                         ok: !is_error,
                         output: in_flight.payload.join("\n"),
@@ -528,19 +555,54 @@ async fn run_reader(
                     );
                 }
             }
+            // ---- Payload accumulation ----
+            //
+            // Lines that don't start with `%` (parsed as Payload)
+            // and lines that DO start with `%` but aren't a known
+            // notification keyword (parsed as Unknown) both land
+            // here when a command reply is in flight. tmux command
+            // output can include both — `list-panes -F '#{pane_id}'`
+            // emits lines like `%1` which parse as Unknown.
+            //
+            // Security note: tmux wraps user-pane bytes in
+            // `%output %P data` envelopes, so a user typing
+            // `%end 0 0 0` into their shell does NOT produce a
+            // bare `%end` line on the CM stdout — it arrives as
+            // `%output %N %end 0 0 0`, which parses as
+            // `Notification::Output` and never reaches this
+            // termination branch. The framing remains
+            // unforgeable from user input.
+            Notification::Payload(_) | Notification::Unknown { .. }
+                if current.is_some() =>
+            {
+                if let Some(in_flight) = current.as_mut() {
+                    in_flight.payload.push(line);
+                }
+            }
+            Notification::Payload(p) => {
+                tracing::trace!(payload = %p, "tmux payload outside begin/end; discarded");
+            }
+            // ---- Async notifications ----
+            //
+            // Lifecycle and async events that arrive between
+            // `%begin` and `%end` route to the notification
+            // channel REGARDLESS of in-flight state. The
+            // dispatcher relies on these (`%sessions-changed`,
+            // `%window-close`, `%unlinked-window-close`) to
+            // trigger reconcile, and folding them into a reply's
+            // payload would silently break that path under
+            // concurrent activity (e.g., once Path 1 per-session
+            // CMs land on the same tmux server).
             other => {
-                // tmux signals attach completion via
-                // `%session-changed`. Until we see it, the reader
-                // is in attach warm-up mode and treats any
-                // `%begin`/`%end` as orphans. After it lands, the
-                // reader pairs `%begin` to pending command slots
-                // normally.
+                // First `%session-changed` is tmux's primary
+                // attach-completion signal — set tmux_ready true
+                // even before a `%end` arrives.
                 if matches!(other, Notification::SessionChanged { .. }) {
                     tmux_ready = true;
                 }
-                // Async notification. Drop on the floor if no one's
-                // listening — that's the mpsc semantics and the
-                // consumer's responsibility to keep up.
+                // Async notifications. Drop on the floor if no
+                // one's listening — that's the mpsc semantics and
+                // the consumer's responsibility to keep up.
                 let _ = notifications.send(other);
             }
         }

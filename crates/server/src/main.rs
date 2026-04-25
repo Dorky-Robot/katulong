@@ -32,11 +32,18 @@ async fn main() {
     // missing binary.
     let socket_name = std::env::var("KATULONG_TMUX_SOCKET")
         .unwrap_or_else(|_| DEDICATED_SOCKET_NAME.to_string());
-    let initial_session = std::env::var("KATULONG_INITIAL_SESSION")
-        .unwrap_or_else(|_| "main".to_string());
-    let (tmux, notifs) = Tmux::spawn(&socket_name, &initial_session, DEFAULT_COLS, DEFAULT_ROWS)
-        .await
-        .expect("spawn tmux control-mode subprocess");
+    // The "keepalive" session is internal infrastructure: its
+    // only job is keeping the CM client attached to something so
+    // the control channel stays alive. It is NOT a user-facing
+    // tile. The env var is named accordingly so an operator
+    // overriding it knows they're naming a hidden session, not
+    // configuring a user terminal.
+    let keepalive_session = std::env::var("KATULONG_KEEPALIVE_SESSION")
+        .unwrap_or_else(|_| "__cm_keepalive".to_string());
+    let (tmux, notifs) =
+        Tmux::spawn(&socket_name, &keepalive_session, DEFAULT_COLS, DEFAULT_ROWS)
+            .await
+            .expect("spawn tmux control-mode subprocess");
     let sessions = SessionManager::new(tmux);
     let output_router = OutputRouter::new();
 
