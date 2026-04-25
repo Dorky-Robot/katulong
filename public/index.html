@@ -488,6 +488,13 @@
       color: #89b4fa;
     }
     .term-status-agent i { color: #89b4fa; }
+    /* Phones don't have the vertical real estate to overlay the status
+       bar on the xterm viewport without burying the last line of output
+       (e.g. an active Claude session). The cwd/branch info is still
+       reachable via the History tile and the terminal title, so we just
+       hide the floating bar on phone-class screens. iPad and desktop
+       keep it — they have the height to spare. */
+    body[data-platform="phone"] .term-status-bar { display: none; }
 
     /* ── History tile ───────────────────────────────────────────── */
     .history-tile-root {
