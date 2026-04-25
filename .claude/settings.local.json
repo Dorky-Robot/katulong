@@ -40,7 +40,18 @@
       "Bash(mv ~/.katulong/config.json.tmp ~/.katulong/config.json)",
       "Bash(KATULONG_DATA_DIR=/tmp/katulong-stage/katulong-git-info/data /Users/felixflores/Projects/dorky_robot/katulong-git-info/bin/katulong setup-token *)",
       "Bash(/Users/felixflores/Projects/dorky_robot/katulong-git-info/bin/katulong --help)",
-      "Bash(KATULONG_DATA_DIR=/tmp/katulong-stage/katulong-git-info/data /Users/felixflores/Projects/dorky_robot/katulong-git-info/bin/katulong token *)"
+      "Bash(KATULONG_DATA_DIR=/tmp/katulong-stage/katulong-git-info/data /Users/felixflores/Projects/dorky_robot/katulong-git-info/bin/katulong token *)",
+      "Bash(/Users/felixflores/Projects/dorky_robot/katulong-git-info/bin/katulong-stage stop *)",
+      "Bash(dig +short katulong-git-info.felixflor.es CNAME @1.1.1.1)",
+      "Bash(dig katulong-git-info.felixflor.es @1.1.1.1 +noall +answer)",
+      "Bash(dig +short NS felixflor.es @1.1.1.1)",
+      "Bash(tunnels logs *)",
+      "Bash(REPO_ROOT=/Users/felixflores/Projects/dorky_robot/katulong-git-info /Users/felixflores/Projects/dorky_robot/katulong-git-info/bin/katulong-stage start katulong-git-info)",
+      "Bash(kill %1)",
+      "Bash(dig +short katulong-git-info.felixflor.es @1.1.1.1)",
+      "Bash(cp /Users/felixflores/Projects/dorky_robot/katulong/.claude/commands/token.md /Users/felixflores/Projects/dorky_robot/katulong-git-info/.claude/commands/token.md)",
+      "Bash(cp /Users/felixflores/Projects/dorky_robot/katulong/.claude/commands/stage.md /Users/felixflores/Projects/dorky_robot/katulong-git-info/.claude/commands/stage.md)",
+      "Bash(rm /Users/felixflores/Projects/dorky_robot/katulong/.claude/commands/token.md)"
     ]
   }
 }
