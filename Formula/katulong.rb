@@ -1,8 +1,8 @@
 class Katulong < Formula
   desc "Self-hosted web terminal with tmux sessions and WebAuthn security"
   homepage "https://github.com/Dorky-Robot/katulong"
-  url "https://github.com/Dorky-Robot/katulong/archive/refs/tags/v0.59.1.tar.gz"
-  sha256 "fe4183e5d0ec0440846442cc412343e8a104ea9d9e86cd6a34c88efae7f7a264"
+  url "https://github.com/Dorky-Robot/katulong/archive/refs/tags/v0.59.2.tar.gz"
+  sha256 "089efa6b95a1a32eb42db9160d976198c1aab70e29ec28c166ccdf808b80f641"
   license "MIT"
 
   depends_on "node"
