@@ -554,15 +554,55 @@ mod tests {
         assert!(matches!(err, SessionError::MalformedReply(_)));
     }
 
-    // Live-tmux integration coverage is deferred: `Tmux::spawn`
-    // uses `tmux -C new-session -d` which exits the CM client
-    // immediately after creating the session (empirically
-    // reproduced on tmux 3.6a — see the existing
-    // `tmux_roundtrip` ignored test with the same limitation).
-    // Wiring an `attach -t` style CM that stays alive is a
-    // separate, broader concern; the unit coverage here
-    // (`retain_panes`, `parse_pane_id_list`, dispatcher-wiring
-    // tests in router.rs) exercises every decision slice 9i
-    // makes. An end-to-end test lands when the tmux spawn
-    // lifetime issue is fixed in its own slice.
+    // ---------- Live-tmux integration ----------
+
+    #[tokio::test]
+    #[ignore = "requires tmux binary + dedicated socket; run with: cargo test -- --ignored"]
+    async fn reconcile_router_evicts_panes_of_destroyed_sessions() {
+        // End-to-end: stand up a real tmux subprocess, create two
+        // extra sessions, register their panes with the router,
+        // destroy one, then reconcile. The destroyed session's
+        // pane must be evicted from the router; the surviving
+        // one must not.
+        //
+        // This test also empirically confirms that `list-panes
+        // -a` reports across every session on the tmux server
+        // regardless of which session the CM client is attached
+        // to — that's the property slice 9i's reconcile depends
+        // on. Per-session `%output` routing is a separate
+        // concern (Path 1 follow-on).
+        use super::super::router::OutputRouter;
+        use super::super::tmux::Tmux;
+
+        let socket = format!("katulong-reconcile-{}", std::process::id());
+        let (tmux, _notifs) = Tmux::spawn(&socket, "main", 80, 24)
+            .await
+            .expect("spawn tmux");
+        let manager = SessionManager::new(tmux.clone());
+        let router = OutputRouter::new();
+
+        manager.create_session("alpha", 80, 24).await.unwrap();
+        manager.create_session("beta", 80, 24).await.unwrap();
+
+        let alpha_pane = manager.query_default_pane("alpha").await.unwrap();
+        let beta_pane = manager.query_default_pane("beta").await.unwrap();
+        assert_ne!(alpha_pane, beta_pane, "panes must be distinct");
+
+        let (_alpha_rx, _alpha_id, _) = router.subscribe(alpha_pane).unwrap();
+        let (_beta_rx, _beta_id, _) = router.subscribe(beta_pane).unwrap();
+        assert_eq!(router.registered_count(), 2);
+
+        manager.destroy_session("alpha").await.unwrap();
+
+        let evicted = manager
+            .reconcile_router(&router)
+            .await
+            .expect("reconcile succeeds");
+        assert_eq!(evicted, 1, "alpha's pane evicted, beta's survives");
+        assert_eq!(router.registered_count(), 1);
+        assert_eq!(router.subscriber_count(beta_pane), 1);
+        assert_eq!(router.subscriber_count(alpha_pane), 0);
+
+        tmux.shutdown().await;
+    }
 }
