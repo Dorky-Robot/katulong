@@ -443,6 +443,109 @@ describe("createSessionSummarizer", () => {
     s.stop();
   });
 
+  it("volume gate alone: settled session with no new bytes blocks a second Ollama call", async () => {
+    // Isolates the volume gate from the activity gate. After a first
+    // summary, the cursor is unchanged on the next tick — activity gate
+    // passes — and `cursor - lastSummarizedCursor === 0`, so the volume
+    // gate must block on its own.
+    const session = makeFakeSessionWithCursor({
+      name: "kat_settled_only",
+      buffer: "ample initial content\n".repeat(40),
+    });
+    const mgr = makeFakeManager([session]);
+    const callOllama = okOllama();
+
+    const s = createSessionSummarizer({
+      sessionManager: mgr,
+      callOllama,
+      minContentChars: 100,
+      minNewBytesPerSummary: 500,
+    });
+
+    await s.runOnce();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(callOllama.calls.length, 1);
+
+    // Same cursor on the next tick. Activity gate is satisfied (no
+    // movement); volume gate must reject the call by itself.
+    await s.runOnce();
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(callOllama.calls.length, 1);
+
+    s.stop();
+  });
+
+  it("unparseable response advances lastSummarizedCursor to suppress retry storm", async () => {
+    const session = makeFakeSessionWithCursor({
+      name: "kat_garbage_retry",
+      buffer: "meaningful content\n".repeat(40),
+    });
+    const mgr = makeFakeManager([session]);
+    const callOllama = okOllama("not json at all");
+
+    const s = createSessionSummarizer({
+      sessionManager: mgr,
+      callOllama,
+      minContentChars: 100,
+      minNewBytesPerSummary: 500,
+    });
+
+    // First tick: gates exempt, Ollama called, parse fails.
+    await s.runOnce();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(callOllama.calls.length, 1);
+
+    // Settled tick: without the failure-path cursor advance, the volume
+    // gate (delta=0) would block — but the bug we're guarding against
+    // is the previous version not advancing lastSummarizedCursor on
+    // parse failure, which left delta=cursor (well above the threshold)
+    // and triggered Ollama on every settled tick. Asserts the fix.
+    await s.runOnce();
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(
+      callOllama.calls.length, 1,
+      "settled session must not retry Ollama after a parse failure",
+    );
+
+    s.stop();
+  });
+
+  it("thrown Ollama error advances lastSummarizedCursor to suppress retry storm", async () => {
+    const session = makeFakeSessionWithCursor({
+      name: "kat_throw_retry",
+      buffer: "meaningful content\n".repeat(40),
+    });
+    const mgr = makeFakeManager([session]);
+    let attempts = 0;
+    const callOllama = async () => {
+      attempts += 1;
+      throw new Error("network down");
+    };
+
+    const s = createSessionSummarizer({
+      sessionManager: mgr,
+      callOllama,
+      minContentChars: 100,
+      minNewBytesPerSummary: 500,
+    });
+
+    await s.runOnce();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(attempts, 1);
+
+    await s.runOnce();
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(
+      attempts, 1,
+      "settled session must not retry Ollama after a thrown error",
+    );
+
+    s.stop();
+  });
+
   it("first observation is exempt from the activity gate", async () => {
     const session = makeFakeSessionWithCursor({
       name: "kat_fresh",
