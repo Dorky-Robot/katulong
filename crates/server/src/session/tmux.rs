@@ -67,6 +67,24 @@
 //! 3. **Client API** — `send_command(&str)` pushes to the writer
 //!    and awaits the matching reply.
 //!
+//! # Reader split: functional core, imperative shell
+//!
+//! The reader is structured as a **pure protocol state machine**
+//! plus a **thin imperative driver**. The protocol logic lives in
+//! [`step`] — a pure function `(state, parsed, raw) → (state,
+//! Vec<Effect>)` whose state space is the [`ProtocolState`] enum
+//! and whose outputs are [`Effect`] values. [`run_reader`] is the
+//! shell: parse, call `step`, interpret each effect via
+//! [`apply_effect`].
+//!
+//! Why: protocol decisions become exhaustively type-checked (the
+//! compiler refuses to build code where a state has no arm), and
+//! every transition is unit-testable without spawning subprocesses
+//! or holding mutexes. Slices 9l/9m/9n are expected to follow the
+//! same template (`enum State`, pure `step`, `Effect` interpreter,
+//! thin shell). See memory `feedback_rewrite_fp_direction` for
+//! the project-wide policy.
+//!
 //! # Dedicated tmux socket
 //!
 //! Every tmux invocation passes `-L <socket_name>` (NOT a path;
@@ -145,14 +163,13 @@ struct OutgoingCommand {
     reply: oneshot::Sender<Result<CommandReply, TmuxError>>,
 }
 
-/// Entry in the reader's pending-reply queue. The writer pushes
-/// one per outgoing command (after successfully writing the bytes
-/// to tmux's stdin); the reader pops in FIFO order on `%begin`.
-/// Does NOT carry the command text — the reader has no use for
-/// it, and avoiding the extra clone keeps the hot path lean.
-struct PendingReply {
-    reply: oneshot::Sender<Result<CommandReply, TmuxError>>,
-}
+/// One-shot sender for a command's reply. The writer pushes one
+/// per outgoing command (after writing the command bytes); the
+/// reader pops in FIFO order on `%begin` and resolves on
+/// `%end`/`%error`. Does NOT carry the command text — the reader
+/// has no use for it, and avoiding the extra clone keeps the hot
+/// path lean.
+type ReplySender = oneshot::Sender<Result<CommandReply, TmuxError>>;
 
 impl Tmux {
     /// Start the tmux server with a detached keepalive session,
@@ -283,7 +300,7 @@ impl Tmux {
 
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<OutgoingCommand>();
         let (notif_tx, notif_rx) = mpsc::unbounded_channel::<Notification>();
-        let pending: Arc<Mutex<VecDeque<PendingReply>>> =
+        let pending: Arc<Mutex<VecDeque<ReplySender>>> =
             Arc::new(Mutex::new(VecDeque::new()));
 
         let reader_handle =
@@ -402,61 +419,41 @@ pub const DEDICATED_SOCKET_NAME: &str = "katulong";
 /// remain-on-exit on` no-command session) lands in one place.
 const KEEPALIVE_PANE_CMD: &str = "cat";
 
-/// Validate a tmux socket name. Same allowlist as session names
-/// but enforced here rather than in `SessionManager` because
-/// sockets are chosen at server startup from operator config, not
-/// user input — still, a misconfigured staging script could feed
-/// something path-like. Rejecting `/`, `..`, and control chars now
-/// forecloses the "tmux creates its socket file in an
-/// attacker-controlled location" class of bug before slice 9c+
-/// widens the caller surface.
+/// Allowlist validator shared by socket and session names: empty
+/// rejected, no leading hyphen (argument-injection guard against
+/// tmux's getopt parser), and only `[a-zA-Z0-9_-]` thereafter.
+/// Rejecting `/`, `..`, and control chars forecloses the
+/// "tmux creates its socket file in an attacker-controlled
+/// location" class of bug.
+///
+/// `kind` ("socket" / "session") feeds the error message so log
+/// scanners and operators can tell which validator rejected.
+fn validate_tmux_name(kind: &str, name: &str) -> Result<(), TmuxError> {
+    let invalid = || TmuxError::InvalidCommand(format!("invalid tmux {kind} name: {name:?}"));
+    if name.is_empty() || name.starts_with('-') {
+        return Err(invalid());
+    }
+    for c in name.chars() {
+        if !(c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            return Err(invalid());
+        }
+    }
+    Ok(())
+}
+
+/// Validate a tmux socket name. Sockets are chosen at server
+/// startup from operator config, not user input — still, a
+/// misconfigured staging script could feed something path-like.
 fn validate_socket_name(name: &str) -> Result<(), TmuxError> {
-    if name.is_empty() || name.starts_with('-') {
-        return Err(TmuxError::InvalidCommand(format!(
-            "invalid tmux socket name: {name:?}"
-        )));
-    }
-    for c in name.chars() {
-        let ok = c.is_ascii_alphanumeric() || c == '-' || c == '_';
-        if !ok {
-            return Err(TmuxError::InvalidCommand(format!(
-                "invalid tmux socket name: {name:?}"
-            )));
-        }
-    }
-    Ok(())
+    validate_tmux_name("socket", name)
 }
 
-/// Same allowlist, applied to the `-s` argument of the initial
-/// `new-session`. Mirrors `SessionManager::validate_session_name`
-/// but lives here so `Tmux::spawn` can reject before any
-/// subprocess lifecycle setup happens.
+/// Validate the `-s` argument of the initial `new-session`.
+/// Mirrors `SessionManager::validate_session_name` but lives here
+/// so `Tmux::spawn` can reject before any subprocess lifecycle
+/// setup happens.
 fn validate_session_name_for_tmux(name: &str) -> Result<(), TmuxError> {
-    if name.is_empty() || name.starts_with('-') {
-        return Err(TmuxError::InvalidCommand(format!(
-            "invalid tmux session name: {name:?}"
-        )));
-    }
-    for c in name.chars() {
-        let ok = c.is_ascii_alphanumeric() || c == '-' || c == '_';
-        if !ok {
-            return Err(TmuxError::InvalidCommand(format!(
-                "invalid tmux session name: {name:?}"
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// In-flight command reply being accumulated by the reader task.
-/// In the FP-leaning reader split (slice 9k), the payload lives
-/// inside [`ProtocolState::InFlight`], not on this struct — the
-/// only thing the imperative shell needs to retain across
-/// `%begin`/`%end` is the oneshot sender, since that's the
-/// resource (a moved-once channel handle) the pure state machine
-/// can't own.
-struct InFlightReply {
-    reply: oneshot::Sender<Result<CommandReply, TmuxError>>,
+    validate_tmux_name("session", name)
 }
 
 /// # Reader protocol state machine (pure core)
@@ -491,6 +488,13 @@ enum ProtocolState {
     /// `%begin` received; accumulating payload lines until
     /// `%end` or `%error` closes the reply. The `payload` Vec
     /// holds the raw lines (UTF-8) collected so far, in order.
+    ///
+    /// TODO(payload-cap): unbounded under a misbehaving tmux
+    /// that emits `%begin` then floods stdout without `%end`.
+    /// Local-only DoS (CM stdout is not network-reachable).
+    /// Add a soft cap (e.g. 64K lines / 64 MiB) and
+    /// `CompleteReply { ok: false, ... }` on overflow before
+    /// Path 1 widens the trust surface.
     InFlight { payload: Vec<String> },
 }
 
@@ -511,12 +515,36 @@ enum Effect {
     /// payload Vec with `\n` and sends the resulting `CommandReply`
     /// on the oneshot.
     CompleteReply { ok: bool, payload: Vec<String> },
-    /// Emit a tracing line at trace level (best-effort
-    /// observability for warm-up / discarded-payload paths).
-    LogTrace(&'static str),
-    /// Emit a tracing line at warn level (stream-desync paths
-    /// the operator should see).
-    LogWarn(&'static str),
+    /// Observability tag describing what just happened. The pure
+    /// core names the event symbolically; the shell decides how
+    /// to surface it (trace level, warn level, formatter). Tests
+    /// assert on the variant rather than coupling to log strings.
+    Note(StepNote),
+}
+
+/// Symbolic observability tags emitted by [`step`]. Each variant
+/// names a notable transition or non-action; the shell maps to a
+/// tracing call. Adding a variant here requires updating
+/// [`apply_effect`]'s `Note` arm — the compiler enforces.
+#[derive(Debug, PartialEq, Eq)]
+enum StepNote {
+    /// Orphan `%begin` arrived during attach warm-up; ignored.
+    /// Expected on every CM attach (trace level).
+    WarmupOrphanBegin,
+    /// First warm-up `%end`/`%error` consumed. State machine
+    /// transitioned `Warming → Ready` (trace level).
+    WarmupHandshakeClosed,
+    /// `%end`/`%error` arrived in Ready with no in-flight reply.
+    /// Stream is desynchronized (warn level).
+    OrphanEndOutOfSync,
+    /// Nested `%begin` while a reply is already in-flight.
+    /// Existing in-flight preserved; this is a tmux protocol
+    /// error and may indicate FIFO desync downstream
+    /// (warn level — see TODO in [`step`]).
+    NestedBeginInFlight,
+    /// `Payload` line outside any `%begin`/`%end` block;
+    /// discarded (trace level).
+    OrphanPayloadDiscarded,
 }
 
 /// Pure transition function — `(state, parsed_notif, raw_line)
@@ -559,11 +587,11 @@ fn step(
         // that might omit or reorder the signals.
         (Warming, N::Begin { .. }) => (
             Warming,
-            vec![LogTrace("orphan %begin during attach warm-up; ignored")],
+            vec![Note(StepNote::WarmupOrphanBegin)],
         ),
-        (Warming, N::End { .. }) | (Warming, N::Error { .. }) => (
+        (Warming, N::End { .. } | N::Error { .. }) => (
             Ready,
-            vec![LogTrace("warm-up handshake closed; protocol ready")],
+            vec![Note(StepNote::WarmupHandshakeClosed)],
         ),
         (Warming, n @ N::SessionChanged { .. }) => (Ready, vec![EmitNotif(n)]),
 
@@ -572,9 +600,9 @@ fn step(
             InFlight { payload: Vec::new() },
             vec![BindNextReply],
         ),
-        (Ready, N::End { .. }) | (Ready, N::Error { .. }) => (
+        (Ready, N::End { .. } | N::Error { .. }) => (
             Ready,
-            vec![LogWarn("tmux %end/%error with no open command; stream out of sync")],
+            vec![Note(StepNote::OrphanEndOutOfSync)],
         ),
 
         // ===== InFlight: payload accumulation =====
@@ -584,7 +612,7 @@ fn step(
         // case) get pushed as the raw line. The parser strips
         // the `%` from Unknown, so we use `raw` to preserve the
         // original byte sequence.
-        (InFlight { mut payload }, N::Payload(_)) | (InFlight { mut payload }, N::Unknown { .. }) => {
+        (InFlight { mut payload }, N::Payload(_) | N::Unknown { .. }) => {
             payload.push(raw);
             (InFlight { payload }, vec![])
         }
@@ -596,27 +624,46 @@ fn step(
             Ready,
             vec![CompleteReply { ok: false, payload }],
         ),
+        // TODO(nested-begin-fifo-desync): correctness reviewer
+        // on PR #654 noted that ignoring a nested %begin without
+        // also draining a pending FIFO entry can leave the FIFO
+        // permanently shifted by one — the spurious pending slot
+        // gets matched to the NEXT real command, and every
+        // subsequent reply is misrouted. The clean fix is a new
+        // effect (e.g. `FailNextPending(reason)`) that resolves
+        // the spurious oneshot with a protocol-error before the
+        // shell continues. Trigger requires tmux to send nested
+        // %begin which is a tmux protocol error itself, so the
+        // current behavior is "no worse than today's flag-based
+        // version." Address before Path 1 widens concurrent
+        // command load.
         (state @ InFlight { .. }, N::Begin { .. }) => (
             state,
-            vec![LogWarn("nested %begin while a reply is in-flight; protocol error")],
+            vec![Note(StepNote::NestedBeginInFlight)],
         ),
 
         // ===== Payload outside InFlight: discard =====
-        (state @ Warming, N::Payload(_)) | (state @ Ready, N::Payload(_)) => (
+        (state @ (Warming | Ready), N::Payload(_)) => (
             state,
-            vec![LogTrace("payload line outside %begin/%end; discarded")],
+            vec![Note(StepNote::OrphanPayloadDiscarded)],
         ),
 
         // ===== Async notifications: always emit =====
-        // Lifecycle/async notifs (`%output`, `%window-close`,
-        // `%unlinked-window-close`, `%sessions-changed`,
-        // `%session-renamed`, `%window-add`, `%window-renamed`,
-        // `%exit`, `%unknown`) route to the notification channel
-        // regardless of state. Folding them into an in-flight
-        // reply's payload would silently break the dispatcher's
-        // reconcile path under Path 1's per-session CM model
-        // where lifecycle events from one session can interleave
-        // with another session's command reply.
+        // Lifecycle/async notifs route to the notification
+        // channel regardless of state. Today this catch-all
+        // covers: `Output`, `WindowAdd`, `WindowClose`,
+        // `WindowRenamed`, `UnlinkedWindowClose`, `SessionChanged`
+        // (in Ready/InFlight; Warming has its own arm),
+        // `SessionRenamed`, `SessionsChanged`, `Exit`, and
+        // `Unknown` outside InFlight. Folding any of these into
+        // an in-flight reply's payload would silently break the
+        // dispatcher's reconcile path under Path 1's per-session
+        // CM model where lifecycle events from one session can
+        // interleave with another session's command reply. If a
+        // future `Notification` variant has framing semantics
+        // (like `Begin`/`End`/`Payload`), it needs an explicit
+        // arm above — the catch-all is for genuinely
+        // asynchronous events only.
         (state, n) => (state, vec![EmitNotif(n)]),
     }
 }
@@ -653,11 +700,11 @@ async fn kill_orphan_server(socket_name: &str) {
 async fn run_reader(
     stdout: ChildStdout,
     notifications: mpsc::UnboundedSender<Notification>,
-    pending: Arc<Mutex<VecDeque<PendingReply>>>,
+    pending: Arc<Mutex<VecDeque<ReplySender>>>,
 ) {
     let mut reader = BufReader::new(stdout).lines();
     let mut state = ProtocolState::Warming;
-    let mut current_reply: Option<InFlightReply> = None;
+    let mut current_reply: Option<ReplySender> = None;
 
     while let Ok(Some(line)) = reader.next_line().await {
         let parsed = match parse(&line) {
@@ -676,11 +723,11 @@ async fn run_reader(
 
     // Stream closed. Fail every pending command with Disconnected.
     let mut pending = pending.lock().await;
-    while let Some(cmd) = pending.pop_front() {
-        let _ = cmd.reply.send(Err(TmuxError::Disconnected));
+    while let Some(reply) = pending.pop_front() {
+        let _ = reply.send(Err(TmuxError::Disconnected));
     }
-    if let Some(in_flight) = current_reply.take() {
-        let _ = in_flight.reply.send(Err(TmuxError::Disconnected));
+    if let Some(reply) = current_reply.take() {
+        let _ = reply.send(Err(TmuxError::Disconnected));
     }
 }
 
@@ -688,8 +735,8 @@ async fn run_reader(
 /// Each variant maps to a small, well-defined IO operation.
 async fn apply_effect(
     effect: Effect,
-    current_reply: &mut Option<InFlightReply>,
-    pending: &Arc<Mutex<VecDeque<PendingReply>>>,
+    current_reply: &mut Option<ReplySender>,
+    pending: &Arc<Mutex<VecDeque<ReplySender>>>,
     notifications: &mpsc::UnboundedSender<Notification>,
 ) {
     match effect {
@@ -700,8 +747,8 @@ async fn apply_effect(
             let _ = notifications.send(n);
         }
         Effect::BindNextReply => {
-            if let Some(cmd) = pending.lock().await.pop_front() {
-                *current_reply = Some(InFlightReply { reply: cmd.reply });
+            if let Some(reply) = pending.lock().await.pop_front() {
+                *current_reply = Some(reply);
             } else {
                 tracing::warn!(
                     "tmux %begin with no pending command — stream out of sync; discarding reply"
@@ -710,20 +757,43 @@ async fn apply_effect(
             }
         }
         Effect::CompleteReply { ok, payload } => {
-            if let Some(in_flight) = current_reply.take() {
+            if let Some(reply) = current_reply.take() {
                 let r = CommandReply {
                     ok,
                     output: payload.join("\n"),
                 };
-                let _ = in_flight.reply.send(Ok(r));
+                let _ = reply.send(Ok(r));
             }
             // No active reply slot means the corresponding
             // BindNextReply hit an empty pending queue (already
             // logged). Silently dropping is the right behavior
             // here — the warning came at bind time.
         }
-        Effect::LogTrace(msg) => tracing::trace!("{}", msg),
-        Effect::LogWarn(msg) => tracing::warn!("{}", msg),
+        Effect::Note(note) => apply_note(note),
+    }
+}
+
+/// Map a [`StepNote`] observability tag to a tracing call.
+/// Centralizing this here keeps the pure core ([`step`])
+/// agnostic to log levels and message formatting; future log
+/// volume tuning happens in one place.
+fn apply_note(note: StepNote) {
+    match note {
+        StepNote::WarmupOrphanBegin => {
+            tracing::trace!("orphan %begin during attach warm-up; ignored")
+        }
+        StepNote::WarmupHandshakeClosed => {
+            tracing::trace!("warm-up handshake closed; protocol ready")
+        }
+        StepNote::OrphanEndOutOfSync => {
+            tracing::warn!("tmux %end/%error with no open command; stream out of sync")
+        }
+        StepNote::NestedBeginInFlight => {
+            tracing::warn!("nested %begin while a reply is in-flight; protocol error")
+        }
+        StepNote::OrphanPayloadDiscarded => {
+            tracing::trace!("payload line outside %begin/%end; discarded")
+        }
     }
 }
 
@@ -740,21 +810,37 @@ async fn write_line(stdin: &mut ChildStdin, line: &str) -> std::io::Result<()> {
 async fn run_writer(
     mut stdin: ChildStdin,
     mut cmd_rx: mpsc::UnboundedReceiver<OutgoingCommand>,
-    pending: Arc<Mutex<VecDeque<PendingReply>>>,
+    pending: Arc<Mutex<VecDeque<ReplySender>>>,
 ) {
+    // Architectural note: the writer is intentionally NOT split
+    // into a pure-core + shell pair like the reader is (slice 9k
+    // template). Its state space is trivial — there is no
+    // multi-state machine to model: receive a command, register
+    // its reply slot, write to stdin, loop. No protocol-level
+    // branching, no deferred decisions. The FP-core split offers
+    // no structural benefit at this size; the imperative loop is
+    // the right shape. If the writer ever grows protocol logic
+    // (e.g., flow control, batched commands, retry backoff),
+    // revisit applying the slice 9k template.
     while let Some(cmd) = cmd_rx.recv().await {
         // Register the pending reply BEFORE writing, so a racing
         // reader that sees `%begin` immediately after the flush
         // already has the oneshot to resolve against.
-        pending.lock().await.push_back(PendingReply {
-            reply: cmd.reply,
-        });
+        //
+        // KNOWN GAP: PR #654 security review flagged that under
+        // concurrent send_command + a write failure, the
+        // pop_back below can peel a different entry than the
+        // one we just pushed (if a racing reader has already
+        // popped the front). The clean fix is to keep the
+        // oneshot in scope until write succeeds, then push, so
+        // failures can resolve directly without touching the
+        // FIFO. Pre-existing — not introduced by slice 9k.
+        // Track for follow-on slice (likely 9l or a writer FP
+        // refactor).
+        pending.lock().await.push_back(cmd.reply);
         if let Err(e) = write_line(&mut stdin, &cmd.line).await {
-            // Writer failed — peel the entry we just pushed and
-            // resolve its oneshot with the I/O error, then bail
-            // out of the loop so `shutdown` can clean up.
-            if let Some(p) = pending.lock().await.pop_back() {
-                let _ = p.reply.send(Err(TmuxError::Io(e)));
+            if let Some(reply) = pending.lock().await.pop_back() {
+                let _ = reply.send(Err(TmuxError::Io(e)));
             }
             break;
         }
@@ -764,8 +850,8 @@ async fn run_writer(
     // see the stdin close and do the same, whichever gets there first
     // wins.
     let mut pending = pending.lock().await;
-    while let Some(cmd) = pending.pop_front() {
-        let _ = cmd.reply.send(Err(TmuxError::Disconnected));
+    while let Some(reply) = pending.pop_front() {
+        let _ = reply.send(Err(TmuxError::Disconnected));
     }
 }
 
@@ -809,7 +895,7 @@ mod tests {
         // must not consume a pending reply slot. Stays Warming.
         let (state, effects) = step(ProtocolState::Warming, n_begin(), "%begin 0 0 0".into());
         assert_eq!(state, ProtocolState::Warming);
-        assert!(matches!(effects.as_slice(), [Effect::LogTrace(_)]));
+        assert_eq!(effects, vec![Effect::Note(StepNote::WarmupOrphanBegin)]);
     }
 
     #[test]
@@ -859,10 +945,11 @@ mod tests {
     #[test]
     fn ready_with_orphan_end_is_warning() {
         // %end arriving outside an in-flight reply means the
-        // pending FIFO got out of sync. Don't crash — just warn.
+        // pending FIFO got out of sync. Don't crash — just emit
+        // an OrphanEndOutOfSync note (shell logs warn).
         let (state, effects) = step(ProtocolState::Ready, n_end(), "%end 0 0 0".into());
         assert_eq!(state, ProtocolState::Ready);
-        assert!(matches!(effects.as_slice(), [Effect::LogWarn(_)]));
+        assert_eq!(effects, vec![Effect::Note(StepNote::OrphanEndOutOfSync)]);
     }
 
     #[test]
@@ -937,7 +1024,7 @@ mod tests {
             }
             other => panic!("expected InFlight to be preserved, got {other:?}"),
         }
-        assert!(matches!(effects.as_slice(), [Effect::LogWarn(_)]));
+        assert_eq!(effects, vec![Effect::Note(StepNote::NestedBeginInFlight)]);
     }
 
     #[test]
@@ -1000,7 +1087,7 @@ mod tests {
             "orphan".into(),
         );
         assert_eq!(state, ProtocolState::Ready);
-        assert!(matches!(effects.as_slice(), [Effect::LogTrace(_)]));
+        assert_eq!(effects, vec![Effect::Note(StepNote::OrphanPayloadDiscarded)]);
     }
 
     #[tokio::test]
