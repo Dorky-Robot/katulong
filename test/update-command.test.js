@@ -232,6 +232,21 @@ describe("decideUpgradeAction", () => {
       { action: "noop", reason: "already-up-to-date" },
     );
   });
+
+  it("still runs finish-upgrade when probe failed but on-disk was upgraded", () => {
+    // Probe timed out (runningVersion === null), but brew DID bump the
+    // on-disk binary. We should still proceed with finish-upgrade — the
+    // probe failure is unrelated to the fact that there's something new
+    // to swap in.
+    assert.deepEqual(
+      decideUpgradeAction({
+        ...base,
+        currentVersion: "0.9.0",
+        runningVersion: null,
+      }),
+      { action: "finish-upgrade", reason: "binary-upgraded" },
+    );
+  });
 });
 
 describe("detectInstallMethod integration", () => {
