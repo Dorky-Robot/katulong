@@ -12,9 +12,12 @@
  * watcher and `meta.pane` rides along on that response, so the status bar
  * subscribes to the same watcher — no extra poller.
  *
- * The bar is absolutely positioned over the xterm viewport. We accept
- * that it covers the bottom ~1 row of terminal output; keeping layout
- * flat avoids a structural refactor of the terminalPool container.
+ * The bar is absolutely positioned at the bottom of the tile body. The
+ * `.terminal-pane` reserves equivalent bottom padding (--term-status-bar-height
+ * in index.html) so xterm renders fewer rows instead of having its bottom
+ * row hidden behind the pills. `scaleToFit` in terminal-pool.js already
+ * subtracts paddingBottom when computing rows, so the carve-out flows
+ * through automatically.
  */
 
 import { escapeHtml } from "/lib/utils.js";
