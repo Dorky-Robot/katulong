@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { detectInstallMethod } from "../lib/cli/process-manager.js";
+import { decideUpgradeAction } from "../lib/cli/commands/update.js";
 
 // Helper: stub fsExists to return a fixed value
 const gitExists = () => true;
@@ -155,6 +156,81 @@ describe("detectInstallMethod", () => {
         "homebrew"
       );
     });
+  });
+});
+
+describe("decideUpgradeAction", () => {
+  const base = {
+    currentVersion: "1.0.0",
+    newVersion: "1.0.0",
+    runningVersion: "1.0.0",
+    oldServerRunning: true,
+    noRestart: false,
+  };
+
+  it("noop when on-disk and running both match latest", () => {
+    assert.deepEqual(decideUpgradeAction(base), {
+      action: "noop",
+      reason: "already-up-to-date",
+    });
+  });
+
+  it("runs finish-upgrade when on-disk binary was bumped", () => {
+    assert.deepEqual(
+      decideUpgradeAction({ ...base, currentVersion: "0.9.0" }),
+      { action: "finish-upgrade", reason: "binary-upgraded" },
+    );
+  });
+
+  it("runs finish-upgrade when running server is stale (binary already updated)", () => {
+    // The bug we just fixed: on-disk == newVersion but the running PID
+    // started from an earlier Cellar dir that has since been pruned.
+    assert.deepEqual(
+      decideUpgradeAction({ ...base, runningVersion: "0.9.0" }),
+      { action: "finish-upgrade", reason: "running-server-stale" },
+    );
+  });
+
+  it("noop with --no-restart even when an upgrade is needed", () => {
+    assert.deepEqual(
+      decideUpgradeAction({
+        ...base,
+        currentVersion: "0.9.0",
+        noRestart: true,
+      }),
+      { action: "noop", reason: "no-restart" },
+    );
+  });
+
+  it("noop with --no-restart even when running server is stale", () => {
+    assert.deepEqual(
+      decideUpgradeAction({
+        ...base,
+        runningVersion: "0.9.0",
+        noRestart: true,
+      }),
+      { action: "noop", reason: "no-restart" },
+    );
+  });
+
+  it("noop when no server is running, even on binary upgrade", () => {
+    assert.deepEqual(
+      decideUpgradeAction({
+        ...base,
+        currentVersion: "0.9.0",
+        runningVersion: null,
+        oldServerRunning: false,
+      }),
+      { action: "noop", reason: "no-running-server" },
+    );
+  });
+
+  it("ignores unprobed runningVersion (null) when versions agree", () => {
+    // /health probe failed (e.g., timeout). Don't fabricate staleness.
+    assert.deepEqual(
+      decideUpgradeAction({ ...base, runningVersion: null }),
+      { action: "noop", reason: "already-up-to-date" },
+    );
   });
 });
 
