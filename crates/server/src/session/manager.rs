@@ -819,4 +819,67 @@ mod tests {
             "clean detach should be quick; took {elapsed:?}"
         );
     }
+
+    #[tokio::test]
+    #[ignore = "requires tmux binary + dedicated socket; run with: cargo test -- --ignored"]
+    async fn tile_output_routes_through_per_tile_dispatcher() {
+        // SLICE 9N END-TO-END: verifies that user-tile %output
+        // actually reaches an OutputRouter subscriber via the
+        // per-tile CM + spawn_output_pump path. This is
+        // the architectural payoff of Path 1.
+        //
+        // Set up:
+        //   command CM ── spawn keepalive session
+        //   per-tile CM (via attach_tile) ── attached to tile
+        //                                    session, runs
+        //                                    user's default
+        //                                    shell
+        //   per-tile dispatcher ── routes %output to router
+        //   router subscriber ── receives the shell's startup
+        //                        prompt as the first chunk
+        use super::super::router::OutputRouter;
+        use super::super::tmux::Tmux;
+        use std::time::Duration;
+
+        let socket = format!("katulong-tile-output-{}", std::process::id());
+        let (cmd_tmux, _cmd_notifs) = Tmux::spawn(&socket, "main", 80, 24)
+            .await
+            .expect("spawn command CM");
+        let manager = SessionManager::new(cmd_tmux.clone());
+        let router = OutputRouter::new();
+
+        // Attach a tile + spawn its per-tile dispatcher. This
+        // is the same wiring `try_attach` does in production.
+        let (tile_tmux, tile_notifs) = manager
+            .attach_tile("tile-out", 80, 24)
+            .await
+            .expect("attach_tile");
+        let tile_disp = router.spawn_output_pump(tile_notifs);
+
+        // Subscribe to the tile's pane on the router.
+        let pane_id = manager
+            .query_default_pane("tile-out")
+            .await
+            .expect("query pane");
+        let (mut rx, _sub_id, _baseline) =
+            router.subscribe(pane_id).expect("subscribe");
+
+        // The default shell prints a prompt at startup, which
+        // generates %output. 5s budget — generous on a normal
+        // dev machine, tolerant of slow shell startups (e.g.,
+        // a heavy ~/.bashrc, a loaded host).
+        let chunk = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("output within 5s")
+            .expect("subscriber received bytes");
+        assert!(
+            !chunk.data.is_empty(),
+            "shell startup should produce non-empty %output via per-tile CM"
+        );
+
+        tile_disp.abort();
+        let _ = tile_disp.await;
+        tile_tmux.shutdown().await;
+        cmd_tmux.shutdown().await;
+    }
 }

@@ -462,7 +462,20 @@ impl OutputRouter {
         });
     }
 
-    /// Spawn the dispatcher task. See module doc.
+    /// Spawn the global dispatcher task — **keepalive CM only**.
+    /// See module doc.
+    ///
+    /// This dispatcher handles `%output`, lifecycle events
+    /// (`%sessions-changed`, `%window-close`,
+    /// `%unlinked-window-close`) that drive reconcile, and
+    /// `%exit` that drives [`OutputRouter::evict_all`]. Per-tile
+    /// CMs do NOT see lifecycle events (a CM only receives
+    /// notifications for the session it's attached to), so this
+    /// task must NOT be spawned for per-tile CMs — they'd never
+    /// trigger reconcile, and a per-tile `%exit` from a tile-
+    /// session-killed event would incorrectly `evict_all`.
+    /// Per-tile CMs use [`OutputRouter::spawn_output_pump`]
+    /// instead.
     ///
     /// When the task exits (either tmux's `%exit` notification
     /// or the notification sender being dropped), it calls
@@ -491,6 +504,39 @@ impl OutputRouter {
     /// close event will try again. Multiple reconciles
     /// queueing up is self-compensating — each one is
     /// idempotent (it sets the keep-set, doesn't append to it).
+    /// Spawn a per-tile output dispatcher (slice 9n / Path 1).
+    /// Consumes `%output` notifications from a single tile's CM
+    /// and routes them through [`OutputRouter::dispatch`].
+    /// Lifecycle and exit events are IGNORED — those are
+    /// handled by the keepalive CM's global
+    /// [`OutputRouter::spawn_dispatcher`] task. Per-pane
+    /// eviction comes from the global reconcile path; per-tile
+    /// dispatchers do not touch router state on shutdown.
+    ///
+    /// The task exits when `notifs` closes (tile CM died via
+    /// `Tmux::shutdown` or because the tile session was
+    /// killed). Caller should hold the returned `JoinHandle`
+    /// and abort it on connection cleanup so the task exits
+    /// deterministically.
+    pub fn spawn_output_pump(
+        &self,
+        mut notifs: mpsc::UnboundedReceiver<Notification>,
+    ) -> JoinHandle<()> {
+        let router = self.clone();
+        tokio::spawn(async move {
+            while let Some(notif) = notifs.recv().await {
+                if let Notification::Output { pane_id, data } = notif {
+                    router.dispatch(pane_id, &data);
+                }
+                // Other notifications (lifecycle, exit, output
+                // for other panes which can't happen since the
+                // tile's session has one pane) are intentionally
+                // discarded. The keepalive CM's dispatcher
+                // handles cross-session lifecycle reconcile.
+            }
+        })
+    }
+
     pub fn spawn_dispatcher(
         &self,
         mut notifs: mpsc::UnboundedReceiver<Notification>,

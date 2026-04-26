@@ -337,6 +337,28 @@ fn phase_name(phase: &Phase) -> &'static str {
 struct AttachedState {
     session: String,
     pane_id: u32,
+    /// Per-tile control-mode client attached to this WS
+    /// connection's tile session. Slice 9n (Path 1): each WS
+    /// owns its own CM child rather than sharing a global
+    /// keepalive CM. The CM is what carries `%output` for the
+    /// tile — the keepalive CM only sees its own session's
+    /// (empty) output. On cleanup, [`Tmux::shutdown`] does the
+    /// in-band detach-client dance to avoid the tmux 3.6a UAF.
+    ///
+    /// Wrapped in `Option` (slice 9n round-1) so the explicit
+    /// cleanup path in [`serve_session`] can `.take()` the
+    /// value, and the [`Drop`] impl can detect "cleanup didn't
+    /// run" (Some still present) and best-effort schedule async
+    /// cleanup via `tokio::spawn`. Closes the
+    /// cancellation-driven UAF risk reviewers flagged.
+    tile_tmux: Option<crate::session::Tmux>,
+    /// JoinHandle for the per-tile output dispatcher task. The
+    /// dispatcher consumes `%output` notifications from
+    /// `tile_tmux`'s notif stream and routes them through
+    /// `OutputRouter::dispatch`. Aborted on cleanup so the
+    /// task exits before the `Tmux` is dropped. Same
+    /// `Option<...>` + Drop pattern as `tile_tmux`.
+    tile_dispatcher: Option<tokio::task::JoinHandle<()>>,
     /// This subscriber's id, handed back by the router on
     /// subscribe. Used at cleanup to remove ONLY this
     /// connection's sender from the pane's fan-out list,
@@ -371,6 +393,57 @@ struct PendingResize {
     cols: u16,
     rows: u16,
     queued_at: Instant,
+}
+
+impl Drop for AttachedState {
+    /// Best-effort cleanup if `serve_session`'s explicit cleanup
+    /// path didn't run (axum task cancelled, panic, future
+    /// dropped abnormally). Slice 9n round-1 closes the
+    /// security/correctness MEDIUM that flagged a per-tile CM
+    /// child being SIGKILLed via `kill_on_drop` instead of
+    /// going through the in-band `detach-client` path — the
+    /// SIGKILL is the tmux 3.6a UAF trigger.
+    ///
+    /// `Drop` can't `.await`, so we schedule an async cleanup
+    /// task via `tokio::spawn` that owns the moved-out handles
+    /// and runs the full shutdown dance:
+    ///   1. `Tmux::shutdown()` (in-band detach-client, watchdog)
+    ///   2. abort + await the dispatcher
+    ///
+    /// If the explicit cleanup ran, both `Option`s are `None`
+    /// (taken by the explicit path) and this is a no-op.
+    ///
+    /// Caveat: `tokio::spawn` requires a runtime. On normal
+    /// runtime shutdown the spawned cleanup may not get to run
+    /// before the runtime stops; `kill_on_drop(true)` on the
+    /// child remains the secondary backstop in that case.
+    fn drop(&mut self) {
+        let tile_tmux = self.tile_tmux.take();
+        let tile_dispatcher = self.tile_dispatcher.take();
+        if tile_tmux.is_none() && tile_dispatcher.is_none() {
+            return;
+        }
+        // Catch the no-runtime case: try_current returns Err if
+        // we're being dropped outside a runtime context (e.g.,
+        // during a runtime shutdown's cleanup phase). Falling
+        // through to runtime-end + kill_on_drop is acceptable
+        // there — the process is going away.
+        if tokio::runtime::Handle::try_current().is_err() {
+            tracing::warn!(
+                "AttachedState dropped outside tokio runtime; falling back to kill_on_drop"
+            );
+            return;
+        }
+        tokio::spawn(async move {
+            if let Some(tmux) = tile_tmux {
+                tmux.shutdown().await;
+            }
+            if let Some(d) = tile_dispatcher {
+                d.abort();
+                let _ = d.await;
+            }
+        });
+    }
 }
 
 impl AttachedState {
@@ -693,16 +766,46 @@ pub async fn serve_session(
         }
     }
 
-    // Cleanup: detach THIS subscriber, but keep the pane's
-    // ring, decoder, and sibling subscribers alive. Slice 9h:
-    // `clear_subscriber` takes the SubscriberId so only this
-    // connection's sender is removed. Multi-device sessions
-    // (phone + laptop) keep flowing for the other devices
-    // when one closes its transport.
-    if let Some(a) = attached {
+    // Cleanup, slice 9n / Path 1:
+    //
+    // 1. Detach this connection's subscriber from the router
+    //    (slice 9h fan-out: keeps the pane's ring, decoder,
+    //    and sibling subscribers alive — multi-device sessions
+    //    keep flowing for the other devices).
+    //
+    // 2. Shut down the per-tile CM client via the in-band
+    //    `detach-client` dance (slice 9l). Avoids the tmux
+    //    3.6a UAF that the abrupt-drop path would trigger.
+    //    The shutdown blocks up to `SHUTDOWN_GRACE` (2s) for
+    //    a clean exit; SIGKILL fallback only if the child is
+    //    truly stuck.
+    //
+    // 3. Abort the per-tile dispatcher LAST. The dispatcher
+    //    must outlive `shutdown()` to keep draining the CM's
+    //    unbounded notif channel during the 2s detach-client
+    //    grace window — leaving it unread would violate the
+    //    backpressure contract on `Tmux::spawn`. The
+    //    dispatcher exits naturally when the CM's notif
+    //    channel closes; `abort` makes cleanup deterministic
+    //    if the CM hung past the watchdog.
+    //
+    // `.take()` on the Option fields signals to the Drop
+    // impl that explicit cleanup ran — preventing duplicate
+    // async cleanup if AttachedState is dropped after this
+    // block (shouldn't happen on the normal path but is
+    // defensive against a future caller that splits
+    // serve_session into smaller scopes).
+    if let Some(mut a) = attached {
         state
             .output_router
             .clear_subscriber(a.pane_id, a.subscriber_id);
+        if let Some(tile_tmux) = a.tile_tmux.take() {
+            tile_tmux.shutdown().await;
+        }
+        if let Some(dispatcher) = a.tile_dispatcher.take() {
+            dispatcher.abort();
+            let _ = dispatcher.await;
+        }
     }
     // Drop the handle. The WS output pump sees the channel close
     // and shuts down the socket gracefully.
@@ -800,6 +903,39 @@ async fn try_attach(
         .query_default_pane(session)
         .await
         .map_err(to_failure)?;
+    // Slice 9n / Path 1: per-tile CM client. Spawned AFTER all
+    // pre-checks so a rejected attach never leaks a subprocess.
+    // The CM's notif stream feeds a per-tile dispatcher that
+    // routes `%output` through `OutputRouter::dispatch`; this
+    // is the path that makes user-tile output actually reach
+    // the WS subscriber (the keepalive CM is attached to its
+    // own session and never sees tile panes' output). On a
+    // post-subscribe failure we shut down the CM and abort the
+    // dispatcher so the cleanup never leaks a child process.
+    // Spawn the per-tile pipeline and roll back the subscriber
+    // on failure. Takes the just-bound `subscriber_id` so the
+    // rollback path is encapsulated here — the three call
+    // sites just `?` the result and don't need to remember
+    // the cleanup discipline. Slice 9n round-1 (correctness
+    // LOW: three-site cleanup duplication).
+    //
+    // Audit log: tie per-tile CM lifecycle to a session name
+    // in operator logs. Slice 9n round-1 (security LOW).
+    // credential_id isn't currently threaded into try_attach;
+    // if/when that lands, include it here.
+    let spawn_pipeline_with_rollback = |subscriber_id: SubscriberId| async move {
+        match sessions.attach_tile(session, cols, rows).await {
+            Ok((tmux, notifs)) => {
+                let dispatcher = state.output_router.spawn_output_pump(notifs);
+                tracing::debug!(session, pane_id, "per-tile CM spawned");
+                Ok((tmux, dispatcher))
+            }
+            Err(err) => {
+                state.output_router.clear_subscriber(pane_id, subscriber_id);
+                Err(to_failure(err))
+            }
+        }
+    };
 
     match resume_from_seq {
         None => {
@@ -809,11 +945,15 @@ async fn try_attach(
                 .output_router
                 .subscribe(pane_id)
                 .map_err(to_subscribe_failure)?;
+            let (tile_tmux, tile_dispatcher) =
+                spawn_pipeline_with_rollback(subscriber_id).await?;
             Ok(AttachOutcome {
                 replay: ReplaySlice::Fresh { end_seq: baseline },
                 new_state: AttachedState {
                     session: session.to_string(),
                     pane_id,
+                    tile_tmux: Some(tile_tmux),
+                    tile_dispatcher: Some(tile_dispatcher),
                     subscriber_id,
                     output_rx: rx,
                     last_seen_seq: baseline,
@@ -863,6 +1003,8 @@ async fn try_attach(
                             .output_router
                             .subscribe(pane_id)
                             .map_err(to_subscribe_failure)?;
+                        let (tile_tmux, tile_dispatcher) =
+                            spawn_pipeline_with_rollback(subscriber_id).await?;
                         Ok(AttachOutcome {
                             replay: ReplaySlice::Gap {
                                 available_from_seq: 0,
@@ -872,6 +1014,8 @@ async fn try_attach(
                             new_state: AttachedState {
                                 session: session.to_string(),
                                 pane_id,
+                                tile_tmux: Some(tile_tmux),
+                                tile_dispatcher: Some(tile_dispatcher),
                                 subscriber_id,
                                 output_rx: rx,
                                 last_seen_seq: 0,
@@ -925,31 +1069,36 @@ async fn try_attach(
                             ),
                         });
                     }
-                    let outcome = AttachOutcome {
+                    let (tile_tmux, tile_dispatcher) =
+                        spawn_pipeline_with_rollback(subscriber_id).await?;
+                    // Compute baseline directly from the replay
+                    // variant. (Slice 9n round-1: AttachedState
+                    // now has a Drop impl, which makes the
+                    // previous struct-update pattern
+                    // `..outcome.new_state` invalid — Rust
+                    // forbids partial moves out of a Drop
+                    // type. Inline the end_seq read instead.)
+                    let baseline = match &replay {
+                        ReplaySlice::Fresh { end_seq } => *end_seq,
+                        ReplaySlice::InRange { end_seq, .. } => *end_seq,
+                        ReplaySlice::UpToDate { end_seq } => *end_seq,
+                        ReplaySlice::Gap { end_seq, .. } => *end_seq,
+                        ReplaySlice::Future => 0, // unreachable; checked above
+                    };
+                    Ok(AttachOutcome {
                         replay,
                         new_state: AttachedState {
                             session: session.to_string(),
                             pane_id,
+                            tile_tmux: Some(tile_tmux),
+                            tile_dispatcher: Some(tile_dispatcher),
                             subscriber_id,
                             output_rx: rx,
-                            // Seeded below after construction so
-                            // `outcome.last_seq()` is the single
-                            // source of truth (accessor reads
-                            // the end_seq from the `replay`
-                            // variant).
-                            last_seen_seq: 0,
+                            last_seen_seq: baseline,
                             coalescer: Coalescer::new(),
                             last_output_at: None,
                             pending_resize: None,
                         },
-                    };
-                    let baseline = outcome.last_seq();
-                    Ok(AttachOutcome {
-                        new_state: AttachedState {
-                            last_seen_seq: baseline,
-                            ..outcome.new_state
-                        },
-                        ..outcome
                     })
                 }
             }
@@ -1429,13 +1578,19 @@ mod tests {
     // ---------- Resize gate deadline math (pure, no runtime) ----------
 
     fn attached_state_for_gate_tests() -> AttachedState {
-        // Build a minimal AttachedState by hand — output_rx +
-        // subscriber_id are required by the struct but the
-        // gate-math helpers don't touch them.
+        // Build a minimal AttachedState by hand — output_rx,
+        // subscriber_id, tile_tmux, and tile_dispatcher are
+        // required by the struct but the gate-math helpers
+        // don't touch them. Slice 9n: tile_tmux is a
+        // dead-channel test handle (any send_command would
+        // fail with Disconnected); tile_dispatcher is a
+        // never-resolving spawned future that we ignore.
         let (_tx, rx) = mpsc::channel(1);
         AttachedState {
             session: "s".into(),
             pane_id: 0,
+            tile_tmux: Some(crate::session::Tmux::dead_for_tests()),
+            tile_dispatcher: Some(tokio::spawn(std::future::pending())),
             subscriber_id: SubscriberId::testing(0),
             output_rx: rx,
             last_seen_seq: 0,
