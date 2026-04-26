@@ -462,7 +462,20 @@ impl OutputRouter {
         });
     }
 
-    /// Spawn the dispatcher task. See module doc.
+    /// Spawn the global dispatcher task — **keepalive CM only**.
+    /// See module doc.
+    ///
+    /// This dispatcher handles `%output`, lifecycle events
+    /// (`%sessions-changed`, `%window-close`,
+    /// `%unlinked-window-close`) that drive reconcile, and
+    /// `%exit` that drives [`OutputRouter::evict_all`]. Per-tile
+    /// CMs do NOT see lifecycle events (a CM only receives
+    /// notifications for the session it's attached to), so this
+    /// task must NOT be spawned for per-tile CMs — they'd never
+    /// trigger reconcile, and a per-tile `%exit` from a tile-
+    /// session-killed event would incorrectly `evict_all`.
+    /// Per-tile CMs use [`OutputRouter::spawn_output_pump`]
+    /// instead.
     ///
     /// When the task exits (either tmux's `%exit` notification
     /// or the notification sender being dropped), it calls
@@ -505,7 +518,7 @@ impl OutputRouter {
     /// killed). Caller should hold the returned `JoinHandle`
     /// and abort it on connection cleanup so the task exits
     /// deterministically.
-    pub fn spawn_tile_dispatcher(
+    pub fn spawn_output_pump(
         &self,
         mut notifs: mpsc::UnboundedReceiver<Notification>,
     ) -> JoinHandle<()> {

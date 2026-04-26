@@ -825,7 +825,7 @@ mod tests {
     async fn tile_output_routes_through_per_tile_dispatcher() {
         // SLICE 9N END-TO-END: verifies that user-tile %output
         // actually reaches an OutputRouter subscriber via the
-        // per-tile CM + spawn_tile_dispatcher path. This is
+        // per-tile CM + spawn_output_pump path. This is
         // the architectural payoff of Path 1.
         //
         // Set up:
@@ -854,7 +854,7 @@ mod tests {
             .attach_tile("tile-out", 80, 24)
             .await
             .expect("attach_tile");
-        let tile_disp = router.spawn_tile_dispatcher(tile_notifs);
+        let tile_disp = router.spawn_output_pump(tile_notifs);
 
         // Subscribe to the tile's pane on the router.
         let pane_id = manager
@@ -865,10 +865,12 @@ mod tests {
             router.subscribe(pane_id).expect("subscribe");
 
         // The default shell prints a prompt at startup, which
-        // generates %output. Wait up to 3s for the first chunk.
-        let chunk = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+        // generates %output. 5s budget — generous on a normal
+        // dev machine, tolerant of slow shell startups (e.g.,
+        // a heavy ~/.bashrc, a loaded host).
+        let chunk = tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
-            .expect("output within 3s")
+            .expect("output within 5s")
             .expect("subscriber received bytes");
         assert!(
             !chunk.data.is_empty(),
