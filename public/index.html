@@ -188,9 +188,16 @@
     #terminal-container { flex: 1; min-width: 0; position: relative; z-index: 1; background: var(--bg); }
     /* terminal-pane: stacking + containment — contain:paint clips all child
        rendering (including system carets) to the pane boundary. */
-    .terminal-pane { position: absolute; inset: 0; display: none; contain: paint; overflow: hidden; padding: 4px 0; }
+    .terminal-pane {
+      position: absolute; inset: 0; display: none; contain: paint; overflow: hidden;
+      /* Bottom padding reserves a strip for the .term-status-bar so xterm
+         renders fewer rows instead of having the cursor row covered. */
+      padding: 4px 0 var(--height-term-status-bar) 0;
+    }
     .terminal-pane.active { display: block; }
-    @media (max-width: 600px) { .terminal-pane { padding: 2px 0; } }
+    /* Mobile only narrows the top padding (2px vs 4px). Bottom strip is the
+       same — the status bar height does not change on phones. */
+    @media (max-width: 600px) { .terminal-pane { padding-top: 2px; } }
 
     /* In carousel mode, all terminal panes stay visible — each one lives
        inside its own card wrapper so they don't overlap. Without this,
@@ -442,7 +449,12 @@
       flex-wrap: wrap;
       gap: var(--space-xs, 4px);
       padding: 6px 10px;
-      background: linear-gradient(to top, rgba(17, 17, 27, 0.88), rgba(17, 17, 27, 0.72) 70%, rgba(17, 17, 27, 0));
+      /* Transparent so the strip inherits whatever the host surface uses
+         (var(--bg) under the main #terminal-container, var(--bg-surface)
+         inside a carousel .card-face). The 1px top border is the visual
+         separator between terminal output and the pills. */
+      background: transparent;
+      border-top: 1px solid var(--border);
       pointer-events: none;
       z-index: 5;
       font-size: var(--text-xs, 12px);
@@ -453,7 +465,7 @@
       align-items: center;
       gap: 5px;
       padding: 3px 8px;
-      border-radius: 999px;
+      border-radius: 4px;
       background: rgba(49, 50, 68, 0.85);
       border: 1px solid rgba(255, 255, 255, 0.06);
       color: var(--text, #cdd6f4);
