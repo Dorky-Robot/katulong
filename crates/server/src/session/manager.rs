@@ -25,18 +25,37 @@ use super::dims::{clamp_dims, DEFAULT_COLS, DEFAULT_ROWS};
 use super::router::OutputRouter;
 use super::tmux::{Tmux, TmuxError};
 use std::collections::HashSet;
+use tokio::sync::mpsc;
+
+use super::parser::Notification;
 
 /// Public handle to the session layer. Construct with `new` at
 /// server startup; clone into every handler that needs to touch
 /// sessions.
+///
+/// SessionManager holds the **command CM** — the long-lived
+/// control-mode client used for global queries
+/// (`list-panes -a`, `list-sessions`, `kill-session`, etc.) and
+/// for issuing `new-session` commands when tiles are created.
+/// It is intentionally NOT a registry of per-tile state; each
+/// per-tile `Tmux` instance is owned by the WS handler that
+/// attached it. Lifecycle of per-tile CMs is tied to the
+/// handler's task, not to this struct.
 #[derive(Clone)]
 pub struct SessionManager {
     tmux: Tmux,
+    socket_name: String,
 }
 
 impl SessionManager {
-    pub fn new(tmux: Tmux) -> Self {
-        Self { tmux }
+    pub fn new(tmux: Tmux, socket_name: String) -> Self {
+        Self { tmux, socket_name }
+    }
+
+    /// Tmux socket this manager talks to. Per-tile `Tmux::attach`
+    /// callers need it; exposed read-only.
+    pub fn socket_name(&self) -> &str {
+        &self.socket_name
     }
 
     /// Create a new tmux session with the given name and initial
@@ -74,10 +93,87 @@ impl SessionManager {
         );
         let reply = self.tmux.send_command(&cmd).await?;
         if !reply.ok {
+            // tmux's "duplicate session" error is what we want to
+            // treat as idempotent success: it means a concurrent
+            // caller (or a prior aborted attempt) already created
+            // this session. Mirrors the symmetric idempotency in
+            // `destroy_session` (treats "can't find session" as
+            // ok). Closes the ensure_session TOCTOU race PR #656
+            // correctness review flagged HIGH.
+            if reply.output.contains("duplicate session") {
+                tracing::info!(
+                    session = %name,
+                    "session already exists; create_session is idempotent"
+                );
+                return Ok(());
+            }
             return Err(SessionError::TmuxRejected(reply.output));
         }
         tracing::info!(session = %name, cols, rows, "session created");
         Ok(())
+    }
+
+    /// Idempotent variant of [`SessionManager::create_session`].
+    /// Creates the session if it doesn't exist; no-op if it does.
+    /// Used by [`SessionManager::attach_tile`] so a WS handler
+    /// can ensure-and-attach in one call without coupling to
+    /// who-creates-it ordering.
+    ///
+    /// Implementation is a `has-session` probe + conditional
+    /// `new-session`. tmux's `new-session -A` flag advertises
+    /// idempotency, but its semantics (attach the calling client
+    /// if the session exists) don't match our use case — the
+    /// command CM should NOT attach to user-tile sessions.
+    pub async fn ensure_session(
+        &self,
+        name: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), SessionError> {
+        validate_session_name(name)?;
+        let has = self
+            .tmux
+            .send_command(&format!("has-session -t {name}"))
+            .await?;
+        if has.ok {
+            tracing::trace!(session = %name, "ensure_session: already exists");
+            return Ok(());
+        }
+        self.create_session(name, cols, rows).await
+    }
+
+    /// Spawn a per-tile control-mode client attached to the named
+    /// tile session. Ensures the session exists first.
+    ///
+    /// Returns the `Tmux` handle and its notification receiver.
+    /// The returned `Tmux` owns a live CM subprocess (despite
+    /// the method name — `attach` here means "attach a CM
+    /// client to an existing tmux session," and that always
+    /// involves spawning a subprocess).
+    ///
+    /// **Ownership transfers to the caller** — typically a WS
+    /// handler. The caller is responsible for:
+    /// - draining the notification receiver (the unbounded-
+    ///   channel backpressure contract documented on
+    ///   [`Tmux::spawn`] applies equally to receivers from
+    ///   [`Tmux::attach`]),
+    /// - calling [`Tmux::shutdown`] when the WS connection
+    ///   tears down (clean detach avoids the tmux 3.6a UAF).
+    ///
+    /// `SessionManager` holds NO per-tile state. The tile's
+    /// underlying tmux session persists across CM disconnects
+    /// (a re-attach gets the same session); only the per-tile
+    /// CM client lifetime is tied to the handler.
+    pub async fn attach_tile(
+        &self,
+        name: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(Tmux, mpsc::UnboundedReceiver<Notification>), SessionError> {
+        self.ensure_session(name, cols, rows).await?;
+        Tmux::attach(&self.socket_name, name)
+            .await
+            .map_err(SessionError::Tmux)
     }
 
     /// List session names currently running on tmux. Returns them in
@@ -578,7 +674,7 @@ mod tests {
         let (tmux, _notifs) = Tmux::spawn(&socket, "main", 80, 24)
             .await
             .expect("spawn tmux");
-        let manager = SessionManager::new(tmux.clone());
+        let manager = SessionManager::new(tmux.clone(), socket.clone());
         let router = OutputRouter::new();
 
         manager.create_session("alpha", 80, 24).await.unwrap();
@@ -604,5 +700,122 @@ mod tests {
         assert_eq!(router.subscriber_count(alpha_pane), 0);
 
         tmux.shutdown().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires tmux binary + dedicated socket; run with: cargo test -- --ignored"]
+    async fn ensure_session_second_call_is_noop() {
+        // Calling ensure_session twice for the same name must
+        // succeed both times. Second call hits the has-session
+        // pre-check and no-ops.
+        use super::super::tmux::Tmux;
+
+        let socket = format!("katulong-ensure-{}", std::process::id());
+        let (tmux, _notifs) = Tmux::spawn(&socket, "main", 80, 24)
+            .await
+            .expect("spawn tmux");
+        let manager = SessionManager::new(tmux.clone(), socket.clone());
+
+        manager.ensure_session("tile-x", 80, 24).await.unwrap();
+        manager
+            .ensure_session("tile-x", 80, 24)
+            .await
+            .expect("second ensure must be a no-op");
+
+        // Verify the session actually exists.
+        let sessions = manager.list_sessions().await.unwrap();
+        assert!(sessions.iter().any(|s| s == "tile-x"));
+
+        tmux.shutdown().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires tmux binary + dedicated socket; run with: cargo test -- --ignored"]
+    async fn attach_tile_returns_live_cm_for_existing_session() {
+        // attach_tile must produce a Tmux whose CM is attached to
+        // the named session. Verified by issuing a list-sessions
+        // command through the per-tile CM and seeing the tile's
+        // session in the reply.
+        use super::super::tmux::Tmux;
+
+        let socket = format!("katulong-attach-{}", std::process::id());
+        let (cmd_tmux, _notifs) = Tmux::spawn(&socket, "main", 80, 24)
+            .await
+            .expect("spawn cmd-tmux");
+        let manager = SessionManager::new(cmd_tmux.clone(), socket.clone());
+
+        let (tile_tmux, _tile_notifs) = manager
+            .attach_tile("tile-y", 80, 24)
+            .await
+            .expect("attach_tile");
+
+        let reply = tile_tmux
+            .send_command("list-sessions -F '#{session_name}'")
+            .await
+            .expect("list-sessions through tile CM");
+        assert!(reply.ok);
+        assert!(
+            reply.output.contains("tile-y"),
+            "tile-y session should appear in list-sessions: {}",
+            reply.output
+        );
+
+        // Clean shutdown via in-band detach.
+        tile_tmux.shutdown().await;
+        cmd_tmux.shutdown().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires tmux binary + dedicated socket; run with: cargo test -- --ignored"]
+    async fn create_session_treats_duplicate_as_idempotent() {
+        // PR #656 round-1 HIGH fix: a concurrent attach race
+        // where two callers both try to create the same session
+        // must not surface tmux's "duplicate session" error to
+        // the second caller. Repeat create_session twice and
+        // expect both Ok.
+        use super::super::tmux::Tmux;
+
+        let socket = format!("katulong-dup-{}", std::process::id());
+        let (tmux, _notifs) = Tmux::spawn(&socket, "main", 80, 24)
+            .await
+            .expect("spawn tmux");
+        let manager = SessionManager::new(tmux.clone(), socket.clone());
+
+        manager.create_session("tile-z", 80, 24).await.unwrap();
+        // Second call must succeed (the "duplicate session" tmux
+        // error is caught and treated as Ok).
+        manager
+            .create_session("tile-z", 80, 24)
+            .await
+            .expect("second create_session must be idempotent");
+
+        tmux.shutdown().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires tmux binary + dedicated socket; run with: cargo test -- --ignored"]
+    async fn shutdown_exits_cleanly_within_grace_period() {
+        // Verifies the slice 9l shutdown path: send detach-client,
+        // wait for clean exit, no SIGKILL fallback in the happy
+        // path. The watchdog warning from `apply_note` style would
+        // not fire on a healthy tmux.
+        use super::super::tmux::Tmux;
+
+        let socket = format!("katulong-detach-{}", std::process::id());
+        let (tmux, _notifs) = Tmux::spawn(&socket, "main", 80, 24)
+            .await
+            .expect("spawn tmux");
+
+        // shutdown should return well within the SHUTDOWN_GRACE
+        // budget (2s). If it took longer, the watchdog tripped
+        // and we'd see a warn — but here the clean path should
+        // be sub-100ms.
+        let start = std::time::Instant::now();
+        tmux.shutdown().await;
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "clean detach should be quick; took {elapsed:?}"
+        );
     }
 }
