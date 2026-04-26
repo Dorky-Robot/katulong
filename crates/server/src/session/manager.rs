@@ -44,18 +44,19 @@ use super::parser::Notification;
 #[derive(Clone)]
 pub struct SessionManager {
     tmux: Tmux,
-    socket_name: String,
 }
 
 impl SessionManager {
-    pub fn new(tmux: Tmux, socket_name: String) -> Self {
-        Self { tmux, socket_name }
+    pub fn new(tmux: Tmux) -> Self {
+        Self { tmux }
     }
 
-    /// Tmux socket this manager talks to. Per-tile `Tmux::attach`
-    /// callers need it; exposed read-only.
+    /// Tmux socket this manager talks to. Delegates to the
+    /// embedded `Tmux` (which owns the canonical
+    /// `socket_name`). Per-tile `Tmux::attach` callers need it;
+    /// exposed read-only.
     pub fn socket_name(&self) -> &str {
-        &self.socket_name
+        self.tmux.socket_name()
     }
 
     /// Create a new tmux session with the given name and initial
@@ -171,7 +172,7 @@ impl SessionManager {
         rows: u16,
     ) -> Result<(Tmux, mpsc::UnboundedReceiver<Notification>), SessionError> {
         self.ensure_session(name, cols, rows).await?;
-        Tmux::attach(&self.socket_name, name)
+        Tmux::attach(self.socket_name(), name)
             .await
             .map_err(SessionError::Tmux)
     }
@@ -674,7 +675,7 @@ mod tests {
         let (tmux, _notifs) = Tmux::spawn(&socket, "main", 80, 24)
             .await
             .expect("spawn tmux");
-        let manager = SessionManager::new(tmux.clone(), socket.clone());
+        let manager = SessionManager::new(tmux.clone());
         let router = OutputRouter::new();
 
         manager.create_session("alpha", 80, 24).await.unwrap();
@@ -714,7 +715,7 @@ mod tests {
         let (tmux, _notifs) = Tmux::spawn(&socket, "main", 80, 24)
             .await
             .expect("spawn tmux");
-        let manager = SessionManager::new(tmux.clone(), socket.clone());
+        let manager = SessionManager::new(tmux.clone());
 
         manager.ensure_session("tile-x", 80, 24).await.unwrap();
         manager
@@ -742,7 +743,7 @@ mod tests {
         let (cmd_tmux, _notifs) = Tmux::spawn(&socket, "main", 80, 24)
             .await
             .expect("spawn cmd-tmux");
-        let manager = SessionManager::new(cmd_tmux.clone(), socket.clone());
+        let manager = SessionManager::new(cmd_tmux.clone());
 
         let (tile_tmux, _tile_notifs) = manager
             .attach_tile("tile-y", 80, 24)
@@ -779,7 +780,7 @@ mod tests {
         let (tmux, _notifs) = Tmux::spawn(&socket, "main", 80, 24)
             .await
             .expect("spawn tmux");
-        let manager = SessionManager::new(tmux.clone(), socket.clone());
+        let manager = SessionManager::new(tmux.clone());
 
         manager.create_session("tile-z", 80, 24).await.unwrap();
         // Second call must succeed (the "duplicate session" tmux

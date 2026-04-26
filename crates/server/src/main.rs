@@ -44,7 +44,7 @@ async fn main() {
         Tmux::spawn(&socket_name, &keepalive_session, DEFAULT_COLS, DEFAULT_ROWS)
             .await
             .expect("spawn tmux control-mode subprocess");
-    let sessions = SessionManager::new(tmux, socket_name.clone());
+    let sessions = SessionManager::new(tmux);
     let output_router = OutputRouter::new();
 
     // The dispatcher task drains the (unbounded per `Tmux::spawn`
