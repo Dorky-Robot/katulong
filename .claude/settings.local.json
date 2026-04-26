@@ -51,7 +51,9 @@
       "Bash(dig +short katulong-git-info.felixflor.es @1.1.1.1)",
       "Bash(cp /Users/felixflores/Projects/dorky_robot/katulong/.claude/commands/token.md /Users/felixflores/Projects/dorky_robot/katulong-git-info/.claude/commands/token.md)",
       "Bash(cp /Users/felixflores/Projects/dorky_robot/katulong/.claude/commands/stage.md /Users/felixflores/Projects/dorky_robot/katulong-git-info/.claude/commands/stage.md)",
-      "Bash(rm /Users/felixflores/Projects/dorky_robot/katulong/.claude/commands/token.md)"
+      "Bash(rm /Users/felixflores/Projects/dorky_robot/katulong/.claude/commands/token.md)",
+      "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage start *)",
+      "Bash(tunnels routes *)"
     ]
   }
 }
