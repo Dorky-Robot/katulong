@@ -786,8 +786,14 @@ async fn try_attach(
             err: err.to_string(),
         }
     };
+    // ensure_session is idempotent: existing session → no-op,
+    // missing session → create. The non-idempotent
+    // `create_session` would surface a spurious "duplicate
+    // session" error to a client whose tile already exists
+    // (e.g., a reconnect to a session created by an earlier
+    // WS connection). Architecture HIGH from PR #656 review.
     sessions
-        .create_session(session, cols, rows)
+        .ensure_session(session, cols, rows)
         .await
         .map_err(to_failure)?;
     let pane_id = sessions

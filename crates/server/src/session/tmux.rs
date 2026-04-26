@@ -163,6 +163,12 @@ pub struct Tmux {
     /// The reader/writer tasks' join handles. Same reason: exactly
     /// one shutdown path should await them.
     tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    /// The `-L <socket_name>` this CM was spawned against. Held
+    /// here (not just via `SessionManager`) so any caller with
+    /// a `Tmux` handle can spawn additional CMs against the
+    /// same socket — e.g. `SessionManager::attach_tile` calling
+    /// `Tmux::attach` for a per-tile CM.
+    socket_name: Arc<str>,
 }
 
 /// Sent over the command mpsc. Carries both what to write to
@@ -366,9 +372,18 @@ impl Tmux {
                 cmd_tx,
                 child: Arc::new(Mutex::new(Some(child))),
                 tasks: Arc::new(Mutex::new(tasks)),
+                socket_name: Arc::from(socket_name),
             },
             notif_rx,
         ))
+    }
+
+    /// Tmux socket name (`-L <name>`) this CM was spawned
+    /// against. Cheap to call (returns a `&str` borrow into the
+    /// `Arc<str>` field). `Tmux::attach` callers need it to
+    /// spawn additional CMs against the same server.
+    pub fn socket_name(&self) -> &str {
+        &self.socket_name
     }
 
     /// Construct a `Tmux` handle with no live subprocess behind
@@ -384,6 +399,7 @@ impl Tmux {
             cmd_tx,
             child: Arc::new(Mutex::new(None)),
             tasks: Arc::new(Mutex::new(Vec::new())),
+            socket_name: Arc::from("dead-test-socket"),
         }
     }
 
@@ -1167,6 +1183,7 @@ mod tests {
             cmd_tx: tx.clone(),
             child: Arc::new(Mutex::new(None)),
             tasks: Arc::new(Mutex::new(vec![])),
+            socket_name: Arc::from("test-direct-socket"),
         };
         drop(tx);
         drop(rx);
@@ -1184,6 +1201,7 @@ mod tests {
             cmd_tx: tx,
             child: Arc::new(Mutex::new(None)),
             tasks: Arc::new(Mutex::new(vec![])),
+            socket_name: Arc::from("test-direct-socket"),
         };
         let err = t
             .send_command("list-sessions\nkill-server")
@@ -1201,6 +1219,7 @@ mod tests {
             cmd_tx: tx,
             child: Arc::new(Mutex::new(None)),
             tasks: Arc::new(Mutex::new(vec![])),
+            socket_name: Arc::from("test-direct-socket"),
         };
         let err = t
             .send_command("list-sessions\rkill-server")

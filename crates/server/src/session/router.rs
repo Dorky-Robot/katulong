@@ -594,7 +594,7 @@ mod tests {
     /// reconcile path logs the error and moves on, so these
     /// tests still observe the loop's behavior correctly.
     fn dead_sessions() -> SessionManager {
-        SessionManager::new(Tmux::dead_for_tests(), "dead-test-socket".to_string())
+        SessionManager::new(Tmux::dead_for_tests())
     }
 
     // ---------- Single-subscriber core behaviour ----------
