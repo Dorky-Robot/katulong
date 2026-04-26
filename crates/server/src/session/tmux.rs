@@ -105,10 +105,19 @@ use super::parser::{parse, Notification, ParseError};
 use std::collections::VecDeque;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
+
+/// How long [`Tmux::shutdown`] waits for the CM child to exit
+/// cleanly after sending `detach-client` before falling back to
+/// SIGKILL. Two seconds matches the Node implementation's
+/// watchdog (Node scar `33feed2`) — long enough that a healthy
+/// tmux always exits well within budget, short enough that a
+/// genuinely stuck process doesn't block server shutdown.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
 /// Result of executing one command against tmux.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -247,19 +256,63 @@ impl Tmux {
             )));
         }
 
-        // Step 2: spawn the long-lived CM client attached to the
-        // keepalive session. `-C attach-session` is the pattern
-        // that keeps the CM alive: the client stays connected as
-        // long as the attached session exists. `cat` in the
-        // keepalive session never exits, so the CM never gets a
-        // `%session-changed`/`%exit` from session death.
+        // Step 2: spawn the long-lived CM child attached to the
+        // keepalive session. If this fails we have to tear down
+        // the tmux server we created in step 1 — otherwise a
+        // failed spawn leaves the server running with an
+        // orphaned keepalive session.
+        match Self::cm_attach_raw(socket_name, initial_session).await {
+            Ok(handle) => Ok(handle),
+            Err(e) => {
+                kill_orphan_server(socket_name).await;
+                Err(e)
+            }
+        }
+    }
+
+    /// Attach a control-mode client to an EXISTING tmux session.
+    /// Pairs with [`Tmux::spawn`] (which creates a new session and
+    /// attaches): use `attach` when the session is already
+    /// running on the given socket, e.g. when a katulong tile's
+    /// session was created earlier and a new WS handler is now
+    /// hooking up its own per-tile CM client.
+    ///
+    /// The session must already exist on `socket_name`. Failures
+    /// from this path do NOT touch the tmux server itself —
+    /// callers other than `Tmux::spawn` are not the server's
+    /// owner.
+    pub async fn attach(
+        socket_name: &str,
+        session: &str,
+    ) -> Result<(Self, mpsc::UnboundedReceiver<Notification>), TmuxError> {
+        validate_socket_name(socket_name)?;
+        validate_session_name_for_tmux(session)?;
+        Self::cm_attach_raw(socket_name, session).await
+    }
+
+    /// Shared body of [`Tmux::spawn`] and [`Tmux::attach`]: spawn
+    /// a `tmux -C attach-session -t <session>` child and hook its
+    /// pipes to the reader/writer/stderr-drain tasks. Errors
+    /// terminate the child (if it spawned) but do NOT kill the
+    /// tmux server — that's `spawn`'s responsibility because only
+    /// `spawn` created it.
+    async fn cm_attach_raw(
+        socket_name: &str,
+        session: &str,
+    ) -> Result<(Self, mpsc::UnboundedReceiver<Notification>), TmuxError> {
+        // `-C attach-session` is the pattern that keeps the CM
+        // client alive: the client stays connected as long as the
+        // attached session exists. The session's pane behavior
+        // determines CM lifetime — for the keepalive session that
+        // pane runs `cat` (never exits), for a user-tile session
+        // it's the user's shell.
         let mut cmd = Command::new("tmux");
         cmd.arg("-L")
             .arg(socket_name)
             .arg("-C")
             .arg("attach-session")
             .arg("-t")
-            .arg(initial_session);
+            .arg(session);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -268,23 +321,11 @@ impl Tmux {
             // escape sequences into tmux on terminal resizes.
             .kill_on_drop(true);
 
-        // From here on, any error must clean up the tmux server
-        // we created in step 1 — otherwise a failed spawn leaves
-        // the server running with an orphaned keepalive session,
-        // and the next `Tmux::spawn` against the same socket
-        // hits `new-session: session already exists`.
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                kill_orphan_server(socket_name).await;
-                return Err(TmuxError::Io(e));
-            }
-        };
+        let mut child = cmd.spawn().map_err(TmuxError::Io)?;
         let stdin = match child.stdin.take() {
             Some(s) => s,
             None => {
                 let _ = child.start_kill();
-                kill_orphan_server(socket_name).await;
                 return Err(TmuxError::Disconnected);
             }
         };
@@ -292,7 +333,6 @@ impl Tmux {
             Some(s) => s,
             None => {
                 let _ = child.start_kill();
-                kill_orphan_server(socket_name).await;
                 return Err(TmuxError::Disconnected);
             }
         };
@@ -367,35 +407,61 @@ impl Tmux {
         rx.await.map_err(|_| TmuxError::Disconnected)?
     }
 
-    // TODO(shutdown-safety): add in-band detach-client dance
-    // before kill to avoid the tmux 3.6a UAF; see KNOWN GAP in
-    // the doc below.
-    /// Kill the tmux subprocess and wait for the reader/writer
-    /// tasks to finish. Idempotent — calling twice is safe; the
-    /// second call no-ops.
+    /// Cleanly tear down this CM client. Idempotent — calling
+    /// twice is safe; the second call no-ops.
     ///
-    /// # KNOWN GAP — tmux 3.6a UAF on abrupt CM child kill
+    /// # tmux 3.6a UAF avoidance (Node scar `33feed2`)
     ///
-    /// Per Node scar `33feed2`: tmux 3.6a has a use-after-free
-    /// in `control_notify_client_detached` that triggers when a
+    /// tmux 3.6a has a use-after-free in
+    /// `control_notify_client_detached` that triggers when a
     /// `tmux -C` child dies abruptly (e.g. SIGTERM/SIGKILL),
     /// causing the tmux server to segfault and take EVERY
-    /// session with it. The fix walks tmux's normal detach path
-    /// by writing `detach-client\n` on stdin first, waiting for
-    /// the CM to close cleanly, THEN running `kill-session`.
-    /// An unref'd 2-second watchdog SIGKILLs as last resort.
+    /// session with it. The Node implementation captured this
+    /// scar tissue: walk tmux's normal detach path by writing
+    /// `detach-client\n` on stdin first, wait for the CM to
+    /// close cleanly, then SIGKILL only as a watchdog fallback
+    /// if it didn't exit on its own.
     ///
-    /// The current code uses `start_kill` directly. That's the
-    /// abrupt path. Today this only fires in test cleanup and
-    /// process-shutdown paths where tmux dying is acceptable;
-    /// production code never calls `shutdown` on a still-live
-    /// instance. Track adding the in-band `detach-client` dance
-    /// before this becomes user-visible.
+    /// Sequence:
+    /// 1. Send `detach-client` via the CM's command channel
+    ///    (best-effort — if the channel is already torn down,
+    ///    proceed to step 3).
+    /// 2. Wait up to [`SHUTDOWN_GRACE`] for the child process
+    ///    to exit on its own.
+    /// 3. If still alive, SIGKILL as a last resort.
+    /// 4. Abort the reader/writer/stderr tasks and await them.
     pub async fn shutdown(&self) {
+        // Step 1: ask the CM client to detach in-band. We don't
+        // care about the reply — tmux closes the connection
+        // immediately after acking the detach, so the oneshot
+        // typically resolves with `Disconnected`. The point is
+        // that tmux saw the request and walked its normal
+        // detach path before the child exits.
+        let _ = self.send_command("detach-client").await;
+
+        // Step 2 + 3: drain the child handle. If detach-client
+        // worked, `child.wait()` returns quickly. If not (channel
+        // dead, tmux misbehaving), the watchdog SIGKILLs.
         if let Some(mut child) = self.child.lock().await.take() {
-            let _ = child.start_kill();
-            let _ = child.wait().await;
+            match tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await {
+                Ok(_) => { /* clean exit */ }
+                Err(_) => {
+                    // Watchdog tripped — fall back to abrupt
+                    // kill. This may still trigger the UAF, but
+                    // we tried the clean path first.
+                    tracing::warn!(
+                        "tmux CM did not exit within {}s of detach-client; SIGKILL fallback",
+                        SHUTDOWN_GRACE.as_secs()
+                    );
+                    let _ = child.start_kill();
+                    let _ = child.wait().await;
+                }
+            }
         }
+
+        // Step 4: tear down the reader/writer/stderr tasks. They
+        // would exit on their own once stdout/stdin close, but
+        // aborting + awaiting makes shutdown deterministic.
         let handles = std::mem::take(&mut *self.tasks.lock().await);
         for h in handles {
             h.abort();
