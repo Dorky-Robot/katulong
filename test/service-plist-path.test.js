@@ -1,6 +1,30 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildLaunchAgentPath } from "../lib/cli/commands/service.js";
+import { buildLaunchAgentPath, xmlEscape } from "../lib/cli/commands/service.js";
+
+describe("xmlEscape", () => {
+  it("escapes the five XML predefined entities", () => {
+    assert.equal(
+      xmlEscape(`<key>injected</key><string>&"'`),
+      "&lt;key&gt;injected&lt;/key&gt;&lt;string&gt;&amp;&quot;&apos;",
+    );
+  });
+
+  it("returns input unchanged when no metacharacters are present", () => {
+    assert.equal(xmlEscape("/opt/homebrew/bin/katulong"), "/opt/homebrew/bin/katulong");
+  });
+
+  it("escapes & before other entities (no double-escape)", () => {
+    // Naive ordering ("escape & last") would re-escape the & in &lt;
+    // and produce &amp;lt;. Confirm that doesn't happen.
+    assert.equal(xmlEscape("&<"), "&amp;&lt;");
+  });
+
+  it("coerces non-string input via String()", () => {
+    assert.equal(xmlEscape(3001), "3001");
+    assert.equal(xmlEscape(null), "null");
+  });
+});
 
 describe("buildLaunchAgentPath", () => {
   it("includes Homebrew, system, and bin-dir entries even when invoked from a stripped shell", () => {
@@ -55,5 +79,29 @@ describe("buildLaunchAgentPath", () => {
     const dirs = result.split(":");
     assert.equal(dirs[0], "/opt/homebrew/bin");
     assert.ok(dirs.includes("/sbin"));
+  });
+
+  it("treats empty string the same as null", () => {
+    assert.equal(buildLaunchAgentPath(""), buildLaunchAgentPath(null));
+  });
+
+  it("drops a binDir containing a colon (would split PATH)", () => {
+    // dirname("/Users/a:b/katulong") === "/Users/a:b" — joining that with `:`
+    // would silently insert an extra entry into PATH. Drop instead of corrupt.
+    const result = buildLaunchAgentPath("/Users/a:b/katulong");
+    const dirs = result.split(":");
+    assert.ok(!dirs.includes("/Users/a"), `unexpected /Users/a entry: ${result}`);
+    assert.ok(!dirs.includes("b"), `unexpected b entry: ${result}`);
+    assert.equal(dirs[0], "/opt/homebrew/bin");
+  });
+
+  it("drops a binDir containing whitespace", () => {
+    const result = buildLaunchAgentPath("/Users/foo bar/bin/katulong");
+    const dirs = result.split(":");
+    assert.ok(
+      !dirs.some((d) => d.includes(" ")),
+      `whitespace leaked into PATH: ${result}`,
+    );
+    assert.equal(dirs[0], "/opt/homebrew/bin");
   });
 });
