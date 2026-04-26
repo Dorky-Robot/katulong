@@ -57,8 +57,7 @@
       "Bash(gh pr *)",
       "Read(//private/tmp/**)",
       "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage stop *)",
-      "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage list *)",
-      "Read(//Users/felixflores/.claude/**)"
+      "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage list *)"
     ]
   }
 }
