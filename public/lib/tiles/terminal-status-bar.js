@@ -13,7 +13,7 @@
  * subscribes to the same watcher — no extra poller.
  *
  * The bar is absolutely positioned at the bottom of the tile body. The
- * `.terminal-pane` reserves equivalent bottom padding (--term-status-bar-height
+ * `.terminal-pane` reserves equivalent bottom padding (--height-term-status-bar
  * in index.html) so xterm renders fewer rows instead of having its bottom
  * row hidden behind the pills. `scaleToFit` in terminal-pool.js already
  * subtracts paddingBottom when computing rows, so the carve-out flows
