@@ -93,6 +93,20 @@ impl SessionManager {
         );
         let reply = self.tmux.send_command(&cmd).await?;
         if !reply.ok {
+            // tmux's "duplicate session" error is what we want to
+            // treat as idempotent success: it means a concurrent
+            // caller (or a prior aborted attempt) already created
+            // this session. Mirrors the symmetric idempotency in
+            // `destroy_session` (treats "can't find session" as
+            // ok). Closes the ensure_session TOCTOU race PR #656
+            // correctness review flagged HIGH.
+            if reply.output.contains("duplicate session") {
+                tracing::info!(
+                    session = %name,
+                    "session already exists; create_session is idempotent"
+                );
+                return Ok(());
+            }
             return Err(SessionError::TmuxRejected(reply.output));
         }
         tracing::info!(session = %name, cols, rows, "session created");
@@ -132,10 +146,17 @@ impl SessionManager {
     /// tile session. Ensures the session exists first.
     ///
     /// Returns the `Tmux` handle and its notification receiver.
+    /// The returned `Tmux` owns a live CM subprocess (despite
+    /// the method name — `attach` here means "attach a CM
+    /// client to an existing tmux session," and that always
+    /// involves spawning a subprocess).
+    ///
     /// **Ownership transfers to the caller** — typically a WS
     /// handler. The caller is responsible for:
-    /// - draining the notification receiver (per the
-    ///   backpressure contract on [`Tmux::spawn`]),
+    /// - draining the notification receiver (the unbounded-
+    ///   channel backpressure contract documented on
+    ///   [`Tmux::spawn`] applies equally to receivers from
+    ///   [`Tmux::attach`]),
     /// - calling [`Tmux::shutdown`] when the WS connection
     ///   tears down (clean detach avoids the tmux 3.6a UAF).
     ///
@@ -683,7 +704,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires tmux binary + dedicated socket; run with: cargo test -- --ignored"]
-    async fn ensure_session_is_idempotent() {
+    async fn ensure_session_second_call_is_noop() {
         // Calling ensure_session twice for the same name must
         // succeed both times. Second call hits the has-session
         // pre-check and no-ops.
@@ -746,7 +767,34 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires tmux binary + dedicated socket; run with: cargo test -- --ignored"]
-    async fn shutdown_uses_in_band_detach_client() {
+    async fn create_session_treats_duplicate_as_idempotent() {
+        // PR #656 round-1 HIGH fix: a concurrent attach race
+        // where two callers both try to create the same session
+        // must not surface tmux's "duplicate session" error to
+        // the second caller. Repeat create_session twice and
+        // expect both Ok.
+        use super::super::tmux::Tmux;
+
+        let socket = format!("katulong-dup-{}", std::process::id());
+        let (tmux, _notifs) = Tmux::spawn(&socket, "main", 80, 24)
+            .await
+            .expect("spawn tmux");
+        let manager = SessionManager::new(tmux.clone(), socket.clone());
+
+        manager.create_session("tile-z", 80, 24).await.unwrap();
+        // Second call must succeed (the "duplicate session" tmux
+        // error is caught and treated as Ok).
+        manager
+            .create_session("tile-z", 80, 24)
+            .await
+            .expect("second create_session must be idempotent");
+
+        tmux.shutdown().await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires tmux binary + dedicated socket; run with: cargo test -- --ignored"]
+    async fn shutdown_exits_cleanly_within_grace_period() {
         // Verifies the slice 9l shutdown path: send detach-client,
         // wait for clean exit, no SIGKILL fallback in the happy
         // path. The watchdog warning from `apply_note` style would
