@@ -337,6 +337,20 @@ fn phase_name(phase: &Phase) -> &'static str {
 struct AttachedState {
     session: String,
     pane_id: u32,
+    /// Per-tile control-mode client attached to this WS
+    /// connection's tile session. Slice 9n (Path 1): each WS
+    /// owns its own CM child rather than sharing a global
+    /// keepalive CM. The CM is what carries `%output` for the
+    /// tile — the keepalive CM only sees its own session's
+    /// (empty) output. On cleanup, [`Tmux::shutdown`] does the
+    /// in-band detach-client dance to avoid the tmux 3.6a UAF.
+    tile_tmux: crate::session::Tmux,
+    /// JoinHandle for the per-tile output dispatcher task. The
+    /// dispatcher consumes `%output` notifications from
+    /// `tile_tmux`'s notif stream and routes them through
+    /// `OutputRouter::dispatch`. Aborted on cleanup so the
+    /// task exits before the `Tmux` is dropped.
+    tile_dispatcher: tokio::task::JoinHandle<()>,
     /// This subscriber's id, handed back by the router on
     /// subscribe. Used at cleanup to remove ONLY this
     /// connection's sender from the pane's fan-out list,
@@ -693,16 +707,31 @@ pub async fn serve_session(
         }
     }
 
-    // Cleanup: detach THIS subscriber, but keep the pane's
-    // ring, decoder, and sibling subscribers alive. Slice 9h:
-    // `clear_subscriber` takes the SubscriberId so only this
-    // connection's sender is removed. Multi-device sessions
-    // (phone + laptop) keep flowing for the other devices
-    // when one closes its transport.
+    // Cleanup, slice 9n / Path 1:
+    //
+    // 1. Detach this connection's subscriber from the router
+    //    (slice 9h fan-out: keeps the pane's ring, decoder,
+    //    and sibling subscribers alive — multi-device sessions
+    //    keep flowing for the other devices).
+    //
+    // 2. Shut down the per-tile CM client via the in-band
+    //    `detach-client` dance (slice 9l). Avoids the tmux
+    //    3.6a UAF that the abrupt-drop path would trigger.
+    //    The shutdown blocks up to `SHUTDOWN_GRACE` (2s) for
+    //    a clean exit; SIGKILL fallback only if the child is
+    //    truly stuck.
+    //
+    // 3. Abort the per-tile dispatcher task. It would exit
+    //    on its own once the CM's notif channel closes
+    //    during step 2, but explicit abort keeps the cleanup
+    //    deterministic and bounded.
     if let Some(a) = attached {
         state
             .output_router
             .clear_subscriber(a.pane_id, a.subscriber_id);
+        a.tile_tmux.shutdown().await;
+        a.tile_dispatcher.abort();
+        let _ = a.tile_dispatcher.await;
     }
     // Drop the handle. The WS output pump sees the channel close
     // and shuts down the socket gracefully.
@@ -800,6 +829,23 @@ async fn try_attach(
         .query_default_pane(session)
         .await
         .map_err(to_failure)?;
+    // Slice 9n / Path 1: per-tile CM client. Spawned AFTER all
+    // pre-checks so a rejected attach never leaks a subprocess.
+    // The CM's notif stream feeds a per-tile dispatcher that
+    // routes `%output` through `OutputRouter::dispatch`; this
+    // is the path that makes user-tile output actually reach
+    // the WS subscriber (the keepalive CM is attached to its
+    // own session and never sees tile panes' output). On a
+    // post-subscribe failure we shut down the CM and abort the
+    // dispatcher so the cleanup never leaks a child process.
+    let spawn_pipeline = || async {
+        let (tmux, notifs) = sessions
+            .attach_tile(session, cols, rows)
+            .await
+            .map_err(to_failure)?;
+        let dispatcher = state.output_router.spawn_tile_dispatcher(notifs);
+        Ok::<_, AttachFailure>((tmux, dispatcher))
+    };
 
     match resume_from_seq {
         None => {
@@ -809,11 +855,20 @@ async fn try_attach(
                 .output_router
                 .subscribe(pane_id)
                 .map_err(to_subscribe_failure)?;
+            let (tile_tmux, tile_dispatcher) = match spawn_pipeline().await {
+                Ok(p) => p,
+                Err(err) => {
+                    state.output_router.clear_subscriber(pane_id, subscriber_id);
+                    return Err(err);
+                }
+            };
             Ok(AttachOutcome {
                 replay: ReplaySlice::Fresh { end_seq: baseline },
                 new_state: AttachedState {
                     session: session.to_string(),
                     pane_id,
+                    tile_tmux,
+                    tile_dispatcher,
                     subscriber_id,
                     output_rx: rx,
                     last_seen_seq: baseline,
@@ -863,6 +918,13 @@ async fn try_attach(
                             .output_router
                             .subscribe(pane_id)
                             .map_err(to_subscribe_failure)?;
+                        let (tile_tmux, tile_dispatcher) = match spawn_pipeline().await {
+                            Ok(p) => p,
+                            Err(err) => {
+                                state.output_router.clear_subscriber(pane_id, subscriber_id);
+                                return Err(err);
+                            }
+                        };
                         Ok(AttachOutcome {
                             replay: ReplaySlice::Gap {
                                 available_from_seq: 0,
@@ -872,6 +934,8 @@ async fn try_attach(
                             new_state: AttachedState {
                                 session: session.to_string(),
                                 pane_id,
+                                tile_tmux,
+                                tile_dispatcher,
                                 subscriber_id,
                                 output_rx: rx,
                                 last_seen_seq: 0,
@@ -925,11 +989,20 @@ async fn try_attach(
                             ),
                         });
                     }
+                    let (tile_tmux, tile_dispatcher) = match spawn_pipeline().await {
+                        Ok(p) => p,
+                        Err(err) => {
+                            state.output_router.clear_subscriber(pane_id, subscriber_id);
+                            return Err(err);
+                        }
+                    };
                     let outcome = AttachOutcome {
                         replay,
                         new_state: AttachedState {
                             session: session.to_string(),
                             pane_id,
+                            tile_tmux,
+                            tile_dispatcher,
                             subscriber_id,
                             output_rx: rx,
                             // Seeded below after construction so
@@ -1429,13 +1502,19 @@ mod tests {
     // ---------- Resize gate deadline math (pure, no runtime) ----------
 
     fn attached_state_for_gate_tests() -> AttachedState {
-        // Build a minimal AttachedState by hand — output_rx +
-        // subscriber_id are required by the struct but the
-        // gate-math helpers don't touch them.
+        // Build a minimal AttachedState by hand — output_rx,
+        // subscriber_id, tile_tmux, and tile_dispatcher are
+        // required by the struct but the gate-math helpers
+        // don't touch them. Slice 9n: tile_tmux is a
+        // dead-channel test handle (any send_command would
+        // fail with Disconnected); tile_dispatcher is a
+        // never-resolving spawned future that we ignore.
         let (_tx, rx) = mpsc::channel(1);
         AttachedState {
             session: "s".into(),
             pane_id: 0,
+            tile_tmux: crate::session::Tmux::dead_for_tests(),
+            tile_dispatcher: tokio::spawn(std::future::pending()),
             subscriber_id: SubscriberId::testing(0),
             output_rx: rx,
             last_seen_seq: 0,
