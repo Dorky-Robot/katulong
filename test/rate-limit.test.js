@@ -335,28 +335,31 @@ describe("getClientIp", () => {
     assert.equal(getClientIp(req), "203.0.113.99");
   });
 
-  it("trusts XFF for private 10.x.x.x socket address", () => {
+  it("does NOT trust XFF for private 10.x.x.x socket — only loopback proxies are trusted", () => {
+    // katulong binds to loopback by design; any other private IP (LAN)
+    // can rotate XFF values and bypass the rate limiter. Only loopback
+    // (where the tunnel runs co-located with katulong) is trusted now.
     const req = {
       socket: { remoteAddress: "10.0.0.5" },
       headers: { "x-forwarded-for": "203.0.113.7" },
     };
-    assert.equal(getClientIp(req), "203.0.113.7");
+    assert.equal(getClientIp(req), "10.0.0.5");
   });
 
-  it("trusts XFF for private 172.16-31.x.x socket address", () => {
+  it("does NOT trust XFF for private 172.16-31.x.x socket address", () => {
     const req = {
       socket: { remoteAddress: "172.20.0.1" },
       headers: { "x-forwarded-for": "203.0.113.8" },
     };
-    assert.equal(getClientIp(req), "203.0.113.8");
+    assert.equal(getClientIp(req), "172.20.0.1");
   });
 
-  it("trusts XFF for private 192.168.x.x socket address", () => {
+  it("does NOT trust XFF for private 192.168.x.x socket address", () => {
     const req = {
       socket: { remoteAddress: "192.168.1.100" },
       headers: { "x-forwarded-for": "203.0.113.9" },
     };
-    assert.equal(getClientIp(req), "203.0.113.9");
+    assert.equal(getClientIp(req), "192.168.1.100");
   });
 
   it("does NOT trust XFF for 172.15 (just outside private range)", () => {
