@@ -61,7 +61,14 @@ async fn main() {
         .with_sessions(sessions)
         .with_output_router(output_router);
 
-    let addr: SocketAddr = "127.0.0.1:3000".parse().expect("valid bind address");
+    // Bind port: `PORT` env (matches the Node convention, plus
+    // bin/katulong-stage's port-allocation contract). Defaults
+    // to 3000 for parity with the Node default.
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3000);
+    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("bind listener");

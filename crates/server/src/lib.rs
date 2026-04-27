@@ -20,7 +20,12 @@ use api::auth::auth_routes;
 use api::devices::device_routes;
 use api::tokens::token_routes;
 use auth_middleware::Authenticated;
-use axum::{extract::DefaultBodyLimit, routing::get, Json, Router};
+use axum::{
+    extract::DefaultBodyLimit,
+    response::Html,
+    routing::get,
+    Json, Router,
+};
 use serde_json::json;
 use state::AppState;
 
@@ -49,9 +54,19 @@ const REQUEST_BODY_LIMIT: usize = 1024 * 1024;
 /// `isPublicPath()`; we enforce it socially instead, which means the
 /// comments ARE the contract.
 ///
-/// Currently public: `/health` (k8s/uptime probe, returns static "ok").
+/// Currently public: `/health` (k8s/uptime probe, returns static
+/// "ok"), `/` (placeholder landing page until the Leptos
+/// frontend bundle replaces it).
 pub fn app(state: AppState) -> Router {
     Router::new()
+        // PUBLIC: placeholder landing page. The Rust crate
+        // doesn't ship a SPA yet (the Leptos crate is a stub).
+        // Until that lands, `/` returns a minimal HTML page so
+        // operators staging the Rust backend can see a sign of
+        // life in the browser instead of a 404 / blank screen.
+        // Replace this with a static-file mount once the Leptos
+        // bundle is built.
+        .route("/", get(landing))
         // PUBLIC: liveness probe. Returns static "ok".
         .route("/health", get(health))
         // PROTECTED: smoke-test endpoint that exercises the full
@@ -79,6 +94,36 @@ pub fn app(state: AppState) -> Router {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// Placeholder landing page served at `/`. The HTML is
+/// intentionally minimal: a single visible heading + a
+/// machine-readable marker (`data-rust-backend="true"`)
+/// e2e tests can assert against. Replace with a static-file
+/// mount serving the Leptos bundle once the frontend lands.
+async fn landing() -> Html<&'static str> {
+    Html(
+        "<!doctype html>\n\
+         <html lang=\"en\">\n\
+         <head>\n\
+           <meta charset=\"utf-8\">\n\
+           <title>katulong (rust backend)</title>\n\
+           <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
+           <style>\n\
+             body { font: 16px/1.4 system-ui, sans-serif; max-width: 480px; \
+                    margin: 4rem auto; padding: 0 1rem; color: #222; }\n\
+             code { background: #f3f3f3; padding: 0.2em 0.4em; border-radius: 3px; }\n\
+             .marker { color: #888; font-size: 0.85em; }\n\
+           </style>\n\
+         </head>\n\
+         <body data-rust-backend=\"true\">\n\
+           <h1>katulong</h1>\n\
+           <p>Rust backend is alive. Frontend not yet built.</p>\n\
+           <p class=\"marker\">Smoke-test endpoints: \
+              <code>/health</code>, <code>/api/me</code>, <code>/ws</code>.</p>\n\
+         </body>\n\
+         </html>",
+    )
 }
 
 async fn me(Authenticated(ctx): Authenticated) -> Json<serde_json::Value> {

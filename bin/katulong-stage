@@ -218,13 +218,18 @@ resolve_host() {
 }
 
 # Wait until the staging server is responding on $1, or fail.
+# Each backend has its own canonical liveness probe:
+#   - Node: `/login` (always served, public)
+#   - Rust: `/health` (always served, public; Rust has no SPA
+#     so /login isn't a route)
 wait_for_server() {
   local port="$1"
   local pid="$2"
   local log="$3"
+  local probe="$4"
   local i
   for i in $(seq 1 20); do
-    if curl -fs -o /dev/null "http://127.0.0.1:${port}/login"; then
+    if curl -fs -o /dev/null "http://127.0.0.1:${port}${probe}"; then
       return 0
     fi
     if ! is_alive "$pid"; then
@@ -445,8 +450,29 @@ cmd_start() {
     rm -rf "$dir"
   fi
 
-  if [[ ! -f "$REPO_ROOT/server.js" ]]; then
+  # Backend selection. Default is the Node implementation
+  # (server.js); set KATULONG_STAGE_BACKEND=rust to launch the
+  # Rust crate (target/release/katulong-server) instead. The
+  # Rust path is a backend-only smoke harness — it has no SPA
+  # served yet (the Leptos crate is a stub), so "poking around"
+  # via browser shows nothing. Use it to verify the Rust binary
+  # responds on /health, accepts WebSocket upgrades, and
+  # handles auth/setup-token APIs.
+  local backend="${KATULONG_STAGE_BACKEND:-node}"
+  case "$backend" in
+    node|rust) ;;
+    *)
+      echo "ERROR: KATULONG_STAGE_BACKEND must be 'node' or 'rust' (got: $backend)" >&2
+      return 1
+      ;;
+  esac
+
+  if [[ "$backend" == "node" && ! -f "$REPO_ROOT/server.js" ]]; then
     echo "ERROR: server.js not found in $REPO_ROOT" >&2
+    return 1
+  fi
+  if [[ "$backend" == "rust" && ! -d "$REPO_ROOT/crates/server" ]]; then
+    echo "ERROR: Rust backend requested but $REPO_ROOT/crates/server not present" >&2
     return 1
   fi
 
@@ -487,15 +513,34 @@ cmd_start() {
   # test/helpers/setup-env.js for the PID-scoped test sockets.
   rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$tmux_socket"
 
-  if [[ ! -d "$REPO_ROOT/node_modules" ]]; then
-    echo "  installing deps..."
-    (cd "$REPO_ROOT" && npm install --silent)
+  if [[ "$backend" == "node" ]]; then
+    if [[ ! -d "$REPO_ROOT/node_modules" ]]; then
+      echo "  installing deps..."
+      (cd "$REPO_ROOT" && npm install --silent)
+    fi
+    PORT="$port" \
+    KATULONG_DATA_DIR="$data_dir" \
+    KATULONG_TMUX_SOCKET="$tmux_socket" \
+      nohup node "$REPO_ROOT/server.js" > "$log_file" 2>&1 &
+  else
+    # Rust backend. Build the release binary if missing or out
+    # of date relative to source. cargo's incremental build is
+    # cheap when nothing has changed.
+    local rust_bin="$REPO_ROOT/target/release/katulong-server"
+    echo "  building rust binary (release)..."
+    if ! (cd "$REPO_ROOT" && cargo build --release -p katulong-server 2>&1 | tail -3); then
+      echo "ERROR: cargo build failed" >&2
+      return 1
+    fi
+    if [[ ! -x "$rust_bin" ]]; then
+      echo "ERROR: $rust_bin not found after build" >&2
+      return 1
+    fi
+    PORT="$port" \
+    KATULONG_DATA_DIR="$data_dir" \
+    KATULONG_TMUX_SOCKET="$tmux_socket" \
+      nohup "$rust_bin" > "$log_file" 2>&1 &
   fi
-
-  PORT="$port" \
-  KATULONG_DATA_DIR="$data_dir" \
-  KATULONG_TMUX_SOCKET="$tmux_socket" \
-    nohup node "$REPO_ROOT/server.js" > "$log_file" 2>&1 &
   local server_pid=$!
 
   # Trap signals so an interrupted start doesn't orphan the server process.
@@ -505,19 +550,36 @@ cmd_start() {
   # shellcheck disable=SC2064
   trap "cleanup_start '$server_pid' '$dir'; exit 130" INT TERM HUP
 
-  if ! wait_for_server "$port" "$server_pid" "$log_file"; then
+  local probe_path
+  if [[ "$backend" == "rust" ]]; then
+    probe_path="/health"
+  else
+    probe_path="/login"
+  fi
+  if ! wait_for_server "$port" "$server_pid" "$log_file" "$probe_path"; then
     trap - INT TERM HUP
     cleanup_start "$server_pid" "$dir"
     return 1
   fi
 
   local token
-  token="$(mint_setup_token "$data_dir" "$name" || true)"
-  if [[ -z "$token" ]]; then
-    echo "ERROR: failed to mint setup token (server up but token CLI returned nothing)" >&2
-    trap - INT TERM HUP
-    cleanup_start "$server_pid" "$dir"
-    return 1
+  if [[ "$backend" == "rust" ]]; then
+    # The Rust server's token-mint API requires auth (CSRF +
+    # `Authenticated`), and there's no equivalent CLI yet that
+    # writes a token directly to AuthStore for bootstrap. Skip
+    # the mint and tell the caller this is a backend-only
+    # smoke instance. /health and /api/me are reachable; the
+    # full UI flow needs the Leptos frontend.
+    token=""
+    echo "  ⚠ rust backend: setup-token mint skipped (CLI not implemented)"
+  else
+    token="$(mint_setup_token "$data_dir" "$name" || true)"
+    if [[ -z "$token" ]]; then
+      echo "ERROR: failed to mint setup token (server up but token CLI returned nothing)" >&2
+      trap - INT TERM HUP
+      cleanup_start "$server_pid" "$dir"
+      return 1
+    fi
   fi
 
   # ---- Tunnel wiring ----
@@ -581,7 +643,31 @@ cmd_start() {
   # signal trap so normal script exit doesn't kill the server we just started.
   trap - INT TERM HUP
 
-  cat <<EOF
+  if [[ "$backend" == "rust" ]]; then
+    cat <<EOF
+
+Staging '$name' is live (BACKEND: rust):
+
+  URL:         $url
+  Port:        $port (pid $server_pid)
+  Tmux Socket: $tmux_socket
+  Tunnel:      $tunnel
+  Data Dir:    $data_dir
+  Log:         tail -f $log_file
+
+Verify the Rust binary is what's responding:
+  curl $url/health                    # → "ok"
+  ps -p $server_pid -o command=       # should show .../target/release/katulong-server
+
+No SPA is served (Leptos frontend is a stub). Use this to
+exercise the Rust backend's HTTP + WebSocket surface.
+
+Stop:
+  $(basename "$0") stop $name
+
+EOF
+  else
+    cat <<EOF
 
 Staging '$name' is live:
 
@@ -598,6 +684,7 @@ Stop:
   $(basename "$0") stop $name
 
 EOF
+  fi
 }
 
 # ---------------------------------------------------------------------------
