@@ -16,9 +16,13 @@ describe("isHttpsConnection (logout cookie Secure flag)", () => {
     assert.ok(!isHttpsConnection(req));
   });
 
-  it("returns false when socket.encrypted is absent (tunnel scenario)", () => {
+  it("returns true for non-loopback Host even when socket.encrypted is absent (tunnel)", () => {
+    // Old behavior: missing socket.encrypted required a tunnel-suffix
+    // match to return true. New behavior: any non-loopback Host implies
+    // a tunnel terminating TLS in front, so this returns true without
+    // needing a CF header or socket.encrypted flag.
     const req = { socket: {}, headers: { host: "myapp.example.com" } };
-    assert.ok(!isHttpsConnection(req));
+    assert.ok(isHttpsConnection(req));
   });
 
   it("returns true for ngrok.app tunnel", () => {
@@ -41,26 +45,32 @@ describe("isHttpsConnection (logout cookie Secure flag)", () => {
     assert.ok(isHttpsConnection(req));
   });
 
-  it("returns true for Cloudflare Tunnel (loopback socket + CF-Connecting-IP header)", () => {
+  it("returns true for any non-loopback Host (tunnel deployment heuristic)", () => {
+    // Non-loopback Host implies a tunnel terminating TLS in front of
+    // katulong. CF-Connecting-IP is no longer trusted (any local process
+    // can forge it).
     const req = {
       socket: { remoteAddress: "127.0.0.1" },
-      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+      headers: { host: "myapp.example.com" },
     };
     assert.ok(isHttpsConnection(req));
   });
 
-  it("returns true for Cloudflare Tunnel with IPv6 loopback", () => {
+  it("returns true for non-loopback Host on IPv6 loopback socket", () => {
     const req = {
       socket: { remoteAddress: "::1" },
-      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+      headers: { host: "myapp.example.com" },
     };
     assert.ok(isHttpsConnection(req));
   });
 
-  it("returns false for non-loopback socket with CF-Connecting-IP (forgeable)", () => {
+  it("does NOT trust CF-Connecting-IP — only Host vs loopback matters", () => {
+    // The CF-Connecting-IP header is forgeable by any local process. A
+    // request with Host=localhost MUST report HTTP regardless of any
+    // claimed CF header.
     const req = {
-      socket: { remoteAddress: "192.168.1.100" },
-      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: { host: "localhost", "cf-connecting-ip": "203.0.113.1" },
     };
     assert.ok(!isHttpsConnection(req));
   });
@@ -79,10 +89,11 @@ describe("isHttpsConnection (logout cookie Secure flag)", () => {
     assert.ok(!clearCookie.includes("; Secure"), "Secure flag must not be set for plain HTTP");
   });
 
-  it("logout cookie includes Secure flag for Cloudflare custom domain", () => {
+  it("logout cookie includes Secure flag for Cloudflare custom domain (non-loopback Host)", () => {
+    // No CF-Connecting-IP needed — Host alone tells us this is a tunnel.
     const req = {
       socket: { remoteAddress: "::ffff:127.0.0.1" },
-      headers: { host: "terminal.example.com", "cf-connecting-ip": "203.0.113.5" },
+      headers: { host: "terminal.example.com" },
     };
     let clearCookie = "katulong_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
     if (isHttpsConnection(req)) clearCookie += "; Secure";

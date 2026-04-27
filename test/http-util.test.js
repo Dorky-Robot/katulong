@@ -184,11 +184,11 @@ describe("isPublicPath", () => {
 });
 
 describe("getOriginAndRpID", () => {
-  it("extracts host and defaults to http", () => {
-    const req = { headers: { host: "example.com:3001" } };
+  it("uses http when Host is localhost (dev mode)", () => {
+    const req = { headers: { host: "localhost:3001" } };
     const { origin, rpID } = getOriginAndRpID(req);
-    assert.equal(origin, "http://example.com:3001");
-    assert.equal(rpID, "example.com");
+    assert.equal(origin, "http://localhost:3001");
+    assert.equal(rpID, "localhost");
   });
 
   it("uses https when socket is encrypted", () => {
@@ -198,11 +198,11 @@ describe("getOriginAndRpID", () => {
     assert.equal(rpID, "example.com");
   });
 
-  it("ignores x-forwarded-proto when socket is not encrypted (no header trust)", () => {
-    const req = { headers: { host: "example.com", "x-forwarded-proto": "https" } };
+  it("ignores x-forwarded-proto for localhost (no header trust)", () => {
+    const req = { headers: { host: "localhost", "x-forwarded-proto": "https" } };
     const { origin, rpID } = getOriginAndRpID(req);
-    assert.equal(origin, "http://example.com"); // Should be http, not https
-    assert.equal(rpID, "example.com");
+    assert.equal(origin, "http://localhost");
+    assert.equal(rpID, "localhost");
   });
 
   it("uses socket.encrypted regardless of x-forwarded-proto header", () => {
@@ -219,16 +219,17 @@ describe("getOriginAndRpID", () => {
     assert.equal(rpID, "localhost");
   });
 
-  it("uses http for CF-Visitor header alone (forgeable, not a verified signal)", () => {
+  it("ignores CF-Visitor header (forgeable, not a verified signal)", () => {
+    // Localhost Host stays http even with a CF header pretending https.
     const req = {
       headers: {
-        host: "katulong.example.com",
+        host: "localhost",
         "cf-visitor": '{"scheme":"https"}'
       }
     };
     const { origin, rpID } = getOriginAndRpID(req);
-    assert.equal(origin, "http://katulong.example.com");
-    assert.equal(rpID, "katulong.example.com");
+    assert.equal(origin, "http://localhost");
+    assert.equal(rpID, "localhost");
   });
 
   it("uses https for temporary Cloudflare tunnels (.trycloudflare.com)", () => {
@@ -245,28 +246,29 @@ describe("getOriginAndRpID", () => {
     assert.equal(rpID, "test.ngrok.app");
   });
 
-  it("uses https for Cloudflare Tunnel with custom domain (loopback + CF header)", () => {
+  it("uses https for any non-loopback Host (custom-domain tunnels, no CF header needed)", () => {
     const req = {
-      headers: { host: "katulong-mini.felixflor.es", "cf-connecting-ip": "203.0.113.1" },
+      headers: { host: "katulong-mini.example.com" },
       socket: { remoteAddress: "127.0.0.1" },
     };
     const { origin, rpID } = getOriginAndRpID(req);
-    assert.equal(origin, "https://katulong-mini.felixflor.es");
-    assert.equal(rpID, "katulong-mini.felixflor.es");
+    assert.equal(origin, "https://katulong-mini.example.com");
+    assert.equal(rpID, "katulong-mini.example.com");
   });
 
-  it("does NOT trust CF header when socket is not loopback", () => {
+  it("does NOT trust CF-Connecting-IP — Host alone determines proto", () => {
+    // Localhost stays http even with a (forgeable) CF header.
     const req = {
-      headers: { host: "katulong-mini.felixflor.es", "cf-connecting-ip": "203.0.113.1" },
-      socket: { remoteAddress: "192.168.1.100" },
+      headers: { host: "localhost", "cf-connecting-ip": "203.0.113.1" },
+      socket: { remoteAddress: "127.0.0.1" },
     };
-    const { origin, rpID } = getOriginAndRpID(req);
-    assert.equal(origin, "http://katulong-mini.felixflor.es");
+    const { origin } = getOriginAndRpID(req);
+    assert.equal(origin, "http://localhost");
   });
 
-  it("uses https for Cloudflare Tunnel with IPv6 loopback", () => {
+  it("uses https for non-loopback Host on IPv6 loopback socket", () => {
     const req = {
-      headers: { host: "app.example.com", "cf-connecting-ip": "203.0.113.1" },
+      headers: { host: "app.example.com" },
       socket: { remoteAddress: "::1" },
     };
     const { origin, rpID } = getOriginAndRpID(req);
@@ -737,8 +739,11 @@ describe("isHttpsConnection", () => {
     assert.ok(isHttpsConnection(req));
   });
 
-  it("returns false when socket is not encrypted and no tunnel indicators", () => {
-    const req = { headers: { host: "example.com" }, socket: { encrypted: false, remoteAddress: "192.168.1.1" } };
+  it("returns false for plain HTTP localhost (dev mode)", () => {
+    // Pre-audit, this test used Host=example.com and asserted false. The
+    // new heuristic infers https from non-loopback Host, so we now use
+    // localhost to keep the spirit of "no tunnel indicators → http".
+    const req = { headers: { host: "localhost" }, socket: { encrypted: false } };
     assert.ok(!isHttpsConnection(req));
   });
 
@@ -762,58 +767,47 @@ describe("isHttpsConnection", () => {
     assert.ok(isHttpsConnection(req));
   });
 
-  it("returns false for CF-Visitor header alone (forgeable, not a verified signal)", () => {
+  it("ignores CF-Visitor header — Host alone determines proto", () => {
+    // The old code never trusted CF-Visitor for proto. The new code also
+    // doesn't. Verify a forged CF-Visitor on a localhost Host stays http.
     const req = {
-      headers: { host: "myapp.example.com", "cf-visitor": '{"scheme":"https"}' },
+      headers: { host: "localhost", "cf-visitor": '{"scheme":"https"}' },
       socket: {},
     };
     assert.ok(!isHttpsConnection(req));
   });
 
-  it("returns false when CF-Visitor scheme is http", () => {
+  it("returns true for any non-loopback Host (tunnel deployment heuristic)", () => {
+    // katulong binds to loopback by design; a non-loopback Host header
+    // implies a tunnel terminating TLS in front. CF-Connecting-IP and
+    // similar headers used to be checked here but are forgeable by any
+    // local process — we now infer HTTPS from Host alone.
     const req = {
-      headers: { host: "myapp.example.com", "cf-visitor": '{"scheme":"http"}' },
-      socket: { remoteAddress: "192.168.1.1" },
-    };
-    assert.ok(!isHttpsConnection(req));
-  });
-
-  it("returns false when CF-Visitor JSON is malformed", () => {
-    const req = {
-      headers: { host: "myapp.example.com", "cf-visitor": "invalid json" },
-      socket: { remoteAddress: "192.168.1.1" },
-    };
-    assert.ok(!isHttpsConnection(req));
-  });
-
-  it("returns true for Cloudflare custom domain via IPv4 loopback + CF-Connecting-IP", () => {
-    const req = {
-      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+      headers: { host: "myapp.example.com" },
       socket: { remoteAddress: "127.0.0.1" },
     };
     assert.ok(isHttpsConnection(req));
   });
 
-  it("returns true for Cloudflare custom domain via IPv6 loopback + CF-Connecting-IP", () => {
+  it("returns true for non-loopback Host even from non-loopback socket", () => {
+    // Adversarial Host=evil.com case: cookie gets Secure=true, browser
+    // refuses to send it on subsequent HTTP, so the attacker's only
+    // achievement is breaking their own session. Fail-closed.
     const req = {
-      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
-      socket: { remoteAddress: "::1" },
-    };
-    assert.ok(isHttpsConnection(req));
-  });
-
-  it("returns true for Cloudflare custom domain via IPv4-mapped IPv6 loopback + CF-Connecting-IP", () => {
-    const req = {
-      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
-      socket: { remoteAddress: "::ffff:127.0.0.1" },
-    };
-    assert.ok(isHttpsConnection(req));
-  });
-
-  it("returns false (security) when CF-Connecting-IP is present but socket is NOT loopback", () => {
-    const req = {
-      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+      headers: { host: "evil.com" },
       socket: { remoteAddress: "192.168.1.100" },
+    };
+    assert.ok(isHttpsConnection(req));
+  });
+
+  it("does NOT trust CF-Connecting-IP header (any local process can forge it)", () => {
+    // Regression for the audit finding: previously, CF-Connecting-IP from
+    // a loopback socket was trusted as proof of HTTPS. Any process on the
+    // same machine could forge it. The check is gone; only Host being
+    // non-loopback matters.
+    const req = {
+      headers: { host: "localhost", "cf-connecting-ip": "203.0.113.1" },
+      socket: { remoteAddress: "127.0.0.1" },
     };
     assert.ok(!isHttpsConnection(req));
   });
@@ -828,12 +822,17 @@ describe("isHttpsConnection", () => {
     assert.ok(!isHttpsConnection(req));
   });
 
-  it("returns false for non-loopback remote address without tunnel suffix", () => {
+  it("returns true for non-loopback Host even from non-loopback socket (Secure fails closed)", () => {
+    // Old behavior required a tunnel hostname suffix from the allowlist.
+    // New behavior: any non-loopback Host implies a tunnel deployment. If
+    // an attacker forges the Host, cookies set with Secure=true won't be
+    // re-sent on plain HTTP, so the only effect is the attacker breaks
+    // their own session.
     const req = {
       headers: { host: "my.custom-domain.net" },
       socket: { remoteAddress: "203.0.113.5" },
     };
-    assert.ok(!isHttpsConnection(req));
+    assert.ok(isHttpsConnection(req));
   });
 
   it("handles missing socket gracefully", () => {
@@ -841,12 +840,15 @@ describe("isHttpsConnection", () => {
     assert.ok(isHttpsConnection(req));
   });
 
-  it("handles missing socket remoteAddress gracefully (defaults to empty string)", () => {
+  it("handles missing socket remoteAddress gracefully", () => {
+    // Pre-audit, this test relied on socket.remoteAddress for the
+    // CF-Connecting-IP heuristic. That heuristic is gone; the answer
+    // now depends only on Host. A non-loopback Host returns true even
+    // if the socket has no remoteAddress.
     const req = {
-      headers: { host: "myapp.example.com", "cf-connecting-ip": "203.0.113.1" },
+      headers: { host: "myapp.example.com" },
       socket: {},
     };
-    // socket.remoteAddress is undefined → addr = "" → not loopback → false
-    assert.ok(!isHttpsConnection(req));
+    assert.ok(isHttpsConnection(req));
   });
 });

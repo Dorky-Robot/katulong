@@ -120,6 +120,16 @@ function isTrustedProxy(req) {
   // Only trust the header from loopback (proxy must run on the same machine)
   const addr = req.socket?.remoteAddress || "";
   if (!isLoopbackAddress(addr)) return false;
+  // ALSO require the Host header to be loopback. Tunnel traffic (Cloudflare,
+  // ngrok) terminates at loopback too — without this check, a request with
+  // a leaked KATULONG_TRUST_PROXY_SECRET could be routed through a tunnel
+  // and bypass session auth from the public internet. The same lesson as
+  // isLocalRequest() in lib/access-method.js: socket address alone is not
+  // sufficient to classify a request as local.
+  const host = (req.headers.host || "").split(":")[0].toLowerCase();
+  if (host !== "localhost" && host !== "127.0.0.1" && host !== "::1" && host !== "[::1]") {
+    return false;
+  }
   const provided = req.headers["x-katulong-auth"];
   if (!provided || provided.length !== secret.length) return false;
   try {
