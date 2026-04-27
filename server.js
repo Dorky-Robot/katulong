@@ -275,21 +275,27 @@ const getDraining = () => shutdown?.isDraining() ?? false;
 const topicBroker = createTopicBroker();
 const claudeWatchlist = createWatchlist({ dataDir: DATA_DIR });
 const permissionStore = createPermissionStore();
-// Pinned to the cloud model: local backbones (gemma3n:e2b,
-// qwen2.5-coder:7b) were too resource-intensive on laptop-class hosts
-// — the model swapped out between prompts and summaries stretched to
-// minutes. The cloud offload is served through the same local Ollama
-// daemon at http://127.0.0.1:11434 after `ollama signin`, so no
-// additional config is needed beyond authenticating the daemon.
+// Local gemma4:31b. Earlier versions used gemma4:31b-cloud — a cloud-
+// proxy model that the local Ollama daemon delegates to ollama.com — to
+// avoid swapping a 31B model in/out of memory on laptop-class hosts.
+// That worked for a while, but the cloud variant is gated by Ollama's
+// weekly free-tier quota, and once exhausted the summarizer + narrator
+// silently 429 every cycle.
+//
+// The Settings UI's "External LLM endpoint" (lib/config.js
+// ollamaPeerUrl/ollamaPeerToken) lets a GPU-poor host (mini, 2019)
+// route inference through ollama-bridge running on a GPU-rich host
+// (mac2024) so the local 31b model works regardless of where katulong
+// itself runs. The default still points at localhost:11434 — operators
+// without a remote bridge fall back to whichever Ollama daemon is on
+// their box. See bridges/ollama/README.md for the bridge setup flow.
+//
 // Single shared client is intentional: we stay Claude-specific until
 // a consumer actually needs a different model / timeout / host.
-//
-// resolveEndpoint reads the peer Ollama config on every request, so the
-// Settings UI can swap endpoints without restarting the server. Returns
-// null when no peer is configured — the client then falls back to the
-// default localhost host.
+// resolveEndpoint reads the peer config on every request, so the
+// Settings UI can swap endpoints without restarting the server.
 const callOllama = createOllamaClient({
-  model: "gemma4:31b-cloud",
+  model: "gemma4:31b",
   resolveEndpoint: () => {
     const peerUrl = configManager.getOllamaPeerUrl();
     if (!peerUrl) return null;
