@@ -536,9 +536,34 @@ cmd_start() {
       echo "ERROR: $rust_bin not found after build" >&2
       return 1
     fi
+
+    # Build the Leptos frontend bundle so the static-asset
+    # fallback in the server has something to serve. Skipping
+    # this (or running it after server start) leaves the URL
+    # showing the trunk-build-not-yet-run warning in the
+    # server log and a 404 in the browser. Trunk is required;
+    # if the operator hasn't installed it, fail fast — the
+    # staging script can't paper over a missing toolchain.
+    if ! command -v trunk >/dev/null 2>&1; then
+      echo "ERROR: 'trunk' CLI is not installed (required for Rust staging)." >&2
+      echo "       Install: cargo install trunk" >&2
+      return 1
+    fi
+    echo "  building leptos bundle (trunk release)..."
+    if ! (cd "$REPO_ROOT/crates/web" && trunk build --release 2>&1 | tail -3); then
+      echo "ERROR: trunk build failed" >&2
+      return 1
+    fi
+    local web_dist="$REPO_ROOT/crates/web/dist"
+    if [[ ! -f "$web_dist/index.html" ]]; then
+      echo "ERROR: $web_dist/index.html not found after trunk build" >&2
+      return 1
+    fi
+
     PORT="$port" \
     KATULONG_DATA_DIR="$data_dir" \
     KATULONG_TMUX_SOCKET="$tmux_socket" \
+    KATULONG_WEB_DIST="$web_dist" \
       nohup "$rust_bin" > "$log_file" 2>&1 &
   fi
   local server_pid=$!
@@ -659,8 +684,9 @@ Verify the Rust binary is what's responding:
   curl $url/health                    # → "ok"
   ps -p $server_pid -o command=       # should show .../target/release/katulong-server
 
-No SPA is served (Leptos frontend is a stub). Use this to
-exercise the Rust backend's HTTP + WebSocket surface.
+The Leptos hello-world shell is served at /; trunk-built
+WASM hydrates on load. Browse the URL or run the e2e smoke:
+  KATULONG_BASE_URL=$url npx playwright test --config=playwright.rust.config.js
 
 Stop:
   $(basename "$0") stop $name
