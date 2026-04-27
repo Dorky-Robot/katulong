@@ -3362,6 +3362,31 @@
               <span id="notification-permission-status" style="font-size: 0.8rem; color: var(--text-muted);"></span>
             </div>
             <p class="tab-description" id="notification-permission-desc" style="margin-top: 0.5rem; margin-bottom: 1.5rem;"></p>
+
+            <h4 style="margin-top: var(--space-xl); font-size: 0.875rem; color: var(--text-muted);">External LLM endpoint</h4>
+            <p class="tab-description" style="margin-top: 0;">
+              Route summarizer + narrator inference to a remote ollama-bridge
+              instead of localhost. Leave blank to use this machine's local Ollama.
+            </p>
+            <div class="settings-row" style="flex-direction: column; align-items: stretch; gap: var(--space-xs);">
+              <span class="settings-label">URL</span>
+              <input type="url" id="ollama-peer-url-input" class="palette-hex-input"
+                     style="width: 100%; box-sizing: border-box;"
+                     placeholder="https://ollama-bridge.example.com" spellcheck="false" autocomplete="off" />
+            </div>
+            <div class="settings-row" style="flex-direction: column; align-items: stretch; gap: var(--space-xs);">
+              <span class="settings-label">Bearer token</span>
+              <input type="password" id="ollama-peer-token-input" class="palette-hex-input"
+                     style="width: 100%; box-sizing: border-box;"
+                     placeholder="paste token from ollama-bridge new-token" spellcheck="false" autocomplete="off" />
+              <span id="ollama-peer-token-state" style="font-size: 0.75rem; color: var(--text-muted);"></span>
+            </div>
+            <div class="settings-row" style="gap: var(--space-xs);">
+              <button class="settings-pair-btn" id="ollama-peer-save-btn">Save</button>
+              <button class="settings-pair-btn" id="ollama-peer-test-btn">Test connection</button>
+              <button class="settings-pair-btn" id="ollama-peer-clear-btn" style="opacity: 0.7;">Clear</button>
+            </div>
+            <p class="tab-description" id="ollama-peer-status" style="margin-top: 0.5rem; min-height: 1.2em;"></p>
           </div>
 
           <!-- Remote tab content -->
