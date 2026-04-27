@@ -91,10 +91,18 @@ pub fn app(state: AppState) -> Router {
         // (bin/katulong-stage) sets the env var explicitly so
         // the binary's cwd doesn't matter.
         //
-        // Path traversal: tower-http's ServeDir refuses to
-        // serve paths that escape the configured root via `..`
-        // — see `ServeDir`'s docs. Same guarantee the Node
-        // implementation enforced manually via prefix-check.
+        // Path traversal: tower-http's `ServeDir` v0.5
+        // normalizes the request path and rejects any `..`
+        // escape attempts before joining to the configured
+        // root. Equivalent to the Node implementation's manual
+        // `filePath.startsWith(publicDir)` prefix check.
+        //
+        // Body limit coverage: axum 0.7's `Router::fallback_
+        // service` applies subsequent `.layer()` calls to BOTH
+        // the routed surface AND the fallback (changed from
+        // 0.6 behavior). So the `DefaultBodyLimit` below
+        // covers ServeDir requests too — no need to wrap
+        // ServeDir separately.
         .fallback_service(ServeDir::new(web_dist_path()))
         .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT))
         .with_state(state)
