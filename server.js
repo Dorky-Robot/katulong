@@ -275,25 +275,41 @@ const getDraining = () => shutdown?.isDraining() ?? false;
 const topicBroker = createTopicBroker();
 const claudeWatchlist = createWatchlist({ dataDir: DATA_DIR });
 const permissionStore = createPermissionStore();
-// Pinned to the cloud model: local backbones (gemma3n:e2b,
-// qwen2.5-coder:7b) were too resource-intensive on laptop-class hosts
-// — the model swapped out between prompts and summaries stretched to
-// minutes. The cloud offload is served through the same local Ollama
-// daemon at http://127.0.0.1:11434 after `ollama signin`, so no
-// additional config is needed beyond authenticating the daemon.
-// Single shared client is intentional: we stay Claude-specific until
-// a consumer actually needs a different model / timeout / host.
+// LLM cascade — the single shared callOllama probes a list of backends
+// in priority order on every cycle and uses the first that's reachable
+// AND has the requested model. Order:
 //
-// resolveEndpoint reads the peer Ollama config on every request, so the
-// Settings UI can swap endpoints without restarting the server. Returns
-// null when no peer is configured — the client then falls back to the
-// default localhost host.
+//   1. peer-bridge      → user-configured ollama-bridge URL (Settings →
+//                          External LLM endpoint), gemma4:31b. Lets a
+//                          GPU-poor host route inference to a GPU-rich
+//                          host running the local 31b model.
+//   2. local-31b        → this host's Ollama daemon, gemma4:31b. Used
+//                          when the local box has the model pulled.
+//   3. local-cloud      → this host's Ollama daemon, gemma4:31b-cloud
+//                          (the cloud-proxy variant). Last-resort
+//                          fallback — quota-gated, but better than
+//                          nothing if no local 31b is pulled.
+//
+// resolveBackends is called fresh on every request, so the Settings UI
+// can swap the peer URL/token at runtime. The client caches its
+// "active" pick for ~5 min then re-probes — covers the case where the
+// peer bridge restarts and we want to migrate back from the local
+// fallback.
 const callOllama = createOllamaClient({
-  model: "gemma4:31b-cloud",
-  resolveEndpoint: () => {
+  resolveBackends: () => {
+    const list = [];
     const peerUrl = configManager.getOllamaPeerUrl();
-    if (!peerUrl) return null;
-    return { host: peerUrl, authToken: configManager.getOllamaPeerToken() };
+    if (peerUrl) {
+      list.push({
+        name: "peer-bridge",
+        host: peerUrl,
+        authToken: configManager.getOllamaPeerToken(),
+        model: "gemma4:31b",
+      });
+    }
+    list.push({ name: "local-31b",    host: "http://127.0.0.1:11434", authToken: null, model: "gemma4:31b" });
+    list.push({ name: "local-cloud",  host: "http://127.0.0.1:11434", authToken: null, model: "gemma4:31b-cloud" });
+    return list;
   },
 });
 const claudeProcessor = createClaudeProcessor({
@@ -343,6 +359,7 @@ const routes = [
     auth, csrf,
     topicBroker,
     permissionStore,
+    callOllama,
     getExternalUrl: () => configManager.getPublicUrl(),
   }),
   ...createClaudeFeedRoutes({
