@@ -11,3 +11,9 @@ path = "src/main.rs"
 [dependencies]
 leptos = { workspace = true }
 console_error_panic_hook = "0.1"
+# `web-sys` for the few browser globals we touch directly
+# (URL query parsing today; future slices will add WebAuthn,
+# fetch, WebSocket, navigation). Feature-gated narrowly to
+# keep the WASM bundle lean — only enable each interface when
+# a slice actually uses it.
+web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams"] }
