@@ -225,6 +225,96 @@ export function createSettingsHandlers(options = {}) {
     input.addEventListener("input", () => input.classList.remove("invalid"));
   }
 
+  /** Initialize the External LLM endpoint section.
+   *
+   *  GET /api/config/ollama-peer returns {url, hasToken}; the token is
+   *  never sent back to the client. The input shows blank with a
+   *  "(token already set)" hint when a token exists server-side; typing
+   *  a new value overrides; Clear sets both to null.
+   */
+  function initOllamaPeer() {
+    const urlInput   = document.getElementById("ollama-peer-url-input");
+    const tokenInput = document.getElementById("ollama-peer-token-input");
+    const tokenState = document.getElementById("ollama-peer-token-state");
+    const saveBtn    = document.getElementById("ollama-peer-save-btn");
+    const testBtn    = document.getElementById("ollama-peer-test-btn");
+    const clearBtn   = document.getElementById("ollama-peer-clear-btn");
+    const statusEl   = document.getElementById("ollama-peer-status");
+    if (!urlInput || !tokenInput) return;
+
+    const setStatus = (msg, kind = "neutral") => {
+      statusEl.textContent = msg;
+      statusEl.style.color = kind === "ok"  ? "var(--accent)"
+                          : kind === "err" ? "var(--danger, #d33)"
+                          : "var(--text-muted)";
+    };
+
+    async function load() {
+      try {
+        const data = await api.get("/api/config/ollama-peer");
+        urlInput.value = data.url || "";
+        tokenInput.value = "";
+        tokenState.textContent = data.hasToken
+          ? "token already set — leave blank to keep, or type to replace"
+          : "no token set";
+      } catch (err) {
+        setStatus(`load failed: ${err.message}`, "err");
+      }
+    }
+
+    async function save() {
+      const url = urlInput.value.trim();
+      const tokenTyped = tokenInput.value;
+      const body = { url: url || null };
+      // Only include token when the user typed something, so an empty
+      // box doesn't accidentally clear a previously-saved token.
+      if (tokenTyped.length > 0) body.token = tokenTyped;
+      try {
+        setStatus("saving...");
+        await api.put("/api/config/ollama-peer", body);
+        setStatus("saved", "ok");
+        await load();
+      } catch (err) {
+        setStatus(`save failed: ${err.message}`, "err");
+      }
+    }
+
+    async function test() {
+      setStatus("testing...");
+      try {
+        const result = await api.post("/api/config/ollama-peer/test", {});
+        if (result.ok) {
+          const count = result.models?.length ?? 0;
+          setStatus(
+            count > 0
+              ? `✓ reachable (${count} model${count === 1 ? "" : "s"} available)`
+              : "✓ reachable, but no models loaded on the bridge",
+            "ok",
+          );
+        } else {
+          setStatus(`✗ ${result.error || "unknown error"}`, "err");
+        }
+      } catch (err) {
+        setStatus(`✗ ${err.message}`, "err");
+      }
+    }
+
+    async function clear() {
+      try {
+        await api.put("/api/config/ollama-peer", { url: null, token: null });
+        setStatus("cleared — using local Ollama", "neutral");
+        await load();
+      } catch (err) {
+        setStatus(`clear failed: ${err.message}`, "err");
+      }
+    }
+
+    saveBtn?.addEventListener("click", save);
+    testBtn?.addEventListener("click", test);
+    clearBtn?.addEventListener("click", clear);
+    load();
+  }
+
   /** Initialize Claude Code hooks copy button. */
   function initClaudeHooksSnippet() {
     const copyBtn = document.getElementById("claude-hooks-copy");
@@ -260,6 +350,7 @@ export function createSettingsHandlers(options = {}) {
     initLogout();
     initVersion();
     initClaudeHooksSnippet();
+    initOllamaPeer();
   }
 
   return {

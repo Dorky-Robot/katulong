@@ -833,4 +833,106 @@ describe("ConfigManager", () => {
       assert.strictEqual(configManager2.getPortProxyEnabled(), false);
     });
   });
+
+  describe("ollamaPeerUrl", () => {
+    beforeEach(() => {
+      configManager.initialize();
+    });
+
+    it("defaults to null", () => {
+      assert.strictEqual(configManager.getOllamaPeerUrl(), null);
+    });
+
+    it("accepts a valid https URL", async () => {
+      await configManager.setOllamaPeerUrl("https://ollama.example.com");
+      assert.strictEqual(configManager.getOllamaPeerUrl(), "https://ollama.example.com");
+    });
+
+    it("accepts http (for localhost / LAN setups)", async () => {
+      await configManager.setOllamaPeerUrl("http://192.168.1.5:11435");
+      assert.strictEqual(configManager.getOllamaPeerUrl(), "http://192.168.1.5:11435");
+    });
+
+    it("strips trailing slashes for predictable path appending", async () => {
+      await configManager.setOllamaPeerUrl("https://ollama.example.com///");
+      assert.strictEqual(configManager.getOllamaPeerUrl(), "https://ollama.example.com");
+    });
+
+    it("clears with null", async () => {
+      await configManager.setOllamaPeerUrl("https://ollama.example.com");
+      await configManager.setOllamaPeerUrl(null);
+      assert.strictEqual(configManager.getOllamaPeerUrl(), null);
+    });
+
+    it("clears with empty string", async () => {
+      await configManager.setOllamaPeerUrl("https://ollama.example.com");
+      await configManager.setOllamaPeerUrl("");
+      assert.strictEqual(configManager.getOllamaPeerUrl(), null);
+    });
+
+    it("rejects malformed URLs", async () => {
+      await assert.rejects(
+        async () => configManager.setOllamaPeerUrl("not a url"),
+        /valid URL/,
+      );
+    });
+
+    it("rejects non-http(s) protocols", async () => {
+      await assert.rejects(
+        async () => configManager.setOllamaPeerUrl("ftp://nope"),
+        /must use http or https/,
+      );
+    });
+
+    it("persists across reload", async () => {
+      await configManager.setOllamaPeerUrl("https://ollama.example.com");
+      const reloaded = new ConfigManager(testDir);
+      reloaded.initialize();
+      assert.strictEqual(reloaded.getOllamaPeerUrl(), "https://ollama.example.com");
+    });
+  });
+
+  describe("ollamaPeerToken", () => {
+    beforeEach(() => {
+      configManager.initialize();
+    });
+
+    it("defaults to null", () => {
+      assert.strictEqual(configManager.getOllamaPeerToken(), null);
+    });
+
+    it("accepts a sensibly long token", async () => {
+      const token = "a".repeat(64);
+      await configManager.setOllamaPeerToken(token);
+      assert.strictEqual(configManager.getOllamaPeerToken(), token);
+    });
+
+    it("clears with null", async () => {
+      await configManager.setOllamaPeerToken("a".repeat(32));
+      await configManager.setOllamaPeerToken(null);
+      assert.strictEqual(configManager.getOllamaPeerToken(), null);
+    });
+
+    it("rejects tokens shorter than 8 chars", async () => {
+      await assert.rejects(
+        async () => configManager.setOllamaPeerToken("short"),
+        /at least 8/,
+      );
+    });
+
+    it("rejects tokens longer than 512 chars", async () => {
+      await assert.rejects(
+        async () => configManager.setOllamaPeerToken("x".repeat(513)),
+        /512 characters or less/,
+      );
+    });
+
+    it("persists across reload", async () => {
+      const token = "a".repeat(64);
+      await configManager.setOllamaPeerToken(token);
+      const reloaded = new ConfigManager(testDir);
+      reloaded.initialize();
+      assert.strictEqual(reloaded.getOllamaPeerToken(), token);
+    });
+  });
 });

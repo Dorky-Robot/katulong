@@ -272,7 +272,19 @@ const permissionStore = createPermissionStore();
 // additional config is needed beyond authenticating the daemon.
 // Single shared client is intentional: we stay Claude-specific until
 // a consumer actually needs a different model / timeout / host.
-const callOllama = createOllamaClient({ model: "gemma4:31b-cloud" });
+//
+// resolveEndpoint reads the peer Ollama config on every request, so the
+// Settings UI can swap endpoints without restarting the server. Returns
+// null when no peer is configured — the client then falls back to the
+// default localhost host.
+const callOllama = createOllamaClient({
+  model: "gemma4:31b-cloud",
+  resolveEndpoint: () => {
+    const peerUrl = configManager.getOllamaPeerUrl();
+    if (!peerUrl) return null;
+    return { host: peerUrl, authToken: configManager.getOllamaPeerToken() };
+  },
+});
 const claudeProcessor = createClaudeProcessor({
   watchlist: claudeWatchlist,
   topicBroker,
