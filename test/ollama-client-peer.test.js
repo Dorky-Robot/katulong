@@ -235,4 +235,94 @@ describe("createOllamaClient — cascade (resolveBackends)", () => {
     });
     await assert.rejects(() => client("hi"), /no backend reachable/);
   });
+
+  it("backs off after a complete cascade failure (no probe storm)", async () => {
+    let resolveCalls = 0;
+    const client = createOllamaClient({
+      resolveBackends: () => {
+        resolveCalls++;
+        return [{ name: "p", host: "http://127.0.0.1:1", authToken: null, model: "x" }];
+      },
+      probeTimeoutMs: 200,
+      failTtlMs: 60_000,
+    });
+    // First call exhausts the cascade and sets the backoff.
+    await assert.rejects(() => client("first"));
+    assert.equal(resolveCalls, 1);
+    // Second call hits the backoff branch — no resolveBackends, no probe.
+    await assert.rejects(() => client("second"), /failure backoff/);
+    assert.equal(resolveCalls, 1, "should not have re-resolved during backoff");
+  });
+
+  it("invalidate() clears the failure backoff too", async () => {
+    let resolveCalls = 0;
+    const client = createOllamaClient({
+      resolveBackends: () => {
+        resolveCalls++;
+        return [{ name: "p", host: "http://127.0.0.1:1", authToken: null, model: "x" }];
+      },
+      probeTimeoutMs: 200,
+      failTtlMs: 60_000,
+    });
+    await assert.rejects(() => client("first"));
+    client.invalidate();
+    // After invalidate, the backoff is gone and the next call probes again.
+    await assert.rejects(() => client("second"));
+    assert.equal(resolveCalls, 2);
+  });
+
+  it("skips the just-failed backend when fast-path falls through", async () => {
+    // A stub that answers /api/tags but 500s on /api/chat. Becomes the
+    // cached active (probe says yes), then the fast path's chat call
+    // fails. The slow path must NOT re-probe-and-call the broken
+    // backend — should jump straight to the healthy one.
+    let chatCallsToBroken = 0;
+    const brokenStub = createServer((req, res) => {
+      if (req.method === "GET" && req.url === "/api/tags") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ models: [{ name: "gemma4:31b" }] }));
+      }
+      chatCallsToBroken++;
+      res.writeHead(500);
+      res.end("nope");
+    });
+    await new Promise((resolve) => brokenStub.listen(0, "127.0.0.1", resolve));
+    const brokenUrl = `http://127.0.0.1:${brokenStub.address().port}`;
+
+    try {
+      const client = createOllamaClient({
+        resolveBackends: () => [
+          { name: "broken",   host: brokenUrl, authToken: null, model: "gemma4:31b" },
+          { name: "local-31b", host: localUrl, authToken: null, model: "gemma4:31b" },
+        ],
+      });
+      // First call: probe broken (ok), chat broken (fails), probe local (ok),
+      // chat local (works). One chat hit on broken, one chat hit on local.
+      await client("first");
+      assert.equal(client.getActiveBackend().name, "local-31b");
+      assert.equal(chatCallsToBroken, 1, "broken should have been tried exactly once");
+      // Second call hits the fast path on local-31b — broken not touched.
+      await client("second");
+      assert.equal(chatCallsToBroken, 1, "broken must not be retried after fast-path success");
+    } finally {
+      brokenStub.close();
+    }
+  });
+
+  it("getActiveBackend does NOT expose the host (foot-gun guard)", async () => {
+    const client = createOllamaClient({
+      resolveBackends: () => [
+        { name: "p", host: bridgeUrl, authToken: null, model: "gemma4:31b" },
+      ],
+    });
+    await client("hi");
+    const active = client.getActiveBackend();
+    assert.equal(active.name, "p");
+    assert.equal(active.model, "gemma4:31b");
+    assert.equal(
+      active.host,
+      undefined,
+      "host must not appear in getActiveBackend's return — could leak peer URL or embedded creds",
+    );
+  });
 });
