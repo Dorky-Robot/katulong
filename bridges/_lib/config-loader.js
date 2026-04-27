@@ -84,8 +84,15 @@ export function writeBridgeConfig(dataDir, bridgeName, partial) {
     mode: 0o600,
   });
   renameSync(tmpPath, path);
-  // Belt-and-suspenders: enforce 0600 even if umask interfered.
-  try { chmodSync(path, 0o600); } catch { /* fs unsupported */ }
+  // Belt-and-suspenders: enforce 0600 even if umask interfered. Only
+  // swallow "filesystem doesn't support chmod" — surface ENOENT/EPERM
+  // because either of those means the file is in a worse state than
+  // we expect (gone or unwritable) and the operator should know.
+  try {
+    chmodSync(path, 0o600);
+  } catch (err) {
+    if (err.code !== "ENOTSUP" && err.code !== "ENOSYS") throw err;
+  }
 }
 
 export function generateToken() {

@@ -1,37 +1,14 @@
 /**
- * Generates a per-bridge LaunchAgent plist. Mirrors the deterministic-PATH
- * lesson from lib/cli/commands/service.js — never inherit the calling
- * shell's PATH (a non-interactive ssh would otherwise bake a stripped
- * PATH into the plist and break tmux/node lookup on respawn).
+ * Generates a per-bridge LaunchAgent plist. Shares the PATH list and XML
+ * escape helper with the main katulong service plist (lib/cli/launchd-util.js),
+ * so the plist invariants — deterministic PATH, full XML escaping, drop
+ * binDirs containing `:` or whitespace — stay consistent across both
+ * code paths instead of drifting silently.
  */
 
 import { homedir } from "node:os";
-import { join, dirname } from "node:path";
-
-const STANDARD_PLIST_PATH_DIRS = [
-  "/opt/homebrew/bin",
-  "/opt/homebrew/sbin",
-  "/usr/local/bin",
-  "/usr/local/sbin",
-  "/usr/bin",
-  "/bin",
-  "/usr/sbin",
-  "/sbin",
-];
-
-function buildPlistPath(bin) {
-  const binDir = bin ? dirname(bin) : null;
-  return [...new Set([binDir, ...STANDARD_PLIST_PATH_DIRS].filter(Boolean))].join(":");
-}
-
-function xmlEscape(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
+import { join } from "node:path";
+import { xmlEscape, buildLaunchAgentPath } from "../../lib/cli/launchd-util.js";
 
 export function bridgeLabel(bridgeName) {
   // Period-separated, mirrors com.dorkyrobot.katulong's label scheme.
@@ -54,7 +31,7 @@ export function bridgePlistPath(bridgeName) {
  */
 export function buildBridgePlist({ bridgeName, bin, dataDir }) {
   const label = bridgeLabel(bridgeName);
-  const path = buildPlistPath(bin);
+  const path = buildLaunchAgentPath(bin);
   const stdoutLog = `${dataDir}/bridges/${bridgeName}/stdout.log`;
   const stderrLog = `${dataDir}/bridges/${bridgeName}/stderr.log`;
 

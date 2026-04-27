@@ -77,6 +77,7 @@ describe("bridge server", () => {
       bind: "127.0.0.1",
       target: `http://127.0.0.1:${stub.port}`,
       token: TOKEN,
+      logger: () => {}, // suppress test-time noise
     });
     bridgePort = bridge.address().port;
   });
@@ -141,6 +142,7 @@ describe("bridge server", () => {
       bind: "127.0.0.1",
       target: "http://127.0.0.1:1",
       token: TOKEN,
+      logger: () => {},
     });
     const res = await fetch(`http://127.0.0.1:${orphan.address().port}/api/tags`, {
       headers: { Authorization: `Bearer ${TOKEN}` },
@@ -148,6 +150,45 @@ describe("bridge server", () => {
     assert.equal(res.status, 502);
     const body = await res.json();
     assert.equal(body.error, "upstream_unreachable");
+    // Don't leak upstream URL or syscall details — the body should NOT
+    // include `detail`, the upstream hostname, or "ECONNREFUSED".
+    assert.equal(body.detail, undefined);
+    assert.ok(!JSON.stringify(body).includes("ECONNREFUSED"));
     orphan.close();
+  });
+
+  it("strips hop-by-hop and forwarding headers", async () => {
+    await fetch(`http://127.0.0.1:${bridgePort}/api/tags`, {
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        "X-Forwarded-For": "1.2.3.4",
+        "X-Real-IP": "5.6.7.8",
+        Connection: "close",
+      },
+    });
+    const last = stub.requests.at(-1);
+    assert.equal(last.headers["x-forwarded-for"], undefined);
+    assert.equal(last.headers["x-real-ip"], undefined);
+    // Note: node's http client adds its own `Connection: keep-alive`
+    // when no value is set, so we can't assert connection is absent —
+    // only that the client's "close" value didn't propagate.
+    assert.notEqual(last.headers["connection"], "close");
+  });
+
+  it("invokes the logger on auth failure with the source address", async () => {
+    const events = [];
+    const probe = await startBridgeServer({
+      port: 0,
+      bind: "127.0.0.1",
+      target: `http://127.0.0.1:${stub.port}`,
+      token: TOKEN,
+      logger: (e) => events.push(e),
+    });
+    await fetch(`http://127.0.0.1:${probe.address().port}/api/tags`);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].event, "auth_failure");
+    assert.equal(events[0].reason, "missing_header");
+    assert.match(events[0].remoteAddress, /127\.0\.0\.1|::1|::ffff:127/);
+    probe.close();
   });
 });
