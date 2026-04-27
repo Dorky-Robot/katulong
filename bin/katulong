@@ -31,6 +31,7 @@ const COMMANDS = {
   notes: "Read per-session notepad content (read, list)",
   setup: "One-time setup (self-access, Claude Code hooks)",
   service: "Manage macOS LaunchAgent (install, uninstall, restart, status)",
+  bridge: "Manage local-service bridges (e.g., ollama)",
   "tmux-sweep": "Reap orphaned katulong-test-<pid> tmux sockets",
 };
 
