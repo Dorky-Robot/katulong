@@ -63,12 +63,46 @@ async fn main() {
 
     // Bind port: `PORT` env (matches the Node convention, plus
     // bin/katulong-stage's port-allocation contract). Defaults
-    // to 3000 for parity with the Node default.
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(3000);
+    // to 3000 for parity with the Node default. A bad value
+    // (non-numeric, out of u16 range) logs a warning and falls
+    // back to the default so the server still starts —
+    // operators can grep for the warn line if their PORT was
+    // ignored.
+    let port: u16 = std::env::var("PORT").ok().map_or(3000, |s| {
+        s.parse().unwrap_or_else(|_| {
+            tracing::warn!(value = %s, "PORT env var is not a valid u16; defaulting to 3000");
+            3000
+        })
+    });
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+
+    // Web dist sanity check: the static-asset fallback in
+    // `app()` reads from `KATULONG_WEB_DIST` (or the default
+    // `crates/web/dist`). Two failure modes warned about
+    // loudly so misconfigurations don't silently 404:
+    //
+    //   1. Directory doesn't exist — operators would see a
+    //      blank-screen failure with no log line.
+    //   2. Directory exists but doesn't look like a trunk dist
+    //      (no `index.html`). Either the build hasn't run or
+    //      the env var was pointed at the wrong directory
+    //      (e.g., `/etc` — operator misconfiguration that
+    //      would otherwise turn the server into an open file
+    //      browser).
+    let dist = std::env::var_os("KATULONG_WEB_DIST")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("crates/web/dist"));
+    if !dist.exists() {
+        tracing::warn!(
+            path = %dist.display(),
+            "KATULONG_WEB_DIST does not exist; static assets will 404 (run `trunk build` in crates/web?)"
+        );
+    } else if !dist.join("index.html").exists() {
+        tracing::warn!(
+            path = %dist.display(),
+            "KATULONG_WEB_DIST does not contain index.html; this doesn't look like a trunk dist directory — check the env var or run `trunk build` in crates/web"
+        );
+    }
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("bind listener");
