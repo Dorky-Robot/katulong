@@ -8,6 +8,10 @@
 //   - "static-only": HTML loads but WASM never hydrates (the
 //     bundle is broken / missing / mis-served)
 //
+// Auth-ceremony tests (login mode swap, sign-in click wiring,
+// error rendering) live in `auth.e2e.js` — this file stays
+// focused on the layout + bundle plumbing.
+//
 // Run against a live Rust backend (no test-side server spin-up):
 //   KATULONG_BASE_URL=http://127.0.0.1:3050 \
 //     npx playwright test --config=playwright.rust.config.js
@@ -68,39 +72,6 @@ test("leptos shell renders header + main + status", async ({ page }) => {
   const main = page.locator("#kat-main");
   await expect(main).toBeVisible();
   await expect(main.locator("#kat-login")).toBeVisible();
-});
-
-test("login defaults to sign-in mode without setup_token", async ({ page }) => {
-  // No `?setup_token=...` query: Login should render its
-  // sign-in mode — no device-name field, "Sign in with
-  // passkey" CTA, `data-mode="signin"` for future styling +
-  // selector hooks.
-  await page.goto("/");
-  await expect(page.locator("#kat-shell")).toBeVisible({ timeout: 15_000 });
-
-  const login = page.locator("#kat-login");
-  await expect(login).toHaveAttribute("data-mode", "signin");
-  await expect(login.locator(".title")).toHaveText("Sign in");
-  await expect(login.locator(".cta")).toHaveText("Sign in with passkey");
-  // No device-name field in sign-in mode.
-  await expect(login.locator('input[name="device-name"]')).toHaveCount(0);
-});
-
-test("login switches to pair mode with setup_token", async ({ page }) => {
-  // Presence of `?setup_token=` flips the form to pair mode
-  // — adds the device-name field, swaps title + CTA copy,
-  // sets `data-mode="pair"`. The token value isn't read by
-  // 9r.1 (the WebAuthn ceremony in 9r.2 will consume it);
-  // this test only asserts the visible mode swap.
-  await page.goto("/?setup_token=abcdef0123456789");
-  await expect(page.locator("#kat-shell")).toBeVisible({ timeout: 15_000 });
-
-  const login = page.locator("#kat-login");
-  await expect(login).toHaveAttribute("data-mode", "pair");
-  await expect(login.locator(".title")).toHaveText("Pair this device");
-  await expect(login.locator(".cta")).toHaveText("Pair with passkey");
-  // Pair mode shows the device-name input.
-  await expect(login.locator('input[name="device-name"]')).toBeVisible();
 });
 
 test("/health returns ok", async ({ request }) => {

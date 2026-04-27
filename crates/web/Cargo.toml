@@ -11,9 +11,42 @@ path = "src/main.rs"
 [dependencies]
 leptos = { workspace = true }
 console_error_panic_hook = "0.1"
-# `web-sys` for the few browser globals we touch directly
-# (URL query parsing today; future slices will add WebAuthn,
-# fetch, WebSocket, navigation). Feature-gated narrowly to
-# keep the WASM bundle lean — only enable each interface when
-# a slice actually uses it.
-web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams"] }
+# `web-sys` for the few browser globals we touch directly.
+# Slice 9r.2 adds the WebAuthn surface (Navigator,
+# CredentialsContainer, CredentialRequestOptions,
+# PublicKeyCredential). Earlier slices added URL parsing.
+# Feature-gated narrowly to keep the WASM bundle lean.
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Location",
+    "UrlSearchParams",
+    "Navigator",
+    "CredentialsContainer",
+    "CredentialRequestOptions",
+    "PublicKeyCredential",
+] }
+# WebAuthn wire types — the same types the Rust server
+# `webauthn_wire` re-exports. The `wasm` feature provides
+# `From<RequestChallengeResponse> for
+# web_sys::CredentialRequestOptions` and the reverse for
+# the assertion, so we don't hand-roll the binary
+# (challenge / rawId / signature) base64url ↔ Uint8Array
+# conversion.
+webauthn-rs-proto = { version = "0.5", features = ["wasm"] }
+# WASM-friendly fetch wrapper. `gloo-net` is the de-facto
+# choice for Leptos apps that need plain JSON HTTP — small,
+# well-tested, builds on web-sys's Fetch API. The `http`
+# feature is the only one we need; `websocket` lands later
+# alongside the terminal slice.
+gloo-net = { version = "0.6", default-features = false, features = ["http"] }
+# Async glue: `JsFuture::from(promise).await` for
+# `navigator.credentials.get(...)`.
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+# JSON in/out at the HTTP boundary. The server speaks plain
+# JSON for auth (CBOR is session-layer only per slice 9d).
+# `gloo-net`'s `.json(...)` pulls in `serde_json` transitively;
+# we don't list it here because no code in this crate calls
+# `serde_json::` directly. If a future slice does, add it back.
+serde = { version = "1", features = ["derive"] }

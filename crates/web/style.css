@@ -155,6 +155,51 @@ body {
   cursor: pointer;
 }
 
-#kat-login .cta:hover {
+#kat-login .cta:hover:not(:disabled) {
   filter: brightness(1.05);
+}
+
+#kat-login .cta:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Error region rendered below the CTA when the ceremony
+ * fails (network, browser-API rejection, server reject).
+ * Conservative red on dark; the role="alert" surface is what
+ * matters semantically — color is reinforcement. */
+#kat-login .error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(208, 77, 77, 0.12);
+  border: 1px solid rgba(208, 77, 77, 0.4);
+  color: #f5b8b8;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* Terminal stub (slice 9r.2). The real terminal view lands
+ * in a future slice; this is what `<Main/>` shows after the
+ * sign-in ceremony succeeds, so the auth-state-driven swap
+ * has something to render. */
+#kat-terminal-stub {
+  max-width: 360px;
+  margin: 64px auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--kat-fg);
+}
+
+#kat-terminal-stub .title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+#kat-terminal-stub .blurb {
+  margin: 0;
+  color: var(--kat-fg-dim);
+  font-size: 13px;
 }

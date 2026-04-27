@@ -1,22 +1,25 @@
-// Leptos shell — slice 9q.
+// Leptos shell.
 //
-// Layout primitives (header + main) replace the slice-9o
-// hello-world `<main>`. The shell is intentionally a frame
-// with NO real content yet: subsequent slices fill `<Main/>`
-// with login → terminal → tile-grid as those land. The
-// Header carries a connection-status signal that future
-// slices will wire to the WS attach state; today it's
-// hardcoded to `false` so the visible truth ("disconnected")
-// matches the actual state.
+// Slice 9q: layout primitives (header + main).
+// Slice 9r.1: <Login/> form shell with URL-based mode switch.
+// Slice 9r.2: sign-in WebAuthn ceremony wired to the API.
+//   Login + ceremony moved to `login.rs` — this file owns
+//   only the shell layout, the App-root signal contexts, and
+//   the auth-state-driven swap in <Main/>.
 //
 // FP-leaning per memory `feedback_rewrite_fp_direction`: the
 // shell is built from small pure components composed into a
-// tree. Connection state lives in a single signal provided
-// at the App root and consumed via context — no global
-// mutable state, no scattered RwSignal allocations across
-// components.
+// tree. Auth + connection state live in signals provided at
+// the App root; the ceremony itself is a pure async function
+// (`login::signin`) that returns a `Result` — the component
+// just dispatches it via `create_action` and reacts to the
+// resolved value. No scattered globals, no callbacks-on-
+// callbacks.
 
 use leptos::*;
+
+mod login;
+use login::Login;
 
 fn main() {
     console_error_panic_hook::set_once();
@@ -28,6 +31,21 @@ fn main() {
 /// attach handshake to flip it.
 #[derive(Copy, Clone)]
 struct ConnectionStatus(ReadSignal<bool>);
+
+/// Reactive auth-state signal exposed to descendants via
+/// context. Slice 9r.2 flips it on successful sign-in so
+/// `<Main/>` can swap from `<Login/>` to a stub. Future
+/// slices read the same signal to gate WS attach + tile
+/// rendering. The setter half travels alongside the reader
+/// because the sign-in ceremony — owned by `<Login/>` —
+/// needs to publish success up to its sibling-switching
+/// parent. Logout (a future slice) will use the same setter
+/// in reverse.
+#[derive(Copy, Clone)]
+pub struct AuthState {
+    pub signed_in: ReadSignal<bool>,
+    pub set_signed_in: WriteSignal<bool>,
+}
 
 #[component]
 fn App() -> impl IntoView {
@@ -41,6 +59,19 @@ fn App() -> impl IntoView {
     let (connected, _set_connected) = create_signal(false);
     provide_context(ConnectionStatus(connected));
 
+    // Auth signal also lives at the root because two siblings
+    // need it: `<Login/>` writes (on ceremony success) and
+    // `<Main/>` reads (to swap children). A future
+    // `<Header/>` logout button will also write through this
+    // setter. Initial value `false` because we haven't yet
+    // checked `/api/auth/status`; slice 9r.3 lands the
+    // session-restore-on-load probe.
+    let (signed_in, set_signed_in) = create_signal(false);
+    provide_context(AuthState {
+        signed_in,
+        set_signed_in,
+    });
+
     view! {
         <div id="kat-shell">
             <Header/>
@@ -52,18 +83,13 @@ fn App() -> impl IntoView {
 #[component]
 fn Header() -> impl IntoView {
     let ConnectionStatus(connected) = expect_context();
-    // The status attribute is what the CSS dot color binds
-    // to. Computing it as a derived signal means the DOM
-    // attribute mutates only when the underlying boolean
-    // flips — no manual class-toggle dance.
-    let status_attr = move || {
-        if connected.get() {
-            "connected"
-        } else {
-            "disconnected"
-        }
-    };
-    let status_label = move || {
+    // Single derived view of the connection bool — used both
+    // for the `data-status` attribute (CSS dot color hook)
+    // and the visible label. Two separate closures would
+    // create two reactive subscriptions and risk silent
+    // divergence if one ever changed; this folds them into
+    // one read per render.
+    let status = move || {
         if connected.get() {
             "connected"
         } else {
@@ -76,9 +102,9 @@ fn Header() -> impl IntoView {
             <span class="brand">
                 "kat" <span class="accent">"•"</span> "ulong"
             </span>
-            <span class="status" data-status=status_attr>
+            <span class="status" data-status=status>
                 <span class="dot" aria-hidden="true"></span>
-                <span class="label">{status_label}</span>
+                <span class="label">{status}</span>
             </span>
         </header>
     }
@@ -86,105 +112,37 @@ fn Header() -> impl IntoView {
 
 #[component]
 fn Main() -> impl IntoView {
-    // Slice 9r.1 lands the visual + URL-mode-switching part
-    // of the login flow. The actual WebAuthn ceremony (calls
-    // to `/api/auth/registration/begin` /
-    // `navigator.credentials.create()` / etc.) lands in 9r.2.
-    //
-    // Today we always render `<Login/>` here — there's no
-    // notion of "authenticated session" yet because no slice
-    // has read the session cookie or the WS attach state.
-    // Once 9r.2 lands, the post-success path will set a
-    // signal that switches `<Main/>` to the (still-stub)
-    // terminal view.
+    let auth = expect_context::<AuthState>();
+    // Switch on auth state. While unauthenticated → `<Login/>`.
+    // Once the sign-in ceremony flips `signed_in`, render the
+    // (still-stub) terminal placeholder. This is the FP-leaning
+    // shape: parent consumes a signal, returns the right child
+    // — no imperative DOM swap, no shared mutable view-state.
     view! {
         <main id="kat-main">
-            <Login/>
+            <Show
+                when=move || auth.signed_in.get()
+                fallback=|| view! { <Login/> }
+            >
+                <TerminalStub/>
+            </Show>
         </main>
     }
 }
 
-/// Setup-token from the URL's `?setup_token=...` query, or
-/// `None` if not present. Read once at component construction
-/// — Leptos signals will track changes if a future slice
-/// needs that, but the initial-load read is enough for slice
-/// 9r.1's mode toggle.
-fn url_setup_token() -> Option<String> {
-    let location = web_sys::window()?.location();
-    let search = location.search().ok()?;
-    if search.is_empty() {
-        return None;
-    }
-    let params = web_sys::UrlSearchParams::new_with_str(&search).ok()?;
-    let token = params.get("setup_token")?;
-    if token.is_empty() {
-        None
-    } else {
-        Some(token)
-    }
-}
-
-/// Visual shell of the auth ceremony. Two modes, switched by
-/// the presence of `?setup_token=` in the URL:
-///
-/// - **Pair mode** (token present): "Pair this device — name
-///   it and confirm with your passkey." This is the
-///   add-additional-device flow that the Node implementation
-///   exposes via the staging script's printed pair URL.
-///
-/// - **Sign-in mode** (no token): "Sign in with your
-///   passkey." Pure WebAuthn login, no setup token needed.
-///   On a fresh data dir with no enrolled passkeys this will
-///   be a dead-end — the bootstrap path (first device, no
-///   token) is a separate question that 9r.4 will resolve.
-///
-/// Slice 9r.1 only renders the form. The buttons currently
-/// have no `on:click` handlers; 9r.2 wires the WebAuthn
-/// ceremony.
+/// Placeholder for the post-auth terminal UI. Slice 9r.2
+/// only needs *something* to render after sign-in so the e2e
+/// can assert the auth-state-driven swap; the real terminal
+/// view is a separate slice that lands the WS attach + xterm
+/// hookup. Keeping it as a literal stub here means we don't
+/// preemptively design the terminal module before its
+/// dependencies (WS protocol, tile spec) are settled.
 #[component]
-fn Login() -> impl IntoView {
-    let setup_token = url_setup_token();
-    let is_pair_mode = setup_token.is_some();
-
-    // The form has a separate identity for tests / future
-    // styling: `data-mode` swaps copy + behavior between the
-    // two ceremonies.
-    let mode_attr = if is_pair_mode { "pair" } else { "signin" };
-    let title = if is_pair_mode {
-        "Pair this device"
-    } else {
-        "Sign in"
-    };
-    let cta = if is_pair_mode {
-        "Pair with passkey"
-    } else {
-        "Sign in with passkey"
-    };
-    let blurb = if is_pair_mode {
-        "Name this device and confirm with your passkey to add it to your account."
-    } else {
-        "Use your passkey to sign in."
-    };
-
+fn TerminalStub() -> impl IntoView {
     view! {
-        <section id="kat-login" data-mode=mode_attr>
-            <h1 class="title">{title}</h1>
-            <p class="blurb">{blurb}</p>
-            // Pair mode collects a device name (e.g.,
-            // "felix-iphone"). Sign-in mode skips it — the
-            // passkey itself identifies the credential.
-            {is_pair_mode.then(|| view! {
-                <label class="field">
-                    <span class="label">"Device name"</span>
-                    <input
-                        type="text"
-                        name="device-name"
-                        autocomplete="off"
-                        placeholder="e.g. felix-iphone"
-                    />
-                </label>
-            })}
-            <button type="button" class="cta">{cta}</button>
+        <section id="kat-terminal-stub">
+            <h1 class="title">"Signed in"</h1>
+            <p class="blurb">"Terminal view lands in a future slice."</p>
         </section>
     }
 }

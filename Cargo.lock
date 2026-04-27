@@ -1073,8 +1073,14 @@ name = "katulong-web"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "gloo-net",
+ "js-sys",
  "leptos",
+ "serde",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
+ "webauthn-rs-proto",
 ]
 
 [[package]]
@@ -2736,6 +2742,8 @@ dependencies = [
  "cfg-if",
  "once_cell",
  "rustversion",
+ "serde",
+ "serde_json",
  "wasm-bindgen-macro",
  "wasm-bindgen-shared",
 ]
@@ -2902,9 +2910,13 @@ checksum = "16a1fb2580ce73baa42d3011a24de2ceab0d428de1879ece06e02e8c416e497c"
 dependencies = [
  "base64 0.21.7",
  "base64urlsafedata",
+ "js-sys",
  "serde",
+ "serde-wasm-bindgen",
  "serde_json",
  "url",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
