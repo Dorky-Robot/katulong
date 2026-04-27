@@ -44,6 +44,11 @@ ciborium = "0.2"
 # codecs — we pick byte-string explicitly because CBOR supports it
 # and we're not using any other codec for session I/O.
 serde_bytes = "0.11"
+# Static asset serving for the Leptos frontend bundle. `ServeDir`
+# mounts a directory under a route prefix; `fs` feature gates the
+# filesystem-reading bits (the rest of tower-http is feature-
+# gated middleware we don't need yet).
+tower-http = { version = "0.5", features = ["fs"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

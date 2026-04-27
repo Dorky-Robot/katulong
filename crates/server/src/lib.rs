@@ -20,14 +20,11 @@ use api::auth::auth_routes;
 use api::devices::device_routes;
 use api::tokens::token_routes;
 use auth_middleware::Authenticated;
-use axum::{
-    extract::DefaultBodyLimit,
-    response::Html,
-    routing::get,
-    Json, Router,
-};
+use axum::{extract::DefaultBodyLimit, routing::get, Json, Router};
 use serde_json::json;
 use state::AppState;
+use std::path::PathBuf;
+use tower_http::services::ServeDir;
 
 /// Hard ceiling on request body bytes. 1 MiB matches the Node
 /// implementation's per-auth-route limit. Applied globally here rather
@@ -55,18 +52,10 @@ const REQUEST_BODY_LIMIT: usize = 1024 * 1024;
 /// comments ARE the contract.
 ///
 /// Currently public: `/health` (k8s/uptime probe, returns static
-/// "ok"), `/` (placeholder landing page until the Leptos
-/// frontend bundle replaces it).
+/// "ok"), and the static-asset fallback at `/` (the Leptos
+/// frontend bundle — `katulong-web`'s `dist/`).
 pub fn app(state: AppState) -> Router {
     Router::new()
-        // PUBLIC: placeholder landing page. The Rust crate
-        // doesn't ship a SPA yet (the Leptos crate is a stub).
-        // Until that lands, `/` returns a minimal HTML page so
-        // operators staging the Rust backend can see a sign of
-        // life in the browser instead of a 404 / blank screen.
-        // Replace this with a static-file mount once the Leptos
-        // bundle is built.
-        .route("/", get(landing))
         // PUBLIC: liveness probe. Returns static "ok".
         .route("/health", get(health))
         // PROTECTED: smoke-test endpoint that exercises the full
@@ -88,42 +77,42 @@ pub fn app(state: AppState) -> Router {
         // loop runs against the transport abstraction so WebRTC
         // (later slice) can drop in without touching this line.
         .route("/ws", get(ws::ws_handler))
+        // PUBLIC: static-asset fallback. `ServeDir` matches any
+        // path not handled above, so specific routes (`/health`,
+        // `/api/*`, `/ws`) take precedence and the SPA shell
+        // catches everything else (`/`, `/index.html`, the
+        // hashed JS/WASM bundle filenames trunk emits).
+        //
+        // The dist directory is the trunk output of
+        // `crates/web` — the Leptos frontend. Path resolution:
+        // `KATULONG_WEB_DIST` env var if set; otherwise
+        // `crates/web/dist` relative to the working directory
+        // where the binary was launched. The staging script
+        // (bin/katulong-stage) sets the env var explicitly so
+        // the binary's cwd doesn't matter.
+        //
+        // Path traversal: tower-http's ServeDir refuses to
+        // serve paths that escape the configured root via `..`
+        // — see `ServeDir`'s docs. Same guarantee the Node
+        // implementation enforced manually via prefix-check.
+        .fallback_service(ServeDir::new(web_dist_path()))
         .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT))
         .with_state(state)
 }
 
-async fn health() -> &'static str {
-    "ok"
+/// Resolve the trunk-output directory for the Leptos frontend.
+/// Operator-overridable via `KATULONG_WEB_DIST`; default is
+/// `crates/web/dist` relative to the binary's working
+/// directory. The staging script always sets the env var so
+/// production paths don't depend on cwd.
+fn web_dist_path() -> PathBuf {
+    std::env::var_os("KATULONG_WEB_DIST")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("crates/web/dist"))
 }
 
-/// Placeholder landing page served at `/`. The HTML is
-/// intentionally minimal: a single visible heading + a
-/// machine-readable marker (`data-rust-backend="true"`)
-/// e2e tests can assert against. Replace with a static-file
-/// mount serving the Leptos bundle once the frontend lands.
-async fn landing() -> Html<&'static str> {
-    Html(
-        "<!doctype html>\n\
-         <html lang=\"en\">\n\
-         <head>\n\
-           <meta charset=\"utf-8\">\n\
-           <title>katulong (rust backend)</title>\n\
-           <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-           <style>\n\
-             body { font: 16px/1.4 system-ui, sans-serif; max-width: 480px; \
-                    margin: 4rem auto; padding: 0 1rem; color: #222; }\n\
-             code { background: #f3f3f3; padding: 0.2em 0.4em; border-radius: 3px; }\n\
-             .marker { color: #888; font-size: 0.85em; }\n\
-           </style>\n\
-         </head>\n\
-         <body data-rust-backend=\"true\">\n\
-           <h1>katulong</h1>\n\
-           <p>Rust backend is alive. Frontend not yet built.</p>\n\
-           <p class=\"marker\">Smoke-test endpoints: \
-              <code>/health</code>, <code>/api/me</code>, <code>/ws</code>.</p>\n\
-         </body>\n\
-         </html>",
-    )
+async fn health() -> &'static str {
+    "ok"
 }
 
 async fn me(Authenticated(ctx): Authenticated) -> Json<serde_json::Value> {
