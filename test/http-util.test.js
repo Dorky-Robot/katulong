@@ -13,6 +13,7 @@ import {
   validateCsrfToken,
   isAllowedCorsOrigin,
   isHttpsConnection,
+  hostnameOnly,
 } from "../lib/http-util.js";
 import { AuthState } from "../lib/auth-state.js";
 
@@ -850,5 +851,54 @@ describe("isHttpsConnection", () => {
       socket: {},
     };
     assert.ok(isHttpsConnection(req));
+  });
+});
+
+describe("hostnameOnly", () => {
+  it("strips port from IPv4 hostnames", () => {
+    assert.equal(hostnameOnly("example.com:3001"), "example.com");
+    assert.equal(hostnameOnly("127.0.0.1:8080"), "127.0.0.1");
+  });
+
+  it("returns hostname unchanged when no port is present", () => {
+    assert.equal(hostnameOnly("example.com"), "example.com");
+    assert.equal(hostnameOnly("localhost"), "localhost");
+  });
+
+  it("strips port from bracketed IPv6 (Host header form)", () => {
+    // Regression for the audit finding: previously `split(':')[0]` on
+    // `[::1]:3001` returned `[`, breaking isTrustedProxy and the
+    // isLocalRequest-style classification for IPv6 deployments.
+    assert.equal(hostnameOnly("[::1]:3001"), "::1");
+    assert.equal(hostnameOnly("[2001:db8::1]:8080"), "2001:db8::1");
+  });
+
+  it("handles bare IPv6 (multiple colons, no port) without mangling", () => {
+    assert.equal(hostnameOnly("::1"), "::1");
+    assert.equal(hostnameOnly("2001:db8::1"), "2001:db8::1");
+  });
+
+  it("lowercases the result", () => {
+    assert.equal(hostnameOnly("EXAMPLE.COM:3001"), "example.com");
+    assert.equal(hostnameOnly("Localhost"), "localhost");
+  });
+
+  it("defaults to localhost on null/undefined/empty", () => {
+    assert.equal(hostnameOnly(null), "localhost");
+    assert.equal(hostnameOnly(undefined), "localhost");
+    assert.equal(hostnameOnly(""), "localhost");
+    assert.equal(hostnameOnly("   "), "localhost");
+  });
+
+  it("returns empty string on malformed multi-colon input (fail closed)", () => {
+    // Triple-colon and obviously-invalid IPv6-like input shouldn't
+    // be classified as a valid hostname — empty return makes
+    // isHttpsConnection / isTrustedProxy fail closed.
+    assert.equal(hostnameOnly(":::invalid:::"), "");
+    assert.equal(hostnameOnly("xyz::abc::def"), "");
+  });
+
+  it("returns empty string on bracketed IPv6 missing closing bracket", () => {
+    assert.equal(hostnameOnly("[::1"), "");
   });
 });

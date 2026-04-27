@@ -13,7 +13,7 @@ import {
   loadState, validateSession, refreshSessionActivity, withStateLock,
 } from "./lib/auth.js";
 import {
-  parseCookies, isPublicPath, createChallengeStore, isHttpsConnection,
+  parseCookies, isPublicPath, createChallengeStore, isHttpsConnection, hostnameOnly,
 } from "./lib/http-util.js";
 import { rateLimit, getClientIp } from "./lib/rate-limit.js";
 import { ConfigManager } from "./lib/config.js";
@@ -125,9 +125,10 @@ function isTrustedProxy(req) {
   // a leaked KATULONG_TRUST_PROXY_SECRET could be routed through a tunnel
   // and bypass session auth from the public internet. The same lesson as
   // isLocalRequest() in lib/access-method.js: socket address alone is not
-  // sufficient to classify a request as local.
-  const host = (req.headers.host || "").split(":")[0].toLowerCase();
-  if (host !== "localhost" && host !== "127.0.0.1" && host !== "::1" && host !== "[::1]") {
+  // sufficient to classify a request as local. hostnameOnly() handles the
+  // bracketed IPv6 form `[::1]:port` correctly.
+  const host = hostnameOnly(req.headers.host);
+  if (host !== "localhost" && host !== "127.0.0.1" && host !== "::1") {
     return false;
   }
   const provided = req.headers["x-katulong-auth"];
