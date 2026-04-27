@@ -8,6 +8,10 @@
 //   - "static-only": HTML loads but WASM never hydrates (the
 //     bundle is broken / missing / mis-served)
 //
+// Auth-ceremony tests (login mode swap, sign-in click wiring,
+// error rendering) live in `auth.e2e.js` — this file stays
+// focused on the layout + bundle plumbing.
+//
 // Run against a live Rust backend (no test-side server spin-up):
 //   KATULONG_BASE_URL=http://127.0.0.1:3050 \
 //     npx playwright test --config=playwright.rust.config.js
@@ -68,112 +72,6 @@ test("leptos shell renders header + main + status", async ({ page }) => {
   const main = page.locator("#kat-main");
   await expect(main).toBeVisible();
   await expect(main.locator("#kat-login")).toBeVisible();
-});
-
-test("login defaults to sign-in mode without setup_token", async ({ page }) => {
-  // No `?setup_token=...` query: Login should render its
-  // sign-in mode — no device-name field, "Sign in with
-  // passkey" CTA, `data-mode="signin"` for future styling +
-  // selector hooks.
-  await page.goto("/");
-  await expect(page.locator("#kat-shell")).toBeVisible({ timeout: 15_000 });
-
-  const login = page.locator("#kat-login");
-  await expect(login).toHaveAttribute("data-mode", "signin");
-  await expect(login.locator(".title")).toHaveText("Sign in");
-  await expect(login.locator(".cta")).toHaveText("Sign in with passkey");
-  // Sign-in mode CTA must be enabled in the idle state — the
-  // ceremony is wired (slice 9r.2). Disabled-by-default would
-  // be a regression that strands users on a dead button.
-  await expect(login.locator(".cta")).toBeEnabled();
-  // No device-name field in sign-in mode.
-  await expect(login.locator('input[name="device-name"]')).toHaveCount(0);
-});
-
-test("login switches to pair mode with setup_token", async ({ page }) => {
-  // Presence of `?setup_token=` flips the form to pair mode
-  // — adds the device-name field, swaps title + CTA copy,
-  // sets `data-mode="pair"`. Slice 9r.2 wires the sign-in
-  // ceremony only; the pair ceremony is still inert, so the
-  // CTA is disabled to avoid a button that does nothing.
-  // 9r.3 will land the pair ceremony and remove the disabled
-  // bit.
-  await page.goto("/?setup_token=abcdef0123456789");
-  await expect(page.locator("#kat-shell")).toBeVisible({ timeout: 15_000 });
-
-  const login = page.locator("#kat-login");
-  await expect(login).toHaveAttribute("data-mode", "pair");
-  await expect(login.locator(".title")).toHaveText("Pair this device");
-  await expect(login.locator(".cta")).toHaveText("Pair with passkey");
-  await expect(login.locator(".cta")).toBeDisabled();
-  // Pair mode shows the device-name input.
-  await expect(login.locator('input[name="device-name"]')).toBeVisible();
-});
-
-test("sign-in click hits /api/auth/login/start", async ({ page }) => {
-  // The CTA in sign-in mode is wired to dispatch the WebAuthn
-  // ceremony (slice 9r.2). We can't run the full ceremony in
-  // headless Chromium without a virtual authenticator, but we
-  // CAN verify the first hop — the POST to
-  // `/api/auth/login/start`. That alone catches the
-  // "button does nothing" regression that the slice 9r.1 stub
-  // had: the click handler is real, the URL is right, the
-  // method is POST.
-  await page.goto("/");
-  await expect(page.locator("#kat-shell")).toBeVisible({ timeout: 15_000 });
-
-  // Listen for the request before clicking — the start-call
-  // is fired synchronously from the click handler so a race
-  // here would show up as a flaky test, not a missed call.
-  const requestPromise = page.waitForRequest(
-    (req) =>
-      req.url().endsWith("/api/auth/login/start") && req.method() === "POST",
-    { timeout: 5_000 },
-  );
-  await page.locator("#kat-login .cta").click();
-  await requestPromise;
-});
-
-test("sign-in surfaces server error on fresh install", async ({ page }) => {
-  // On a fresh data dir with no credentials, the server's
-  // `/api/auth/login/start` returns 409 ("no credentials
-  // registered; first device must register…"). The UI must
-  // render that as a visible error instead of silently
-  // swallowing it — otherwise the user has no idea why the
-  // button "stopped working." We don't assert the exact
-  // message text (the server controls that wording); we just
-  // assert that an error region appears.
-  //
-  // This test is conditional on a fresh data dir. The Rust
-  // staging script (`bin/katulong-stage` in --rust mode)
-  // creates a fresh data dir per run, so this holds in the
-  // default e2e setup. If a future slice changes that, the
-  // test will need a route-mock fallback.
-  //
-  // Route-stubbing the start endpoint to 409 is the
-  // belt-and-suspenders alternative; we use it here so the
-  // assertion holds regardless of the server's auth state.
-  await page.route("**/api/auth/login/start", (route) =>
-    route.fulfill({
-      status: 409,
-      contentType: "application/json",
-      body: JSON.stringify({
-        error: { code: "conflict", message: "no credentials registered" },
-      }),
-    }),
-  );
-
-  await page.goto("/");
-  await expect(page.locator("#kat-shell")).toBeVisible({ timeout: 15_000 });
-
-  await page.locator("#kat-login .cta").click();
-
-  // The error <p role="alert"> is the user-visible result.
-  // role=alert is what assistive tech reads; we double-check
-  // class for the styling hook.
-  const error = page.locator('#kat-login .error[role="alert"]');
-  await expect(error).toBeVisible({ timeout: 5_000 });
-  await expect(error).toContainText("409");
 });
 
 test("/health returns ok", async ({ request }) => {

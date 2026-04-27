@@ -46,5 +46,7 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 # JSON in/out at the HTTP boundary. The server speaks plain
 # JSON for auth (CBOR is session-layer only per slice 9d).
+# `gloo-net`'s `.json(...)` pulls in `serde_json` transitively;
+# we don't list it here because no code in this crate calls
+# `serde_json::` directly. If a future slice does, add it back.
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
