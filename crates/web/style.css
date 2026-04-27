@@ -1,0 +1,95 @@
+/* Slice 9q layout primitives.
+ *
+ * Zero design system here yet — just the bones a future
+ * frontend slice can extend. Goals:
+ *   - body fills the viewport, no margins
+ *   - header is sticky, full-width, fixed-height
+ *   - main fills the remaining vertical space, scrolls on
+ *     overflow (so the future tile grid can scroll
+ *     independently of the chrome)
+ *   - status dot in the header tints itself based on a
+ *     `data-status` attribute the WASM toggles
+ *
+ * The next slice swaps these vanilla rules for whatever
+ * design system we land on (Tailwind, design tokens, etc).
+ * Keep it dependency-free and overridable until that decision.
+ */
+
+:root {
+  --kat-bg: #0e0e10;
+  --kat-fg: #e6e6e6;
+  --kat-fg-dim: #8a8a90;
+  --kat-accent: #4dd0e1;
+  --kat-status-disconnected: #d04d4d;
+  --kat-status-connected: #4dd07a;
+  --kat-header-h: 44px;
+  --kat-pad: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--kat-bg);
+  color: var(--kat-fg);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI",
+    system-ui, sans-serif;
+}
+
+#kat-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+#kat-header {
+  flex: 0 0 var(--kat-header-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--kat-pad);
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#kat-header .brand {
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--kat-fg);
+}
+
+#kat-header .brand .accent {
+  color: var(--kat-accent);
+}
+
+#kat-header .status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--kat-fg-dim);
+}
+
+#kat-header .status .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--kat-status-disconnected);
+  transition: background 120ms ease;
+}
+
+#kat-header .status[data-status="connected"] .dot {
+  background: var(--kat-status-connected);
+}
+
+#kat-main {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: var(--kat-pad);
+  color: var(--kat-fg-dim);
+}

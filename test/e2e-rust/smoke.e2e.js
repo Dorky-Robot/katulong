@@ -18,7 +18,7 @@
 
 import { test, expect } from "@playwright/test";
 
-test("leptos shell renders into the body", async ({ page }) => {
+test("leptos shell renders header + main + status", async ({ page }) => {
   // The trunk-built `index.html` arrives with an empty
   // `<body></body>`. Leptos's `mount_to_body` populates it
   // AFTER the WASM downloads + hydrates. So if we see a
@@ -33,26 +33,41 @@ test("leptos shell renders into the body", async ({ page }) => {
 
   // Wait for hydration. `mount_to_body` is sync once the WASM
   // module is initialised, but the WASM fetch + instantiation
-  // is async. Playwright's auto-waiting on a locator handles
-  // the race for us — `toBeVisible` polls until the element
-  // exists OR the timeout fires.
+  // is async. Playwright's auto-waiting on the shell root
+  // handles the race for us — `toBeVisible` polls until the
+  // element exists OR the timeout fires.
   //
   // 15s budget: cold CI runners (constrained ARM, GitHub
   // Actions macOS) take 3-8s for non-trivial WASM
-  // instantiation. 5s was originally chosen on a warm
-  // dev machine where hydration is sub-second; CI flakes
-  // would look like hydration regressions. The outer test
-  // timeout in playwright.rust.config.js is 30s, so this
-  // still leaves headroom for the rest of the test.
-  await expect(page.locator("h1")).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator("h1")).toContainText("katulong");
+  // instantiation. The outer test timeout in
+  // playwright.rust.config.js is 30s, so this still leaves
+  // headroom for the rest of the test.
+  await expect(page.locator("#kat-shell")).toBeVisible({ timeout: 15_000 });
 
-  // Catch the failure mode where the HTML is served but the
-  // WASM didn't load — the body would be empty. Asserting on
-  // the rendered text confirms hydration completed.
-  await expect(page.locator("body")).toContainText(
-    "Rust + Leptos rewrite",
+  // Header presence — slice 9q layout primitive. The brand
+  // text uses a `kat•ulong` glyph split, so we match
+  // case-insensitively on the substring.
+  const header = page.locator("#kat-header");
+  await expect(header).toBeVisible();
+  await expect(header.locator(".brand")).toContainText("kat");
+  await expect(header.locator(".brand")).toContainText("ulong");
+
+  // Connection status indicator: starts disconnected (no WS
+  // yet). The `data-status` attribute drives the dot color
+  // via CSS; future slices flip it to "connected" when WS
+  // attach succeeds.
+  await expect(header.locator(".status")).toHaveAttribute(
+    "data-status",
+    "disconnected",
   );
+  await expect(header.locator(".status .label")).toHaveText("disconnected");
+
+  // Main content area exists with the placeholder copy. Will
+  // be replaced by Login / Terminal / TileGrid in subsequent
+  // slices.
+  const main = page.locator("#kat-main");
+  await expect(main).toBeVisible();
+  await expect(main).toContainText("shell ready, content pending");
 });
 
 test("/health returns ok", async ({ request }) => {
