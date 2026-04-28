@@ -128,10 +128,15 @@ Once `formula:` matches NEW_VERSION, run:
 katulong update
 ```
 
-If `katulong update` reports "Already up to date" because the installed version
-already matches NEW_VERSION (e.g. a re-run on the same host), use
-`katulong service restart` to bounce the running service onto the freshly
-installed binary.
+If `katulong update` reports "Already up to date", the running service is
+already on NEW_VERSION (this happens on a re-run, or if the host was upgraded
+out-of-band). Confirm with `katulong --version` and `katulong status`, then
+proceed to Step 8 — there is nothing to bounce. Do **not** fall back to
+`katulong service restart` here: that re-introduces the exact bootout/bootstrap
+race this step was rewritten to avoid. The only time a bounce is appropriate
+is when `katulong status` reports the service is **not running** despite the
+binary being current — in that case `katulong start` (or `katulong service
+restart` if the LaunchAgent is loaded) is the recovery path.
 
 ## Step 8: Verify
 
