@@ -56,6 +56,7 @@ fn url_setup_token() -> Option<String> {
 // WASM-friendly.
 // =====================================================================
 
+// No `LoginStartReq` — `login/start` takes no request body.
 #[derive(Debug, Deserialize)]
 struct LoginStartResp {
     challenge_id: String,
@@ -95,6 +96,40 @@ struct PairFinishReq {
     response: webauthn_rs_proto::RegisterPublicKeyCredential,
 }
 
+/// HTTP status guard shared by both ceremonies. Earlier
+/// drafts inlined this twice; the duplicated format strings
+/// drifted in review (one read "pair payload" for two
+/// different payloads), which is exactly the failure mode a
+/// helper prevents. Returns the status code embedded in the
+/// message because the e2e suite asserts on it
+/// (`toContainText("401")`).
+fn check_ok(resp: &gloo_net::http::Response, label: &str) -> Result<(), String> {
+    if resp.ok() {
+        Ok(())
+    } else {
+        Err(format!("{label} ({})", resp.status()))
+    }
+}
+
+/// Resolve a `navigator.credentials.{get,create}` promise into
+/// the `web_sys::PublicKeyCredential` both ceremonies consume.
+/// The promise is owned (not borrowed) because `JsFuture::from`
+/// takes ownership; once we hand it over, the caller has no
+/// remaining handle anyway.
+async fn credential_from_promise(
+    promise: js_sys::Promise,
+) -> Result<web_sys::PublicKeyCredential, String> {
+    let credential_js = JsFuture::from(promise)
+        .await
+        .map_err(|e| format!("passkey ceremony failed: {}", js_err(&e)))?;
+    credential_js.dyn_into().map_err(|v| {
+        format!(
+            "browser returned an unexpected credential type: {}",
+            js_err(&v)
+        )
+    })
+}
+
 /// Run the full sign-in WebAuthn ceremony.
 ///
 /// Pure-by-shape: takes nothing, returns `Result<(), String>`.
@@ -109,21 +144,12 @@ struct PairFinishReq {
 /// to branch on the variant (e.g., "session expired" vs.
 /// "credential revoked" surfacing different recovery UIs).
 async fn signin() -> Result<(), String> {
-    // 1. Ask the server for a challenge. `login_start` takes
-    //    no body, so a bare POST with no Content-Type works —
-    //    the route doesn't use `JsonBody<T>`.
+    // 1. Ask the server for a challenge.
     let start_resp = gloo_net::http::Request::post("/api/auth/login/start")
         .send()
         .await
         .map_err(|e| format!("network error contacting server: {e}"))?;
-
-    if !start_resp.ok() {
-        return Err(format!(
-            "server rejected sign-in challenge ({})",
-            start_resp.status()
-        ));
-    }
-
+    check_ok(&start_resp, "server rejected sign-in challenge")?;
     let start: LoginStartResp = start_resp
         .json()
         .await
@@ -141,17 +167,12 @@ async fn signin() -> Result<(), String> {
     //    with biometric/PIN) or rejects (cancel, no credential,
     //    timeout, virtual-authenticator absent in test env).
     let window = web_sys::window().ok_or("browser window unavailable")?;
-    let credentials = window.navigator().credentials();
-    let promise = credentials
+    let promise = window
+        .navigator()
+        .credentials()
         .get_with_options(&options)
         .map_err(|e| format!("browser refused credential request: {}", js_err(&e)))?;
-    let credential_js = JsFuture::from(promise)
-        .await
-        .map_err(|e| format!("passkey ceremony failed: {}", js_err(&e)))?;
-
-    let credential: web_sys::PublicKeyCredential = credential_js
-        .dyn_into()
-        .map_err(|v| format!("browser returned an unexpected credential type: {}", js_err(&v)))?;
+    let credential = credential_from_promise(promise).await?;
     let response: webauthn_rs_proto::PublicKeyCredential = credential.into();
 
     // 4. Send the assertion back. `login_finish` uses
@@ -166,20 +187,11 @@ async fn signin() -> Result<(), String> {
         .send()
         .await
         .map_err(|e| format!("network error completing sign-in: {e}"))?;
+    check_ok(&finish_resp, "server rejected sign-in")?;
 
-    if !finish_resp.ok() {
-        return Err(format!(
-            "server rejected sign-in ({})",
-            finish_resp.status()
-        ));
-    }
-
-    // We don't need to parse the body — the server set the
-    // session cookie via Set-Cookie, which the browser
-    // automatically applies. The caller flips the auth-state
-    // signal so the UI swaps to the post-auth view; future
-    // slices that need the credential id or csrf token will
-    // parse the response then.
+    // The server set the session cookie via Set-Cookie. The
+    // caller flips the auth-state signal so the UI swaps to
+    // the post-auth view.
     Ok(())
 }
 
@@ -204,33 +216,21 @@ async fn signin() -> Result<(), String> {
 /// once the click fires, the future may outlive any borrow we
 /// could have given it.
 async fn pair(setup_token: String) -> Result<(), String> {
-    // 1. Ask for a registration challenge. This route uses
-    //    `JsonBody<T>`, so we must send a body with
-    //    Content-Type: application/json — `gloo-net`'s
-    //    `.json(...)` handles the header automatically.
+    // 1. Ask for a registration challenge.
     let start_resp = gloo_net::http::Request::post("/api/auth/pair/start")
         .json(&PairStartReq { setup_token })
-        .map_err(|e| format!("could not encode pair payload: {e}"))?
+        .map_err(|e| format!("could not encode pair-start payload: {e}"))?
         .send()
         .await
         .map_err(|e| format!("network error contacting server: {e}"))?;
-
-    if !start_resp.ok() {
-        return Err(format!(
-            "server rejected pair challenge ({})",
-            start_resp.status()
-        ));
-    }
-
+    check_ok(&start_resp, "server rejected pair challenge")?;
     let start: PairStartResp = start_resp
         .json()
         .await
         .map_err(|e| format!("server returned malformed challenge: {e}"))?;
 
     // 2. Convert the wire challenge to the JS shape that
-    //    `navigator.credentials.create()` expects. Same
-    //    `webauthn-rs-proto` `wasm` feature handles the
-    //    base64url ↔ Uint8Array dance.
+    //    `navigator.credentials.create()` expects.
     let options: web_sys::CredentialCreationOptions = start.options.into();
 
     // 3. Run the platform registration ceremony. `.create()`
@@ -239,17 +239,12 @@ async fn pair(setup_token: String) -> Result<(), String> {
     //    new keypair) or rejects (cancel, "already
     //    registered", timeout, no authenticator available).
     let window = web_sys::window().ok_or("browser window unavailable")?;
-    let credentials = window.navigator().credentials();
-    let promise = credentials
+    let promise = window
+        .navigator()
+        .credentials()
         .create_with_options(&options)
         .map_err(|e| format!("browser refused credential creation: {}", js_err(&e)))?;
-    let credential_js = JsFuture::from(promise)
-        .await
-        .map_err(|e| format!("passkey ceremony failed: {}", js_err(&e)))?;
-
-    let credential: web_sys::PublicKeyCredential = credential_js
-        .dyn_into()
-        .map_err(|v| format!("browser returned an unexpected credential type: {}", js_err(&v)))?;
+    let credential = credential_from_promise(promise).await?;
     let response: webauthn_rs_proto::RegisterPublicKeyCredential = credential.into();
 
     // 4. Send the attestation back along with the
@@ -260,21 +255,12 @@ async fn pair(setup_token: String) -> Result<(), String> {
             setup_token_id: start.setup_token_id,
             response,
         })
-        .map_err(|e| format!("could not encode pair payload: {e}"))?
+        .map_err(|e| format!("could not encode pair-finish payload: {e}"))?
         .send()
         .await
         .map_err(|e| format!("network error completing pair: {e}"))?;
+    check_ok(&finish_resp, "server rejected pair")?;
 
-    if !finish_resp.ok() {
-        return Err(format!(
-            "server rejected pair ({})",
-            finish_resp.status()
-        ));
-    }
-
-    // Same as sign-in: the server set the session cookie via
-    // Set-Cookie. We let the caller flip the auth-state
-    // signal so the post-auth view replaces this component.
     Ok(())
 }
 
@@ -436,23 +422,20 @@ pub fn Login() -> impl IntoView {
     };
 
     // Click handler picks the ceremony based on mode and
-    // dispatches with the appropriate input. The `setup_token`
-    // is captured by clone into the closure so each click can
-    // hand a fresh `String` to `pair_action.dispatch`. Cloning
-    // a hex string is trivial; `Rc<String>` would buy nothing.
-    let setup_token_for_click = setup_token;
+    // dispatches with the appropriate input. `setup_token` is
+    // moved into the closure; each click clones the inner
+    // `String` into the dispatch.
     let on_click = move |_| {
-        // Set InFlight directly here, not inside the action
-        // future. The action's first poll runs on a microtask,
-        // so an Idle → InFlight transition done inside the
-        // future would leave a tick where the button is
-        // briefly enabled — long enough for a synthetic
-        // double-click to fire a second concurrent ceremony.
-        // Setting InFlight synchronously here closes that
-        // window: the disabled re-render happens before the
-        // second click can be queued.
+        // Set InFlight synchronously, not inside the action
+        // future. `create_action`'s first poll runs on a
+        // microtask, so an Idle → InFlight transition done
+        // inside the future would leave a tick where the
+        // button is briefly enabled — long enough for a
+        // synthetic double-click to fire a second concurrent
+        // ceremony. The disabled re-render must happen before
+        // the second click can be queued.
         set_phase.set(LoginPhase::InFlight);
-        match &setup_token_for_click {
+        match &setup_token {
             Some(token) => {
                 pair_action.dispatch(token.clone());
             }
@@ -466,26 +449,12 @@ pub fn Login() -> impl IntoView {
         <section id="kat-login" data-mode=mode_attr>
             <h1 class="title">{title}</h1>
             <p class="blurb">{blurb}</p>
-            // Pair mode collects a device name (e.g.,
-            // "felix-iphone"). Sign-in mode skips it — the
-            // passkey itself identifies the credential.
-            // Slice 9r.3 wires the ceremony but does NOT yet
-            // forward the device name to the server (the
-            // pair_finish endpoint takes only the credential
-            // assertion). A future slice will plumb it
-            // through once a credential-name field exists in
-            // the auth schema.
-            {is_pair_mode.then(|| view! {
-                <label class="field">
-                    <span class="label">"Device name"</span>
-                    <input
-                        type="text"
-                        name="device-name"
-                        autocomplete="off"
-                        placeholder="e.g. felix-iphone"
-                    />
-                </label>
-            })}
+            // Device-name input deliberately absent. A future
+            // slice that adds a `credential_name` field to the
+            // auth schema will reintroduce it; rendering the
+            // affordance before the wire type carries the
+            // value would silently discard whatever the user
+            // typed.
             <button
                 type="button"
                 class="cta"

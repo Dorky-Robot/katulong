@@ -64,8 +64,12 @@ test("login switches to pair mode with setup_token", async ({ page }) => {
   // wired (slice 9r.3). A disabled CTA here would be a
   // regression back to the inert 9r.2 stub.
   await expect(login.locator(".cta")).toBeEnabled();
-  // Pair mode shows the device-name input.
-  await expect(login.locator('input[name="device-name"]')).toBeVisible();
+  // Device-name input is intentionally absent: `pair_finish`
+  // doesn't carry a name field yet, so rendering an input
+  // would silently discard whatever the user typed. Future
+  // slice that lands a credential-name schema field will
+  // reintroduce it.
+  await expect(login.locator('input[name="device-name"]')).toHaveCount(0);
 });
 
 test("sign-in click hits /api/auth/login/start", async ({ page }) => {
