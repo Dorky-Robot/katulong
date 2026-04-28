@@ -45,7 +45,7 @@ import { test, expect } from "@playwright/test";
 import {
   ensureFreshStagingDataDir,
   setupVirtualAuthenticator,
-  registerFirstDeviceViaApi,
+  registerFirstDevice,
   injectCredential,
   mintSetupToken,
 } from "./lib/webauthn.js";
@@ -74,7 +74,15 @@ test.describe.serial("WebAuthn UI happy paths", () => {
     const page = await context.newPage();
     await page.goto("/");
     const vauth = await setupVirtualAuthenticator(page);
-    bootstrap = await registerFirstDeviceViaApi(page, vauth);
+    // `bootstrap.credentialDump` carries a PKCS#8 private
+    // key for the just-minted credential. It only lives in
+    // JS memory, never in the DOM — but never log it,
+    // serialize it to disk, or pass it through
+    // `page.evaluate` (where it would land in Playwright's
+    // trace recording). The dump exists only so a fresh
+    // page in the sign-in test can inject the same
+    // credential into a new authenticator.
+    bootstrap = await registerFirstDevice(page, vauth);
     setupToken = await mintSetupToken(
       page,
       bootstrap.finishResponse.csrf_token,
@@ -128,10 +136,17 @@ test.describe.serial("WebAuthn UI happy paths", () => {
     // the consumed setup token and issues a session cookie.
     const context = await browser.newContext();
     const page = await context.newPage();
-    const vauth = await setupVirtualAuthenticator(page);
-    // We don't need vauth's handle after setup — it's
-    // attached for the page's lifetime.
-    void vauth;
+    // The authenticator is attached for the page's
+    // lifetime; we don't need its CDP handle here so we
+    // don't bind the return value.
+    await setupVirtualAuthenticator(page);
+    // The setup token rides the URL because that's the
+    // pairing flow's designed entry point — the operator
+    // gives the new device a `?setup_token=` URL. The
+    // token is a test fixture on a wiped data dir; do NOT
+    // copy this pattern with a real token, since
+    // Playwright's trace recorder captures URLs and a
+    // production token would persist in trace artifacts.
     await page.goto(`/?setup_token=${setupToken}`);
 
     await page.getByRole("button", { name: /pair with passkey/i }).click();

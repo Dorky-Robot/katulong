@@ -38,16 +38,13 @@ import { execSync } from "node:child_process";
 //                                          the bootstrap)
 
 /**
- * Attach a virtual CTAP2 authenticator to a page. The
- * returned `authenticatorId` is the handle used by the other
- * CDP commands; the `client` is the CDP session used to
- * issue them.
+ * Attach a virtual CTAP2 authenticator to a page.
  *
- * Defaults: USB transport, no resident keys, user
- * verification supported AND assumed to be performed (i.e.,
- * the authenticator auto-confirms — no biometric prompt to
- * dismiss). Tests get the success path without any UI
- * interaction beyond clicking the page's actual buttons.
+ * `isUserVerified: true` + `automaticPresenceSimulation:
+ * true` together make the authenticator auto-confirm
+ * ceremonies without a UV prompt to dismiss — the test
+ * exercises the success path by clicking the page's real
+ * buttons, not by simulating biometric input.
  */
 export async function setupVirtualAuthenticator(page) {
   const client = await page.context().newCDPSession(page);
@@ -118,14 +115,24 @@ export async function ensureFreshStagingDataDir(baseURL) {
       encoding: "utf8",
     });
   } catch (err) {
+    // Trim stderr to the tail to keep the test report
+    // scannable AND to avoid echoing the entire staging
+    // banner (which on the Node backend includes the
+    // plaintext setup token — see katulong-stage:723). The
+    // tail almost always contains the actual error line.
+    const tail = (s) =>
+      (s || "").toString().split("\n").slice(-10).join("\n");
     throw new Error(
-      `staging restart failed: ${err.message}\nstdout: ${err.stdout}\nstderr: ${err.stderr}`,
+      `staging restart failed: ${err.message}\n--- stderr (last 10 lines) ---\n${tail(err.stderr)}`,
     );
   }
 
-  // Wait for /health to come back. Without this poll the
-  // immediately-following bootstrap fetch would race the
-  // server's startup.
+  // Wait for /health to come back. The staging script's
+  // own `wait_for_server` already gates on this internally,
+  // so reaching this poll loop after a successful execSync
+  // means the server is at least listening — the poll is a
+  // belt-and-braces guard for the rare case where the
+  // socket is bound but the route table isn't ready yet.
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     try {
@@ -160,7 +167,7 @@ export async function ensureFreshStagingDataDir(baseURL) {
  * a fresh authenticator and inject the same credential —
  * needed because virtual authenticators are page-scoped.
  */
-export async function registerFirstDeviceViaApi(page, vauth) {
+export async function registerFirstDevice(page, vauth) {
   // The base64url ↔ ArrayBuffer dance is unavoidable: the
   // server speaks JSON-with-base64url over the wire, the
   // browser's WebAuthn API speaks ArrayBuffers. The WASM
@@ -218,7 +225,9 @@ export async function registerFirstDeviceViaApi(page, vauth) {
       }),
     });
     if (!finishResp.ok) {
-      throw new Error(`register/finish returned ${finishResp.status}`);
+      throw new Error(
+        `register/finish returned ${finishResp.status} — credential payload may be malformed or challenge expired`,
+      );
     }
     return await finishResp.json();
   });
@@ -226,12 +235,21 @@ export async function registerFirstDeviceViaApi(page, vauth) {
   // Capture the credential dump for later injection. Without
   // this, a fresh page can't sign in as this user — its
   // virtual authenticator has no credentials.
+  //
+  // Asserting `length === 1` (not just non-empty) catches
+  // the unlikely-but-real case where the CDP session
+  // already held a credential from a leaked prior context:
+  // `credentials[0]` would then be the stale one, the
+  // injection in the sign-in test would target the wrong
+  // key, and the failure mode would be a confusing
+  // "browser-credential-mismatch" message at the assertion
+  // step rather than at the boot.
   const { credentials } = await vauth.client.send("WebAuthn.getCredentials", {
     authenticatorId: vauth.authenticatorId,
   });
-  if (credentials.length === 0) {
+  if (credentials.length !== 1) {
     throw new Error(
-      "virtual authenticator reported no credentials after register/finish",
+      `virtual authenticator reported ${credentials.length} credentials after register/finish — expected exactly 1`,
     );
   }
 
@@ -277,9 +295,22 @@ export async function mintSetupToken(page, csrfToken, name) {
         body: JSON.stringify({ name: deviceName }),
       });
       if (!resp.ok) {
-        throw new Error(`setup-tokens returned ${resp.status}`);
+        throw new Error(
+          `setup-tokens returned ${resp.status} — CSRF token may be stale or session cookie missing`,
+        );
       }
       const body = await resp.json();
+      if (!body.plaintext) {
+        // An empty plaintext would silently make the pair
+        // test navigate to `/?setup_token=` (no value), which
+        // the server treats as "no token in URL" and the UI
+        // would render the sign-in mode. The test would then
+        // fail at the missing pair-CTA, with no signal that
+        // the real bug was the empty-token response.
+        throw new Error(
+          "setup-tokens response had empty `plaintext` field — server may have changed wire format",
+        );
+      }
       return body.plaintext;
     },
     { csrf: csrfToken, deviceName: name },
