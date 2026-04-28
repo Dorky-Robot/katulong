@@ -4,8 +4,8 @@
 // shell layout + WASM bundle.
 //
 // Slice 9r.1 introduced the form shell + pair/sign-in mode
-// swap. Slice 9r.2 wired the actual sign-in ceremony.
-// Slice 9r.3 (planned) will wire the pair ceremony.
+// swap. Slice 9r.2 wired the sign-in ceremony. Slice 9r.3
+// wires the pair ceremony.
 //
 // We deliberately don't run the full happy-path WebAuthn
 // ceremony here — that needs Chromium's CDP virtual
@@ -13,9 +13,10 @@
 // is a separate setup. The tests below cover everything
 // EXCEPT the platform credential interaction:
 //   - mode swap based on `?setup_token=`
-//   - CTA enabled/disabled state per mode
-//   - the start-call fires when the user clicks (button is
-//     wired, URL is right, method is POST)
+//   - CTA enabled state in idle, both modes
+//   - the start-call fires when the user clicks, with the
+//     right URL + method per mode (and the right body for
+//     pair, since pair/start needs the setup_token)
 //   - server rejection renders a visible error region
 // The "did the passkey actually verify" assertion belongs in
 // a dedicated suite once the virtual authenticator is wired.
@@ -49,11 +50,9 @@ test("login defaults to sign-in mode without setup_token", async ({ page }) => {
 test("login switches to pair mode with setup_token", async ({ page }) => {
   // Presence of `?setup_token=` flips the form to pair mode
   // — adds the device-name field, swaps title + CTA copy,
-  // sets `data-mode="pair"`. Slice 9r.2 wires the sign-in
-  // ceremony only; the pair ceremony is still inert, so the
-  // CTA is disabled to avoid a button that does nothing.
-  // 9r.3 will land the pair ceremony and remove the disabled
-  // bit.
+  // sets `data-mode="pair"`. Slice 9r.3 wires the ceremony,
+  // so the CTA must be enabled in idle (the 9r.2 disabled
+  // bit was a placeholder that this slice removes).
   await page.goto("/?setup_token=abcdef0123456789");
   await expect(page.locator("#kat-shell")).toBeVisible({ timeout: 15_000 });
 
@@ -61,9 +60,16 @@ test("login switches to pair mode with setup_token", async ({ page }) => {
   await expect(login).toHaveAttribute("data-mode", "pair");
   await expect(login.locator(".title")).toHaveText("Pair this device");
   await expect(login.locator(".cta")).toHaveText("Pair with passkey");
-  await expect(login.locator(".cta")).toBeDisabled();
-  // Pair mode shows the device-name input.
-  await expect(login.locator('input[name="device-name"]')).toBeVisible();
+  // Pair mode CTA must be enabled now that the ceremony is
+  // wired (slice 9r.3). A disabled CTA here would be a
+  // regression back to the inert 9r.2 stub.
+  await expect(login.locator(".cta")).toBeEnabled();
+  // Device-name input is intentionally absent: `pair_finish`
+  // doesn't carry a name field yet, so rendering an input
+  // would silently discard whatever the user typed. Future
+  // slice that lands a credential-name schema field will
+  // reintroduce it.
+  await expect(login.locator('input[name="device-name"]')).toHaveCount(0);
 });
 
 test("sign-in click hits /api/auth/login/start", async ({ page }) => {
@@ -131,4 +137,62 @@ test("sign-in renders error region on server rejection", async ({ page }) => {
   const error = page.locator('#kat-login .error[role="alert"]');
   await expect(error).toBeVisible({ timeout: 5_000 });
   await expect(error).toContainText("409");
+});
+
+test("pair click hits /api/auth/pair/start with setup_token", async ({
+  page,
+}) => {
+  // Slice 9r.3 wires the pair ceremony parallel to sign-in.
+  // The first hop is POST /api/auth/pair/start with the
+  // plaintext setup_token in the JSON body — the server
+  // hashes + looks it up. We assert URL, method, and body
+  // because the body is the load-bearing part: a wired
+  // button that posts to the right URL but forgets the
+  // setup_token would 401 in production and look like
+  // "the button does nothing" without diagnostics.
+  const SETUP_TOKEN = "abcdef0123456789".repeat(4); // 64 hex chars, real-token shape
+  await page.goto(`/?setup_token=${SETUP_TOKEN}`);
+  await expect(page.locator("#kat-shell")).toBeVisible({ timeout: 15_000 });
+
+  const requestPromise = page.waitForRequest(
+    (req) =>
+      req.url().endsWith("/api/auth/pair/start") && req.method() === "POST",
+    { timeout: 5_000 },
+  );
+  await page.locator("#kat-login .cta").click();
+  const request = await requestPromise;
+
+  // Body shape: `{ setup_token: "<plaintext>" }`. The server
+  // accepts only this exact field name; a typo here would
+  // make the start call 400 with `JsonBody` deserialization
+  // failure, looking like "the button is broken."
+  const body = request.postDataJSON();
+  expect(body).toEqual({ setup_token: SETUP_TOKEN });
+});
+
+test("pair renders error region on server rejection", async ({ page }) => {
+  // Symmetric to the sign-in error test. A 401 here is the
+  // typical "setup token expired / already redeemed / never
+  // issued" case — the user has no other channel to learn
+  // why the ceremony failed, so silent failure is a UX trap.
+  // Stubbing the response keeps the test deterministic
+  // regardless of staging-data state.
+  await page.route("**/api/auth/pair/start", (route) =>
+    route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "unauthorized", message: "setup token not redeemable" },
+      }),
+    }),
+  );
+
+  await page.goto("/?setup_token=abcdef0123456789");
+  await expect(page.locator("#kat-shell")).toBeVisible({ timeout: 15_000 });
+
+  await page.locator("#kat-login .cta").click();
+
+  const error = page.locator('#kat-login .error[role="alert"]');
+  await expect(error).toBeVisible({ timeout: 5_000 });
+  await expect(error).toContainText("401");
 });

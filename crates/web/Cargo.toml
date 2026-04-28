@@ -12,16 +12,20 @@ path = "src/main.rs"
 leptos = { workspace = true }
 console_error_panic_hook = "0.1"
 # `web-sys` for the few browser globals we touch directly.
-# Slice 9r.2 adds the WebAuthn surface (Navigator,
+# Slice 9r.2 added the sign-in WebAuthn surface (Navigator,
 # CredentialsContainer, CredentialRequestOptions,
-# PublicKeyCredential). Earlier slices added URL parsing.
-# Feature-gated narrowly to keep the WASM bundle lean.
+# PublicKeyCredential). Slice 9r.3 adds
+# `CredentialCreationOptions` for the registration ceremony
+# (`navigator.credentials.create(...)`). Earlier slices added
+# URL parsing. Feature-gated narrowly to keep the WASM bundle
+# lean.
 web-sys = { version = "0.3", features = [
     "Window",
     "Location",
     "UrlSearchParams",
     "Navigator",
     "CredentialsContainer",
+    "CredentialCreationOptions",
     "CredentialRequestOptions",
     "PublicKeyCredential",
 ] }
