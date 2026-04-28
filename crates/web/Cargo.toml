@@ -9,6 +9,13 @@ name = "katulong-web"
 path = "src/main.rs"
 
 [dependencies]
+# Cross-crate wire types — single source of truth for the
+# JSON shapes that flow over /api/auth/*. The server crate
+# uses the same definitions to build responses and parse
+# requests, so a field rename or `#[serde(rename = ...)]`
+# change is caught by the type checker on both sides instead
+# of manifesting as a runtime "could not deserialize" error.
+katulong-shared = { path = "../shared" }
 leptos = { workspace = true }
 console_error_panic_hook = "0.1"
 # `web-sys` for the few browser globals we touch directly.

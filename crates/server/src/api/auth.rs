@@ -38,11 +38,14 @@ use axum::{
     Json, Router,
 };
 use katulong_auth::webauthn_wire::{
-    CreationChallengeResponse, PublicKeyCredential, RegisterPublicKeyCredential,
-    RequestChallengeResponse,
+    CreationChallengeResponse, RequestChallengeResponse,
 };
-use katulong_auth::{AuthError, ChallengeId, Session, SESSION_TTL};
-use serde::{Deserialize, Serialize};
+use katulong_auth::{AuthError, Session, SESSION_TTL};
+use katulong_shared::wire::{
+    AuthFinishResponse, ChallengeStartResponse, LoginFinishRequest, PairFinishRequest,
+    PairStartRequest, PairStartResponse, RegisterFinishRequest,
+};
+use serde::Serialize;
 use std::net::SocketAddr;
 use std::time::SystemTime;
 
@@ -117,37 +120,13 @@ async fn status(
     })
 }
 
-#[derive(Debug, Serialize)]
-struct ChallengeStartResponse<T: Serialize> {
-    challenge_id: ChallengeId,
-    options: T,
-}
-
-#[derive(Debug, Deserialize)]
-struct RegisterFinishRequest {
-    challenge_id: ChallengeId,
-    response: RegisterPublicKeyCredential,
-}
-
-#[derive(Debug, Deserialize)]
-struct LoginFinishRequest {
-    challenge_id: ChallengeId,
-    response: PublicKeyCredential,
-}
-
-/// Shared response shape for every flow that mints a session on
-/// success — register, login, and pair. All three return the same two
-/// fields (`credential_id` for UI display, `csrf_token` for the
-/// client to echo in the `X-Csrf-Token` header on subsequent
-/// state-changing requests). Keeping them as one type means a future
-/// schema addition (e.g., `session_expires_at`) lands in one place.
-/// Status codes still differ per route (201 on register/pair, 200 on
-/// login), so the distinction is preserved at the call sites.
-#[derive(Debug, Serialize)]
-struct AuthFinishResponse {
-    credential_id: String,
-    csrf_token: String,
-}
+// Wire types (`ChallengeStartResponse<T>`,
+// `RegisterFinishRequest`, `LoginFinishRequest`,
+// `AuthFinishResponse`) live in `katulong_shared::wire` so
+// the WASM client compiles against the same definitions. A
+// field rename or `#[serde(rename = ...)]` change there
+// breaks both consumers at compile time instead of at
+// runtime.
 
 /// Start a first-device registration ceremony.
 ///
@@ -406,30 +385,8 @@ where
 
 // ============== pair flow (setup-token-gated registration) ==============
 
-#[derive(Debug, Deserialize)]
-struct PairStartRequest {
-    /// Plaintext setup token value as given to the new device's
-    /// operator. The server hashes and looks it up.
-    setup_token: String,
-}
-
-#[derive(Debug, Serialize)]
-struct PairStartResponse {
-    challenge_id: ChallengeId,
-    /// The setup-token id — opaque to the client, returned so the
-    /// finish call can reference it without re-submitting the
-    /// plaintext value. Defence in depth: keeps the plaintext
-    /// transiting the network once, not twice.
-    setup_token_id: String,
-    options: CreationChallengeResponse,
-}
-
-#[derive(Debug, Deserialize)]
-struct PairFinishRequest {
-    challenge_id: ChallengeId,
-    setup_token_id: String,
-    response: RegisterPublicKeyCredential,
-}
+// `PairStartRequest`, `PairStartResponse`, `PairFinishRequest`
+// all live in `katulong_shared::wire`.
 
 /// Validate the plaintext token, start a WebAuthn registration
 /// ceremony, and return the challenge. Public — anyone with a valid
