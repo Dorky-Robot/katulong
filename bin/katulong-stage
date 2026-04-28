@@ -144,6 +144,16 @@ default_name() {
 }
 
 # Ask Node for a free TCP port at or above $1.
+#
+# `process.stdout.write(String(p))` and not `console.log(p)` —
+# when FORCE_COLOR is set (Playwright sets it for colorized
+# test output, and that env propagates into our execSync
+# invocations of this script), Node's `console.log(<number>)`
+# wraps the value in ANSI yellow escape codes. Bash command
+# substitution then captures `[33m3050[39m` instead of
+# `3050`, which silently contaminates downstream KATULONG_*
+# env vars and crashes the Rust server with "invalid port
+# number". `process.stdout.write` of a string is plain.
 find_free_port() {
   local from="${1:-3050}"
   node -e "
@@ -155,7 +165,7 @@ find_free_port() {
         s.on('error', () => resolve(tryPort(p + 1)));
       });
     }
-    tryPort($from).then(p => console.log(p));
+    tryPort($from).then(p => process.stdout.write(String(p)));
   "
 }
 
@@ -560,10 +570,19 @@ cmd_start() {
       return 1
     fi
 
+    # KATULONG_ORIGIN must match the URL the browser actually
+    # uses, or webauthn-rs's clientDataJSON.origin check
+    # rejects every assertion. The default in main.rs is
+    # `http://localhost:3000`, which only happens to match
+    # when the operator hand-launches with PORT=3000. For
+    # staging on a dynamic port, the local URL is
+    # http://localhost:$port — set it here so passkey
+    # ceremonies actually verify.
     PORT="$port" \
     KATULONG_DATA_DIR="$data_dir" \
     KATULONG_TMUX_SOCKET="$tmux_socket" \
     KATULONG_WEB_DIST="$web_dist" \
+    KATULONG_ORIGIN="http://localhost:$port" \
       nohup "$rust_bin" > "$log_file" 2>&1 &
   fi
   local server_pid=$!
