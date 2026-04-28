@@ -1,7 +1,7 @@
 {
   "name": "katulong",
   "license": "MIT OR Apache-2.0",
-  "version": "0.61.1",
+  "version": "0.61.2",
   "description": "Self-hosted web terminal for remote machines. Browser-based shell access with tmux sessions, file browser, and WebAuthn security.",
   "keywords": [
     "web-terminal",
