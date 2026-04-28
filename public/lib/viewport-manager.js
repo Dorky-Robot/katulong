@@ -4,7 +4,7 @@
  * Handles viewport resizing, scroll button UI, and terminal gesture handlers.
  */
 
-import { viewportOf, isAtBottom, scrollToBottom } from "/lib/scroll-utils.js";
+import { isAtBottom, scrollToBottom } from "/lib/scroll-utils.js";
 
 /**
  * Viewport Manager

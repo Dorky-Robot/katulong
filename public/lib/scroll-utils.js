@@ -3,12 +3,19 @@
  *
  * Composable scroll management helpers for terminal.
  *
- * Tracks user-initiated scrolling so that rapid terminal output (e.g.
- * Claude Code working) doesn't yank the viewport back to the bottom
- * every frame.  The lock is set on wheel / touchmove events when the
- * viewport is away from the bottom, and cleared when the viewport
- * reaches the bottom again (via any means — manual scroll, button
- * click, or programmatic scrollToBottom).
+ * Tracks scroll state so rapid terminal output (e.g. Claude Code typing)
+ * doesn't yank the viewport back to the bottom while the user is reading
+ * scrollback.  The lock follows the buffer's viewport position: set when
+ * away from bottom, cleared on arrival.
+ *
+ * Scroll architecture: native browser scroll is disabled on the terminal
+ * pane (#terminal-container .xterm-viewport { overflow: hidden }) so all
+ * viewport movement flows through `term.scrollLines()`:
+ *   - wheel/trackpad → xterm's built-in wheel handler
+ *   - touch drag    → initTouchScroll's pointer bridge
+ *   - programmatic  → scrollToBottom, etc.
+ * Every path triggers `term.onScroll`, which is the single source of
+ * truth for tracking scroll-lock state.
  *
  * IMPORTANT: xterm.js 6 uses a custom scrollable element — native DOM
  * scroll properties (scrollTop, scrollHeight) are NOT meaningful. All
@@ -20,14 +27,6 @@
 
 // --- Per-terminal scroll-lock state (WeakMap so GC-friendly) ---
 const _scrollLocked = new WeakMap();
-
-/** Derive the scrollable viewport element from a terminal instance's own DOM */
-export function viewportOf(term) {
-  const pane = term?.element?.closest(".terminal-pane");
-  if (!pane) return null;
-  // xterm 6 uses .xterm-scrollable-element; fall back to .xterm-viewport for older versions
-  return pane.querySelector(".xterm-scrollable-element") || pane.querySelector(".xterm-viewport") || null;
-}
 
 /**
  * Check if terminal is scrolled to the bottom.
@@ -43,29 +42,15 @@ export function isAtBottom(term) {
  * Attach scroll-lock tracking to a terminal.
  * Call once per terminal (idempotent — skips if already attached).
  *
- * Wheel / touchmove away from bottom → lock (suppress auto-scroll).
- * Scroll back to bottom (via term.onScroll) → unlock.
+ * Lock follows the buffer position via term.onScroll, which fires for
+ * every viewport movement (wheel, touch, scrollbar, programmatic).
  */
 export function initScrollTracking(term) {
   if (_scrollLocked.has(term)) return;
   _scrollLocked.set(term, false);
 
-  const viewport = viewportOf(term);
-
-  const markUserScroll = () => {
-    if (!isAtBottom(term)) _scrollLocked.set(term, true);
-  };
-
-  // Wheel and touchmove fire on the custom scrollable even in xterm.js 6
-  if (viewport) {
-    viewport.addEventListener("wheel", markUserScroll, { passive: true });
-    viewport.addEventListener("touchmove", markUserScroll, { passive: true });
-  }
-
-  // Clear lock when terminal reaches bottom — use term.onScroll which
-  // fires reliably (unlike native DOM scroll events on xterm 6).
   term.onScroll(() => {
-    if (isAtBottom(term)) _scrollLocked.set(term, false);
+    _scrollLocked.set(term, !isAtBottom(term));
   });
 }
 

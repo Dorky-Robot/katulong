@@ -727,21 +727,21 @@
        between left and right instead of accumulating on the right only.
        .xterm-screen has a definite width (set by xterm to cols*cellWidth). */
     .terminal-pane .xterm-screen { margin-left: auto; margin-right: auto; }
+    /* Scroll is JS-driven (xterm's wheel handler + initTouchScroll's pointer
+       bridge → term.scrollLines). Override xterm.css's overflow-y:scroll so
+       no native scroll container exists on iOS — native momentum scrolling
+       on this layer fights the WebGL canvas redraw and ghosts rows on iPad. */
     #terminal-container .xterm-viewport,
     #terminal-container .xterm-scrollable-element {
-      -webkit-overflow-scrolling: touch;
-      overscroll-behavior: contain;
+      overflow: hidden;
     }
-    /* Override xterm.css default #000 background with transparent so whatever
-       paints behind the viewport (card-face surface in carousel mode,
-       #terminal-container var(--bg) in non-carousel mode) shows through the
-       gap below the last terminal row instead of a mismatched strip. Must be
-       !important because xterm.css hardcodes background:#000 on .xterm-viewport. */
+    /* Transparent (not a fixed color) so whatever paints behind the viewport
+       — card-face surface in carousel mode, --bg in non-carousel — shows
+       through the gap below the last row. !important because xterm.css
+       hardcodes background:#000 on .xterm-viewport. */
     #terminal-container .xterm-viewport {
       background-color: transparent !important;
-      scrollbar-width: none; /* Firefox */
     }
-    #terminal-container .xterm-viewport::-webkit-scrollbar { display: none; } /* Chrome/Safari */
     /* xterm's input textarea is moved into this off-screen wrapper at the DOM
        level (see terminal-pool.js) so the system caret can never appear in the
        visible terminal area.  No opacity/clip-path hacks needed. */
