@@ -1066,6 +1066,8 @@ name = "katulong-shared"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
+ "webauthn-rs-proto",
 ]
 
 [[package]]
@@ -1075,6 +1077,7 @@ dependencies = [
  "console_error_panic_hook",
  "gloo-net",
  "js-sys",
+ "katulong-shared",
  "leptos",
  "serde",
  "wasm-bindgen",

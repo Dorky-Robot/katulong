@@ -19,8 +19,11 @@
 //! `create_action` and reacts to the resolved value.
 
 use crate::AuthState;
+use katulong_shared::wire::{
+    LoginFinishRequest, LoginStartResponse, PairFinishRequest, PairStartRequest,
+    PairStartResponse,
+};
 use leptos::*;
-use serde::{Deserialize, Serialize};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
@@ -42,58 +45,6 @@ fn url_setup_token() -> Option<String> {
     } else {
         Some(token)
     }
-}
-
-// =====================================================================
-// Wire types — mirror the server's `ChallengeStartResponse<...>` and
-// `LoginFinishRequest` shapes. We don't share the server's structs
-// because the server pulls in axum, sqlx, scrypt, etc. — bringing
-// those into the WASM bundle would balloon it. The wire format itself
-// is small + stable, so duplicating two structs is cheaper than the
-// transitive crate weight. The shared `webauthn_rs_proto` types
-// (`RequestChallengeResponse`, `PublicKeyCredential`) DO ride along —
-// they're the part that's tricky to redo, and the crate itself is
-// WASM-friendly.
-// =====================================================================
-
-// No `LoginStartReq` — `login/start` takes no request body.
-#[derive(Debug, Deserialize)]
-struct LoginStartResp {
-    challenge_id: String,
-    options: webauthn_rs_proto::RequestChallengeResponse,
-}
-
-#[derive(Debug, Serialize)]
-struct LoginFinishReq {
-    challenge_id: String,
-    response: webauthn_rs_proto::PublicKeyCredential,
-}
-
-#[derive(Debug, Serialize)]
-struct PairStartReq {
-    /// Plaintext setup-token from the URL. The server hashes
-    /// and looks it up; we never see the hashed form.
-    setup_token: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct PairStartResp {
-    challenge_id: String,
-    /// Server-side opaque id for the redeemable token. Echoed
-    /// back on `pair/finish` so the client doesn't have to
-    /// re-submit the plaintext setup-token a second time. The
-    /// authoritative token re-check still happens server-side
-    /// under the state lock, so this is a nicety, not a
-    /// security boundary.
-    setup_token_id: String,
-    options: webauthn_rs_proto::CreationChallengeResponse,
-}
-
-#[derive(Debug, Serialize)]
-struct PairFinishReq {
-    challenge_id: String,
-    setup_token_id: String,
-    response: webauthn_rs_proto::RegisterPublicKeyCredential,
 }
 
 /// HTTP status guard shared by both ceremonies. Earlier
@@ -150,7 +101,7 @@ async fn signin() -> Result<(), String> {
         .await
         .map_err(|e| format!("network error contacting server: {e}"))?;
     check_ok(&start_resp, "server rejected sign-in challenge")?;
-    let start: LoginStartResp = start_resp
+    let start: LoginStartResponse = start_resp
         .json()
         .await
         .map_err(|e| format!("server returned malformed challenge: {e}"))?;
@@ -179,7 +130,7 @@ async fn signin() -> Result<(), String> {
     //    `JsonBody<T>` so Content-Type *must* be application/json
     //    — `gloo-net`'s `.json(...)` sets that automatically.
     let finish_resp = gloo_net::http::Request::post("/api/auth/login/finish")
-        .json(&LoginFinishReq {
+        .json(&LoginFinishRequest {
             challenge_id: start.challenge_id,
             response,
         })
@@ -218,13 +169,13 @@ async fn signin() -> Result<(), String> {
 async fn pair(setup_token: String) -> Result<(), String> {
     // 1. Ask for a registration challenge.
     let start_resp = gloo_net::http::Request::post("/api/auth/pair/start")
-        .json(&PairStartReq { setup_token })
+        .json(&PairStartRequest { setup_token })
         .map_err(|e| format!("could not encode pair-start payload: {e}"))?
         .send()
         .await
         .map_err(|e| format!("network error contacting server: {e}"))?;
     check_ok(&start_resp, "server rejected pair challenge")?;
-    let start: PairStartResp = start_resp
+    let start: PairStartResponse = start_resp
         .json()
         .await
         .map_err(|e| format!("server returned malformed challenge: {e}"))?;
@@ -250,7 +201,7 @@ async fn pair(setup_token: String) -> Result<(), String> {
     // 4. Send the attestation back along with the
     //    `setup_token_id` the server gave us in step 1.
     let finish_resp = gloo_net::http::Request::post("/api/auth/pair/finish")
-        .json(&PairFinishReq {
+        .json(&PairFinishRequest {
             challenge_id: start.challenge_id,
             setup_token_id: start.setup_token_id,
             response,

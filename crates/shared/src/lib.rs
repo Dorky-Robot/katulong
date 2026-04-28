@@ -1,19 +1,24 @@
-//! Types shared between `katulong-server` and any future
-//! cross-crate consumer (e.g., the eventual Leptos client, the
-//! tile SDK).
+//! Cross-crate types shared between `katulong-server` and
+//! `katulong-web`.
 //!
-//! The slice-4 scaffold originally defined placeholder
-//! `ServerMessage`/`ClientMessage`/`PROTOCOL_VERSION` here to
-//! verify end-to-end wiring. Slice 9c deleted those: the
-//! authoritative WS protocol now lives in
-//! `katulong_server::transport::message`, and the HTTP smoke
-//! endpoint (`/api/hello`) it backed is gone — the real auth
-//! handshake is `GET /api/auth/status`. Keeping two parallel
-//! `ServerMessage` types (different tag keys, different casing,
-//! different version strings) was the CRITICAL finding in the
-//! slice-9c review; removing the dead scaffold is the fix.
+//! The slice-4 scaffold once held placeholder
+//! `ServerMessage`/`ClientMessage` types that diverged from
+//! the live WS protocol; slice 9c removed them. This crate
+//! sat empty until the auth-rewrite slices grew enough wire
+//! types (login/register/pair × start/finish) that
+//! duplicating them on both sides became silent-drift
+//! prone. The wire module below is the single source of
+//! truth: server uses these structs to build responses and
+//! deserialize requests; the WASM client uses the same
+//! structs in the reverse direction.
 //!
-//! This crate stays in the workspace because truly cross-crate
-//! shared types — tile-SDK message envelopes, federation
-//! primitives, whatever lands later — will live here. For now
-//! it's intentionally empty.
+//! What belongs here: types that cross the HTTP/WS boundary
+//! and must serialize identically on both sides.
+//! What does NOT belong here: server-side state types
+//! (auth_store, session manager), WASM-side view types
+//! (Leptos signals), anything with an axum/sqlx/web-sys dep.
+//! The point of the crate is to be cheap to depend on from
+//! either side; keeping its dependency surface to `serde` +
+//! `webauthn-rs-proto` is what makes that true.
+
+pub mod wire;

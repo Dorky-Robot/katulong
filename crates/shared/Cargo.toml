@@ -6,3 +6,20 @@ license.workspace = true
 
 [dependencies]
 serde = { workspace = true }
+# `webauthn-rs-proto` ships the wire-format structs (challenge,
+# credential, response) used by both the server (issuing
+# challenges, verifying assertions) and the WASM client
+# (calling `navigator.credentials.{get,create}`). Keeping it
+# as a direct dep of this crate means both consumers see the
+# same version, so the JSON shape can't drift.
+#
+# No `wasm` feature here — that flag adds `From` impls
+# bridging `webauthn-rs-proto` types to `web-sys` types,
+# which is web-side only. The WASM crate enables the feature
+# in its own dependency entry; Cargo's feature unification
+# means the WASM build sees the bridge impls without forcing
+# them onto the server build.
+webauthn-rs-proto = "0.5"
+
+[dev-dependencies]
+serde_json = { workspace = true }
