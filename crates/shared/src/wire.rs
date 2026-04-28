@@ -42,7 +42,13 @@
 //! safety gain.
 
 use serde::{Deserialize, Serialize};
-use webauthn_rs_proto::{
+
+// Re-export the WebAuthn proto types so consumers can pull
+// every wire-related type through `katulong_shared::wire`,
+// not split between `katulong_shared::wire` (envelopes) and
+// `katulong_auth::webauthn_wire` (credentials). Single import
+// path keeps the boundary unambiguous.
+pub use webauthn_rs_proto::{
     CreationChallengeResponse, PublicKeyCredential, RegisterPublicKeyCredential,
     RequestChallengeResponse,
 };
@@ -52,22 +58,17 @@ pub type ChallengeId = String;
 // --- start: shared challenge envelope ---------------------------------
 
 /// Generic envelope for the start phase of every ceremony.
-/// The `T` parameter is the WebAuthn options type — one of:
-/// - `CreationChallengeResponse` (register, pair)
-/// - `RequestChallengeResponse` (login)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChallengeStartResponse<T> {
     pub challenge_id: ChallengeId,
     pub options: T,
 }
 
-/// Concrete alias for register/start and pair/start (where
-/// the generic version is awkward for the WASM client to
-/// deserialize without explicit turbofish at every call
-/// site).
+/// The aliases below exist so the WASM client can write
+/// `let start: LoginStartResponse = resp.json().await?` and
+/// have the deserialize call resolve without an explicit
+/// turbofish.
 pub type RegisterStartResponse = ChallengeStartResponse<CreationChallengeResponse>;
-
-/// Concrete alias for login/start.
 pub type LoginStartResponse = ChallengeStartResponse<RequestChallengeResponse>;
 
 // --- finish: shared session response ---------------------------------

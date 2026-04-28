@@ -37,13 +37,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use katulong_auth::webauthn_wire::{
-    CreationChallengeResponse, RequestChallengeResponse,
-};
 use katulong_auth::{AuthError, Session, SESSION_TTL};
 use katulong_shared::wire::{
-    AuthFinishResponse, ChallengeStartResponse, LoginFinishRequest, PairFinishRequest,
-    PairStartRequest, PairStartResponse, RegisterFinishRequest,
+    AuthFinishResponse, ChallengeStartResponse, CreationChallengeResponse,
+    LoginFinishRequest, PairFinishRequest, PairStartRequest, PairStartResponse,
+    RegisterFinishRequest, RequestChallengeResponse,
 };
 use serde::Serialize;
 use std::net::SocketAddr;
@@ -119,14 +117,6 @@ async fn status(
         authenticated: authed.is_some(),
     })
 }
-
-// Wire types (`ChallengeStartResponse<T>`,
-// `RegisterFinishRequest`, `LoginFinishRequest`,
-// `AuthFinishResponse`) live in `katulong_shared::wire` so
-// the WASM client compiles against the same definitions. A
-// field rename or `#[serde(rename = ...)]` change there
-// breaks both consumers at compile time instead of at
-// runtime.
 
 /// Start a first-device registration ceremony.
 ///
@@ -384,9 +374,6 @@ where
 }
 
 // ============== pair flow (setup-token-gated registration) ==============
-
-// `PairStartRequest`, `PairStartResponse`, `PairFinishRequest`
-// all live in `katulong_shared::wire`.
 
 /// Validate the plaintext token, start a WebAuthn registration
 /// ceremony, and return the challenge. Public — anyone with a valid

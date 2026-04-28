@@ -47,12 +47,6 @@ fn url_setup_token() -> Option<String> {
     }
 }
 
-// Wire types live in `katulong_shared::wire` so the server
-// and the WASM client compile against the same definitions.
-// The transitive `webauthn-rs-proto` types ride along inside
-// each struct; the `wasm` feature on this crate's own
-// dependency entry adds the `From` impls bridging to web-sys.
-
 /// HTTP status guard shared by both ceremonies. Earlier
 /// drafts inlined this twice; the duplicated format strings
 /// drifted in review (one read "pair payload" for two
