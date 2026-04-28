@@ -28,14 +28,6 @@
 // --- Per-terminal scroll-lock state (WeakMap so GC-friendly) ---
 const _scrollLocked = new WeakMap();
 
-/** Derive the scrollable viewport element from a terminal instance's own DOM */
-export function viewportOf(term) {
-  const pane = term?.element?.closest(".terminal-pane");
-  if (!pane) return null;
-  // xterm 6 uses .xterm-scrollable-element; fall back to .xterm-viewport for older versions
-  return pane.querySelector(".xterm-scrollable-element") || pane.querySelector(".xterm-viewport") || null;
-}
-
 /**
  * Check if terminal is scrolled to the bottom.
  * Uses xterm.js buffer API, not DOM scroll properties.

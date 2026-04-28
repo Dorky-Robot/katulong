@@ -730,12 +730,15 @@
     /* Scroll is JS-driven (xterm's wheel handler + initTouchScroll's pointer
        bridge → term.scrollLines). Override xterm.css's overflow-y:scroll so
        no native scroll container exists on iOS — native momentum scrolling
-       on this layer fights the WebGL canvas redraw and ghosts rows on iPad.
-       Background override is !important because xterm.css hardcodes #000. */
+       on this layer fights the WebGL canvas redraw and ghosts rows on iPad. */
     #terminal-container .xterm-viewport,
     #terminal-container .xterm-scrollable-element {
       overflow: hidden;
     }
+    /* Transparent (not a fixed color) so whatever paints behind the viewport
+       — card-face surface in carousel mode, --bg in non-carousel — shows
+       through the gap below the last row. !important because xterm.css
+       hardcodes background:#000 on .xterm-viewport. */
     #terminal-container .xterm-viewport {
       background-color: transparent !important;
     }
