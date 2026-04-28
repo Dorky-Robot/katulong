@@ -102,29 +102,55 @@ at https://github.com/Dorky-Robot/homebrew-tap automatically — no manual
 cross-repo push is needed. (The deprecated `Dorky-Robot/homebrew-katulong`
 tap is no longer updated.)
 
-## Step 7: Brew upgrade
+## Step 7: Upgrade the running install
+
+Use `katulong update` — never plain `brew upgrade dorky-robot/tap/katulong`. The
+update command writes a `~/.katulong/.update-in-progress` sentinel that the
+formula's `post_install` checks for; with the sentinel present, brew skips its
+own `katulong service restart` and `katulong update` orchestrates the
+smoke-test-and-swap with proper port handoff. Without the sentinel, brew's
+`post_install` `bootout`s the still-listening old server and tries to bootstrap
+the new one — but the bootstrap can fail when the old PID is still gripping
+port 3001 in the race window. The plist has `KeepAlive: SuccessfulExit=false`,
+so a clean SIGTERM exit (code 0) won't auto-respawn, leaving the service down.
+
+First confirm the tap's formula has caught up to NEW_VERSION (the release
+workflow takes a minute or two to push the SHA bump):
 
 ```bash
 brew update
 brew info dorky-robot/tap/katulong --json | jq -r '.[0] | "formula: \(.versions.stable)\ninstalled: \([.installed[].version] | join(","))"'
 ```
 
-If installed version matches NEW_VERSION, `brew reinstall dorky-robot/tap/katulong`.
-Otherwise `brew upgrade dorky-robot/tap/katulong`.
+Once `formula:` matches NEW_VERSION, run:
+
+```bash
+katulong update
+```
+
+If `katulong update` reports "Already up to date", the running service is
+already on NEW_VERSION (this happens on a re-run, or if the host was upgraded
+out-of-band). Confirm with `katulong --version` and `katulong status`, then
+proceed to Step 8 — there is nothing to bounce. Do **not** fall back to
+`katulong service restart` here: that re-introduces the exact bootout/bootstrap
+race this step was rewritten to avoid. The only time a bounce is appropriate
+is when `katulong status` reports the service is **not running** despite the
+binary being current — in that case `katulong start` (or `katulong service
+restart` if the LaunchAgent is loaded) is the recovery path.
 
 ## Step 8: Verify
+
+`katulong update` leaves the service running on its production port — do not
+stop it to verify. Just hit it.
 
 1. Check CLI version:
    ```bash
    katulong --version
    ```
 
-2. Start, verify HTTP, stop:
+2. Verify HTTP without disrupting the service:
    ```bash
-   katulong start
-   sleep 3
-   curl -s -o /dev/null -w "%{http_code}" http://localhost:3001
-   katulong stop
+   curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3001/
    ```
 
 3. Clean up:

@@ -49,10 +49,20 @@ class Katulong < Formula
       To auto-start katulong on login:
         katulong service install
 
-      To restart after upgrading (if not using the service):
-        katulong start
+      To upgrade in place without dropping the running service, prefer:
+        katulong update
 
-      If the service is installed, brew upgrade restarts it automatically.
+      `katulong update` writes a `~/.katulong/.update-in-progress` sentinel
+      that this formula's post_install honors, letting the update command
+      orchestrate a smoke-test-and-swap with proper port handoff. Plain
+      `brew upgrade dorky-robot/tap/katulong` will still run, but its
+      post_install issues `katulong service restart` directly, which can
+      race the still-listening old server on port 3001 and leave the
+      LaunchAgent down (KeepAlive=SuccessfulExit=false won't auto-respawn
+      a clean exit).
+
+      If you're not using the service, `katulong start` after an upgrade
+      will pick up the new binary.
 
       Upgrading from a pre-v0.56 build? The pub/sub directory may contain
       stale topics left behind by retired releases (high-volume PTY output
