@@ -1,13 +1,21 @@
-//! Login component + sign-in WebAuthn ceremony.
+//! Login component + sign-in / pair WebAuthn ceremonies.
 //!
 //! Slice 9r.1 landed the form shell + URL-based pair vs.
 //! sign-in mode swap. Slice 9r.2 wired the sign-in ceremony.
-//! Slice 9r.3 (planned) lands the pair ceremony, which will
-//! reuse the `LoginPhase` machine and the HTTP glue here.
+//! Slice 9r.3 wires the pair (registration) ceremony,
+//! reusing the `LoginPhase` state machine.
 //!
 //! FP-leaning per memory `feedback_rewrite_fp_direction`:
-//! `signin()` is a pure async pipeline (no shared state, no
-//! callbacks); the component dispatches it via
+//! `signin()` and `pair()` are pure async pipelines (no shared
+//! state, no callbacks). They share shape but not types — the
+//! WebAuthn wire formats and the `web-sys` entry points
+//! diverge between get/create. We keep them as two parallel
+//! functions rather than a generic helper because the
+//! "different parts" (endpoint, request body, options type,
+//! navigator method, response type) outweigh the "same parts"
+//! (ok-check, JsFuture, dyn_into); a generic abstraction
+//! would obscure the flow without paying for itself.
+//! The component dispatches whichever applies via
 //! `create_action` and reacts to the resolved value.
 
 use crate::AuthState;
@@ -58,6 +66,33 @@ struct LoginStartResp {
 struct LoginFinishReq {
     challenge_id: String,
     response: webauthn_rs_proto::PublicKeyCredential,
+}
+
+#[derive(Debug, Serialize)]
+struct PairStartReq {
+    /// Plaintext setup-token from the URL. The server hashes
+    /// and looks it up; we never see the hashed form.
+    setup_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PairStartResp {
+    challenge_id: String,
+    /// Server-side opaque id for the redeemable token. Echoed
+    /// back on `pair/finish` so the client doesn't have to
+    /// re-submit the plaintext setup-token a second time. The
+    /// authoritative token re-check still happens server-side
+    /// under the state lock, so this is a nicety, not a
+    /// security boundary.
+    setup_token_id: String,
+    options: webauthn_rs_proto::CreationChallengeResponse,
+}
+
+#[derive(Debug, Serialize)]
+struct PairFinishReq {
+    challenge_id: String,
+    setup_token_id: String,
+    response: webauthn_rs_proto::RegisterPublicKeyCredential,
 }
 
 /// Run the full sign-in WebAuthn ceremony.
@@ -148,6 +183,101 @@ async fn signin() -> Result<(), String> {
     Ok(())
 }
 
+/// Run the full pair (WebAuthn registration) ceremony.
+///
+/// Symmetric to `signin()` but uses the registration variant
+/// of every step:
+///   - POST `/api/auth/pair/start` with the plaintext
+///     setup-token in the body (vs. no body for sign-in)
+///   - convert `CreationChallengeResponse` →
+///     `web_sys::CredentialCreationOptions` (vs. request
+///     options for sign-in)
+///   - call `navigator.credentials.create(...)` (vs.
+///     `.get(...)`)
+///   - convert returned credential →
+///     `RegisterPublicKeyCredential` (vs. assertion type)
+///   - POST `/api/auth/pair/finish` with the
+///     `setup_token_id` echoed alongside the assertion
+///
+/// The setup-token is moved in (not borrowed) because the
+/// dispatched action future has no upper-bounded lifetime —
+/// once the click fires, the future may outlive any borrow we
+/// could have given it.
+async fn pair(setup_token: String) -> Result<(), String> {
+    // 1. Ask for a registration challenge. This route uses
+    //    `JsonBody<T>`, so we must send a body with
+    //    Content-Type: application/json — `gloo-net`'s
+    //    `.json(...)` handles the header automatically.
+    let start_resp = gloo_net::http::Request::post("/api/auth/pair/start")
+        .json(&PairStartReq { setup_token })
+        .map_err(|e| format!("could not encode pair payload: {e}"))?
+        .send()
+        .await
+        .map_err(|e| format!("network error contacting server: {e}"))?;
+
+    if !start_resp.ok() {
+        return Err(format!(
+            "server rejected pair challenge ({})",
+            start_resp.status()
+        ));
+    }
+
+    let start: PairStartResp = start_resp
+        .json()
+        .await
+        .map_err(|e| format!("server returned malformed challenge: {e}"))?;
+
+    // 2. Convert the wire challenge to the JS shape that
+    //    `navigator.credentials.create()` expects. Same
+    //    `webauthn-rs-proto` `wasm` feature handles the
+    //    base64url ↔ Uint8Array dance.
+    let options: web_sys::CredentialCreationOptions = start.options.into();
+
+    // 3. Run the platform registration ceremony. `.create()`
+    //    either resolves with a `PublicKeyCredential` (user
+    //    confirmed with biometric/PIN, authenticator minted a
+    //    new keypair) or rejects (cancel, "already
+    //    registered", timeout, no authenticator available).
+    let window = web_sys::window().ok_or("browser window unavailable")?;
+    let credentials = window.navigator().credentials();
+    let promise = credentials
+        .create_with_options(&options)
+        .map_err(|e| format!("browser refused credential creation: {}", js_err(&e)))?;
+    let credential_js = JsFuture::from(promise)
+        .await
+        .map_err(|e| format!("passkey ceremony failed: {}", js_err(&e)))?;
+
+    let credential: web_sys::PublicKeyCredential = credential_js
+        .dyn_into()
+        .map_err(|v| format!("browser returned an unexpected credential type: {}", js_err(&v)))?;
+    let response: webauthn_rs_proto::RegisterPublicKeyCredential = credential.into();
+
+    // 4. Send the attestation back along with the
+    //    `setup_token_id` the server gave us in step 1.
+    let finish_resp = gloo_net::http::Request::post("/api/auth/pair/finish")
+        .json(&PairFinishReq {
+            challenge_id: start.challenge_id,
+            setup_token_id: start.setup_token_id,
+            response,
+        })
+        .map_err(|e| format!("could not encode pair payload: {e}"))?
+        .send()
+        .await
+        .map_err(|e| format!("network error completing pair: {e}"))?;
+
+    if !finish_resp.ok() {
+        return Err(format!(
+            "server rejected pair ({})",
+            finish_resp.status()
+        ));
+    }
+
+    // Same as sign-in: the server set the session cookie via
+    // Set-Cookie. We let the caller flip the auth-state
+    // signal so the post-auth view replaces this component.
+    Ok(())
+}
+
 /// Render a `JsValue` error into a human-readable string.
 ///
 /// Two layers, both bounded:
@@ -209,18 +339,14 @@ enum LoginPhase {
 ///   be a dead-end — the bootstrap path (first device, no
 ///   token) is a separate question that 9r.4 will resolve.
 ///
-/// Slice 9r.2 wires the sign-in ceremony only. The pair
-/// ceremony stays inert until 9r.3 — the `<button>` is
-/// disabled in pair mode so a user can't click it and get
-/// nothing.
+/// Both ceremonies are wired as of slice 9r.3. The component
+/// constructs one `create_action` per mode so the active
+/// dispatch path is statically determined at component
+/// construction; the click handler picks which to fire.
 #[component]
 pub fn Login() -> impl IntoView {
     let setup_token = url_setup_token();
     let is_pair_mode = setup_token.is_some();
-    // 9r.3 will read `setup_token` to forward into the pair
-    // ceremony. Holding it in a binding (not just discarding)
-    // documents that intent.
-    let _setup_token_for_9r3 = setup_token;
 
     // The form has a separate identity for tests / future
     // styling: `data-mode` swaps copy + behavior between the
@@ -248,46 +374,58 @@ pub fn Login() -> impl IntoView {
     // disabled state and renders the error region.
     let (phase, set_phase) = create_signal(LoginPhase::Idle);
 
-    // The ceremony itself is dispatched via `create_action`.
-    // That gives us:
+    // Both ceremonies share the same post-resolve handler:
+    // success flips global auth state (which unmounts this
+    // component, so we don't bother resetting `phase`); error
+    // moves the local state machine into Error so the alert
+    // renders. Defining the handler once keeps the two
+    // actions in lockstep — adding a new "logging" hook later
+    // means changing one place, not two.
+    let resolve = move |result: Result<(), String>| match result {
+        Ok(()) => auth.set_signed_in.set(true),
+        Err(message) => set_phase.set(LoginPhase::Error(message)),
+    };
+
+    // The ceremonies themselves are dispatched via
+    // `create_action`. That gives us:
     //   - automatic pending tracking (we don't fire twice on
     //     a fast double-click — the action is gated by the
     //     button's `disabled` attribute, which we wire to
     //     `phase == InFlight`)
     //   - automatic cleanup if the component unmounts mid-
     //     flight (Leptos cancels the future)
-    //   - composability: the action handler reads/writes the
-    //     same `set_phase` signal, keeping all state
-    //     transitions in one place.
+    //   - composability: each handler funnels its result
+    //     through `resolve`, keeping all state transitions in
+    //     one place.
+    //
+    // We construct both actions unconditionally even though
+    // only one will be dispatched per component instance. The
+    // unused action is a small allocation; branching on
+    // `is_pair_mode` here would force the click handler to
+    // hold either an `Action<(), ()>` or an `Action<String,
+    // ()>` (different input types), which doesn't compose
+    // without erasure. Keeping both visible is also useful
+    // for future slices that may want a "switch mode" toggle.
     let signin_action = create_action(move |_: &()| async move {
-        match signin().await {
-            Ok(()) => {
-                // Flip global auth state — `<Main/>` swaps to
-                // the post-auth view, unmounting this
-                // component in the process. We don't reset
-                // `phase` here because the unmount discards
-                // the signal anyway; resetting would just be
-                // a write into a dropped scope.
-                auth.set_signed_in.set(true);
-            }
-            Err(message) => {
-                set_phase.set(LoginPhase::Error(message));
-            }
+        resolve(signin().await);
+    });
+    let pair_action = create_action(move |token: &String| {
+        let token = token.clone();
+        async move {
+            resolve(pair(token).await);
         }
     });
 
     let cta_label = move || match phase.get() {
-        LoginPhase::InFlight => "Signing in…".to_string(),
+        LoginPhase::InFlight => if is_pair_mode {
+            "Pairing…"
+        } else {
+            "Signing in…"
+        }
+        .to_string(),
         _ => cta_idle.to_string(),
     };
-    let cta_disabled = move || {
-        // Sign-in: disable while a ceremony is mid-flight.
-        // Pair mode: disabled outright in 9r.2 — clicking it
-        // would do nothing because we haven't wired the pair
-        // ceremony yet. Greying the button out is a clearer
-        // signal than letting the user click into the void.
-        is_pair_mode || matches!(phase.get(), LoginPhase::InFlight)
-    };
+    let cta_disabled = move || matches!(phase.get(), LoginPhase::InFlight);
     // Signal: are we in the error state? Drives a conditional
     // <p class="error">. Reading the message directly out of
     // the signal would clone an empty string in the non-error
@@ -297,6 +435,33 @@ pub fn Login() -> impl IntoView {
         _ => None,
     };
 
+    // Click handler picks the ceremony based on mode and
+    // dispatches with the appropriate input. The `setup_token`
+    // is captured by clone into the closure so each click can
+    // hand a fresh `String` to `pair_action.dispatch`. Cloning
+    // a hex string is trivial; `Rc<String>` would buy nothing.
+    let setup_token_for_click = setup_token;
+    let on_click = move |_| {
+        // Set InFlight directly here, not inside the action
+        // future. The action's first poll runs on a microtask,
+        // so an Idle → InFlight transition done inside the
+        // future would leave a tick where the button is
+        // briefly enabled — long enough for a synthetic
+        // double-click to fire a second concurrent ceremony.
+        // Setting InFlight synchronously here closes that
+        // window: the disabled re-render happens before the
+        // second click can be queued.
+        set_phase.set(LoginPhase::InFlight);
+        match &setup_token_for_click {
+            Some(token) => {
+                pair_action.dispatch(token.clone());
+            }
+            None => {
+                signin_action.dispatch(());
+            }
+        }
+    };
+
     view! {
         <section id="kat-login" data-mode=mode_attr>
             <h1 class="title">{title}</h1>
@@ -304,6 +469,12 @@ pub fn Login() -> impl IntoView {
             // Pair mode collects a device name (e.g.,
             // "felix-iphone"). Sign-in mode skips it — the
             // passkey itself identifies the credential.
+            // Slice 9r.3 wires the ceremony but does NOT yet
+            // forward the device name to the server (the
+            // pair_finish endpoint takes only the credential
+            // assertion). A future slice will plumb it
+            // through once a credential-name field exists in
+            // the auth schema.
             {is_pair_mode.then(|| view! {
                 <label class="field">
                     <span class="label">"Device name"</span>
@@ -319,21 +490,7 @@ pub fn Login() -> impl IntoView {
                 type="button"
                 class="cta"
                 prop:disabled=cta_disabled
-                on:click=move |_| {
-                    // Set InFlight directly here, not inside
-                    // the action future. The action's first
-                    // poll runs on a microtask, so an Idle →
-                    // InFlight transition done inside the
-                    // future would leave a tick where the
-                    // button is briefly enabled — long enough
-                    // for a synthetic double-click to fire a
-                    // second concurrent ceremony. Setting
-                    // InFlight synchronously here closes that
-                    // window: the disabled re-render happens
-                    // before the second click can be queued.
-                    set_phase.set(LoginPhase::InFlight);
-                    signin_action.dispatch(());
-                }
+                on:click=on_click
             >
                 {cta_label}
             </button>
