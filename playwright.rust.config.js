@@ -7,18 +7,27 @@
 // mode, or the public staging URL.
 //
 // Run:
-//   KATULONG_BASE_URL=http://127.0.0.1:3050 \
-//     npx playwright test --config=playwright.rust.config.js
+//   npx playwright test --config=playwright.rust.config.js
 //
 //   KATULONG_BASE_URL=https://rewrite-rust-leptos.felixflor.es \
 //     npx playwright test --config=playwright.rust.config.js
 //
-// The default base URL points at localhost so a developer who's
-// just run `KATULONG_STAGE_BACKEND=rust bin/katulong-stage start`
-// can run the suite without thinking about flags.
+// The default base URL is `http://localhost:3050` and NOT
+// `http://127.0.0.1:3050`. The webauthn happy-path suite
+// (test/e2e-rust/webauthn.e2e.js) drives Chromium's virtual
+// authenticator, which enforces the WebAuthn spec rule that
+// the page's origin host must be a registrable suffix of the
+// configured RP ID. Katulong's default RP ID is "localhost"
+// (see crates/server/src/main.rs:126), and the browser does
+// not consider "127.0.0.1" a registrable suffix of that, so
+// passkey ceremonies on `http://127.0.0.1:3050` reject with
+// "SecurityError: This is an invalid domain." The token-rejection
+// tests in auth.e2e.js wouldn't surface this — they stub the
+// network — so the failure only appears when a real ceremony
+// runs.
 import { defineConfig, devices } from "@playwright/test";
 
-const BASE_URL = process.env.KATULONG_BASE_URL || "http://127.0.0.1:3050";
+const BASE_URL = process.env.KATULONG_BASE_URL || "http://localhost:3050";
 
 export default defineConfig({
   testDir: "test/e2e-rust",
