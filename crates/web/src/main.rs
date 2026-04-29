@@ -209,8 +209,8 @@ fn Main() -> impl IntoView {
             {move || match auth.phase.get() {
                 AuthPhase::Restoring => view! { <SessionRestoring/> }.into_view(),
                 AuthPhase::Register => view! { <Register/> }.into_view(),
-                AuthPhase::SignedIn => view! { <TerminalStub/> }.into_view(),
                 AuthPhase::SignedOut => view! { <Login/> }.into_view(),
+                AuthPhase::SignedIn => view! { <TerminalStub/> }.into_view(),
             }}
         </main>
     }

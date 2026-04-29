@@ -319,17 +319,19 @@ fn js_err(v: &JsValue) -> String {
     // Operator-side detail goes to the console; the user-side
     // string stays generic. Useful when triaging weird browser
     // / extension errors that don't follow the `Error` shape.
-    web_sys::console::warn_2(&JsValue::from_str("katulong: unstructured signin error"), v);
+    web_sys::console::warn_2(&JsValue::from_str("katulong: unstructured browser error"), v);
     "unexpected browser error".to_string()
 }
 
-/// Login phase — local to `<Login/>`. The three states form a
-/// minimal state machine: idle → in-flight → (idle | error).
-/// Encoded as an enum (rather than a pair of bool signals) so
-/// "in-flight" and "error" can never co-exist; `pending` would
-/// be ambiguous if both were independent.
+/// In-flight state machine for an auth ceremony component.
+/// Used by both `<Login/>` (sign-in + pair) and
+/// `<Register/>`. Three states form a minimal machine:
+/// idle → in-flight → (idle | error). Encoded as an enum
+/// (rather than a pair of bool signals) so "in-flight" and
+/// "error" can never co-exist; `pending` would be ambiguous
+/// if both were independent.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum LoginPhase {
+enum CeremonyPhase {
     Idle,
     InFlight,
     Error(String),
@@ -382,7 +384,7 @@ pub fn Login() -> impl IntoView {
 
     // Local state machine. `phase` drives the CTA copy +
     // disabled state and renders the error region.
-    let (phase, set_phase) = create_signal(LoginPhase::Idle);
+    let (phase, set_phase) = create_signal(CeremonyPhase::Idle);
 
     // Both ceremonies share the same post-resolve handler:
     // success flips global auth state (which unmounts this
@@ -393,7 +395,7 @@ pub fn Login() -> impl IntoView {
     // means changing one place, not two.
     let resolve = move |result: Result<(), String>| match result {
         Ok(()) => auth.set_phase.set(crate::AuthPhase::SignedIn),
-        Err(message) => set_phase.set(LoginPhase::Error(message)),
+        Err(message) => set_phase.set(CeremonyPhase::Error(message)),
     };
 
     // The ceremonies themselves are dispatched via
@@ -427,7 +429,7 @@ pub fn Login() -> impl IntoView {
     });
 
     let cta_label = move || match phase.get() {
-        LoginPhase::InFlight => if is_pair_mode {
+        CeremonyPhase::InFlight => if is_pair_mode {
             "Pairing…"
         } else {
             "Signing in…"
@@ -435,13 +437,13 @@ pub fn Login() -> impl IntoView {
         .to_string(),
         _ => cta_idle.to_string(),
     };
-    let cta_disabled = move || matches!(phase.get(), LoginPhase::InFlight);
+    let cta_disabled = move || matches!(phase.get(), CeremonyPhase::InFlight);
     // Signal: are we in the error state? Drives a conditional
     // <p class="error">. Reading the message directly out of
     // the signal would clone an empty string in the non-error
     // case, hence the `Show` + accessor split.
     let error_message = move || match phase.get() {
-        LoginPhase::Error(msg) => Some(msg),
+        CeremonyPhase::Error(msg) => Some(msg),
         _ => None,
     };
 
@@ -458,7 +460,7 @@ pub fn Login() -> impl IntoView {
         // synthetic double-click to fire a second concurrent
         // ceremony. The disabled re-render must happen before
         // the second click can be queued.
-        set_phase.set(LoginPhase::InFlight);
+        set_phase.set(CeremonyPhase::InFlight);
         match &setup_token {
             Some(token) => {
                 pair_action.dispatch(token.clone());
@@ -512,7 +514,7 @@ pub fn Login() -> impl IntoView {
 #[component]
 pub fn Register() -> impl IntoView {
     let auth = expect_context::<AuthState>();
-    let (phase, set_phase) = create_signal(LoginPhase::Idle);
+    let (phase, set_phase) = create_signal(CeremonyPhase::Idle);
 
     // Same resolve closure pattern as `<Login/>` — success
     // flips global auth state (which unmounts this component
@@ -520,7 +522,7 @@ pub fn Register() -> impl IntoView {
     // error renders in the local error region.
     let resolve = move |result: Result<(), String>| match result {
         Ok(()) => auth.set_phase.set(crate::AuthPhase::SignedIn),
-        Err(message) => set_phase.set(LoginPhase::Error(message)),
+        Err(message) => set_phase.set(CeremonyPhase::Error(message)),
     };
 
     let register_action = create_action(move |_: &()| async move {
@@ -528,12 +530,12 @@ pub fn Register() -> impl IntoView {
     });
 
     let cta_label = move || match phase.get() {
-        LoginPhase::InFlight => "Registering…".to_string(),
+        CeremonyPhase::InFlight => "Registering…".to_string(),
         _ => "Register first device".to_string(),
     };
-    let cta_disabled = move || matches!(phase.get(), LoginPhase::InFlight);
+    let cta_disabled = move || matches!(phase.get(), CeremonyPhase::InFlight);
     let error_message = move || match phase.get() {
-        LoginPhase::Error(msg) => Some(msg),
+        CeremonyPhase::Error(msg) => Some(msg),
         _ => None,
     };
 
@@ -544,7 +546,7 @@ pub fn Register() -> impl IntoView {
     // could fire two concurrent ceremonies. Setting InFlight
     // synchronously here closes that window.
     let on_click = move |_| {
-        set_phase.set(LoginPhase::InFlight);
+        set_phase.set(CeremonyPhase::InFlight);
         register_action.dispatch(());
     };
 
