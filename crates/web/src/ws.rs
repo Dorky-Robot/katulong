@@ -158,6 +158,20 @@ impl WsClient {
     /// `data-status="connected"` indicator surfaces the disconnected
     /// state, so a tile that observes a non-effect from a `send` is
     /// expected to also observe `ConnectionStatus.connected = false`.
+    ///
+    /// **Back-pressure / delivery contract.** `send` returns `()`,
+    /// not `Result<(), ...>`. Callers that need delivery
+    /// confirmation should gate on `ConnectionStatus.connected`
+    /// BEFORE the call, not after — checking after is racy (the
+    /// connection could die between the check and the next call).
+    /// Today's only consumer (TerminalTile's `Attach`) tolerates
+    /// silent failure because a failed Attach manifests as no
+    /// Output frames arriving, which the user observes as an
+    /// empty terminal alongside the disconnected indicator. When
+    /// a future tile needs a stronger guarantee, the right
+    /// upgrade is to add a `send_with_ack(...)` helper that
+    /// returns a future resolving on `ServerMessage` echo, not
+    /// to change this method's signature.
     pub fn send(&self, msg: ClientMessage) {
         // `unbounded_send` only fails when the receiver has been
         // dropped (lifecycle task ended). That case is observable
@@ -193,14 +207,28 @@ impl WsClient {
 /// `SubscriberList` but a free counter is simpler and the IDs
 /// don't need to be unique across WsClient instances (there's
 /// only ever one WsClient per page anyway).
+///
+/// `Cell<u64>` rather than `thread_local!` because WASM is
+/// single-threaded — `thread_local!` would imply per-thread
+/// isolation that doesn't exist here, misleading future
+/// readers into thinking there's a multi-thread concern.
 fn next_subscriber_id() -> u64 {
+    use std::cell::Cell;
     thread_local! {
-        static NEXT_ID: RefCell<u64> = const { RefCell::new(0) };
+        // We do still need `thread_local!` for the
+        // module-level static because Rust's `static` requires
+        // `Sync` for non-Cell types, and `Cell` is `!Sync`.
+        // The thread-local wrapper is the standard escape
+        // hatch for "single-threaded mutable static" — not a
+        // statement about thread isolation, just about the
+        // type-system constraint. Single-threaded WASM only
+        // ever has one thread to begin with.
+        static NEXT_ID: Cell<u64> = const { Cell::new(0) };
     }
-    NEXT_ID.with(|cell| {
-        let mut id = cell.borrow_mut();
-        *id += 1;
-        *id
+    NEXT_ID.with(|c| {
+        let id = c.get() + 1;
+        c.set(id);
+        id
     })
 }
 
@@ -372,6 +400,14 @@ async fn run_connection(
     // Send loop: drain `receiver` (channel from `WsClient::send`
     // calls in tile components) into the WS sink. Spawned as a
     // separate task so it doesn't block the receive loop.
+    //
+    // On sink error we ALSO flip `set_connected.set(false)` —
+    // otherwise the asymmetric failure (sink dies, stream
+    // continues) would leave the UI showing "connected" while
+    // every send silently fails. Both halves share one underlying
+    // WebSocket; in practice the stream sees the close shortly
+    // after, but flipping connected here makes the UI honest
+    // immediately.
     spawn_local(async move {
         let mut sink = sink;
         let mut receiver = receiver;
@@ -380,13 +416,14 @@ async fn run_connection(
                 console::warn_1(
                     &format!("katulong: WS send_loop write failed: {err}").into(),
                 );
+                set_connected.set(false);
                 break;
             }
         }
-        // When the channel closes (all WsClient clones dropped) or
-        // the sink errors, the send loop exits. The receive loop
-        // continues to handle inbound until it sees the stream
-        // close.
+        // Channel closed (all WsClient clones dropped) is a
+        // graceful exit — no `set_connected` write needed; the
+        // receive loop owns the disconnect signalling on the
+        // graceful path.
     });
 
     // Receive loop: drain `stream`, dispatch each successfully

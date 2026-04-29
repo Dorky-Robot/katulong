@@ -24,10 +24,24 @@
 //! id. Future persistence slices populate the descriptor with
 //! a stable id; the hardcoded `"main"` fallback covers the
 //! pre-persistence path.
+//!
+//! **FIXME (multi-terminal):** Two terminal tiles with
+//! `session_id: None` both resolve to `"main"` and both send
+//! `ClientMessage::Attach { session: "main", ... }`. Per the
+//! protocol's "one transport binds one session" rule
+//! (`katulong_shared::wire`), the second `Attach` re-binds
+//! the transport to the same session — both tiles subscribe
+//! to the same Output stream and effectively mirror each
+//! other. The bootstrap layout has only one terminal tile so
+//! this isn't a current bug, but the persistence / multi-tile
+//! slice MUST populate `session_id` with a stable per-tile id
+//! before adding a second terminal tile to the layout, or the
+//! tiles will collide silently.
 
 use crate::ws::WsClient;
 use katulong_shared::wire::{ClientMessage, ServerMessage};
 use leptos::*;
+use wasm_bindgen_futures::spawn_local;
 
 /// Default session id used when the tile's descriptor doesn't
 /// carry one. The server creates the tmux session lazily on
@@ -64,18 +78,23 @@ pub fn TerminalTile(#[prop(into)] session_id: Option<String>) -> impl IntoView {
     // Multiple TerminalTiles all attaching to "main" would
     // share the same transport's output; a future slice that
     // supports per-tile sessions adds the disambiguation.
-    let sub_buffer = buffer;
+    //
+    // **Lossy decode caveat.** `String::from_utf8_lossy` is
+    // applied per-chunk: if a multi-byte UTF-8 char (e.g., a
+    // 4-byte emoji) splits across two `Output` chunks, EACH
+    // half is replaced with `U+FFFD` and the original code
+    // point is lost — not "robust degradation", outright loss.
+    // The lossy path is acceptable for a placeholder slice
+    // (xterm in 9s.4 replaces this with a stateful byte-stream
+    // writer that buffers incomplete sequences); it must NOT
+    // be carried forward into the xterm slice as an
+    // approximation. The 9s.4 cutover should replace the
+    // signal type entirely (`String` → raw `Vec<u8>` piped
+    // straight to xterm.write).
     let handle = ws.subscribe(move |msg| {
         if let ServerMessage::Output { data, .. } = msg {
-            // UTF-8-lossy decode keeps the rendering robust
-            // against partial code points at chunk boundaries
-            // — the byte stream IS valid UTF-8 in aggregate
-            // but a chunk may split a multi-byte char. xterm
-            // in 9s.4 handles this natively; for now lossy
-            // decode + accumulation is good enough to display
-            // the shell banner and prompts.
             let s = String::from_utf8_lossy(data).to_string();
-            sub_buffer.update(|buf| buf.push_str(&s));
+            buffer.update(|buf| buf.push_str(&s));
         }
     });
 
@@ -87,34 +106,55 @@ pub fn TerminalTile(#[prop(into)] session_id: Option<String>) -> impl IntoView {
     // list. RAII via Leptos's scope.
     store_value(handle);
 
-    // Send the Attach request once the component mounts. The
-    // WS connection may not yet be live — the channel buffers
-    // the message; the lifecycle task drains it once the
-    // handshake completes.
-    let session_for_attach = session_id.clone();
-    let ws_for_attach = ws.clone();
-    create_effect(move |prev: Option<bool>| -> bool {
-        // Send Attach exactly once. The prev-value latch
-        // mirrors the WS lifecycle's pattern (see
-        // `crate::ws::spawn_lifecycle`); this effect doesn't
-        // need to react to anything, but `create_effect` is
-        // the natural Leptos primitive for "run once at
-        // mount."
-        if prev.unwrap_or(false) {
-            return true;
+    // Send `Attach` exactly once at mount. `spawn_local` is
+    // the right primitive for "run a future once when the
+    // component is placed in the tree" — it cannot
+    // accidentally re-run, unlike `create_effect`'s
+    // signal-tracking mechanism (`create_effect` would also
+    // work today because the closure reads no signals, but a
+    // future maintainer who adds a reactive read would
+    // silently break the once-only semantics).
+    //
+    // The future itself is synchronous — `WsClient::send`
+    // returns immediately — but `spawn_local` is the
+    // language-level signal that this is a side-effect at
+    // mount, not a reactive subscription.
+    spawn_local({
+        let ws = ws.clone();
+        let session = session_id.clone();
+        async move {
+            ws.send(ClientMessage::Attach {
+                session,
+                cols: DEFAULT_COLS,
+                rows: DEFAULT_ROWS,
+                resume_from_seq: None,
+            });
         }
-        ws_for_attach.send(ClientMessage::Attach {
-            session: session_for_attach.clone(),
-            cols: DEFAULT_COLS,
-            rows: DEFAULT_ROWS,
-            resume_from_seq: None,
-        });
-        true
     });
 
     view! {
-        <section id="kat-terminal-tile" data-tile-kind="terminal" data-session=session_id.clone()>
+        // `data-session` exposes the bound session id for
+        // operator devtools (one-line `document.querySelector`
+        // to inspect which tile is attached where) and as a
+        // selector hook for any future per-tile e2e test.
+        // No CSS rule depends on it today; remove if a future
+        // slice clearly doesn't need it.
+        <section
+            id="kat-terminal-tile"
+            data-tile-kind="terminal"
+            data-session=session_id.clone()
+        >
             <h1 class="title">"Terminal"</h1>
+            // **XSS-safety note.** Leptos's `view!` macro
+            // inserts `String` values as DOM text nodes (via
+            // `createTextNode` / `textContent`), NOT as
+            // `innerHTML`. Server-controlled bytes flowing
+            // through the buffer cannot inject markup here; a
+            // shell command running `echo '<script>...'`
+            // produces literal visible characters. Do NOT
+            // switch this binding to `inner_html()` or
+            // similar — that would turn the PTY-output path
+            // into a stored-XSS surface.
             <pre class="terminal-output">{move || buffer.get()}</pre>
         </section>
     }
