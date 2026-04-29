@@ -359,7 +359,5 @@ Add a pattern for host Claude to subscribe to progress via
 - Replacing helm mode (helm renders full conversation events;
   progress tile renders a checklist — different purposes)
 - Multi-agent orchestration UI (dispatch v2 handles this separately)
-- Crew tile integration (crew manages multiple sessions; progress
-  tile is per-task)
 - Changing the topic broker's retention/rotation policy
 - Adding progress publishing to existing CLI commands
