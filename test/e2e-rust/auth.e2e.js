@@ -26,7 +26,7 @@
 //     npx playwright test --config=playwright.rust.config.js
 
 import { test, expect } from "@playwright/test";
-import { stubUnauthenticated } from "./lib/webauthn.js";
+import { stubUnauthenticated } from "./lib/auth-stub.js";
 
 // Every test in this file exercises the login UI. Slice
 // 9r.4's probe-on-mount means the WASM only renders the

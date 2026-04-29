@@ -41,38 +41,55 @@ fn main() {
 #[derive(Copy, Clone)]
 struct ConnectionStatus(ReadSignal<bool>);
 
-/// Tri-state auth signal exposed to descendants via context:
+/// Phases of the auth state machine driving `<Main/>`'s
+/// view selection.
 ///
-/// - `None` — initial probe to `/api/auth/status` is in
-///   flight. `<Main/>` renders a small "restoring" view
-///   here, NOT the login form, so a page reload of an
-///   already-authed user doesn't flash through the sign-in
-///   screen.
-/// - `Some(false)` — probe resolved as unauthenticated. The
+/// - `Restoring` — initial probe to `/api/auth/status` is in
+///   flight. `<Main/>` renders a small "restoring" view here,
+///   NOT the login form, so a page reload of an already-authed
+///   user doesn't flash through the sign-in screen.
+/// - `SignedOut` — probe resolved as unauthenticated. The
 ///   login form renders.
-/// - `Some(true)` — probe resolved as authenticated, OR the
+/// - `SignedIn` — probe resolved as authenticated, OR the
 ///   sign-in/pair ceremony just succeeded. Post-auth view
 ///   renders.
 ///
-/// The setter half travels alongside the reader because two
-/// places need to write: the App-root probe-on-mount, and
-/// `<Login/>`'s ceremony success branches. A future logout
-/// will write the same setter in the opposite direction.
-#[derive(Copy, Clone)]
-pub struct AuthState {
-    pub signed_in: ReadSignal<Option<bool>>,
-    pub set_signed_in: WriteSignal<Option<bool>>,
+/// Encoded as a typed enum (rather than `Option<bool>`) so
+/// each variant has a name at the match sites — the previous
+/// `Some(false)` / `Some(true)` shape leaned on a doc comment
+/// to spell out which boolean meant what. Also gives us a
+/// natural place to grow: when 9r.5 lands the register flow,
+/// a `SignedOutNoCredentials` variant captures the
+/// "authenticated-but-fresh-install" case that `Option<bool>`
+/// can't represent without splitting into a second signal.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum AuthPhase {
+    Restoring,
+    SignedOut,
+    SignedIn,
 }
 
-/// Probe `/api/auth/status` once at App mount to discover
-/// the current session state. Returns the `authenticated`
-/// flag from the response (the wire shape exposes more
-/// fields — `access_method`, `has_credentials` — but only
-/// `authenticated` is needed at this layer; future slices
-/// that branch on `has_credentials` for the
-/// "no-credentials-yet → register flow" route will read the
-/// other fields).
-async fn probe_auth_status() -> Result<bool, String> {
+/// Reactive auth-state signal exposed via context. The setter
+/// half travels alongside the reader because two places write
+/// today (the App-root probe-on-mount and `<Login/>`'s
+/// ceremony success branches), and a future logout slice will
+/// write the same setter in the opposite direction.
+#[derive(Copy, Clone)]
+pub struct AuthState {
+    pub phase: ReadSignal<AuthPhase>,
+    pub set_phase: WriteSignal<AuthPhase>,
+}
+
+/// Probe `/api/auth/status` once at App mount.
+///
+/// Returns the full `AuthStatusResponse` (not just the
+/// `authenticated` bool) so the caller has access to
+/// `has_credentials` and `access_method` without a second
+/// round trip when 9r.5 lands the register flow gate. The
+/// caller currently only consumes `authenticated`; the wider
+/// shape is on the boundary instead of behind it so
+/// downstream code can grow without re-shaping this fn.
+async fn probe_auth_status() -> Result<AuthStatusResponse, String> {
     let resp = gloo_net::http::Request::get("/api/auth/status")
         .send()
         .await
@@ -80,11 +97,9 @@ async fn probe_auth_status() -> Result<bool, String> {
     if !resp.ok() {
         return Err(format!("status returned {}", resp.status()));
     }
-    let status: AuthStatusResponse = resp
-        .json()
+    resp.json()
         .await
-        .map_err(|e| format!("malformed status response: {e}"))?;
-    Ok(status.authenticated)
+        .map_err(|e| format!("malformed status response: {e}"))
 }
 
 #[component]
@@ -102,25 +117,30 @@ fn App() -> impl IntoView {
     // Auth signal lives at the root because three places
     // need to write: the probe-on-mount below, `<Login/>`'s
     // ceremony success branches, and a future logout. Initial
-    // `None` means "probe in flight" — `<Main/>` renders the
-    // restoring view in this state.
-    let (signed_in, set_signed_in) = create_signal(None::<bool>);
-    provide_context(AuthState {
-        signed_in,
-        set_signed_in,
-    });
+    // `Restoring` — `<Main/>` renders the restoring view in
+    // this state.
+    let (phase, set_phase) = create_signal(AuthPhase::Restoring);
+    provide_context(AuthState { phase, set_phase });
 
     // Fire the probe once on mount. We don't use
     // `create_action` because there's no input and no need
     // to expose pending/result state to the component tree —
     // the auth signal IS the result. On error (network
-    // failure, server misbehaving), default to
-    // `Some(false)` so the user lands on the login form
-    // rather than getting stuck on "restoring…" forever.
+    // failure, server misbehaving), default to `SignedOut`
+    // so the user lands on the login form rather than
+    // getting stuck on "restoring…" forever; a `console.warn`
+    // surfaces the actual failure for dev triage without
+    // putting it in the user-visible string.
     spawn_local(async move {
         match probe_auth_status().await {
-            Ok(authed) => set_signed_in.set(Some(authed)),
-            Err(_) => set_signed_in.set(Some(false)),
+            Ok(status) if status.authenticated => set_phase.set(AuthPhase::SignedIn),
+            Ok(_) => set_phase.set(AuthPhase::SignedOut),
+            Err(message) => {
+                web_sys::console::warn_1(
+                    &format!("katulong: auth status probe failed: {message}").into(),
+                );
+                set_phase.set(AuthPhase::SignedOut);
+            }
         }
     });
 
@@ -173,10 +193,10 @@ fn Main() -> impl IntoView {
     // section is small and self-explanatory.
     view! {
         <main id="kat-main">
-            {move || match auth.signed_in.get() {
-                None => view! { <SessionRestoring/> }.into_view(),
-                Some(true) => view! { <TerminalStub/> }.into_view(),
-                Some(false) => view! { <Login/> }.into_view(),
+            {move || match auth.phase.get() {
+                AuthPhase::Restoring => view! { <SessionRestoring/> }.into_view(),
+                AuthPhase::SignedIn => view! { <TerminalStub/> }.into_view(),
+                AuthPhase::SignedOut => view! { <Login/> }.into_view(),
             }}
         </main>
     }

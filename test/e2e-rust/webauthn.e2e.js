@@ -42,13 +42,13 @@
 // UI flow in isolation while sharing the bootstrap cost.
 
 import { test, expect } from "@playwright/test";
+import { stubUnauthenticated } from "./lib/auth-stub.js";
 import {
   ensureFreshStagingDataDir,
   setupVirtualAuthenticator,
   registerFirstDevice,
   injectCredential,
   mintSetupToken,
-  stubUnauthenticated,
 } from "./lib/webauthn.js";
 
 test.describe.serial("WebAuthn UI happy paths", () => {
@@ -101,9 +101,12 @@ test.describe.serial("WebAuthn UI happy paths", () => {
     );
 
     // Snapshot the session cookie before the bootstrap
-    // context closes. The cookie is HttpOnly + SameSite=Lax;
-    // `context.cookies()` returns the full descriptor that
-    // `addCookies` accepts as-is.
+    // context closes. The cookie is HttpOnly + SameSite=Lax,
+    // and the value is sensitive — Playwright's trace
+    // recorder captures network responses including
+    // Set-Cookie, so do NOT enable `--trace on` for this
+    // suite without scrubbing the artifact, and do NOT
+    // copy this capture pattern with a real-user session.
     const cookies = await context.cookies();
     sessionCookie = cookies.find((c) => c.name === "katulong_session");
     if (!sessionCookie) {
@@ -196,6 +199,7 @@ test.describe.serial("WebAuthn UI happy paths", () => {
 
   test("an active session restores after a page reload", async ({
     browser,
+    baseURL,
   }) => {
     // The slice 9r.4 contract: a valid session cookie at
     // page load means the user lands on the post-auth view,
@@ -208,13 +212,22 @@ test.describe.serial("WebAuthn UI happy paths", () => {
     // than another UI sign-in: the bootstrap credential's
     // signCount is frozen in the dump and would trip the
     // replay guard on a second use, and we've already
-    // consumed the only setup token. Direct cookie
-    // injection isolates THIS slice's contract — the
-    // mechanism that established the session is irrelevant
-    // here; what matters is that the WASM's on-mount probe
-    // observes the cookie and renders accordingly.
+    // consumed the only setup token.
+    //
+    // Normalise the cookie's `domain` to the baseURL host
+    // before injection. `context.cookies()` returns the
+    // domain set by the bootstrap response (which on
+    // localhost may be `127.0.0.1` if the staging script
+    // bound there); `addCookies` silently drops cookies
+    // whose domain doesn't match the next navigation's
+    // hostname. A dropped cookie would still pass this test
+    // on localhost via the server's auto-auth fallback —
+    // i.e., a false-positive — defeating the regression
+    // guard.
     const context = await browser.newContext();
-    await context.addCookies([sessionCookie]);
+    await context.addCookies([
+      { ...sessionCookie, domain: new URL(baseURL).hostname },
+    ]);
     const page = await context.newPage();
     await page.goto("/");
 

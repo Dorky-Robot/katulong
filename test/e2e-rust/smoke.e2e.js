@@ -21,7 +21,7 @@
 // — that runs trunk for you).
 
 import { test, expect } from "@playwright/test";
-import { stubUnauthenticated } from "./lib/webauthn.js";
+import { stubUnauthenticated } from "./lib/auth-stub.js";
 
 test("leptos shell renders header + main + status", async ({ page }) => {
   // The trunk-built `index.html` arrives with an empty

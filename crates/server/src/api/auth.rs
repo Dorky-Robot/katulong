@@ -83,18 +83,8 @@ async fn status(
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
     let access = AccessMethod::classify(peer, host);
     let snap = state.auth_store.snapshot().await;
-    // The server-internal `AccessMethod` (in `crate::access`)
-    // owns the security-critical loopback-vs-tunnel
-    // classification. The wire-format `AccessMethod` (in
-    // `katulong_shared::wire`) is its JSON-serialisable
-    // mirror. Convert at the response boundary so the two
-    // never drift.
-    let access_wire = match access {
-        AccessMethod::Localhost => katulong_shared::wire::AccessMethod::Localhost,
-        AccessMethod::Remote => katulong_shared::wire::AccessMethod::Remote,
-    };
     Json(AuthStatusResponse {
-        access_method: access_wire,
+        access_method: access.into(),
         has_credentials: !snap.credentials.is_empty(),
         authenticated: authed.is_some(),
     })
