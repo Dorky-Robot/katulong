@@ -9,9 +9,20 @@
  *
  * Two isolations are set up here:
  *
- * 1. **KATULONG_DATA_DIR** — each test process gets its own temp data dir
- *    so parallel auth tests don't stomp on each other's ~/.katulong/
- *    (which may be owned by root in CI/containers).
+ * 1. **KATULONG_DATA_DIR** — each test process gets its own temp data
+ *    dir so parallel auth tests don't stomp on each other's
+ *    ~/.katulong/ (which may be owned by root in CI/containers).
+ *
+ *    The override is unconditional and **must stay that way**. The
+ *    daemon (LaunchAgent in lib/cli/commands/service.js, and any
+ *    `katulong-stage` invocation) exports `KATULONG_DATA_DIR=<live dir>`
+ *    into the env of every shell it spawns. If we honored that
+ *    inherited value, running `npm run test:unit` from inside any
+ *    katulong tile would silently overwrite the developer's real
+ *    auth state with test fixtures — and has, see commit history.
+ *    `lib/env-filter.js` strips these vars from PTY shells as a
+ *    second line of defense, but the test harness must not rely on
+ *    that filtering being correct.
  *
  * 2. **KATULONG_TMUX_SOCKET** — each test process gets its own isolated
  *    tmux server, scoped by PID. Without this, every integration test
@@ -21,6 +32,10 @@
  *    (b) causes flaky cross-file races — e.g. `sessions-crud` and
  *    `credential-revoke` both creating sessions on the same shared
  *    socket while they run in parallel.
+ *
+ *    Same unconditional-override rule applies: the daemon's plist
+ *    sets `KATULONG_TMUX_SOCKET=katulong`, so an inherited value
+ *    would point us at the live tmux server.
  *
  *    See `lib/tmux.js:tmuxSocketArgs()` for the `-L <name>` wiring this
  *    hooks into. The socket name MUST match `/^[A-Za-z0-9_-]+$/`;
@@ -37,11 +52,26 @@
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { sweepOrphanTmuxSockets } from "../../lib/tmux-socket-sweep.js";
 
-if (!process.env.KATULONG_DATA_DIR) {
+// Refuse to run if anything has already set DATA_DIR to the developer's
+// real katulong directory. Surface it loudly so a regression in the
+// inheritance path (env-filter, plist, etc.) is impossible to miss.
+const realDataDir = join(homedir(), ".katulong");
+if (
+  process.env.KATULONG_DATA_DIR &&
+  process.env.KATULONG_DATA_DIR === realDataDir
+) {
+  process.stderr.write(
+    `\n[setup-env] WARNING: KATULONG_DATA_DIR was inherited as ${realDataDir} ` +
+    `(likely from a parent katulong shell). Overriding with a private ` +
+    `tmpdir to prevent test fixtures from clobbering live auth state.\n\n`,
+  );
+}
+
+{
   const dir = mkdtempSync(join(tmpdir(), "katulong-test-"));
   process.env.KATULONG_DATA_DIR = dir;
 
@@ -50,7 +80,7 @@ if (!process.env.KATULONG_DATA_DIR) {
   });
 }
 
-if (!process.env.KATULONG_TMUX_SOCKET) {
+{
   // Reap orphan sockets from prior test runs. Catches both
   //   (a) graceful exits where `kill-server` ran but did not unlink, and
   //   (b) hard kills (SIGKILL / CI or pre-push hook timeouts / OOM)
