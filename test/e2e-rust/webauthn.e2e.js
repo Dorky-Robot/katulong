@@ -48,6 +48,7 @@ import {
   registerFirstDevice,
   injectCredential,
   mintSetupToken,
+  stubUnauthenticated,
 } from "./lib/webauthn.js";
 
 test.describe.serial("WebAuthn UI happy paths", () => {
@@ -63,6 +64,16 @@ test.describe.serial("WebAuthn UI happy paths", () => {
   // count).
   let bootstrap;
   let setupToken;
+  // The session cookie minted by `register/finish` during
+  // bootstrap. Captured here so test 3 can establish a
+  // session via cookie-injection rather than running
+  // another ceremony — re-using the bootstrap credential
+  // for a UI sign-in trips the sign-counter replay guard,
+  // and we've already consumed the bootstrap setupToken
+  // (test 2 takes it). Cookie injection is the cleanest
+  // way to set up "authed user opens the app" without
+  // burning more credentials/tokens.
+  let sessionCookie;
 
   test.beforeAll(async ({ browser, baseURL }) => {
     // Self-heal the data dir if a previous run left
@@ -88,6 +99,19 @@ test.describe.serial("WebAuthn UI happy paths", () => {
       bootstrap.finishResponse.csrf_token,
       "pair-test-device",
     );
+
+    // Snapshot the session cookie before the bootstrap
+    // context closes. The cookie is HttpOnly + SameSite=Lax;
+    // `context.cookies()` returns the full descriptor that
+    // `addCookies` accepts as-is.
+    const cookies = await context.cookies();
+    sessionCookie = cookies.find((c) => c.name === "katulong_session");
+    if (!sessionCookie) {
+      throw new Error(
+        "expected katulong_session cookie after register/finish",
+      );
+    }
+
     await context.close();
   });
 
@@ -99,6 +123,11 @@ test.describe.serial("WebAuthn UI happy paths", () => {
     // in", and end up at the post-auth view.
     const context = await browser.newContext();
     const page = await context.newPage();
+    // Localhost auto-auth would skip past the login form
+    // before we can click the CTA; stub the status probe so
+    // the WASM resolves to "not signed in" and renders the
+    // login UI we're trying to exercise.
+    await stubUnauthenticated(page);
     await page.goto("/");
 
     // Bootstrap minted the credential in a different
@@ -140,6 +169,10 @@ test.describe.serial("WebAuthn UI happy paths", () => {
     // lifetime; we don't need its CDP handle here so we
     // don't bind the return value.
     await setupVirtualAuthenticator(page);
+    // Stub the probe so the pair UI (gated on the same
+    // tri-state signal as login) actually renders — see
+    // the sign-in test for the full rationale.
+    await stubUnauthenticated(page);
     // The setup token rides the URL because that's the
     // pairing flow's designed entry point — the operator
     // gives the new device a `?setup_token=` URL. The
@@ -156,6 +189,53 @@ test.describe.serial("WebAuthn UI happy paths", () => {
     });
     await expect(
       page.getByRole("button", { name: /pair with passkey/i }),
+    ).toHaveCount(0);
+
+    await context.close();
+  });
+
+  test("an active session restores after a page reload", async ({
+    browser,
+  }) => {
+    // The slice 9r.4 contract: a valid session cookie at
+    // page load means the user lands on the post-auth view,
+    // not the login form. Without the on-mount status
+    // probe, every reload would briefly flash through the
+    // sign-in screen — observable as a visible login form
+    // for ~100ms before the WASM realised it was authed.
+    //
+    // We exercise the contract via cookie injection rather
+    // than another UI sign-in: the bootstrap credential's
+    // signCount is frozen in the dump and would trip the
+    // replay guard on a second use, and we've already
+    // consumed the only setup token. Direct cookie
+    // injection isolates THIS slice's contract — the
+    // mechanism that established the session is irrelevant
+    // here; what matters is that the WASM's on-mount probe
+    // observes the cookie and renders accordingly.
+    const context = await browser.newContext();
+    await context.addCookies([sessionCookie]);
+    const page = await context.newPage();
+    await page.goto("/");
+
+    // First load: the probe resolves to authenticated=true
+    // and the post-auth view renders without the user
+    // touching anything.
+    await expect(page.getByText(/signed in/i)).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(
+      page.getByRole("button", { name: /sign in with passkey/i }),
+    ).toHaveCount(0);
+
+    // Reload: same cookie, fresh WASM mount, fresh probe.
+    // Same outcome — never flash through the login form.
+    await page.reload();
+    await expect(page.getByText(/signed in/i)).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(
+      page.getByRole("button", { name: /sign in with passkey/i }),
     ).toHaveCount(0);
 
     await context.close();

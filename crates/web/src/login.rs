@@ -319,7 +319,7 @@ pub fn Login() -> impl IntoView {
     // actions in lockstep — adding a new "logging" hook later
     // means changing one place, not two.
     let resolve = move |result: Result<(), String>| match result {
-        Ok(()) => auth.set_signed_in.set(true),
+        Ok(()) => auth.set_signed_in.set(Some(true)),
         Err(message) => set_phase.set(LoginPhase::Error(message)),
     };
 

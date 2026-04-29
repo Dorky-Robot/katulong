@@ -55,6 +55,43 @@ pub use webauthn_rs_proto::{
 
 pub type ChallengeId = String;
 
+// --- status probe ----------------------------------------------------
+
+/// Wire-format access classification. The server has its own
+/// `crate::access::AccessMethod` (security-critical, owns the
+/// loopback-vs-tunnel detection logic); this is the
+/// JSON-serialisable mirror used at the response boundary so
+/// the WASM client can pattern-match on the same two
+/// variants. Snake/lower-case at the wire so a server enum
+/// rename doesn't change the JSON shape — the
+/// `#[serde(rename_all = "lowercase")]` is the contract.
+///
+/// Binary by design (`project_access_model_no_lan`): there
+/// is no third "LAN" variant.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AccessMethod {
+    Localhost,
+    Remote,
+}
+
+/// Response shape for `GET /api/auth/status`. Public route
+/// (no auth required) — the WASM client probes this on every
+/// page load to discover the current session state and decide
+/// whether to render the login form, the post-auth view, or a
+/// loading state while the probe is in flight.
+///
+/// `has_credentials = false` is the signal for "fresh install
+/// — go to register flow"; `authenticated = true` is the
+/// signal for "session cookie is valid, go to post-auth
+/// view"; the remaining case is "show the login form."
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AuthStatusResponse {
+    pub access_method: AccessMethod,
+    pub has_credentials: bool,
+    pub authenticated: bool,
+}
+
 // --- start: shared challenge envelope ---------------------------------
 
 /// Generic envelope for the start phase of every ceremony.

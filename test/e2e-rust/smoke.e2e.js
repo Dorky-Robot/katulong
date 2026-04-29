@@ -21,6 +21,7 @@
 // — that runs trunk for you).
 
 import { test, expect } from "@playwright/test";
+import { stubUnauthenticated } from "./lib/webauthn.js";
 
 test("leptos shell renders header + main + status", async ({ page }) => {
   // The trunk-built `index.html` arrives with an empty
@@ -31,6 +32,14 @@ test("leptos shell renders header + main + status", async ({ page }) => {
   //   - Browser ran the JS glue + downloaded the WASM
   //   - Leptos mounted successfully
   // i.e., the entire vertical works.
+  //
+  // Stub the status probe to look unauthenticated. On
+  // localhost the server auto-authenticates every request
+  // (security model: physical access = root-equivalent), so
+  // the slice-9r.4 probe would otherwise resolve as
+  // `authenticated: true` and the login form — which we want
+  // to assert is visible — would never render.
+  await stubUnauthenticated(page);
   const response = await page.goto("/");
   expect(response, "GET / should respond").not.toBeNull();
   expect(response.status(), "GET / should be 200").toBe(200);
@@ -66,9 +75,10 @@ test("leptos shell renders header + main + status", async ({ page }) => {
   );
   await expect(header.locator(".status .label")).toHaveText("disconnected");
 
-  // Main content area renders the Login form (slice 9r.1).
-  // Visible at every page load until a future slice gates
-  // it on the authenticated-session signal.
+  // Main content area renders the Login form. Slice 9r.4
+  // gates this on the auth probe — with the stubbed
+  // unauthenticated response, the WASM resolves
+  // `signed_in: Some(false)` and the login form renders.
   const main = page.locator("#kat-main");
   await expect(main).toBeVisible();
   await expect(main.locator("#kat-login")).toBeVisible();
