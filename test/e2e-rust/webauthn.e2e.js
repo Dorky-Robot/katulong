@@ -51,6 +51,60 @@ import {
   mintSetupToken,
 } from "./lib/webauthn.js";
 
+test.describe("Register UI (first-device)", () => {
+  // Slice 9r.5 — fresh-install on localhost lands on a
+  // dedicated register UI rather than the login form. The
+  // App-root probe sees `authenticated: true` (loopback
+  // auto-auth) and `has_credentials: false` (fresh data
+  // dir) and resolves `AuthPhase::Register`.
+  //
+  // This test does NOT stub the status probe — the real
+  // probe behaviour IS what's under test. It runs against a
+  // freshly-wiped data dir so the server reports
+  // `has_credentials: false`. Because each ensure-fresh call
+  // tears down + restarts staging, we don't share data-dir
+  // state with the "WebAuthn UI happy paths" describe block
+  // below — that block's `beforeAll` does its own wipe.
+  test("a fresh-install localhost user registers their first device", async ({
+    browser,
+    baseURL,
+  }) => {
+    await ensureFreshStagingDataDir(baseURL);
+
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    // Attach the virtual authenticator BEFORE navigation so
+    // the page's `navigator.credentials.create()` can resolve
+    // when the user clicks the CTA.
+    await setupVirtualAuthenticator(page);
+    await page.goto("/");
+
+    // The probe should resolve the user to the Register
+    // phase, NOT the login form or the post-auth view. The
+    // CTA copy is the user-visible signal that we're in the
+    // right phase.
+    await expect(
+      page.getByRole("button", { name: /register first device/i }),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(
+      page.getByRole("button", { name: /sign in with passkey/i }),
+    ).toHaveCount(0);
+
+    await page
+      .getByRole("button", { name: /register first device/i })
+      .click();
+
+    // Successful registration: the WASM flips
+    // `AuthPhase::SignedIn`, `<Main/>` swaps to the
+    // post-auth view.
+    await expect(page.getByText(/signed in/i)).toBeVisible({
+      timeout: 10_000,
+    });
+
+    await context.close();
+  });
+});
+
 test.describe.serial("WebAuthn UI happy paths", () => {
   // Bootstrap output captured in `beforeAll` and read by
   // each test. The bootstrap registers a credential AND
