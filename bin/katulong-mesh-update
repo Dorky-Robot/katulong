@@ -140,7 +140,7 @@ cmd_list() {
     echo "node-id: (not set; create $NODE_ID_FILE)"
   fi
   echo
-  printf "  %-12s %-32s %-6s %s\n" "ID" "SSH ALIAS" "PORT" ""
+  printf "  %-12s %-32s %-6s\n" "ID" "SSH ALIAS" "PORT"
   printf "  %-12s %-32s %-6s\n" "------------" "--------------------------------" "------"
   while IFS=$'\t' read -r id alias port; do
     if [[ "$id" == "$self_id" ]]; then
