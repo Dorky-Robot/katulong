@@ -333,3 +333,20 @@ describe("safeStopServer — input validation", () => {
     assert.equal(calls.unload, 0);
   });
 });
+
+describe("safeStopServer — default timeout contract", () => {
+  it("default timeoutMs exceeds the server's drain timeout", async () => {
+    // The bug this guards against: if safeStopServer's caller-side
+    // watchdog fires before the server's own drain wait completes,
+    // a healthy graceful shutdown gets SIGKILLed mid-flight, skipping
+    // sessionManager.shutdown() (which sends in-band detach-client to
+    // each tmux control mode child to dodge the 3.6a UAF). Any future
+    // edit that uncouples these two values will silently re-introduce
+    // the `katulong update` race we hit on mac2019/mac2024 in v0.61.3.
+    const envConfig = (await import("../lib/env-config.js")).default;
+    assert.ok(
+      envConfig.shutdownBudget > envConfig.drainTimeout,
+      `shutdownBudget (${envConfig.shutdownBudget}ms) must exceed drainTimeout (${envConfig.drainTimeout}ms)`,
+    );
+  });
+});
