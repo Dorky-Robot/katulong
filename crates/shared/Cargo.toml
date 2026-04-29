@@ -20,6 +20,16 @@ serde = { workspace = true }
 # means the WASM build sees the bridge impls without forcing
 # them onto the server build.
 webauthn-rs-proto = "0.5"
+# `serde_bytes` for the byte-string CBOR encoding on
+# `ClientMessage::Input.data` and `ServerMessage::Output.data` —
+# see the session protocol section in `wire.rs`. Without this
+# annotation, `Vec<u8>` payloads encode as CBOR arrays of small
+# integers (1-2 bytes overhead per byte), which doubles a 1 KiB
+# paste's wire size. The annotation is part of the protocol's
+# wire contract; the contract pinning is in
+# `tests/session_message.rs::cbor_input_encodes_data_as_byte_string`.
+serde_bytes = "0.11"
 
 [dev-dependencies]
 serde_json = { workspace = true }
+ciborium = "0.2"

@@ -11,7 +11,7 @@ use leptos::*;
 
 #[component]
 pub fn StatusTile() -> impl IntoView {
-    let ConnectionStatus(connected) = expect_context();
+    let ConnectionStatus { connected, .. } = expect_context();
     let label = move || {
         if connected.get() {
             "Connected"

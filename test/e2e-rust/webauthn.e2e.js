@@ -295,6 +295,22 @@ test.describe.serial("WebAuthn UI happy paths", () => {
       page.getByRole("button", { name: /sign in with passkey/i }),
     ).toHaveCount(0);
 
+    // Slice 9s.2 contract: once the user is signed in, the
+    // platform's WS connection completes the Hello/HelloAck
+    // handshake and `ConnectionStatus.connected` flips to
+    // true. The header's status indicator (one of two
+    // ConnectionStatus consumers — the StatusTile is the
+    // other) reflects that as `data-status="connected"`.
+    // If the WS handshake never completes, the indicator
+    // stays "disconnected" and this assertion times out —
+    // catching a regression in the platform's connection
+    // lifecycle without requiring any tile to be focused.
+    await expect(page.locator("#kat-header .status")).toHaveAttribute(
+      "data-status",
+      "connected",
+      { timeout: 5_000 },
+    );
+
     // Reload: same cookie, fresh WASM mount, fresh probe.
     // Same outcome — never flash through the login form.
     await page.reload();
