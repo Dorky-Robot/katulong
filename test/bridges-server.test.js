@@ -293,24 +293,39 @@ describe("bridge server", () => {
       { headers: { Authorization: `Bearer ${TOKEN}` } },
     );
     assert.equal(res.status, 200);
-    // Reading the body should either yield the partial event or throw —
-    // either way the bridge must not crash.
     try {
       await res.text();
     } catch (_e) {
       /* truncated streams may surface as a fetch read error; tolerable */
     }
     // Give the bridge a tick to settle its cleanup.
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 80));
+
+    // The bridge must NOT have thrown a write-after-destroy error inside
+    // the data handler — that would indicate the bug from Round 1 has
+    // regressed. We tolerate the upstream's own ECONNRESET / aborted
+    // signal, which is the legitimate "upstream gave up" telemetry.
+    const writeAfterDestroy = events.filter(
+      (e) =>
+        e.event === "upstream_error" &&
+        /ERR_STREAM_DESTROYED|ERR_STREAM_WRITE_AFTER_END/.test(e.code || ""),
+    );
+    assert.equal(
+      writeAfterDestroy.length,
+      0,
+      `expected no write-after-destroy errors, got: ${JSON.stringify(writeAfterDestroy)}`,
+    );
     probe.close();
   });
 
   it("rejects garbage keepaliveMs values by falling back to the default", async () => {
     // NaN / negative values would otherwise cause sub-millisecond ticks
     // (CPU burn). The defensive clamp inside createBridgeServer should
-    // map them to the default. We can't observe the value directly, but
-    // we can confirm the bridge still answers normal requests with the
-    // bad input.
+    // map them to the default. We exercise the *SSE* path here so the
+    // setInterval is actually constructed under the bad value — without
+    // the clamp, setInterval(fn, NaN) treats the delay as 1ms and pegs
+    // a CPU. The test would then time out or hang; with the clamp it
+    // completes promptly.
     const probe = await startBridgeServer({
       port: 0,
       bind: "127.0.0.1",
@@ -319,12 +334,17 @@ describe("bridge server", () => {
       logger: () => {},
       keepaliveMs: NaN,
     });
+    const t0 = Date.now();
     const res = await fetch(
-      `http://127.0.0.1:${probe.address().port}/api/tags`,
+      `http://127.0.0.1:${probe.address().port}/api/sse?status=sse-silent&ms=80`,
       { headers: { Authorization: `Bearer ${TOKEN}` } },
     );
     assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "text/event-stream");
     await res.text();
+    // A clamp regression would either throw or produce sub-ms ticks that
+    // CPU-burn for the duration of the request. 2s is generous.
+    assert.ok(Date.now() - t0 < 2000, "SSE response took too long with NaN keepaliveMs");
     probe.close();
   });
 
