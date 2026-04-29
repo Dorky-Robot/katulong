@@ -2571,6 +2571,12 @@
     .doc-tile-markdown th, .doc-tile-markdown td { border: 1px solid var(--border); padding: 0.3em 0.6em; }
     .doc-tile-markdown th { background: var(--bg-surface); font-weight: 600; }
     .doc-tile-markdown img { max-width: 100%; }
+    /* Mermaid diagrams (shared across markdown surfaces — document tile + feed). */
+    .markdown-mermaid { margin: 0.8em 0; padding: var(--space-sm); background: var(--bg-surface); border-radius: 4px; overflow-x: auto; text-align: center; }
+    .markdown-mermaid svg { max-width: 100%; height: auto; }
+    .markdown-mermaid-error { text-align: left; border: 1px solid var(--border); background: var(--bg); }
+    .markdown-mermaid-error-msg { color: var(--text-secondary); font-size: var(--text-xs); font-family: var(--font-mono); margin-bottom: var(--space-xs); }
+    .markdown-mermaid-error pre { background: var(--bg-surface); padding: var(--space-xs); border-radius: 3px; overflow-x: auto; font-family: var(--font-mono); font-size: 0.9em; }
 
     /* --- Image Tile --- */
     .img-tile-root { display: flex; flex-direction: column; height: 100%; width: 100%; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: var(--text-sm); }

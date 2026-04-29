@@ -23,6 +23,7 @@ import { marked } from "/vendor/marked/marked.esm.js";
 import DOMPurify from "/vendor/dompurify/purify.es.mjs";
 import { createDocumentWatcher } from "/lib/document-watcher.js";
 import { createWorktreeBadge } from "/lib/tiles/tile-badge.js";
+import { renderMermaidIn } from "/lib/markdown-mermaid.js";
 
 /* ---------- cute animated error pages ---------- */
 
@@ -503,6 +504,7 @@ export function createDocumentTileFactory(_deps = {}) {
                   if (!mounted) return;
                   contentEl.classList.remove("doc-tile-error");
                   contentEl.innerHTML = DOMPurify.sanitize(marked.parse(data.content));
+                  renderMermaidIn(contentEl);
                 })
                 .catch(() => { /* keep previous content */ });
             };
@@ -516,6 +518,7 @@ export function createDocumentTileFactory(_deps = {}) {
                 .then((data) => {
                   if (!mounted) return;
                   contentEl.innerHTML = DOMPurify.sanitize(marked.parse(data.content));
+                  renderMermaidIn(contentEl);
                   if (!watcher) {
                     watcher = createDocumentWatcher({ filePath, onChange: refreshMarkdown });
                   }
@@ -528,6 +531,7 @@ export function createDocumentTileFactory(_deps = {}) {
             loadMarkdown();
           } else if (content != null) {
             contentEl.innerHTML = DOMPurify.sanitize(marked.parse(content));
+            renderMermaidIn(contentEl);
           }
         } else {
           // --- CodeMirror editor ---

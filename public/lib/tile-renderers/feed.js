@@ -29,16 +29,21 @@
 // still loads in environments (Node tests) that can't resolve the
 // /vendor/... browser paths. When the import succeeds we render markdown
 // → sanitized HTML; when it fails we fall back to setting textContent
-// and the tests never hit the real parser.
+// and the tests never hit the real parser. Mermaid post-render is
+// best-effort — if its module fails to load, plain markdown still
+// renders via the marked/DOMPurify path.
 let renderMarkdown = (el, text) => { el.textContent = text || ""; };
 try {
-  const [{ marked }, purifyMod] = await Promise.all([
+  const [{ marked }, purifyMod, mermaidMod] = await Promise.all([
     import("/vendor/marked/marked.esm.js"),
     import("/vendor/dompurify/purify.es.mjs"),
+    import("/lib/markdown-mermaid.js").catch(() => ({ renderMermaidIn: () => {} })),
   ]);
   const DOMPurify = purifyMod.default;
+  const { renderMermaidIn } = mermaidMod;
   renderMarkdown = (el, text) => {
     el.innerHTML = DOMPurify.sanitize(marked.parse(text || ""));
+    renderMermaidIn(el);
   };
 } catch {
   // Fallback already set above.
