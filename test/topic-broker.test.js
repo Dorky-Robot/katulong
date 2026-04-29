@@ -265,7 +265,7 @@ describe("Topic Broker", () => {
       const broker1 = makeBroker();
       broker1.publish("topic-a", "msg-a");
       broker1.publish("topic-b", "msg-b");
-      broker1.publish("crew/project/dev/done", "msg-c");
+      broker1.publish("events/session/done", "msg-c");
 
       const broker2 = makeBroker();
       const topics = broker2.listTopics();
@@ -273,7 +273,7 @@ describe("Topic Broker", () => {
       assert.equal(topics.length, 3);
       assert.ok(topics.find(t => t.name === "topic-a"));
       assert.ok(topics.find(t => t.name === "topic-b"));
-      assert.ok(topics.find(t => t.name === "crew/project/dev/done"));
+      assert.ok(topics.find(t => t.name === "events/session/done"));
     });
   });
 

@@ -144,9 +144,7 @@ duration, and quick actions (kill, restart, copy output). When the
 agent running inside the terminal finishes its work, the card
 auto-flips to the dashboard after a short delay.
 
-Multiple terminals in one view (the "cluster") and persistent
-per-project crews (`{project}--{role}`) are the next step — see
-`docs/dorkyrobot-stack.md`.
+Multiple terminals in one view (the "cluster") is the next step.
 
 ## Security
 
