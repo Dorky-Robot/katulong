@@ -24,6 +24,16 @@ import { request as httpsRequest } from "node:https";
 // token cannot exhaust host disk/memory by sending an unbounded stream.
 const MAX_BODY_BYTES = 512 * 1024 * 1024;
 
+// SSE keepalive cadence. When upstream goes silent on a `text/event-stream`
+// response (e.g. an LLM is in its reasoning phase before any visible
+// tokens), inject `: keepalive\n\n` SSE comments so intermediate proxies
+// (Cloudflare, cloudflared, nginx) don't trip their "idle response"
+// timeouts and tear the connection down. 15s is comfortably inside
+// Cloudflare's ~100s edge timeout.
+const SSE_KEEPALIVE_MS = 15_000;
+// Heuristic: treat any response whose content-type starts with this as SSE.
+const SSE_CT_PREFIX = "text/event-stream";
+
 // Headers that must NOT propagate end-to-end, per RFC 7230 §6.1 (hop-by-hop)
 // plus forwarding headers a client could lie about to influence upstream
 // routing/trust decisions. `authorization` and `host` are stripped separately
@@ -84,7 +94,7 @@ function sanitizedUpstreamHeaders(rawHeaders) {
  * Default is a console.warn writer; tests can override with a no-op or
  * collector. The token itself is never passed to the logger.
  */
-export function createBridgeServer({ target, token, logger = defaultLogger }) {
+export function createBridgeServer({ target, token, logger = defaultLogger, keepaliveMs = SSE_KEEPALIVE_MS }) {
   const targetUrl = new URL(target);
   const targetIsHttps = targetUrl.protocol === "https:";
   const proxyRequest = targetIsHttps ? httpsRequest : httpRequest;
@@ -117,8 +127,8 @@ export function createBridgeServer({ target, token, logger = defaultLogger }) {
           logger({ event: "upstream_error", code: err.code || err.name });
           res.destroy(err);
         });
-        res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
-        upstreamRes.pipe(res);
+        const isSse = (upstreamRes.headers["content-type"] || "").startsWith(SSE_CT_PREFIX);
+        forwardResponse({ upstreamRes, res, isSse, keepaliveMs });
       },
     );
 
@@ -160,6 +170,67 @@ export function createBridgeServer({ target, token, logger = defaultLogger }) {
   });
 }
 
+
+/**
+ * Forward an upstream response to the client. For SSE responses, inject
+ * keepalive comments during upstream silence so intermediate proxies
+ * don't time out. For everything else, this is a verbatim pipe.
+ */
+function forwardResponse({ upstreamRes, res, isSse, keepaliveMs }) {
+  if (!isSse) {
+    res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
+    upstreamRes.pipe(res);
+    return;
+  }
+
+  // Belt-and-suspenders: hint to anything along the path that it must
+  // not buffer this response. Cloudflare honors `text/event-stream` on
+  // its own; nginx-shaped intermediaries also key off X-Accel-Buffering.
+  // Strip `transfer-encoding` and `content-length` so Node manages the
+  // framing for the bytes we write (otherwise res.write payloads bypass
+  // the chunked encoder and the client sees a corrupt stream).
+  const headers = { ...upstreamRes.headers };
+  delete headers["transfer-encoding"];
+  delete headers["content-length"];
+  headers["x-accel-buffering"] = "no";
+  headers["cache-control"] = headers["cache-control"] || "no-cache";
+  res.writeHead(upstreamRes.statusCode || 502, headers);
+
+  let lastByteAt = Date.now();
+  let ended = false;
+  const tick = setInterval(() => {
+    if (ended) return;
+    if (Date.now() - lastByteAt < keepaliveMs) return;
+    if (res.writableEnded || res.destroyed) {
+      clearInterval(tick);
+      return;
+    }
+    res.write(": keepalive\n\n");
+    lastByteAt = Date.now();
+  }, Math.max(50, Math.floor(keepaliveMs / 3)));
+
+  upstreamRes.on("data", (chunk) => {
+    lastByteAt = Date.now();
+    res.write(chunk);
+  });
+  upstreamRes.on("end", () => {
+    ended = true;
+    clearInterval(tick);
+    res.end();
+  });
+  upstreamRes.on("error", (err) => {
+    ended = true;
+    clearInterval(tick);
+    if (!res.destroyed) res.destroy(err);
+  });
+  res.on("close", () => {
+    if (!ended) {
+      ended = true;
+      clearInterval(tick);
+    }
+  });
+}
+
 function defaultLogger(event) {
   // Single-line structured log so it shows up readably in launchd-stderr.log.
   // The caller can swap this for nothing in tests.
@@ -167,8 +238,8 @@ function defaultLogger(event) {
   console.warn(JSON.stringify({ ts: new Date().toISOString(), ...event }));
 }
 
-export function startBridgeServer({ port, bind, target, token, logger }) {
-  const server = createBridgeServer({ target, token, logger });
+export function startBridgeServer({ port, bind, target, token, logger, keepaliveMs }) {
+  const server = createBridgeServer({ target, token, logger, keepaliveMs });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, bind, () => {

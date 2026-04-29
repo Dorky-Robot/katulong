@@ -35,6 +35,25 @@ function startStubUpstream() {
         }, 10);
         return;
       }
+      if (url.searchParams.get("status") === "sse-silent") {
+        // SSE upstream that stays silent for the requested duration before
+        // sending a single visible event, then ends. Used to verify the
+        // bridge injects keepalive comments while upstream is quiet.
+        const silentMs = Number(url.searchParams.get("ms") || "200");
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        // Flush headers so the bridge enters its silent-SSE keepalive
+        // phase before we send any real bytes (matches real LLM upstream
+        // behavior where headers land immediately and tokens come later).
+        res.flushHeaders();
+        const t = setTimeout(() => {
+          if (!res.writableEnded) {
+            res.write('data: {"x":1}\n\n');
+            res.end();
+          }
+        }, silentMs);
+        res.on("close", () => clearTimeout(t));
+        return;
+      }
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
     });
@@ -78,6 +97,7 @@ describe("bridge server", () => {
       target: `http://127.0.0.1:${stub.port}`,
       token: TOKEN,
       logger: () => {}, // suppress test-time noise
+      keepaliveMs: 50,
     });
     bridgePort = bridge.address().port;
   });
@@ -135,6 +155,53 @@ describe("bridge server", () => {
     assert.ok(text.includes('"chunk":2'));
     assert.ok(text.includes('"done":true'));
   });
+
+  it("injects SSE keepalive comments while upstream is silent", async () => {
+    // Upstream stays quiet for 200ms, then sends one event. With
+    // keepaliveMs=50 the bridge should emit at least one `: keepalive`
+    // SSE comment before the real event arrives.
+    const res = await fetch(
+      `http://127.0.0.1:${bridgePort}/api/sse?status=sse-silent&ms=200`,
+      { headers: { Authorization: `Bearer ${TOKEN}` } },
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "text/event-stream");
+    // Belt-and-suspenders header for nginx-shaped intermediaries.
+    assert.equal(res.headers.get("x-accel-buffering"), "no");
+    const text = await res.text();
+    assert.match(text, /:\s*keepalive/);
+    // Real event still arrives.
+    assert.match(text, /data:\s*\{"x":1\}/);
+  });
+
+  it("does NOT inject keepalive on non-SSE responses", async () => {
+    const res = await fetch(`http://127.0.0.1:${bridgePort}/api/tags`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    const text = await res.text();
+    assert.doesNotMatch(text, /keepalive/);
+    // Should not have added the buffering hint to a non-SSE response.
+    assert.equal(res.headers.get("x-accel-buffering"), null);
+  });
+
+  it("stops the keepalive timer when the client disconnects mid-stream", async () => {
+    // Make a request and abort it before upstream sends its real event.
+    // The bridge should clean up its interval timer; if it leaks node's
+    // test runner exits with an open-handle warning. Coarse but cheap.
+    const ac = new AbortController();
+    const promise = fetch(
+      `http://127.0.0.1:${bridgePort}/api/sse?status=sse-silent&ms=10000`,
+      { headers: { Authorization: `Bearer ${TOKEN}` }, signal: ac.signal },
+    );
+    await new Promise((r) => setTimeout(r, 60));
+    ac.abort();
+    try {
+      await promise;
+    } catch (_e) {
+      // Aborted as expected.
+    }
+  });
+
 
   it("returns 502 when upstream is unreachable", async () => {
     const orphan = await startBridgeServer({
