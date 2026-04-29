@@ -9,6 +9,13 @@
  * path, headers (minus auth), and body all forward verbatim. New endpoints
  * on the wrapped service get picked up automatically.
  *
+ * One transport-level carve-out: when the upstream returns
+ * `Content-Type: text/event-stream`, the bridge injects keepalive SSE
+ * comments during upstream silence and forces no-cache headers, so long
+ * generations survive intermediate-proxy idle timeouts. The keepalive
+ * frame (`: keepalive\n\n`) is spec-defined as ignored by SSE clients,
+ * so the wrapped service's wire contract is preserved.
+ *
  * Auth is bearer-token only in v1. The wire shape (`Authorization: Bearer
  * <token>`) is the same shape the eventual katulong-app/1 runtime call
  * will use, so when the protocol's host implementation lands, this server
@@ -95,6 +102,13 @@ function sanitizedUpstreamHeaders(rawHeaders) {
  * collector. The token itself is never passed to the logger.
  */
 export function createBridgeServer({ target, token, logger = defaultLogger, keepaliveMs = SSE_KEEPALIVE_MS }) {
+  // Defensive clamp: any non-finite or sub-50ms value would either crash
+  // setInterval (NaN → 1ms CPU burn) or pin the loop with sub-millisecond
+  // ticks. The lower floor matches `Math.max(50, …)` below so callers can
+  // still tune low for tests without falling off the cliff.
+  if (!Number.isFinite(keepaliveMs) || keepaliveMs < 50) {
+    keepaliveMs = SSE_KEEPALIVE_MS;
+  }
   const targetUrl = new URL(target);
   const targetIsHttps = targetUrl.protocol === "https:";
   const proxyRequest = targetIsHttps ? httpsRequest : httpRequest;
@@ -120,15 +134,8 @@ export function createBridgeServer({ target, token, logger = defaultLogger, keep
         headers: sanitizedUpstreamHeaders(req.headers),
       },
       (upstreamRes) => {
-        // Mid-stream upstream errors: forward as a destroy on the client
-        // side rather than letting an unhandled `error` event crash the
-        // bridge process.
-        upstreamRes.on("error", (err) => {
-          logger({ event: "upstream_error", code: err.code || err.name });
-          res.destroy(err);
-        });
         const isSse = (upstreamRes.headers["content-type"] || "").startsWith(SSE_CT_PREFIX);
-        forwardResponse({ upstreamRes, res, isSse, keepaliveMs });
+        forwardResponse({ upstreamRes, upstreamReq, res, isSse, keepaliveMs, logger });
       },
     );
 
@@ -175,8 +182,24 @@ export function createBridgeServer({ target, token, logger = defaultLogger, keep
  * Forward an upstream response to the client. For SSE responses, inject
  * keepalive comments during upstream silence so intermediate proxies
  * don't time out. For everything else, this is a verbatim pipe.
+ *
+ * On client disconnect (the very scenario keepalive enables — long-lived
+ * SSE responses), we explicitly destroy `upstreamReq` so the upstream
+ * stops generating bytes for a connection that has nowhere to go. We
+ * also gate every `res.write` on `res.destroyed || res.writableEnded`
+ * so a stale data event between client-close and upstream-teardown
+ * cannot trigger an unhandled `ERR_STREAM_DESTROYED`. (The non-SSE
+ * `pipe(res)` path gets these properties from Node's stream plumbing
+ * for free; the manual forward here has to declare them.)
  */
-function forwardResponse({ upstreamRes, res, isSse, keepaliveMs }) {
+function forwardResponse({ upstreamRes, upstreamReq, res, isSse, keepaliveMs, logger }) {
+  // Single source of truth for upstream errors on either branch. Logging
+  // and tearing down `res` is consistent across SSE/non-SSE.
+  upstreamRes.on("error", (err) => {
+    logger({ event: "upstream_error", code: err.code || err.name });
+    if (!res.destroyed) res.destroy(err);
+  });
+
   if (!isSse) {
     res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
     upstreamRes.pipe(res);
@@ -186,6 +209,10 @@ function forwardResponse({ upstreamRes, res, isSse, keepaliveMs }) {
   // Belt-and-suspenders: hint to anything along the path that it must
   // not buffer this response. Cloudflare honors `text/event-stream` on
   // its own; nginx-shaped intermediaries also key off X-Accel-Buffering.
+  // SSE is inherently a "live, ephemeral, do not cache" payload, so we
+  // unconditionally force `no-cache, no-store` rather than respecting an
+  // upstream-set Cache-Control that would let intermediaries try to
+  // cache the stream.
   // Strip `transfer-encoding` and `content-length` so Node manages the
   // framing for the bytes we write (otherwise res.write payloads bypass
   // the chunked encoder and the client sees a corrupt stream).
@@ -193,41 +220,63 @@ function forwardResponse({ upstreamRes, res, isSse, keepaliveMs }) {
   delete headers["transfer-encoding"];
   delete headers["content-length"];
   headers["x-accel-buffering"] = "no";
-  headers["cache-control"] = headers["cache-control"] || "no-cache";
+  headers["cache-control"] = "no-cache, no-store";
   res.writeHead(upstreamRes.statusCode || 502, headers);
+
+  // Single guard for every write attempt — on the keepalive tick AND on
+  // the upstream data handler. Returns true if the write proceeded.
+  const safeWrite = (bytes) => {
+    if (res.writableEnded || res.destroyed) return false;
+    res.write(bytes);
+    return true;
+  };
 
   let lastByteAt = Date.now();
   let ended = false;
+  // Tick at ~1/3 of the keepalive interval so the worst-case delay
+  // between idle threshold crossing and an injected comment is bounded
+  // by one tick.
   const tick = setInterval(() => {
     if (ended) return;
     if (Date.now() - lastByteAt < keepaliveMs) return;
-    if (res.writableEnded || res.destroyed) {
+    if (!safeWrite(": keepalive\n\n")) {
       clearInterval(tick);
       return;
     }
-    res.write(": keepalive\n\n");
     lastByteAt = Date.now();
   }, Math.max(50, Math.floor(keepaliveMs / 3)));
 
+  // Single point that ends the per-request bookkeeping. Idempotent — the
+  // various lifecycle events all funnel through here. `destroyUpstream`
+  // is the key fix: when the client disconnects, we must stop pulling
+  // bytes from upstream, otherwise the data handler below keeps trying
+  // to write to a dead `res` (HIGH severity bug pre-fix).
+  const finish = ({ destroyUpstream }) => {
+    if (ended) return;
+    ended = true;
+    clearInterval(tick);
+    if (destroyUpstream && upstreamReq && !upstreamReq.destroyed) {
+      upstreamReq.destroy();
+    }
+  };
+
   upstreamRes.on("data", (chunk) => {
+    if (ended) return;
     lastByteAt = Date.now();
-    res.write(chunk);
+    if (!safeWrite(chunk)) {
+      // Client gone — stop pulling bytes from upstream.
+      finish({ destroyUpstream: true });
+    }
   });
   upstreamRes.on("end", () => {
-    ended = true;
-    clearInterval(tick);
-    res.end();
+    finish({ destroyUpstream: false });
+    if (!res.writableEnded) res.end();
   });
-  upstreamRes.on("error", (err) => {
-    ended = true;
-    clearInterval(tick);
-    if (!res.destroyed) res.destroy(err);
-  });
+  // Note: `upstreamRes.on("error")` is registered above (covers SSE +
+  // non-SSE). It calls `res.destroy(err)`, which fires `res.on("close")`
+  // below, which runs `finish({ destroyUpstream: true })`.
   res.on("close", () => {
-    if (!ended) {
-      ended = true;
-      clearInterval(tick);
-    }
+    finish({ destroyUpstream: true });
   });
 }
 
