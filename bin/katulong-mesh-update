@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+#
+# katulong-mesh-update — rolling `katulong update` across mesh peers
+#
+# Usage:
+#   katulong-mesh-update [roll]    Run rolling update across all peers (default)
+#   katulong-mesh-update list      Show configured peers and which is self
+#   katulong-mesh-update --dry-run Print the planned rollout without ssh-ing
+#   katulong-mesh-update -h        Show this help
+#
+# The "self-heal" rule:
+#   The peer whose id matches ~/.katulong/node-id is EXCLUDED from the rollout.
+#   This host stays on its current version on purpose. If the new release
+#   wedges a peer, you still have one known-good machine to ssh from and roll
+#   back / debug. To upgrade THIS host, run `katulong-mesh-update` from a
+#   different peer in the mesh — every node updates the others, never itself.
+#
+# Config (~/.katulong/mesh.json — node updates ~/.katulong/node-id, single line):
+#   {
+#     "peers": [
+#       { "id": "host-a", "ssh": "alias-a" },
+#       { "id": "host-b", "ssh": "alias-b" }
+#     ]
+#   }
+#
+# Each peer is processed sequentially. On any failure (ssh error, brew/update
+# non-zero exit, post-update HTTP probe != 200) the rollout halts and the
+# remaining peers are NOT touched — the user is the one to decide whether the
+# half-rolled state is acceptable or whether to roll back. `katulong update`
+# is idempotent (already-current host = no-op), so a fixed-and-retried run
+# safely resumes from where the rollout failed.
+
+set -euo pipefail
+
+USER_DATA_DIR="${KATULONG_DATA_DIR:-$HOME/.katulong}"
+MESH_FILE="$USER_DATA_DIR/mesh.json"
+NODE_ID_FILE="$USER_DATA_DIR/node-id"
+
+# Brew installs to /opt/homebrew on Apple Silicon and /usr/local on Intel.
+# A non-interactive `ssh host cmd` does NOT source ~/.zshrc / ~/.bash_profile,
+# so neither prefix is on PATH by default. Setting PATH explicitly avoids
+# every-host-config-is-different breakage at the cost of one assumption: the
+# remote uses Homebrew. Anyone running katulong on macOS via brew already does.
+REMOTE_PATH_PREFIX='PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"'
+
+usage() {
+  sed -n '3,32p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+read_node_id() {
+  [[ -f "$NODE_ID_FILE" ]] || return 1
+  local id
+  id="$(head -n 1 "$NODE_ID_FILE" | tr -d '[:space:]')"
+  [[ -n "$id" ]] || return 1
+  printf '%s' "$id"
+}
+
+# Emit one "id<TAB>ssh_alias" line per peer, in the order they appear in
+# mesh.json. node is used (not jq) to match the rest of bin/ — every katulong
+# host has node by definition; jq is not guaranteed.
+list_peers() {
+  if [[ ! -f "$MESH_FILE" ]]; then
+    echo "katulong-mesh-update: no mesh configured at $MESH_FILE" >&2
+    echo "  create it with the shape documented in 'katulong-mesh-update -h'." >&2
+    return 1
+  fi
+  KATULONG_MESH_PATH="$MESH_FILE" node -e "
+    const fs = require('fs');
+    try {
+      const m = JSON.parse(fs.readFileSync(process.env.KATULONG_MESH_PATH, 'utf8'));
+      if (!Array.isArray(m.peers) || m.peers.length === 0) {
+        process.stderr.write('mesh.json: missing or empty peers array\n');
+        process.exit(1);
+      }
+      const seen = new Set();
+      for (const p of m.peers) {
+        if (typeof p?.id !== 'string' || typeof p?.ssh !== 'string') {
+          process.stderr.write('mesh.json: each peer needs string \"id\" and \"ssh\" fields\n');
+          process.exit(1);
+        }
+        if (seen.has(p.id)) {
+          process.stderr.write('mesh.json: duplicate peer id ' + JSON.stringify(p.id) + '\n');
+          process.exit(1);
+        }
+        seen.add(p.id);
+        process.stdout.write(p.id + '\t' + p.ssh + '\n');
+      }
+    } catch (e) {
+      process.stderr.write('mesh.json: ' + e.message + '\n');
+      process.exit(1);
+    }
+  "
+}
+
+cmd_list() {
+  local self_id peers
+  self_id="$(read_node_id || true)"
+  # Resolve peers BEFORE printing the table header so a missing/invalid
+  # mesh.json reports the schema error cleanly with a non-zero exit, instead
+  # of leaving an orphan "ID / SSH ALIAS" banner above the error message.
+  peers="$(list_peers)" || return 1
+
+  echo "mesh:    $MESH_FILE"
+  if [[ -n "$self_id" ]]; then
+    echo "node-id: $self_id  ($NODE_ID_FILE)"
+  else
+    echo "node-id: (not set; create $NODE_ID_FILE)"
+  fi
+  echo
+  printf "  %-12s %-32s %s\n" "ID" "SSH ALIAS" ""
+  printf "  %-12s %-32s\n" "------------" "--------------------------------"
+  while IFS=$'\t' read -r id alias; do
+    if [[ "$id" == "$self_id" ]]; then
+      printf "  %-12s %-32s [self — excluded from roll]\n" "$id" "$alias"
+    else
+      printf "  %-12s %-32s\n" "$id" "$alias"
+    fi
+  done <<< "$peers"
+}
+
+cmd_roll() {
+  local dry_run="${1:-no}"
+  local self_id
+  self_id="$(read_node_id || true)"
+  if [[ -z "$self_id" ]]; then
+    echo "katulong-mesh-update: warning — $NODE_ID_FILE not set." >&2
+    echo "  No peer will be excluded as 'self'. If you intend to update every" >&2
+    echo "  host including this one, that's fine; otherwise create the file" >&2
+    echo "  with this host's id and re-run." >&2
+    echo >&2
+  fi
+
+  # Materialize the list once. The roll loop and the final "remaining" count
+  # both read it; re-running list_peers in a `< <(...)` would ssh nothing but
+  # would run the parser twice for no reason. The `local peers; peers=$(...)`
+  # split is deliberate — `local var=$(cmd)` masks the substitution's exit
+  # status under set -e, and we want a malformed mesh.json to halt here.
+  local peers
+  peers="$(list_peers)" || return 1
+
+  local total
+  total=$(printf '%s\n' "$peers" | grep -c '^' || true)
+
+  local processed=0 updated=0 skipped=0 failed_id=""
+
+  while IFS=$'\t' read -r id alias; do
+    processed=$((processed + 1))
+    if [[ "$id" == "$self_id" ]]; then
+      echo "[$processed/$total] $id ($alias): self — skipping"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    if [[ "$dry_run" == "yes" ]]; then
+      echo "[$processed/$total] $id ($alias): would run 'katulong update' over ssh"
+      continue
+    fi
+
+    echo "[$processed/$total] $id ($alias): rolling update"
+    local pre_version
+    pre_version="$(ssh "$alias" "$REMOTE_PATH_PREFIX katulong --version" 2>/dev/null || true)"
+    echo "    before: ${pre_version:-(unknown — host unreachable or katulong missing)}"
+
+    if [[ -z "$pre_version" ]]; then
+      echo "    ✗ pre-flight failed: cannot reach $alias or katulong not installed" >&2
+      failed_id="$id"
+      break
+    fi
+
+    if ! ssh "$alias" "$REMOTE_PATH_PREFIX katulong update"; then
+      echo "    ✗ update FAILED on $id ($alias) — rollout halted" >&2
+      failed_id="$id"
+      break
+    fi
+
+    local post_version http_code
+    post_version="$(ssh "$alias" "$REMOTE_PATH_PREFIX katulong --version" 2>/dev/null || true)"
+    http_code="$(ssh "$alias" "$REMOTE_PATH_PREFIX"' curl -s -o /dev/null -w "%{http_code}" http://localhost:3001/' 2>/dev/null || true)"
+    echo "    after:  ${post_version:-(unknown)}  (HTTP ${http_code:-000})"
+
+    if [[ "${http_code:-}" != "200" ]]; then
+      echo "    ✗ post-update HTTP check failed on $id (got ${http_code:-no response}, want 200)" >&2
+      failed_id="$id"
+      break
+    fi
+    updated=$((updated + 1))
+  done <<< "$peers"
+
+  echo
+  if [[ -n "$failed_id" ]]; then
+    local remaining=$((total - processed))
+    echo "ROLLOUT HALTED at $failed_id."
+    echo "  updated: $updated   skipped (self): $skipped   not attempted: $remaining"
+    echo "  fix $failed_id and re-run — already-updated peers will no-op."
+    return 1
+  fi
+  echo "rollout complete."
+  echo "  updated: $updated   skipped (self): $skipped   total: $total"
+}
+
+# ── Arg parsing ──────────────────────────────────────────────────────
+DRY_RUN="no"
+SUBCMD="roll"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN="yes" ;;
+    -h|--help) usage; exit 0 ;;
+    list|peers) SUBCMD="list" ;;
+    roll) SUBCMD="roll" ;;
+    *) echo "unknown argument: $1" >&2; echo >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+case "$SUBCMD" in
+  list) cmd_list ;;
+  roll) cmd_roll "$DRY_RUN" ;;
+esac
