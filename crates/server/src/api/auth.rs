@@ -39,11 +39,10 @@ use axum::{
 };
 use katulong_auth::{AuthError, Session, SESSION_TTL};
 use katulong_shared::wire::{
-    AuthFinishResponse, ChallengeStartResponse, CreationChallengeResponse,
-    LoginFinishRequest, PairFinishRequest, PairStartRequest, PairStartResponse,
-    RegisterFinishRequest, RequestChallengeResponse,
+    AuthFinishResponse, AuthStatusResponse, ChallengeStartResponse,
+    CreationChallengeResponse, LoginFinishRequest, PairFinishRequest, PairStartRequest,
+    PairStartResponse, RegisterFinishRequest, RequestChallengeResponse,
 };
-use serde::Serialize;
 use std::net::SocketAddr;
 use std::time::SystemTime;
 
@@ -75,44 +74,17 @@ pub fn auth_routes() -> Router<AppState> {
         .route("/api/auth/logout", post(logout))
 }
 
-/// JSON wire format for the status endpoint.
-///
-/// Snake_case on purpose — this is a fresh Rust-only wire format, no
-/// migrated Node clients to stay compatible with. Serde's default
-/// encoding already uses the struct field names so we don't carry a
-/// `rename_all` attribute. Any future interop requirement would land
-/// as an explicit rename.
-#[derive(Debug, Serialize)]
-struct AuthStatus {
-    /// `"localhost"` or `"remote"` — the binary access model. No LAN
-    /// tier; see project memory `project_access_model_no_lan`.
-    access_method: &'static str,
-    /// True when at least one credential is registered. A fresh
-    /// install reports `false` and the client routes to the register
-    /// flow.
-    has_credentials: bool,
-    /// True when the current request would pass the `Authenticated`
-    /// extractor. Derived from the same extractor in-process (via
-    /// `Option<Authenticated>`) so the two can't drift — if the
-    /// extractor's acceptance criteria change later, `status` tracks
-    /// automatically.
-    authenticated: bool,
-}
-
 async fn status(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     authed: Option<Authenticated>,
-) -> Json<AuthStatus> {
+) -> Json<AuthStatusResponse> {
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
     let access = AccessMethod::classify(peer, host);
     let snap = state.auth_store.snapshot().await;
-    Json(AuthStatus {
-        access_method: match access {
-            AccessMethod::Localhost => "localhost",
-            AccessMethod::Remote => "remote",
-        },
+    Json(AuthStatusResponse {
+        access_method: access.into(),
         has_credentials: !snap.credentials.is_empty(),
         authenticated: authed.is_some(),
     })

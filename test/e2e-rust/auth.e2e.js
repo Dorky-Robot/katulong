@@ -26,6 +26,18 @@
 //     npx playwright test --config=playwright.rust.config.js
 
 import { test, expect } from "@playwright/test";
+import { stubUnauthenticated } from "./lib/auth-stub.js";
+
+// Every test in this file exercises the login UI. Slice
+// 9r.4's probe-on-mount means the WASM only renders the
+// login form when the server says `authenticated: false`,
+// and on localhost the server auto-authenticates EVERY
+// request (security feature: physical access already grants
+// root). Without this stub the login form would never
+// render and every assertion below would time out.
+test.beforeEach(async ({ page }) => {
+  await stubUnauthenticated(page);
+});
 
 test("login defaults to sign-in mode without setup_token", async ({ page }) => {
   // No `?setup_token=...` query: Login should render its

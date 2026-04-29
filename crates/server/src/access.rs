@@ -50,6 +50,23 @@ impl AccessMethod {
     }
 }
 
+/// Boundary conversion from the server-internal access type
+/// to its wire-format mirror. Lives here (not in `wire.rs`)
+/// because the conversion direction is one-way at the
+/// HTTP-response boundary, and putting it in the shared
+/// crate would require an upstream dep on the server crate.
+/// Centralising the match here means a future variant
+/// addition gets caught by the exhaustive-match warning at
+/// one site instead of N inline matches across handlers.
+impl From<AccessMethod> for katulong_shared::wire::AccessMethod {
+    fn from(value: AccessMethod) -> Self {
+        match value {
+            AccessMethod::Localhost => Self::Localhost,
+            AccessMethod::Remote => Self::Remote,
+        }
+    }
+}
+
 /// Strip any `:port` from a Host header and test whether the remaining
 /// authority is a loopback hostname or literal loopback IP.
 ///

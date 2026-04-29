@@ -25,8 +25,8 @@
 //! key is part of an HTTP contract.
 
 use katulong_shared::wire::{
-    AuthFinishResponse, ChallengeId, LoginFinishRequest, PairFinishRequest,
-    PairStartRequest, PairStartResponse,
+    AccessMethod, AuthFinishResponse, AuthStatusResponse, ChallengeId,
+    LoginFinishRequest, PairFinishRequest, PairStartRequest, PairStartResponse,
 };
 use serde_json::{json, Value};
 
@@ -177,6 +177,42 @@ fn pair_start_response_envelope_keys_are_snake_case() {
     assert_eq!(re_serialized["challenge_id"], json!("c1"));
     assert_eq!(re_serialized["setup_token_id"], json!("tok-id-1"));
     assert!(re_serialized["options"].is_object());
+}
+
+#[test]
+fn auth_status_response_pins_keys_and_round_trips() {
+    let resp = AuthStatusResponse {
+        access_method: AccessMethod::Localhost,
+        has_credentials: true,
+        authenticated: true,
+    };
+
+    let value = serde_json::to_value(&resp).unwrap();
+    assert_eq!(
+        value,
+        json!({
+            "access_method": "localhost",
+            "has_credentials": true,
+            "authenticated": true,
+        })
+    );
+
+    // Cover the other variant too — the WASM client switches
+    // on this string and a missed `Remote => "remote"` case
+    // would silently treat tunnel access as localhost.
+    let remote = AuthStatusResponse {
+        access_method: AccessMethod::Remote,
+        has_credentials: false,
+        authenticated: false,
+    };
+    let v = serde_json::to_value(&remote).unwrap();
+    assert_eq!(v["access_method"], json!("remote"));
+
+    let s = serde_json::to_string(&resp).unwrap();
+    let back: AuthStatusResponse = serde_json::from_str(&s).unwrap();
+    assert_eq!(back.access_method, AccessMethod::Localhost);
+    assert!(back.has_credentials);
+    assert!(back.authenticated);
 }
 
 #[test]
