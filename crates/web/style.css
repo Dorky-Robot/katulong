@@ -186,7 +186,11 @@ body {
  * SignedIn arm of `<Main/>`. Rules are scoped to the
  * `data-tile-kind` attribute so adding a new tile kind
  * inherits the chrome without per-kind CSS. */
-[data-tile-kind] {
+/* Tiles other than terminal share a narrow centered chrome.
+ * Terminal needs the full viewport width for code-readable
+ * line lengths, so it overrides below.
+ */
+[data-tile-kind="status"] {
   max-width: 360px;
   margin: 64px auto 0;
   display: flex;
@@ -195,14 +199,49 @@ body {
   color: var(--kat-fg);
 }
 
-[data-tile-kind] .title {
+[data-tile-kind="status"] .title {
   margin: 0;
   font-size: 22px;
   font-weight: 600;
 }
 
-[data-tile-kind] .blurb {
+[data-tile-kind="status"] .blurb {
   margin: 0;
   color: var(--kat-fg-dim);
   font-size: 13px;
+}
+
+/* Terminal tile — slice 9s.3 lands the WS-driven byte stream;
+ * 9s.4 swaps `<pre>` for an xterm-mounted div. The chrome here
+ * stays minimal: full-width, monospace, dark panel. */
+[data-tile-kind="terminal"] {
+  margin: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--kat-fg);
+}
+
+[data-tile-kind="terminal"] .title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--kat-fg-dim);
+}
+
+[data-tile-kind="terminal"] .terminal-output {
+  margin: 0;
+  padding: 12px 14px;
+  background: #0c0c10;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  color: #d4d4d4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 360px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
 }

@@ -73,3 +73,9 @@ ciborium = "0.2"
 # executor — Leptos's `spawn_local` is the WASM executor we
 # already use.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# `mpsc::unbounded` for the tile-to-WS-task send channel. The
+# `WsClient` context exposes the sender so any tile can call
+# `ws.send(ClientMessage::...)`; the lifecycle task owns the
+# receiver and drains it into the WS sink alongside inbound
+# frames via `futures::select!`.
+futures-channel = { version = "0.3", default-features = false, features = ["std"] }

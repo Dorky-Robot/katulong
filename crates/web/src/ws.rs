@@ -27,10 +27,13 @@
 //! or tab close).
 
 use crate::{AuthPhase, AuthState, ConnectionStatus};
+use futures_channel::mpsc;
 use futures_util::{SinkExt, StreamExt};
 use gloo_net::websocket::{futures::WebSocket, Message};
 use katulong_shared::wire::{ClientMessage, ServerMessage, PROTOCOL_VERSION};
 use leptos::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 use wasm_bindgen_futures::spawn_local;
 use web_sys::console;
 
@@ -69,6 +72,138 @@ fn sanitize_for_log(s: &str) -> String {
         .collect()
 }
 
+// =====================================================================
+// Tile-side send/subscribe API.
+//
+// Tiles consume the connection through `WsClient`, the platform's
+// shared context. There are exactly two operations:
+//
+// - `ws.send(ClientMessage)` queues an outbound message into the
+//   send channel. The lifecycle task drains the channel into the
+//   WS sink. Returns immediately; if the connection is dead or
+//   reconnecting, the message buffers in the channel until either
+//   it can be sent or the channel itself is dropped.
+//
+// - `ws.subscribe(callback)` registers a callback invoked for every
+//   decoded `ServerMessage`. The caller filters by message variant
+//   and any descriptor-specific keys (e.g., `Output.session_id`)
+//   inside the callback. Returns a `SubscriberHandle` whose `Drop`
+//   impl auto-unsubscribes — RAII tied to the caller's scope.
+//
+// The shape stays minimal because the alternative (centralised
+// routing inside the platform: filter trees keyed by message variant
+// + tile-id) would require the platform to know what each tile kind
+// cares about. That's the framework-not-protocol failure mode —
+// every new tile would force the platform to grow. With the
+// callback shape, terminal tiles filter on `session_id`, future
+// Claude-feed tiles will filter on topic, the platform stays tile-
+// kind-agnostic.
+//
+// **Re-entrancy.** The receive loop dispatches messages to
+// subscribers while holding a `RefCell::borrow()` on the subscriber
+// list. A subscriber callback that itself calls `ws.subscribe(...)`
+// would attempt `borrow_mut()` while we hold `borrow()` — `RefCell`
+// panics on overlapping borrow modes. In practice no tile does
+// this; subscriptions register at component mount, not from inside
+// a message callback. The pattern is documented; if a future tile
+// genuinely needs nested subscription, the receive loop should
+// snapshot the subscriber list (via a clone) before dispatch.
+// =====================================================================
+
+/// The platform's shared WS handle. Cloneable so multiple tiles
+/// can hold one without coordination; clones share the same
+/// underlying channel and subscriber list.
+#[derive(Clone)]
+pub struct WsClient {
+    sender: mpsc::UnboundedSender<ClientMessage>,
+    subscribers: SubscriberList,
+}
+
+/// Internal subscriber registry. `Rc<RefCell<...>>` is fine in
+/// WASM (single-threaded); the lifetime is tied to the WsClient
+/// clones, which the App-root context owns for the page's
+/// lifetime.
+#[derive(Clone, Default)]
+struct SubscriberList(Rc<RefCell<Vec<Subscriber>>>);
+
+struct Subscriber {
+    id: u64,
+    callback: Box<dyn Fn(&ServerMessage)>,
+}
+
+/// RAII handle returned by `WsClient::subscribe`. Dropping
+/// it removes the subscriber from the dispatch list. Tile
+/// components keep the handle alive via `store_value` so it
+/// lives as long as the component scope; the handle's `Drop`
+/// fires on scope dispose, automatically cleaning up.
+pub struct SubscriberHandle {
+    id: u64,
+    subscribers: SubscriberList,
+}
+
+impl Drop for SubscriberHandle {
+    fn drop(&mut self) {
+        self.subscribers
+            .0
+            .borrow_mut()
+            .retain(|s| s.id != self.id);
+    }
+}
+
+impl WsClient {
+    /// Queue a client message for the WS connection. Non-blocking;
+    /// the message rides the send channel and the lifecycle task
+    /// drains it into the WS sink. If the connection is dead
+    /// (channel receiver dropped), the send is silently lost — the
+    /// `data-status="connected"` indicator surfaces the disconnected
+    /// state, so a tile that observes a non-effect from a `send` is
+    /// expected to also observe `ConnectionStatus.connected = false`.
+    pub fn send(&self, msg: ClientMessage) {
+        // `unbounded_send` only fails when the receiver has been
+        // dropped (lifecycle task ended). That case is observable
+        // via `ConnectionStatus`; logging here would be redundant.
+        let _ = self.sender.unbounded_send(msg);
+    }
+
+    /// Register a callback for every decoded inbound message.
+    /// Returns a handle whose `Drop` removes the subscriber.
+    /// Callers that want their subscription tied to a Leptos
+    /// component scope should keep the handle in `store_value`.
+    pub fn subscribe<F>(&self, callback: F) -> SubscriberHandle
+    where
+        F: Fn(&ServerMessage) + 'static,
+    {
+        // ID generation: monotonic counter on the subscribers list.
+        // We keep IDs in the Subscriber rather than relying on
+        // pointer identity because pointer identity changes if a
+        // subscriber is moved (and Box pointers can be moved).
+        let id = next_subscriber_id();
+        self.subscribers.0.borrow_mut().push(Subscriber {
+            id,
+            callback: Box::new(callback),
+        });
+        SubscriberHandle {
+            id,
+            subscribers: self.subscribers.clone(),
+        }
+    }
+}
+
+/// Process-wide subscriber id counter. Could live in
+/// `SubscriberList` but a free counter is simpler and the IDs
+/// don't need to be unique across WsClient instances (there's
+/// only ever one WsClient per page anyway).
+fn next_subscriber_id() -> u64 {
+    thread_local! {
+        static NEXT_ID: RefCell<u64> = const { RefCell::new(0) };
+    }
+    NEXT_ID.with(|cell| {
+        let mut id = cell.borrow_mut();
+        *id += 1;
+        *id
+    })
+}
+
 /// Spawn the WS lifecycle effect from the App root.
 ///
 /// Reads `AuthState`, watches the phase, opens a connection on the
@@ -99,6 +234,25 @@ fn sanitize_for_log(s: &str) -> String {
 /// must use exponential backoff with jitter to avoid self-DoS — see
 /// `TODO.md`).
 pub fn spawn_lifecycle(auth: AuthState, status: ConnectionStatus) {
+    // Channel + subscriber list are created here so they're
+    // available BEFORE the connection comes up — tiles can call
+    // `ws.send(...)` / `ws.subscribe(...)` immediately on mount;
+    // the channel buffers sends until the lifecycle task drains
+    // it, and the subscriber list is read by the receive loop
+    // when frames arrive.
+    let (sender, receiver) = mpsc::unbounded::<ClientMessage>();
+    let subscribers = SubscriberList::default();
+    provide_context(WsClient {
+        sender,
+        subscribers: subscribers.clone(),
+    });
+
+    // The receiver is single-use (mpsc unbounded), so we move it
+    // into the lifecycle task on the first `SignedIn` transition.
+    // `RefCell<Option<...>>` lets a `Fn`-bounded effect closure
+    // take ownership exactly once.
+    let receiver_slot = Rc::new(RefCell::new(Some(receiver)));
+
     // The effect's own return value tracks "started" across
     // re-runs. `Fn` closures can't capture-and-mutate, so we thread
     // the started flag through Leptos's prev-value mechanism
@@ -116,17 +270,38 @@ pub fn spawn_lifecycle(auth: AuthState, status: ConnectionStatus) {
         if !matches!(auth.phase.get(), AuthPhase::SignedIn) {
             return false;
         }
-        spawn_local(run_connection(status.set_connected));
+        let receiver = receiver_slot
+            .borrow_mut()
+            .take()
+            .expect("ws receiver already taken — install effect re-fired");
+        spawn_local(run_connection(
+            status.set_connected,
+            receiver,
+            subscribers.clone(),
+        ));
         true
     });
 }
 
-/// Open the WS, run the Hello/HelloAck handshake, then loop
-/// until the connection closes. On exit (normal or error) the
-/// `connected` signal flips back to `false` — a future
-/// reconnect slice can listen for this and re-call
-/// `run_connection`.
-async fn run_connection(set_connected: WriteSignal<bool>) {
+/// Open the WS, run the Hello/HelloAck handshake, then split
+/// into two cooperating tasks: a send-loop draining the
+/// outbound channel into the sink, and a receive-loop draining
+/// the stream and dispatching to subscribers. On exit (stream
+/// end or error) the `connected` signal flips back to `false`.
+///
+/// Two cooperating tasks rather than `select!` over both
+/// directions because (a) `futures-util`'s `select!` macro
+/// requires the `select` feature flag we don't currently
+/// pull in, (b) two linear `while let` loops are easier to
+/// read than a select arm, and (c) the only synchronisation
+/// point we need is "did the receive-loop end" — that flips
+/// `connected = false`, which the send-loop observes via
+/// channel close (its sink errors when the WS dies).
+async fn run_connection(
+    set_connected: WriteSignal<bool>,
+    receiver: mpsc::UnboundedReceiver<ClientMessage>,
+    subscribers: SubscriberList,
+) {
     let url = match websocket_url() {
         Ok(u) => u,
         Err(reason) => {
@@ -194,34 +369,36 @@ async fn run_connection(set_connected: WriteSignal<bool>) {
     // Handshake complete — the connection is live.
     set_connected.set(true);
 
-    // **Intentional silent discard, slice 9s.2 only.** No tile is
-    // wired to consume `ServerMessage` yet — the next slice (9s.3,
-    // real terminal) lands the dispatch that routes `Output` to
-    // the focused TerminalTile, future ClaudeFeed events to the
-    // feed tile, etc. In this slice's own operation no
-    // post-handshake messages should arrive (the server doesn't
-    // emit unsolicited frames between `Hello` and `Attach`, and
-    // `Attach` lands in 9s.3), so the silent-discard branch is
-    // unreachable in practice. We log at `warn` rather than panic
-    // (`todo!()`) because (a) a panic crashes the WASM tab, (b) a
-    // panic during the e2e suite's 5-second `data-status="connected"`
-    // window would cause a flaky test failure that masks real
-    // regressions, and (c) the warn is a positive signal to the
-    // 9s.3 author that arriving messages are awaiting routing.
+    // Send loop: drain `receiver` (channel from `WsClient::send`
+    // calls in tile components) into the WS sink. Spawned as a
+    // separate task so it doesn't block the receive loop.
+    spawn_local(async move {
+        let mut sink = sink;
+        let mut receiver = receiver;
+        while let Some(msg) = receiver.next().await {
+            if let Err(err) = send_client_message(&mut sink, &msg).await {
+                console::warn_1(
+                    &format!("katulong: WS send_loop write failed: {err}").into(),
+                );
+                break;
+            }
+        }
+        // When the channel closes (all WsClient clones dropped) or
+        // the sink errors, the send loop exits. The receive loop
+        // continues to handle inbound until it sees the stream
+        // close.
+    });
+
+    // Receive loop: drain `stream`, dispatch each successfully
+    // decoded `ServerMessage` to every subscriber. Subscribers
+    // filter by message variant + descriptor-specific keys (e.g.,
+    // a TerminalTile callback matches on
+    // `ServerMessage::Output { .. }` whose session matches its
+    // `session_id` prop).
     while let Some(msg) = stream.next().await {
         match msg {
             Ok(Message::Bytes(bytes)) => match decode_server_message(&bytes) {
-                Ok(server_msg) => {
-                    // 9s.3 replaces this branch with tile-side
-                    // dispatch. Until then, log the type for
-                    // operator triage of any unexpected arrival.
-                    console::warn_1(
-                        &format!(
-                            "katulong: WS message received pre-9s.3 dispatch: {server_msg:?}"
-                        )
-                        .into(),
-                    );
-                }
+                Ok(server_msg) => dispatch_to_subscribers(&subscribers, &server_msg),
                 Err(err) => {
                     console::warn_1(
                         &format!("katulong: WS decode failed: {err}").into(),
@@ -251,6 +428,18 @@ async fn run_connection(set_connected: WriteSignal<bool>) {
     // Stream ended — connection closed. Flip the signal back so
     // the UI's `connected` state matches reality.
     set_connected.set(false);
+}
+
+/// Invoke every subscriber's callback with the message. Borrows
+/// the subscriber list immutably; subscribers must NOT call
+/// `WsClient::subscribe` from inside their callback (would
+/// trigger a `RefCell` borrow conflict). The pattern is
+/// documented at the module level.
+fn dispatch_to_subscribers(subscribers: &SubscriberList, msg: &ServerMessage) {
+    let subs = subscribers.0.borrow();
+    for s in subs.iter() {
+        (s.callback)(msg);
+    }
 }
 
 /// Receive the next CBOR-encoded ServerMessage from the WS

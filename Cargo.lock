@@ -1078,6 +1078,7 @@ version = "0.1.0"
 dependencies = [
  "ciborium",
  "console_error_panic_hook",
+ "futures-channel",
  "futures-util",
  "gloo-net",
  "js-sys",
