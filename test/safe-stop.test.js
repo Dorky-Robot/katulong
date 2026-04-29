@@ -333,3 +333,29 @@ describe("safeStopServer — input validation", () => {
     assert.equal(calls.unload, 0);
   });
 });
+
+describe("safeStopServer — default timeout contract", () => {
+  it("default budget = drainTimeout + named tail slack", async () => {
+    // The bug this guards against: if safeStopServer's caller-side
+    // watchdog fires before the server's own drain wait completes,
+    // a healthy graceful shutdown gets SIGKILLed mid-flight, skipping
+    // sessionManager.shutdown() (which sends in-band detach-client to
+    // each tmux control mode child to dodge the 3.6a UAF). The
+    // `katulong update` race we hit on mac2019/mac2024 in v0.61.3 was
+    // this exact failure mode.
+    //
+    // Asserting equality with SHUTDOWN_TAIL_SLACK_MS (rather than just
+    // shutdownBudget > drainTimeout) catches both regression vectors:
+    // someone reverting the derivation, AND someone shrinking the
+    // slack to a value too small to cover the synchronous tail
+    // (sessionManager.shutdown → shutdownPlugins → cleanupPidFile).
+    const { default: envConfig, SHUTDOWN_TAIL_SLACK_MS } = await import(
+      "../lib/env-config.js"
+    );
+    assert.equal(
+      envConfig.shutdownBudget - envConfig.drainTimeout,
+      SHUTDOWN_TAIL_SLACK_MS,
+      `shutdownBudget (${envConfig.shutdownBudget}ms) must equal drainTimeout (${envConfig.drainTimeout}ms) + SHUTDOWN_TAIL_SLACK_MS (${SHUTDOWN_TAIL_SLACK_MS}ms)`,
+    );
+  });
+});
