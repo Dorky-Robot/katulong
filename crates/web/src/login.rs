@@ -1,27 +1,37 @@
-//! Login component + sign-in / pair WebAuthn ceremonies.
+//! Login + Register components + their WebAuthn ceremonies.
 //!
 //! Slice 9r.1 landed the form shell + URL-based pair vs.
 //! sign-in mode swap. Slice 9r.2 wired the sign-in ceremony.
-//! Slice 9r.3 wires the pair (registration) ceremony,
-//! reusing the `LoginPhase` state machine.
+//! Slice 9r.3 wires the pair (additional-device registration)
+//! ceremony. Slice 9r.5 adds the first-device register
+//! ceremony as a sibling component, gated by
+//! `AuthPhase::Register` (which the App-root probe sets when
+//! the server reports authenticated-but-no-credentials, the
+//! fresh-install-on-localhost case).
 //!
-//! FP-leaning per memory `feedback_rewrite_fp_direction`:
-//! `signin()` and `pair()` are pure async pipelines (no shared
-//! state, no callbacks). They share shape but not types — the
-//! WebAuthn wire formats and the `web-sys` entry points
-//! diverge between get/create. We keep them as two parallel
-//! functions rather than a generic helper because the
-//! "different parts" (endpoint, request body, options type,
-//! navigator method, response type) outweigh the "same parts"
-//! (ok-check, JsFuture, dyn_into); a generic abstraction
-//! would obscure the flow without paying for itself.
-//! The component dispatches whichever applies via
-//! `create_action` and reacts to the resolved value.
+//! Three pure async ceremonies live here: `signin()`, `pair()`,
+//! `register()`. Their shapes are nearly identical (start
+//! request → options → credentials API → finish request) but
+//! the types diverge at every step (endpoint URL, request
+//! body, options type, navigator method, response type, finish
+//! body). A generic helper across the three would need ~6
+//! type parameters; three parallel functions reading top-to-
+//! bottom is easier to follow. The genuinely shared parts —
+//! HTTP-status guard, JsFuture-into-credential conversion,
+//! JsValue error rendering — are extracted as `check_ok`,
+//! `credential_from_promise`, and `js_err`.
+//!
+//! FP-leaning per memory `feedback_rewrite_fp_direction`: the
+//! ceremonies are side-effect-free in shape (Result-returning
+//! linear pipelines). The components dispatch them via
+//! `create_action` and react to the resolved value through a
+//! shared `resolve` closure that funnels success/error into
+//! the right signals.
 
 use crate::AuthState;
 use katulong_shared::wire::{
     LoginFinishRequest, LoginStartResponse, PairFinishRequest, PairStartRequest,
-    PairStartResponse,
+    PairStartResponse, RegisterFinishRequest, RegisterStartResponse,
 };
 use leptos::*;
 use wasm_bindgen::{JsCast, JsValue};
@@ -215,6 +225,69 @@ async fn pair(setup_token: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Run the first-device WebAuthn registration ceremony.
+///
+/// Same shape as `pair()` (both produce a credential via
+/// `navigator.credentials.create()`), with the differences
+/// concentrated at the HTTP boundaries:
+///   - POST `/api/auth/register/start` with no body (the
+///     route is localhost-only and fresh-install-only on the
+///     server; no setup token to submit)
+///   - POST `/api/auth/register/finish` with just the
+///     credential — no `setup_token_id` to echo
+///
+/// The server's register routes refuse non-localhost callers
+/// and refuse a non-fresh install. The WASM doesn't pre-check
+/// either condition; the user only reaches this ceremony when
+/// the App-root probe has already classified the request as
+/// `AuthPhase::Register`, which by definition means
+/// authenticated (loopback peer) AND no credentials. If the
+/// server rejects anyway (race against another concurrent
+/// register, or a credential added between the probe and the
+/// click), the error renders in the standard error region.
+async fn register() -> Result<(), String> {
+    // 1. Ask for a registration challenge.
+    let start_resp = gloo_net::http::Request::post("/api/auth/register/start")
+        .send()
+        .await
+        .map_err(|e| format!("network error contacting server: {e}"))?;
+    check_ok(&start_resp, "server rejected register challenge")?;
+    let start: RegisterStartResponse = start_resp
+        .json()
+        .await
+        .map_err(|e| format!("server returned malformed challenge: {e}"))?;
+
+    // 2. Convert the wire challenge to the JS shape that
+    //    `navigator.credentials.create()` expects.
+    let options: web_sys::CredentialCreationOptions = start.options.into();
+
+    // 3. Run the platform registration ceremony.
+    let window = web_sys::window().ok_or("browser window unavailable")?;
+    let promise = window
+        .navigator()
+        .credentials()
+        .create_with_options(&options)
+        .map_err(|e| format!("browser refused credential creation: {}", js_err(&e)))?;
+    let credential = credential_from_promise(promise).await?;
+    let response: webauthn_rs_proto::RegisterPublicKeyCredential = credential.into();
+
+    // 4. Send the attestation back. No `setup_token_id` here —
+    //    register/finish only needs the challenge id and the
+    //    credential.
+    let finish_resp = gloo_net::http::Request::post("/api/auth/register/finish")
+        .json(&RegisterFinishRequest {
+            challenge_id: start.challenge_id,
+            response,
+        })
+        .map_err(|e| format!("could not encode register-finish payload: {e}"))?
+        .send()
+        .await
+        .map_err(|e| format!("network error completing register: {e}"))?;
+    check_ok(&finish_resp, "server rejected register")?;
+
+    Ok(())
+}
+
 /// Render a `JsValue` error into a human-readable string.
 ///
 /// Two layers, both bounded:
@@ -246,17 +319,19 @@ fn js_err(v: &JsValue) -> String {
     // Operator-side detail goes to the console; the user-side
     // string stays generic. Useful when triaging weird browser
     // / extension errors that don't follow the `Error` shape.
-    web_sys::console::warn_2(&JsValue::from_str("katulong: unstructured signin error"), v);
+    web_sys::console::warn_2(&JsValue::from_str("katulong: unstructured browser error"), v);
     "unexpected browser error".to_string()
 }
 
-/// Login phase — local to `<Login/>`. The three states form a
-/// minimal state machine: idle → in-flight → (idle | error).
-/// Encoded as an enum (rather than a pair of bool signals) so
-/// "in-flight" and "error" can never co-exist; `pending` would
-/// be ambiguous if both were independent.
+/// In-flight state machine for an auth ceremony component.
+/// Used by both `<Login/>` (sign-in + pair) and
+/// `<Register/>`. Three states form a minimal machine:
+/// idle → in-flight → (idle | error). Encoded as an enum
+/// (rather than a pair of bool signals) so "in-flight" and
+/// "error" can never co-exist; `pending` would be ambiguous
+/// if both were independent.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum LoginPhase {
+enum CeremonyPhase {
     Idle,
     InFlight,
     Error(String),
@@ -309,7 +384,7 @@ pub fn Login() -> impl IntoView {
 
     // Local state machine. `phase` drives the CTA copy +
     // disabled state and renders the error region.
-    let (phase, set_phase) = create_signal(LoginPhase::Idle);
+    let (phase, set_phase) = create_signal(CeremonyPhase::Idle);
 
     // Both ceremonies share the same post-resolve handler:
     // success flips global auth state (which unmounts this
@@ -320,7 +395,7 @@ pub fn Login() -> impl IntoView {
     // means changing one place, not two.
     let resolve = move |result: Result<(), String>| match result {
         Ok(()) => auth.set_phase.set(crate::AuthPhase::SignedIn),
-        Err(message) => set_phase.set(LoginPhase::Error(message)),
+        Err(message) => set_phase.set(CeremonyPhase::Error(message)),
     };
 
     // The ceremonies themselves are dispatched via
@@ -354,7 +429,7 @@ pub fn Login() -> impl IntoView {
     });
 
     let cta_label = move || match phase.get() {
-        LoginPhase::InFlight => if is_pair_mode {
+        CeremonyPhase::InFlight => if is_pair_mode {
             "Pairing…"
         } else {
             "Signing in…"
@@ -362,13 +437,13 @@ pub fn Login() -> impl IntoView {
         .to_string(),
         _ => cta_idle.to_string(),
     };
-    let cta_disabled = move || matches!(phase.get(), LoginPhase::InFlight);
+    let cta_disabled = move || matches!(phase.get(), CeremonyPhase::InFlight);
     // Signal: are we in the error state? Drives a conditional
     // <p class="error">. Reading the message directly out of
     // the signal would clone an empty string in the non-error
     // case, hence the `Show` + accessor split.
     let error_message = move || match phase.get() {
-        LoginPhase::Error(msg) => Some(msg),
+        CeremonyPhase::Error(msg) => Some(msg),
         _ => None,
     };
 
@@ -385,7 +460,7 @@ pub fn Login() -> impl IntoView {
         // synthetic double-click to fire a second concurrent
         // ceremony. The disabled re-render must happen before
         // the second click can be queued.
-        set_phase.set(LoginPhase::InFlight);
+        set_phase.set(CeremonyPhase::InFlight);
         match &setup_token {
             Some(token) => {
                 pair_action.dispatch(token.clone());
@@ -406,6 +481,81 @@ pub fn Login() -> impl IntoView {
             // affordance before the wire type carries the
             // value would silently discard whatever the user
             // typed.
+            <button
+                type="button"
+                class="cta"
+                prop:disabled=cta_disabled
+                on:click=on_click
+            >
+                {cta_label}
+            </button>
+            {move || error_message().map(|msg| view! {
+                <p class="error" role="alert">{msg}</p>
+            })}
+        </section>
+    }
+}
+
+/// First-device register UI. Rendered when the App-root
+/// probe classifies the request as `AuthPhase::Register`
+/// (server: authenticated && !has_credentials, i.e., a
+/// fresh-install localhost session with no enrolled
+/// credentials).
+///
+/// The UX is deliberately minimal: one CTA, one explanatory
+/// blurb. Unlike `<Login/>` (which has two URL-driven modes
+/// and dispatches between two ceremonies), `<Register/>` has
+/// exactly one path — there's no setup token, no device-
+/// name input (the server doesn't carry a name field on
+/// register/finish either), no mode switch. A user reaching
+/// this view is by definition the operator setting up the
+/// first device; we don't need to clutter the screen with
+/// options.
+#[component]
+pub fn Register() -> impl IntoView {
+    let auth = expect_context::<AuthState>();
+    let (phase, set_phase) = create_signal(CeremonyPhase::Idle);
+
+    // Same resolve closure pattern as `<Login/>` — success
+    // flips global auth state (which unmounts this component
+    // when `<Main/>`'s match swaps to `<TerminalStub/>`),
+    // error renders in the local error region.
+    let resolve = move |result: Result<(), String>| match result {
+        Ok(()) => auth.set_phase.set(crate::AuthPhase::SignedIn),
+        Err(message) => set_phase.set(CeremonyPhase::Error(message)),
+    };
+
+    let register_action = create_action(move |_: &()| async move {
+        resolve(register().await);
+    });
+
+    let cta_label = move || match phase.get() {
+        CeremonyPhase::InFlight => "Registering…".to_string(),
+        _ => "Register first device".to_string(),
+    };
+    let cta_disabled = move || matches!(phase.get(), CeremonyPhase::InFlight);
+    let error_message = move || match phase.get() {
+        CeremonyPhase::Error(msg) => Some(msg),
+        _ => None,
+    };
+
+    // Same synchronous-InFlight pattern as `<Login/>`'s
+    // click handler. `create_action`'s first poll runs on a
+    // microtask, so a transition done inside the future
+    // would leave a window where a synthetic double-click
+    // could fire two concurrent ceremonies. Setting InFlight
+    // synchronously here closes that window.
+    let on_click = move |_| {
+        set_phase.set(CeremonyPhase::InFlight);
+        register_action.dispatch(());
+    };
+
+    view! {
+        <section id="kat-register" data-mode="register">
+            <h1 class="title">"Set up your first device"</h1>
+            <p class="blurb">
+                "Register a passkey for this device to get started. The first credential is created from this machine over localhost."
+            </p>
             <button
                 type="button"
                 class="cta"

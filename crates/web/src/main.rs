@@ -28,7 +28,7 @@ use leptos::*;
 use wasm_bindgen_futures::spawn_local;
 
 mod login;
-use login::Login;
+use login::{Login, Register};
 
 fn main() {
     console_error_panic_hook::set_once();
@@ -48,23 +48,23 @@ struct ConnectionStatus(ReadSignal<bool>);
 ///   flight. `<Main/>` renders a small "restoring" view here,
 ///   NOT the login form, so a page reload of an already-authed
 ///   user doesn't flash through the sign-in screen.
-/// - `SignedOut` — probe resolved as unauthenticated. The
-///   login form renders.
-/// - `SignedIn` — probe resolved as authenticated, OR the
-///   sign-in/pair ceremony just succeeded. Post-auth view
+/// - `Register` — server says authenticated (typically via
+///   localhost auto-auth) but no credentials are registered
+///   yet. The first-device register UI renders. Distinct
+///   from `SignedOut` because the next user action differs:
+///   `Register` triggers `/api/auth/register/*` (localhost-
+///   only, fresh-install-only); `SignedOut` triggers
+///   `/api/auth/login/*`.
+/// - `SignedOut` — probe resolved as unauthenticated AND
+///   credentials exist on the server. The login form
 ///   renders.
-///
-/// Encoded as a typed enum (rather than `Option<bool>`) so
-/// each variant has a name at the match sites — the previous
-/// `Some(false)` / `Some(true)` shape leaned on a doc comment
-/// to spell out which boolean meant what. Also gives us a
-/// natural place to grow: when 9r.5 lands the register flow,
-/// a `SignedOutNoCredentials` variant captures the
-/// "authenticated-but-fresh-install" case that `Option<bool>`
-/// can't represent without splitting into a second signal.
+/// - `SignedIn` — probe resolved as authenticated AND
+///   credentials exist, OR a register/sign-in/pair ceremony
+///   just succeeded. Post-auth view renders.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AuthPhase {
     Restoring,
+    Register,
     SignedOut,
     SignedIn,
 }
@@ -133,6 +133,19 @@ fn App() -> impl IntoView {
     // putting it in the user-visible string.
     spawn_local(async move {
         match probe_auth_status().await {
+            // Branch order matters: the `authenticated &&
+            // !has_credentials` case is the fresh-install-on-
+            // localhost path (auto-auth gives `authenticated`
+            // before any credential exists). Routing it to
+            // `SignedIn` would land the user on the terminal
+            // stub with no path back to the register flow;
+            // routing to `SignedOut` would show the login
+            // form with no credentials to sign in against.
+            // The dedicated `Register` phase is what makes
+            // this state representable.
+            Ok(status) if status.authenticated && !status.has_credentials => {
+                set_phase.set(AuthPhase::Register);
+            }
             Ok(status) if status.authenticated => set_phase.set(AuthPhase::SignedIn),
             Ok(_) => set_phase.set(AuthPhase::SignedOut),
             Err(message) => {
@@ -195,8 +208,9 @@ fn Main() -> impl IntoView {
         <main id="kat-main">
             {move || match auth.phase.get() {
                 AuthPhase::Restoring => view! { <SessionRestoring/> }.into_view(),
-                AuthPhase::SignedIn => view! { <TerminalStub/> }.into_view(),
+                AuthPhase::Register => view! { <Register/> }.into_view(),
                 AuthPhase::SignedOut => view! { <Login/> }.into_view(),
+                AuthPhase::SignedIn => view! { <TerminalStub/> }.into_view(),
             }}
         </main>
     }
