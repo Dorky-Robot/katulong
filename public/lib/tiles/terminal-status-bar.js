@@ -121,13 +121,26 @@ export function createTerminalStatusBar() {
 
     /**
      * Accept a status event from SessionStatusWatcher. The `status` field
-     * mirrors the server's /status payload, which now includes `pane` and
-     * (when an agent is detected) `meta.agent`.
+     * mirrors the server's /status payload, which includes `pane` and
+     * (when an agent is detected) `agent`.
+     *
+     * Sticky semantics: only overwrite `pane`/`agent` when the server returns
+     * a truthy value. The status route emits `pane: meta.pane || null`, and
+     * `meta.pane` is only populated by the 5s server-side monitor tick (see
+     * lib/session-child-counter.js). After a server restart — notably the
+     * binary swap inside `katulong update` — meta.pane is unset for every
+     * session until the first post-restart tick lands, so every poll in
+     * that window returns `pane: null`. The previous "always assign" shape
+     * let that null clobber the last-known state, hiding the entire pill
+     * bar for ~5–10s after every release. The server only ever MERGES into
+     * meta.pane (never clears it back to null), so treating a null payload
+     * as "no update" is consistent with how the server actually mutates
+     * the data and removes the cold-start flicker.
      */
     updateFromStatus(status) {
       if (!status) return;
-      if (status.pane !== undefined) state.pane = status.pane;
-      if (status.agent !== undefined) state.agent = status.agent;
+      if (status.pane) state.pane = status.pane;
+      if (status.agent) state.agent = status.agent;
       render();
     },
 
