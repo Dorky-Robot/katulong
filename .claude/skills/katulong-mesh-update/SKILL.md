@@ -56,10 +56,11 @@ The script reads two files in `$KATULONG_DATA_DIR` (default `~/.katulong`):
   {
     "peers": [
       { "id": "host-a", "ssh": "alias-a" },
-      { "id": "host-b", "ssh": "alias-b" }
+      { "id": "host-b", "ssh": "alias-b", "port": 4001 }
     ]
   }
   ```
+  The optional `port` field overrides the post-update HTTP probe target (default 3001) for peers that run on a non-default `KATULONG_PORT`. The `ssh` field must be a bare alias (`[A-Za-z0-9._-]+`) — leading dashes or whitespace are rejected to block ssh option injection.
 - `node-id` — single line containing this host's id (one of the `peers[*].id` values).
 
 If the user is configuring this for the first time and asks for help, suggest copying `mesh.json` to every host (it's identical) and writing the right `node-id` on each. Don't generate the contents from your own knowledge — ask the user for their host inventory and ssh aliases.
