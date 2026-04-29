@@ -384,7 +384,10 @@ in pull-manager.js.
 
 ```js
 const BACKOFF_INITIAL = 1000;    // 1s
-const BACKOFF_MAX     = 10000;   // 10s
+const BACKOFF_MAX     = 2000;    // 2s (low cap: self-hosted single-user,
+                                 // reconnect cost ~100ms; high cap made
+                                 // accumulated backoff visible as
+                                 // multi-second blank-tile lag)
 const BACKOFF_FACTOR  = 2;
 
 // On disconnect:

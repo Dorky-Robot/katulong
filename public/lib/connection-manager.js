@@ -19,7 +19,7 @@ import { basePath } from "./base-path.js";
 
 // ─── Constants ──────────────────────────────────────────────────────
 const BACKOFF_INITIAL    = 1000;
-const BACKOFF_MAX        = 10000;
+const BACKOFF_MAX        = 2000;  // low cap: self-hosted single-user, reconnect cost ~100ms
 const BACKOFF_FACTOR     = 2;
 const BACKGROUND_THRESHOLD = 5000; // 5s — after this long in background, force reconnect
 const WAKE_PROBE_TIMEOUT   = 2000; // 2s — probe deadline on focus/pageshow (laptop wake)
