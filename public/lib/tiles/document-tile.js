@@ -23,6 +23,7 @@ import { marked } from "/vendor/marked/marked.esm.js";
 import DOMPurify from "/vendor/dompurify/purify.es.mjs";
 import { createDocumentWatcher } from "/lib/document-watcher.js";
 import { createWorktreeBadge } from "/lib/tiles/tile-badge.js";
+import { renderMermaidIn } from "/lib/markdown-mermaid.js";
 
 /* ---------- cute animated error pages ---------- */
 
@@ -200,6 +201,12 @@ function extToIcon(ext) {
 
 function isMarkdown(ext, format) {
   return format === "markdown" || ext === ".md";
+}
+
+/** Render markdown text into `el`: marked → DOMPurify → mermaid post-pass. */
+function renderMarkdownInto(el, text) {
+  el.innerHTML = DOMPurify.sanitize(marked.parse(text || ""));
+  renderMermaidIn(el);
 }
 
 /**
@@ -502,7 +509,7 @@ export function createDocumentTileFactory(_deps = {}) {
                 .then((data) => {
                   if (!mounted) return;
                   contentEl.classList.remove("doc-tile-error");
-                  contentEl.innerHTML = DOMPurify.sanitize(marked.parse(data.content));
+                  renderMarkdownInto(contentEl, data.content);
                 })
                 .catch(() => { /* keep previous content */ });
             };
@@ -515,7 +522,7 @@ export function createDocumentTileFactory(_deps = {}) {
               api.get(`/api/files/read?path=${encodeURIComponent(filePath)}`)
                 .then((data) => {
                   if (!mounted) return;
-                  contentEl.innerHTML = DOMPurify.sanitize(marked.parse(data.content));
+                  renderMarkdownInto(contentEl, data.content);
                   if (!watcher) {
                     watcher = createDocumentWatcher({ filePath, onChange: refreshMarkdown });
                   }
@@ -527,7 +534,7 @@ export function createDocumentTileFactory(_deps = {}) {
             };
             loadMarkdown();
           } else if (content != null) {
-            contentEl.innerHTML = DOMPurify.sanitize(marked.parse(content));
+            renderMarkdownInto(contentEl, content);
           }
         } else {
           // --- CodeMirror editor ---
