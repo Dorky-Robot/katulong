@@ -179,11 +179,14 @@ body {
   line-height: 1.4;
 }
 
-/* Terminal stub (slice 9r.2). The real terminal view lands
- * in a future slice; this is what `<Main/>` shows after the
- * sign-in ceremony succeeds, so the auth-state-driven swap
- * has something to render. */
-#kat-terminal-stub {
+/* Tile contents (slice 9s.1). Both `#kat-terminal-tile` and
+ * `#kat-status-tile` (and any future tile that lands the
+ * `data-tile-kind="…"` shape) share the same chrome — the
+ * tile renders inside `<TileHost/>` which is mounted as the
+ * SignedIn arm of `<Main/>`. Rules are scoped to the
+ * `data-tile-kind` attribute so adding a new tile kind
+ * inherits the chrome without per-kind CSS. */
+[data-tile-kind] {
   max-width: 360px;
   margin: 64px auto 0;
   display: flex;
@@ -192,13 +195,13 @@ body {
   color: var(--kat-fg);
 }
 
-#kat-terminal-stub .title {
+[data-tile-kind] .title {
   margin: 0;
   font-size: 22px;
   font-weight: 600;
 }
 
-#kat-terminal-stub .blurb {
+[data-tile-kind] .blurb {
   margin: 0;
   color: var(--kat-fg-dim);
   font-size: 13px;

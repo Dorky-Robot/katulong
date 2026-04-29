@@ -23,12 +23,14 @@
 // components dispatch them via `spawn_local` /
 // `create_action` and react to the resolved value.
 
-use katulong_shared::wire::AuthStatusResponse;
+use katulong_shared::wire::{AuthStatusResponse, TileLayout};
 use leptos::*;
 use wasm_bindgen_futures::spawn_local;
 
 mod login;
+mod tile;
 use login::{Login, Register};
+use tile::{LayoutState, TileHost};
 
 fn main() {
     console_error_panic_hook::set_once();
@@ -122,6 +124,35 @@ fn App() -> impl IntoView {
     let (phase, set_phase) = create_signal(AuthPhase::Restoring);
     provide_context(AuthState { phase, set_phase });
 
+    // Tile layout — the single state atom for what's rendered
+    // in the post-auth view. Empty until the user signs in;
+    // an effect below seeds the bootstrap default when
+    // `phase` flips to `SignedIn`. Persistence (load from
+    // localStorage / server-side at mount, save on change) is
+    // a future slice's job.
+    let layout = create_rw_signal(TileLayout::empty());
+    provide_context(LayoutState { layout });
+
+    create_effect(move |_| {
+        // Seed once, on the first SignedIn transition with an
+        // empty layout. The `tiles.is_empty()` guard means
+        // re-firing this effect after the layout has been
+        // populated is a safe no-op.
+        //
+        // **Logout-clear obligation**: when a future logout
+        // slice writes `set_phase.set(SignedOut)`, it must
+        // ALSO write `layout.set(TileLayout::empty())` so the
+        // next sign-in re-seeds. Without that, a second
+        // sign-in cycle would inherit the stale tiles from
+        // the previous session — including any session-ids
+        // that no longer exist on the server.
+        if matches!(phase.get(), AuthPhase::SignedIn)
+            && layout.with(|l| l.tiles.is_empty())
+        {
+            layout.set(TileLayout::bootstrap_default());
+        }
+    });
+
     // Fire the probe once on mount. We don't use
     // `create_action` because there's no input and no need
     // to expose pending/result state to the component tree —
@@ -210,7 +241,7 @@ fn Main() -> impl IntoView {
                 AuthPhase::Restoring => view! { <SessionRestoring/> }.into_view(),
                 AuthPhase::Register => view! { <Register/> }.into_view(),
                 AuthPhase::SignedOut => view! { <Login/> }.into_view(),
-                AuthPhase::SignedIn => view! { <TerminalStub/> }.into_view(),
+                AuthPhase::SignedIn => view! { <TileHost/> }.into_view(),
             }}
         </main>
     }
@@ -233,19 +264,3 @@ fn SessionRestoring() -> impl IntoView {
     }
 }
 
-/// Placeholder for the post-auth terminal UI. Slice 9r.2
-/// only needs *something* to render after sign-in so the e2e
-/// can assert the auth-state-driven swap; the real terminal
-/// view is a separate slice that lands the WS attach + xterm
-/// hookup. Keeping it as a literal stub here means we don't
-/// preemptively design the terminal module before its
-/// dependencies (WS protocol, tile spec) are settled.
-#[component]
-fn TerminalStub() -> impl IntoView {
-    view! {
-        <section id="kat-terminal-stub">
-            <h1 class="title">"Signed in"</h1>
-            <p class="blurb">"Terminal view lands in a future slice."</p>
-        </section>
-    }
-}

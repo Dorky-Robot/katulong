@@ -169,3 +169,168 @@ pub struct PairFinishRequest {
     pub setup_token_id: String,
     pub response: RegisterPublicKeyCredential,
 }
+
+// =====================================================================
+// Tile protocol — see docs/rewrite-tile-protocol.md.
+//
+// A tile is a `TileDescriptor { id, kind }` record where `kind` carries
+// the typed props for that tile type. The host (`<TileHost/>` in
+// crates/web) renders by matching on `kind`, so adding a new tile type
+// = adding an enum variant + extending the host's match. The compiler
+// enforces exhaustiveness at every match site.
+//
+// Wire-typed (Serialize/Deserialize) so a future persistence slice can
+// round-trip the layout to localStorage or server-side without re-
+// shaping the protocol.
+// =====================================================================
+
+use std::collections::HashMap;
+
+/// Stable identifier for a tile instance. UUID-ish at runtime (the
+/// WASM client generates one when adding a tile, server-side
+/// persistence stores it verbatim), but the `bootstrap_default`
+/// layout uses well-known stable strings (`"default-terminal"`,
+/// `"default-status"`) because they're created at App-mount time
+/// before any persistence is wired and there's no need for
+/// uniqueness across instances of "the bootstrap". Future
+/// dynamically-added tiles will use UUIDs.
+///
+/// Newtype around `String` so a `TileId` can't accidentally be
+/// passed where a `ChallengeId` (also `String`) is expected.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct TileId(pub String);
+
+/// What kind of tile, plus the typed props for that kind.
+///
+/// Two variants today (`Status`, `Terminal`); future variants
+/// (`Cluster`, `FileBrowser`, `ClaudeFeed`, etc.) extend this enum
+/// and force `<TileHost/>`'s exhaustive match to grow with them.
+/// Each variant carries the typed props for that tile type so a
+/// field rename can't drift between consumers.
+///
+/// **Wire-shape contract**: `#[serde(tag = "kind", rename_all =
+/// "snake_case")]` produces `{"kind": "terminal", ...}`. Pinned by
+/// `tile_kind_*_serializes_*` round-trip tests in
+/// `crates/shared/tests/wire_round_trip.rs`.
+///
+/// **Do NOT add `#[serde(skip_serializing_if = "Option::is_none")]`**
+/// to `Option`-typed variant fields. The pinning tests assert that
+/// `None` serializes as `"session_id": null` (present-but-null);
+/// adding `skip_serializing_if` would silently change the wire shape
+/// to omit the field, and consumers that distinguish absent from null
+/// would break. If a future schema needs the absent form, do it
+/// explicitly with a separate variant, not by tweaking the attribute.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TileKind {
+    /// Connection-status indicator. No props — the tile reads the
+    /// `ConnectionStatus` context directly.
+    Status,
+    /// Terminal viewport for a tmux session. `session_id = None` is
+    /// the unattached state (placeholder today; future slices
+    /// populate it when a session is attached).
+    Terminal { session_id: Option<String> },
+}
+
+/// **Serde fragility note**: `#[serde(flatten)]` over an
+/// internally-tagged enum (`TileKind` is `#[serde(tag = "kind")]`)
+/// is a serde combination that round-trips correctly via
+/// `serde_json` today but is documented as version-sensitive across
+/// the serde ecosystem. The `tile_descriptor_flattens_kind_at_root`
+/// and `tile_layout_round_trips_with_descriptors` tests are the
+/// regression guards — if either fails after a serde / serde_json
+/// version bump, that's the signal to revisit this shape (e.g.,
+/// promote `kind` out of flatten-position into its own envelope).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TileDescriptor {
+    pub id: TileId,
+    #[serde(flatten)]
+    pub kind: TileKind,
+}
+
+/// The single state atom for the layout. `<TileHost/>` reads it; the
+/// dispatch helpers in `crate::tile::layout` write it.
+///
+/// Invariants (upheld by the dispatch helpers, not by the type
+/// system):
+/// - `order` is a permutation of `tiles.keys()`.
+/// - `focused_id` is `None` iff `tiles` is empty; otherwise points at
+///   a key in `tiles`.
+///
+/// Future helpers must maintain both. The dangerous one is
+/// `remove_tile`: removing the last tile must clear `focused_id`;
+/// removing the focused tile must advance focus to the next-or-prev
+/// in `order`. The cluster slice (when it lands) must also resolve
+/// whether sub-tiles live in `tiles` (forcing the permutation
+/// invariant to weaken) or in a separate field — see the design doc
+/// for the deferred decision.
+///
+/// `tiles` is a `HashMap` rather than `Vec<(TileId, _)>` because the
+/// dispatch helpers do keyed lookups (focus → descriptor, remove by
+/// id, add-or-update). At katulong's tile counts (typically 2–8) a
+/// linear scan would be fine; the HashMap is here to keep the API
+/// surface honest about the access pattern, not to win on
+/// asymptotics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TileLayout {
+    pub tiles: HashMap<TileId, TileDescriptor>,
+    pub order: Vec<TileId>,
+    pub focused_id: Option<TileId>,
+}
+
+impl TileLayout {
+    /// Empty layout — no tiles, nothing focused. Used when a fresh
+    /// signed-in session has no persisted layout to restore.
+    pub fn empty() -> Self {
+        Self {
+            tiles: HashMap::new(),
+            order: Vec::new(),
+            focused_id: None,
+        }
+    }
+
+    /// Bootstrap layout for a fresh signed-in session — one
+    /// terminal-stub tile (focused) and one status tile. The seed is
+    /// shared between the WASM crate (which calls it on the
+    /// `AuthPhase::SignedIn` transition when no persisted layout
+    /// exists) and any future server-side persistence layer that
+    /// might want to mint the same default for new users. Lives here
+    /// (rather than in the web crate) so the persistence slice
+    /// doesn't have to choose between duplicating the logic and
+    /// reaching into the WASM crate.
+    ///
+    /// **Layout debt**: the Status tile is unreachable in this slice
+    /// (no tab bar; the host renders only the focused tile). The
+    /// tab-bar slice exposes it; the persistence slice that lands
+    /// before the tab bar should treat the orphaned Status tile as
+    /// expected layout content, not as garbage to migrate out.
+    pub fn bootstrap_default() -> Self {
+        let term_id = TileId("default-terminal".to_string());
+        let status_id = TileId("default-status".to_string());
+
+        let mut tiles = HashMap::new();
+        tiles.insert(
+            term_id.clone(),
+            TileDescriptor {
+                id: term_id.clone(),
+                kind: TileKind::Terminal { session_id: None },
+            },
+        );
+        tiles.insert(
+            status_id.clone(),
+            TileDescriptor {
+                id: status_id.clone(),
+                kind: TileKind::Status,
+            },
+        );
+
+        Self {
+            tiles,
+            order: vec![term_id.clone(), status_id],
+            focused_id: Some(term_id),
+        }
+    }
+}

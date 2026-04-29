@@ -27,6 +27,7 @@
 use katulong_shared::wire::{
     AccessMethod, AuthFinishResponse, AuthStatusResponse, ChallengeId,
     LoginFinishRequest, PairFinishRequest, PairStartRequest, PairStartResponse,
+    TileDescriptor, TileId, TileKind, TileLayout,
 };
 use serde_json::{json, Value};
 
@@ -225,4 +226,134 @@ fn challenge_id_serializes_as_bare_string() {
     let id: ChallengeId = "challenge-123".to_string();
     let value: Value = serde_json::to_value(&id).unwrap();
     assert_eq!(value, json!("challenge-123"));
+}
+
+#[test]
+fn tile_id_serializes_as_bare_string() {
+    // `TileId` is a `#[serde(transparent)]` newtype around
+    // `String`. Removing the transparent attribute would
+    // change serialization to a single-element tuple
+    // (`["tile-123"]`) and break round-trips with persisted
+    // layouts. Pin the contract.
+    let id = TileId("tile-123".to_string());
+    let value: Value = serde_json::to_value(&id).unwrap();
+    assert_eq!(value, json!("tile-123"));
+}
+
+#[test]
+fn tile_kind_status_serializes_as_tagged_object() {
+    // The `Status` variant has no payload; the wire shape is
+    // `{"kind": "status"}` because of
+    // `#[serde(tag = "kind", rename_all = "snake_case")]` on
+    // `TileKind`. Without `rename_all`, the tag would
+    // serialize to `"Status"` (capitalised), which would
+    // break a round-trip from a persisted lowercase layout.
+    let kind = TileKind::Status;
+    let value: Value = serde_json::to_value(&kind).unwrap();
+    assert_eq!(value, json!({ "kind": "status" }));
+
+    let s = serde_json::to_string(&kind).unwrap();
+    let back: TileKind = serde_json::from_str(&s).unwrap();
+    assert_eq!(back, TileKind::Status);
+}
+
+#[test]
+fn tile_kind_terminal_serializes_with_session_id() {
+    // The `Terminal` variant has typed props
+    // (`session_id: Option<String>`). The wire shape is the
+    // tag plus the variant's fields flattened in. Pin both
+    // the `None` and `Some` cases — `None` should serialize
+    // as `null` (not omit the field) so the tag-and-fields
+    // round-trip is symmetrical.
+    let kind = TileKind::Terminal { session_id: None };
+    let value: Value = serde_json::to_value(&kind).unwrap();
+    assert_eq!(
+        value,
+        json!({ "kind": "terminal", "session_id": null })
+    );
+
+    let kind_some = TileKind::Terminal {
+        session_id: Some("session-abc".to_string()),
+    };
+    let value_some: Value = serde_json::to_value(&kind_some).unwrap();
+    assert_eq!(
+        value_some,
+        json!({ "kind": "terminal", "session_id": "session-abc" })
+    );
+
+    let s = serde_json::to_string(&kind_some).unwrap();
+    let back: TileKind = serde_json::from_str(&s).unwrap();
+    assert_eq!(back, kind_some);
+}
+
+#[test]
+fn tile_layout_round_trips_with_descriptors() {
+    // The full layout shape — descriptors keyed by id, an
+    // ordered list, and an optional focused id. This is the
+    // shape the persistence slice will round-trip to
+    // localStorage; pinning it now means the persistence
+    // slice doesn't have to re-shape the protocol.
+    let term_id = TileId("t-1".to_string());
+    let status_id = TileId("s-1".to_string());
+
+    let mut tiles = std::collections::HashMap::new();
+    tiles.insert(
+        term_id.clone(),
+        TileDescriptor {
+            id: term_id.clone(),
+            kind: TileKind::Terminal { session_id: None },
+        },
+    );
+    tiles.insert(
+        status_id.clone(),
+        TileDescriptor {
+            id: status_id.clone(),
+            kind: TileKind::Status,
+        },
+    );
+    let layout = TileLayout {
+        tiles,
+        order: vec![term_id.clone(), status_id.clone()],
+        focused_id: Some(term_id.clone()),
+    };
+
+    let s = serde_json::to_string(&layout).unwrap();
+    let back: TileLayout = serde_json::from_str(&s).unwrap();
+    assert_eq!(back, layout);
+
+    // Verify the JSON keys we depend on exist with the
+    // expected shape — a future `#[serde(rename = ...)]`
+    // tweak would silently break a persisted layout.
+    let value: Value = serde_json::to_value(&layout).unwrap();
+    assert!(value["tiles"].is_object());
+    assert!(value["order"].is_array());
+    assert_eq!(value["focused_id"], json!("t-1"));
+}
+
+#[test]
+fn tile_descriptor_flattens_kind_at_root() {
+    // `TileDescriptor` uses `#[serde(flatten)]` on the
+    // `kind` field so the wire shape is
+    // `{"id": "...", "kind": "terminal", "session_id": null}`
+    // (flat) rather than
+    // `{"id": "...", "kind": {"kind": "terminal", "session_id": null}}`
+    // (nested). The flat form is what the persistence
+    // schema and any future server-side endpoint will see;
+    // pinning the shape catches an accidental drop of the
+    // `flatten` attribute.
+    let desc = TileDescriptor {
+        id: TileId("t-1".to_string()),
+        kind: TileKind::Terminal {
+            session_id: Some("s".to_string()),
+        },
+    };
+    let value: Value = serde_json::to_value(&desc).unwrap();
+    assert_eq!(
+        value,
+        json!({
+            "id": "t-1",
+            "kind": "terminal",
+            "session_id": "s",
+        })
+    );
 }
