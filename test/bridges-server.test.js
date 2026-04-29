@@ -35,6 +35,71 @@ function startStubUpstream() {
         }, 10);
         return;
       }
+      if (url.searchParams.get("status") === "sse-silent") {
+        // SSE upstream that stays silent for the requested duration before
+        // sending a single visible event, then ends. Used to verify the
+        // bridge injects keepalive comments while upstream is quiet.
+        const silentMs = Number(url.searchParams.get("ms") || "200");
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        // Flush headers so the bridge enters its silent-SSE keepalive
+        // phase before we send any real bytes (matches real LLM upstream
+        // behavior where headers land immediately and tokens come later).
+        res.flushHeaders();
+        const t = setTimeout(() => {
+          if (!res.writableEnded) {
+            res.write('data: {"x":1}\n\n');
+            res.end();
+          }
+        }, silentMs);
+        res.on("close", () => clearTimeout(t));
+        return;
+      }
+      if (url.searchParams.get("status") === "sse-error-mid") {
+        // Sends one SSE event then abruptly destroys the socket — used
+        // to confirm the bridge cleans up the keepalive timer and tears
+        // down the response without crashing on a write-after-error.
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        res.flushHeaders();
+        res.write('data: first\n\n');
+        setTimeout(() => res.destroy(), 30);
+        return;
+      }
+      if (url.searchParams.get("status") === "sse-stream") {
+        // Continuously emits an SSE event every `intervalMs` (default 10ms)
+        // until the response closes. Used to catch the race where the
+        // bridge data handler must guard against `res` already being
+        // destroyed by a client-side abort.
+        const intervalMs = Number(url.searchParams.get("interval") || "10");
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        res.flushHeaders();
+        let n = 0;
+        const i = setInterval(() => {
+          if (res.writableEnded || res.destroyed) {
+            clearInterval(i);
+            return;
+          }
+          res.write(`data: ${n++}\n\n`);
+        }, intervalMs);
+        res.on("close", () => clearInterval(i));
+        return;
+      }
+      if (url.searchParams.get("status") === "sse-cached") {
+        // Upstream tries to set Cache-Control: public, max-age=60 on an
+        // SSE response. Bridge must override to no-cache, no-store —
+        // intermediate caches cannot be allowed to capture a live stream.
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "public, max-age=60",
+        });
+        res.flushHeaders();
+        setTimeout(() => {
+          if (!res.writableEnded) {
+            res.write('data: ok\n\n');
+            res.end();
+          }
+        }, 20);
+        return;
+      }
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
     });
@@ -78,6 +143,7 @@ describe("bridge server", () => {
       target: `http://127.0.0.1:${stub.port}`,
       token: TOKEN,
       logger: () => {}, // suppress test-time noise
+      keepaliveMs: 50,
     });
     bridgePort = bridge.address().port;
   });
@@ -134,6 +200,241 @@ describe("bridge server", () => {
     assert.ok(text.includes('"chunk":1'));
     assert.ok(text.includes('"chunk":2'));
     assert.ok(text.includes('"done":true'));
+  });
+
+  it("injects SSE keepalive comments while upstream is silent", async () => {
+    // Upstream stays quiet for 200ms, then sends one event. With
+    // keepaliveMs=50 the bridge should emit at least one `: keepalive`
+    // SSE comment before the real event arrives.
+    const res = await fetch(
+      `http://127.0.0.1:${bridgePort}/api/sse?status=sse-silent&ms=200`,
+      { headers: { Authorization: `Bearer ${TOKEN}` } },
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "text/event-stream");
+    // Belt-and-suspenders header for nginx-shaped intermediaries.
+    assert.equal(res.headers.get("x-accel-buffering"), "no");
+    const text = await res.text();
+    assert.match(text, /:\s*keepalive/);
+    // Real event still arrives.
+    assert.match(text, /data:\s*\{"x":1\}/);
+  });
+
+  it("does NOT inject keepalive on non-SSE responses", async () => {
+    const res = await fetch(`http://127.0.0.1:${bridgePort}/api/tags`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    const text = await res.text();
+    assert.doesNotMatch(text, /keepalive/);
+    // Should not have added the buffering hint to a non-SSE response.
+    assert.equal(res.headers.get("x-accel-buffering"), null);
+  });
+
+  it("tears down upstream and the keepalive timer on client disconnect", async () => {
+    // Spin up a private bridge so we can capture logger events without
+    // racing other tests. Stub uses a 5s upstream silence so we can
+    // observe the disconnect cleanup *before* upstream would have ended
+    // on its own.
+    const events = [];
+    const probe = await startBridgeServer({
+      port: 0,
+      bind: "127.0.0.1",
+      target: `http://127.0.0.1:${stub.port}`,
+      token: TOKEN,
+      logger: (e) => events.push(e),
+      keepaliveMs: 50,
+    });
+    const probePort = probe.address().port;
+
+    const ac = new AbortController();
+    const promise = fetch(
+      `http://127.0.0.1:${probePort}/api/sse?status=sse-silent&ms=5000`,
+      { headers: { Authorization: `Bearer ${TOKEN}` }, signal: ac.signal },
+    );
+    await new Promise((r) => setTimeout(r, 80));
+    ac.abort();
+    try {
+      await promise;
+    } catch (_e) {
+      /* expected */
+    }
+    // Wait long enough that, if the bridge had failed to destroy
+    // upstream, the data handler would have fired write-after-destroy
+    // and emitted an upstream_error event.
+    await new Promise((r) => setTimeout(r, 250));
+    // ECONNRESET is the expected consequence of our deliberate
+    // upstreamReq.destroy() — upstream's socket gets RST'd. The bug we
+    // want to catch is the data handler writing to an already-destroyed
+    // `res`, which surfaces as ERR_STREAM_DESTROYED or
+    // ERR_STREAM_WRITE_AFTER_END.
+    const writeAfterDestroy = events.filter(
+      (e) =>
+        e.event === "upstream_error" &&
+        /ERR_STREAM_DESTROYED|ERR_STREAM_WRITE_AFTER_END/.test(e.code || ""),
+    );
+    assert.equal(
+      writeAfterDestroy.length,
+      0,
+      `expected no write-after-destroy errors after client disconnect, got: ${JSON.stringify(writeAfterDestroy)}`,
+    );
+    probe.close();
+  });
+
+  it("destroys the upstream connection when the client aborts mid-stream", async () => {
+    // Direct observation of the leak fix: spin up a private stub that
+    // counts how many chunks it has *sent*. After the bridge call, we
+    // sample the counter, abort the client, wait, then sample again.
+    // If the bridge correctly calls upstreamReq.destroy() on
+    // res.on('close'), the stub's response fires its own 'close' event
+    // and stops the chunk loop within one tick. The counter delta
+    // post-abort should be small (last in-flight chunk + close
+    // propagation). Without the fix, the stub keeps streaming for the
+    // full wait window — the counter delta will be 25–30+.
+    let chunkCount = 0;
+    const trackingStub = createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.flushHeaders();
+      const i = setInterval(() => {
+        if (res.writableEnded || res.destroyed) {
+          clearInterval(i);
+          return;
+        }
+        chunkCount++;
+        res.write(`data: ${chunkCount}\n\n`);
+      }, 8);
+      res.on("close", () => clearInterval(i));
+    });
+    await new Promise((r) => trackingStub.listen(0, "127.0.0.1", r));
+    const probe = await startBridgeServer({
+      port: 0,
+      bind: "127.0.0.1",
+      target: `http://127.0.0.1:${trackingStub.address().port}`,
+      token: TOKEN,
+      logger: () => {},
+      keepaliveMs: 50,
+    });
+
+    const ac = new AbortController();
+    const promise = fetch(
+      `http://127.0.0.1:${probe.address().port}/sse`,
+      { headers: { Authorization: `Bearer ${TOKEN}` }, signal: ac.signal },
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    ac.abort();
+    try {
+      await promise;
+    } catch (_e) {
+      /* expected */
+    }
+    const countAtAbort = chunkCount;
+    // Wait significantly longer than the 8ms tick — without the fix,
+    // 30 more chunks would arrive in this window. With the fix, the
+    // stub's res.on('close') fires within 1–2 ticks of abort and the
+    // counter freezes.
+    await new Promise((r) => setTimeout(r, 250));
+    const delta = chunkCount - countAtAbort;
+    assert.ok(
+      delta <= 5,
+      `upstream not torn down on client abort: stub sent ${delta} more chunks after client gave up (countAtAbort=${countAtAbort}, finalCount=${chunkCount})`,
+    );
+
+    probe.close();
+    trackingStub.close();
+  });
+
+  it("forces no-cache, no-store on SSE responses, overriding upstream Cache-Control", async () => {
+    const res = await fetch(
+      `http://127.0.0.1:${bridgePort}/api/sse?status=sse-cached`,
+      { headers: { Authorization: `Bearer ${TOKEN}` } },
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "text/event-stream");
+    // Must NOT preserve the upstream's public/max-age caching directive
+    // for a live stream.
+    const cc = res.headers.get("cache-control");
+    assert.match(cc, /no-cache/);
+    assert.match(cc, /no-store/);
+    assert.doesNotMatch(cc, /public/);
+    assert.doesNotMatch(cc, /max-age/);
+    await res.text(); // drain
+  });
+
+  it("survives upstream destroying the socket mid-stream", async () => {
+    const events = [];
+    const probe = await startBridgeServer({
+      port: 0,
+      bind: "127.0.0.1",
+      target: `http://127.0.0.1:${stub.port}`,
+      token: TOKEN,
+      logger: (e) => events.push(e),
+      keepaliveMs: 50,
+    });
+    const res = await fetch(
+      `http://127.0.0.1:${probe.address().port}/api/sse?status=sse-error-mid`,
+      { headers: { Authorization: `Bearer ${TOKEN}` } },
+    );
+    assert.equal(res.status, 200);
+    try {
+      await res.text();
+    } catch (_e) {
+      /* truncated streams may surface as a fetch read error; tolerable */
+    }
+    // Give the bridge a tick to settle its cleanup.
+    await new Promise((r) => setTimeout(r, 80));
+
+    // The bridge must NOT have thrown a write-after-destroy error inside
+    // the data handler — that would indicate the bug from Round 1 has
+    // regressed. We tolerate the upstream's own ECONNRESET / aborted
+    // signal, which is the legitimate "upstream gave up" telemetry.
+    const writeAfterDestroy = events.filter(
+      (e) =>
+        e.event === "upstream_error" &&
+        /ERR_STREAM_DESTROYED|ERR_STREAM_WRITE_AFTER_END/.test(e.code || ""),
+    );
+    assert.equal(
+      writeAfterDestroy.length,
+      0,
+      `expected no write-after-destroy errors, got: ${JSON.stringify(writeAfterDestroy)}`,
+    );
+    probe.close();
+  });
+
+  it("rejects garbage keepaliveMs values by falling back to the default", async () => {
+    // NaN / negative values would otherwise cause sub-millisecond ticks
+    // (CPU burn). The defensive clamp inside createBridgeServer should
+    // map them to the default. We exercise the *SSE* path here so the
+    // setInterval is actually constructed under the bad value — without
+    // the clamp, setInterval(fn, NaN) treats the delay as 1ms and pegs
+    // a CPU. The test would then time out or hang; with the clamp it
+    // completes promptly.
+    const probe = await startBridgeServer({
+      port: 0,
+      bind: "127.0.0.1",
+      target: `http://127.0.0.1:${stub.port}`,
+      token: TOKEN,
+      logger: () => {},
+      keepaliveMs: NaN,
+    });
+    const res = await fetch(
+      `http://127.0.0.1:${probe.address().port}/api/sse?status=sse-silent&ms=80`,
+      { headers: { Authorization: `Bearer ${TOKEN}` } },
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "text/event-stream");
+    const body = await res.text();
+    // The response body distinguishes clamped vs. unclamped behavior:
+    //   - With the clamp: keepaliveMs = 15000ms default. 80ms upstream
+    //     silence is way under threshold → 0 keepalive frames written.
+    //   - Without the clamp: setInterval(fn, NaN) → 1ms ticks. The
+    //     threshold check `Date.now() - lastByteAt < NaN` is always
+    //     false → keepalive frame written on every tick → ~80 frames.
+    // Anything above a small handful indicates the clamp was bypassed.
+    const keepaliveCount = (body.match(/:\s*keepalive/g) || []).length;
+    assert.ok(
+      keepaliveCount < 5,
+      `clamp regression: expected <5 keepalive frames in 80ms, got ${keepaliveCount}`,
+    );
+    probe.close();
   });
 
   it("returns 502 when upstream is unreachable", async () => {
