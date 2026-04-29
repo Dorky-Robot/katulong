@@ -169,3 +169,83 @@ pub struct PairFinishRequest {
     pub setup_token_id: String,
     pub response: RegisterPublicKeyCredential,
 }
+
+// =====================================================================
+// Tile protocol — see docs/rewrite-tile-protocol.md.
+//
+// A tile is a `TileDescriptor { id, kind }` record where `kind` carries
+// the typed props for that tile type. The host (`<TileHost/>` in
+// crates/web) renders by matching on `kind`, so adding a new tile type
+// = adding an enum variant + extending the host's match. The compiler
+// enforces exhaustiveness at every match site.
+//
+// Wire-typed (Serialize/Deserialize) so a future persistence slice can
+// round-trip the layout to localStorage or server-side without re-
+// shaping the protocol.
+// =====================================================================
+
+use std::collections::HashMap;
+
+/// Stable identifier for a tile instance. UUID-ish; the WASM client
+/// generates one when adding a tile, server-side persistence stores it
+/// verbatim. Newtype around `String` so a `TileId` can't accidentally
+/// be passed where a `ChallengeId` (also `String`) is expected.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct TileId(pub String);
+
+/// What kind of tile, plus the typed props for that kind.
+///
+/// Slice 9s.1 lands two variants: `Status` (trivial, validates the
+/// protocol with two consumers) and `Terminal` (placeholder shape;
+/// the real WS-attach + xterm rendering arrives in a later slice).
+/// Future slices add `Cluster`, `FileBrowser`, `ClaudeFeed`, etc. —
+/// each variant carries the typed props for that tile type so adding
+/// a field can't drift between consumers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TileKind {
+    /// Connection-status indicator. No props — the tile reads the
+    /// `ConnectionStatus` context directly.
+    Status,
+    /// Terminal viewport for a tmux session. `session_id = None` is
+    /// the unattached stub state shipped in slice 9s.1; later slices
+    /// populate it when a session is attached.
+    Terminal { session_id: Option<String> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TileDescriptor {
+    pub id: TileId,
+    #[serde(flatten)]
+    pub kind: TileKind,
+}
+
+/// The single state atom for the layout. `<TileHost/>` reads it; the
+/// dispatch helpers in `crate::tile::layout` write it.
+///
+/// Invariants (upheld by the dispatch helpers, not by the type
+/// system):
+/// - `order` is a permutation of `tiles.keys()`.
+/// - `focused_id` is `None` iff `tiles` is empty; otherwise points at
+///   a key in `tiles`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TileLayout {
+    pub tiles: HashMap<TileId, TileDescriptor>,
+    pub order: Vec<TileId>,
+    pub focused_id: Option<TileId>,
+}
+
+impl TileLayout {
+    /// Empty layout — no tiles, nothing focused. Used when a fresh
+    /// signed-in session has no persisted layout to restore.
+    pub fn empty() -> Self {
+        Self {
+            tiles: HashMap::new(),
+            order: Vec::new(),
+            focused_id: None,
+        }
+    }
+}

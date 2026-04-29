@@ -518,8 +518,8 @@ pub fn Register() -> impl IntoView {
 
     // Same resolve closure pattern as `<Login/>` — success
     // flips global auth state (which unmounts this component
-    // when `<Main/>`'s match swaps to `<TerminalStub/>`),
-    // error renders in the local error region.
+    // when `<Main/>`'s match swaps to `<TileHost/>`), error
+    // renders in the local error region.
     let resolve = move |result: Result<(), String>| match result {
         Ok(()) => auth.set_phase.set(crate::AuthPhase::SignedIn),
         Err(message) => set_phase.set(CeremonyPhase::Error(message)),
