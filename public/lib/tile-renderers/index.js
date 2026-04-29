@@ -20,6 +20,7 @@ import { localhostBrowserRenderer } from "./localhost-browser.js";
 import { progressRenderer } from "./progress.js";
 import { imageRenderer } from "./image.js";
 import { historyRenderer } from "./history.js";
+import { sipagRenderer } from "./sipag.js";
 
 const renderers = new Map();
 
@@ -56,6 +57,7 @@ export function initRenderers({ terminalPool, createTerminalTile, uiStore, getSe
   progressRenderer.init({});
   imageRenderer.init({});
   historyRenderer.init({ getSessionStore });
+  sipagRenderer.init({});
 }
 
 // Register built-in renderers
@@ -68,3 +70,4 @@ registerRenderer(localhostBrowserRenderer);
 registerRenderer(progressRenderer);
 registerRenderer(imageRenderer);
 registerRenderer(historyRenderer);
+registerRenderer(sipagRenderer);

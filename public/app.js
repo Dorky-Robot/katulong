@@ -1501,6 +1501,7 @@
         { type: "terminal",     name: "Terminal", icon: "terminal-window" },
         { type: "feed",          name: "Feed",     icon: "rss" },
         { type: "localhost-browser", name: "Browser", icon: "globe-simple" },
+        { type: "sipag",             name: "sipag",   icon: "list-checks" },
       ],
       onCreateTile: (type) => {
         if (type === "terminal") {
@@ -1513,6 +1514,8 @@
           openAgentFeedTile();
         } else if (type === "localhost-browser") {
           openLocalhostBrowserTile();
+        } else if (type === "sipag") {
+          openSipagTile();
         }
       },
       onTabClick: (name) => {
@@ -1778,6 +1781,7 @@
         else if (type === "file-browser") openFileBrowserTile();
         else if (type === "feed") openAgentFeedTile();
         else if (type === "localhost-browser") openLocalhostBrowserTile();
+        else if (type === "sipag") openSipagTile();
       },
       showHelp: () => toggleKeyboardHelp(),
     };
@@ -2166,6 +2170,17 @@
       const tileId = `lb-${Date.now().toString(36)}`;
       uiStore.addTile(
         { id: tileId, type: "localhost-browser", props: {} },
+        { focus: true, insertAt: "afterFocus" },
+      );
+      if (isOverlayViewport()) setOverlaySidebar(false);
+    }
+
+    // --- Sipag (tile) ---
+
+    function openSipagTile() {
+      const tileId = `sipag-${Date.now().toString(36)}`;
+      uiStore.addTile(
+        { id: tileId, type: "sipag", props: {} },
         { focus: true, insertAt: "afterFocus" },
       );
       if (isOverlayViewport()) setOverlaySidebar(false);
