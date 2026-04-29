@@ -144,7 +144,7 @@ fn App() -> impl IntoView {
     // Lives at App root so every tile (current and future)
     // sees the same connection. See `crate::ws` for the
     // platform-vs-tile-feature framing.
-    ws::install(auth_state, connection_status);
+    ws::spawn_lifecycle(auth_state, connection_status);
 
     // Tile layout — the single state atom for what's rendered
     // in the post-auth view. Empty until the user signs in;
