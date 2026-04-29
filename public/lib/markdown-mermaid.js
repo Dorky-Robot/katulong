@@ -11,28 +11,29 @@
  * Sanitization: marked's output already passed through DOMPurify with default
  * (HTML) profile. The mermaid SVG goes through a second DOMPurify pass with
  * the SVG profile enabled before injection — without that profile DOMPurify
- * strips every `<svg>` descendant.
+ * strips every `<svg>` descendant. The HTML profile is intentionally NOT
+ * combined here: opening the HTML allowlist inside an SVG node would re-admit
+ * scriptable elements (<a href="javascript:…">, etc.) that the SVG-only
+ * profile correctly rejects.
  */
 import DOMPurify from "/vendor/dompurify/purify.es.mjs";
 
+// Maximum mermaid source length we hand to mermaid.render(). Beyond this,
+// mermaid's synchronous parse+layout can stall the main thread for seconds
+// on pathological flowcharts. Cap at 100kB; surfaces larger fences as an
+// inline error instead of silently locking the tab.
+const MAX_MERMAID_SOURCE_BYTES = 100_000;
+
 let mermaidPromise = null;
+let mermaidScript = null;
 
 function loadMermaid() {
   if (mermaidPromise) return mermaidPromise;
   mermaidPromise = new Promise((resolve, reject) => {
-    if (globalThis.mermaid) {
-      resolve(globalThis.mermaid);
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = "/vendor/mermaid/mermaid.min.js";
-    script.async = true;
-    script.onload = () => {
-      const m = globalThis.mermaid;
-      if (!m) {
-        reject(new Error("mermaid script loaded but global is missing"));
-        return;
-      }
+    // Always (re-)apply our security config, even when the global was set
+    // by some earlier code path. Skipping initialize() means a pre-seeded
+    // mermaid would render without securityLevel: "strict".
+    const finalize = (m) => {
       m.initialize({
         startOnLoad: false,
         theme: "dark",
@@ -44,8 +45,32 @@ function loadMermaid() {
       });
       resolve(m);
     };
-    script.onerror = () => reject(new Error("failed to load /vendor/mermaid/mermaid.min.js"));
-    document.head.appendChild(script);
+    if (globalThis.mermaid) {
+      finalize(globalThis.mermaid);
+      return;
+    }
+    // mermaidScript guards against double-injection if a prior rejection
+    // cleared mermaidPromise while a script tag from the failed attempt
+    // still lingers in the DOM. The error path removes the tag so a real
+    // retry re-injects.
+    if (!mermaidScript) {
+      mermaidScript = document.createElement("script");
+      mermaidScript.src = "/vendor/mermaid/mermaid.min.js";
+      mermaidScript.async = true;
+      document.head.appendChild(mermaidScript);
+    }
+    mermaidScript.addEventListener("load", () => {
+      const m = globalThis.mermaid;
+      if (!m) {
+        reject(new Error("mermaid script loaded but global is missing"));
+        return;
+      }
+      finalize(m);
+    }, { once: true });
+    mermaidScript.addEventListener("error", () => {
+      if (mermaidScript) { mermaidScript.remove(); mermaidScript = null; }
+      reject(new Error("failed to load /vendor/mermaid/mermaid.min.js"));
+    }, { once: true });
   }).catch((err) => {
     // Reset so a subsequent call can retry (e.g., the tile is reopened
     // after a transient network failure).
@@ -55,12 +80,13 @@ function loadMermaid() {
   return mermaidPromise;
 }
 
-let renderCounter = 0;
+let svgIdCounter = 0;
 
 /**
  * Replace every ` ```mermaid ` fence inside `root` with its rendered SVG.
- * Idempotent — already-rendered blocks (marked with data-mermaid-rendered)
- * are skipped, so calling this twice on the same root is a no-op.
+ * Idempotent in practice — once a fence is rendered, the original
+ * `<pre><code class="language-mermaid">` is gone, so the selector won't
+ * match it on subsequent calls.
  *
  * @param {HTMLElement} root
  * @returns {Promise<void>}
@@ -81,16 +107,21 @@ export async function renderMermaidIn(root) {
   for (const code of blocks) {
     const pre = code.parentElement;
     if (!pre || !pre.parentElement) continue;
-    if (pre.dataset.mermaidRendered === "true") continue;
     const source = code.textContent || "";
-    const id = `mermaid-svg-${Date.now()}-${++renderCounter}`;
+    if (source.length > MAX_MERMAID_SOURCE_BYTES) {
+      replaceWithError(pre, `diagram source too large (${source.length} > ${MAX_MERMAID_SOURCE_BYTES} bytes)`, source);
+      continue;
+    }
+    // Per-call unique id is a mermaid API requirement: render() appends to
+    // <defs> using this id as a key, so collisions across calls would
+    // cross-pollinate gradients/markers between diagrams.
+    const id = `mermaid-svg-${++svgIdCounter}`;
     try {
       const { svg } = await mermaid.render(id, source);
       const wrapper = document.createElement("div");
       wrapper.className = "markdown-mermaid";
-      wrapper.dataset.mermaidRendered = "true";
       wrapper.innerHTML = DOMPurify.sanitize(svg, {
-        USE_PROFILES: { svg: true, svgFilters: true, html: true },
+        USE_PROFILES: { svg: true, svgFilters: true },
       });
       pre.replaceWith(wrapper);
     } catch (err) {
@@ -106,7 +137,7 @@ function replaceWithError(pre, message, source) {
 
   const msg = document.createElement("div");
   msg.className = "markdown-mermaid-error-msg";
-  msg.textContent = `Mermaid render failed: ${message}`;
+  msg.textContent = `mermaid render failed: ${message}`;
   wrapper.appendChild(msg);
 
   const fallback = document.createElement("pre");

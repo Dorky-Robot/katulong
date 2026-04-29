@@ -2571,7 +2571,11 @@
     .doc-tile-markdown th, .doc-tile-markdown td { border: 1px solid var(--border); padding: 0.3em 0.6em; }
     .doc-tile-markdown th { background: var(--bg-surface); font-weight: 600; }
     .doc-tile-markdown img { max-width: 100%; }
-    /* Mermaid diagrams (shared across markdown surfaces — document tile + feed). */
+
+    /* --- Shared: Mermaid Diagrams --- */
+    /* Used by both .doc-tile-markdown and the feed reply/prompt bodies — kept
+       in its own section so future overrides aren't accidentally split between
+       the doc-tile and feed-tile blocks. */
     .markdown-mermaid { margin: 0.8em 0; padding: var(--space-sm); background: var(--bg-surface); border-radius: 4px; overflow-x: auto; text-align: center; }
     .markdown-mermaid svg { max-width: 100%; height: auto; }
     .markdown-mermaid-error { text-align: left; border: 1px solid var(--border); background: var(--bg); }

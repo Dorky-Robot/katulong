@@ -203,6 +203,12 @@ function isMarkdown(ext, format) {
   return format === "markdown" || ext === ".md";
 }
 
+/** Render markdown text into `el`: marked → DOMPurify → mermaid post-pass. */
+function renderMarkdownInto(el, text) {
+  el.innerHTML = DOMPurify.sanitize(marked.parse(text || ""));
+  renderMermaidIn(el);
+}
+
 /**
  * Lazy-load CodeMirror bundle. Cached after first import.
  * @returns {Promise<object>} The CM6 exports
@@ -503,8 +509,7 @@ export function createDocumentTileFactory(_deps = {}) {
                 .then((data) => {
                   if (!mounted) return;
                   contentEl.classList.remove("doc-tile-error");
-                  contentEl.innerHTML = DOMPurify.sanitize(marked.parse(data.content));
-                  renderMermaidIn(contentEl);
+                  renderMarkdownInto(contentEl, data.content);
                 })
                 .catch(() => { /* keep previous content */ });
             };
@@ -517,8 +522,7 @@ export function createDocumentTileFactory(_deps = {}) {
               api.get(`/api/files/read?path=${encodeURIComponent(filePath)}`)
                 .then((data) => {
                   if (!mounted) return;
-                  contentEl.innerHTML = DOMPurify.sanitize(marked.parse(data.content));
-                  renderMermaidIn(contentEl);
+                  renderMarkdownInto(contentEl, data.content);
                   if (!watcher) {
                     watcher = createDocumentWatcher({ filePath, onChange: refreshMarkdown });
                   }
@@ -530,8 +534,7 @@ export function createDocumentTileFactory(_deps = {}) {
             };
             loadMarkdown();
           } else if (content != null) {
-            contentEl.innerHTML = DOMPurify.sanitize(marked.parse(content));
-            renderMermaidIn(contentEl);
+            renderMarkdownInto(contentEl, content);
           }
         } else {
           // --- CodeMirror editor ---
