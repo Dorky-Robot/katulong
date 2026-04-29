@@ -127,18 +127,29 @@ fn App() -> impl IntoView {
     // Tile layout — the single state atom for what's rendered
     // in the post-auth view. Empty until the user signs in;
     // an effect below seeds the bootstrap default when
-    // `phase` flips to `SignedIn`. Future slices add
-    // persistence (load from localStorage / server-side at
-    // mount, save on change) — this slice keeps the seed
-    // in-memory only.
+    // `phase` flips to `SignedIn`. Persistence (load from
+    // localStorage / server-side at mount, save on change) is
+    // a future slice's job.
     let layout = create_rw_signal(TileLayout::empty());
-    provide_context(LayoutState(layout));
+    provide_context(LayoutState { layout });
 
     create_effect(move |_| {
+        // Seed once, on the first SignedIn transition with an
+        // empty layout. The `tiles.is_empty()` guard means
+        // re-firing this effect after the layout has been
+        // populated is a safe no-op.
+        //
+        // **Logout-clear obligation**: when a future logout
+        // slice writes `set_phase.set(SignedOut)`, it must
+        // ALSO write `layout.set(TileLayout::empty())` so the
+        // next sign-in re-seeds. Without that, a second
+        // sign-in cycle would inherit the stale tiles from
+        // the previous session — including any session-ids
+        // that no longer exist on the server.
         if matches!(phase.get(), AuthPhase::SignedIn)
             && layout.with(|l| l.tiles.is_empty())
         {
-            layout.set(tile::layout::bootstrap_default());
+            layout.set(TileLayout::bootstrap_default());
         }
     });
 

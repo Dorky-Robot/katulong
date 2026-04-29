@@ -129,9 +129,14 @@ Invariants enforced by construction:
 ```rust
 // crates/web/src/tile/mod.rs
 
+#[derive(Copy, Clone)]
+pub struct LayoutState {
+    pub layout: RwSignal<TileLayout>,
+}
+
 #[component]
 pub fn TileHost() -> impl IntoView {
-    let layout = expect_context::<RwSignal<TileLayout>>();
+    let LayoutState { layout } = expect_context::<LayoutState>();
     // Render the focused tile by matching on its kind. `<For>` over
     // multiple visible tiles comes in the multi-tile-layout slice;
     // for now the host renders only the focused one.
@@ -139,6 +144,13 @@ pub fn TileHost() -> impl IntoView {
                                        TileKind::Terminal { .. } => <TerminalTile/>, } }
 }
 ```
+
+Tile components consume App-root context (`ConnectionStatus`,
+`AuthState`, future `TopicBroker`) directly via `expect_context`
+— **not** via `TileKind` variant props. Subscription metadata
+(which topic this tile is interested in, which session it
+attaches to) belongs in the descriptor; runtime context is
+provided by the host's surroundings, not by the wire.
 
 Each tile component:
 
@@ -194,15 +206,53 @@ through `<TileHost/>`).
   (`tile-tab-bar.js`, 568 lines) with reordering, renaming, badges.
   The Rust rewrite needs an equivalent slice; this design doc's
   scope is the data layer, not the chrome.
-- **Cluster tile recursion.** Sub-tiles complicate the layout shape —
-  is `tiles` a flat map with cluster tiles holding `Vec<TileId>`, or
-  does the layout become tree-shaped? Defer the decision to the
-  cluster-tile slice; the protocol as designed is flat.
+
+- **Cluster tile recursion — must be resolved BEFORE the cluster
+  slice starts.** Sub-tiles need to live somewhere. Two concrete
+  options, each with type consequences:
+
+  *Option A: cluster children stored in `tiles`, hidden from `order`*
+  Cluster's variant carries `Vec<TileId>` referencing other top-level
+  keys in `tiles`. Pro: flat storage, single permutation invariant
+  (sort of). Con: weakens the current invariant that `order` is a
+  *permutation* of `tiles.keys()` — clusters have keys in `tiles`
+  not in `order`. Either rename the invariant ("`order` is a subset
+  of `tiles.keys()`, and the union of `order` plus all
+  `Cluster.sub_tiles` equals `tiles.keys()`") or split into
+  `visible_order: Vec<TileId>` + `all_tiles: HashMap<TileId, _>`.
+
+  *Option B: cluster children stored separately, layout tree-shaped*
+  `TileLayout` becomes a tree: `Vec<TileNode>` where each node is
+  either `Leaf(TileDescriptor)` or `Cluster { sub_tiles:
+  Vec<TileNode> }`. Pro: invariant stays clean (the tree shape IS
+  the invariant). Con: bigger reshape; dispatch helpers need
+  recursive walks; persistence schema gets nested.
+
+  Decision should land in the slice that introduces `Cluster`,
+  with the option chosen here documented + defended in the doc.
+
+- **`?s=` URL boot-hint behavior** (principle 4 in this doc) has no
+  implementation yet — the layout signal isn't seeded from the URL
+  on mount, and the URL isn't written from layout changes for
+  bookmarkability. Belongs in the URL-sync slice, which probably
+  pairs with the tab-bar slice (since both touch the
+  outside-of-component user-input surface).
+
 - **Tile-to-tile communication.** Today every tile is independent.
   If a future feature needs cross-tile messaging (e.g., Claude feed
-  triggering a terminal action), this slice's design has no answer —
-  add it as a separate primitive (event bus or topic broker) rather
-  than coupling tiles.
+  triggering a terminal action), this design has no answer — add it
+  as a separate primitive (event bus or topic broker) rather than
+  coupling tiles. The topic broker is the obvious candidate; tiles
+  consume it via context (not via descriptor props), so the
+  tile-to-tile pathway is "two tiles read the same topic."
+
 - **Persistence schema versioning.** `TileLayout` doesn't carry a
   version field today; the persistence slice should add one and
   decide migration semantics before the schema sees real users.
+
+- **Logout layout reset.** The tile layout currently outlives the
+  auth phase. When a future logout slice writes
+  `set_phase.set(SignedOut)`, it must also write
+  `layout.set(TileLayout::empty())` so the next sign-in re-seeds
+  fresh. The seed effect's `tiles.is_empty()` guard otherwise sees
+  the stale tiles and skips the seed.

@@ -1,11 +1,10 @@
-//! Status tile. The protocol's second concrete consumer in slice
-//! 9s.1 — exists to validate that the host's `match` on `TileKind`
-//! is exhaustive across more than one variant.
+//! Status tile. The protocol's second concrete consumer — exists
+//! to validate that the host's `match` on `TileKind` is
+//! exhaustive across more than one variant, and (when the tab-bar
+//! slice lands) to give the user a real connection-status surface.
 //!
 //! Reads the existing `ConnectionStatus` context (provided at
-//! App-root) and renders a tiny status panel. Deliberately minimal
-//! — the value isn't the UX, it's that having two concrete tile
-//! kinds proves the protocol shape can host more than one.
+//! App-root) and renders a tiny status panel.
 
 use crate::ConnectionStatus;
 use leptos::*;

@@ -1,35 +1,29 @@
-//! Terminal tile. Slice 9s.1 ships the placeholder shape: the
-//! component renders a "Signed in" stub with a blurb noting where
-//! the real terminal view lands. The component takes a
-//! `session_id: Option<String>` prop so the descriptor's typed
-//! props flow through, even though nothing is wired yet.
+//! Terminal tile placeholder. The real WS-attach + xterm rendering
+//! lands in a future slice; this version exists so the protocol
+//! has a concrete `Terminal` consumer and `<Main/>::SignedIn`
+//! has something to render through `<TileHost/>`.
 //!
-//! When the real terminal slice lands, this component grows the WS
-//! attach + xterm-style rendering. Everything outside this file
-//! (the layout signal, the host's match arm, the descriptor wire
-//! type) stays as-is — that's the value of getting the protocol
-//! shape right first.
+//! The component takes the `session_id` prop so the
+//! `TileKind::Terminal { session_id }` props flow through end-to-
+//! end. The real terminal slice replaces the body without changing
+//! the signature; everything outside this file (the layout signal,
+//! the host's match arm, the descriptor wire type) stays put.
 
 use leptos::*;
 
 #[component]
 pub fn TerminalTile(#[prop(into)] session_id: Option<String>) -> impl IntoView {
-    // Hold session_id in a derived computation so a future slice
-    // that switches on attached/unattached doesn't have to re-shape
-    // the component signature. Today both branches render the same
-    // stub copy — but having the branch present documents the shape.
-    let attached = session_id.is_some();
+    // `_session_id` is the prop the real terminal slice will read
+    // to drive WS attach. Bound (not destructured into `_`) so a
+    // grep for `session_id` in this file finds it; reading it via
+    // a `let _ =` keeps the compiler from warning about the unused
+    // variable today.
+    let _ = session_id;
 
     view! {
         <section id="kat-terminal-tile" data-tile-kind="terminal">
             <h1 class="title">"Signed in"</h1>
-            <p class="blurb">
-                {if attached {
-                    "Terminal view lands in a future slice — session attached."
-                } else {
-                    "Terminal view lands in a future slice."
-                }}
-            </p>
+            <p class="blurb">"Terminal view lands in a future slice."</p>
         </section>
     }
 }

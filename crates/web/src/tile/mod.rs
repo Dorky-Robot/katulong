@@ -10,11 +10,12 @@
 //!   (cursor position, scroll offset, etc.) lives inside the tile
 //!   component's own signal scope, not the layout atom.
 //!
-//! This slice (9s.1) lands the protocol foundation + two trivial
-//! tile kinds (`Status`, `Terminal` as a placeholder). Future slices
-//! add real tile renderers.
+//! Today the host renders only the focused tile and ships two trivial
+//! tile kinds (`Status` reading `ConnectionStatus`, `Terminal` as a
+//! placeholder). Future work adds real tile renderers (real terminal,
+//! Claude feed, file-browser, etc.) by extending `TileKind` and the
+//! host's match arm — the protocol shape stays put.
 
-pub mod layout;
 pub mod status;
 pub mod terminal;
 
@@ -24,28 +25,35 @@ use katulong_shared::wire::{TileKind, TileLayout};
 use leptos::*;
 
 /// The single state atom for the tile layout. Provided at App-root
-/// via `provide_context`; consumed by `<TileHost/>` and by dispatch
-/// helpers in `crate::tile::layout`.
+/// via `provide_context`; consumed by `<TileHost/>`.
 ///
-/// `RwSignal` rather than `(ReadSignal, WriteSignal)` because both
-/// the host and the dispatch helpers need to read and write — the
-/// dispatch helpers in particular often do read-modify-write
-/// sequences (e.g., `add_tile` checks if the tile already exists).
-/// Splitting the halves would force every dispatch site to thread
-/// both signals through context.
+/// `RwSignal` rather than `(ReadSignal, WriteSignal)` (the
+/// `AuthState` pattern) because both the host and the dispatch
+/// helpers need to read AND write — the dispatch helpers in
+/// particular do read-modify-write sequences (e.g., `add_tile`
+/// checks if the tile already exists). Splitting the halves
+/// would force every dispatch site to thread both signals
+/// through context, with no safety benefit.
+///
+/// Named-field struct (rather than a tuple struct) so future
+/// associated values (e.g., a `set_layout` reset path, an undo
+/// stack, dispatch helpers as methods) can land without touching
+/// every consumer. Mirrors `AuthState`'s shape.
 #[derive(Copy, Clone)]
-pub struct LayoutState(pub RwSignal<TileLayout>);
+pub struct LayoutState {
+    pub layout: RwSignal<TileLayout>,
+}
 
 /// The tile host. Reads the layout signal and renders the focused
 /// tile (if any) by matching on its kind.
 ///
-/// Slice 9s.1 renders only the focused tile — multi-tile layout
-/// (tab bar, side-by-side) lands in a separate slice. The match
-/// covers every `TileKind` variant exhaustively; adding a new kind
-/// without extending the host is a compile error.
+/// Renders only the focused tile today — multi-tile layout (tab bar,
+/// side-by-side) is a separate slice. The match covers every
+/// `TileKind` variant exhaustively; adding a new kind without
+/// extending the host is a compile error.
 #[component]
 pub fn TileHost() -> impl IntoView {
-    let LayoutState(layout) = expect_context::<LayoutState>();
+    let LayoutState { layout } = expect_context::<LayoutState>();
 
     // Computed: the focused tile's descriptor, or None if no tile is
     // focused (e.g., empty layout). Re-evaluates on layout changes.
