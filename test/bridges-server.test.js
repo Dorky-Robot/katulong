@@ -64,6 +64,25 @@ function startStubUpstream() {
         setTimeout(() => res.destroy(), 30);
         return;
       }
+      if (url.searchParams.get("status") === "sse-stream") {
+        // Continuously emits an SSE event every `intervalMs` (default 10ms)
+        // until the response closes. Used to catch the race where the
+        // bridge data handler must guard against `res` already being
+        // destroyed by a client-side abort.
+        const intervalMs = Number(url.searchParams.get("interval") || "10");
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        res.flushHeaders();
+        let n = 0;
+        const i = setInterval(() => {
+          if (res.writableEnded || res.destroyed) {
+            clearInterval(i);
+            return;
+          }
+          res.write(`data: ${n++}\n\n`);
+        }, intervalMs);
+        res.on("close", () => clearInterval(i));
+        return;
+      }
       if (url.searchParams.get("status") === "sse-cached") {
         // Upstream tries to set Cache-Control: public, max-age=60 on an
         // SSE response. Bridge must override to no-cache, no-store —
@@ -261,6 +280,68 @@ describe("bridge server", () => {
     probe.close();
   });
 
+  it("destroys the upstream connection when the client aborts mid-stream", async () => {
+    // Direct observation of the leak fix: spin up a private stub that
+    // counts how many chunks it has *sent*. After the bridge call, we
+    // sample the counter, abort the client, wait, then sample again.
+    // If the bridge correctly calls upstreamReq.destroy() on
+    // res.on('close'), the stub's response fires its own 'close' event
+    // and stops the chunk loop within one tick. The counter delta
+    // post-abort should be small (last in-flight chunk + close
+    // propagation). Without the fix, the stub keeps streaming for the
+    // full wait window — the counter delta will be 25–30+.
+    let chunkCount = 0;
+    const trackingStub = createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.flushHeaders();
+      const i = setInterval(() => {
+        if (res.writableEnded || res.destroyed) {
+          clearInterval(i);
+          return;
+        }
+        chunkCount++;
+        res.write(`data: ${chunkCount}\n\n`);
+      }, 8);
+      res.on("close", () => clearInterval(i));
+    });
+    await new Promise((r) => trackingStub.listen(0, "127.0.0.1", r));
+    const probe = await startBridgeServer({
+      port: 0,
+      bind: "127.0.0.1",
+      target: `http://127.0.0.1:${trackingStub.address().port}`,
+      token: TOKEN,
+      logger: () => {},
+      keepaliveMs: 50,
+    });
+
+    const ac = new AbortController();
+    const promise = fetch(
+      `http://127.0.0.1:${probe.address().port}/sse`,
+      { headers: { Authorization: `Bearer ${TOKEN}` }, signal: ac.signal },
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    ac.abort();
+    try {
+      await promise;
+    } catch (_e) {
+      /* expected */
+    }
+    const countAtAbort = chunkCount;
+    // Wait significantly longer than the 8ms tick — without the fix,
+    // 30 more chunks would arrive in this window. With the fix, the
+    // stub's res.on('close') fires within 1–2 ticks of abort and the
+    // counter freezes.
+    await new Promise((r) => setTimeout(r, 250));
+    const delta = chunkCount - countAtAbort;
+    assert.ok(
+      delta <= 5,
+      `upstream not torn down on client abort: stub sent ${delta} more chunks after client gave up (countAtAbort=${countAtAbort}, finalCount=${chunkCount})`,
+    );
+
+    probe.close();
+    trackingStub.close();
+  });
+
   it("forces no-cache, no-store on SSE responses, overriding upstream Cache-Control", async () => {
     const res = await fetch(
       `http://127.0.0.1:${bridgePort}/api/sse?status=sse-cached`,
@@ -334,17 +415,25 @@ describe("bridge server", () => {
       logger: () => {},
       keepaliveMs: NaN,
     });
-    const t0 = Date.now();
     const res = await fetch(
       `http://127.0.0.1:${probe.address().port}/api/sse?status=sse-silent&ms=80`,
       { headers: { Authorization: `Bearer ${TOKEN}` } },
     );
     assert.equal(res.status, 200);
     assert.equal(res.headers.get("content-type"), "text/event-stream");
-    await res.text();
-    // A clamp regression would either throw or produce sub-ms ticks that
-    // CPU-burn for the duration of the request. 2s is generous.
-    assert.ok(Date.now() - t0 < 2000, "SSE response took too long with NaN keepaliveMs");
+    const body = await res.text();
+    // The response body distinguishes clamped vs. unclamped behavior:
+    //   - With the clamp: keepaliveMs = 15000ms default. 80ms upstream
+    //     silence is way under threshold → 0 keepalive frames written.
+    //   - Without the clamp: setInterval(fn, NaN) → 1ms ticks. The
+    //     threshold check `Date.now() - lastByteAt < NaN` is always
+    //     false → keepalive frame written on every tick → ~80 frames.
+    // Anything above a small handful indicates the clamp was bypassed.
+    const keepaliveCount = (body.match(/:\s*keepalive/g) || []).length;
+    assert.ok(
+      keepaliveCount < 5,
+      `clamp regression: expected <5 keepalive frames in 80ms, got ${keepaliveCount}`,
+    );
     probe.close();
   });
 
