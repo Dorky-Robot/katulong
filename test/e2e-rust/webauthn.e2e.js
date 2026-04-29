@@ -97,7 +97,14 @@ test.describe("Register UI (first-device)", () => {
     // Successful registration: the WASM flips
     // `AuthPhase::SignedIn`, `<Main/>` swaps to the
     // post-auth view.
-    await expect(page.getByText(/signed in/i)).toBeVisible({
+    // Post-auth view: `<TileHost/>` renders the focused tile,
+    // which in the bootstrap-default layout is the terminal.
+    // We assert the tile element is visible rather than a
+    // specific copy string — the UI text changed when 9s.3
+    // replaced the "Signed in" placeholder with the real
+    // terminal, but the behaviour ("user reaches the post-
+    // auth view after a successful ceremony") is the contract.
+    await expect(page.locator('[data-tile-kind="terminal"]')).toBeVisible({
       timeout: 10_000,
     });
 
@@ -203,7 +210,14 @@ test.describe.serial("WebAuthn UI happy paths", () => {
     // post-auth view replaces the login form. We don't
     // poke at internal data-attrs; we look for what a user
     // would see.
-    await expect(page.getByText(/signed in/i)).toBeVisible({
+    // Post-auth view: `<TileHost/>` renders the focused tile,
+    // which in the bootstrap-default layout is the terminal.
+    // We assert the tile element is visible rather than a
+    // specific copy string — the UI text changed when 9s.3
+    // replaced the "Signed in" placeholder with the real
+    // terminal, but the behaviour ("user reaches the post-
+    // auth view after a successful ceremony") is the contract.
+    await expect(page.locator('[data-tile-kind="terminal"]')).toBeVisible({
       timeout: 10_000,
     });
     await expect(
@@ -241,7 +255,14 @@ test.describe.serial("WebAuthn UI happy paths", () => {
 
     await page.getByRole("button", { name: /pair with passkey/i }).click();
 
-    await expect(page.getByText(/signed in/i)).toBeVisible({
+    // Post-auth view: `<TileHost/>` renders the focused tile,
+    // which in the bootstrap-default layout is the terminal.
+    // We assert the tile element is visible rather than a
+    // specific copy string — the UI text changed when 9s.3
+    // replaced the "Signed in" placeholder with the real
+    // terminal, but the behaviour ("user reaches the post-
+    // auth view after a successful ceremony") is the contract.
+    await expect(page.locator('[data-tile-kind="terminal"]')).toBeVisible({
       timeout: 10_000,
     });
     await expect(
@@ -288,7 +309,14 @@ test.describe.serial("WebAuthn UI happy paths", () => {
     // First load: the probe resolves to authenticated=true
     // and the post-auth view renders without the user
     // touching anything.
-    await expect(page.getByText(/signed in/i)).toBeVisible({
+    // Post-auth view: `<TileHost/>` renders the focused tile,
+    // which in the bootstrap-default layout is the terminal.
+    // We assert the tile element is visible rather than a
+    // specific copy string — the UI text changed when 9s.3
+    // replaced the "Signed in" placeholder with the real
+    // terminal, but the behaviour ("user reaches the post-
+    // auth view after a successful ceremony") is the contract.
+    await expect(page.locator('[data-tile-kind="terminal"]')).toBeVisible({
       timeout: 10_000,
     });
     await expect(
@@ -311,10 +339,33 @@ test.describe.serial("WebAuthn UI happy paths", () => {
       { timeout: 5_000 },
     );
 
+    // Slice 9s.3 contract: TerminalTile mounts → sends
+    // ClientMessage::Attach over the platform WsClient → server
+    // creates / attaches to the tmux session "main" → PTY emits
+    // a shell prompt → server forwards `Output` frames → WASM
+    // dispatches to the TerminalTile's subscriber → buffer
+    // accumulates → `<pre.terminal-output>` renders the bytes.
+    //
+    // Observable signal: the terminal-output element gains
+    // non-empty text within a few seconds of attach. We don't
+    // assert specific shell-prompt copy because the shell varies
+    // by environment (bash, zsh, sh — different prompt
+    // conventions); just that bytes flowed end-to-end.
+    await expect(page.locator(".terminal-output")).not.toBeEmpty({
+      timeout: 10_000,
+    });
+
     // Reload: same cookie, fresh WASM mount, fresh probe.
     // Same outcome — never flash through the login form.
     await page.reload();
-    await expect(page.getByText(/signed in/i)).toBeVisible({
+    // Post-auth view: `<TileHost/>` renders the focused tile,
+    // which in the bootstrap-default layout is the terminal.
+    // We assert the tile element is visible rather than a
+    // specific copy string — the UI text changed when 9s.3
+    // replaced the "Signed in" placeholder with the real
+    // terminal, but the behaviour ("user reaches the post-
+    // auth view after a successful ceremony") is the contract.
+    await expect(page.locator('[data-tile-kind="terminal"]')).toBeVisible({
       timeout: 10_000,
     });
     await expect(
