@@ -121,12 +121,37 @@ export function createTerminalStatusBar() {
 
     /**
      * Accept a status event from SessionStatusWatcher. The `status` field
-     * mirrors the server's /status payload, which now includes `pane` and
-     * (when an agent is detected) `meta.agent`.
+     * mirrors the server's /status payload, which includes `pane` and
+     * (when an agent is detected) `agent`.
+     *
+     * `pane` is sticky, `agent` is not — they have different server-side
+     * lifecycles and the client must mirror them.
+     *
+     * pane (sticky): the route emits `pane: meta.pane || null`, and the
+     * server-side reconcilers (reconcilePaneCwd / reconcilePaneGit in
+     * lib/session-child-counter.js) only ever MERGE into meta.pane via
+     * spread — nothing in the codebase sets it back to null after
+     * population. So a null payload always means "monitor hasn't ticked
+     * yet" (notably immediately after the binary swap inside `katulong
+     * update`), not "this session genuinely has no pane." Skipping the
+     * null assignment preserves the last-known cwd/branch through the
+     * cold-start window and removes the ~5–10s pill-bar flicker on every
+     * release.
+     *
+     * agent (NOT sticky): reconcileAgentPresence explicitly calls
+     * setMeta("agent", null) when the foreground command is no longer a
+     * recognized agent (Claude exited, etc.). That null is a real "agent
+     * gone" signal — skipping it would leave the robot pill stuck on
+     * indefinitely after the agent quits. The `!== undefined` guard
+     * accepts null (the explicit clear) while keeping forward-compat for
+     * a server that omits the key entirely.
+     *
+     * `!= null` on pane catches both null and undefined, matching the
+     * forward-compat intent for the omitted-key case there too.
      */
     updateFromStatus(status) {
       if (!status) return;
-      if (status.pane !== undefined) state.pane = status.pane;
+      if (status.pane != null) state.pane = status.pane;
       if (status.agent !== undefined) state.agent = status.agent;
       render();
     },
