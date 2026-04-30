@@ -911,6 +911,137 @@ describe("ConfigManager", () => {
     });
   });
 
+  describe("sipagUrl", () => {
+    beforeEach(() => {
+      configManager.initialize();
+    });
+
+    it("defaults to null", () => {
+      assert.strictEqual(configManager.getSipagUrl(), null);
+    });
+
+    it("accepts a valid https URL", async () => {
+      await configManager.setSipagUrl("https://sipag.felixflor.es");
+      assert.strictEqual(configManager.getSipagUrl(), "https://sipag.felixflor.es");
+    });
+
+    it("accepts http (for localhost / LAN setups)", async () => {
+      await configManager.setSipagUrl("http://192.168.1.5:7100");
+      assert.strictEqual(configManager.getSipagUrl(), "http://192.168.1.5:7100");
+    });
+
+    it("strips trailing slashes on absolute URLs", async () => {
+      await configManager.setSipagUrl("https://sipag.felixflor.es///");
+      assert.strictEqual(configManager.getSipagUrl(), "https://sipag.felixflor.es");
+    });
+
+    it("accepts a relative reverse-proxy path", async () => {
+      await configManager.setSipagUrl("/_proxy/7100/");
+      assert.strictEqual(configManager.getSipagUrl(), "/_proxy/7100/");
+    });
+
+    it("keeps trailing slash on relative paths (intentional asymmetry — paths are routed verbatim)", async () => {
+      await configManager.setSipagUrl("/_proxy/7100/");
+      assert.strictEqual(configManager.getSipagUrl(), "/_proxy/7100/");
+      // Without the slash, katulong's reverse proxy may interpret it
+      // differently. Document the asymmetry vs. absolute URLs.
+    });
+
+    it("clears with null", async () => {
+      await configManager.setSipagUrl("https://sipag.felixflor.es");
+      await configManager.setSipagUrl(null);
+      assert.strictEqual(configManager.getSipagUrl(), null);
+    });
+
+    it("clears with empty string", async () => {
+      await configManager.setSipagUrl("https://sipag.felixflor.es");
+      await configManager.setSipagUrl("");
+      assert.strictEqual(configManager.getSipagUrl(), null);
+    });
+
+    it("clears with whitespace-only string", async () => {
+      await configManager.setSipagUrl("https://sipag.felixflor.es");
+      await configManager.setSipagUrl("   ");
+      assert.strictEqual(configManager.getSipagUrl(), null);
+    });
+
+    it("rejects malformed URLs", async () => {
+      await assert.rejects(
+        async () => configManager.setSipagUrl("not a url"),
+        /valid URL or path/,
+      );
+    });
+
+    it("rejects non-http(s) protocols", async () => {
+      await assert.rejects(
+        async () => configManager.setSipagUrl("ftp://nope"),
+        /must use http or https/,
+      );
+    });
+
+    it("rejects URLs with embedded credentials", async () => {
+      await assert.rejects(
+        async () => configManager.setSipagUrl("https://user:pw@sipag.felixflor.es"),
+        /must not contain credentials/,
+      );
+    });
+
+    it("rejects relative paths containing ..", async () => {
+      await assert.rejects(
+        async () => configManager.setSipagUrl("/foo/../bar"),
+        /must not contain \.\./,
+      );
+      await assert.rejects(
+        async () => configManager.setSipagUrl("/.."),
+        /must not contain \.\./,
+      );
+    });
+
+    it("rejects protocol-relative URLs (//host/path)", async () => {
+      // Without this guard, //evil.example/foo would slip past the
+      // relative-path branch and become a cross-origin iframe src.
+      await assert.rejects(
+        async () => configManager.setSipagUrl("//evil.example/foo"),
+        /protocol-relative/,
+      );
+    });
+
+    it("rejects relative paths longer than 2048 chars", async () => {
+      await assert.rejects(
+        async () => configManager.setSipagUrl("/" + "a".repeat(2050)),
+        /2048 characters or less/,
+      );
+    });
+
+    it("rejects absolute URLs longer than 2048 chars", async () => {
+      // Symmetry with the relative-path length cap. A 10MB "valid"
+      // https URL would otherwise sail past `new URL()` parsing.
+      const long = "https://x.example/" + "a".repeat(2050);
+      await assert.rejects(
+        async () => configManager.setSipagUrl(long),
+        /2048 characters or less/,
+      );
+    });
+
+    it("rejects relative paths with control characters", async () => {
+      await assert.rejects(
+        async () => configManager.setSipagUrl("/foo\u0000bar"),
+        /control characters/,
+      );
+      await assert.rejects(
+        async () => configManager.setSipagUrl("/foo\nbar"),
+        /control characters/,
+      );
+    });
+
+    it("persists across reload", async () => {
+      await configManager.setSipagUrl("/_proxy/7100/");
+      const reloaded = new ConfigManager(testDir);
+      reloaded.initialize();
+      assert.strictEqual(reloaded.getSipagUrl(), "/_proxy/7100/");
+    });
+  });
+
   describe("ollamaPeerToken", () => {
     beforeEach(() => {
       configManager.initialize();

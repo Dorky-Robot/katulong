@@ -42,6 +42,16 @@ function loadMermaid() {
         // the markdown pipeline.
         securityLevel: "strict",
         fontFamily: "var(--font-sans, -apple-system, BlinkMacSystemFont, sans-serif)",
+        // Force SVG <text> labels for flowcharts. Mermaid's default uses
+        // <foreignObject> with embedded HTML, which our outer DOMPurify
+        // sanitize() strips (foreignObject is an HTML-injection vector
+        // and not in DOMPurify's `svg` profile allowlist). Without this,
+        // flowchart node text disappears silently — boxes render but
+        // labels are blank. Sequence diagrams use SVG <text> directly so
+        // they were never affected. We trade rich HTML labels for
+        // labels-that-actually-render; mermaid auto-wraps so the loss
+        // is minor.
+        flowchart: { htmlLabels: false },
       });
       resolve(m);
     };

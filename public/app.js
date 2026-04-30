@@ -1500,6 +1500,7 @@
         { type: "terminal",     name: "Terminal", icon: "terminal-window" },
         { type: "feed",          name: "Feed",     icon: "rss" },
         { type: "localhost-browser", name: "Browser", icon: "globe-simple" },
+        { type: "sipag",             name: "sipag",   icon: "list-checks" },
       ],
       onCreateTile: (type) => {
         if (type === "terminal") {
@@ -1512,6 +1513,8 @@
           openAgentFeedTile();
         } else if (type === "localhost-browser") {
           openLocalhostBrowserTile();
+        } else if (type === "sipag") {
+          openSipagTile();
         }
       },
       onTabClick: (name) => {
@@ -1738,7 +1741,19 @@
           action: "adopt",
         }));
 
-      const items = [...openTiles, ...closedManaged, ...tmuxItems];
+      // "New X" actions appear in the picker so the same fuzzy search
+      // that finds existing tiles can also create one. Mirrors the
+      // tileTypes list used by the shortcut-bar add menu — single
+      // source of truth lives in commandActions.createTile below, so
+      // both code paths dispatch to the same factories.
+      const newTileItems = [
+        { id: "new:terminal",          label: "New Terminal", kind: "new", action: "create:terminal" },
+        { id: "new:feed",              label: "New Feed",     kind: "new", action: "create:feed" },
+        { id: "new:localhost-browser", label: "New Browser",  kind: "new", action: "create:localhost-browser" },
+        { id: "new:sipag",             label: "New sipag",    kind: "new", action: "create:sipag" },
+      ];
+
+      const items = [...newTileItems, ...openTiles, ...closedManaged, ...tmuxItems];
 
       window.removeEventListener("keydown", onEscape, true);
       if (cancelled) return;
@@ -1747,6 +1762,10 @@
         items,
         placeholder: "Go to tile or session…",
         onPick: async (item) => {
+          if (item.action && item.action.startsWith("create:")) {
+            commandActions.createTile(item.action.slice("create:".length));
+            return;
+          }
           if (item.action === "focus") {
             uiStore.focusTile(item.id);
           } else if (item.action === "route") {
@@ -1777,6 +1796,8 @@
         else if (type === "file-browser") openFileBrowserTile();
         else if (type === "feed") openAgentFeedTile();
         else if (type === "localhost-browser") openLocalhostBrowserTile();
+        else if (type === "sipag") openSipagTile();
+        else console.warn(`createTile: unknown tile type ${JSON.stringify(type)}`);
       },
       showHelp: () => toggleKeyboardHelp(),
     };
@@ -2165,6 +2186,17 @@
       const tileId = `lb-${Date.now().toString(36)}`;
       uiStore.addTile(
         { id: tileId, type: "localhost-browser", props: {} },
+        { focus: true, insertAt: "afterFocus" },
+      );
+      if (isOverlayViewport()) setOverlaySidebar(false);
+    }
+
+    // --- Sipag (tile) ---
+
+    function openSipagTile() {
+      const tileId = `sipag-${Date.now().toString(36)}`;
+      uiStore.addTile(
+        { id: tileId, type: "sipag", props: {} },
         { focus: true, insertAt: "afterFocus" },
       );
       if (isOverlayViewport()) setOverlaySidebar(false);
