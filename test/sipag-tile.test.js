@@ -71,8 +71,18 @@ class FakeElement {
   }
 }
 
+// Track iframe creation so the unmount-before-fetch test can assert
+// the `mounted` guard actually skipped iframe construction. Without
+// this spy the test could pass for the wrong reason: connect() appends
+// to a closure-captured `content` element that was orphaned by
+// unmount(), so `el.children.length === 0` is true regardless of the
+// guard. Counting iframe-creation tags the actual code path.
+let iframesCreated = 0;
 globalThis.document = {
-  createElement(tag) { return new FakeElement(tag); },
+  createElement(tag) {
+    if (tag === "iframe") iframesCreated += 1;
+    return new FakeElement(tag);
+  },
   querySelector() { return null; },
 };
 globalThis.window = { open() {} };
@@ -168,7 +178,15 @@ describe("sipagRenderer.mount", () => {
     handle.unmount();
   });
 
-  it("does NOT mount an iframe if unmounted before fetch resolves", async () => {
+  it("does NOT create an iframe if unmounted before fetch resolves", async () => {
+    // Snapshot the iframe-creation counter before this test, then
+    // assert it didn't increment. We CAN'T just check
+    // `el.children.length` because connect()'s appendChild target is a
+    // closure-captured `content` element that unmount() orphaned —
+    // the assertion would pass whether or not the `mounted` guard
+    // exists. Counting iframe creations is a direct probe of the
+    // guard's effect.
+    const iframesBefore = iframesCreated;
     let release;
     apiGetImpl = () => new Promise((r) => { release = r; });
     const { el, api } = makeMountArgs();
@@ -177,9 +195,12 @@ describe("sipagRenderer.mount", () => {
     release({ config: { sipagUrl: "https://late.example/" } });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    // unmount() clears el.innerHTML — children must remain empty even
-    // after the late `.then()` ran on the resolved fetch.
-    assert.equal(el.children.length, 0, "no late iframe append after unmount");
+    assert.equal(
+      iframesCreated,
+      iframesBefore,
+      "connect() should NOT have run — `mounted` guard must skip it",
+    );
+    assert.equal(el.children.length, 0, "unmount cleared the el subtree");
   });
 
   it("sets the iframe sandbox with allow-top-navigation-by-user-activation", () => {

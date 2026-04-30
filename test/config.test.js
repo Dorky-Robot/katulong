@@ -1013,6 +1013,16 @@ describe("ConfigManager", () => {
       );
     });
 
+    it("rejects absolute URLs longer than 2048 chars", async () => {
+      // Symmetry with the relative-path length cap. A 10MB "valid"
+      // https URL would otherwise sail past `new URL()` parsing.
+      const long = "https://x.example/" + "a".repeat(2050);
+      await assert.rejects(
+        async () => configManager.setSipagUrl(long),
+        /2048 characters or less/,
+      );
+    });
+
     it("rejects relative paths with control characters", async () => {
       await assert.rejects(
         async () => configManager.setSipagUrl("/foo\u0000bar"),
