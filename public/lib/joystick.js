@@ -61,6 +61,9 @@ export function createJoystickManager(options = {}) {
     dotEl = document.createElement("div");
     dotEl.className = "joystick-dot";
     dotEl.id = "joystick-connection-dot";
+    dotEl.setAttribute("role", "button");
+    dotEl.setAttribute("tabindex", "0");
+    dotEl.setAttribute("aria-label", "Connection status — tap for instance host");
     island.appendChild(dotEl);
 
     joystick.appendChild(island);

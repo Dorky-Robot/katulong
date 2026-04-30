@@ -2581,6 +2581,20 @@
       connTooltip.id = "connection-tooltip";
       document.body.appendChild(connTooltip);
     }
+    // Tooltip has two lines: state on top, host underneath. The host
+    // disambiguates which katulong instance you're on — mobile PWA hides the
+    // browser address bar, and the sidebar instance label is hidden in the
+    // collapsed/mobile sidebar (index.html line ~1629). Using
+    // window.location.host (not hostname) so a non-default port also shows.
+    connTooltip.replaceChildren();
+    const connTooltipState = document.createElement("span");
+    connTooltipState.className = "connection-tooltip-state";
+    const connTooltipHost = document.createElement("span");
+    connTooltipHost.className = "connection-tooltip-host";
+    connTooltipHost.textContent = window.location.host || "";
+    connTooltip.appendChild(connTooltipState);
+    if (connTooltipHost.textContent) connTooltip.appendChild(connTooltipHost);
+
     const dotIds = ["sidebar-connection-dot", "joystick-connection-dot"];
     let connTooltipText = "Disconnected";
 
@@ -2590,7 +2604,7 @@
     const wiredDots = new Set();
     function showTooltipAt(dot) {
       const r = dot.getBoundingClientRect();
-      connTooltip.textContent = connTooltipText;
+      connTooltipState.textContent = connTooltipText;
       connTooltip.style.left = `${r.left + r.width / 2}px`;
       connTooltip.style.top = `${r.top - 4}px`;
       connTooltip.style.transform = "translate(-50%, -100%)";
@@ -2646,7 +2660,7 @@
 
       // Update tooltip text live if it's currently visible
       if (connTooltip.classList.contains("visible")) {
-        connTooltip.textContent = connTooltipText;
+        connTooltipState.textContent = connTooltipText;
       }
 
       const overlay = document.getElementById("disconnect-overlay");
