@@ -44,12 +44,13 @@ web-sys = { version = "0.3", features = [
 # (challenge / rawId / signature) base64url ↔ Uint8Array
 # conversion.
 webauthn-rs-proto = { version = "0.5", features = ["wasm"] }
-# WASM-friendly fetch wrapper. `gloo-net` is the de-facto
-# choice for Leptos apps that need plain JSON HTTP — small,
-# well-tested, builds on web-sys's Fetch API. The `http`
-# feature is the only one we need; `websocket` lands later
-# alongside the terminal slice.
-gloo-net = { version = "0.6", default-features = false, features = ["http"] }
+# WASM-friendly fetch + WebSocket wrapper. `gloo-net`'s
+# `websocket::futures::WebSocket` adapts the browser
+# WebSocket API into a `Stream + Sink` pair so the WS
+# client can `.next().await` inbound frames and `.send().await`
+# outbound — no manual onmessage callbacks. The `http`
+# feature stays for the auth-ceremony fetch layer.
+gloo-net = { version = "0.6", default-features = false, features = ["http", "websocket"] }
 # Async glue: `JsFuture::from(promise).await` for
 # `navigator.credentials.get(...)`.
 wasm-bindgen = "0.2"
@@ -61,3 +62,22 @@ js-sys = "0.3"
 # we don't list it here because no code in this crate calls
 # `serde_json::` directly. If a future slice does, add it back.
 serde = { version = "1", features = ["derive"] }
+# CBOR codec for the session-layer WS protocol.
+# `katulong_shared::wire::{ClientMessage, ServerMessage}` carry
+# `#[serde(with = "serde_bytes")]` annotations that produce
+# CBOR major-type-2 byte strings — same library on both sides
+# of the wire keeps the byte-payload encoding symmetric.
+ciborium = "0.2"
+# `Stream::next().await` on the gloo-net WebSocket adapter.
+# `default-features = false` avoids pulling in a default
+# executor — Leptos's `spawn_local` is the WASM executor we
+# already use.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# `mpsc::unbounded` for the tile-to-WS-task send channel. The
+# `WsClient` context exposes the sender so any tile can call
+# `ws.send(ClientMessage::...)`; the lifecycle task owns the
+# receiver and drains it in a dedicated send-loop task (paired
+# with a separate receive-loop task draining the WS stream).
+# See `ws::run_connection` for the rationale on the two-task
+# split vs. `futures::select!`.
+futures-channel = { version = "0.3", default-features = false, features = ["std"] }

@@ -29,6 +29,7 @@ use wasm_bindgen_futures::spawn_local;
 
 mod login;
 mod tile;
+mod ws;
 use login::{Login, Register};
 use tile::{LayoutState, TileHost};
 
@@ -37,11 +38,22 @@ fn main() {
     mount_to_body(|| view! { <App/> });
 }
 
-/// Reactive connection-state signal exposed to descendants
-/// via context. `false` until a future slice wires the WS
-/// attach handshake to flip it.
+/// Reactive connection-state signal exposed to descendants via
+/// context. `false` until the WS handshake completes; flips to
+/// `true` after the client has sent `HelloAck` and back to
+/// `false` on disconnect. The setter is exposed so the WS
+/// client (lifecycle owner) can write through; readers (Header
+/// status indicator, StatusTile, future tiles) only need the
+/// reader.
+///
+/// Named-field shape mirrors `AuthState` so callers see a
+/// consistent context shape across the platform's two
+/// reactive primitives.
 #[derive(Copy, Clone)]
-struct ConnectionStatus(ReadSignal<bool>);
+pub struct ConnectionStatus {
+    pub connected: ReadSignal<bool>,
+    pub set_connected: WriteSignal<bool>,
+}
 
 /// Phases of the auth state machine driving `<Main/>`'s
 /// view selection.
@@ -107,14 +119,16 @@ async fn probe_auth_status() -> Result<AuthStatusResponse, String> {
 #[component]
 fn App() -> impl IntoView {
     // Connection signal lives at the root so any descendant
-    // can read it without prop-drilling. The setter half is
-    // discarded for now — only future slices that own the WS
-    // lifecycle will need it, and they'll re-create the
-    // signal at a more appropriate scope (e.g., inside the
-    // WS-driving component) rather than mutating shared state
-    // from anywhere.
-    let (connected, _set_connected) = create_signal(false);
-    provide_context(ConnectionStatus(connected));
+    // can read it without prop-drilling. The WS lifecycle owner
+    // (`crate::ws::install`, called below after `AuthState` is
+    // provided) writes the setter as the connection comes up
+    // and goes down.
+    let (connected, set_connected) = create_signal(false);
+    let connection_status = ConnectionStatus {
+        connected,
+        set_connected,
+    };
+    provide_context(connection_status);
 
     // Auth signal lives at the root because three places
     // need to write: the probe-on-mount below, `<Login/>`'s
@@ -122,7 +136,15 @@ fn App() -> impl IntoView {
     // `Restoring` — `<Main/>` renders the restoring view in
     // this state.
     let (phase, set_phase) = create_signal(AuthPhase::Restoring);
-    provide_context(AuthState { phase, set_phase });
+    let auth_state = AuthState { phase, set_phase };
+    provide_context(auth_state);
+
+    // WS platform primitive — connects on `SignedIn`, runs the
+    // protocol handshake, drives `ConnectionStatus.connected`.
+    // Lives at App root so every tile (current and future)
+    // sees the same connection. See `crate::ws` for the
+    // platform-vs-tile-feature framing.
+    ws::spawn_lifecycle(auth_state, connection_status);
 
     // Tile layout — the single state atom for what's rendered
     // in the post-auth view. Empty until the user signs in;
@@ -198,7 +220,7 @@ fn App() -> impl IntoView {
 
 #[component]
 fn Header() -> impl IntoView {
-    let ConnectionStatus(connected) = expect_context();
+    let ConnectionStatus { connected, .. } = expect_context();
     // Single derived view of the connection bool — used both
     // for the `data-status` attribute (CSS dot color hook)
     // and the visible label. Two separate closures would

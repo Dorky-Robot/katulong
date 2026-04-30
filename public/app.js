@@ -1032,7 +1032,6 @@
         const anchorIdx = activeName ? priorTabs.indexOf(activeName) : -1;
         routeToSession(data.name);
         windowTabSet.addTab(data.name, anchorIdx >= 0 ? anchorIdx + 1 : undefined);
-        cm.reconnectNow();
       } catch (err) {
         console.error("Failed to create session:", err);
         showToast(`Failed to create session: ${err.message}`);

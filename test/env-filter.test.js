@@ -16,6 +16,15 @@ describe("SENSITIVE_ENV_VARS", () => {
     assert.ok(SENSITIVE_ENV_VARS.has("TMUX_PANE"));
     assert.ok(SENSITIVE_ENV_VARS.has("TMUX_TMPDIR"));
   });
+
+  // The daemon exports KATULONG_DATA_DIR and KATULONG_TMUX_SOCKET so its
+  // own subprocesses know where to read/write. If a PTY shell inherited
+  // those, running `npm test` from a katulong tile would point the test
+  // harness at the live data dir and live tmux server.
+  it("contains KATULONG_DATA_DIR and KATULONG_TMUX_SOCKET", () => {
+    assert.ok(SENSITIVE_ENV_VARS.has("KATULONG_DATA_DIR"));
+    assert.ok(SENSITIVE_ENV_VARS.has("KATULONG_TMUX_SOCKET"));
+  });
 });
 
 describe("getSafeEnv", () => {
@@ -105,5 +114,15 @@ describe("getSafeEnv", () => {
   it("filters TMUX_TMPDIR from the returned environment", () => {
     process.env.TMUX_TMPDIR = "/private/tmp";
     assert.ok(!("TMUX_TMPDIR" in getSafeEnv()));
+  });
+
+  it("filters KATULONG_DATA_DIR from the returned environment", () => {
+    process.env.KATULONG_DATA_DIR = "/Users/felixflores/.katulong";
+    assert.ok(!("KATULONG_DATA_DIR" in getSafeEnv()));
+  });
+
+  it("filters KATULONG_TMUX_SOCKET from the returned environment", () => {
+    process.env.KATULONG_TMUX_SOCKET = "katulong";
+    assert.ok(!("KATULONG_TMUX_SOCKET" in getSafeEnv()));
   });
 });

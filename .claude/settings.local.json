@@ -59,7 +59,14 @@
       "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage stop *)",
       "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-stage list *)",
       "Bash(gh auth *)",
-      "WebFetch(domain:app.unpkg.com)"
+      "WebFetch(domain:app.unpkg.com)",
+      "Bash(bin/katulong-stage list *)",
+      "Bash(ssh 2019 *)",
+      "Bash(ssh 2024 *)",
+      "Bash(ssh cloudflare-mac2019 *)",
+      "Bash(ssh cloudflare-mac2024 *)",
+      "Bash(command -v jq)",
+      "Bash(bash -n bin/katulong-mesh-update)"
     ]
   }
 }

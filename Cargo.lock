@@ -1065,7 +1065,9 @@ dependencies = [
 name = "katulong-shared"
 version = "0.1.0"
 dependencies = [
+ "ciborium",
  "serde",
+ "serde_bytes",
  "serde_json",
  "webauthn-rs-proto",
 ]
@@ -1074,7 +1076,10 @@ dependencies = [
 name = "katulong-web"
 version = "0.1.0"
 dependencies = [
+ "ciborium",
  "console_error_panic_hook",
+ "futures-channel",
+ "futures-util",
  "gloo-net",
  "js-sys",
  "katulong-shared",

@@ -186,12 +186,24 @@ body {
  * SignedIn arm of `<Main/>`. Rules are scoped to the
  * `data-tile-kind` attribute so adding a new tile kind
  * inherits the chrome without per-kind CSS. */
+/* Tile chrome: shared base + per-kind overrides.
+ *
+ * The base rule applies to ANY element carrying
+ * `data-tile-kind="..."`. New tile kinds added in future
+ * slices inherit the flex column / fg color baseline
+ * automatically and override only what they need (terminal
+ * goes full-width, status stays narrow, future tiles pick
+ * their own).
+ *
+ * Title / blurb default styles live under the base too —
+ * `.title` is 22px/600 by default; the terminal narrows it
+ * down to 13px/500 because the heading sits above a
+ * monospace panel where a heavy serif title would visually
+ * compete.
+ */
 [data-tile-kind] {
-  max-width: 360px;
-  margin: 64px auto 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
   color: var(--kat-fg);
 }
 
@@ -205,4 +217,43 @@ body {
   margin: 0;
   color: var(--kat-fg-dim);
   font-size: 13px;
+}
+
+/* Status tile — narrow centered chrome, the auth/connection
+ * status indicator. Slice 9s.1 origin. */
+[data-tile-kind="status"] {
+  max-width: 360px;
+  margin: 64px auto 0;
+  gap: 12px;
+}
+
+/* Terminal tile — slice 9s.3 lands the WS-driven byte stream;
+ * 9s.4 swaps `<pre>` for an xterm-mounted div. Full-width
+ * chrome, monospace dark panel. */
+[data-tile-kind="terminal"] {
+  margin: 16px;
+  gap: 8px;
+}
+
+[data-tile-kind="terminal"] .title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--kat-fg-dim);
+}
+
+[data-tile-kind="terminal"] .terminal-output {
+  margin: 0;
+  padding: 12px 14px;
+  background: #0c0c10;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  color: #d4d4d4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 360px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
 }
