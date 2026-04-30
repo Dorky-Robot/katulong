@@ -1798,6 +1798,7 @@
         else if (type === "feed") openAgentFeedTile();
         else if (type === "localhost-browser") openLocalhostBrowserTile();
         else if (type === "sipag") openSipagTile();
+        else console.warn(`createTile: unknown tile type ${JSON.stringify(type)}`);
       },
       showHelp: () => toggleKeyboardHelp(),
     };

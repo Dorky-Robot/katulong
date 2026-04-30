@@ -21,12 +21,18 @@
  *  3. Future hooks for richer integration (notification badges from
  *     sipag's pubsub, status-bar element, etc.) live naturally here.
  *
+ * Forward-looking note: this renderer is expected to fold into the
+ * `remote-tile` shape described in `docs/cross-instance-tiles.md`
+ * once that lands. Until then it lives as its own type so the
+ * sipag-specific UX is tractable; when `remote-tile` ships, this
+ * becomes a configured `remote-tile` for `kind: "sipag-ui"` and
+ * the bespoke renderer goes away.
+ *
  * Props:  { url?: string }   — per-tile override of the configured URL.
  * Persistence: always (the URL is resolvable without user input).
  */
 
-import { escapeAttr } from "../utils.js";
-import { api } from "/lib/api-client.js";
+import { api } from "../api-client.js";
 
 // Last-resort fallback when neither tile props nor katulong config has
 // a sipagUrl set. Matches the most common deployment shape: sipag
@@ -63,19 +69,37 @@ export const sipagRenderer = {
 
     const toolbar = document.createElement("div");
     toolbar.className = "lb-tile-toolbar sipag-tile-toolbar";
-    toolbar.innerHTML = `
-      <div class="lb-tile-toolbar-form sipag-tile-toolbar-form">
-        <span class="sipag-tile-url" data-role="url">…</span>
-      </div>
-      <div class="lb-tile-toolbar-actions">
-        <button class="lb-tile-btn lb-tile-refresh-btn" aria-label="Refresh">
-          <i class="ph ph-arrow-clockwise"></i>
-        </button>
-        <button class="lb-tile-btn lb-tile-open-btn" aria-label="Open in new tab">
-          <i class="ph ph-arrow-square-out"></i>
-        </button>
-      </div>
-    `;
+    // Build toolbar via createElement (no innerHTML) so tile tests can
+    // querySelector the controls without re-implementing an HTML parser
+    // in the test FakeElement, AND so accidental future template-string
+    // injection of user input becomes impossible.
+    const toolbarForm = document.createElement("div");
+    toolbarForm.className = "lb-tile-toolbar-form sipag-tile-toolbar-form";
+    const urlLabel = document.createElement("span");
+    urlLabel.className = "sipag-tile-url";
+    urlLabel.setAttribute("data-role", "url");
+    urlLabel.textContent = "…";
+    toolbarForm.appendChild(urlLabel);
+
+    const toolbarActions = document.createElement("div");
+    toolbarActions.className = "lb-tile-toolbar-actions";
+    const refreshBtn = document.createElement("button");
+    refreshBtn.className = "lb-tile-btn lb-tile-refresh-btn";
+    refreshBtn.setAttribute("aria-label", "Refresh");
+    const refreshIcon = document.createElement("i");
+    refreshIcon.className = "ph ph-arrow-clockwise";
+    refreshBtn.appendChild(refreshIcon);
+    const openBtn = document.createElement("button");
+    openBtn.className = "lb-tile-btn lb-tile-open-btn";
+    openBtn.setAttribute("aria-label", "Open in new tab");
+    const openIcon = document.createElement("i");
+    openIcon.className = "ph ph-arrow-square-out";
+    openBtn.appendChild(openIcon);
+    toolbarActions.appendChild(refreshBtn);
+    toolbarActions.appendChild(openBtn);
+
+    toolbar.appendChild(toolbarForm);
+    toolbar.appendChild(toolbarActions);
     root.appendChild(toolbar);
 
     const content = document.createElement("div");
@@ -83,10 +107,6 @@ export const sipagRenderer = {
     root.appendChild(content);
 
     el.appendChild(root);
-
-    const urlLabel = toolbar.querySelector('[data-role="url"]');
-    const refreshBtn = toolbar.querySelector(".lb-tile-refresh-btn");
-    const openBtn = toolbar.querySelector(".lb-tile-open-btn");
 
     function setUrlLabel(url) {
       urlLabel.textContent = url;

@@ -392,6 +392,31 @@ piggyback on any one katulong's `GET /api/swarm` to discover the
 whole mesh automatically. Adding a new katulong = `katulong swarm
 join` once, and sipag picks it up on the next observer tick.
 
+#### Sipag-tile target resolution post-swarm
+
+The current sipag tile renderer reads `config.sipagUrl` to decide
+where to point its iframe (relative path for same-host deployments;
+absolute URL for tunnel-hosted ones). Once swarm membership lands,
+two distinct things happen at the rendering host:
+
+1. **Local sipag UI** — the host's own sipag instance, embedded as a
+   tile via `config.sipagUrl`. Same as today. Stays a config knob.
+2. **Cross-instance sipag UI** — "render the sipag UI from a *peer*
+   katulong as a tile in this katulong". Becomes a `remote-tile`
+   descriptor with `props.peer = memberId, target = { kind: "sipag-ui" }`.
+   Resolution goes through the swarm view, not config.
+
+The two paths don't compete: `config.sipagUrl` still answers "where
+is the sipag for this host?"; swarm membership answers "which other
+hosts can I render from?". When `remote-tile` ships, the bespoke
+sipag tile renderer becomes a thin wrapper that emits a `remote-tile`
+descriptor for the local host's sipag-ui — collapsing both paths into
+the same rendering primitive.
+
+This means `config.sipagUrl` survives the swarm transition; nothing
+deprecated. Only the bespoke `sipag` tile type goes away (folds into
+`remote-tile`).
+
 Each observation already knows its host. The "live activity" tap
 handler becomes:
 
