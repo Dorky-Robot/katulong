@@ -76,7 +76,7 @@ export class BaseMockSession {
     this.external = options.external || false;
     this._options = options;
     this._childCount = 0;
-    this.outputBuffer = { totalBytes: 0, sliceFrom: () => "" };
+    this.outputBuffer = { totalBytes: 0, sliceFrom: () => "", restore: () => {} };
     this.meta = (options.meta && typeof options.meta === "object" && !Array.isArray(options.meta))
       ? { ...options.meta } : {};
     this._onChange = typeof options.onChange === "function" ? options.onChange : null;
@@ -110,6 +110,11 @@ export class BaseMockSession {
     const fromSeq = Math.max(cursor - maxBytes, 0);
     return { data: this.outputBuffer.sliceFrom(fromSeq) || "", cursor };
   }
+  // Stubbed for the scrollback persistence path: shutdown() reads each
+  // session's buffer + cursor and writes them via createScrollbackStore.
+  // The base mock has no real RingBuffer, so getBuffer() returns "" and
+  // cursor stays 0 — both safe inputs to scrollbackStore.save().
+  getBuffer() { return ""; }
   updateChildCount(count) { this._childCount = count; }
   write() {}
   resize() {}

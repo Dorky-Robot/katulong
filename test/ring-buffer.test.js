@@ -105,6 +105,90 @@ describe("RingBuffer", () => {
     });
   });
 
+  describe("restore", () => {
+    it("rehydrates data and totalBytes from a snapshot", () => {
+      const buffer = new RingBuffer();
+      buffer.restore("hello world", 1000);
+
+      assert.strictEqual(buffer.toString(), "hello world");
+      assert.strictEqual(buffer.totalBytes, 1000);
+      assert.strictEqual(buffer.getEndOffset(), 1000);
+      assert.strictEqual(buffer.getStartOffset(), 989, "start offset must be endOffset - data.length");
+    });
+
+    it("preserves pre-restart seq cursors via sliceFrom", () => {
+      // The whole point of restore: a client that held seq=995 from before
+      // the restart should get the last 5 bytes via pullFrom-style sliceFrom.
+      const buffer = new RingBuffer();
+      buffer.restore("hello world", 1000);
+
+      assert.strictEqual(buffer.sliceFrom(995), "world");
+      assert.strictEqual(buffer.sliceFrom(989), "hello world");
+      assert.strictEqual(buffer.sliceFrom(1000), "");
+      // Anything older than the start of the rehydrated buffer is treated as
+      // evicted — same contract as a long-running session.
+      assert.strictEqual(buffer.sliceFrom(900), null);
+    });
+
+    it("appends new pushes after the restored cursor", () => {
+      const buffer = new RingBuffer();
+      buffer.restore("abcd", 100);
+      buffer.push("efgh");
+
+      assert.strictEqual(buffer.totalBytes, 104);
+      assert.strictEqual(buffer.sliceFrom(96), "abcdefgh");
+      assert.strictEqual(buffer.sliceFrom(100), "efgh");
+    });
+
+    it("handles empty data with non-zero cursor", () => {
+      // Edge case: a session whose buffer was completely evicted but had
+      // pushed N bytes overall. We should still be able to advance from N.
+      const buffer = new RingBuffer();
+      buffer.restore("", 500);
+
+      assert.strictEqual(buffer.totalBytes, 500);
+      assert.strictEqual(buffer.toString(), "");
+      buffer.push("x");
+      assert.strictEqual(buffer.totalBytes, 501);
+      assert.strictEqual(buffer.sliceFrom(500), "x");
+    });
+
+    it("rejects structurally inconsistent input (cursor < data.length)", () => {
+      const buffer = new RingBuffer();
+      buffer.push("preexisting");
+      const before = buffer.totalBytes;
+
+      // cursor=3 with 11-char data would imply a negative starting offset.
+      buffer.restore("hello world", 3);
+
+      // Restore is a no-op on bad input — existing state is preserved.
+      assert.strictEqual(buffer.totalBytes, before);
+      assert.strictEqual(buffer.toString(), "preexisting");
+    });
+
+    it("rejects non-string data and non-finite cursors", () => {
+      const buffer = new RingBuffer();
+      buffer.restore(null, 100);
+      buffer.restore("data", NaN);
+      buffer.restore("data", -1);
+
+      assert.strictEqual(buffer.totalBytes, 0);
+      assert.strictEqual(buffer.toString(), "");
+    });
+
+    it("rejects data larger than maxBytes (eviction-contract defense)", () => {
+      // push() enforces maxBytes via evict(). restore() must enforce the
+      // same cap or a tampered/oversized snapshot would silently bypass
+      // the buffer's memory contract.
+      const buffer = new RingBuffer(100);
+      const oversized = "x".repeat(200);
+      buffer.restore(oversized, 200);
+
+      assert.strictEqual(buffer.totalBytes, 0, "restore must no-op on oversize input");
+      assert.strictEqual(buffer.toString(), "");
+    });
+  });
+
   describe("stats", () => {
     it("returns accurate statistics", () => {
       const buffer = new RingBuffer();
