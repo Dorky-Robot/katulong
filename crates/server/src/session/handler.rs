@@ -928,6 +928,93 @@ async fn try_attach(
             Ok((tmux, notifs)) => {
                 let dispatcher = state.output_router.spawn_output_pump(notifs);
                 tracing::debug!(session, pane_id, "per-tile CM spawned");
+
+                // Force the shell to repaint its prompt
+                // through this fresh CM so the initial output
+                // — emitted by the shell BEFORE we attached
+                // — lands on the wire as `%output`.
+                //
+                // **Why here, not in `SessionManager`.**
+                // `attach_tile` is a lifecycle primitive — it
+                // creates and attaches a CM. The redraw nudge
+                // is presentation behavior tied to a specific
+                // consumer (the xterm-backed UI tile); future
+                // non-display callers (admin tools, headless
+                // recorders) MUST NOT have Ctrl-L silently
+                // injected into a live PTY. Architecture
+                // review of PR #696 flagged this layer
+                // violation; the fix lives here, in the WS
+                // attach path that owns the display contract.
+                //
+                // **Why send-keys C-l, not refresh-client -C.**
+                // `refresh-client` redraws the calling
+                // client's view but tmux empirically does NOT
+                // replay pre-existing pane content to a
+                // freshly-attached CM even on explicit refresh
+                // — produces zero `%output`. `send-keys -t
+                // <name> C-l` sends Ctrl-L (`0x0c`) to the
+                // shell on the pane; every shell
+                // (bash/zsh/fish/sh) interprets it as "clear
+                // screen + redraw prompt" and emits the
+                // redraw through the PTY, which tmux forwards
+                // as fresh `%output`. Result: the user's
+                // terminal shows their shell prompt within
+                // milliseconds of attach, no manual keystroke
+                // needed. Long-running TUIs (vim, less)
+                // ALSO redraw on Ctrl-L — same intent, same
+                // effect, idempotent on re-attach.
+                //
+                // **Why send through the per-tile `tmux`,
+                // not the keepalive CM.** Correctness review
+                // of PR #696 flagged a timing race: issuing
+                // the command via the global keepalive CM
+                // routes `send-keys` through one tmux server
+                // path while the per-tile CM is still
+                // finishing its own attach handshake. The
+                // resulting `%output` could land before the
+                // per-tile dispatcher is draining
+                // notifications. Sending via the per-tile
+                // `tmux` makes the round-trip itself the
+                // synchronisation barrier — `send_command`
+                // awaits `%end`, which arrives only after the
+                // per-tile CM has fully attached and is
+                // processing commands. By the time we
+                // continue, the redraw `%output` is already
+                // in the per-tile notif channel and the
+                // dispatcher (spawned just above) will drain
+                // it.
+                //
+                // **Why not synthesize the bytes via
+                // capture-pane.** `capture-pane -p` strips
+                // ANSI escapes and color attributes; replaying
+                // its output through xterm would lose cursor
+                // position, scroll region, and color — the
+                // exact things a terminal emulator needs.
+                // Letting the shell repaint via Ctrl-L
+                // preserves all escape sequences as the
+                // shell intends.
+                //
+                // Failure is non-fatal at the protocol level
+                // — the user just sees an empty terminal
+                // until their first keystroke triggers a
+                // prompt. Log and continue rather than
+                // rolling back the attach; the attach itself
+                // succeeded and the WS handler can still
+                // forward I/O.
+                let nudge_cmd = format!("send-keys -t {session} C-l");
+                let nudge_error: Option<String> = match tmux.send_command(&nudge_cmd).await {
+                    Ok(reply) if reply.ok => None,
+                    Ok(reply) => Some(reply.output),
+                    Err(err) => Some(err.to_string()),
+                };
+                if let Some(error) = nudge_error {
+                    tracing::warn!(
+                        session,
+                        error = %error,
+                        "post-attach prompt-repaint nudge failed; terminal will appear empty until first keystroke"
+                    );
+                }
+
                 Ok((tmux, dispatcher))
             }
             Err(err) => {

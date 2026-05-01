@@ -30,6 +30,12 @@ use wasm_bindgen_futures::spawn_local;
 mod login;
 mod tile;
 mod ws;
+// Slice 9s.4: thin `wasm-bindgen` shim around the vendored
+// xterm.js + FitAddon. Lives at the crate root so any tile
+// kind that wants a terminal-emulator surface (the Claude feed
+// rendering ANSI logs, future debug panes) can opt in without
+// re-vendoring or re-binding the JS API.
+mod xterm;
 use login::{Login, Register};
 use tile::{LayoutState, TileHost};
 

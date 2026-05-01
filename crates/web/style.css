@@ -227,12 +227,19 @@ body {
   gap: 12px;
 }
 
-/* Terminal tile — slice 9s.3 lands the WS-driven byte stream;
- * 9s.4 swaps `<pre>` for an xterm-mounted div. Full-width
- * chrome, monospace dark panel. */
+/* Terminal tile — slice 9s.4 hosts a real xterm.js terminal
+ * inside `.terminal-mount`. xterm injects its own DOM
+ * (`.xterm`, `.xterm-screen`, `.xterm-rows`) into the mount
+ * node and styles itself via the vendored `xterm.min.css` —
+ * we only own the surrounding chrome and the mount node's
+ * box. Background and border live on the mount node so xterm's
+ * internal `.xterm-screen` (which has its own black bg via
+ * the vendored stylesheet) feels framed inside our dark panel. */
 [data-tile-kind="terminal"] {
+  flex: 1 1 auto;
   margin: 16px;
   gap: 8px;
+  min-height: 0;
 }
 
 [data-tile-kind="terminal"] .title {
@@ -241,19 +248,36 @@ body {
   color: var(--kat-fg-dim);
 }
 
-[data-tile-kind="terminal"] .terminal-output {
-  margin: 0;
-  padding: 12px 14px;
+/* xterm mount node. xterm's FitAddon reads the COMPUTED width
+ * and height of this element, divides by glyph cell dims, and
+ * picks a (cols, rows) pair. So this element MUST have a
+ * definite size at the moment `term.open(el)` runs — no
+ * `height: auto` reliance, no zero-width ancestors. The
+ * `flex: 1` + `min-height: 0` chain on the parent + main is
+ * what gives us a real height; on a phone in portrait,
+ * `min-height: 360px` keeps the terminal usable even when
+ * the page is being rendered before the viewport's height
+ * media query has settled.
+ *
+ * Padding on the OUTER container (not the inner `.xterm`)
+ * because xterm's renderer expects to own the inner box —
+ * inner padding makes the cursor land in the wrong cell. */
+[data-tile-kind="terminal"] .terminal-mount {
+  flex: 1 1 auto;
+  min-height: 360px;
   background: #0c0c10;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 4px;
-  color: #d4d4d4;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-break: break-word;
-  min-height: 360px;
-  max-height: calc(100vh - 120px);
-  overflow-y: auto;
+  padding: 8px;
+  position: relative;
+}
+
+/* The `.xterm` element xterm injects as the immediate child of
+ * `.terminal-mount` should fill the mount node so the FitAddon
+ * has a sensible measurement target. `xterm.min.css` already
+ * declares `.xterm { position: relative; ... }` — this rule
+ * just ensures it stretches to our box. */
+[data-tile-kind="terminal"] .terminal-mount .xterm {
+  width: 100%;
+  height: 100%;
 }

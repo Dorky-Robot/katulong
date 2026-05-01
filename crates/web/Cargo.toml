@@ -26,6 +26,11 @@ console_error_panic_hook = "0.1"
 # (`navigator.credentials.create(...)`). Earlier slices added
 # URL parsing. Feature-gated narrowly to keep the WASM bundle
 # lean.
+# Slice 9s.4 added `Element` / `HtmlElement` (xterm mounts into a
+# DOM node we hand it via `term.open(el)`), `ResizeObserver` /
+# `ResizeObserverEntry` (debounced container-size watcher that
+# drives `Resize` notifications to the server) and `DomRect`
+# (read by the observer entry's `contentRect`).
 web-sys = { version = "0.3", features = [
     "Window",
     "Location",
@@ -35,6 +40,11 @@ web-sys = { version = "0.3", features = [
     "CredentialCreationOptions",
     "CredentialRequestOptions",
     "PublicKeyCredential",
+    "Element",
+    "HtmlElement",
+    "ResizeObserver",
+    "ResizeObserverEntry",
+    "DomRectReadOnly",
 ] }
 # WebAuthn wire types — the same types the Rust server
 # `webauthn_wire` re-exports. The `wasm` feature provides

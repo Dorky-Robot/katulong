@@ -339,19 +339,23 @@ test.describe.serial("WebAuthn UI happy paths", () => {
       { timeout: 5_000 },
     );
 
-    // Slice 9s.3 contract: TerminalTile mounts → sends
-    // ClientMessage::Attach over the platform WsClient → server
-    // creates / attaches to the tmux session "main" → PTY emits
-    // a shell prompt → server forwards `Output` frames → WASM
-    // dispatches to the TerminalTile's subscriber → buffer
-    // accumulates → `<pre.terminal-output>` renders the bytes.
+    // Slice 9s.3 + 9s.4 contract: TerminalTile mounts xterm.js
+    // → sends ClientMessage::Attach over the platform WsClient
+    // → server creates / attaches to the tmux session "main" →
+    // PTY emits a shell prompt → server forwards `Output`
+    // frames → WASM dispatches to the TerminalTile's subscriber
+    // → `term.write()` paints the bytes into xterm's
+    // `.xterm-rows` element.
     //
-    // Observable signal: the terminal-output element gains
-    // non-empty text within a few seconds of attach. We don't
-    // assert specific shell-prompt copy because the shell varies
-    // by environment (bash, zsh, sh — different prompt
-    // conventions); just that bytes flowed end-to-end.
-    await expect(page.locator(".terminal-output")).not.toBeEmpty({
+    // Observable signal: a `.xterm-rows` row element exists and
+    // contains non-empty text within a few seconds of attach.
+    // The selector `.xterm-rows > div` is xterm's per-row span;
+    // the first row is the shell's first line of output (the
+    // prompt). We assert non-emptiness rather than specific
+    // copy because the shell varies by environment (bash, zsh,
+    // sh — different prompt conventions); the contract is "PTY
+    // bytes reached the renderer," not any particular text.
+    await expect(page.locator(".xterm-rows").first()).not.toBeEmpty({
       timeout: 10_000,
     });
 
