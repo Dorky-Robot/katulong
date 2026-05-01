@@ -70,7 +70,11 @@
       "Bash(scutil --get LocalHostName)",
       "Bash(system_profiler SPHardwareDataType)",
       "Bash(ssh -o ConnectTimeout=5 -o BatchMode=yes mac2019 'hostname; uptime; which katulong')",
-      "Bash(ssh mac2019 *)"
+      "Bash(ssh mac2019 *)",
+      "Bash(/usr/libexec/PlistBuddy -c \"Print :KeepAlive\" ~/Library/LaunchAgents/com.dorkyrobot.katulong.plist)",
+      "Bash(rm -f /tmp/katulong-v0.61.6.tar.gz)",
+      "Bash(/Users/felixflores/Projects/dorky_robot/katulong/bin/katulong-mesh-update *)",
+      "Bash(ssh *)"
     ]
   }
 }
