@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>katulong</title>
     <link data-trunk rel="css" href="style.css">
+    <!-- Slice 9s.4: vendor xterm.js + addon-fit. Self-hosted to
+         avoid CDN trust (matches the Node frontend's supply-
+         chain rule). `copy-dir` lands the files under
+         `dist/xterm/...` so the WASM-side wasm-bindgen module
+         imports (`module = "/xterm/xterm.esm.js"`) resolve at
+         runtime via the browser's ES module loader. The
+         minified xterm CSS is loaded as a stylesheet so the
+         terminal's internal layout (`.xterm`, `.xterm-screen`,
+         `.xterm-rows`) gets its required absolute positioning. -->
+    <link data-trunk rel="copy-dir" href="assets/xterm">
+    <link rel="stylesheet" href="/xterm/xterm.min.css">
   </head>
   <body></body>
 </html>

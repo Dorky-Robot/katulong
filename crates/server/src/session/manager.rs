@@ -172,9 +172,86 @@ impl SessionManager {
         rows: u16,
     ) -> Result<(Tmux, mpsc::UnboundedReceiver<Notification>), SessionError> {
         self.ensure_session(name, cols, rows).await?;
-        Tmux::attach(self.socket_name(), name)
+        let (tmux, notifs) = Tmux::attach(self.socket_name(), name)
             .await
-            .map_err(SessionError::Tmux)
+            .map_err(SessionError::Tmux)?;
+
+        // Force the shell to repaint its prompt through this
+        // fresh CM so the initial output — printed by the shell
+        // BEFORE we attached — lands on the wire as `%output`.
+        //
+        // Why this is necessary. `ensure_session` runs `tmux
+        // new-session -d ... <shell>`; the shell starts and
+        // emits its prompt synchronously, then `Tmux::attach`
+        // spawns a separate `tmux -C attach-session` CM
+        // subprocess. Tmux only forwards `%output` events that
+        // occur AFTER a CM client attaches — historical pane
+        // content is not replayed. So without this nudge, a
+        // fresh attach shows an empty xterm grid until the user
+        // types a key (which flushes a fresh prompt through the
+        // now-attached CM). Slice 9s.4's xterm-backed terminal
+        // caught this in test 13: `Attached { last_seq: 0 }`
+        // and a blank `.xterm-rows` ten seconds later. The
+        // placeholder `<pre>` from 9s.3 hit the same race but
+        // flaked through.
+        //
+        // **Why send-keys C-l, not refresh-client -C.**
+        // `refresh-client` redraws the calling client's view of
+        // the pane state, but tmux apparently doesn't replay the
+        // pre-existing pane content to a freshly-attached CM
+        // even on explicit refresh — empirically, the redraw
+        // produces zero `%output` notifications. `send-keys -t
+        // <name> C-l` sends Ctrl-L (`0x0c`) to the shell on the
+        // pane. Every shell (bash/zsh/fish/sh) interprets Ctrl-L
+        // as "clear screen + redraw prompt" and EMITS the redraw
+        // through the PTY — which means tmux forwards it as
+        // fresh `%output` to all attached CMs (including ours).
+        // Result: the user's terminal shows their shell prompt
+        // within milliseconds of attach, no manual keystroke
+        // needed.
+        //
+        // **Idempotency caveat: re-attach to an already-busy
+        // session.** If a re-attach happens while the user has
+        // a long-running TUI (vim, less) on the pane, sending
+        // Ctrl-L will trigger that program's redraw — which is
+        // its NORMAL response to Ctrl-L and exactly what we
+        // want. Sending Ctrl-L is therefore safe at every
+        // attach, not just first-attach.
+        //
+        // **Why not synthesize the bytes via capture-pane.**
+        // `capture-pane -p` returns the pane's visible rows but
+        // strips ANSI escapes and color attributes. Replaying
+        // its output through xterm would lose color, cursor
+        // position, scroll region — the exact things a
+        // terminal emulator needs to render a coherent screen.
+        // Letting the shell repaint via Ctrl-L preserves all
+        // escape sequences as the shell intends.
+        //
+        // Failure is non-fatal at the protocol level — the user
+        // just sees an empty terminal until their first
+        // keystroke triggers a prompt. Log and continue rather
+        // than rolling back the attach: the attach itself
+        // succeeded and the WS handler can still forward I/O.
+        let cmd = format!("send-keys -t {name} C-l");
+        match tmux.send_command(&cmd).await {
+            Ok(reply) if reply.ok => {}
+            Ok(reply) => {
+                tracing::warn!(
+                    session = %name,
+                    error = %reply.output,
+                    "post-attach send-keys C-l failed; terminal will appear empty until first keystroke"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    session = %name,
+                    error = %err,
+                    "post-attach send-keys C-l errored; terminal will appear empty until first keystroke"
+                );
+            }
+        }
+
+        Ok((tmux, notifs))
     }
 
     /// List session names currently running on tmux. Returns them in
