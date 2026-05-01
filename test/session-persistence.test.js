@@ -7,9 +7,11 @@
 
 import { describe, it, before, beforeEach, mock } from "node:test";
 import assert from "node:assert";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+import { RingBuffer } from "../lib/ring-buffer.js";
 
 // Mock tmux operations before importing session-manager
 const tmuxSessions = new Map(); // tmuxName -> true
@@ -29,13 +31,19 @@ class MockSession {
     this._cols = 0;
     this._rows = 0;
     this._resizeCalls = [];
-    this.outputBuffer = { totalBytes: 0 };
+    // Real RingBuffer so the scrollback round-trip tests can push data
+    // and assert that restore() rehydrates it correctly. Existing
+    // sessions.json tests don't push anything, so they see an empty
+    // buffer just like before.
+    this.outputBuffer = new RingBuffer();
     this.external = options.external || false;
     this.meta = (options.meta && typeof options.meta === "object" && !Array.isArray(options.meta))
       ? { ...options.meta } : {};
     this._onChange = options.onChange || null;
   }
   get alive() { return this._alive; }
+  get cursor() { return this.outputBuffer.totalBytes; }
+  getBuffer() { return this.outputBuffer.toString(); }
   attachControlMode(/* cols, rows */) { /* Real Session does NOT set _cols here */ }
   async seedScreen() {}
   updateChildCount() {}
@@ -220,6 +228,104 @@ describe("Session persistence", () => {
 
     mgr.shutdown();
     rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  describe("scrollback round trip", () => {
+    it("restores RingBuffer contents and cursor across a manager restart", async () => {
+      const mgr1 = createSessionManager({
+        bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
+      });
+      const created = await mgr1.createSession("durable", 80, 24);
+      const session1 = mgr1.getSession("durable");
+
+      // Simulate live terminal output building up the RingBuffer.
+      session1.outputBuffer.push("line one\n");
+      session1.outputBuffer.push("\x1b[31mline two\x1b[0m\n");
+      const cursorAtShutdown = session1.cursor;
+      const bufferAtShutdown = session1.getBuffer();
+
+      mgr1.shutdown();
+
+      // Scrollback file should now exist on disk under the session id.
+      const scrollbackPath = join(dataDir, "scrollback", created.id);
+      assert.ok(existsSync(scrollbackPath), "scrollback file must be written on shutdown");
+
+      // Re-add the tmux session so restore() can re-adopt it.
+      tmuxSessions.set(`kat_${created.id}`, true);
+
+      const mgr2 = createSessionManager({
+        bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
+      });
+      await mgr2.restoreSessions();
+
+      const session2 = mgr2.getSession("durable");
+      assert.ok(session2, "session must be restored");
+      assert.strictEqual(session2.cursor, cursorAtShutdown, "cursor must persist across restart");
+      assert.strictEqual(session2.getBuffer(), bufferAtShutdown, "buffer contents must persist across restart");
+
+      // Pre-restart seq cursors must still resolve to the right slice —
+      // the whole point of preserving cursor (clients reconnecting after a
+      // brief restart shouldn't see their seq become "evicted").
+      const slice = session2.outputBuffer.sliceFrom(cursorAtShutdown - 4);
+      assert.strictEqual(slice.length, 4);
+
+      mgr2.shutdown();
+      rmSync(dataDir, { recursive: true, force: true });
+    });
+
+    it("removes the scrollback file when the session is hard-deleted", async () => {
+      const mgr = createSessionManager({
+        bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
+      });
+      const created = await mgr.createSession("doomed", 80, 24);
+      const session = mgr.getSession("doomed");
+      session.outputBuffer.push("about to die\n");
+      mgr.shutdown();
+
+      const scrollbackPath = join(dataDir, "scrollback", created.id);
+      assert.ok(existsSync(scrollbackPath), "scrollback file must exist after first shutdown");
+
+      // Re-add the tmux session and restart so we can hard-delete.
+      tmuxSessions.set(`kat_${created.id}`, true);
+      const mgr2 = createSessionManager({
+        bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
+      });
+      await mgr2.restoreSessions();
+
+      mgr2.deleteSession("doomed");
+
+      assert.ok(!existsSync(scrollbackPath), "scrollback file must be removed on hard delete");
+
+      mgr2.shutdown();
+      rmSync(dataDir, { recursive: true, force: true });
+    });
+
+    it("prunes orphan scrollback files on restore", async () => {
+      // Lay down a scrollback file for a session id that nothing in
+      // sessions.json or tmux will reference. The first restoreSessions()
+      // call should garbage-collect it.
+      const orphanId = "abcdefghijklmnopqrstu"; // 21 chars, matches sessionId() shape
+      const orphanPath = join(dataDir, "scrollback");
+      // Force the dir to exist before we write into it.
+      const tmpStore = createSessionManager({
+        bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
+      });
+      tmpStore.shutdown();
+
+      writeFileSync(join(orphanPath, orphanId), "100\norphan contents");
+      assert.ok(existsSync(join(orphanPath, orphanId)));
+
+      const mgr = createSessionManager({
+        bridge: makeBridge(), shell: "/bin/sh", home: "/tmp", dataDir,
+      });
+      await mgr.restoreSessions();
+
+      assert.ok(!existsSync(join(orphanPath, orphanId)),
+        "orphan scrollback file must be pruned after restoreSessions");
+
+      mgr.shutdown();
+      rmSync(dataDir, { recursive: true, force: true });
+    });
   });
 
   it("works without dataDir (no persistence)", async () => {
