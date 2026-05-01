@@ -2613,16 +2613,31 @@
       connTooltip.id = "connection-tooltip";
       document.body.appendChild(connTooltip);
     }
-    const dotIds = ["sidebar-connection-dot", "joystick-connection-dot"];
-    let connTooltipText = "Disconnected";
+    // Tooltip has two lines: connection state on top, window.location.host
+    // underneath (host, not hostname — keeps non-default ports visible).
+    // Disambiguates which katulong instance you're on in PWA mode where the
+    // address bar is hidden and the sidebar instance label is also hidden
+    // (see .sidebar-instance-label in index.html).
+    connTooltip.replaceChildren();
+    const connTooltipStateEl = document.createElement("span");
+    connTooltipStateEl.className = "connection-tooltip-state";
+    const connTooltipHostEl = document.createElement("span");
+    connTooltipHostEl.className = "connection-tooltip-host";
+    connTooltipHostEl.textContent = window.location.host || "";
+    connTooltip.appendChild(connTooltipStateEl);
+    if (connTooltipHostEl.textContent) connTooltip.appendChild(connTooltipHostEl);
 
-    // Wire hover listeners to all connection dots. Uses event delegation
-    // pattern: dots that don't exist yet (e.g. connection-indicator created
-    // by shortcut-bar.js) get wired when the subscriber first finds them.
+    const dotIds = ["sidebar-connection-dot", "joystick-connection-dot"];
+    let connStatusLabel = "Disconnected";
+
+    // Wire hover/click/keyboard listeners to all connection dots. Uses
+    // event delegation pattern: dots that don't exist yet (e.g.
+    // joystick-connection-dot created lazily by joystick.js) get wired when
+    // the subscriber first finds them.
     const wiredDots = new Set();
     function showTooltipAt(dot) {
       const r = dot.getBoundingClientRect();
-      connTooltip.textContent = connTooltipText;
+      connTooltipStateEl.textContent = connStatusLabel;
       connTooltip.style.left = `${r.left + r.width / 2}px`;
       connTooltip.style.top = `${r.top - 4}px`;
       connTooltip.style.transform = "translate(-50%, -100%)";
@@ -2630,6 +2645,10 @@
     }
     function hideTooltip() {
       connTooltip.classList.remove("visible");
+    }
+    function toggleTooltipAt(dot) {
+      if (connTooltip.classList.contains("visible")) hideTooltip();
+      else showTooltipAt(dot);
     }
     function wireDotTooltip(dot) {
       if (wiredDots.has(dot)) return;
@@ -2640,10 +2659,15 @@
       // Touch: tap to toggle, tap elsewhere to dismiss
       dot.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (connTooltip.classList.contains("visible")) {
-          hideTooltip();
-        } else {
-          showTooltipAt(dot);
+        toggleTooltipAt(dot);
+      });
+      // Keyboard: Enter/Space activates the role="button" dot. Without this
+      // the role + tabindex on the dot are an incomplete contract — focusable
+      // but not operable.
+      dot.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggleTooltipAt(dot);
         }
       });
     }
@@ -2657,14 +2681,14 @@
 
     cm.subscribe((connState) => {
       let cssClass = "";
-      connTooltipText = "Disconnected";
+      connStatusLabel = "Disconnected";
 
       if (connState.status === "connecting") {
         cssClass = "connecting";
-        connTooltipText = "Connecting\u2026";
+        connStatusLabel = "Connecting\u2026";
       } else if (connState.status === "ready") {
         cssClass = connState.transport === "datachannel" ? "direct" : "relay";
-        connTooltipText = connState.transport === "datachannel" ? "Direct (P2P)" : "Relay (WebSocket)";
+        connStatusLabel = connState.transport === "datachannel" ? "Direct (P2P)" : "Relay (WebSocket)";
       }
 
       for (const id of dotIds) {
@@ -2678,7 +2702,7 @@
 
       // Update tooltip text live if it's currently visible
       if (connTooltip.classList.contains("visible")) {
-        connTooltip.textContent = connTooltipText;
+        connTooltipStateEl.textContent = connStatusLabel;
       }
 
       const overlay = document.getElementById("disconnect-overlay");

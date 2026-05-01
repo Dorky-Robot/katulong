@@ -968,15 +968,28 @@
     }
 
     /* Connection dot tooltip — floating element positioned by JS to avoid
-       overflow:hidden clipping from parent containers (#shortcut-bar, sidebar) */
+       overflow:hidden clipping from parent containers (#shortcut-bar, sidebar).
+       Two lines: state on top, host (window.location.host) underneath so the
+       user can tell which katulong instance they're on without the browser
+       chrome (PWA / standalone mode hides the address bar). */
     #connection-tooltip {
       position: fixed; z-index: 9999; pointer-events: none;
       background: var(--bg-surface); color: var(--text);
       border: 1px solid var(--border); border-radius: var(--radius-sm);
       padding: 0.25rem 0.5rem; font-size: var(--text-xs);
-      white-space: nowrap; opacity: 0; transition: opacity 0.15s;
+      max-width: min(80vw, 22rem);
+      display: flex; flex-direction: column; align-items: center; gap: 1px;
+      opacity: 0; transition: opacity 0.15s;
     }
     #connection-tooltip.visible { opacity: 1; }
+    #connection-tooltip .connection-tooltip-state { white-space: nowrap; }
+    #connection-tooltip .connection-tooltip-host {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--text-dim);
+      max-width: 100%;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
 
     @keyframes connection-pulse {
       0%, 100% { opacity: 1; }
@@ -3157,7 +3170,7 @@
         <button class="sidebar-icon-btn" id="sidebar-settings-btn" aria-label="Settings" title="Settings">
           <i class="ph ph-gear"></i>
         </button>
-        <span id="sidebar-connection-dot" class="sidebar-connection-dot"></span>
+        <span id="sidebar-connection-dot" class="sidebar-connection-dot" role="button" tabindex="0" aria-label="Connection status — tap for instance host"></span>
         <span id="sidebar-instance-label" class="sidebar-instance-label" aria-label="Instance hostname"></span>
       </div>
     </aside>
