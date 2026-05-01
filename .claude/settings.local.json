@@ -66,7 +66,11 @@
       "Bash(ssh cloudflare-mac2019 *)",
       "Bash(ssh cloudflare-mac2024 *)",
       "Bash(command -v jq)",
-      "Bash(bash -n bin/katulong-mesh-update)"
+      "Bash(bash -n bin/katulong-mesh-update)",
+      "Bash(scutil --get LocalHostName)",
+      "Bash(system_profiler SPHardwareDataType)",
+      "Bash(ssh -o ConnectTimeout=5 -o BatchMode=yes mac2019 'hostname; uptime; which katulong')",
+      "Bash(ssh mac2019 *)"
     ]
   }
 }
