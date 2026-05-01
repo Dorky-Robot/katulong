@@ -103,12 +103,25 @@ const RESIZE_DEBOUNCE: Duration = Duration::from_millis(80);
 
 /// Aggregate of the JS-side allocations the tile owns. Stored
 /// in a single `store_value` so a single drop site
-/// (`on_cleanup`) tears the whole graph down. Field order is
-/// intentional: drop hits them top-down, and the disposables
-/// must drop before the closures they reference. (Rust's drop
-/// order is field-declaration order for structs — we rely on
-/// it here so the `on_data` and `ResizeObserver` listeners
-/// detach BEFORE their backing closures' `drop_box` runs.)
+/// (`on_cleanup`) tears the whole graph down.
+///
+/// **Naming convention.** Fields named WITHOUT a leading
+/// underscore are accessed by name in the cleanup closure
+/// (`terminal.dispose()`, `resize_observer.disconnect()`).
+/// Fields WITH a leading underscore are held only to extend
+/// their lifetime — never read after construction; they exist
+/// solely so wasm-bindgen's drop logic detaches the JS
+/// references when the guard drops.
+///
+/// **Drop safety.** The cleanup closure invokes
+/// `resize_observer.disconnect()` and `terminal.dispose()`
+/// EXPLICITLY before the guard drops. Those explicit calls are
+/// the real safety mechanism — they detach the JS-side
+/// listeners while the WASM closures are still valid. The
+/// field-declaration drop order (Rust drops top-down) is the
+/// belt-and-suspenders fallback if `on_cleanup` ever fires
+/// without those explicit calls (it shouldn't, but the type
+/// system can't prove it).
 struct TerminalGuard {
     /// xterm `IDisposable` returned by `Terminal::on_data`.
     /// Holding the JsValue keeps the listener attached; drop
@@ -118,23 +131,28 @@ struct TerminalGuard {
     /// dispose below cascades.
     _on_data_disposable: JsValue,
 
-    /// The xterm input-callback closure. Must outlive the
-    /// disposable above; dropping it before xterm detaches the
-    /// listener leaves xterm holding a JS reference to a freed
-    /// WASM closure → use-after-free on the next keystroke.
+    /// The xterm input-callback closure. xterm holds a JS
+    /// reference to it via the listener registry; releasing
+    /// the WASM closure before the registry detaches would
+    /// land a use-after-free on the next keystroke.
     _on_data_closure: Closure<dyn FnMut(String)>,
 
-    /// ResizeObserver instance. `disconnect()`-ed in cleanup so
-    /// it stops firing into the (about-to-be-freed) callback
-    /// closure.
+    /// ResizeObserver instance. The cleanup closure calls
+    /// `disconnect()` BEFORE the guard drops, so the observer
+    /// stops firing into the (about-to-be-freed) callback
+    /// closure. Read by name in cleanup → no underscore.
     resize_observer: ResizeObserver,
 
-    /// ResizeObserver callback closure. See ordering note on
-    /// `_on_data_closure` — same constraint applies.
+    /// ResizeObserver callback closure. Same constraint as
+    /// `_on_data_closure`: must outlive any JS reference into
+    /// it. The explicit `disconnect()` above ensures the JS
+    /// engine drops its reference before this closure drops.
     _resize_observer_closure: Closure<dyn FnMut(JsValue, JsValue)>,
 
-    /// xterm.js terminal handle. `dispose()` called in cleanup;
-    /// a future fitness slice may keep the handle alive across
+    /// xterm.js terminal handle. The cleanup closure calls
+    /// `dispose()`, which releases the renderer + helper-
+    /// textarea. Read by name in cleanup → no underscore.
+    /// A future fitness slice may keep the handle alive across
     /// tile re-mounts (cache one terminal per session) but
     /// that's a layout-persistence-tier concern.
     terminal: Terminal,
@@ -160,11 +178,14 @@ pub fn TerminalTile(#[prop(into)] session_id: Option<String>) -> impl IntoView {
     // correct dimensions. Running this in the component body
     // (or in `spawn_local` at body level) would race the
     // initial render — the div doesn't exist yet.
+    // Clone the session id once per closure capture: the outer
+    // `session_id` is consumed by the `view!` macro for the
+    // `data-session` attribute below; the on_load closure needs
+    // its own copy to send through `ClientMessage::Attach`.
     let session_id_for_attach = session_id.clone();
     mount_ref.on_load({
         let ws = ws.clone();
         move |el| {
-            let session_id = session_id_for_attach;
             let term = Terminal::new();
             let fit = FitAddon::new();
             term.load_fit_addon(&fit);
@@ -205,7 +226,7 @@ pub fn TerminalTile(#[prop(into)] session_id: Option<String>) -> impl IntoView {
             });
 
             ws.send(ClientMessage::Attach {
-                session: session_id,
+                session: session_id_for_attach,
                 cols,
                 rows,
                 resume_from_seq: None,

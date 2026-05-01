@@ -44,14 +44,19 @@
 use wasm_bindgen::prelude::*;
 use web_sys::Element;
 
+// vendor-path contract: `/xterm/` is also referenced in
+// `crates/web/index.html` (trunk `copy-dir`) and on the
+// sibling addon-fit extern below. If the URL prefix changes,
+// update all three. Searchable sentinel for grep:
+// `vendor-path:/xterm/`.
 #[wasm_bindgen(raw_module = "/xterm/xterm.esm.js")]
 extern "C" {
-    /// xterm.js terminal emulator. Construct via [`Terminal::new`]
-    /// or [`Terminal::new_with_options`], then `open` it on a
-    /// DOM node to render. Bytes pushed via `write` go through
-    /// the internal stateful UTF-8 decoder + ANSI parser — DO
-    /// NOT pre-decode bytes to a Rust `String`; multi-byte
-    /// chars split across PTY chunks would produce U+FFFD.
+    /// xterm.js terminal emulator. Construct via [`Terminal::new`],
+    /// then `open` it on a DOM node to render. Bytes pushed via
+    /// `write` go through the internal stateful UTF-8 decoder +
+    /// ANSI parser — DO NOT pre-decode bytes to a Rust `String`;
+    /// multi-byte chars split across PTY chunks would produce
+    /// U+FFFD.
     ///
     /// `Clone` is shallow — clones share the same underlying
     /// JS object reference, which is what we want when handing
@@ -60,18 +65,20 @@ extern "C" {
     /// `#[derive(Clone)]` below is required for `term.clone()`
     /// to call into the JsValue's clone-as-`Self` impl rather
     /// than the JsValue Deref's clone-as-`JsValue`.
+    ///
+    /// **No `new_with_options` extern.** The configurable-options
+    /// constructor is omitted until a caller actually needs to
+    /// pass options — the wasm-bindgen shim adds bytes to the
+    /// bundle even when unused. When a future slice wants
+    /// `fontFamily`, `theme`, `scrollback`, etc., add a second
+    /// extern constructor (`new_with_options(opts: &JsValue) ->
+    /// Terminal`) and pass a `js_sys::Object` or
+    /// `serde_wasm_bindgen::to_value` from the call site.
     #[derive(Clone)]
     pub type Terminal;
 
     #[wasm_bindgen(constructor)]
     pub fn new() -> Terminal;
-
-    /// Construct with a JS options bag. Most useful fields:
-    /// `cols`, `rows`, `fontSize`, `fontFamily`, `cursorBlink`,
-    /// `theme`, `scrollback`, `allowProposedApi`. Pass via
-    /// `js_sys::Object` or `serde_wasm_bindgen::to_value`.
-    #[wasm_bindgen(constructor)]
-    pub fn new_with_options(opts: &JsValue) -> Terminal;
 
     /// Mount the terminal into the given DOM element. The
     /// element must be visible (`display != none`, non-zero
@@ -135,6 +142,7 @@ extern "C" {
     pub fn focus(this: &Terminal);
 }
 
+// vendor-path:/xterm/ — see the sibling Terminal extern above.
 #[wasm_bindgen(raw_module = "/xterm/addon-fit.esm.js")]
 extern "C" {
     /// Computes a `(cols, rows)` pair from the terminal's
@@ -155,9 +163,8 @@ extern "C" {
     #[wasm_bindgen(constructor)]
     pub fn new() -> FitAddon;
 
-    /// Compute proposed dimensions and resize the terminal in
-    /// one shot. Safe to call repeatedly — does nothing if the
-    /// computed dims match the current ones.
+    /// Compute proposed dimensions and resize the terminal to
+    /// match the containing element.
     #[wasm_bindgen(method)]
     pub fn fit(this: &FitAddon);
 }
