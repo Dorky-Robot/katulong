@@ -193,10 +193,14 @@ cmd_roll() {
 
     echo "[$processed/$total] $id ($alias:$port): rolling update"
     local pre_version
+    # `-n` redirects ssh's stdin to /dev/null. Without it, ssh consumes the
+    # while-loop's piped input on the first iteration and the loop exits
+    # silently after one peer. (Symptom: summary reports total=3 but
+    # processed=1 with no failed_id — a green "rollout complete" lie.)
     # `--` ends ssh's option processing so a future mesh.json that somehow
     # smuggled a leading-dash alias through validation still can't inject
     # ssh options. Belt and suspenders against the parser regex above.
-    pre_version="$(ssh -- "$alias" "$REMOTE_PATH_PREFIX katulong --version" 2>/dev/null || true)"
+    pre_version="$(ssh -n -- "$alias" "$REMOTE_PATH_PREFIX katulong --version" 2>/dev/null || true)"
     echo "    before: ${pre_version:-(unknown — host unreachable or katulong missing)}"
 
     if [[ -z "$pre_version" ]]; then
@@ -205,15 +209,15 @@ cmd_roll() {
       break
     fi
 
-    if ! ssh -- "$alias" "$REMOTE_PATH_PREFIX katulong update"; then
+    if ! ssh -n -- "$alias" "$REMOTE_PATH_PREFIX katulong update"; then
       echo "    ✗ update failed on $id ($alias) — rollout halted" >&2
       failed_id="$id"
       break
     fi
 
     local post_version http_code
-    post_version="$(ssh -- "$alias" "$REMOTE_PATH_PREFIX katulong --version" 2>/dev/null || true)"
-    http_code="$(ssh -- "$alias" "$REMOTE_PATH_PREFIX curl -s -o /dev/null -w \"%{http_code}\" http://localhost:$port/" 2>/dev/null || true)"
+    post_version="$(ssh -n -- "$alias" "$REMOTE_PATH_PREFIX katulong --version" 2>/dev/null || true)"
+    http_code="$(ssh -n -- "$alias" "$REMOTE_PATH_PREFIX curl -s -o /dev/null -w \"%{http_code}\" http://localhost:$port/" 2>/dev/null || true)"
     echo "    after:  ${post_version:-(unknown)}  (HTTP ${http_code:-000})"
 
     if [[ "${http_code:-}" != "200" ]]; then
@@ -230,6 +234,15 @@ cmd_roll() {
     echo "rollout halted at $failed_id."
     echo "  updated: $updated   skipped (self): $skipped   not attempted: $remaining"
     echo "  fix $failed_id and re-run — already-updated peers will no-op."
+    return 1
+  fi
+  # Sanity check: if the loop exited without setting failed_id but didn't
+  # process every peer, something silently swallowed iterations (e.g. an ssh
+  # call inside the loop consuming its stdin without `-n`). Don't lie about
+  # "rollout complete" in that case — fail loudly so the bug surfaces.
+  if [[ "$processed" != "$total" ]]; then
+    echo "rollout incomplete: processed $processed of $total peers (no failure reported)" >&2
+    echo "  this is a script bug — please report it." >&2
     return 1
   fi
   echo "rollout complete."
