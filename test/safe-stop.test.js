@@ -5,7 +5,8 @@
  *
  *   1. Send SIGTERM to a LaunchAgent-managed PID
  *   2. Process exits
- *   3. launchd sees SuccessfulExit=false and IMMEDIATELY respawns the server
+ *   3. launchd sees KeepAlive (originally SuccessfulExit=false; now unconditional
+ *      true) and IMMEDIATELY respawns the server
  *   4. `isServerRunning()` falls back to its port probe and returns running=true
  *      (the respawn is now on the port)
  *   5. stop.js calls SIGKILL against the ORIGINAL PID → ESRCH, because the
