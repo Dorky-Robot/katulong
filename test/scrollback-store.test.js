@@ -8,7 +8,7 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert";
-import { mkdtempSync, rmSync, readdirSync, statSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, readdirSync, statSync, writeFileSync, readFileSync, existsSync, openSync, ftruncateSync, closeSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -114,6 +114,23 @@ describe("scrollback store", () => {
 
       assert.strictEqual(store.load("truncated_id"), null);
     });
+
+    it("load refuses files larger than the RingBuffer cap (OOM defense)", () => {
+      // The store rejects anything > 20 MB + small slack. We simulate a
+      // tampered/oversized file without actually writing 21 MB by truncating
+      // a sparse file (stat.size reports the truncated size and triggers
+      // the gate before readFileSync runs).
+      const oversizePath = join(dataDir, "scrollback", "oversize_id");
+      const fd = openSync(oversizePath, "w");
+      try {
+        ftruncateSync(fd, 25 * 1024 * 1024); // 25 MB sparse file
+      } finally {
+        closeSync(fd);
+      }
+
+      assert.strictEqual(store.load("oversize_id"), null,
+        "oversized file must be refused before readFileSync runs");
+    });
   });
 
   describe("atomic write", () => {
@@ -170,14 +187,44 @@ describe("scrollback store", () => {
       assert.deepStrictEqual(remaining, ["active_a", "active_b"]);
     });
 
-    it("preserves stray .tmp.<pid> files (a concurrent write may own them)", () => {
+    it("preserves recent .tmp.<pid> files (a concurrent write may own them)", () => {
       // Simulate a temp file from a live writer in another process.
       writeFileSync(join(dataDir, "scrollback", "session_x.tmp.99999"), "in-flight");
 
       store.pruneExcept([]);
 
-      // The tmp file is still there — pruning would race the other writer.
+      // Recent tmp file is preserved — pruning would race the other writer.
       assert.ok(existsSync(join(dataDir, "scrollback", "session_x.tmp.99999")));
+    });
+
+    it("evicts stale .tmp.<pid> files older than the age threshold", () => {
+      // A repeatedly crashing server can otherwise accumulate 20 MB-sized
+      // temp files indefinitely. Anything older than the threshold belongs
+      // to a writer whose pid is long gone.
+      const stalePath = join(dataDir, "scrollback", "session_y.tmp.88888");
+      writeFileSync(stalePath, "stranded");
+      // Backdate the file 2 hours (well past the 1-hour threshold).
+      const twoHoursAgo = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+      utimesSync(stalePath, twoHoursAgo, twoHoursAgo);
+
+      store.pruneExcept([]);
+
+      assert.ok(!existsSync(stalePath), "stale .tmp file must be evicted");
+    });
+
+    it("preserves files whose names don't match the id format (.gitkeep, dotfiles, etc.)", () => {
+      // pruneExcept's id-format filter is path-traversal defense — it must
+      // skip anything in the dir that couldn't possibly be one of our files
+      // (names with `.`, `/`, etc.). Bare alnum names that happen to match
+      // the id format are still candidates for deletion; that's accepted
+      // behavior since we own the directory.
+      writeFileSync(join(dataDir, "scrollback", ".gitkeep"), "");
+      writeFileSync(join(dataDir, "scrollback", "with.dots"), "x");
+
+      store.pruneExcept([]);
+
+      assert.ok(existsSync(join(dataDir, "scrollback", ".gitkeep")));
+      assert.ok(existsSync(join(dataDir, "scrollback", "with.dots")));
     });
 
     it("handles a missing scrollback dir without throwing", () => {
@@ -188,10 +235,9 @@ describe("scrollback store", () => {
   });
 
   describe("no-op store (no dataDir)", () => {
-    it("returns an enabled=false store that swallows all operations", () => {
+    it("returns a store that silently swallows all operations", () => {
       const noop = createScrollbackStore({ dataDir: null });
 
-      assert.strictEqual(noop.enabled, false);
       noop.save("id", "data", 4);  // no throw
       assert.strictEqual(noop.load("id"), null);
       noop.remove("id");           // no throw

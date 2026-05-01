@@ -175,6 +175,18 @@ describe("RingBuffer", () => {
       assert.strictEqual(buffer.totalBytes, 0);
       assert.strictEqual(buffer.toString(), "");
     });
+
+    it("rejects data larger than maxBytes (eviction-contract defense)", () => {
+      // push() enforces maxBytes via evict(). restore() must enforce the
+      // same cap or a tampered/oversized snapshot would silently bypass
+      // the buffer's memory contract.
+      const buffer = new RingBuffer(100);
+      const oversized = "x".repeat(200);
+      buffer.restore(oversized, 200);
+
+      assert.strictEqual(buffer.totalBytes, 0, "restore must no-op on oversize input");
+      assert.strictEqual(buffer.toString(), "");
+    });
   });
 
   describe("stats", () => {
