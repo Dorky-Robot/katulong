@@ -119,7 +119,6 @@ export const wsMessageHandlers = {
       effects: [
         { type: 'carouselRename', oldName: ctx.currentSessionName, newName: msg.name },
         { type: 'poolRename', oldName: ctx.currentSessionName, newName: msg.name },
-        { type: 'notepadRename', oldName: ctx.currentSessionName, newName: msg.name },
         { type: 'iconStoreRename', oldName: ctx.currentSessionName, newName: msg.name },
         { type: 'tabRename', oldName: ctx.currentSessionName, newName: msg.name },
         { type: 'uiStoreRename', oldName: ctx.currentSessionName, newName: msg.name },

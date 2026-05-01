@@ -6,10 +6,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 /**
- * Integration tests for Notes API endpoints.
+ * Integration tests for the flat-name Notes API.
  *
- * Verifies that per-session notes can be created, read, updated,
- * and deleted via the REST API, and that checkbox markdown is preserved.
+ * Notes are no longer per-session; each note is a markdown file at
+ * DATA_DIR/notes/<name>.md, identified solely by its name. Tests cover
+ * list / create / read / write / rename (PATCH) / delete plus name
+ * validation (rejects path traversal, hidden files, oversize names).
  */
 
 const TEST_PORT = 3007;
@@ -55,18 +57,75 @@ describe("Notes API Integration", { concurrency: 1, skip: "flaky under parallel 
     if (testDataDir) rmSync(testDataDir, { recursive: true, force: true });
   });
 
-  describe("GET /api/notes/:session", () => {
-    it("returns empty content for nonexistent note", async () => {
-      const r = await fetch(`${BASE_URL}/api/notes/no-such-session`);
+  describe("GET /api/notes (list)", () => {
+    it("returns empty array initially", async () => {
+      const r = await fetch(`${BASE_URL}/api/notes`);
       assert.equal(r.status, 200);
       const data = await r.json();
-      assert.equal(data.content, "");
+      assert.deepEqual(data.notes, []);
     });
   });
 
-  describe("PUT /api/notes/:session", () => {
+  describe("POST /api/notes (create)", () => {
+    it("creates an untitled note when no name is given", async () => {
+      const r = await fetch(`${BASE_URL}/api/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      assert.equal(r.status, 201);
+      const data = await r.json();
+      assert.match(data.name, /^untitled-\d+$/);
+    });
+
+    it("creates a note with a specific name", async () => {
+      const r = await fetch(`${BASE_URL}/api/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "sprint plan", content: "# Goals\n- ship" }),
+      });
+      assert.equal(r.status, 201);
+      const data = await r.json();
+      assert.equal(data.name, "sprint plan");
+    });
+
+    it("rejects invalid names (path traversal)", async () => {
+      const r = await fetch(`${BASE_URL}/api/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "../escape" }),
+      });
+      assert.equal(r.status, 400);
+    });
+
+    it("returns 409 on collision", async () => {
+      const r = await fetch(`${BASE_URL}/api/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "sprint plan" }),
+      });
+      assert.equal(r.status, 409);
+    });
+  });
+
+  describe("GET /api/notes/:name", () => {
+    it("returns 404 for nonexistent note", async () => {
+      const r = await fetch(`${BASE_URL}/api/notes/no-such-note`);
+      assert.equal(r.status, 404);
+    });
+
+    it("returns content for an existing note", async () => {
+      const r = await fetch(`${BASE_URL}/api/notes/${encodeURIComponent("sprint plan")}`);
+      assert.equal(r.status, 200);
+      const data = await r.json();
+      assert.equal(data.name, "sprint plan");
+      assert.equal(data.content, "# Goals\n- ship");
+    });
+  });
+
+  describe("PUT /api/notes/:name", () => {
     it("creates a note", async () => {
-      const r = await fetch(`${BASE_URL}/api/notes/test-session`, {
+      const r = await fetch(`${BASE_URL}/api/notes/checkboxes`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: "# Hello\n- [ ] task one\n- [ ] task two" }),
@@ -76,25 +135,25 @@ describe("Notes API Integration", { concurrency: 1, skip: "flaky under parallel 
       assert.equal(data.ok, true);
     });
 
-    it("persists the note for subsequent reads", async () => {
-      const r = await fetch(`${BASE_URL}/api/notes/test-session`);
+    it("persists for subsequent reads", async () => {
+      const r = await fetch(`${BASE_URL}/api/notes/checkboxes`);
       const data = await r.json();
       assert.equal(data.content, "# Hello\n- [ ] task one\n- [ ] task two");
     });
 
     it("updates existing note", async () => {
-      await fetch(`${BASE_URL}/api/notes/test-session`, {
+      await fetch(`${BASE_URL}/api/notes/checkboxes`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: "# Hello\n- [x] task one\n- [ ] task two" }),
       });
-      const r = await fetch(`${BASE_URL}/api/notes/test-session`);
+      const r = await fetch(`${BASE_URL}/api/notes/checkboxes`);
       const data = await r.json();
       assert.equal(data.content, "# Hello\n- [x] task one\n- [ ] task two");
     });
 
     it("rejects non-string content", async () => {
-      const r = await fetch(`${BASE_URL}/api/notes/test-session`, {
+      const r = await fetch(`${BASE_URL}/api/notes/checkboxes`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: 123 }),
@@ -103,21 +162,63 @@ describe("Notes API Integration", { concurrency: 1, skip: "flaky under parallel 
     });
   });
 
-  describe("DELETE /api/notes/:session", () => {
+  describe("PATCH /api/notes/:name (rename)", () => {
+    it("renames a note", async () => {
+      await fetch(`${BASE_URL}/api/notes/old-name`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "stays the same" }),
+      });
+      const r = await fetch(`${BASE_URL}/api/notes/old-name`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newName: "new-name" }),
+      });
+      assert.equal(r.status, 200);
+      const data = await r.json();
+      assert.equal(data.name, "new-name");
+
+      // old gone, new present with same content
+      assert.equal((await fetch(`${BASE_URL}/api/notes/old-name`)).status, 404);
+      const got = await (await fetch(`${BASE_URL}/api/notes/new-name`)).json();
+      assert.equal(got.content, "stays the same");
+    });
+
+    it("returns 409 if target already exists", async () => {
+      await fetch(`${BASE_URL}/api/notes/keep-me`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "x" }),
+      });
+      const r = await fetch(`${BASE_URL}/api/notes/new-name`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newName: "keep-me" }),
+      });
+      assert.equal(r.status, 409);
+    });
+
+    it("rejects invalid newName", async () => {
+      const r = await fetch(`${BASE_URL}/api/notes/keep-me`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newName: "../escape" }),
+      });
+      assert.equal(r.status, 400);
+    });
+  });
+
+  describe("DELETE /api/notes/:name", () => {
     it("deletes an existing note", async () => {
-      // Create
       await fetch(`${BASE_URL}/api/notes/to-delete`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: "temp note" }),
       });
-      // Delete
       const r = await fetch(`${BASE_URL}/api/notes/to-delete`, { method: "DELETE" });
       assert.equal(r.status, 200);
-      // Verify gone
       const check = await fetch(`${BASE_URL}/api/notes/to-delete`);
-      const data = await check.json();
-      assert.equal(data.content, "");
+      assert.equal(check.status, 404);
     });
 
     it("succeeds for nonexistent note (no-op)", async () => {
@@ -152,7 +253,6 @@ describe("Notes API Integration", { concurrency: 1, skip: "flaky under parallel 
       const data = await r.json();
       const lines = data.content.split("\n");
 
-      // Check off "fix clipboard bridge"
       const idx = lines.findIndex(l => l.includes("fix clipboard bridge"));
       assert.notEqual(idx, -1);
       lines[idx] = lines[idx].replace("- [ ] ", "- [x] ");
@@ -167,82 +267,6 @@ describe("Notes API Integration", { concurrency: 1, skip: "flaky under parallel 
       const updated = await verify.json();
       assert.ok(updated.content.includes("- [x] fix clipboard bridge"));
       assert.ok(updated.content.includes("- [ ] write tests")); // unchanged
-    });
-
-    it("supports reordering blocks", async () => {
-      const r = await fetch(`${BASE_URL}/api/notes/blocks-test`);
-      const data = await r.json();
-      const lines = data.content.split("\n");
-
-      // Move last line to first
-      const last = lines.pop();
-      lines.unshift(last);
-
-      await fetch(`${BASE_URL}/api/notes/blocks-test`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: lines.join("\n") }),
-      });
-
-      const verify = await fetch(`${BASE_URL}/api/notes/blocks-test`);
-      const updated = await verify.json();
-      assert.equal(updated.content.split("\n")[0], last);
-    });
-
-    it("supports inserting a block at an index", async () => {
-      const r = await fetch(`${BASE_URL}/api/notes/blocks-test`);
-      const lines = (await r.json()).content.split("\n");
-
-      lines.splice(1, 0, "## Priorities");
-
-      await fetch(`${BASE_URL}/api/notes/blocks-test`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: lines.join("\n") }),
-      });
-
-      const verify = await fetch(`${BASE_URL}/api/notes/blocks-test`);
-      const updated = (await verify.json()).content.split("\n");
-      assert.equal(updated[1], "## Priorities");
-    });
-
-    it("supports removing a block by index", async () => {
-      const r = await fetch(`${BASE_URL}/api/notes/blocks-test`);
-      const lines = (await r.json()).content.split("\n");
-      const countBefore = lines.length;
-
-      lines.splice(1, 1); // remove "## Priorities"
-
-      await fetch(`${BASE_URL}/api/notes/blocks-test`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: lines.join("\n") }),
-      });
-
-      const verify = await fetch(`${BASE_URL}/api/notes/blocks-test`);
-      const updated = (await verify.json()).content.split("\n");
-      assert.equal(updated.length, countBefore - 1);
-      assert.ok(!updated.includes("## Priorities"));
-    });
-  });
-
-  describe("session isolation", () => {
-    it("notes are isolated per session", async () => {
-      await fetch(`${BASE_URL}/api/notes/session-a`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: "note for A" }),
-      });
-      await fetch(`${BASE_URL}/api/notes/session-b`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: "note for B" }),
-      });
-
-      const a = await (await fetch(`${BASE_URL}/api/notes/session-a`)).json();
-      const b = await (await fetch(`${BASE_URL}/api/notes/session-b`)).json();
-      assert.equal(a.content, "note for A");
-      assert.equal(b.content, "note for B");
     });
   });
 });
