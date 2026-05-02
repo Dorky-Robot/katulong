@@ -179,6 +179,84 @@ body {
   line-height: 1.4;
 }
 
+/* Slice 9s.5: alternate-auth disclosure for the
+ * "Set up new passkey" path. Rendered below the primary
+ * sign-in CTA in sign-in mode only.
+ *
+ * `<details>` / `<summary>` is the native disclosure
+ * widget — keyboard/SR accessible by default, the open/
+ * closed state is OS-managed, no Leptos signal needed.
+ * We strip the default disclosure triangle (`marker: none`
+ * / `display: none` on the `::-webkit-details-marker`
+ * pseudo) and replace it with a plain text button that
+ * looks like a tertiary action. The accent-tinted hover
+ * tracks the rest of the auth UI's CTA palette.
+ */
+#kat-login .alt-auth {
+  margin-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 16px;
+}
+
+#kat-login .alt-auth-toggle {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--kat-fg-dim);
+  list-style: none;
+  padding: 4px 0;
+  user-select: none;
+}
+
+/* Hide the platform default disclosure marker so we control
+ * the visual entirely. Both selectors are needed: WebKit
+ * uses the pseudo-element, Firefox/standards uses
+ * `list-style`. */
+#kat-login .alt-auth-toggle::-webkit-details-marker {
+  display: none;
+}
+
+#kat-login .alt-auth-toggle::before {
+  content: "+ ";
+  color: var(--kat-accent);
+  font-weight: 600;
+}
+
+#kat-login .alt-auth[open] .alt-auth-toggle::before {
+  content: "− ";
+}
+
+#kat-login .alt-auth-toggle:hover {
+  color: var(--kat-fg);
+}
+
+#kat-login .alt-auth-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+#kat-login .alt-auth-body .hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--kat-fg-dim);
+  line-height: 1.4;
+}
+
+/* Secondary CTA: same shape as the primary `.cta`, muted
+ * fill so it doesn't compete with the sign-in button
+ * above. */
+#kat-login .cta-secondary {
+  background: rgba(77, 208, 225, 0.12);
+  color: var(--kat-accent);
+  border: 1px solid rgba(77, 208, 225, 0.4);
+}
+
+#kat-login .cta-secondary:hover:not(:disabled) {
+  background: rgba(77, 208, 225, 0.2);
+  filter: none;
+}
+
 /* Tile contents (slice 9s.1). Both `#kat-terminal-tile` and
  * `#kat-status-tile` (and any future tile that lands the
  * `data-tile-kind="…"` shape) share the same chrome — the

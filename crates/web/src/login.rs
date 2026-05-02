@@ -471,6 +471,43 @@ pub fn Login() -> impl IntoView {
         }
     };
 
+    // Setup-token-input flow.
+    //
+    // The pair URL `?setup_token=...` covers the "scan QR
+    // from another device" path; this manual-input flow
+    // covers the "I have a setup token I want to paste"
+    // path. Both feed the same `pair_action`, so the
+    // ceremony shape and error surface stay singular —
+    // only the source of the token differs. Rendered in
+    // both sign-in and pair modes per the parity rule with
+    // the Node login UI ("always an option"): a stale or
+    // wrong pair URL must still let the user paste a fresh
+    // token without re-navigating.
+    let (token_input, set_token_input) = create_signal(String::new());
+    // Trim on read so leading/trailing whitespace from a
+    // paste-from-clipboard doesn't reach the `pair_action`
+    // (the server's token validator is strict).
+    let token_trimmed = move || token_input.with(|t| t.trim().to_string());
+    let register_disabled = move || {
+        matches!(phase.get(), CeremonyPhase::InFlight) || token_trimmed().is_empty()
+    };
+    let register_label = move || match phase.get() {
+        CeremonyPhase::InFlight => "Setting up…".to_string(),
+        _ => "Set up new passkey".to_string(),
+    };
+    let on_setup_click = move |_| {
+        let token = token_trimmed();
+        if token.is_empty() {
+            return;
+        }
+        // Same synchronous-InFlight pattern as the primary
+        // CTA. `create_action`'s microtask scheduling means
+        // setting InFlight inside the action future would
+        // leave a re-entrant click window.
+        set_phase.set(CeremonyPhase::InFlight);
+        pair_action.dispatch(token);
+    };
+
     view! {
         <section id="kat-login" data-mode=mode_attr>
             <h1 class="title">{title}</h1>
@@ -492,6 +529,62 @@ pub fn Login() -> impl IntoView {
             {move || error_message().map(|msg| view! {
                 <p class="error" role="alert">{msg}</p>
             })}
+
+            // Alternate-auth disclosure: setup-token-input
+            // path. Always rendered, including in pair mode —
+            // the user might arrive with a stale or wrong
+            // pair URL and need to paste a different token,
+            // or they might want to register a different
+            // device than the URL was minted for. Keeping
+            // the affordance present in both modes matches
+            // the "always an option" rule from the Node
+            // login UI.
+            //
+            // Native `<details>` is the right primitive: the
+            // disclosure state is OS-managed, accessible by
+            // default (keyboard, screen reader), and survives
+            // page reload behavior in Safari/Chrome.
+            //
+            // **Why deferred: "Authorize from another
+            // device".** The Node login UI offers a third
+            // option that uses a server-side device-auth
+            // flow (one device shows a code, the user
+            // confirms on a logged-in device). The matching
+            // server endpoints don't exist on the Rust side
+            // yet — a separate slice. Rendering a disabled
+            // button here would just be visual debt.
+            <details class="alt-auth">
+                <summary class="alt-auth-toggle">
+                    "Set up a new passkey"
+                </summary>
+                <div class="alt-auth-body">
+                    <p class="hint">
+                        "Paste a setup token to register this device. Get one from the staging script's pair URL or from another already-paired device."
+                    </p>
+                    <div class="field">
+                        <label class="label" for="kat-setup-token">"Setup token"</label>
+                        <input
+                            id="kat-setup-token"
+                            type="text"
+                            autocorrect="off"
+                            autocapitalize="off"
+                            autocomplete="off"
+                            spellcheck="false"
+                            placeholder="paste token here"
+                            prop:value=token_input
+                            on:input=move |ev| set_token_input.set(event_target_value(&ev))
+                        />
+                    </div>
+                    <button
+                        type="button"
+                        class="cta cta-secondary"
+                        prop:disabled=register_disabled
+                        on:click=on_setup_click
+                    >
+                        {register_label}
+                    </button>
+                </div>
+            </details>
         </section>
     }
 }
