@@ -168,20 +168,29 @@ export function createTileHost({ store, carousel, getRenderer, getClusterIdx, on
    */
   function _createAdapter(id, tileDesc, renderer, dispatch) {
     let handle = null;
+    // Read props live from the store on every adapter call — the
+    // closed-over `tileDesc` is a snapshot from adapter-creation time
+    // and goes stale the moment any renderer dispatches UPDATE_PROPS
+    // without changing the tile id. Pre-notes the only caller that
+    // mutated props after mount was file-browser's setTitle shim,
+    // which already routed through renderer.describe(); the notes
+    // tile is the first that renames in place, so getTitle / getIcon /
+    // persistable / serialize have to track the live state or the
+    // rename gets lost on save and reload.
+    const liveProps = () => store.getState().tiles[id]?.props ?? tileDesc.props;
     const adapter = {
       type: tileDesc.type,
-      // The carousel reads persistable on save — route through renderer
-      get persistable() { return renderer.describe(tileDesc.props).persistable !== false; },
+      get persistable() { return renderer.describe(liveProps()).persistable !== false; },
       get sessionName() {
         // Terminal and cluster tiles need sessionName for WS bookkeeping
-        return tileDesc.props.sessionName || id;
+        return liveProps().sessionName || id;
       },
       setSessionName(newName) {
         // Carousel rename — update the underlying tile handle if it exists
         handle?.tile?.setSessionName?.(newName);
       },
       mount(el, ctx) {
-        handle = renderer.mount(el, { id, props: tileDesc.props, dispatch, ctx });
+        handle = renderer.mount(el, { id, props: liveProps(), dispatch, ctx });
         adapter._handle = handle;
       },
       unmount() {
@@ -191,10 +200,10 @@ export function createTileHost({ store, carousel, getRenderer, getClusterIdx, on
       focus() { handle?.focus(); },
       blur() { handle?.blur(); },
       resize() { handle?.resize(); },
-      getTitle() { return renderer.describe(tileDesc.props).title; },
-      getIcon() { return renderer.describe(tileDesc.props).icon; },
+      getTitle() { return renderer.describe(liveProps()).title; },
+      getIcon() { return renderer.describe(liveProps()).icon; },
       serialize() {
-        return { type: tileDesc.type, ...tileDesc.props };
+        return { type: tileDesc.type, ...liveProps() };
       },
       // For cluster sub-tiles
       getSubTiles() { return handle?.tile?.getSubTiles?.() || []; },

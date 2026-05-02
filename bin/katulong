@@ -27,7 +27,7 @@ const COMMANDS = {
   token: "Manage setup tokens (create, list, revoke)",
   credential: "Manage passkey credentials (list, revoke)",
   session: "Manage terminal sessions (list, create, kill, rename)",
-  notes: "Read per-session notepad content (read, list)",
+  notes: "Manage notes (list, read, edit, rename, delete)",
   setup: "One-time setup (self-access, Claude Code hooks)",
   service: "Manage macOS LaunchAgent (install, uninstall, restart, status)",
   bridge: "Manage local-service bridges (e.g., ollama)",
@@ -68,9 +68,10 @@ EXAMPLES:
   katulong session create myapp --open  Create session + open in browser
   katulong setup api          Create orchestrator API key for kubos
   katulong notify "done"      Send notification to connected browsers
-  katulong notes read         Read notes for current session
-  katulong notes todos        List unchecked todos
-  katulong notes check "fix"  Check off a matching todo
+  katulong notes list         List all notes
+  katulong notes read --name plan  Read a note
+  katulong notes check "fix" --name plan  Check off a matching todo
+  katulong notes rename "v2" --name plan  Rename a note
   katulong service install    Auto-start on login (macOS)
   katulong service restart    Restart after brew upgrade
 

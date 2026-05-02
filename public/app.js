@@ -41,7 +41,6 @@
     import { screenFingerprint } from "/lib/screen-fingerprint.js";
     import { createWebRTCPeer } from "/lib/webrtc-peer.js";
 
-    import { createNotepad } from "/lib/notepad.js";
     import { createCardCarousel, parseLegacyCarouselStorage } from "/lib/card-carousel.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
     import { createClusterTileFactory } from "/lib/tiles/cluster-tile.js";
@@ -1064,9 +1063,6 @@
     let _attachScrollButton = () => {};
 
     function activateSession(name) {
-      // Close alternative views — switching sessions returns to terminal
-      if (notepad.isActive()) notepad.hide();
-
       // Ensure session is in this window's tab set
       if (!windowTabSet.hasTab(name)) {
         windowTabSet.addTab(name);
@@ -1497,10 +1493,11 @@
       ],
       onNewSessionClick: createNewSession,
       tileTypes: [
-        { type: "terminal",     name: "Terminal", icon: "terminal-window" },
-        { type: "feed",          name: "Feed",     icon: "rss" },
-        { type: "localhost-browser", name: "Browser", icon: "globe-simple" },
-        { type: "sipag",             name: "sipag",   icon: "list-checks" },
+        { type: "terminal",          name: "Terminal", icon: "terminal-window" },
+        { type: "feed",              name: "Feed",     icon: "rss" },
+        { type: "localhost-browser", name: "Browser",  icon: "globe-simple" },
+        { type: "sipag",             name: "sipag",    icon: "list-checks" },
+        { type: "notes",             name: "Note",     icon: "note-pencil" },
       ],
       onCreateTile: (type) => {
         if (type === "terminal") {
@@ -1515,6 +1512,8 @@
           openLocalhostBrowserTile();
         } else if (type === "sipag") {
           openSipagTile();
+        } else if (type === "notes") {
+          openNotesTile();
         }
       },
       onTabClick: (name) => {
@@ -1527,8 +1526,6 @@
           routeToSession(name);
         }
       },
-      onNotepadClick: () => toggleNotepad(),
-      get notepad() { return notepad; },
       onAdoptSession: async (name) => {
         windowTabSet.addTab(name);
         try {
@@ -1568,7 +1565,6 @@
     function applyLocalRename(oldName, newName, tile, wasFocused) {
       carousel.renameCard(oldName, newName);
       terminalPool.rename(oldName, newName);
-      notepad.rename(oldName, newName);
       iconStore.rename(oldName, newName);
       windowTabSet.renameTab(oldName, newName);
       invalidateSessions(sessionStore, newName);
@@ -1585,7 +1581,21 @@
       const uiState = uiStore.getState();
       const tile = uiState.tiles[id];
       const desc = describeTile(tile);
-      if (!desc.renameable || !desc.session) return;
+      if (!desc.renameable) return;
+
+      // Session-less renameable tiles (e.g. notes) keep a stable tile id
+      // and rename only the file on disk. The renderer's setName hook
+      // does the PATCH and dispatches UPDATE_PROPS so describe() picks
+      // up the new title. No carousel/pool/uiStore.removeTile churn —
+      // the editor stays mounted with cursor and edit state intact.
+      if (!desc.session) {
+        const handle = tileHost.getHandle(id);
+        if (!handle?.tile?.setName) return;
+        Promise.resolve(handle.tile.setName(newName)).catch((err) => {
+          console.error("[Tab] Rename failed:", err);
+        });
+        return;
+      }
 
       const wasFocused = uiState.focusedId === id;
       // Optimistic local rename before the API call, so the WS broadcast
@@ -1751,6 +1761,7 @@
         { id: "new:feed",              label: "New Feed",     kind: "new", action: "create:feed" },
         { id: "new:localhost-browser", label: "New Browser",  kind: "new", action: "create:localhost-browser" },
         { id: "new:sipag",             label: "New sipag",    kind: "new", action: "create:sipag" },
+        { id: "new:notes",             label: "New Note",     kind: "new", action: "create:notes" },
       ];
 
       const items = [...newTileItems, ...openTiles, ...closedManaged, ...tmuxItems];
@@ -1797,6 +1808,7 @@
         else if (type === "feed") openAgentFeedTile();
         else if (type === "localhost-browser") openLocalhostBrowserTile();
         else if (type === "sipag") openSipagTile();
+        else if (type === "notes") openNotesTile();
         else console.warn(`createTile: unknown tile type ${JSON.stringify(type)}`);
       },
       showHelp: () => toggleKeyboardHelp(),
@@ -1973,7 +1985,6 @@
     // public/lib/tiles/file-browser-tile.js.
 
     function returnToTerminal() {
-      if (notepad.isActive()) notepad.hide();
       getTerm()?.focus();
     }
 
@@ -2202,6 +2213,21 @@
       if (isOverlayViewport()) setOverlaySidebar(false);
     }
 
+    // --- Notes (tile) ---
+    //
+    // The empty state is the picker — list existing notes or create a
+    // fresh one. Once a note is opened, the same tile transitions to
+    // editor mode and props.name keeps the file<->title link stable
+    // across reloads.
+    function openNotesTile() {
+      const tileId = `notes-${Date.now().toString(36)}`;
+      uiStore.addTile(
+        { id: tileId, type: "notes", props: {} },
+        { focus: true, insertAt: "afterFocus" },
+      );
+      if (isOverlayViewport()) setOverlaySidebar(false);
+    }
+
     const sidebarFilesBtn = document.getElementById("sidebar-files-btn");
     if (sidebarFilesBtn) {
       sidebarFilesBtn.addEventListener("click", openFileBrowserTile);
@@ -2215,20 +2241,6 @@
     const sidebarSettingsBtn = document.getElementById("sidebar-settings-btn");
     if (sidebarSettingsBtn) {
       sidebarSettingsBtn.addEventListener("click", () => modals.open('settings'));
-    }
-
-    // --- Notepad ---
-
-    const notepad = createNotepad({
-      onClose: () => getTerm()?.focus(),
-    });
-
-    function toggleNotepad() {
-      if (notepad.isActive()) {
-        notepad.hide();
-      } else {
-        notepad.show(getActiveSessionName());
-      }
     }
 
     // --- Connection Manager ---
@@ -2364,7 +2376,6 @@
       },
       carouselRename: (e) => carousel.renameCard(e.oldName, e.newName),
       poolRename: (e) => terminalPool.rename(e.oldName, e.newName),
-      notepadRename: (e) => notepad.rename(e.oldName, e.newName),
       iconStoreRename: (e) => iconStore.rename(e.oldName, e.newName),
       tabRename: (e) => windowTabSet.renameTab(e.oldName, e.newName),
       // Update ui-store tile so getActiveSessionName() returns the new name.
