@@ -729,17 +729,18 @@
     .terminal-pane .xterm-screen { margin-left: auto; margin-right: auto; }
     /* Scroll is JS-driven (xterm's wheel handler + initTouchScroll's pointer
        bridge → term.scrollLines). Override xterm.css's overflow-y:scroll so
-       no native scroll container exists on iOS — native momentum scrolling
-       on this layer fights the WebGL canvas redraw and ghosts rows on iPad.
+       wheel events have no native layer to translate against the WebGL
+       canvas redraw — that race ghosts rows on iPad.
 
-       Why `clip` and not `hidden`: on iPadOS WebKit, `overflow: hidden` still
-       creates a scroll container — focus and trackpad-wheel events translate
-       its compositor layer even though no scrollbar shows. PR #677 used
-       `hidden` and fixed finger-touch (whose path is the pointer bridge), but
+       `clip`, not `hidden`: on iPadOS WebKit, `overflow: hidden` still
+       establishes a scroll container — wheel and focus events drive its
+       compositor layer even though no scrollbar shows. PR #677 used `hidden`
+       and fixed finger-touch (which goes through the pointer bridge), but
        trackpad wheel still ghosted rows because the container was alive.
-       `overflow: clip` does not create a scroll container at all (see prior
-       lessons in commits 88dc3a1 and a391a15), so wheel events have no native
-       layer to translate and only xterm's JS handler runs. */
+       `overflow: clip` does not create a scroll container at all, so only
+       xterm's JS handler runs. Prior fixes for the same WebKit quirk on
+       html/body (88dc3a1) and the carousel container (a391a15) reached
+       the same conclusion. */
     #terminal-container .xterm-viewport,
     #terminal-container .xterm-scrollable-element {
       overflow: clip;
