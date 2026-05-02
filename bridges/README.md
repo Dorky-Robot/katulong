@@ -67,7 +67,8 @@ katulong bridge <name> start             # foreground (used internally by launch
 Per-bridge state lives under `~/.katulong/bridges/<name>/`:
 
 - `config.json` (mode 0600) — `{ token, port?, bind?, target? }`. Operator overrides go here.
-- `stdout.log`, `stderr.log` — launchd output
+- `stdout.log`, `stderr.log` — launchd output (crashes, `console.log` lines)
+- `logs/<YYYY-MM-DD>.log` — structured per-week JSON-line logs (auth failures, upstream errors). The date is the UTC Sunday that begins the entry's week. Files are append-only; rotation happens lazily on the first write past a Sunday boundary. There is no automatic pruning — run `find ~/.katulong/bridges/<name>/logs -mtime +90 -delete` (or your retention of choice) on whatever cadence you like.
 
 The shared CLI handles atomic writes and 0600 enforcement. Don't write these files directly.
 
