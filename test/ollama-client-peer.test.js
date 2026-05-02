@@ -204,6 +204,72 @@ describe("createOllamaClient — cascade (resolveBackends)", () => {
     assert.equal(probesAfterSecond, 1, "second call should reuse the cached active");
   });
 
+  it("re-probes higher-priority backends quickly when serving from a fallback", async () => {
+    // Simulates the peer-bridge being down at first call (so we cascade
+    // to local-31b), then coming back online. With the fallback-aware
+    // short TTL, the next call after fallbackTtlMs should re-probe and
+    // migrate back to peer-bridge.
+    let bridgeReachable = false;
+    const client = createOllamaClient({
+      resolveBackends: () => [
+        {
+          name: "peer-bridge",
+          host: bridgeReachable ? bridgeUrl : "http://127.0.0.1:1",
+          authToken: null,
+          model: "gemma4:31b",
+        },
+        { name: "local-31b", host: localUrl, authToken: null, model: "gemma4:31b" },
+      ],
+      probeTimeoutMs: 200,
+      fallbackTtlMs: 50,
+      probeTtlMs: 10 * 60 * 1000,
+    });
+
+    await client("first");
+    assert.equal(client.getActiveBackend().name, "local-31b");
+
+    // Bridge comes back. Within fallbackTtlMs we still trust the cached
+    // fallback (no probe storm).
+    bridgeReachable = true;
+    const localChatsBefore = localStub.requests.filter((r) => r.url === "/api/chat").length;
+    await client("second");
+    assert.equal(client.getActiveBackend().name, "local-31b", "stays on fallback within TTL");
+    const localChatsAfter = localStub.requests.filter((r) => r.url === "/api/chat").length;
+    assert.equal(localChatsAfter, localChatsBefore + 1, "second call served by local within TTL");
+
+    // After fallbackTtlMs expires, the next call should re-probe and find
+    // the now-healthy peer-bridge.
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await client("third");
+    assert.equal(client.getActiveBackend().name, "peer-bridge", "migrates back once TTL expires");
+    assert.ok(
+      bridgeStub.requests.some((r) => r.url === "/api/chat"),
+      "bridge served the third call",
+    );
+  });
+
+  it("uses the long TTL when the active backend is the highest-priority one", async () => {
+    // Counterpart to the fallback test: when we're already on the
+    // preferred backend, fallbackTtlMs must NOT shorten the cache —
+    // otherwise we'd probe-storm the happy path.
+    const client = createOllamaClient({
+      resolveBackends: () => [
+        { name: "peer-bridge", host: bridgeUrl, authToken: null, model: "gemma4:31b" },
+        { name: "local-31b",   host: localUrl,  authToken: null, model: "gemma4:31b" },
+      ],
+      fallbackTtlMs: 10,
+      probeTtlMs: 10 * 60 * 1000,
+    });
+    await client("first");
+    assert.equal(client.getActiveBackend().name, "peer-bridge");
+    const probesAfterFirst = bridgeStub.requests.filter((r) => r.url === "/api/tags").length;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await client("second");
+    const probesAfterSecond = bridgeStub.requests.filter((r) => r.url === "/api/tags").length;
+    assert.equal(probesAfterFirst, 1, "first call probes once");
+    assert.equal(probesAfterSecond, 1, "preferred backend is not re-probed on the short TTL");
+  });
+
   it("invalidate() forces the next call to re-probe", async () => {
     const client = createOllamaClient({
       resolveBackends: () => [
