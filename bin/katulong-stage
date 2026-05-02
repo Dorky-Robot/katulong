@@ -629,23 +629,35 @@ cmd_start() {
     #   anyway. Browser origin = `localhost`. Set
     #   KATULONG_ORIGIN/KATULONG_RP_ID to localhost.
     #
-    # Default = manual flow (the common case). E2E harness
-    # opts into localhost RP ID by exporting
-    # `KATULONG_STAGE_FOR_TESTS=1` before invoking
-    # `katulong-stage start`. The conditional is
-    # non-destructive: a future slice that lands webauthn-rs's
-    # `additional_origins` plumbing can drop it and accept
-    # both origins simultaneously.
+    # Default = manual flow (the common case). Callers that
+    # need a different RP ID (e.g. the e2e harness running
+    # against localhost) export
+    # `KATULONG_STAGE_RP_ID_OVERRIDE=<rp-id>` before invoking
+    # `katulong-stage start`. The override describes WHAT it
+    # does, not WHO calls it — the older `_FOR_TESTS=1` shape
+    # had a security smell (env-var-flag-flips-auth-config is
+    # the same pattern the pre-commit hook scans for in the
+    # auth-bypass guard). Both origin and RP ID flip together
+    # so they remain a registrable suffix pair (webauthn-rs
+    # rejects mismatches at startup).
+    #
+    # `host` is guaranteed non-empty by the upfront
+    # `resolve_host` call — the early-exit there returns 1
+    # before we reach this block on resolution failure. So
+    # there's no fall-through localhost branch here; if
+    # someone ever loosens the upfront guard, this block
+    # MUST be revisited.
     local origin rp_id
-    if [[ "${KATULONG_STAGE_FOR_TESTS:-0}" == "1" ]]; then
-      origin="http://localhost:$port"
-      rp_id="localhost"
-    elif [[ -n "$host" ]]; then
+    if [[ -n "${KATULONG_STAGE_RP_ID_OVERRIDE:-}" ]]; then
+      rp_id="$KATULONG_STAGE_RP_ID_OVERRIDE"
+      if [[ "$rp_id" == "localhost" ]]; then
+        origin="http://localhost:$port"
+      else
+        origin="https://$rp_id"
+      fi
+    else
       origin="https://$host"
       rp_id="$host"
-    else
-      origin="http://localhost:$port"
-      rp_id="localhost"
     fi
     PORT="$port" \
     KATULONG_DATA_DIR="$data_dir" \

@@ -328,7 +328,12 @@ test.describe.serial("WebAuthn UI happy paths", () => {
     // disclosure widget; `<summary>` is the toggle; clicking
     // it expands the body. We assert the toggle exists, then
     // click it to reveal the body.
-    const toggle = page.getByRole("group").getByText(/set up a new passkey/i);
+    // Stable hook: scope to `.alt-auth summary` instead of
+    // `getByRole("group")`. Chromium has shipped multiple
+    // ARIA-mapping changes for `<details>` (variously
+    // exposed as `group`, none, or `disclosure`); a class-
+    // scoped CSS selector is the most durable contract.
+    const toggle = page.locator(".alt-auth summary");
     await expect(toggle).toBeVisible({ timeout: 5_000 });
     await toggle.click();
 

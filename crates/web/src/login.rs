@@ -471,17 +471,18 @@ pub fn Login() -> impl IntoView {
         }
     };
 
-    // Setup-token-input flow (sign-in mode only).
+    // Setup-token-input flow.
     //
     // The pair URL `?setup_token=...` covers the "scan QR
     // from another device" path; this manual-input flow
     // covers the "I have a setup token I want to paste"
     // path. Both feed the same `pair_action`, so the
     // ceremony shape and error surface stay singular —
-    // only the source of the token differs. Pair mode (URL
-    // already carries a token) hides this section: the user
-    // arrived via a pair link and the token is already in
-    // hand; presenting an input would be confusing.
+    // only the source of the token differs. Rendered in
+    // both sign-in and pair modes per the parity rule with
+    // the Node login UI ("always an option"): a stale or
+    // wrong pair URL must still let the user paste a fresh
+    // token without re-navigating.
     let (token_input, set_token_input) = create_signal(String::new());
     // Trim on read so leading/trailing whitespace from a
     // paste-from-clipboard doesn't reach the `pair_action`
