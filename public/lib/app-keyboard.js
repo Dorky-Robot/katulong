@@ -75,7 +75,7 @@ export function decideAppKey(ev, ctx = {}) {
   }
   // Cmd+W and Cmd+Shift+W are intentionally NOT bound: iPadOS Safari
   // standalone swallows them at the system level before JS sees the event.
-  // Close / kill live in the Cmd+. chord menu (t x / t k) instead.
+  // Close / kill live in the Cmd+; chord menu (t x / t k) instead.
 
   // ── Option (Alt) shortcuts ───────────────────────────────────────────
   // Must be Option alone, not Cmd+Option or Ctrl+Option.

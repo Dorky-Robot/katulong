@@ -54,14 +54,20 @@ export function createTerminalKeyboard(options = {}) {
   /**
    * Initialize custom key event handler.
    * Wires the pure decideTerminalKey function to the term instance.
+   *
+   * isPwaStandalone() is captured once here rather than re-queried on every
+   * keydown. matchMedia is cheap but not free, and the display mode cannot
+   * change during a page session — a standalone PWA only becomes a browser
+   * tab via reload, which rebuilds this closure.
    */
   function initCustomKeyHandler() {
     if (!term) return;
+    const pwa = isPwaStandalone();
 
     term.attachCustomKeyEventHandler((ev) => {
       const decision = decideTerminalKey(ev, {
         hasSelection: term.hasSelection(),
-        pwa: isPwaStandalone(),
+        pwa,
       });
 
       if (decision.sequence && onSend) {

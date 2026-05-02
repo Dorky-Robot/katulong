@@ -3255,9 +3255,10 @@
     <div class="modal-panel" style="max-width: var(--modal-width-sm);">
       <h3>Keyboard Shortcuts</h3>
       <ul class="kb-help-list">
-        <!-- kb-mod-pwa-cmd: in standalone PWA mode app.js swaps the ⌥ glyph
-             to ⌘ for these rows. Only mark modifiers whose Cmd+ alias is
-             actually wired in app-keyboard.js / terminal-key-decider.js. -->
+        <!-- kb-mod-pwa-cmd: only mark rows that show ⌥ in browser-tab mode
+             but switch to ⌘ in PWA standalone mode. app.js queries this class
+             on init and swaps the textContent. Rows where the modifier is
+             unchanged across modes (Cmd+/, Ctrl+C, etc.) stay unmarked. -->
         <li><span class="kb-label">New terminal</span><span><kbd class="kb-mod-pwa-cmd">&#x2325;</kbd> <kbd>T</kbd></span></li>
         <li><span class="kb-label">Close terminal</span><span><kbd>&#x2325;</kbd> <kbd>W</kbd></span></li>
         <li><span class="kb-label">Kill session</span><span><kbd>&#x2325;</kbd> <kbd>Shift</kbd> <kbd>W</kbd></span></li>

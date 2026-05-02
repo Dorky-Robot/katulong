@@ -1218,6 +1218,10 @@
       jumpToTab: (n) => jumpToTab(n),
     };
 
+    // Captured once: display-mode cannot change without reloading the page,
+    // so re-querying matchMedia per keystroke is wasted work.
+    const IS_PWA = isPwaStandalone();
+
     function handleAppKeydown(ev) {
       // Escape closes the keyboard help overlay. Other modals own their
       // own Escape handling via ModalRegistry.
@@ -1229,7 +1233,7 @@
 
       const decision = decideAppKey(ev, {
         isTextInput: isTextInputTarget(ev.target),
-        pwa: isPwaStandalone(),
+        pwa: IS_PWA,
       });
       if (!decision.action) return;
 

@@ -20,11 +20,11 @@
  * Build the default chord tree with the host's action registry wired in.
  *
  * @param {object} actions
- * @param {function} actions.closeCurrentTile      — () => void
- * @param {function} actions.renameCurrentTile     — () => void
- * @param {function} actions.killCurrentTile       — () => void
- * @param {function} actions.clearCurrentTerminal  — () => void
- * @param {function} actions.searchCurrentTerminal — () => void
+ * @param {function} actions.closeCurrentTile      — () => void; works for any tile type
+ * @param {function} actions.renameCurrentTile     — () => void; works for any tile type
+ * @param {function} actions.killCurrentTile       — () => void; works for any tile type (kills tmux only when applicable)
+ * @param {function} actions.clearCurrentTerminal  — () => void; terminal-only — the *Terminal suffix marks that
+ * @param {function} actions.searchCurrentTerminal — () => void; terminal-only — the *Terminal suffix marks that
  * @param {function} actions.createTile            — (type: string) => void
  * @param {function} [actions.showHelp]            — () => void
  *
@@ -89,7 +89,7 @@ export function buildCommandTree(actions) {
 export function matchChild(node, keyStr) {
   if (!node?.children) return null;
   for (const child of node.children) {
-    if (child.key && child.key === keyStr) return child;
+    if (child.key === keyStr) return child;
   }
   return null;
 }
