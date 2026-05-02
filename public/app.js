@@ -25,7 +25,7 @@
     import { createCommandMode } from "/lib/command-mode.js";
     import { createCommandSurface } from "/lib/command-surface.js";
     import { buildCommandTree } from "/lib/command-tree.js";
-    import { openCommandPicker } from "/lib/command-picker.js";
+    import { openCommandPicker, closeOpenPicker } from "/lib/command-picker.js";
     import { fetchSessionLists } from "/lib/session-fetch.js";
     import { createWindowTabSet } from "/lib/window-tab-set.js";
     import { installTabOrderSync } from "/lib/tab-order-sync.js";
@@ -33,6 +33,7 @@
     import { createSettingsHandlers } from "/lib/settings-handlers.js";
     import { createTerminalKeyboard } from "/lib/terminal-keyboard.js";
     import { decideAppKey, isTextInputTarget } from "/lib/app-keyboard.js";
+    import { isPwaStandalone } from "/lib/pwa.js";
     import { createInputSender } from "/lib/input-sender.js";
     import { createViewportManager } from "/lib/viewport-manager.js";
     import { createConnectionManager } from "/lib/connection-manager.js";
@@ -1189,6 +1190,14 @@
       });
       const closeBtn = document.getElementById("kb-help-close");
       if (closeBtn) closeBtn.addEventListener("click", toggleKeyboardHelp);
+
+      // In standalone PWA mode the corresponding shortcuts also accept Cmd+;
+      // swap the ⌥ glyph to ⌘ so the help overlay matches what's wired.
+      if (isPwaStandalone()) {
+        for (const el of kbHelpOverlay.querySelectorAll(".kb-mod-pwa-cmd")) {
+          el.textContent = "⌘";
+        }
+      }
     }
 
     // Global keyboard shortcuts. Decision logic lives in app-keyboard.js
@@ -1218,7 +1227,10 @@
         return;
       }
 
-      const decision = decideAppKey(ev, { isTextInput: isTextInputTarget(ev.target) });
+      const decision = decideAppKey(ev, {
+        isTextInput: isTextInputTarget(ev.target),
+        pwa: isPwaStandalone(),
+      });
       if (!decision.action) return;
 
       const handler = appKeyActions[decision.action];
@@ -1688,6 +1700,9 @@
     // tree is pure data (command-tree.js) wired to host actions below.
     let pickerPending = false;
     async function openTilePicker() {
+      // Toggle: if a picker is already open, close it and bail. Cmd+/ tapped
+      // a second time should dismiss the picker, not open a duplicate.
+      if (closeOpenPicker()) return;
       // Re-entry guard. The single-instance check inside openCommandPicker
       // only fires once the overlay is mounted — during our awaits below,
       // a second trigger would race through and leak a ghost picker.
@@ -1791,6 +1806,9 @@
     const commandActions = {
       closeCurrentTile: () => { closeCurrentSession(); },
       renameCurrentTile: () => { renameCurrentSession(); },
+      killCurrentTile: () => { killCurrentSession(); },
+      clearCurrentTerminal: () => { getTerm()?.clear(); },
+      searchCurrentTerminal: () => { toggleSearchBar(); },
       createTile: (type) => {
         if (type === "terminal") createNewSession();
         else if (type === "file-browser") openFileBrowserTile();

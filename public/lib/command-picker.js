@@ -38,6 +38,18 @@ function score(label, query) {
   return total - s.length * 0.1;
 }
 
+/**
+ * Close the currently-open picker, if any. Returns true if a picker was
+ * closed, false otherwise — used by callers that toggle the picker (e.g.
+ * Cmd+/ tapped a second time).
+ */
+export function closeOpenPicker() {
+  const existing = document.querySelector(`.${EL_CLASS}`);
+  if (!existing || !existing.__handle) return false;
+  existing.__handle.close();
+  return true;
+}
+
 export function openCommandPicker({ items, onPick, placeholder = "Go to…" }) {
   // Single-instance guard: a second open-while-open would mount a ghost
   // overlay and leak its capture-phase keydown listener on window (Escape

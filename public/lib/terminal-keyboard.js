@@ -9,6 +9,7 @@
 
 import { filterTerminalResponses, registerResponseSuppressors } from "/lib/terminal-input-filter.js";
 import { decideTerminalKey } from "/lib/terminal-key-decider.js";
+import { isPwaStandalone } from "/lib/pwa.js";
 
 /**
  * Create terminal keyboard handlers
@@ -58,7 +59,10 @@ export function createTerminalKeyboard(options = {}) {
     if (!term) return;
 
     term.attachCustomKeyEventHandler((ev) => {
-      const decision = decideTerminalKey(ev, { hasSelection: term.hasSelection() });
+      const decision = decideTerminalKey(ev, {
+        hasSelection: term.hasSelection(),
+        pwa: isPwaStandalone(),
+      });
 
       if (decision.sequence && onSend) {
         onSend(decision.sequence);

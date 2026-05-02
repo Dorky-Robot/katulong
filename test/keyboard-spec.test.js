@@ -188,6 +188,8 @@ describe("decideTerminalKey — app-level Option keys are blocked from PTY", () 
 describe("decideTerminalKey — accidental mappings (negative coverage)", () => {
   // Anything NOT in the spec must reach the PTY untouched. If a future
   // change accidentally adds a mapping for a common key, this catches it.
+  // ctx.pwa is left undefined so these assertions pin the *browser-tab*
+  // behavior — PWA-mode bindings are exercised in their own block below.
   const passThroughKeys = [
     ["a", { key: "a", code: "KeyA" }],
     ["A", { key: "A", code: "KeyA", shiftKey: true }],
@@ -195,8 +197,8 @@ describe("decideTerminalKey — accidental mappings (negative coverage)", () => 
     ["plain ArrowUp", { key: "ArrowUp", code: "ArrowUp" }],
     ["plain ArrowDown", { key: "ArrowDown", code: "ArrowDown" }],
     ["Cmd+ArrowLeft (browser nav, not us)", { key: "ArrowLeft", code: "ArrowLeft", metaKey: true }],
-    ["Cmd+K (NOT in spec — was the doc bug)", { key: "k", code: "KeyK", metaKey: true }],
-    ["Cmd+F (NOT in spec — browser find)", { key: "f", code: "KeyF", metaKey: true }],
+    ["Cmd+K in browser tab (PWA-only)", { key: "k", code: "KeyK", metaKey: true }],
+    ["Cmd+F (browser find, not us)", { key: "f", code: "KeyF", metaKey: true }],
   ];
 
   for (const [label, overrides] of passThroughKeys) {
@@ -207,6 +209,74 @@ describe("decideTerminalKey — accidental mappings (negative coverage)", () => 
       assert.equal(r.allowDefault, true, `${label} must let xterm handle it`);
     });
   }
+});
+
+describe("decideTerminalKey — PWA-mode Cmd+ aliases", () => {
+  // In standalone PWA mode select Cmd+ combos are wired as aliases for the
+  // existing Option+ shortcuts. Cmd+K is the only one that resolves to a
+  // terminal-level action (clearTerminal) — the rest (Cmd+T, Cmd+digits,
+  // Cmd+Shift+[/]) are app-level, and the terminal decider's job is just to
+  // keep them from reaching the PTY when xterm would otherwise treat them
+  // as raw input.
+
+  it("Cmd+K (PWA) → clearTerminal, blocks PTY", () => {
+    const r = decideTerminalKey(ev({ key: "k", code: "KeyK", metaKey: true }), { pwa: true });
+    assert.equal(r.action, "clearTerminal");
+    assert.equal(r.allowDefault, false);
+    assert.equal(r.sequence, null);
+  });
+
+  it("Cmd+K (browser tab, no pwa flag) → reaches PTY untouched", () => {
+    const r = decideTerminalKey(ev({ key: "k", code: "KeyK", metaKey: true }));
+    assert.equal(r.action, null);
+    assert.equal(r.allowDefault, true);
+  });
+
+  it("Cmd+T (PWA) → blocked from PTY (handled at app level)", () => {
+    const r = decideTerminalKey(ev({ key: "t", code: "KeyT", metaKey: true }), { pwa: true });
+    assert.equal(r.allowDefault, false);
+    assert.equal(r.sequence, null);
+  });
+
+  for (let i = 0; i <= 9; i++) {
+    it(`Cmd+${i} (PWA) → blocked from PTY`, () => {
+      const r = decideTerminalKey(ev({ key: String(i), code: `Digit${i}`, metaKey: true }), { pwa: true });
+      assert.equal(r.allowDefault, false);
+      assert.equal(r.sequence, null);
+    });
+  }
+
+  it("Cmd+Shift+[ (PWA) → blocked from PTY", () => {
+    const r = decideTerminalKey(ev({ key: "{", code: "BracketLeft", metaKey: true, shiftKey: true }), { pwa: true });
+    assert.equal(r.allowDefault, false);
+  });
+
+  it("Cmd+Shift+] (PWA) → blocked from PTY", () => {
+    const r = decideTerminalKey(ev({ key: "}", code: "BracketRight", metaKey: true, shiftKey: true }), { pwa: true });
+    assert.equal(r.allowDefault, false);
+  });
+
+  it("Cmd+[ (PWA) → blocked from PTY", () => {
+    const r = decideTerminalKey(ev({ key: "[", code: "BracketLeft", metaKey: true }), { pwa: true });
+    assert.equal(r.allowDefault, false);
+  });
+
+  it("Cmd+] (PWA) → blocked from PTY", () => {
+    const r = decideTerminalKey(ev({ key: "]", code: "BracketRight", metaKey: true }), { pwa: true });
+    assert.equal(r.allowDefault, false);
+  });
+
+  it("Cmd+R (PWA) is NOT claimed — browser still owns reload", () => {
+    const r = decideTerminalKey(ev({ key: "r", code: "KeyR", metaKey: true }), { pwa: true });
+    assert.equal(r.action, null);
+    assert.equal(r.allowDefault, true);
+  });
+
+  it("Cmd+ArrowLeft (PWA) is NOT claimed — browser still owns history nav", () => {
+    const r = decideTerminalKey(ev({ key: "ArrowLeft", code: "ArrowLeft", metaKey: true }), { pwa: true });
+    assert.equal(r.action, null);
+    assert.equal(r.allowDefault, true);
+  });
 });
 
 describe("decideTerminalKey — REGRESSION: word-back/word-forward removed", () => {
@@ -425,7 +495,145 @@ describe("isTextInputTarget", () => {
   });
 });
 
+describe("decideAppKey — PWA-mode Cmd+ aliases", () => {
+  // In standalone PWA mode the browser frees up several Cmd+ combos that
+  // are normally browser-claimed in a regular tab. We add Cmd+ aliases for
+  // the subset where the OS/browser doesn't intercept (Cmd+T, Cmd+1..9,
+  // Cmd+Shift+[/]). Option+ originals stay live so muscle memory carries.
+  // Cmd+W, Cmd+R, Cmd+F, and Cmd+arrow are still browser/OS-owned even in
+  // standalone, so we deliberately do not remap those.
+
+  const PWA = { pwa: true };
+
+  it("Cmd+T (PWA) → newSession", () => {
+    const r = decideAppKey(ev({ code: "KeyT", key: "t", metaKey: true }), PWA);
+    assert.equal(r.action, "newSession");
+    assert.equal(r.preventDefault, true);
+  });
+
+  it("Cmd+T (browser tab, no pwa flag) → no action", () => {
+    const r = decideAppKey(ev({ code: "KeyT", key: "t", metaKey: true }));
+    assert.equal(r.action, null);
+  });
+
+  it("Cmd+T (PWA) inside text input → no action (matches Option+T behavior)", () => {
+    const r = decideAppKey(ev({ code: "KeyT", key: "t", metaKey: true }), { ...PWA, isTextInput: true });
+    assert.equal(r.action, null);
+  });
+
+  for (let i = 1; i <= 9; i++) {
+    it(`Cmd+${i} (PWA) → jumpToTab ${i}`, () => {
+      const r = decideAppKey(ev({ code: `Digit${i}`, key: String(i), metaKey: true }), PWA);
+      assert.equal(r.action, "jumpToTab");
+      assert.equal(r.args, i);
+      assert.equal(r.preventDefault, true);
+    });
+  }
+
+  it("Cmd+0 (PWA) → jumpToTab 10", () => {
+    const r = decideAppKey(ev({ code: "Digit0", key: "0", metaKey: true }), PWA);
+    assert.equal(r.action, "jumpToTab");
+    assert.equal(r.args, 10);
+  });
+
+  it("Cmd+1 (PWA) inside text input → still jumps (navigation works in inputs)", () => {
+    const r = decideAppKey(ev({ code: "Digit1", key: "1", metaKey: true }), { ...PWA, isTextInput: true });
+    assert.equal(r.action, "jumpToTab");
+    assert.equal(r.args, 1);
+  });
+
+  it("Cmd+1 (browser tab) → no action", () => {
+    const r = decideAppKey(ev({ code: "Digit1", key: "1", metaKey: true }));
+    assert.equal(r.action, null);
+  });
+
+  it("Cmd+Shift+[ (PWA) → moveTab -1", () => {
+    const r = decideAppKey(ev({ code: "BracketLeft", key: "{", metaKey: true, shiftKey: true }), PWA);
+    assert.equal(r.action, "moveTab");
+    assert.equal(r.args, -1);
+  });
+
+  it("Cmd+Shift+] (PWA) → moveTab 1", () => {
+    const r = decideAppKey(ev({ code: "BracketRight", key: "}", metaKey: true, shiftKey: true }), PWA);
+    assert.equal(r.action, "moveTab");
+    assert.equal(r.args, 1);
+  });
+
+  it("Cmd+[ (PWA) → navigateTab -1", () => {
+    const r = decideAppKey(ev({ code: "BracketLeft", key: "[", metaKey: true }), PWA);
+    assert.equal(r.action, "navigateTab");
+    assert.equal(r.args, -1);
+    assert.equal(r.preventDefault, true);
+  });
+
+  it("Cmd+] (PWA) → navigateTab 1", () => {
+    const r = decideAppKey(ev({ code: "BracketRight", key: "]", metaKey: true }), PWA);
+    assert.equal(r.action, "navigateTab");
+    assert.equal(r.args, 1);
+    assert.equal(r.preventDefault, true);
+  });
+
+  it("Cmd+[ (browser tab) → no action", () => {
+    const r = decideAppKey(ev({ code: "BracketLeft", key: "[", metaKey: true }));
+    assert.equal(r.action, null);
+  });
+
+  it("Cmd+/ (PWA) → openPicker (works in both modes)", () => {
+    const r = decideAppKey(ev({ key: "/", metaKey: true }), PWA);
+    assert.equal(r.action, "openPicker");
+  });
+
+  // Bindings we deliberately did NOT remap because the OS/browser owns them
+  // even in standalone PWA mode. If a future change accidentally adds them,
+  // these break loud.
+  //
+  // Cmd+W / Cmd+Shift+W: iPadOS Safari standalone swallows these system-side
+  // — keydown never reaches JS. Confirmed empirically. Close / kill live in
+  // the Cmd+. chord menu (t x / t k) instead.
+  const stillBrowserOwned = [
+    ["Cmd+W", { code: "KeyW", key: "w", metaKey: true }],
+    ["Cmd+Shift+W", { code: "KeyW", key: "W", metaKey: true, shiftKey: true }],
+    ["Cmd+R", { code: "KeyR", key: "r", metaKey: true }],
+    ["Cmd+F", { code: "KeyF", key: "f", metaKey: true }],
+    ["Cmd+Q", { code: "KeyQ", key: "q", metaKey: true }],
+    ["Cmd+ArrowLeft", { code: "ArrowLeft", key: "ArrowLeft", metaKey: true }],
+    ["Cmd+ArrowRight", { code: "ArrowRight", key: "ArrowRight", metaKey: true }],
+  ];
+  for (const [label, overrides] of stillBrowserOwned) {
+    it(`${label} (PWA) → no action`, () => {
+      const r = decideAppKey(ev(overrides), PWA);
+      assert.equal(r.action, null, `${label} must stay unbound in PWA (browser/OS owns it)`);
+    });
+  }
+});
+
+describe("decideAppKey — Option+ shortcuts still work in PWA mode", () => {
+  // Regression guard: the Cmd+ aliases must not displace the Option+
+  // originals. Users with muscle memory from browser-tab use should still
+  // hit Option+T and get a new tab when they switch to standalone.
+  const PWA = { pwa: true };
+
+  it("Option+T (PWA) → newSession", () => {
+    const r = decideAppKey(ev({ code: "KeyT", key: "†", altKey: true }), PWA);
+    assert.equal(r.action, "newSession");
+  });
+
+  it("Option+1 (PWA) → jumpToTab 1", () => {
+    const r = decideAppKey(ev({ code: "Digit1", key: "¡", altKey: true }), PWA);
+    assert.equal(r.action, "jumpToTab");
+    assert.equal(r.args, 1);
+  });
+
+  it("Option+Shift+] (PWA) → moveTab", () => {
+    const r = decideAppKey(ev({ code: "BracketRight", altKey: true, shiftKey: true }), PWA);
+    assert.equal(r.action, "moveTab");
+    assert.equal(r.args, 1);
+  });
+});
+
 describe("decideAppKey — accidental mappings (negative coverage)", () => {
+  // No ctx.pwa here — these assertions pin browser-tab behavior. PWA-mode
+  // Cmd+ aliases have their own block above.
   const passThroughKeys = [
     ["plain a", { key: "a", code: "KeyA" }],
     ["Cmd+T", { key: "t", code: "KeyT", metaKey: true }],
