@@ -221,6 +221,8 @@ describe("createOllamaClient — cascade (resolveBackends)", () => {
         { name: "local-31b", host: localUrl, authToken: null, model: "gemma4:31b" },
       ],
       probeTimeoutMs: 200,
+      // Short TTL so the test can wait it out, with a generous 5x margin
+      // on the post-expiry sleep below to absorb GC pauses on loaded CI.
       fallbackTtlMs: 50,
       probeTtlMs: 10 * 60 * 1000,
     });
@@ -238,8 +240,8 @@ describe("createOllamaClient — cascade (resolveBackends)", () => {
     assert.equal(localChatsAfter, localChatsBefore + 1, "second call served by local within TTL");
 
     // After fallbackTtlMs expires, the next call should re-probe and find
-    // the now-healthy peer-bridge.
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    // the now-healthy peer-bridge. 5x the TTL to tolerate scheduler jitter.
+    await new Promise((resolve) => setTimeout(resolve, 250));
     await client("third");
     assert.equal(client.getActiveBackend().name, "peer-bridge", "migrates back once TTL expires");
     assert.ok(
@@ -263,7 +265,10 @@ describe("createOllamaClient — cascade (resolveBackends)", () => {
     await client("first");
     assert.equal(client.getActiveBackend().name, "peer-bridge");
     const probesAfterFirst = bridgeStub.requests.filter((r) => r.url === "/api/tags").length;
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    // Wait well past fallbackTtlMs so the assertion below is a true
+    // negative — if the index-0 backend were incorrectly short-TTL'd,
+    // this delay would force a re-probe.
+    await new Promise((resolve) => setTimeout(resolve, 100));
     await client("second");
     const probesAfterSecond = bridgeStub.requests.filter((r) => r.url === "/api/tags").length;
     assert.equal(probesAfterFirst, 1, "first call probes once");
