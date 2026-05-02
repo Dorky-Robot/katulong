@@ -13,7 +13,7 @@
  * Decide what action a global keydown event should trigger.
  *
  * @param {KeyboardEvent} ev — DOM-shaped event with key/code/type/modifier flags
- * @param {object}        ctx — { isTextInput?: boolean }
+ * @param {object}        ctx — { isTextInput?: boolean, pwa?: boolean }
  * @returns {{ action: string|null, args: any, preventDefault: boolean }}
  *   action          — symbolic name (newSession, jumpToTab, …) or null
  *   args            — argument for the action (tab index, direction)
@@ -24,6 +24,11 @@
  *    don't hijack typing inside rename inputs, settings panels, or the
  *    inline textbox. Without this guard, Option+R re-enters rename while
  *    the rename input is already focused.
+ *  - When ctx.pwa is true, a subset of shortcuts also accept Cmd+ as an
+ *    alias to feel more native in standalone mode. Option+ originals stay
+ *    live so muscle memory carries across browser-tab and standalone use.
+ *    Only combos the browser/OS doesn't claim in standalone are remapped —
+ *    Cmd+W/R/F/arrow are still off-limits even in PWA mode.
  */
 // Returned as a fresh object every call so callers can never accidentally
 // mutate a shared instance. Distinct from terminal-key-decider's `pass`
@@ -38,6 +43,39 @@ export function decideAppKey(ev, ctx = {}) {
   if (ev.metaKey && ev.key === "/" && !ev.shiftKey) {
     return { action: "openPicker", args: null, preventDefault: true };
   }
+
+  // PWA-only Cmd+ aliases. Bare Cmd, no Alt/Ctrl. In a regular browser tab
+  // these combos belong to the browser (Cmd+T new tab, Cmd+1..9 tab jump),
+  // so we only steal them in standalone mode where there are no tabs.
+  //
+  // Cmd+[ / Cmd+] caveat: on desktop Chrome standalone these may still trigger
+  // browser history back/forward — the keydown can be invisible to JS or
+  // preventDefault may not stick. iPad Safari standalone reliably hands them
+  // through. Wiring them anyway means iPad gets the win; desktop falls back
+  // to Option+[ / Option+] which still works.
+  if (ctx.pwa && ev.metaKey && !ev.altKey && !ev.ctrlKey) {
+    if (ev.shiftKey) {
+      // Cmd+Shift+[ / Cmd+Shift+] → move tab.
+      if (ev.code === "BracketLeft") return { action: "moveTab", args: -1, preventDefault: true };
+      if (ev.code === "BracketRight") return { action: "moveTab", args: 1, preventDefault: true };
+    } else {
+      // Cmd+1..9 / Cmd+0 → positional tab jump.
+      if (/^Digit[0-9]$/.test(ev.code || "")) {
+        const d = Number(ev.code.slice(5));
+        return { action: "jumpToTab", args: d === 0 ? 10 : d, preventDefault: true };
+      }
+      // Cmd+T → new session. Suppressed in text inputs to match Option+T.
+      if (ev.code === "KeyT" && !ctx.isTextInput) {
+        return { action: "newSession", args: null, preventDefault: true };
+      }
+      // Cmd+[ / Cmd+] → previous / next tab.
+      if (ev.code === "BracketLeft") return { action: "navigateTab", args: -1, preventDefault: true };
+      if (ev.code === "BracketRight") return { action: "navigateTab", args: 1, preventDefault: true };
+    }
+  }
+  // Cmd+W and Cmd+Shift+W are intentionally NOT bound: iPadOS Safari
+  // standalone swallows them at the system level before JS sees the event.
+  // Close / kill live in the Cmd+; chord menu (t x / t k) instead.
 
   // ── Option (Alt) shortcuts ───────────────────────────────────────────
   // Must be Option alone, not Cmd+Option or Ctrl+Option.

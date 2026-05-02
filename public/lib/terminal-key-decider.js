@@ -12,12 +12,17 @@
 
 /**
  * @param {KeyboardEvent} ev — DOM-shaped event with key/code/type/modifier flags
- * @param {object}        ctx — { hasSelection?: boolean }
+ * @param {object}        ctx — { hasSelection?: boolean, pwa?: boolean }
  * @returns {{ action: string|null, sequence: string|null, allowDefault: boolean }}
  *   action       — symbolic name (clearTerminal, toggleSearch, …) or null
  *   sequence     — bytes to write to the PTY, or null
  *   allowDefault — return value for attachCustomKeyEventHandler.
  *                  true = let xterm process; false = block.
+ *
+ * When ctx.pwa is true, the PWA-mode Cmd+ aliases (Cmd+K clear, Cmd+T new,
+ * Cmd+1..9/0 jump, Cmd+Shift+[/]) are also handled or blocked here. The app
+ * shortcuts are dispatched in app-keyboard.js → decideAppKey; this decider
+ * just keeps them from leaking to the PTY.
  */
 export function decideTerminalKey(ev, ctx = {}) {
   const pass = (allowDefault) => ({ action: null, sequence: null, allowDefault });
@@ -58,6 +63,26 @@ export function decideTerminalKey(ev, ctx = {}) {
   // _keyDownHandled stays false and _keyPress reprocesses the keypress,
   // sending "/" to the shell. Block all event types for consistency.
   if (ev.metaKey && ev.key === "/") return pass(false);
+
+  // PWA-mode Cmd+ aliases. Standalone PWAs free up Cmd+T, Cmd+K, Cmd+1..9,
+  // and Cmd+Shift+[/] (the browser doesn't intercept them when there are no
+  // tabs). The app dispatches these in decideAppKey; here we just clear them
+  // from the PTY path so xterm doesn't treat the keypress as raw input.
+  //
+  // Cmd+K is the only one we *handle* here (clearTerminal lives at the
+  // terminal layer, not the app layer — same as Option+K).
+  if (ctx.pwa && ev.metaKey && !ev.altKey && !ev.ctrlKey && ev.type === "keydown") {
+    if (ev.code === "KeyK" && !ev.shiftKey) {
+      return { action: "clearTerminal", sequence: null, allowDefault: false };
+    }
+    if (ev.code === "KeyT" && !ev.shiftKey) return pass(false);
+    if (/^Digit[0-9]$/.test(ev.code || "") && !ev.shiftKey) return pass(false);
+    if (ev.code === "BracketLeft" || ev.code === "BracketRight") {
+      // Covers both Cmd+[ / Cmd+] (navigate) and Cmd+Shift+[ / Cmd+Shift+]
+      // (move). Either way, keep them out of the PTY.
+      return pass(false);
+    }
+  }
 
   // Option (Alt) shortcuts.
   //

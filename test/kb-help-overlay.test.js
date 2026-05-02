@@ -69,7 +69,7 @@ function extractKbHelpList(html) {
     const label = decodeEntities(item[1].replace(/&ndash;|–/g, "–")).trim();
     const keysHtml = item[2];
     const keys = [];
-    const kbdRe = /<kbd>([^<]+)<\/kbd>/g;
+    const kbdRe = /<kbd[^>]*>([^<]+)<\/kbd>/g;
     let kbd;
     while ((kbd = kbdRe.exec(keysHtml)) !== null) {
       keys.push(decodeEntities(kbd[1]).trim());

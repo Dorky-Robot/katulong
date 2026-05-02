@@ -9,6 +9,7 @@
 
 import { filterTerminalResponses, registerResponseSuppressors } from "/lib/terminal-input-filter.js";
 import { decideTerminalKey } from "/lib/terminal-key-decider.js";
+import { isPwaStandalone } from "/lib/pwa.js";
 
 /**
  * Create terminal keyboard handlers
@@ -53,12 +54,21 @@ export function createTerminalKeyboard(options = {}) {
   /**
    * Initialize custom key event handler.
    * Wires the pure decideTerminalKey function to the term instance.
+   *
+   * isPwaStandalone() is captured once here rather than re-queried on every
+   * keydown. matchMedia is cheap but not free, and the display mode cannot
+   * change during a page session — a standalone PWA only becomes a browser
+   * tab via reload, which rebuilds this closure.
    */
   function initCustomKeyHandler() {
     if (!term) return;
+    const pwa = isPwaStandalone();
 
     term.attachCustomKeyEventHandler((ev) => {
-      const decision = decideTerminalKey(ev, { hasSelection: term.hasSelection() });
+      const decision = decideTerminalKey(ev, {
+        hasSelection: term.hasSelection(),
+        pwa,
+      });
 
       if (decision.sequence && onSend) {
         onSend(decision.sequence);

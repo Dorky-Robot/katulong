@@ -9,11 +9,15 @@
  *
  * Hotkey contract:
  *
- *   Cmd+. / Ctrl+.  toggle command mode
+ *   Cmd+; / Ctrl+;  toggle command mode
  *   Esc             exit command mode (from any depth)
  *   Backspace       step back one level (no-op at root)
  *   any other key   forwarded to the tree walker when active;
  *                   leaves invoke their action and reset to root
+ *
+ * Why semicolon and not period: iPadOS Safari standalone swallows Cmd+.
+ * at the system level (it's the historical "cancel" combo) before JS sees
+ * the keydown. Cmd+; lands cleanly on every PWA surface we tested.
  *
  * The listener attaches at `window` capture so it sees keys before
  * xterm (which mounts its own keydown handler inside the terminal
@@ -57,7 +61,7 @@ export function createCommandMode({ tree = null } = {}) {
   }
 
   function isToggleChord(e) {
-    if (e.key !== ".") return false;
+    if (e.key !== ";") return false;
     // Mac uses Cmd; everywhere else Ctrl. We accept either so the
     // shortcut works regardless of how the OS reports the modifier
     // (e.g. external keyboards on iPad, Windows over TeamViewer, etc).
