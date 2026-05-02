@@ -219,6 +219,11 @@ export const notesRenderer = {
     async function createNew() {
       try {
         const resp = await api.post("/api/notes", {});
+        // The tile may have been unmounted while the POST was in flight.
+        // Don't dispatch UPDATE_PROPS or render against detached DOM —
+        // the dispatch would otherwise persist a name into a tile that
+        // no longer exists in the carousel.
+        if (!mounted) return;
         if (!resp || typeof resp.name !== "string") throw new Error("Bad create response");
         // Server-assigned untitled-N is not a manual rename. Leave
         // userRenamed untouched so auto-naming can still kick in.
