@@ -137,5 +137,30 @@ describe("createRotatingLogger", () => {
       process.stderr.write = originalWrite;
     }
     assert.match(captured, /"event":"fallback"/);
+    // Fallback lines are tagged so operators can grep for them when
+    // logs/ is mysteriously empty.
+    assert.match(captured, /"_log_fallback":true/);
+    assert.match(captured, /"_log_error":/);
+  });
+
+  it("does not throw when an event contains a circular reference", () => {
+    const logger = createRotatingLogger({
+      dir,
+      now: () => new Date("2026-05-01T22:00:00Z"),
+    });
+    const cycle = { event: "loopy" };
+    cycle.self = cycle;
+
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    let captured = "";
+    process.stderr.write = (chunk) => { captured += chunk; return true; };
+    try {
+      assert.doesNotThrow(() => logger(cycle));
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+    // The catch path swallowed the TypeError; primary log file was never
+    // created; fallback either annotated or emitted the bare tag.
+    assert.match(captured, /_log_fallback/);
   });
 });

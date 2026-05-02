@@ -42,12 +42,29 @@ export function sundayOfWeekUTC(date) {
 export function createRotatingLogger({ dir, now = () => new Date() } = {}) {
   const logger = (event) => {
     const ts = now();
-    const line = JSON.stringify({ ts: ts.toISOString(), ...event }) + "\n";
+    let line = "";
     try {
-      mkdirSync(dir, { recursive: true });
-      appendFileSync(join(dir, `${sundayOfWeekUTC(ts)}.log`), line, { mode: 0o644 });
-    } catch {
-      try { process.stderr.write(line); } catch { /* nothing left to do */ }
+      // JSON.stringify can throw on circular references; keep it inside
+      // the try so the contract holds even for misbehaving callers.
+      line = JSON.stringify({ ts: ts.toISOString(), ...event }) + "\n";
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      appendFileSync(join(dir, `${sundayOfWeekUTC(ts)}.log`), line, { mode: 0o600 });
+    } catch (err) {
+      // Annotate the fallback so a future debugger seeing logs/ empty
+      // can grep stderr for `_log_fallback` and find the cause.
+      try {
+        const fallback = JSON.stringify({
+          ts: ts.toISOString(),
+          _log_fallback: true,
+          _log_error: err?.code || err?.name || "unknown",
+          ...event,
+        }) + "\n";
+        process.stderr.write(fallback);
+      } catch {
+        // Even JSON.stringify failed (event shape is hostile). Emit
+        // whatever we managed to build, falling back to a tag.
+        try { process.stderr.write(line || "{\"_log_fallback\":true}\n"); } catch { /* nothing left to do */ }
+      }
     }
   };
   // No-op kept for API symmetry — earlier stream-based draft exposed
