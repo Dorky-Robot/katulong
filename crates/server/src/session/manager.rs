@@ -110,6 +110,23 @@ impl SessionManager {
             }
             return Err(SessionError::TmuxRejected(reply.output));
         }
+        // Apply the standard tmux session options matching the
+        // Node frontend's `tmuxNewSession`. Without these, the
+        // shell renders with broken color (default-terminal),
+        // visible status bar (status), small scrollback
+        // (history-limit), and Synchronized-Output escape
+        // sequences leak through xterm.js as raw text
+        // (allow-passthrough).
+        //
+        // Failure of any individual option is non-fatal — the
+        // session is already created, the shell will run, just
+        // with degraded rendering. Log and move on so a single
+        // option being unsupported on the operator's tmux
+        // version doesn't block session creation entirely.
+        // Surfacing each per-option failure individually (vs.
+        // bailing on the first) is closer to the Node side's
+        // `Promise.all` shape: every option attempt happens.
+        apply_session_options(&self.tmux, name).await;
         tracing::info!(session = %name, cols, rows, "session created");
         Ok(())
     }
@@ -471,6 +488,88 @@ const MAX_SESSION_NAME_LEN: usize = 64;
 ///
 /// **Length cap.** Names over `MAX_SESSION_NAME_LEN` bytes fail
 /// validation — see the constant's doc for the rationale.
+/// Apply the standard tmux session options on top of a freshly-
+/// created session. Mirrors the Node frontend's `tmuxNewSession`
+/// post-create block so the Rust and Node backends produce
+/// terminologically-equivalent panes.
+///
+/// **Why each option matters.**
+/// - `default-terminal xterm-256color` — without it tmux
+///   defaults to `screen` (or `tmux` on newer builds), which
+///   advertises 8/16 color support. Modern shells then strip
+///   the 256-color and truecolor escape sequences, and what
+///   reaches xterm.js is partial — the operator sees raw
+///   `[38;5;232m`-style bytes scattered across their prompt.
+/// - `allow-passthrough on` — DEC private-mode passthrough
+///   (tmux 3.3a+) lets Synchronized Output (DECSET 2026)
+///   markers and other passthrough escapes reach xterm.js
+///   intact. Without it tmux strips BSU/ESU, and TUI apps
+///   render with visible partial frames during full-screen
+///   redraws.
+/// - `history-limit 50000` — pane scrollback. tmux defaults
+///   to 2000 lines, which is too short for log-tail use
+///   cases. Must be set before any output reaches the pane,
+///   or older lines are already discarded.
+/// - `status off` — hides tmux's own status line. We don't
+///   want the user to see tmux's UI; this is plumbing.
+/// - `aggressive-resize on` — make tmux choose the smallest
+///   client's dimensions only when actually rendering for
+///   that client (vs. always using the smallest). Reduces
+///   redraws under multi-client attach.
+/// - `window-size latest` — when multiple clients attach with
+///   different sizes, tmux follows the most recently
+///   active. Pairs with the resize-gate logic in
+///   `session::dims` so the operator's primary device drives
+///   pane dimensions.
+///
+/// **Per-option non-fatal handling.** A single option failing
+/// (unsupported on the operator's tmux version, e.g.
+/// `allow-passthrough` predates tmux 3.3a) shouldn't block
+/// session creation — the shell will run, just with degraded
+/// rendering. Each `set-option` runs sequentially and logs at
+/// `warn` on failure; the overall function never returns Err.
+/// The Node side does the same via `Promise.all` — every
+/// option attempt happens regardless of sibling failures.
+async fn apply_session_options(tmux: &Tmux, name: &str) {
+    // Order matches the Node side. Sequential rather than
+    // concurrent: the underlying control-mode CM serialises
+    // commands on its single writer, so spawning N futures
+    // gives us no parallelism, just makes the logs harder to
+    // read on failure.
+    const OPTIONS: &[(&str, &str)] = &[
+        ("default-terminal", "xterm-256color"),
+        ("allow-passthrough", "on"),
+        ("history-limit", "50000"),
+        ("status", "off"),
+        ("aggressive-resize", "on"),
+        ("window-size", "latest"),
+    ];
+    for (option, value) in OPTIONS {
+        let cmd = format!("set-option -t {name} {option} {value}");
+        match tmux.send_command(&cmd).await {
+            Ok(reply) if reply.ok => {}
+            Ok(reply) => {
+                tracing::warn!(
+                    session = %name,
+                    %option,
+                    %value,
+                    error = %reply.output.trim(),
+                    "set-option failed; continuing with degraded rendering"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    session = %name,
+                    %option,
+                    %value,
+                    error = %err,
+                    "set-option errored; continuing with degraded rendering"
+                );
+            }
+        }
+    }
+}
+
 fn validate_session_name(name: &str) -> Result<(), SessionError> {
     if name.is_empty() || name.starts_with('-') || name.len() > MAX_SESSION_NAME_LEN {
         return Err(SessionError::InvalidName(name.to_string()));
