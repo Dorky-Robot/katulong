@@ -9,8 +9,11 @@
  * away from bottom, cleared on arrival.
  *
  * Scroll architecture: native browser scroll is disabled on the terminal
- * pane (#terminal-container .xterm-viewport { overflow: hidden }) so all
- * viewport movement flows through `term.scrollLines()`:
+ * pane (#terminal-container .xterm-viewport { overflow: clip }) so all
+ * viewport movement flows through `term.scrollLines()`. `clip` is load-
+ * bearing on iPadOS WebKit — `hidden` still creates a scroll container
+ * whose compositor layer wheel events translate independently of xterm's
+ * redraw, ghosting rows on trackpad scroll.
  *   - wheel/trackpad → xterm's built-in wheel handler
  *   - touch drag    → initTouchScroll's pointer bridge
  *   - programmatic  → scrollToBottom, etc.
