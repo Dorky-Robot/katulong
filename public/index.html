@@ -3012,6 +3012,32 @@
     .feed-tile-picker-info { flex-shrink: 0; font-size: var(--text-xs); color: var(--text-secondary); }
     .feed-tile-picker-empty { padding: var(--space-lg) var(--space-sm); text-align: center; color: var(--text-secondary); font-size: var(--text-sm); }
 
+    /* --- Peers picker (cross-instance tile spike) --- */
+    .peers-picker-list { display: flex; flex-direction: column; gap: var(--space-xs, 0.5rem); max-height: 60vh; overflow-y: auto; }
+    .peers-picker-empty, .peers-picker-error { color: var(--text-muted); font-size: 0.875rem; padding: var(--space-md, 0.75rem) 0; text-align: center; }
+    .peers-picker-error { color: var(--danger, #f66); }
+    .peers-picker-peer { border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); overflow: hidden; }
+    .peers-picker-peer-header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-sm, 0.5rem); width: 100%; padding: var(--space-sm, 0.5rem) var(--space-md, 0.75rem); background: var(--bg-surface, #313244); border: none; color: var(--text); font-size: 0.9375rem; cursor: pointer; text-align: left; }
+    .peers-picker-peer-header:hover { background: var(--bg-hover, rgba(255,255,255,0.08)); }
+    .peers-picker-peer-url { color: var(--text-muted); font-size: 0.75rem; font-family: var(--font-mono); font-weight: normal; }
+    .peers-picker-sessions { padding: var(--space-xs, 0.25rem) var(--space-sm, 0.5rem); display: flex; flex-direction: column; gap: 2px; background: var(--bg, #1e1e2e); }
+    .peers-picker-session { display: flex; align-items: baseline; gap: var(--space-sm, 0.5rem); padding: var(--space-xs, 0.5rem) var(--space-sm, 0.5rem); background: transparent; border: none; color: var(--text); font-size: 0.875rem; cursor: pointer; text-align: left; border-radius: var(--radius-sm, 4px); }
+    .peers-picker-session:hover:not(:disabled) { background: var(--bg-hover, rgba(255,255,255,0.08)); }
+    .peers-picker-session:disabled { opacity: 0.5; cursor: not-allowed; }
+    .peers-picker-session-name { font-family: var(--font-mono); flex-shrink: 0; }
+    .peers-picker-session-title { color: var(--text-secondary); font-size: 0.8125rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .peers-picker-session-dead { color: var(--text-muted); font-size: 0.75rem; }
+    .peers-picker-session-loading, .peers-picker-session-error, .peers-picker-session-empty { color: var(--text-muted); font-size: 0.8125rem; padding: var(--space-sm, 0.5rem); }
+    .peers-picker-session-error { color: var(--danger, #f66); }
+
+    /* --- Remote terminal tile (cross-instance spike) --- */
+    .remote-terminal-tile-root { display: flex; flex-direction: column; height: 100%; width: 100%; background: var(--bg); color: var(--text); }
+    .remote-terminal-status { display: flex; align-items: center; gap: var(--space-xs, 0.4rem); padding: 2px var(--space-sm, 0.5rem); background: var(--bg-surface, #313244); color: var(--text-muted); font-size: 0.75rem; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+    .remote-terminal-dot[data-state="connecting"] { color: var(--warning, #f0c674); }
+    .remote-terminal-dot[data-state="connected"]  { color: var(--success, #aac26d); }
+    .remote-terminal-dot[data-state="disconnected"], .remote-terminal-dot[data-state="error"] { color: var(--danger, #f66); }
+    .remote-terminal-host { padding: 4px; }
+
     /* --- Progress Tile --- */
     .progress-tile-root { display: flex; flex-direction: column; height: 100%; width: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font-sans, -apple-system, sans-serif); font-size: var(--text-sm); }
     .progress-tile-header { padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg-surface); color: var(--text-secondary); font-size: var(--text-xs); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3289,6 +3315,21 @@
 
 
 
+
+  <!-- Peers picker — cross-instance tile spike (docs/cross-instance-tiles.md).
+       The list is populated by lib/peers-picker.js when the modal opens. -->
+  <div id="peers-picker-overlay" class="modal-overlay" role="dialog" aria-label="Open remote terminal">
+    <div class="modal-panel" style="max-width: var(--modal-width-md, 28rem);">
+      <h3 style="margin-top:0">Remote terminal</h3>
+      <p style="color: var(--text-muted); font-size: 0.8125rem; margin-top: -0.5rem;">
+        Pick a peer katulong, then a session running there.
+      </p>
+      <div id="peers-picker-list" class="peers-picker-list"></div>
+      <div style="display:flex; justify-content:flex-end; padding-top: var(--space-md, 0.75rem);">
+        <button class="btn btn--secondary" id="peers-picker-close-btn">Close</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Device-to-device auth approval modal -->
   <div id="device-auth-overlay" class="modal-overlay" role="dialog" aria-label="Login request">

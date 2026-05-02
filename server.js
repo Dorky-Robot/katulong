@@ -11,6 +11,7 @@ import { log } from "./lib/log.js";
 
 import {
   loadState, validateSession, refreshSessionActivity, withStateLock,
+  extractApiKeyCandidate,
 } from "./lib/auth.js";
 import {
   parseCookies, isPublicPath, createChallengeStore, isHttpsConnection, hostnameOnly,
@@ -36,6 +37,7 @@ import { createClaudeProcessor } from "./lib/claude-processor.js";
 import { createOllamaClient } from "./lib/ollama-client.js";
 import { createSessionSummarizer } from "./lib/session-summarizer.js";
 import { createClaudeFeedRoutes } from "./lib/routes/claude-feed-routes.js";
+import { createPeersRoutes } from "./lib/routes/peers-routes.js";
 import { createPermissionStore } from "./lib/claude-permissions.js";
 import { readBody, parseJSON, json, setSecurityHeaders } from "./lib/request-util.js";
 import { homedir } from "node:os";
@@ -154,13 +156,19 @@ function isAuthenticated(req) {
     log.debug("Auth bypassed: localhost", { ip: req.socket.remoteAddress });
     return { authenticated: true, sessionToken: null, credentialId: null };
   }
-  // API key auth via Bearer token
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    const apiKey = authHeader.slice(7);
+  // API key auth — accepts both the `Authorization: Bearer <key>`
+  // header form and the `?api_key=<key>` query-param form. The query
+  // form is required because browsers cannot set headers on
+  // `new WebSocket(url)`, which is how the cross-instance-tile spike
+  // authenticates against a peer's WS endpoint. Server logs strip
+  // query strings; revisit this if we ever start logging full URLs
+  // (a subprotocol-token convention would keep the key out of URLs
+  // entirely).
+  const apiKeyCandidate = extractApiKeyCandidate(req);
+  if (apiKeyCandidate) {
     const state = loadState();
     if (state) {
-      const keyData = state.findApiKey(apiKey);
+      const keyData = state.findApiKey(apiKeyCandidate);
       if (keyData) {
         req._apiKeyAuth = true;
         withStateLock((s) => {
@@ -374,6 +382,7 @@ const routes = [
   }),
   ...createFileBrowserRoutes({ json, parseJSON, auth, csrf }),
   ...createPortProxyRoutes({ auth, PORT, configManager }),
+  ...createPeersRoutes({ json, parseJSON, configManager, auth, csrf }),
   ...pluginRoutes,
 ];
 

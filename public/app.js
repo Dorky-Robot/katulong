@@ -43,6 +43,7 @@
 
     import { createNotepad } from "/lib/notepad.js";
     import { createCardCarousel, parseLegacyCarouselStorage } from "/lib/card-carousel.js";
+    import { createPeersPicker } from "/lib/peers-picker.js";
     import { createTerminalTileFactory } from "/lib/tiles/terminal-tile.js";
     import { createClusterTileFactory } from "/lib/tiles/cluster-tile.js";
     import { createFileBrowserTileFactory } from "/lib/tiles/file-browser-tile.js";
@@ -401,6 +402,25 @@
     // document tiles adjacent to the browser tile on single-click.
     const uiStore = createUiStore({ isPersistable });
     _uiStore = uiStore;
+
+    // Spike-only debug handle for the cross-instance-tile experiment.
+    // Lets the dev console call `__kat.openRemote({...})` without us
+    // shipping a UI surface yet. Remove once `remote-tile` graduates
+    // out of spike state.
+    window.__kat = window.__kat || {};
+    window.__kat.uiStore = uiStore;
+    window.__kat.openRemote = ({ peerUrl, apiKey, session, label } = {}) => {
+      if (!peerUrl || !apiKey || !session) {
+        console.error("__kat.openRemote: peerUrl, apiKey, session required");
+        return null;
+      }
+      const id = `remote-${Math.random().toString(36).slice(2, 9)}`;
+      uiStore.addTile(
+        { id, type: "remote-terminal", props: { peerUrl, apiKey, session, label } },
+        { focus: true, insertAt: "afterFocus" },
+      );
+      return id;
+    };
 
     // Initialize the renderer registry with shared deps. This must happen
     // before any tile mount — renderers wrap the existing tile factories.
@@ -774,6 +794,29 @@
       onClose: () => getTerm()?.focus(),
       onOpen: () => refreshNotificationRow(),
     });
+
+    // Cross-instance tile picker (spike). The picker is constructed once
+    // here so its event listeners attach a single time, but its content
+    // is freshly populated on each modal open via picker.refresh().
+    let peersPicker = null;
+    modals.register('peers', 'peers-picker-overlay', {
+      get returnFocus() { return getTerm(); },
+      onOpen: () => peersPicker?.refresh(),
+      onClose: () => getTerm()?.focus(),
+    });
+    {
+      const list = document.getElementById('peers-picker-list');
+      const closeBtn = document.getElementById('peers-picker-close-btn');
+      if (list) {
+        peersPicker = createPeersPicker({
+          rootEl: list,
+          closeBtn,
+          api,
+          openRemote: openRemoteTerminalTile,
+          onClose: () => modals.close('peers'),
+        });
+      }
+    }
 
     document.fonts.ready.then(() => {
       // Fonts loaded — refit terminal since glyph metrics may have changed
@@ -1501,6 +1544,7 @@
         { type: "feed",          name: "Feed",     icon: "rss" },
         { type: "localhost-browser", name: "Browser", icon: "globe-simple" },
         { type: "sipag",             name: "sipag",   icon: "list-checks" },
+        { type: "peers",             name: "Remote",  icon: "broadcast" },
       ],
       onCreateTile: (type) => {
         if (type === "terminal") {
@@ -1515,6 +1559,8 @@
           openLocalhostBrowserTile();
         } else if (type === "sipag") {
           openSipagTile();
+        } else if (type === "peers") {
+          openPeersPicker();
         }
       },
       onTabClick: (name) => {
@@ -2200,6 +2246,27 @@
         { focus: true, insertAt: "afterFocus" },
       );
       if (isOverlayViewport()) setOverlaySidebar(false);
+    }
+
+    // --- Remote terminal (cross-instance tile spike) ---
+
+    function openRemoteTerminalTile({ peerUrl, apiKey, session, label }) {
+      // Spike: not persistable on purpose. The api key lives in
+      // closure scope of the renderer, never in ui-store.
+      const tileId = `remote-${Math.random().toString(36).slice(2, 9)}`;
+      uiStore.addTile(
+        {
+          id: tileId,
+          type: "remote-terminal",
+          props: { peerUrl, apiKey, session, label },
+        },
+        { focus: true, insertAt: "afterFocus" },
+      );
+      if (isOverlayViewport()) setOverlaySidebar(false);
+    }
+
+    function openPeersPicker() {
+      modals.open('peers');
     }
 
     const sidebarFilesBtn = document.getElementById("sidebar-files-btn");
