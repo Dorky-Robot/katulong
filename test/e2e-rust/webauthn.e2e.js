@@ -125,6 +125,11 @@ test.describe.serial("WebAuthn UI happy paths", () => {
   // count).
   let bootstrap;
   let setupToken;
+  // Second setup token for the manual-input pair test below.
+  // Setup tokens are single-use — `setupToken` is consumed by
+  // the URL-pair test, so any test that re-paires needs its
+  // own token. Minted once in `beforeAll` to amortise cost.
+  let inputPairToken;
   // The session cookie minted by `register/finish` during
   // bootstrap. Captured here so test 3 can establish a
   // session via cookie-injection rather than running
@@ -159,6 +164,16 @@ test.describe.serial("WebAuthn UI happy paths", () => {
       page,
       bootstrap.finishResponse.csrf_token,
       "pair-test-device",
+    );
+    // Slice 9s.5: a SECOND token for the manual-input pair
+    // test. Setup tokens are single-use, and the URL-pair test
+    // (test 3) consumes `setupToken` above. Minting both up
+    // front in beforeAll keeps the bootstrap costs amortised
+    // across the suite.
+    inputPairToken = await mintSetupToken(
+      page,
+      bootstrap.finishResponse.csrf_token,
+      "input-pair-test-device",
     );
 
     // Snapshot the session cookie before the bootstrap
@@ -268,6 +283,121 @@ test.describe.serial("WebAuthn UI happy paths", () => {
     await expect(
       page.getByRole("button", { name: /pair with passkey/i }),
     ).toHaveCount(0);
+
+    await context.close();
+  });
+
+  test("a setup-token holder can pair via the login-page input (no URL token)", async ({
+    browser,
+  }) => {
+    // Slice 9s.5 contract: the login UI exposes a "Set up a
+    // new passkey" disclosure with a setup-token input,
+    // covering the case where a user lands on the login page
+    // WITHOUT a `?setup_token=` URL — they have a token in
+    // their clipboard from a console / Slack message / shared
+    // doc. The pair ceremony shape is identical to the URL
+    // path; only the token-source differs.
+    //
+    // This test catches three regressions at once:
+    //   1. The disclosure must be visible in sign-in mode
+    //      (when no `?setup_token=` is in the URL). A previous
+    //      version hid it; an earlier still hid it but ALSO
+    //      in pair mode. The "always available" rule from
+    //      the Node login UI means it must render here.
+    //   2. The server's WebAuthn `rp.id` must match the
+    //      page origin host. The staging script previously
+    //      hard-coded `KATULONG_ORIGIN=http://localhost:$port`
+    //      which made `rp.id="localhost"` and the browser
+    //      rejected every assertion from the public URL with
+    //      "RPID did not match". The fix passes
+    //      `KATULONG_ORIGIN=https://<host>` AND
+    //      `KATULONG_RP_ID=<host>` together.
+    //   3. The pair ceremony round-trip works end-to-end via
+    //      the input path — same as test 3, but with the
+    //      token entered manually instead of via URL param.
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await setupVirtualAuthenticator(page);
+    // Stub auth as not-signed-in so the login UI renders
+    // (otherwise localhost auto-auth on the test runner
+    // lands on Register or SignedIn).
+    await stubUnauthenticated(page);
+    await page.goto("/");
+
+    // The disclosure must be visible. `<details>` is the
+    // disclosure widget; `<summary>` is the toggle; clicking
+    // it expands the body. We assert the toggle exists, then
+    // click it to reveal the body.
+    const toggle = page.getByRole("group").getByText(/set up a new passkey/i);
+    await expect(toggle).toBeVisible({ timeout: 5_000 });
+    await toggle.click();
+
+    // Paste the token + click. The button copy reads "Set up
+    // new passkey" (without "a"); the disclosure-toggle copy
+    // reads "Set up A new passkey" (with "a"). They are
+    // distinct DOM nodes; we target by role to avoid the
+    // accidental match.
+    await page.getByLabel(/setup token/i).fill(inputPairToken);
+    await page
+      .getByRole("button", { name: /^set up new passkey$/i })
+      .click();
+
+    // The pair ceremony succeeds → post-auth view renders the
+    // terminal tile. Same assertion as the URL-pair test —
+    // behaviour is "user reaches the post-auth view".
+    await expect(page.locator('[data-tile-kind="terminal"]')).toBeVisible({
+      timeout: 10_000,
+    });
+    // No login UI hangs around.
+    await expect(
+      page.getByRole("button", { name: /sign in with passkey/i }),
+    ).toHaveCount(0);
+
+    await context.close();
+  });
+
+  test("pair/start rp.id matches the page origin (RPID config sanity)", async ({
+    browser,
+    baseURL,
+  }) => {
+    // Slice 9s.5 server-side contract: the staging script
+    // must export `KATULONG_RP_ID=<public-host>` so the
+    // server's WebAuthn options carry an `rp.id` that is a
+    // registrable suffix of the browser origin. If they
+    // diverge — as happened when the script defaulted to
+    // localhost — every WebAuthn assertion from the public
+    // URL rejects with "RPID did not match the origin or
+    // related origins."
+    //
+    // We exercise this without running a full ceremony: a
+    // single `POST /api/auth/pair/start` returns the
+    // CredentialCreationOptions; we parse `rp.id` and assert
+    // it matches the URL host. This catches misconfigurations
+    // in seconds instead of waiting for the next manual
+    // device-pair attempt.
+    //
+    // Setup tokens for this probe come from a second mint
+    // call inside the test — the bootstrap-minted ones are
+    // earmarked for the ceremonies above. We re-use the
+    // bootstrap session cookie via the helper (no second
+    // ceremony needed).
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.goto("/");
+    const probeToken = await mintSetupToken(
+      page,
+      bootstrap.finishResponse.csrf_token,
+      "rpid-probe",
+    );
+
+    const response = await page.request.post("/api/auth/pair/start", {
+      data: { setup_token: probeToken },
+    });
+    expect(response.ok()).toBeTruthy();
+    const body = await response.json();
+    const rpId = body.options?.publicKey?.rp?.id;
+    const expectedHost = new URL(baseURL).hostname;
+    expect(rpId).toBe(expectedHost);
 
     await context.close();
   });

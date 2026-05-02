@@ -514,6 +514,36 @@ cmd_start() {
 
   echo "Starting staging '$name' on port $port..."
 
+  # Resolve tunnel + public host BEFORE the server starts so
+  # the Rust backend can use the public URL as
+  # `KATULONG_ORIGIN` (and therefore as the WebAuthn RP ID).
+  # Earlier this lived after the `nohup` launch — fine for the
+  # Node backend (which derives its RP ID from the request
+  # `Host` header at ceremony time) but broken for Rust
+  # (`webauthn-rs` builds a single RP ID at process start).
+  # Without this swap, the public-URL browser sees
+  # `RPID did not match the origin or related origins` on
+  # every passkey assertion. The actual `tunnels route add`
+  # call still happens after the server is ready (so we don't
+  # advertise a route that's about to time out); only the
+  # NAME resolution moves up.
+  local tunnel host
+  if ! command -v tunnels >/dev/null 2>&1; then
+    echo "ERROR: 'tunnels' CLI is not installed." >&2
+    echo "       Install it (brew tap dorky-robot/tap && brew install tunnels)" >&2
+    echo "       and register at least one named tunnel via 'tunnels add'." >&2
+    return 1
+  fi
+  tunnel="$(resolve_tunnel || true)"
+  if [[ -z "$tunnel" ]]; then
+    echo "ERROR: no named tunnel available." >&2
+    echo "       Register one with 'tunnels add <name> --token <token>'," >&2
+    echo "       or pin one in ~/.katulong/config.json via:" >&2
+    echo '         { "stage": { "tunnel": "<tunnel-name>" } }' >&2
+    return 1
+  fi
+  host="$(resolve_host "$name" "$tunnel")"
+
   # Clear any stale socket file for this stage name before tmux tries to
   # bind. tmux does not unlink the socket on `kill-server`, so a prior
   # `stop` of the same name leaves `/tmp/tmux-$UID/stage-<name>` behind,
@@ -572,17 +602,57 @@ cmd_start() {
 
     # KATULONG_ORIGIN must match the URL the browser actually
     # uses, or webauthn-rs's clientDataJSON.origin check
-    # rejects every assertion. The default in main.rs is
-    # `http://localhost:3000`, which only happens to match
-    # when the operator hand-launches with PORT=3000. For
-    # staging on a dynamic port, the local URL is
-    # http://localhost:$port — set it here so passkey
-    # ceremonies actually verify.
+    # rejects every assertion. For multi-device staging
+    # (paired phone + desktop, or remote QA) the browser hits
+    # the tunnel URL `https://<host>`, NOT
+    # `http://localhost:<port>`. Setting origin to localhost
+    # makes RP ID = "localhost" and the server rejects every
+    # WebAuthn assertion from the public URL with
+    # "RPID did not match the origin or related origins."
+    #
+    # webauthn-rs (unlike Node katulong) takes ONE RP ID at
+    # process start — it can't derive per-request from the
+    # Host header. So we have to pick a single origin, and
+    # the choice depends on the consumer:
+    #
+    # * **Manual operator flow (default).** Operator hits
+    #   `/stage <name>`, opens the public URL on a phone,
+    #   pairs via the setup-token-input UI. Browser origin =
+    #   `https://<host>`. Set KATULONG_ORIGIN/KATULONG_RP_ID
+    #   to the public host.
+    #
+    # * **E2E test harness.** Tests run via Playwright
+    #   against `http://localhost:$port`. Going through the
+    #   tunnel adds latency, requires the tunnel to be up,
+    #   AND `register/start` is localhost-only on the server
+    #   side so tunnel-as-peer is rejected on that one route
+    #   anyway. Browser origin = `localhost`. Set
+    #   KATULONG_ORIGIN/KATULONG_RP_ID to localhost.
+    #
+    # Default = manual flow (the common case). E2E harness
+    # opts into localhost RP ID by exporting
+    # `KATULONG_STAGE_FOR_TESTS=1` before invoking
+    # `katulong-stage start`. The conditional is
+    # non-destructive: a future slice that lands webauthn-rs's
+    # `additional_origins` plumbing can drop it and accept
+    # both origins simultaneously.
+    local origin rp_id
+    if [[ "${KATULONG_STAGE_FOR_TESTS:-0}" == "1" ]]; then
+      origin="http://localhost:$port"
+      rp_id="localhost"
+    elif [[ -n "$host" ]]; then
+      origin="https://$host"
+      rp_id="$host"
+    else
+      origin="http://localhost:$port"
+      rp_id="localhost"
+    fi
     PORT="$port" \
     KATULONG_DATA_DIR="$data_dir" \
     KATULONG_TMUX_SOCKET="$tmux_socket" \
     KATULONG_WEB_DIST="$web_dist" \
-    KATULONG_ORIGIN="http://localhost:$port" \
+    KATULONG_ORIGIN="$origin" \
+    KATULONG_RP_ID="$rp_id" \
       nohup "$rust_bin" > "$log_file" 2>&1 &
   fi
   local server_pid=$!
@@ -627,32 +697,13 @@ cmd_start() {
   fi
 
   # ---- Tunnel wiring ----
-  # The `tunnels` CLI is the single supported path. If it isn't installed
-  # or no usable named tunnel can be resolved, fail loud rather than silently
-  # falling back to a different mechanism. See the header comment for the
-  # reasoning behind dropping the ephemeral cloudflared path.
-  if ! command -v tunnels >/dev/null 2>&1; then
-    echo "ERROR: 'tunnels' CLI is not installed." >&2
-    echo "       Install it (brew tap dorky-robot/tap && brew install tunnels)" >&2
-    echo "       and register at least one named tunnel via 'tunnels add'." >&2
-    trap - INT TERM HUP
-    cleanup_start "$server_pid" "$dir"
-    return 1
-  fi
-
-  local tunnel host url
-  tunnel="$(resolve_tunnel || true)"
-  if [[ -z "$tunnel" ]]; then
-    echo "ERROR: no named tunnel available." >&2
-    echo "       Register one with 'tunnels add <name> --token <token>'," >&2
-    echo "       or pin one in ~/.katulong/config.json via:" >&2
-    echo '         { "stage": { "tunnel": "<tunnel-name>" } }' >&2
-    trap - INT TERM HUP
-    cleanup_start "$server_pid" "$dir"
-    return 1
-  fi
-  host="$(resolve_host "$name" "$tunnel")"
-
+  # The tunnel + host names were already resolved above (so
+  # the Rust server could be launched with the public URL as
+  # KATULONG_ORIGIN). The remaining piece — registering the
+  # host → port route with the running tunnel — happens here,
+  # after the local server is up, so we never advertise a
+  # route that points at a not-yet-listening port.
+  local url
   if ! tunnels route add "$host" "$port" --tunnel "$tunnel" >/dev/null 2>&1; then
     echo "ERROR: 'tunnels route add $host $port --tunnel $tunnel' failed." >&2
     echo "       Check 'tunnels list' and 'tunnels logs $tunnel'." >&2

@@ -50,11 +50,11 @@ test("login defaults to sign-in mode without setup_token", async ({ page }) => {
   const login = page.locator("#kat-login");
   await expect(login).toHaveAttribute("data-mode", "signin");
   await expect(login.locator(".title")).toHaveText("Sign in");
-  await expect(login.locator(".cta")).toHaveText("Sign in with passkey");
+  await expect(login.locator(".cta:not(.cta-secondary)")).toHaveText("Sign in with passkey");
   // Sign-in mode CTA must be enabled in the idle state — the
   // ceremony is wired (slice 9r.2). Disabled-by-default would
   // be a regression that strands users on a dead button.
-  await expect(login.locator(".cta")).toBeEnabled();
+  await expect(login.locator(".cta:not(.cta-secondary)")).toBeEnabled();
   // No device-name field in sign-in mode.
   await expect(login.locator('input[name="device-name"]')).toHaveCount(0);
 });
@@ -71,11 +71,11 @@ test("login switches to pair mode with setup_token", async ({ page }) => {
   const login = page.locator("#kat-login");
   await expect(login).toHaveAttribute("data-mode", "pair");
   await expect(login.locator(".title")).toHaveText("Pair this device");
-  await expect(login.locator(".cta")).toHaveText("Pair with passkey");
+  await expect(login.locator(".cta:not(.cta-secondary)")).toHaveText("Pair with passkey");
   // Pair mode CTA must be enabled now that the ceremony is
   // wired (slice 9r.3). A disabled CTA here would be a
   // regression back to the inert 9r.2 stub.
-  await expect(login.locator(".cta")).toBeEnabled();
+  await expect(login.locator(".cta:not(.cta-secondary)")).toBeEnabled();
   // Device-name input is intentionally absent: `pair_finish`
   // doesn't carry a name field yet, so rendering an input
   // would silently discard whatever the user typed. Future
@@ -108,7 +108,7 @@ test("sign-in click hits /api/auth/login/start", async ({ page }) => {
       req.url().endsWith("/api/auth/login/start") && req.method() === "POST",
     { timeout: 5_000 },
   );
-  await page.locator("#kat-login .cta").click();
+  await page.locator("#kat-login .cta:not(.cta-secondary)").click();
   await requestPromise;
 });
 
@@ -141,7 +141,7 @@ test("sign-in renders error region on server rejection", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#kat-shell")).toBeVisible({ timeout: 15_000 });
 
-  await page.locator("#kat-login .cta").click();
+  await page.locator("#kat-login .cta:not(.cta-secondary)").click();
 
   // The error <p role="alert"> is the user-visible result.
   // role=alert is what assistive tech reads; we double-check
@@ -171,7 +171,7 @@ test("pair click hits /api/auth/pair/start with setup_token", async ({
       req.url().endsWith("/api/auth/pair/start") && req.method() === "POST",
     { timeout: 5_000 },
   );
-  await page.locator("#kat-login .cta").click();
+  await page.locator("#kat-login .cta:not(.cta-secondary)").click();
   const request = await requestPromise;
 
   // Body shape: `{ setup_token: "<plaintext>" }`. The server
@@ -202,7 +202,7 @@ test("pair renders error region on server rejection", async ({ page }) => {
   await page.goto("/?setup_token=abcdef0123456789");
   await expect(page.locator("#kat-shell")).toBeVisible({ timeout: 15_000 });
 
-  await page.locator("#kat-login .cta").click();
+  await page.locator("#kat-login .cta:not(.cta-secondary)").click();
 
   const error = page.locator('#kat-login .error[role="alert"]');
   await expect(error).toBeVisible({ timeout: 5_000 });

@@ -110,7 +110,19 @@ export async function ensureFreshStagingDataDir(baseURL) {
   // fresh dir.
   try {
     execSync("bin/katulong-stage stop && bin/katulong-stage start", {
-      env: { ...process.env, KATULONG_STAGE_BACKEND: "rust" },
+      env: {
+        ...process.env,
+        KATULONG_STAGE_BACKEND: "rust",
+        // Slice 9s.5: opt the staging script into localhost
+        // RP ID. Without this the script defaults to using
+        // the public-tunnel hostname for `KATULONG_RP_ID` so
+        // the operator's manual phone-pair flow works, but
+        // tests run via Playwright against
+        // `http://localhost:$port` — those would fail with
+        // `RPID did not match the origin or related origins`
+        // on every WebAuthn assertion.
+        KATULONG_STAGE_FOR_TESTS: "1",
+      },
       timeout: 60_000,
       encoding: "utf8",
     });
