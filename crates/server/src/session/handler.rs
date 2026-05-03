@@ -611,17 +611,7 @@ pub async fn serve_session(
                     .pending_resize
                     .take()
                     .expect("resize_deadline implies pending_resize is Some");
-                let sessions = require_sessions(&state);
-                if let Err(err) = sessions
-                    .resize_session(&a.session, pending.cols, pending.rows)
-                    .await
-                {
-                    tracing::warn!(
-                        session = %a.session,
-                        error = %err,
-                        "deferred resize failed; keeping transport open"
-                    );
-                }
+                resize_via_tile_cm(a, pending.cols, pending.rows, "deferred resize").await;
             }
         }
 
@@ -731,14 +721,7 @@ pub async fn serve_session(
                     // is the initial-attach path (no output yet)
                     // and the quiet-shell path.
                     a.pending_resize = None;
-                    let sessions = require_sessions(&state);
-                    if let Err(err) = sessions.resize_session(&a.session, cols, rows).await {
-                        tracing::warn!(
-                            session = %a.session,
-                            error = %err,
-                            "resize failed; keeping transport open"
-                        );
-                    }
+                    resize_via_tile_cm(a, cols, rows, "resize").await;
                 } else {
                     // Defer: stash and let the timer branch
                     // pick it up. If a resize is already pending,
@@ -1259,6 +1242,81 @@ fn require_sessions(state: &AppState) -> &crate::session::SessionManager {
         .sessions
         .as_deref()
         .expect("Attached phase implies sessions is Some")
+}
+
+/// Apply a resize through the per-tile CM, NOT through the
+/// global keepalive CM.
+///
+/// **Why this exists.** `SessionManager::resize_session` uses
+/// the keepalive `Tmux` (the one held by the manager) and
+/// issues `refresh-client -t <session> -C cols,rows`.
+/// Empirically that fails on every call with
+/// `tmux rejected command: can't find client: <session>`,
+/// because `-t` for `refresh-client` takes a CLIENT name
+/// (TTY-derived id like `/dev/ttys001` or `%client/3`), NOT a
+/// session name. tmux 3.6a accepts the malformed command
+/// silently for some flag combinations and rejects others
+/// — for ours it always rejects, but the original
+/// `resize_session` only logged a `warn` and continued, so
+/// the broken path went unnoticed for ~four slices' worth
+/// of staging until a user observed wrap+escape-leak
+/// rendering on a wider browser viewport (1711 failed
+/// resizes in one session).
+///
+/// **The fix.** Send `refresh-client -C XxY` (no `-t` at
+/// all) THROUGH the per-tile CM. Without `-t`, tmux refreshes
+/// the calling client — and the per-tile CM IS the client of
+/// `<session>`, so it resizes the right pane. The per-tile
+/// `Tmux` is held in `AttachedState::tile_tmux`, so the
+/// helper takes `&AttachedState` and pulls it out.
+///
+/// **Why `XxY` not `X,Y` for the size.** Both formats work
+/// on tmux 3.6a, but `XxY` (the historical one) survives the
+/// 3.0 → 3.x migration and is the form Node katulong uses.
+/// The comma form was the original Rust attempt and was the
+/// thing being silently rejected — keeping `XxY` to match
+/// observable Node parity.
+///
+/// **Failure mode.** Non-fatal: if the resize doesn't take,
+/// the user just sees a wrap mismatch (text wraps at the
+/// stale dimensions). The transport stays open and I/O
+/// flows. The per-tile CM might be `None` if the manager is
+/// in a transient teardown state (the `Option<Tmux>` field
+/// is `take()`-able for clean shutdown); in that case we
+/// log + skip rather than panic.
+async fn resize_via_tile_cm(
+    a: &AttachedState,
+    cols: u16,
+    rows: u16,
+    label: &'static str,
+) {
+    let (cols, rows) = crate::session::dims::clamp_dims(cols, rows);
+    let Some(tmux) = a.tile_tmux.as_ref() else {
+        tracing::warn!(
+            session = %a.session,
+            "{label}: per-tile CM unavailable (teardown in progress?); skipping"
+        );
+        return;
+    };
+    let cmd = format!("refresh-client -C {cols}x{rows}");
+    let result = tmux.send_command(&cmd).await;
+    match result {
+        Ok(reply) if reply.ok => {}
+        Ok(reply) => {
+            tracing::warn!(
+                session = %a.session,
+                error = %reply.output.trim(),
+                "{label} failed; keeping transport open"
+            );
+        }
+        Err(err) => {
+            tracing::warn!(
+                session = %a.session,
+                error = %err,
+                "{label} errored; keeping transport open"
+            );
+        }
+    }
 }
 
 /// Decide whether a revocation event should tear down this
