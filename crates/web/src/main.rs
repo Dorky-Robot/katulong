@@ -8,7 +8,7 @@
 //   the auth-state-driven swap in <Main/>.
 // Slice 9r.4: status probe + session restore. Auth state
 //   becomes tri-state — None while the initial
-//   `/api/auth/status` probe is in flight, Some(false) when
+//   `/auth/status` probe is in flight, Some(false) when
 //   the server says not authed, Some(true) when authed. The
 //   None branch renders a small "restoring" view, NOT the
 //   login form, so a refresh after sign-in doesn't flash
@@ -23,7 +23,7 @@
 // components dispatch them via `spawn_local` /
 // `create_action` and react to the resolved value.
 
-use katulong_shared::wire::{AuthStatusResponse, TileLayout};
+use katulong_shared::wire::{AccessMethod, AuthStatusResponse, TileLayout};
 use leptos::*;
 use wasm_bindgen_futures::spawn_local;
 
@@ -64,7 +64,7 @@ pub struct ConnectionStatus {
 /// Phases of the auth state machine driving `<Main/>`'s
 /// view selection.
 ///
-/// - `Restoring` — initial probe to `/api/auth/status` is in
+/// - `Restoring` — initial probe to `/auth/status` is in
 ///   flight. `<Main/>` renders a small "restoring" view here,
 ///   NOT the login form, so a page reload of an already-authed
 ///   user doesn't flash through the sign-in screen.
@@ -72,9 +72,9 @@ pub struct ConnectionStatus {
 ///   localhost auto-auth) but no credentials are registered
 ///   yet. The first-device register UI renders. Distinct
 ///   from `SignedOut` because the next user action differs:
-///   `Register` triggers `/api/auth/register/*` (localhost-
+///   `Register` triggers `/auth/register/*` (localhost-
 ///   only, fresh-install-only); `SignedOut` triggers
-///   `/api/auth/login/*`.
+///   `/auth/login/*`.
 /// - `SignedOut` — probe resolved as unauthenticated AND
 ///   credentials exist on the server. The login form
 ///   renders.
@@ -100,17 +100,19 @@ pub struct AuthState {
     pub set_phase: WriteSignal<AuthPhase>,
 }
 
-/// Probe `/api/auth/status` once at App mount.
+/// Probe `/auth/status` once at App mount.
 ///
-/// Returns the full `AuthStatusResponse` (not just the
-/// `authenticated` bool) so the caller has access to
-/// `has_credentials` and `access_method` without a second
-/// round trip when 9r.5 lands the register flow gate. The
-/// caller currently only consumes `authenticated`; the wider
-/// shape is on the boundary instead of behind it so
-/// downstream code can grow without re-shaping this fn.
+/// Phase 0a-1 of the cutover: the response shape is now
+/// `{setup, accessMethod}` (Node-compatible) and the
+/// `authenticated` field is gone. The probe can no longer
+/// distinguish "session cookie is valid" from "no session"
+/// — that signal moves to a separate `/api/me` probe in a
+/// follow-up PR. Until then, refreshing an already-authed
+/// page lands on the login form, and the user re-runs the
+/// passkey ceremony to recover SignedIn. Acceptable interim
+/// regression per the cutover plan.
 async fn probe_auth_status() -> Result<AuthStatusResponse, String> {
-    let resp = gloo_net::http::Request::get("/api/auth/status")
+    let resp = gloo_net::http::Request::get("/auth/status")
         .send()
         .await
         .map_err(|e| format!("network error contacting server: {e}"))?;
@@ -192,20 +194,20 @@ fn App() -> impl IntoView {
     // putting it in the user-visible string.
     spawn_local(async move {
         match probe_auth_status().await {
-            // Branch order matters: the `authenticated &&
-            // !has_credentials` case is the fresh-install-on-
-            // localhost path (auto-auth gives `authenticated`
-            // before any credential exists). Routing it to
-            // `SignedIn` would land the user on the terminal
-            // stub with no path back to the register flow;
-            // routing to `SignedOut` would show the login
-            // form with no credentials to sign in against.
-            // The dedicated `Register` phase is what makes
-            // this state representable.
-            Ok(status) if status.authenticated && !status.has_credentials => {
+            // `!setup` on a localhost peer is the fresh-install
+            // bootstrap path: no credentials yet AND physical
+            // access, so the first-device register flow is the
+            // only sensible UI.
+            Ok(status)
+                if !status.setup
+                    && matches!(status.access_method, AccessMethod::Localhost) =>
+            {
                 set_phase.set(AuthPhase::Register);
             }
-            Ok(status) if status.authenticated => set_phase.set(AuthPhase::SignedIn),
+            // Everything else routes to SignedOut. Until the
+            // sibling PR adds `/api/me`, the probe can't tell
+            // a live session apart from no session — the user
+            // re-runs the passkey ceremony either way.
             Ok(_) => set_phase.set(AuthPhase::SignedOut),
             Err(message) => {
                 web_sys::console::warn_1(

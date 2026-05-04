@@ -25,9 +25,8 @@
 //! key is part of an HTTP contract.
 
 use katulong_shared::wire::{
-    AccessMethod, AuthFinishResponse, AuthStatusResponse, ChallengeId,
-    LoginFinishRequest, PairFinishRequest, PairStartRequest, PairStartResponse,
-    TileDescriptor, TileId, TileKind, TileLayout,
+    AccessMethod, AuthFinishResponse, AuthStatusResponse, LoginFinishRequest,
+    RegisterFinishRequest, RegisterOptionsRequest, TileDescriptor, TileId, TileKind, TileLayout,
 };
 use serde_json::{json, Value};
 
@@ -51,32 +50,46 @@ fn auth_finish_response_pins_keys_and_round_trips() {
 }
 
 #[test]
-fn pair_start_request_pins_setup_token_key_and_round_trips() {
-    let req = PairStartRequest {
-        setup_token: "deadbeef".to_string(),
-    };
+fn register_options_request_round_trips_with_and_without_setup_token() {
+    // Phase 0a step 4 collapsed `/auth/pair/options` into
+    // `/auth/register/options`. The server branches on
+    // `setupToken` presence: absent → first-device
+    // localhost-only; present → setup-token-gated pair.
+    //
+    // Wire shape is camelCase (`setupToken`) to match Node's
+    // `public/login.js` which uses `JSON.stringify({ setupToken })`.
+    // An empty body deserialises with `setup_token = None` via
+    // `serde(default)`.
 
+    // Without setup_token: serialises out with the field omitted
+    // (per `skip_serializing_if`).
+    let req = RegisterOptionsRequest::default();
     let value = serde_json::to_value(&req).unwrap();
-    assert_eq!(value, json!({ "setup_token": "deadbeef" }));
+    assert!(value.get("setupToken").is_none());
+    assert!(value.get("setup_token").is_none());
 
-    let s = serde_json::to_string(&req).unwrap();
-    let back: PairStartRequest = serde_json::from_str(&s).unwrap();
-    assert_eq!(back.setup_token, "deadbeef");
+    // An empty `{}` body deserialises into `None`.
+    let parsed: RegisterOptionsRequest = serde_json::from_value(json!({})).unwrap();
+    assert!(parsed.setup_token.is_none());
+
+    // With setup_token: the wire field is camelCase `setupToken`.
+    let req = RegisterOptionsRequest {
+        setup_token: Some("deadbeef".to_string()),
+    };
+    let value = serde_json::to_value(&req).unwrap();
+    assert_eq!(value, json!({ "setupToken": "deadbeef" }));
+    let back: RegisterOptionsRequest = serde_json::from_value(value).unwrap();
+    assert_eq!(back.setup_token.as_deref(), Some("deadbeef"));
 }
 
 #[test]
 fn login_finish_request_envelope_keys_are_snake_case() {
-    // We can't construct a real `PublicKeyCredential` without
-    // a live authenticator. Verify the envelope keys
-    // (`challenge_id`, `response`) by deserializing a
-    // hand-rolled JSON object with a stub credential body
-    // that contains only the unconditionally-required fields
-    // — the proto types use serde defaults / Option for the
-    // rest. If this stops parsing, the proto contract
-    // changed underneath us; if the envelope key changed,
-    // we'd see the failure here in code review.
+    // The cutover collapsed the request shape to
+    // `{ credential: <PublicKeyCredential> }` — the
+    // server-issued `challenge_id` is gone, recovered from
+    // `clientDataJSON.challenge` instead.
     //
-    // The `response` body is a `webauthn-rs-proto`
+    // The `credential` body is a `webauthn-rs-proto`
     // `PublicKeyCredential`. Its required fields per the
     // crate docs: `id` (string), `rawId` (base64url bytes),
     // `response.{authenticatorData, clientDataJSON,
@@ -93,108 +106,75 @@ fn login_finish_request_envelope_keys_are_snake_case() {
     });
 
     let envelope = json!({
-        "challenge_id": "c1",
-        "response": credential_json,
+        "credential": credential_json,
     });
 
-    // Round-trip via deserialize → re-serialize. A future
-    // `#[serde(rename_all = "camelCase")]` on the envelope
-    // would change `challenge_id` to `challengeId` and break
-    // the deserialize step here.
     let parsed: LoginFinishRequest = serde_json::from_value(envelope.clone()).unwrap();
     let re_serialized = serde_json::to_value(&parsed).unwrap();
 
-    // The envelope keys must match. We don't compare the
-    // `response` body byte-for-byte because the proto
-    // struct's serializer may emit a canonical form that
-    // differs from our hand-rolled JSON; instead we assert
-    // the `response` key exists with an object value.
-    assert_eq!(re_serialized["challenge_id"], json!("c1"));
-    assert!(re_serialized["response"].is_object());
+    // Confirm no challenge envelope leaked into the
+    // serialized output, and the `credential` key is intact.
+    assert!(re_serialized.get("challenge_id").is_none());
+    assert!(re_serialized["credential"].is_object());
 }
 
 #[test]
-fn pair_finish_request_envelope_keys_are_snake_case() {
+fn register_finish_request_carries_optional_setup_token() {
+    // `RegisterFinishRequest` is `rename_all = "camelCase"`, so the
+    // wire field is `setupToken` (matching Node's
+    // `JSON.stringify({ setupToken })` in `public/login.js`).
+    // Phase 0a step 4 merged the pair flow into this body — `Some`
+    // selects the token-gated pair finish, `None` selects the
+    // first-device localhost-only finish.
     let credential_json = json!({
         "id": "AAAA",
         "rawId": "AAAA",
         "type": "public-key",
         "response": {
-            // RegisterPublicKeyCredential needs the
-            // attestation response shape: clientDataJSON +
-            // attestationObject.
             "clientDataJSON": "AAAA",
             "attestationObject": "AAAA",
         }
     });
 
-    let envelope = json!({
-        "challenge_id": "c1",
-        "setup_token_id": "tok-id-1",
-        "response": credential_json,
-    });
-
-    let parsed: PairFinishRequest = serde_json::from_value(envelope).unwrap();
+    // Without setupToken: round-trip should NOT emit the field.
+    let envelope = json!({ "credential": credential_json.clone() });
+    let parsed: RegisterFinishRequest = serde_json::from_value(envelope).unwrap();
     let re_serialized = serde_json::to_value(&parsed).unwrap();
+    assert!(re_serialized.get("setupToken").is_none());
+    assert!(re_serialized.get("setup_token").is_none());
+    assert!(re_serialized["credential"].is_object());
 
-    assert_eq!(re_serialized["challenge_id"], json!("c1"));
-    assert_eq!(re_serialized["setup_token_id"], json!("tok-id-1"));
-    assert!(re_serialized["response"].is_object());
-}
-
-#[test]
-fn pair_start_response_envelope_keys_are_snake_case() {
-    // The `options` field carries a real
-    // `CreationChallengeResponse`, which has its own complex
-    // shape. We deserialize an envelope and re-serialize it
-    // to verify the wrapper keys round-trip.
-    //
-    // Construct a minimal `CreationChallengeResponse`
-    // payload — it has `publicKey` (the actual options
-    // object) as the load-bearing field. The other fields
-    // (`mediation`, etc.) are optional.
-    let options_json = json!({
-        "publicKey": {
-            "rp": { "name": "katulong", "id": "katulong.test" },
-            "user": {
-                "id": "AAAA",
-                "name": "u",
-                "displayName": "u",
-            },
-            "challenge": "AAAA",
-            "pubKeyCredParams": [],
-        }
-    });
-
+    // With setupToken: round-trips through the camelCase field.
     let envelope = json!({
-        "challenge_id": "c1",
-        "setup_token_id": "tok-id-1",
-        "options": options_json,
+        "credential": credential_json,
+        "setupToken": "tok-plaintext",
     });
-
-    let parsed: PairStartResponse = serde_json::from_value(envelope).unwrap();
+    let parsed: RegisterFinishRequest = serde_json::from_value(envelope).unwrap();
+    assert_eq!(parsed.setup_token.as_deref(), Some("tok-plaintext"));
     let re_serialized = serde_json::to_value(&parsed).unwrap();
-
-    assert_eq!(re_serialized["challenge_id"], json!("c1"));
-    assert_eq!(re_serialized["setup_token_id"], json!("tok-id-1"));
-    assert!(re_serialized["options"].is_object());
+    assert_eq!(re_serialized["setupToken"], json!("tok-plaintext"));
+    // The pair-flow leg of the merged endpoint reads the same field
+    // — no separate `PairFinishRequest` exists post-step-4.
+    assert!(re_serialized.get("challenge_id").is_none());
+    assert!(re_serialized.get("setup_token_id").is_none());
 }
 
 #[test]
 fn auth_status_response_pins_keys_and_round_trips() {
     let resp = AuthStatusResponse {
+        setup: true,
         access_method: AccessMethod::Localhost,
-        has_credentials: true,
-        authenticated: true,
     };
 
     let value = serde_json::to_value(&resp).unwrap();
+    // Wire shape mirrors Node: `{setup, accessMethod}`
+    // (camelCase). The `authenticated` field is gone; the
+    // `accessMethod` rename is at the wire boundary only.
     assert_eq!(
         value,
         json!({
-            "access_method": "localhost",
-            "has_credentials": true,
-            "authenticated": true,
+            "setup": true,
+            "accessMethod": "localhost",
         })
     );
 
@@ -202,30 +182,17 @@ fn auth_status_response_pins_keys_and_round_trips() {
     // on this string and a missed `Remote => "remote"` case
     // would silently treat tunnel access as localhost.
     let remote = AuthStatusResponse {
+        setup: false,
         access_method: AccessMethod::Remote,
-        has_credentials: false,
-        authenticated: false,
     };
     let v = serde_json::to_value(&remote).unwrap();
-    assert_eq!(v["access_method"], json!("remote"));
+    assert_eq!(v["accessMethod"], json!("remote"));
+    assert_eq!(v["setup"], json!(false));
 
     let s = serde_json::to_string(&resp).unwrap();
     let back: AuthStatusResponse = serde_json::from_str(&s).unwrap();
     assert_eq!(back.access_method, AccessMethod::Localhost);
-    assert!(back.has_credentials);
-    assert!(back.authenticated);
-}
-
-#[test]
-fn challenge_id_serializes_as_bare_string() {
-    // `ChallengeId` is `type ChallengeId = String`. A future
-    // newtype-ification (e.g., `struct ChallengeId(String)`)
-    // could change serialization to a single-element tuple
-    // struct unless `#[serde(transparent)]` is added. Pin
-    // the contract: it must serialize to a bare JSON string.
-    let id: ChallengeId = "challenge-123".to_string();
-    let value: Value = serde_json::to_value(&id).unwrap();
-    assert_eq!(value, json!("challenge-123"));
+    assert!(back.setup);
 }
 
 #[test]

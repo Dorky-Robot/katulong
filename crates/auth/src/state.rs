@@ -202,6 +202,55 @@ impl AuthState {
         }
     }
 
+    /// Stamp `last_used_at` on a credential. No-op if the id isn't
+    /// found. Called from inside `transact` after a successful login
+    /// so the same write that bumps the WebAuthn counter also records
+    /// usage — keeps the device-management UI's "last seen" column
+    /// honest without a second writer that could race.
+    pub fn touch_credential(&self, id: &str, now: SystemTime) -> Self {
+        Self {
+            credentials: self
+                .credentials
+                .iter()
+                .map(|c| {
+                    if c.id == id {
+                        Credential {
+                            last_used_at: Some(now),
+                            ..c.clone()
+                        }
+                    } else {
+                        c.clone()
+                    }
+                })
+                .collect(),
+            ..self.clone()
+        }
+    }
+
+    /// Update a setup token's `name`. No-op if the id isn't found.
+    /// PATCH `/api/tokens/:id` is the only caller; the closure re-checks
+    /// existence under the mutex via the boolean a separate `find_setup_token`
+    /// returns, so this transition stays a pure rewrite.
+    pub fn update_setup_token_name(&self, id: &str, name: String) -> Self {
+        Self {
+            setup_tokens: self
+                .setup_tokens
+                .iter()
+                .map(|t| {
+                    if t.id == id {
+                        SetupToken {
+                            name: Some(name.clone()),
+                            ..t.clone()
+                        }
+                    } else {
+                        t.clone()
+                    }
+                })
+                .collect(),
+            ..self.clone()
+        }
+    }
+
     /// Add or replace a session by its stored hash (upsert — mirrors
     /// `upsert_credential`). The `Session` argument already carries
     /// `token_hash`; dedup works on that value.
@@ -449,6 +498,8 @@ mod tests {
             counter: 0,
             created_at: epoch_plus(0),
             setup_token_id: None,
+            user_agent: String::new(),
+            last_used_at: None,
         }
     }
 

@@ -1,15 +1,33 @@
 //! Authentication HTTP routes.
 //!
-//! Eight endpoints covering the full auth surface:
+//! Six endpoints covering the full auth surface:
 //!
-//! - `GET  /api/auth/status`          — public; access mode + install state + authenticated
-//! - `POST /api/auth/register/start`  — localhost-only, fresh install
-//! - `POST /api/auth/register/finish` — localhost-only, fresh install; mints session
-//! - `POST /api/auth/login/start`     — public
-//! - `POST /api/auth/login/finish`    — public; updates counter + mints session
-//! - `POST /api/auth/pair/start`      — public, setup-token-gated
-//! - `POST /api/auth/pair/finish`     — public; links credential to token + mints session
-//! - `POST /api/auth/logout`          — auth + CSRF; localhost → 409
+//! - `GET  /auth/status`          — public; `{setup, accessMethod}`
+//! - `POST /auth/register/options` — branched on optional `setupToken`:
+//!     - absent → localhost-only, fresh install
+//!     - present → public, setup-token-gated additional-device pair
+//!   Returns a bare `CreationChallengeResponse` either way.
+//! - `POST /auth/register/verify` — same branching as `/options`;
+//!   mints a session cookie on success.
+//! - `POST /auth/login/options`   — public; bare `RequestChallengeResponse`
+//! - `POST /auth/login/verify`    — public; updates counter + mints session
+//! - `POST /auth/logout`          — auth + CSRF; localhost → 409
+//!
+//! Phase 0a step 4 collapsed the standalone `/auth/pair/*`
+//! routes into `/auth/register/*`. The Node frontend
+//! (`public/login.js`) only ever called `/auth/register/*`
+//! and branched on whether it had a setup token to send;
+//! mirroring that here means the Rust server is drop-in
+//! compatible with the existing Node-built UI as well as
+//! the WASM `<Login/>` / `<Register/>` components.
+//!
+//! The wire shapes match the Node implementation
+//! (`lib/routes/auth-routes.js`) byte-for-byte so the JS frontend
+//! drives the Rust server unchanged. In particular: the start
+//! endpoints return WebAuthn options at the JSON top level (no
+//! `challenge_id` envelope), and the verify endpoints recover the
+//! challenge from `credential.response.clientDataJSON.challenge` —
+//! the same `extractChallenge()` pattern the Node handler uses.
 //!
 //! Setup-token management (list / create / revoke) lives in
 //! `api::tokens`. Those routes share the same `CsrfProtected` pattern
@@ -39,9 +57,8 @@ use axum::{
 };
 use katulong_auth::{AuthError, Session, SESSION_TTL};
 use katulong_shared::wire::{
-    AuthFinishResponse, AuthStatusResponse, ChallengeStartResponse,
-    CreationChallengeResponse, LoginFinishRequest, PairFinishRequest, PairStartRequest,
-    PairStartResponse, RegisterFinishRequest, RequestChallengeResponse,
+    AuthFinishResponse, AuthStatusResponse, CreationChallengeResponse, LoginFinishRequest,
+    RegisterFinishRequest, RegisterOptionsRequest, RequestChallengeResponse,
 };
 use std::net::SocketAddr;
 use std::time::SystemTime;
@@ -51,188 +68,329 @@ pub fn auth_routes() -> Router<AppState> {
         // PUBLIC: reports whether the instance has any credentials and
         // which access mode this request is coming from; the client
         // uses this to pick between register/login UI.
-        .route("/api/auth/status", get(status))
-        // PUBLIC (but state-gated): first-device registration. Only
-        // works from localhost AND only when no credentials exist.
-        // Additional-device registration uses the pair flow below.
-        .route("/api/auth/register/start", post(register_start))
-        .route("/api/auth/register/finish", post(register_finish))
+        .route("/auth/status", get(status))
+        // PUBLIC (but state-gated): registration. Branches inside the
+        // handler on the optional `setupToken` body field:
+        //   - absent → first-device bootstrap; localhost-only AND
+        //     refused once any credential exists.
+        //   - present → additional-device pair; the token value is the
+        //     gate (anyone with a valid plaintext token can pair).
+        // Token validity and "no credentials yet" are both re-checked
+        // inside `transact` so the mutex is the authoritative
+        // enforcement point. Phase 0a step 4 merged the dedicated
+        // `/auth/pair/*` routes into these so the Node frontend
+        // (which only ever calls `/auth/register/*`) drives the Rust
+        // server unchanged.
+        .route("/auth/register/options", post(register_start))
+        .route("/auth/register/verify", post(register_finish))
         // PUBLIC: anyone can try to log in. The ceremony itself gates
         // who actually succeeds.
-        .route("/api/auth/login/start", post(login_start))
-        .route("/api/auth/login/finish", post(login_finish))
-        // PUBLIC: pair a new device using a setup token issued by an
-        // authenticated admin. The token value IS the gate — anyone
-        // with a valid plaintext token can pair. Token validity and
-        // single-use semantics are enforced inside `transact`.
-        .route("/api/auth/pair/start", post(pair_start))
-        .route("/api/auth/pair/finish", post(pair_finish))
+        .route("/auth/login/options", post(login_start))
+        .route("/auth/login/verify", post(login_finish))
         // PROTECTED + CSRF: end the caller's session. Localhost
         // callers get a 409 — there's no session to end, and the
         // UI shouldn't offer logout for physical-access peers (Node
         // scar `23981ca`).
-        .route("/api/auth/logout", post(logout))
+        .route("/auth/logout", post(logout))
 }
 
 async fn status(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    authed: Option<Authenticated>,
+    _authed: Option<Authenticated>,
 ) -> Json<AuthStatusResponse> {
+    // Wire shape mirrors Node's `lib/routes/auth-routes.js`:
+    // `{ setup, accessMethod }`. The `Option<Authenticated>`
+    // parameter stays in the signature so the auth-middleware
+    // wiring exercises the cookie-validation path on this
+    // public endpoint (logging side effects, lockout pruning),
+    // but the resulting bool no longer round-trips through
+    // status — a sibling PR adds `/api/me` for the frontend
+    // to recover that signal.
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
     let access = AccessMethod::classify(peer, host);
     let snap = state.auth_store.snapshot().await;
     Json(AuthStatusResponse {
+        setup: !snap.credentials.is_empty(),
         access_method: access.into(),
-        has_credentials: !snap.credentials.is_empty(),
-        authenticated: authed.is_some(),
     })
 }
 
-/// Start a first-device registration ceremony.
+/// Upper bound on the raw `setupToken` value accepted by the
+/// register endpoints. Legitimate tokens are 64 hex chars
+/// (32 bytes from CSPRNG, hex-encoded); 128 gives headroom.
+/// The cap exists to stop an unauthenticated caller from
+/// submitting a megabyte-long string and forcing
+/// `find_redeemable_setup_token` to run scrypt verify against
+/// every stored token with a megabyte input per call — a CPU
+/// amplification DoS vector because the no-token branch is
+/// localhost-gated but the token branch is fully public.
+const SETUP_TOKEN_MAX_LEN: usize = 128;
+
+/// Normalise an optional `setupToken` from the request body.
+/// Node's frontend sends `setupToken: ""` when the input is
+/// empty (it doesn't trim before submitting); treat empty
+/// strings as absent so the no-token branch fires for both
+/// shapes. Anything longer than `SETUP_TOKEN_MAX_LEN` is
+/// rejected before it reaches scrypt verify.
+fn normalise_setup_token(raw: Option<String>) -> Result<Option<String>, ApiError> {
+    let Some(value) = raw else {
+        return Ok(None);
+    };
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.len() > SETUP_TOKEN_MAX_LEN {
+        tracing::warn!(
+            length = value.len(),
+            "register: setupToken exceeds maximum length"
+        );
+        return Err(ApiError::BadRequest("setupToken exceeds maximum length"));
+    }
+    Ok(Some(value))
+}
+
+/// Start a registration ceremony.
 ///
-/// First-device is the ONLY registration path this slice supports.
-/// Adding subsequent devices goes through the setup-token flow in
-/// slice 6 (which reuses `WebAuthnService::start_registration` but
-/// gates the state differently).
+/// Two branches selected by `body.setupToken`:
 ///
-/// Two guards — both enforced again inside `register_finish`'s
-/// `transact` closure so a race can't slip past the pre-flight:
-/// 1. `access == Localhost` — physical access is required to bootstrap
-///    the first device, since there's nothing to authenticate against
-///    yet. If we let this run from a tunnel, anyone with the URL could
-///    register their own key on a fresh install.
-/// 2. `credentials.is_empty()` — once any device is registered, further
-///    registrations must go through pairing so the existing user can
-///    authorise them.
+/// 1. **No token (first-device bootstrap)** — refuses non-localhost
+///    callers (a tunnel-bound register would let anyone with the URL
+///    enrol a key on a fresh install) and refuses any call after the
+///    first credential exists. Both invariants are re-checked inside
+///    `register_finish`'s `transact` closure so a race can't slip past
+///    the pre-flight.
+///
+/// 2. **Token present (additional-device pair)** — public; the token
+///    value IS the gate. `find_redeemable_setup_token` walks every
+///    stored token and runs scrypt verify (no short-circuit — the
+///    timing channel is the same as login). Only live, unconsumed,
+///    unexpired tokens pass. Token validity is re-validated under the
+///    state mutex in `register_finish` to close the TOCTOU window
+///    against a concurrent revoke between start and finish.
+///
+/// Both branches return a bare `CreationChallengeResponse` at the JSON
+/// top level (Node's `res.json(opts)` shape).
 async fn register_start(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-) -> Result<Json<ChallengeStartResponse<CreationChallengeResponse>>, ApiError> {
-    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
-    let access = AccessMethod::classify(peer, host);
-    if !matches!(access, AccessMethod::Localhost) {
-        // Generic "forbidden" — the descriptive variant would confirm
-        // to a remote scanner that this is a katulong instance with a
-        // first-device registration path gated on localhost. Operators
-        // needing detail can read the server log.
-        tracing::warn!("rejecting remote request to first-device registration");
-        return Err(ApiError::Forbidden("forbidden"));
-    }
+    JsonBody(body): JsonBody<RegisterOptionsRequest>,
+) -> Result<Json<CreationChallengeResponse>, ApiError> {
+    let setup_token = normalise_setup_token(body.setup_token)?;
+    let now = SystemTime::now();
 
-    // Get-or-init the stable user handle AND enforce the "no
-    // credentials yet" invariant atomically. `user_handle_or_init`
-    // returns the existing handle on a fresh call for the same
-    // install (idempotent) or mints a fresh one on first use. Doing
-    // this inside `transact` means the handle persists before the
-    // ceremony runs, so `register_finish`'s transact closure reads
-    // the same value even if a second device later pairs in.
-    //
-    // This is the authoritative `credentials.is_empty()` check — the
-    // same re-check appears in `register_finish`'s transact closure
-    // to close the TOCTOU window between start and finish.
-    let (user_handle, credentials) = state
-        .auth_store
-        .transact(|s| {
-            if !s.credentials.is_empty() {
-                return Err(AuthError::StateConflict(
-                    "instance already initialised; additional devices must pair via setup token",
-                ));
-            }
-            let (uh, next) = s.user_handle_or_init();
-            let creds = next.credentials.clone();
-            Ok((next, (uh, creds)))
-        })
-        .await
-        .map_err(ApiError::from)?;
+    let (user_handle, credentials) = if let Some(plaintext) = setup_token.as_ref() {
+        // Token-gated branch: skip the localhost check, validate the
+        // token, then ensure a stable user handle is persisted before
+        // the WebAuthn ceremony. Token re-validation under the mutex
+        // happens in `register_finish`; the pre-flight here is a
+        // fast-fail for the common (non-racing) case.
+        let snap = state.auth_store.snapshot().await;
+        if snap.find_redeemable_setup_token(plaintext, now).is_none() {
+            tracing::warn!("register_start: setup token not redeemable");
+            return Err(ApiError::Unauthorized);
+        }
+        let user_handle = state
+            .auth_store
+            .transact(|s| {
+                let (uh, next) = s.user_handle_or_init();
+                Ok((next, uh))
+            })
+            .await
+            .map_err(ApiError::from)?;
+        (user_handle, snap.credentials.clone())
+    } else {
+        // No-token branch: physical access is required to bootstrap
+        // the first device, since there's nothing to authenticate
+        // against yet.
+        let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
+        let access = AccessMethod::classify(peer, host);
+        if !matches!(access, AccessMethod::Localhost) {
+            // Generic "forbidden" — the descriptive variant would
+            // confirm to a remote scanner that this is a katulong
+            // instance with a first-device registration path gated on
+            // localhost. Operators needing detail can read the log.
+            tracing::warn!("rejecting remote request to first-device registration");
+            return Err(ApiError::Forbidden("forbidden"));
+        }
+        // Get-or-init the stable user handle AND enforce the "no
+        // credentials yet" invariant atomically. The same re-check
+        // appears in `register_finish`'s transact closure to close
+        // the TOCTOU window between start and finish.
+        state
+            .auth_store
+            .transact(|s| {
+                if !s.credentials.is_empty() {
+                    return Err(AuthError::StateConflict(
+                        "instance already initialised; additional devices must pair via setup token",
+                    ));
+                }
+                let (uh, next) = s.user_handle_or_init();
+                let creds = next.credentials.clone();
+                Ok((next, (uh, creds)))
+            })
+            .await
+            .map_err(ApiError::from)?
+    };
 
-    let (id, ccr) = state
+    let ccr = state
         .webauthn
-        .start_registration(
-            user_handle,
-            "katulong",
-            "Katulong",
-            &credentials,
-            SystemTime::now(),
-        )
+        .start_registration(user_handle, "katulong", "Katulong", &credentials, now)
         .map_err(ApiError::from)?;
-    Ok(Json(ChallengeStartResponse {
-        challenge_id: id,
-        options: ccr,
-    }))
+    Ok(Json(ccr))
 }
 
-/// Finish the first-device registration, persist the credential, and
-/// mint a session cookie bound to it.
+/// Finish a registration ceremony, persist the credential, and mint a
+/// session cookie. Branches on `body.setupToken` exactly like
+/// `register_start`.
 ///
-/// The localhost check is outside `transact` (socket state doesn't
-/// change under the mutex). The "no credentials yet" check is INSIDE
-/// `transact` so it evaluates under the same lock that will do the
-/// write — without this, two concurrent finishes could each pass the
-/// pre-flight check on separate snapshots and both end up upserting a
-/// credential on what was supposed to be a single-device install.
+/// Both branches enforce their guards INSIDE `transact`:
+///   - No-token: `credentials.is_empty()` re-check (TOCTOU-safe vs a
+///     concurrent first-device finish).
+///   - Token: `find_redeemable_setup_token` re-check (TOCTOU-safe vs a
+///     concurrent revoke between start and finish), then
+///     `consume_setup_token` linking the new credential id to the
+///     token id (Node scar `7742ac3` — revoke cascades to remove the
+///     paired device).
 async fn register_finish(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     JsonBody(body): JsonBody<RegisterFinishRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
-    let access = AccessMethod::classify(peer, host);
-    if !matches!(access, AccessMethod::Localhost) {
-        // Generic "forbidden" — the descriptive variant would confirm
-        // to a remote scanner that this is a katulong instance with a
-        // first-device registration path gated on localhost. Operators
-        // needing detail can read the server log.
-        tracing::warn!("rejecting remote request to first-device registration");
-        return Err(ApiError::Forbidden("forbidden"));
+    let setup_token = normalise_setup_token(body.setup_token.clone())?;
+    let now = SystemTime::now();
+
+    if setup_token.is_none() {
+        // No-token branch is localhost-only. Socket state doesn't
+        // change under the mutex, so this gate stays outside transact;
+        // the `credentials.is_empty()` re-check inside the transact
+        // closure is the authoritative invariant.
+        let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
+        let access = AccessMethod::classify(peer, host);
+        if !matches!(access, AccessMethod::Localhost) {
+            tracing::warn!("rejecting remote request to first-device registration");
+            return Err(ApiError::Forbidden("forbidden"));
+        }
     }
 
-    let now = SystemTime::now();
-    let credential = state
-        .webauthn
-        .finish_registration(&body.challenge_id, &body.response, now)
-        .inspect_err(|e| {
-            // Log failed ceremonies at `warn` so brute-force or replay
-            // attempts are visible in operator logs. The challenge id
-            // is safe to log — it's an opaque server-issued handle,
-            // not the attestation response bytes.
-            tracing::warn!(
-                challenge_id = %body.challenge_id,
-                error = %e,
-                "registration ceremony failed"
-            );
-        })
-        .map_err(ApiError::from)?;
+    // Run the WebAuthn ceremony. The pair branch needs the
+    // setup_token_id stamped onto the credential — `finish_paired_registration`
+    // owns the bidirectional link invariant (credential ↔ setup token)
+    // so the handler never constructs that link by hand.
+    let credential = if let Some(plaintext) = setup_token.as_ref() {
+        // Pre-flight token resolve so we can pass the id to the
+        // ceremony; the authoritative re-check happens under the
+        // state mutex below.
+        let snap = state.auth_store.snapshot().await;
+        let token = snap
+            .find_redeemable_setup_token(plaintext, now)
+            .ok_or_else(|| {
+                tracing::warn!("register_finish: setup token not redeemable");
+                ApiError::Unauthorized
+            })?;
+        let setup_token_id = token.id.clone();
+        state
+            .webauthn
+            .finish_paired_registration(&body.credential, setup_token_id, now)
+            .inspect_err(|e| {
+                tracing::warn!(
+                    credential_id = %body.credential.id,
+                    error = %e,
+                    "pair ceremony failed"
+                );
+            })
+            .map_err(ApiError::from)?
+    } else {
+        state
+            .webauthn
+            .finish_registration(&body.credential, now)
+            .inspect_err(|e| {
+                // Log failed ceremonies at `warn` so brute-force or
+                // replay attempts are visible in operator logs. The
+                // credential id is safe to log; the attestation
+                // response bytes are not logged.
+                tracing::warn!(
+                    credential_id = %body.credential.id,
+                    error = %e,
+                    "registration ceremony failed"
+                );
+            })
+            .map_err(ApiError::from)?
+    };
 
-    // The credentials.is_empty() re-check inside the closure is the
-    // authoritative TOCTOU-safe enforcement — a second concurrent
-    // finisher will see state already containing the first winner's
-    // credential and bail out with StateConflict (→ 409).
+    // Stamp the human-facing labels onto the credential before it goes
+    // to disk. `finish_registration` doesn't see the request body
+    // (it's a pure WebAuthn primitive); the handler is the only place
+    // that has both the verified credential AND the operator-supplied
+    // `deviceName`/`userAgent`. Defaults to empty when missing — Node
+    // uses the same `||''` tolerance.
+    let credential = katulong_auth::Credential {
+        name: body.device_name.clone().filter(|n| !n.is_empty()),
+        user_agent: body.user_agent.clone().unwrap_or_default(),
+        ..credential
+    };
+
     let new_credential = credential.clone();
-    let (plaintext_token, minted_session) = state
+    let setup_token_for_closure = setup_token.clone();
+    let (plaintext_token, minted_session, paired_token_id) = state
         .auth_store
         .transact(move |s| {
-            if !s.credentials.is_empty() {
-                return Err(AuthError::StateConflict(
-                    "instance already initialised by a concurrent registration",
-                ));
+            if let Some(plaintext) = setup_token_for_closure.as_ref() {
+                // Re-validate the token under the mutex: a concurrent
+                // revoke between start and finish must NOT succeed in
+                // pairing. Re-resolve from the plaintext so the id we
+                // commit against is whatever the live state says is
+                // redeemable RIGHT NOW.
+                let Some(token) = s.find_redeemable_setup_token(plaintext, now) else {
+                    return Err(AuthError::StateConflict(
+                        "setup token no longer redeemable (revoked, consumed, or expired)",
+                    ));
+                };
+                let token_id = token.id.clone();
+                let (plaintext_session, session) =
+                    Session::mint(new_credential.id.clone(), now, SESSION_TTL);
+                let next = s
+                    .upsert_credential(new_credential.clone())
+                    .consume_setup_token(&token_id, &new_credential.id, now)
+                    .upsert_session(session.clone());
+                Ok((next, (plaintext_session, session, Some(token_id))))
+            } else {
+                // The credentials.is_empty() re-check inside the
+                // closure is the authoritative TOCTOU-safe enforcement
+                // — a second concurrent finisher will see state already
+                // containing the first winner's credential and bail
+                // out with StateConflict (→ 409).
+                if !s.credentials.is_empty() {
+                    return Err(AuthError::StateConflict(
+                        "instance already initialised by a concurrent registration",
+                    ));
+                }
+                let (plaintext_session, session) =
+                    Session::mint(new_credential.id.clone(), now, SESSION_TTL);
+                let next = s
+                    .upsert_credential(new_credential.clone())
+                    .upsert_session(session.clone());
+                Ok((next, (plaintext_session, session, None)))
             }
-            let (plaintext, session) = Session::mint(new_credential.id.clone(), now, SESSION_TTL);
-            let next = s
-                .upsert_credential(new_credential.clone())
-                .upsert_session(session.clone());
-            Ok((next, (plaintext, session)))
         })
         .await
         .map_err(ApiError::from)?;
 
-    tracing::info!(
-        credential_id = %credential.id,
-        "registered first device; session minted"
-    );
+    if let Some(token_id) = paired_token_id.as_ref() {
+        tracing::info!(
+            credential_id = %credential.id,
+            setup_token_id = %token_id,
+            "paired new device; session minted"
+        );
+    } else {
+        tracing::info!(
+            credential_id = %credential.id,
+            "registered first device; session minted"
+        );
+    }
 
     Ok(session_cookie_response(
         StatusCode::CREATED,
@@ -249,24 +407,21 @@ async fn register_finish(
 /// gates who actually passes.
 async fn login_start(
     State(state): State<AppState>,
-) -> Result<Json<ChallengeStartResponse<RequestChallengeResponse>>, ApiError> {
+) -> Result<Json<RequestChallengeResponse>, ApiError> {
     let snap = state.auth_store.snapshot().await;
     if snap.credentials.is_empty() {
         // Fresh-install case. Return an explicit conflict rather than
         // letting webauthn-rs surface "no usable credentials" as a 401;
         // the client should route to the register flow instead.
         return Err(ApiError::Conflict(
-            "no credentials registered; first device must register via /api/auth/register/start",
+            "no credentials registered; first device must register via /auth/register/options",
         ));
     }
-    let (id, rcr) = state
+    let rcr = state
         .webauthn
         .start_authentication(&snap.credentials, SystemTime::now())
         .map_err(ApiError::from)?;
-    Ok(Json(ChallengeStartResponse {
-        challenge_id: id,
-        options: rcr,
-    }))
+    Ok(Json(rcr))
 }
 
 /// Finish an authentication ceremony, persist the counter update, and
@@ -278,10 +433,10 @@ async fn login_finish(
     let now = SystemTime::now();
     let verified = state
         .webauthn
-        .finish_authentication(&body.challenge_id, &body.response, now)
+        .finish_authentication(&body.credential, now)
         .inspect_err(|e| {
             tracing::warn!(
-                challenge_id = %body.challenge_id,
+                credential_id = %body.credential.id,
                 error = %e,
                 "login ceremony failed"
             );
@@ -308,6 +463,11 @@ async fn login_finish(
             if let Some(updated_cred) = updated {
                 next = next.upsert_credential(updated_cred);
             }
+            // Stamp `last_used_at` on the credential we just authed
+            // against. Done inside `transact` so the same write that
+            // bumps the WebAuthn counter also records usage — single
+            // writer, no extra TOCTOU surface for the device-list UI.
+            next = next.touch_credential(&credential_id, now);
             next = next.upsert_session(session.clone());
             Ok((next, (plaintext, session)))
         })
@@ -343,172 +503,6 @@ where
 {
     let cookie = build_set_cookie(token, SESSION_TTL.as_secs(), secure);
     (status, [(header::SET_COOKIE, cookie)], body)
-}
-
-// ============== pair flow (setup-token-gated registration) ==============
-
-/// Validate the plaintext token, start a WebAuthn registration
-/// ceremony, and return the challenge. Public — anyone with a valid
-/// token can pair.
-///
-/// Token validation uses `find_redeemable_setup_token` which walks
-/// every token and runs scrypt verify (no short-circuit — the slice-2
-/// comment calls out the timing-channel concern). Only live,
-/// non-consumed tokens pass.
-/// Upper bound on the raw `setup_token` value accepted by
-/// `pair_start`. Legitimate tokens are 64 hex chars (32 bytes from
-/// CSPRNG, hex-encoded); 128 gives headroom. The cap exists to stop
-/// an unauthenticated caller from submitting a megabyte-long string
-/// and forcing `find_redeemable_setup_token` to run scrypt verify
-/// against every stored token with a megabyte input per call — a CPU
-/// amplification DoS vector because pair_start is public.
-const SETUP_TOKEN_MAX_LEN: usize = 128;
-
-async fn pair_start(
-    State(state): State<AppState>,
-    JsonBody(body): JsonBody<PairStartRequest>,
-) -> Result<Json<PairStartResponse>, ApiError> {
-    if body.setup_token.len() > SETUP_TOKEN_MAX_LEN {
-        tracing::warn!(
-            length = body.setup_token.len(),
-            "pair_start: setup_token exceeds maximum length"
-        );
-        return Err(ApiError::BadRequest("setup_token exceeds maximum length"));
-    }
-
-    let now = SystemTime::now();
-
-    // Ensure the stable user handle is persisted before we hand it
-    // to the WebAuthn ceremony. `user_handle_or_init` is idempotent:
-    // returns the existing value on a live install, mints + persists
-    // a fresh one on the pathological path where tokens somehow
-    // exist without a handle. Running this inside `transact` means
-    // the handle that pair_finish reads back is the SAME value that
-    // was used here, even across concurrent pair_start calls.
-    let user_handle = state
-        .auth_store
-        .transact(|s| {
-            let (uh, next) = s.user_handle_or_init();
-            Ok((next, uh))
-        })
-        .await
-        .map_err(ApiError::from)?;
-
-    // A separate snapshot for token validation + excludeCredentials.
-    // `find_redeemable_setup_token` walks every record with scrypt
-    // verify, so a concurrent mutation doesn't matter — the
-    // authoritative token re-check happens in pair_finish's transact.
-    let snap = state.auth_store.snapshot().await;
-    let token = snap
-        .find_redeemable_setup_token(&body.setup_token, now)
-        .ok_or_else(|| {
-            tracing::warn!("pair_start: setup token not redeemable");
-            ApiError::Unauthorized
-        })?;
-    let setup_token_id = token.id.clone();
-
-    let (challenge_id, ccr) = state
-        .webauthn
-        .start_registration(
-            user_handle,
-            "katulong",
-            "Katulong",
-            &snap.credentials,
-            now,
-        )
-        .map_err(ApiError::from)?;
-
-    Ok(Json(PairStartResponse {
-        challenge_id,
-        setup_token_id,
-        options: ccr,
-    }))
-}
-
-/// Complete the pair ceremony. Verifies the challenge, verifies the
-/// setup token is STILL redeemable under the mutex (TOCTOU-safe vs a
-/// concurrent revoke between start and finish), consumes the token,
-/// persists the new credential with a bidirectional link to the
-/// token, and mints a session cookie.
-///
-/// The bidirectional link (token ↔ credential, Node scar `7742ac3`)
-/// means that revoking the setup token later also cascades to
-/// removing this device. We set it here so future
-/// `remove_setup_token(id)` calls can follow the link.
-async fn pair_finish(
-    State(state): State<AppState>,
-    JsonBody(body): JsonBody<PairFinishRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let now = SystemTime::now();
-    // The auth crate owns the bidirectional link invariant (credential
-    // ↔ setup token). `finish_paired_registration` returns a
-    // credential already stamped with `setup_token_id` — the handler
-    // never constructs that link by hand.
-    let credential = state
-        .webauthn
-        .finish_paired_registration(
-            &body.challenge_id,
-            &body.response,
-            body.setup_token_id.clone(),
-            now,
-        )
-        .inspect_err(|e| {
-            tracing::warn!(
-                challenge_id = %body.challenge_id,
-                error = %e,
-                "pair ceremony failed"
-            );
-        })
-        .map_err(ApiError::from)?;
-
-    let new_credential = credential.clone();
-    let setup_token_id = body.setup_token_id.clone();
-    let (plaintext_token, minted_session) = state
-        .auth_store
-        .transact(move |s| {
-            // Re-validate the token under the mutex: a concurrent
-            // revoke between pair_start and pair_finish must NOT
-            // succeed in pairing. `find_setup_token` by id because at
-            // this point we're committing against the specific token
-            // the client referenced; we also require it to still be
-            // redeemable.
-            let Some(token) = s.find_setup_token(&setup_token_id) else {
-                return Err(AuthError::StateConflict(
-                    "setup token revoked during pair ceremony",
-                ));
-            };
-            if !token.is_redeemable(now) {
-                return Err(AuthError::StateConflict(
-                    "setup token no longer redeemable (consumed or expired)",
-                ));
-            }
-
-            let (plaintext, session) =
-                Session::mint(new_credential.id.clone(), now, SESSION_TTL);
-            let next = s
-                .upsert_credential(new_credential.clone())
-                .consume_setup_token(&setup_token_id, &new_credential.id, now)
-                .upsert_session(session.clone());
-            Ok((next, (plaintext, session)))
-        })
-        .await
-        .map_err(ApiError::from)?;
-
-    tracing::info!(
-        credential_id = %credential.id,
-        setup_token_id = %body.setup_token_id,
-        "paired new device; session minted"
-    );
-
-    Ok(session_cookie_response(
-        StatusCode::CREATED,
-        &plaintext_token,
-        state.config.cookie_secure,
-        Json(AuthFinishResponse {
-            credential_id: credential.id,
-            csrf_token: minted_session.csrf_token,
-        }),
-    ))
 }
 
 // ============== logout ==============

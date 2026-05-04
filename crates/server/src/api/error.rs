@@ -2,12 +2,25 @@
 //!
 //! One error type. Every handler returns `Result<Json<T>, ApiError>`
 //! and this module owns the status-code + response-body mapping. The
-//! response body is deliberately terse — a client gets a stable
-//! `code` string and a short human-readable message, never stack
-//! traces or server-side error chains. `AuthError`'s own `Display`
-//! carries operator-facing context (paths, library detail) and is
-//! suitable for server logs only; see the caller-obligation comment
-//! in `crates/auth/src/error.rs`.
+//! response body is `{"error": "<message>"}` — a single string,
+//! matching the Node implementation (`json(res, status, { error:
+//! "..." })`). The JS frontend reads `err.error` directly:
+//!     `loginError.innerHTML = err.error || "fallback"`
+//! so the body shape is part of the wire contract.
+//!
+//! Phase 0a-1 of the cutover flipped the body from the previous
+//! `{"error": {"code": ..., "message": ...}}` envelope to the
+//! Node-compatible flat string. The `code` string still exists
+//! internally — it's wired through `Display` and tracing so
+//! operator logs distinguish "csrf_missing" from "csrf_mismatch"
+//! without parsing the message — but it does NOT appear on the
+//! wire. A future client that needs typed discrimination can
+//! recover it from the HTTP status + the message text; pulling
+//! `code` back into the body would diverge from Node again.
+//!
+//! `AuthError`'s own `Display` carries operator-facing context
+//! (paths, library detail) and is suitable for server logs only;
+//! see the caller-obligation comment in `crates/auth/src/error.rs`.
 
 use axum::{
     http::StatusCode,
@@ -49,7 +62,15 @@ pub enum ApiError {
     /// first-device registration flow. Node hit this exact bug
     /// (`f25855f`); the two-tier access model means the guard must
     /// apply to remote callers only.
+    ///
+    /// Maps to `403` with the literal Node message — the frontend
+    /// renders `err.error` unchanged, so the wording is part of the
+    /// wire contract.
     LastCredential,
+    /// The id in the URL path doesn't match any record. Surfaces as
+    /// `404` with the supplied message — matches Node's
+    /// `{"error": "Credential not found"}` / `"Token not found"`.
+    NotFound(&'static str),
     /// State-changing request reached us without an `X-Csrf-Token`
     /// header. Maps to 403 with code `csrf_missing`. Distinct from
     /// `CsrfMismatch` so a client can distinguish "never sent" from
@@ -70,6 +91,10 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    /// Internal triple: `(status, code, message)`. The `code` string
+    /// is operator-log-only (emitted via `tracing` in
+    /// `IntoResponse`); the `message` is the body. Kept colocated so
+    /// adding a new variant forces both to be specified at once.
     fn as_pieces(&self) -> (StatusCode, &'static str, String) {
         match self {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized", "unauthorized".into()),
@@ -87,10 +112,13 @@ impl ApiError {
             ),
             Self::Conflict(why) => (StatusCode::CONFLICT, "conflict", (*why).into()),
             Self::LastCredential => (
-                StatusCode::CONFLICT,
+                StatusCode::FORBIDDEN,
                 "last_credential",
-                "cannot remove the last remote-access credential from a non-localhost session".into(),
+                // Literal Node message — the frontend renders this
+                // verbatim. Changing the wording would diverge.
+                "Cannot remove the last credential — would lock you out".into(),
             ),
+            Self::NotFound(msg) => (StatusCode::NOT_FOUND, "not_found", (*msg).into()),
             Self::CsrfMissing => (
                 StatusCode::FORBIDDEN,
                 "csrf_missing",
@@ -113,9 +141,13 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code, message) = self.as_pieces();
-        let body = Json(json!({
-            "error": { "code": code, "message": message },
-        }));
+        // Operator-log discriminator. The body keeps only the
+        // human-readable message (Node-compatible), but
+        // operators tailing the server log still see the
+        // typed code so "csrf_missing" vs "csrf_mismatch" is
+        // greppable without parsing message strings.
+        tracing::debug!(status = %status.as_u16(), code, "api error response");
+        let body = Json(json!({ "error": message }));
         (status, body).into_response()
     }
 }

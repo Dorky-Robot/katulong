@@ -1,7 +1,7 @@
 //! Credential-revocation broadcast channel.
 //!
-//! When a credential is removed (directly via `/api/auth/devices/:id`
-//! or transitively via `/api/auth/setup-tokens/:id` cascading to its
+//! When a credential is removed (directly via `/api/credentials/:id`
+//! or transitively via `/api/tokens/:id` cascading to its
 //! paired device), every long-lived connection bound to that
 //! credential must tear down immediately. Without that, a
 //! WebSocket — or a future WebRTC peer-link — continues streaming
