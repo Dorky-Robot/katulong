@@ -3,11 +3,18 @@
  *
  * Renders the rolling timeline of auto-generated summaries for a
  * terminal session, so the user can answer "what was I doing an hour
- * ago?" at a glance. The summarizer (lib/session-summarizer.js) writes
- * each new distinct summary to `session.meta.summaryHistory`; this
- * tile subscribes to the session store and re-renders on every
- * session-updated broadcast, so new entries land live without
- * per-tile polling.
+ * ago?" at a glance. The summarizer (lib/session-summarizer.js) appends
+ * each new distinct summary to a disk-backed JSONL store; this tile
+ * fetches from `/sessions/by-id/:id/summaries` on mount and re-fetches
+ * on every session-updated broadcast (debounced) so new entries land
+ * live without per-tile polling.
+ *
+ * History used to live in `session.meta.summaryHistory` so the tile
+ * could read it from the in-memory session object directly. That broke
+ * the 4 KB meta cap once history grew past ~12 entries (every other
+ * setMeta — pane, agent — failed and the status pill bar went dark);
+ * the timeline is durable on disk now, and the tile pays a small fetch
+ * on mount + change in exchange for unbounded honest history.
  *
  * Props:
  *   sessionName: string  — the session to describe. Falsy → "pick a
@@ -16,6 +23,7 @@
  */
 
 import { escapeHtml, formatRelativeTime } from "/lib/utils.js";
+import { api, resolveSessionId } from "/lib/api-client.js";
 
 // Module-scoped dep stash; populated by `init()` at renderer-registry
 // boot. Mirrors fileBrowserRenderer / clusterRenderer / terminalRenderer,
@@ -79,6 +87,36 @@ export const historyRenderer = {
 
     let destroyed = false;
     let relTimer = null;
+    let history = [];
+    // Coalesce rapid session-updated bursts (Claude streaming a long
+    // turn fires many of them) into one fetch — the timeline only
+    // changes ~once per 30s summarizer cycle, so 250 ms debounce is
+    // ample and keeps refresh cost off the hot path.
+    let refetchTimer = null;
+
+    async function refetch() {
+      if (destroyed || !sessionName) return;
+      try {
+        const sessionId = await resolveSessionId(sessionName);
+        if (destroyed) return;
+        const data = await api.get(`/sessions/by-id/${encodeURIComponent(sessionId)}/summaries`);
+        if (destroyed) return;
+        history = Array.isArray(data?.summaries) ? data.summaries : [];
+        render();
+      } catch {
+        // Session not found / network blip — keep the previous render
+        // rather than blanking the tile. The next session-updated tick
+        // will retry.
+      }
+    }
+
+    function scheduleRefetch() {
+      if (refetchTimer) return;
+      refetchTimer = setTimeout(() => {
+        refetchTimer = null;
+        refetch();
+      }, 250);
+    }
 
     function render() {
       if (destroyed) return;
@@ -93,9 +131,6 @@ export const historyRenderer = {
       }
 
       const session = findSession(store, sessionName);
-      const history = Array.isArray(session?.meta?.summaryHistory)
-        ? session.meta.summaryHistory
-        : [];
       const currentTitle = session?.meta?.autoTitle
         || session?.meta?.summary?.short
         || sessionName;
@@ -135,13 +170,19 @@ export const historyRenderer = {
       `;
     }
 
+    // Initial render shows the "no history yet" / autoTitle skeleton
+    // immediately while the fetch is in flight; refetch fills it in.
     render();
+    refetch();
 
-    // Subscribe for live updates. Session store broadcasts a full
-    // sessions array on every change, so we just re-render — the cost
-    // is a single innerHTML assignment, negligible next to the live
-    // terminal.
-    const unsubscribe = store?.subscribe ? store.subscribe(render) : null;
+    // Subscribe for live updates. The session store still drives the
+    // current-title header, and a session-updated tick is also our
+    // signal that a new summary may have landed — schedule a debounced
+    // refetch rather than a synchronous re-render.
+    const unsubscribe = store?.subscribe ? store.subscribe(() => {
+      render();
+      scheduleRefetch();
+    }) : null;
 
     // Refresh the relative timestamps once a minute. Cheap: re-render
     // a small DOM subtree; no network, no computation.
@@ -151,6 +192,7 @@ export const historyRenderer = {
       unmount() {
         destroyed = true;
         if (relTimer) { clearInterval(relTimer); relTimer = null; }
+        if (refetchTimer) { clearTimeout(refetchTimer); refetchTimer = null; }
         unsubscribe?.();
         root.remove();
       },
