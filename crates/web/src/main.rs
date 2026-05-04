@@ -8,7 +8,7 @@
 //   the auth-state-driven swap in <Main/>.
 // Slice 9r.4: status probe + session restore. Auth state
 //   becomes tri-state — None while the initial
-//   `/api/auth/status` probe is in flight, Some(false) when
+//   `/auth/status` probe is in flight, Some(false) when
 //   the server says not authed, Some(true) when authed. The
 //   None branch renders a small "restoring" view, NOT the
 //   login form, so a refresh after sign-in doesn't flash
@@ -64,7 +64,7 @@ pub struct ConnectionStatus {
 /// Phases of the auth state machine driving `<Main/>`'s
 /// view selection.
 ///
-/// - `Restoring` — initial probe to `/api/auth/status` is in
+/// - `Restoring` — initial probe to `/auth/status` is in
 ///   flight. `<Main/>` renders a small "restoring" view here,
 ///   NOT the login form, so a page reload of an already-authed
 ///   user doesn't flash through the sign-in screen.
@@ -72,9 +72,9 @@ pub struct ConnectionStatus {
 ///   localhost auto-auth) but no credentials are registered
 ///   yet. The first-device register UI renders. Distinct
 ///   from `SignedOut` because the next user action differs:
-///   `Register` triggers `/api/auth/register/*` (localhost-
+///   `Register` triggers `/auth/register/*` (localhost-
 ///   only, fresh-install-only); `SignedOut` triggers
-///   `/api/auth/login/*`.
+///   `/auth/login/*`.
 /// - `SignedOut` — probe resolved as unauthenticated AND
 ///   credentials exist on the server. The login form
 ///   renders.
@@ -100,7 +100,7 @@ pub struct AuthState {
     pub set_phase: WriteSignal<AuthPhase>,
 }
 
-/// Probe `/api/auth/status` once at App mount.
+/// Probe `/auth/status` once at App mount.
 ///
 /// Returns the full `AuthStatusResponse` (not just the
 /// `authenticated` bool) so the caller has access to
@@ -110,7 +110,7 @@ pub struct AuthState {
 /// shape is on the boundary instead of behind it so
 /// downstream code can grow without re-shaping this fn.
 async fn probe_auth_status() -> Result<AuthStatusResponse, String> {
-    let resp = gloo_net::http::Request::get("/api/auth/status")
+    let resp = gloo_net::http::Request::get("/auth/status")
         .send()
         .await
         .map_err(|e| format!("network error contacting server: {e}"))?;

@@ -3,9 +3,9 @@
 //! Registered credentials are the user-facing view of "devices"
 //! paired with this instance. Two endpoints:
 //!
-//! - `GET    /api/auth/devices`      — auth required, list with
+//! - `GET    /api/credentials`      — auth required, list with
 //!   per-device metadata
-//! - `DELETE /api/auth/devices/:id`  — auth + CSRF required; removes
+//! - `DELETE /api/credentials/:id`  — auth + CSRF required; removes
 //!   the credential AND its sessions; blocked for remote callers if
 //!   it's the last credential on the instance
 //!
@@ -36,8 +36,8 @@ use std::time::SystemTime;
 
 pub fn device_routes() -> Router<AppState> {
     Router::new()
-        .route("/api/auth/devices", get(list_devices))
-        .route("/api/auth/devices/:id", delete(revoke_device))
+        .route("/api/credentials", get(list_devices))
+        .route("/api/credentials/:id", delete(revoke_device))
 }
 
 #[derive(Debug, Serialize)]

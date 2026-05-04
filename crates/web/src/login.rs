@@ -106,7 +106,7 @@ async fn credential_from_promise(
 /// "credential revoked" surfacing different recovery UIs).
 async fn signin() -> Result<(), String> {
     // 1. Ask the server for a challenge.
-    let start_resp = gloo_net::http::Request::post("/api/auth/login/start")
+    let start_resp = gloo_net::http::Request::post("/auth/login/options")
         .send()
         .await
         .map_err(|e| format!("network error contacting server: {e}"))?;
@@ -139,7 +139,7 @@ async fn signin() -> Result<(), String> {
     // 4. Send the assertion back. `login_finish` uses
     //    `JsonBody<T>` so Content-Type *must* be application/json
     //    — `gloo-net`'s `.json(...)` sets that automatically.
-    let finish_resp = gloo_net::http::Request::post("/api/auth/login/finish")
+    let finish_resp = gloo_net::http::Request::post("/auth/login/verify")
         .json(&LoginFinishRequest {
             challenge_id: start.challenge_id,
             response,
@@ -160,7 +160,7 @@ async fn signin() -> Result<(), String> {
 ///
 /// Symmetric to `signin()` but uses the registration variant
 /// of every step:
-///   - POST `/api/auth/pair/start` with the plaintext
+///   - POST `/auth/pair/options` with the plaintext
 ///     setup-token in the body (vs. no body for sign-in)
 ///   - convert `CreationChallengeResponse` →
 ///     `web_sys::CredentialCreationOptions` (vs. request
@@ -169,7 +169,7 @@ async fn signin() -> Result<(), String> {
 ///     `.get(...)`)
 ///   - convert returned credential →
 ///     `RegisterPublicKeyCredential` (vs. assertion type)
-///   - POST `/api/auth/pair/finish` with the
+///   - POST `/auth/pair/verify` with the
 ///     `setup_token_id` echoed alongside the assertion
 ///
 /// The setup-token is moved in (not borrowed) because the
@@ -178,7 +178,7 @@ async fn signin() -> Result<(), String> {
 /// could have given it.
 async fn pair(setup_token: String) -> Result<(), String> {
     // 1. Ask for a registration challenge.
-    let start_resp = gloo_net::http::Request::post("/api/auth/pair/start")
+    let start_resp = gloo_net::http::Request::post("/auth/pair/options")
         .json(&PairStartRequest { setup_token })
         .map_err(|e| format!("could not encode pair-start payload: {e}"))?
         .send()
@@ -210,7 +210,7 @@ async fn pair(setup_token: String) -> Result<(), String> {
 
     // 4. Send the attestation back along with the
     //    `setup_token_id` the server gave us in step 1.
-    let finish_resp = gloo_net::http::Request::post("/api/auth/pair/finish")
+    let finish_resp = gloo_net::http::Request::post("/auth/pair/verify")
         .json(&PairFinishRequest {
             challenge_id: start.challenge_id,
             setup_token_id: start.setup_token_id,
@@ -230,10 +230,10 @@ async fn pair(setup_token: String) -> Result<(), String> {
 /// Same shape as `pair()` (both produce a credential via
 /// `navigator.credentials.create()`), with the differences
 /// concentrated at the HTTP boundaries:
-///   - POST `/api/auth/register/start` with no body (the
+///   - POST `/auth/register/options` with no body (the
 ///     route is localhost-only and fresh-install-only on the
 ///     server; no setup token to submit)
-///   - POST `/api/auth/register/finish` with just the
+///   - POST `/auth/register/verify` with just the
 ///     credential — no `setup_token_id` to echo
 ///
 /// The server's register routes refuse non-localhost callers
@@ -247,7 +247,7 @@ async fn pair(setup_token: String) -> Result<(), String> {
 /// click), the error renders in the standard error region.
 async fn register() -> Result<(), String> {
     // 1. Ask for a registration challenge.
-    let start_resp = gloo_net::http::Request::post("/api/auth/register/start")
+    let start_resp = gloo_net::http::Request::post("/auth/register/options")
         .send()
         .await
         .map_err(|e| format!("network error contacting server: {e}"))?;
@@ -274,7 +274,7 @@ async fn register() -> Result<(), String> {
     // 4. Send the attestation back. No `setup_token_id` here —
     //    register/finish only needs the challenge id and the
     //    credential.
-    let finish_resp = gloo_net::http::Request::post("/api/auth/register/finish")
+    let finish_resp = gloo_net::http::Request::post("/auth/register/verify")
         .json(&RegisterFinishRequest {
             challenge_id: start.challenge_id,
             response,

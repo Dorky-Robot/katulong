@@ -5,7 +5,7 @@
 //! a browser-signed assertion, which an in-process test can't produce.
 //! So the tests here cover:
 //!
-//! - `/api/auth/status` in all four cases (install × access)
+//! - `/auth/status` in all four cases (install × access)
 //! - `register_start` guards: non-localhost → 403; fresh localhost → 200
 //!   with a challenge id + options; already-initialised → 409
 //! - `register_finish` guards: non-localhost → 403
@@ -32,7 +32,7 @@ use katulong_server::app;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 
-// ---------------- /api/auth/status ----------------
+// ---------------- /auth/status ----------------
 
 #[tokio::test]
 async fn status_fresh_install_from_localhost() {
@@ -41,7 +41,7 @@ async fn status_fresh_install_from_localhost() {
         .oneshot(
             req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
                 .method(Method::GET)
-                .uri("/api/auth/status")
+                .uri("/auth/status")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -61,7 +61,7 @@ async fn status_fresh_install_from_remote() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::GET)
-                .uri("/api/auth/status")
+                .uri("/auth/status")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -86,7 +86,7 @@ async fn status_after_credential_registered() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::GET)
-                .uri("/api/auth/status")
+                .uri("/auth/status")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -97,7 +97,7 @@ async fn status_after_credential_registered() {
     assert_eq!(v["authenticated"], false);
 }
 
-// ---------------- /api/auth/register/start ----------------
+// ---------------- /auth/register/options ----------------
 
 #[tokio::test]
 async fn register_start_from_remote_is_forbidden() {
@@ -106,7 +106,7 @@ async fn register_start_from_remote_is_forbidden() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/register/start")
+                .uri("/auth/register/options")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("{}"))
                 .unwrap(),
@@ -125,7 +125,7 @@ async fn register_start_localhost_fresh_install_returns_challenge() {
         .oneshot(
             req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
                 .method(Method::POST)
-                .uri("/api/auth/register/start")
+                .uri("/auth/register/options")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("{}"))
                 .unwrap(),
@@ -153,7 +153,7 @@ async fn register_start_localhost_after_init_is_conflict() {
         .oneshot(
             req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
                 .method(Method::POST)
-                .uri("/api/auth/register/start")
+                .uri("/auth/register/options")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("{}"))
                 .unwrap(),
@@ -165,7 +165,7 @@ async fn register_start_localhost_after_init_is_conflict() {
     assert_eq!(v["error"]["code"], "conflict");
 }
 
-// ---------------- /api/auth/register/finish ----------------
+// ---------------- /auth/register/verify ----------------
 
 #[tokio::test]
 async fn register_finish_from_remote_is_forbidden() {
@@ -178,7 +178,7 @@ async fn register_finish_from_remote_is_forbidden() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/register/finish")
+                .uri("/auth/register/verify")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(json_body(&body))
                 .unwrap(),
@@ -199,7 +199,7 @@ async fn register_finish_with_unknown_challenge_id_returns_challenge_not_found()
         .oneshot(
             req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
                 .method(Method::POST)
-                .uri("/api/auth/register/finish")
+                .uri("/auth/register/verify")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(json_body(&body))
                 .unwrap(),
@@ -227,7 +227,7 @@ async fn register_finish_with_real_challenge_but_bogus_response_returns_401() {
         .oneshot(
             req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
                 .method(Method::POST)
-                .uri("/api/auth/register/start")
+                .uri("/auth/register/options")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("{}"))
                 .unwrap(),
@@ -248,7 +248,7 @@ async fn register_finish_with_real_challenge_but_bogus_response_returns_401() {
         .oneshot(
             req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
                 .method(Method::POST)
-                .uri("/api/auth/register/finish")
+                .uri("/auth/register/verify")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(json_body(&body))
                 .unwrap(),
@@ -267,7 +267,7 @@ async fn register_finish_with_bad_json_returns_400() {
         .oneshot(
             req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
                 .method(Method::POST)
-                .uri("/api/auth/register/finish")
+                .uri("/auth/register/verify")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("not json"))
                 .unwrap(),
@@ -277,7 +277,7 @@ async fn register_finish_with_bad_json_returns_400() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
-// ---------------- /api/auth/login/start ----------------
+// ---------------- /auth/login/options ----------------
 
 #[tokio::test]
 async fn login_start_on_fresh_install_is_conflict() {
@@ -286,7 +286,7 @@ async fn login_start_on_fresh_install_is_conflict() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/login/start")
+                .uri("/auth/login/options")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("{}"))
                 .unwrap(),
@@ -298,7 +298,7 @@ async fn login_start_on_fresh_install_is_conflict() {
     assert_eq!(v["error"]["code"], "conflict");
 }
 
-// ---------------- /api/auth/login/finish ----------------
+// ---------------- /auth/login/verify ----------------
 
 #[tokio::test]
 async fn login_finish_with_unknown_challenge_id_returns_challenge_not_found() {
@@ -316,7 +316,7 @@ async fn login_finish_with_unknown_challenge_id_returns_challenge_not_found() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/login/finish")
+                .uri("/auth/login/verify")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(json_body(&body))
                 .unwrap(),

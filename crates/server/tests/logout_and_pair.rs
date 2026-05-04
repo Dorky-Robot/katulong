@@ -33,7 +33,7 @@ async fn logout_without_auth_returns_401() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/logout")
+                .uri("/auth/logout")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -50,7 +50,7 @@ async fn logout_without_csrf_returns_403() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/logout")
+                .uri("/auth/logout")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -70,7 +70,7 @@ async fn logout_with_wrong_csrf_returns_403_mismatch() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/logout")
+                .uri("/auth/logout")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .header("x-csrf-token", "wrong-token")
                 .body(Body::empty())
@@ -91,7 +91,7 @@ async fn logout_with_valid_auth_and_csrf_clears_cookie_and_session() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/logout")
+                .uri("/auth/logout")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .header("x-csrf-token", &csrf)
                 .body(Body::empty())
@@ -128,7 +128,7 @@ async fn logout_from_localhost_is_conflict() {
         .oneshot(
             req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
                 .method(Method::POST)
-                .uri("/api/auth/logout")
+                .uri("/auth/logout")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -146,7 +146,7 @@ async fn list_setup_tokens_requires_auth() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::GET)
-                .uri("/api/auth/setup-tokens")
+                .uri("/api/tokens")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -167,7 +167,7 @@ async fn create_and_list_setup_token_roundtrip() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/setup-tokens")
+                .uri("/api/tokens")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .header("x-csrf-token", &csrf)
                 .header(header::CONTENT_TYPE, "application/json")
@@ -187,7 +187,7 @@ async fn create_and_list_setup_token_roundtrip() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::GET)
-                .uri("/api/auth/setup-tokens")
+                .uri("/api/tokens")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -214,7 +214,7 @@ async fn create_setup_token_without_csrf_is_403() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/setup-tokens")
+                .uri("/api/tokens")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("{}"))
@@ -234,7 +234,7 @@ async fn create_setup_token_rejects_oversized_name() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/setup-tokens")
+                .uri("/api/tokens")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .header("x-csrf-token", &csrf)
                 .header(header::CONTENT_TYPE, "application/json")
@@ -259,7 +259,7 @@ async fn revoke_setup_token_is_idempotent_and_cascades() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/setup-tokens")
+                .uri("/api/tokens")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .header("x-csrf-token", &csrf)
                 .header(header::CONTENT_TYPE, "application/json")
@@ -295,7 +295,7 @@ async fn revoke_setup_token_is_idempotent_and_cascades() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::DELETE)
-                .uri(format!("/api/auth/setup-tokens/{token_id}"))
+                .uri(format!("/api/tokens/{token_id}"))
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .header("x-csrf-token", &csrf)
                 .body(Body::empty())
@@ -319,7 +319,7 @@ async fn revoke_setup_token_is_idempotent_and_cascades() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::DELETE)
-                .uri(format!("/api/auth/setup-tokens/{token_id}"))
+                .uri(format!("/api/tokens/{token_id}"))
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .header("x-csrf-token", &csrf)
                 .body(Body::empty())
@@ -339,7 +339,7 @@ async fn pair_start_with_invalid_token_returns_401() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/pair/start")
+                .uri("/auth/pair/options")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(json_body(&json!({ "setup_token": "never-issued" })))
                 .unwrap(),
@@ -363,7 +363,7 @@ async fn pair_start_with_valid_token_returns_challenge() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/setup-tokens")
+                .uri("/api/tokens")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .header("x-csrf-token", &csrf)
                 .header(header::CONTENT_TYPE, "application/json")
@@ -381,7 +381,7 @@ async fn pair_start_with_valid_token_returns_challenge() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/pair/start")
+                .uri("/auth/pair/options")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(json_body(&json!({ "setup_token": plaintext })))
                 .unwrap(),
@@ -413,7 +413,7 @@ async fn pair_finish_with_unknown_challenge_is_challenge_not_found() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/api/auth/pair/finish")
+                .uri("/auth/pair/verify")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(json_body(&body))
                 .unwrap(),

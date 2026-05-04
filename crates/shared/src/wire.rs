@@ -75,7 +75,7 @@ pub enum AccessMethod {
     Remote,
 }
 
-/// Response shape for `GET /api/auth/status`. Public route
+/// Response shape for `GET /auth/status`. Public route
 /// (no auth required) — the WASM client probes this on every
 /// page load to discover the current session state and decide
 /// whether to render the login form, the post-auth view, or a

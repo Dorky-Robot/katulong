@@ -4,14 +4,14 @@
 //! the currently-authenticated user mints a token (carrying a short
 //! name for audit) and hands the plaintext to the new device's
 //! operator. The new device posts the plaintext to
-//! `/api/auth/pair/start` + `/finish` (in `auth.rs`), which consumes
+//! `/auth/pair/options` + `/finish` (in `auth.rs`), which consumes
 //! the token, registers a credential linked to the token, and mints
 //! a session cookie.
 //!
 //! Three endpoints here:
-//! - `GET    /api/auth/setup-tokens`       — list (auth)
-//! - `POST   /api/auth/setup-tokens`       — create (auth + CSRF)
-//! - `DELETE /api/auth/setup-tokens/:id`   — revoke (auth + CSRF)
+//! - `GET    /api/tokens`       — list (auth)
+//! - `POST   /api/tokens`       — create (auth + CSRF)
+//! - `DELETE /api/tokens/:id`   — revoke (auth + CSRF)
 //!
 //! Revocation cascades to the paired device AND its sessions via
 //! `AuthState::remove_setup_token` (Node scar `7742ac3`: bidirectional
@@ -45,10 +45,10 @@ const SETUP_TOKEN_TTL: Duration = Duration::from_secs(60 * 60);
 pub fn token_routes() -> Router<AppState> {
     Router::new()
         // PROTECTED: list requires auth but not CSRF (GET is safe).
-        .route("/api/auth/setup-tokens", get(list_tokens))
+        .route("/api/tokens", get(list_tokens))
         // PROTECTED + CSRF: state-changing.
-        .route("/api/auth/setup-tokens", post(create_token))
-        .route("/api/auth/setup-tokens/:id", delete(revoke_token))
+        .route("/api/tokens", post(create_token))
+        .route("/api/tokens/:id", delete(revoke_token))
 }
 
 #[derive(Debug, Serialize)]

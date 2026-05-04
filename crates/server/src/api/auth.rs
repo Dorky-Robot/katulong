@@ -2,14 +2,14 @@
 //!
 //! Eight endpoints covering the full auth surface:
 //!
-//! - `GET  /api/auth/status`          — public; access mode + install state + authenticated
-//! - `POST /api/auth/register/start`  — localhost-only, fresh install
-//! - `POST /api/auth/register/finish` — localhost-only, fresh install; mints session
-//! - `POST /api/auth/login/start`     — public
-//! - `POST /api/auth/login/finish`    — public; updates counter + mints session
-//! - `POST /api/auth/pair/start`      — public, setup-token-gated
-//! - `POST /api/auth/pair/finish`     — public; links credential to token + mints session
-//! - `POST /api/auth/logout`          — auth + CSRF; localhost → 409
+//! - `GET  /auth/status`          — public; access mode + install state + authenticated
+//! - `POST /auth/register/options`  — localhost-only, fresh install
+//! - `POST /auth/register/verify` — localhost-only, fresh install; mints session
+//! - `POST /auth/login/options`     — public
+//! - `POST /auth/login/verify`    — public; updates counter + mints session
+//! - `POST /auth/pair/options`      — public, setup-token-gated
+//! - `POST /auth/pair/verify`     — public; links credential to token + mints session
+//! - `POST /auth/logout`          — auth + CSRF; localhost → 409
 //!
 //! Setup-token management (list / create / revoke) lives in
 //! `api::tokens`. Those routes share the same `CsrfProtected` pattern
@@ -51,27 +51,27 @@ pub fn auth_routes() -> Router<AppState> {
         // PUBLIC: reports whether the instance has any credentials and
         // which access mode this request is coming from; the client
         // uses this to pick between register/login UI.
-        .route("/api/auth/status", get(status))
+        .route("/auth/status", get(status))
         // PUBLIC (but state-gated): first-device registration. Only
         // works from localhost AND only when no credentials exist.
         // Additional-device registration uses the pair flow below.
-        .route("/api/auth/register/start", post(register_start))
-        .route("/api/auth/register/finish", post(register_finish))
+        .route("/auth/register/options", post(register_start))
+        .route("/auth/register/verify", post(register_finish))
         // PUBLIC: anyone can try to log in. The ceremony itself gates
         // who actually succeeds.
-        .route("/api/auth/login/start", post(login_start))
-        .route("/api/auth/login/finish", post(login_finish))
+        .route("/auth/login/options", post(login_start))
+        .route("/auth/login/verify", post(login_finish))
         // PUBLIC: pair a new device using a setup token issued by an
         // authenticated admin. The token value IS the gate — anyone
         // with a valid plaintext token can pair. Token validity and
         // single-use semantics are enforced inside `transact`.
-        .route("/api/auth/pair/start", post(pair_start))
-        .route("/api/auth/pair/finish", post(pair_finish))
+        .route("/auth/pair/options", post(pair_start))
+        .route("/auth/pair/verify", post(pair_finish))
         // PROTECTED + CSRF: end the caller's session. Localhost
         // callers get a 409 — there's no session to end, and the
         // UI shouldn't offer logout for physical-access peers (Node
         // scar `23981ca`).
-        .route("/api/auth/logout", post(logout))
+        .route("/auth/logout", post(logout))
 }
 
 async fn status(
@@ -256,7 +256,7 @@ async fn login_start(
         // letting webauthn-rs surface "no usable credentials" as a 401;
         // the client should route to the register flow instead.
         return Err(ApiError::Conflict(
-            "no credentials registered; first device must register via /api/auth/register/start",
+            "no credentials registered; first device must register via /auth/register/options",
         ));
     }
     let (id, rcr) = state

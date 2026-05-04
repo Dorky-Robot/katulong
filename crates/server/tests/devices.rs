@@ -1,4 +1,4 @@
-//! Integration tests for `/api/auth/devices`.
+//! Integration tests for `/api/credentials`.
 //!
 //! Covers listing, current-device marking, CSRF enforcement, revoke
 //! cascade to sessions, idempotent delete, and the last-credential
@@ -24,7 +24,7 @@ async fn list_devices_requires_auth() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::GET)
-                .uri("/api/auth/devices")
+                .uri("/api/credentials")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -49,7 +49,7 @@ async fn list_devices_returns_is_current_for_remote_caller() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::GET)
-                .uri("/api/auth/devices")
+                .uri("/api/credentials")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -84,7 +84,7 @@ async fn list_devices_from_localhost_shows_no_current() {
         .oneshot(
             req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
                 .method(Method::GET)
-                .uri("/api/auth/devices")
+                .uri("/api/credentials")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -118,7 +118,7 @@ async fn list_devices_surfaces_setup_token_id() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::GET)
-                .uri("/api/auth/devices")
+                .uri("/api/credentials")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -151,7 +151,7 @@ async fn revoke_device_requires_csrf() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::DELETE)
-                .uri("/api/auth/devices/other")
+                .uri("/api/credentials/other")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -174,7 +174,7 @@ async fn revoke_device_cascades_to_sessions() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::DELETE)
-                .uri("/api/auth/devices/target-device")
+                .uri("/api/credentials/target-device")
                 .header(header::COOKIE, format!("katulong_session={admin_cookie}"))
                 .header("x-csrf-token", &csrf)
                 .body(Body::empty())
@@ -216,7 +216,7 @@ async fn revoke_device_is_idempotent() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::DELETE)
-                .uri("/api/auth/devices/never-existed")
+                .uri("/api/credentials/never-existed")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .header("x-csrf-token", &csrf)
                 .body(Body::empty())
@@ -237,7 +237,7 @@ async fn revoke_last_credential_from_remote_is_blocked() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::DELETE)
-                .uri("/api/auth/devices/only-device")
+                .uri("/api/credentials/only-device")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
                 .header("x-csrf-token", &csrf)
                 .body(Body::empty())
@@ -265,7 +265,7 @@ async fn revoke_last_credential_from_localhost_is_allowed() {
         .oneshot(
             req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
                 .method(Method::DELETE)
-                .uri("/api/auth/devices/only-device")
+                .uri("/api/credentials/only-device")
                 .body(Body::empty())
                 .unwrap(),
         )
