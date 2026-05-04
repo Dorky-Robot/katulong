@@ -15,10 +15,11 @@ import {
   parseSummaryResponse,
 } from "../lib/session-summarizer.js";
 
-function makeFakeSession({ name, buffer, alive = true }) {
+function makeFakeSession({ name, buffer, alive = true, id = `id_${name}` }) {
   const meta = {};
   return {
     name,
+    id,
     alive,
     meta,
     pullTail(maxBytes) {
@@ -36,12 +37,13 @@ function makeFakeSession({ name, buffer, alive = true }) {
 // activity- and volume-gate paths in the summarizer are exercised.
 // `appendBytes` simulates new PTY output: it grows the buffer (so
 // pullTail returns updated content) and advances the cursor.
-function makeFakeSessionWithCursor({ name, buffer, alive = true }) {
+function makeFakeSessionWithCursor({ name, buffer, alive = true, id = `id_${name}` }) {
   const meta = {};
   let _buffer = buffer;
   let _cursor = buffer.length;
   return {
     name,
+    id,
     alive,
     meta,
     get cursor() {
@@ -62,9 +64,20 @@ function makeFakeSessionWithCursor({ name, buffer, alive = true }) {
   };
 }
 
+// In-memory summary timeline stand-in. Real implementation writes JSONL
+// to disk via createSummaryStore; the summarizer only ever calls
+// `appendSummary(id, entry)`, so the fake just records calls per session
+// id for assertions. `readSummaries` round-trips for test inspection.
 function makeFakeManager(sessions) {
   const byName = new Map(sessions.map((s) => [s.name, s]));
+  const byId = new Map();
   return {
+    appendSummary(id, entry) {
+      const list = byId.get(id) || [];
+      list.push(entry);
+      byId.set(id, list);
+    },
+    readSummaries(id) { return byId.get(id) || []; },
     listSessions() {
       return { sessions: [...byName.values()].map((s) => ({ name: s.name, alive: s.alive })) };
     },
@@ -151,7 +164,7 @@ describe("createSessionSummarizer", () => {
     s.stop();
   });
 
-  it("appends each distinct summary to meta.summaryHistory", async () => {
+  it("appends each distinct summary to the disk-backed summary store", async () => {
     const session = makeFakeSession({
       name: "kat_hist",
       buffer: "first buffer content\n".repeat(30),
@@ -172,10 +185,13 @@ describe("createSessionSummarizer", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    assert.ok(Array.isArray(session.meta.summaryHistory));
-    assert.strictEqual(session.meta.summaryHistory.length, 1);
-    assert.strictEqual(session.meta.summaryHistory[0].title, "Phase A");
-    assert.ok(Number.isFinite(session.meta.summaryHistory[0].at));
+    let history = mgr.readSummaries(session.id);
+    assert.strictEqual(history.length, 1);
+    assert.strictEqual(history[0].title, "Phase A");
+    assert.ok(Number.isFinite(history[0].at));
+    // History must NOT live in meta — it pressured the 4 KB cap and broke
+    // every other setMeta. This assertion is the regression guard.
+    assert.strictEqual(session.meta.summaryHistory, undefined);
 
     // Mutate the window so the hash changes, then second cycle → Phase B appended.
     session.pullTail = (n) => ({ data: ("second content\n".repeat(50)).slice(-n), cursor: 0 });
@@ -183,8 +199,9 @@ describe("createSessionSummarizer", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    assert.strictEqual(session.meta.summaryHistory.length, 2);
-    assert.strictEqual(session.meta.summaryHistory[1].title, "Phase B");
+    history = mgr.readSummaries(session.id);
+    assert.strictEqual(history.length, 2);
+    assert.strictEqual(history[1].title, "Phase B");
 
     s.stop();
   });
@@ -197,8 +214,8 @@ describe("createSessionSummarizer", () => {
     const mgr = makeFakeManager([session]);
     // Ollama returns identical content both times. Hash-dedup should
     // skip the second call entirely, but even if a future change makes
-    // it call again, duplicate-guard in summaryHistory must prevent
-    // duplicate entries.
+    // it call again, the in-memory dedupe key (st.lastEntry) must
+    // prevent duplicate appends to the store.
     const callOllama = okOllama('{"title":"Same","summary":"Same summary."}');
 
     const s = createSessionSummarizer({ sessionManager: mgr, callOllama, minContentChars: 100 });
@@ -208,34 +225,27 @@ describe("createSessionSummarizer", () => {
     await s.runOnce();
     await new Promise((r) => setImmediate(r));
 
-    assert.strictEqual(session.meta.summaryHistory.length, 1);
+    assert.strictEqual(mgr.readSummaries(session.id).length, 1);
     s.stop();
   });
 
-  it("caps meta.summaryHistory at MAX_HISTORY_ENTRIES (ring behaviour)", async () => {
-    const session = makeFakeSession({
-      name: "kat_cap",
-      buffer: "seed content\n".repeat(30),
-    });
+  it("does not append history for a session without a stable id", async () => {
+    // Edge case: an in-memory-only session (no surrogate id assigned)
+    // can't be keyed against the disk store. The summarizer still writes
+    // meta.summary / meta.autoTitle (those are name-keyed, ephemeral)
+    // but skips the store append rather than persisting under an
+    // unstable key.
+    const session = makeFakeSession({ name: "kat_no_id", buffer: "x\n".repeat(60), id: null });
     const mgr = makeFakeManager([session]);
+    const callOllama = okOllama('{"title":"Anywhere","summary":"Anywhere doing anything."}');
 
-    // Pre-seed history near the cap so the test doesn't need 40+ cycles.
-    const seed = [];
-    for (let i = 0; i < 40; i += 1) {
-      seed.push({ title: `old ${i}`, summary: `s ${i}`, at: i });
-    }
-    session.meta.summaryHistory = seed;
-
-    const callOllama = okOllama('{"title":"Fresh","summary":"Fresh summary."}');
     const s = createSessionSummarizer({ sessionManager: mgr, callOllama, minContentChars: 100 });
     await s.runOnce();
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    assert.strictEqual(session.meta.summaryHistory.length, 40);
-    // Oldest pushed out, newest landed at the tail.
-    assert.strictEqual(session.meta.summaryHistory[0].title, "old 1");
-    assert.strictEqual(session.meta.summaryHistory[39].title, "Fresh");
+    assert.ok(session.meta.summary, "current summary should still be written");
+    assert.strictEqual(mgr.readSummaries(null).length, 0);
     s.stop();
   });
 
