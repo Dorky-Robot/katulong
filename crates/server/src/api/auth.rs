@@ -218,6 +218,18 @@ async fn register_finish(
         })
         .map_err(ApiError::from)?;
 
+    // Stamp the human-facing labels onto the credential before it goes
+    // to disk. `finish_registration` doesn't see the request body
+    // (it's a pure WebAuthn primitive); the handler is the only place
+    // that has both the verified credential AND the operator-supplied
+    // `deviceName`/`userAgent`. Defaults to empty when missing — Node
+    // uses the same `||''` tolerance.
+    let credential = katulong_auth::Credential {
+        name: body.device_name.clone().filter(|n| !n.is_empty()),
+        user_agent: body.user_agent.clone().unwrap_or_default(),
+        ..credential
+    };
+
     // The credentials.is_empty() re-check inside the closure is the
     // authoritative TOCTOU-safe enforcement — a second concurrent
     // finisher will see state already containing the first winner's
@@ -316,6 +328,11 @@ async fn login_finish(
             if let Some(updated_cred) = updated {
                 next = next.upsert_credential(updated_cred);
             }
+            // Stamp `last_used_at` on the credential we just authed
+            // against. Done inside `transact` so the same write that
+            // bumps the WebAuthn counter also records usage — single
+            // writer, no extra TOCTOU surface for the device-list UI.
+            next = next.touch_credential(&credential_id, now);
             next = next.upsert_session(session.clone());
             Ok((next, (plaintext, session)))
         })
@@ -487,6 +504,16 @@ async fn pair_finish(
             );
         })
         .map_err(ApiError::from)?;
+
+    // Stamp the human-facing labels supplied with the pair request.
+    // Same reasoning as `register_finish` — the auth crate stays
+    // unaware of the request shape; the handler stitches the user-
+    // visible metadata onto the verified credential.
+    let credential = katulong_auth::Credential {
+        name: body.device_name.clone().filter(|n| !n.is_empty()),
+        user_agent: body.user_agent.clone().unwrap_or_default(),
+        ..credential
+    };
 
     let new_credential = credential.clone();
     let setup_token_plaintext = body.setup_token.clone();

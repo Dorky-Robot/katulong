@@ -260,6 +260,8 @@ impl WebAuthnService {
             counter: 0,
             created_at: now,
             setup_token_id: None,
+            user_agent: String::new(),
+            last_used_at: None,
         })
     }
 
@@ -669,6 +671,8 @@ mod tests {
             counter: 0,
             created_at: SystemTime::UNIX_EPOCH,
             setup_token_id: None,
+            user_agent: String::new(),
+            last_used_at: None,
         };
         let err = svc
             .start_authentication(std::slice::from_ref(&bad), SystemTime::UNIX_EPOCH)
@@ -728,6 +732,8 @@ mod tests {
             counter: 0,
             created_at: SystemTime::UNIX_EPOCH,
             setup_token_id: None,
+            user_agent: String::new(),
+            last_used_at: None,
         };
         let err = bad.to_passkey().unwrap_err();
         assert!(matches!(err, AuthError::WebAuthn(_)));

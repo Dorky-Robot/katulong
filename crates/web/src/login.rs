@@ -225,6 +225,13 @@ async fn pair(setup_token: String) -> Result<(), String> {
         .json(&PairFinishRequest {
             credential,
             setup_token,
+            // Phase 0a step 3 added optional device_name / user_agent
+            // for the device-management UI. The Leptos frontend
+            // doesn't surface a name input yet (Node's pair page
+            // does); leaving these `None` matches what Node sends
+            // on a first-pair from a freshly-loaded login page.
+            device_name: None,
+            user_agent: None,
         })
         .map_err(|e| format!("could not encode pair-finish payload: {e}"))?
         .send()
@@ -288,6 +295,10 @@ async fn register() -> Result<(), String> {
         .json(&RegisterFinishRequest {
             credential,
             setup_token: None,
+            // See PairFinishRequest above — fields are optional on
+            // the wire, the WASM frontend doesn't capture them yet.
+            device_name: None,
+            user_agent: None,
         })
         .map_err(|e| format!("could not encode register-finish payload: {e}"))?
         .send()

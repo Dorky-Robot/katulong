@@ -131,10 +131,22 @@ pub struct AuthFinishResponse {
 /// field now means the type doesn't need a second wire
 /// migration when that merge happens.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RegisterFinishRequest {
     pub credential: RegisterPublicKeyCredential,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup_token: Option<String>,
+    /// Optional human label for the credential ("Felix iPhone").
+    /// Persisted to `Credential.name` for the device-management
+    /// UI. Defaults to empty when missing — matches Node's
+    /// `deviceName || ''` tolerance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+    /// Optional User-Agent capture from the registering browser.
+    /// Surfaced on the device-management UI so an operator can
+    /// match a passkey row to the device that minted it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<String>,
 }
 
 // --- login flow ------------------------------------------------------
@@ -169,9 +181,17 @@ pub struct PairStartRequest {
 /// The challenge is recovered from
 /// `credential.response.clientDataJSON.challenge` server-side.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PairFinishRequest {
     pub credential: RegisterPublicKeyCredential,
     pub setup_token: String,
+    /// Optional human label for the paired credential. Persisted to
+    /// `Credential.name`; defaults to empty when missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+    /// Optional User-Agent capture from the pairing browser.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<String>,
 }
 
 // =====================================================================

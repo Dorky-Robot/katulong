@@ -62,6 +62,8 @@ pub fn stub_credential(id: &str) -> Credential {
         counter: 0,
         created_at: SystemTime::UNIX_EPOCH,
         setup_token_id: None,
+        user_agent: String::new(),
+        last_used_at: None,
     }
 }
 

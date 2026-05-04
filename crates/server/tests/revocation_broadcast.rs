@@ -53,7 +53,7 @@ async fn direct_device_revoke_emits_broadcast() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert_eq!(resp.status(), StatusCode::OK);
 
     let event = timeout(Duration::from_millis(500), rx.recv())
         .await
@@ -87,7 +87,9 @@ async fn device_revoke_on_unknown_id_does_not_emit() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    // Unknown-id returns 404 post-cutover (was idempotent-204).
+    // No emission either way — the assertion below proves that.
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
     // Unknown id → no state change → no emission. A short timeout
     // that MUST elapse without a message proves the negative.
@@ -167,7 +169,7 @@ async fn setup_token_revoke_emits_for_paired_credential() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert_eq!(resp.status(), StatusCode::OK);
 
     let event = timeout(Duration::from_millis(500), rx.recv())
         .await
@@ -213,7 +215,7 @@ async fn setup_token_revoke_without_paired_credential_does_not_emit() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert_eq!(resp.status(), StatusCode::OK);
 
     let result = timeout(Duration::from_millis(100), rx.recv()).await;
     assert!(

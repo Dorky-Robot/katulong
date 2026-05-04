@@ -62,7 +62,15 @@ pub enum ApiError {
     /// first-device registration flow. Node hit this exact bug
     /// (`f25855f`); the two-tier access model means the guard must
     /// apply to remote callers only.
+    ///
+    /// Maps to `403` with the literal Node message — the frontend
+    /// renders `err.error` unchanged, so the wording is part of the
+    /// wire contract.
     LastCredential,
+    /// The id in the URL path doesn't match any record. Surfaces as
+    /// `404` with the supplied message — matches Node's
+    /// `{"error": "Credential not found"}` / `"Token not found"`.
+    NotFound(&'static str),
     /// State-changing request reached us without an `X-Csrf-Token`
     /// header. Maps to 403 with code `csrf_missing`. Distinct from
     /// `CsrfMismatch` so a client can distinguish "never sent" from
@@ -104,10 +112,13 @@ impl ApiError {
             ),
             Self::Conflict(why) => (StatusCode::CONFLICT, "conflict", (*why).into()),
             Self::LastCredential => (
-                StatusCode::CONFLICT,
+                StatusCode::FORBIDDEN,
                 "last_credential",
-                "cannot remove the last remote-access credential from a non-localhost session".into(),
+                // Literal Node message — the frontend renders this
+                // verbatim. Changing the wording would diverge.
+                "Cannot remove the last credential — would lock you out".into(),
             ),
+            Self::NotFound(msg) => (StatusCode::NOT_FOUND, "not_found", (*msg).into()),
             Self::CsrfMissing => (
                 StatusCode::FORBIDDEN,
                 "csrf_missing",
