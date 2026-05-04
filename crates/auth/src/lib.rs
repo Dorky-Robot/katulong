@@ -26,7 +26,7 @@ pub use session::{Session, SessionTokenPlaintext, SESSION_TTL};
 pub use setup_token::{PlaintextToken, SetupToken};
 pub use state::AuthState;
 pub use store::AuthStore;
-pub use webauthn::{ChallengeId, VerifiedAuthentication, WebAuthnService};
+pub use webauthn::{VerifiedAuthentication, WebAuthnService};
 
 /// Re-export the webauthn-rs wire types the server crate needs to shape
 /// its HTTP request/response bodies. Keeping these behind the auth

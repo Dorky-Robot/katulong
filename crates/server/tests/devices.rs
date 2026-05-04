@@ -247,7 +247,7 @@ async fn revoke_last_credential_from_remote_is_blocked() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
     let v = body_json(resp).await;
-    assert_eq!(v["error"]["code"], "last_credential");
+    assert!(v["error"].is_string(), "flat error envelope per Node shape");
 }
 
 #[tokio::test]

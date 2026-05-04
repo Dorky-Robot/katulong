@@ -2,44 +2,40 @@
 //!
 //! Three flows × two phases each:
 //! - **register** (first-device, localhost-only bootstrap):
-//!   `register/start` → `register/finish`
+//!   `register/options` → `register/verify`
 //! - **login** (any device with an enrolled credential):
-//!   `login/start` → `login/finish`
+//!   `login/options` → `login/verify`
 //! - **pair** (additional device via setup token):
-//!   `pair/start` → `pair/finish`
+//!   `pair/options` → `pair/verify`
 //!
-//! Register-start and login-start take no request body, so
-//! there's no `RegisterStartRequest` / `LoginStartRequest`
-//! type — those routes parse the `()` body. Pair-start needs
-//! the plaintext setup token, so it has a request struct.
+//! Phase 0a-1 of the cutover reshapes these to match the
+//! Node frontend wire shapes byte-for-byte:
 //!
-//! All three start endpoints return a challenge wrapped in a
-//! generic envelope (`ChallengeStartResponse<T>`). The `T`
-//! varies because register/pair return registration options
-//! (`CreationChallengeResponse`) while login returns
-//! authentication options (`RequestChallengeResponse`).
-//! Concrete aliases are provided for the WASM client where
-//! generic deserialisation is awkward.
+//! - Each `*/options` endpoint returns the bare WebAuthn
+//!   options object at the JSON top level (no
+//!   `challenge_id`, no `options` envelope). Node's handler
+//!   does `res.json(opts)` where `opts` is the
+//!   `@simplewebauthn` options output; we mirror that by
+//!   handing back the raw `CreationChallengeResponse` /
+//!   `RequestChallengeResponse`.
+//! - Each `*/verify` endpoint takes a body that carries only
+//!   the credential payload. The challenge no longer
+//!   round-trips through a server-issued id; instead the
+//!   server recovers it from the credential's
+//!   `clientDataJSON.challenge` at verify time. That's the
+//!   `@simplewebauthn` model and what `extractChallenge` in
+//!   `lib/auth-handlers.js` does on the Node side.
 //!
-//! Pair-start additionally echoes a `setup_token_id` back to
-//! the client so `pair/finish` can reference the redeemable
-//! token without re-submitting the plaintext value. That's
-//! defence in depth (the plaintext transits the network
-//! once), and it's why pair has its own response type rather
-//! than reusing the generic envelope.
+//! Consequence: `ChallengeId` is gone from the public wire,
+//! and so is the `ChallengeStartResponse<T>` envelope. The
+//! types that survive are bodies the Node frontend (and the
+//! WASM frontend, post-cutover) actually exchange.
 //!
-//! All three finish endpoints converge on the same response
+//! All three verify endpoints converge on the same response
 //! shape (`AuthFinishResponse`) — the server has minted a
 //! session cookie via `Set-Cookie` and returns the
 //! credential id (for UI display) and the CSRF token (for
 //! the client to echo on subsequent state-changing requests).
-//!
-//! `ChallengeId` is exposed as a type alias rather than a
-//! newtype because the server side already has its own
-//! `katulong_auth::webauthn::ChallengeId = String` alias and
-//! the wire format is just a string. A newtype here would
-//! force every consumer to convert at the boundary for no
-//! safety gain.
 
 use serde::{Deserialize, Serialize};
 
@@ -52,8 +48,6 @@ pub use webauthn_rs_proto::{
     CreationChallengeResponse, PublicKeyCredential, RegisterPublicKeyCredential,
     RequestChallengeResponse,
 };
-
-pub type ChallengeId = String;
 
 // --- status probe ----------------------------------------------------
 
@@ -75,43 +69,39 @@ pub enum AccessMethod {
     Remote,
 }
 
-/// Response shape for `GET /auth/status`. Public route
-/// (no auth required) — the WASM client probes this on every
-/// page load to discover the current session state and decide
-/// whether to render the login form, the post-auth view, or a
-/// loading state while the probe is in flight.
+/// Response shape for `GET /auth/status`. Public route (no
+/// auth required) — the WASM client probes this on page load
+/// to choose between register / login / pair UIs.
 ///
-/// `has_credentials = false` is the signal for "fresh install
-/// — go to register flow"; `authenticated = true` is the
-/// signal for "session cookie is valid, go to post-auth
-/// view"; the remaining case is "show the login form."
+/// **Wire shape matches Node's `lib/routes/auth-routes.js`:**
+/// `{ setup, accessMethod }`. `setup` is `true` once any
+/// credential exists on the instance; `accessMethod` is the
+/// camelCase mirror of the server's classification (the JSON
+/// frontend reads `accessMethod`, not `access_method`).
+///
+/// Phase 0a-1 of the cutover dropped the `authenticated`
+/// field — Node never returned it and the JS frontend never
+/// read it. Whether the caller has a live session is
+/// recoverable from a separate `/api/me` probe (sibling PR).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuthStatusResponse {
+    /// `true` once any credential exists on the instance.
+    /// Mirrors Node's `isSetup()` boolean — drives the
+    /// frontend's "fresh install → register" vs.
+    /// "credentials exist → sign in" branch.
+    pub setup: bool,
+    /// Camel-cased on the wire (`accessMethod`) to match
+    /// Node's `getAccessMethod()` output. The Rust enum stays
+    /// snake-case internally; the rename is at the wire
+    /// boundary only.
+    #[serde(rename = "accessMethod")]
     pub access_method: AccessMethod,
-    pub has_credentials: bool,
-    pub authenticated: bool,
 }
-
-// --- start: shared challenge envelope ---------------------------------
-
-/// Generic envelope for the start phase of every ceremony.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ChallengeStartResponse<T> {
-    pub challenge_id: ChallengeId,
-    pub options: T,
-}
-
-/// The aliases below exist so the WASM client can write
-/// `let start: LoginStartResponse = resp.json().await?` and
-/// have the deserialize call resolve without an explicit
-/// turbofish.
-pub type RegisterStartResponse = ChallengeStartResponse<CreationChallengeResponse>;
-pub type LoginStartResponse = ChallengeStartResponse<RequestChallengeResponse>;
 
 // --- finish: shared session response ---------------------------------
 
-/// Returned by every successful finish endpoint
-/// (register/finish, login/finish, pair/finish). The status
+/// Returned by every successful verify endpoint
+/// (register/verify, login/verify, pair/verify). The status
 /// codes still differ per route (201 on register/pair, 200 on
 /// login) — that's a transport detail handled at the call
 /// site, not part of this type.
@@ -129,18 +119,32 @@ pub struct AuthFinishResponse {
 
 // --- register flow ---------------------------------------------------
 
+/// Body for `POST /auth/register/verify`. Carries the
+/// credential payload only — the challenge is recovered from
+/// `credential.response.clientDataJSON.challenge` server-side
+/// (same pattern as `@simplewebauthn` and `extractChallenge`
+/// in `lib/auth-handlers.js`).
+///
+/// `setup_token` is reserved for the follow-up PR that merges
+/// the register and pair flows into a single endpoint; today
+/// it stays `None` on first-device registration. Landing the
+/// field now means the type doesn't need a second wire
+/// migration when that merge happens.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RegisterFinishRequest {
-    pub challenge_id: ChallengeId,
-    pub response: RegisterPublicKeyCredential,
+    pub credential: RegisterPublicKeyCredential,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_token: Option<String>,
 }
 
 // --- login flow ------------------------------------------------------
 
+/// Body for `POST /auth/login/verify`. The struct exists
+/// purely so the WASM frontend can name it; the wire shape is
+/// `{ "credential": <PublicKeyCredential> }`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LoginFinishRequest {
-    pub challenge_id: ChallengeId,
-    pub response: PublicKeyCredential,
+    pub credential: PublicKeyCredential,
 }
 
 // --- pair flow (setup-token-gated registration) ----------------------
@@ -153,21 +157,21 @@ pub struct PairStartRequest {
     pub setup_token: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PairStartResponse {
-    pub challenge_id: ChallengeId,
-    /// Server-side opaque id for the redeemable token.
-    /// Echoed back on `pair/finish` so the client doesn't
-    /// re-submit the plaintext token a second time.
-    pub setup_token_id: String,
-    pub options: CreationChallengeResponse,
-}
-
+/// Body for `POST /auth/pair/verify`.
+///
+/// Carries the plaintext `setup_token` again rather than an
+/// opaque `setup_token_id` echoed from `pair/options`. The
+/// server re-validates redemption under the state mutex —
+/// that re-validation is the authoritative gate, not whether
+/// the client echoed an id correctly. This shape matches the
+/// Node implementation.
+///
+/// The challenge is recovered from
+/// `credential.response.clientDataJSON.challenge` server-side.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PairFinishRequest {
-    pub challenge_id: ChallengeId,
-    pub setup_token_id: String,
-    pub response: RegisterPublicKeyCredential,
+    pub credential: RegisterPublicKeyCredential,
+    pub setup_token: String,
 }
 
 // =====================================================================

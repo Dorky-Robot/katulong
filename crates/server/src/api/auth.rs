@@ -2,14 +2,22 @@
 //!
 //! Eight endpoints covering the full auth surface:
 //!
-//! - `GET  /auth/status`          — public; access mode + install state + authenticated
-//! - `POST /auth/register/options`  — localhost-only, fresh install
+//! - `GET  /auth/status`          — public; `{setup, accessMethod}`
+//! - `POST /auth/register/options` — localhost-only, fresh install; bare `CreationChallengeResponse`
 //! - `POST /auth/register/verify` — localhost-only, fresh install; mints session
-//! - `POST /auth/login/options`     — public
+//! - `POST /auth/login/options`   — public; bare `RequestChallengeResponse`
 //! - `POST /auth/login/verify`    — public; updates counter + mints session
-//! - `POST /auth/pair/options`      — public, setup-token-gated
-//! - `POST /auth/pair/verify`     — public; links credential to token + mints session
+//! - `POST /auth/pair/options`    — public, setup-token-gated; bare `CreationChallengeResponse`
+//! - `POST /auth/pair/verify`     — public; takes plaintext `setup_token`; mints session
 //! - `POST /auth/logout`          — auth + CSRF; localhost → 409
+//!
+//! The wire shapes match the Node implementation
+//! (`lib/routes/auth-routes.js`) byte-for-byte so the JS frontend
+//! drives the Rust server unchanged. In particular: the start
+//! endpoints return WebAuthn options at the JSON top level (no
+//! `challenge_id` envelope), and the verify endpoints recover the
+//! challenge from `credential.response.clientDataJSON.challenge` —
+//! the same `extractChallenge()` pattern the Node handler uses.
 //!
 //! Setup-token management (list / create / revoke) lives in
 //! `api::tokens`. Those routes share the same `CsrfProtected` pattern
@@ -39,9 +47,8 @@ use axum::{
 };
 use katulong_auth::{AuthError, Session, SESSION_TTL};
 use katulong_shared::wire::{
-    AuthFinishResponse, AuthStatusResponse, ChallengeStartResponse,
-    CreationChallengeResponse, LoginFinishRequest, PairFinishRequest, PairStartRequest,
-    PairStartResponse, RegisterFinishRequest, RequestChallengeResponse,
+    AuthFinishResponse, AuthStatusResponse, CreationChallengeResponse, LoginFinishRequest,
+    PairFinishRequest, PairStartRequest, RegisterFinishRequest, RequestChallengeResponse,
 };
 use std::net::SocketAddr;
 use std::time::SystemTime;
@@ -78,15 +85,22 @@ async fn status(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    authed: Option<Authenticated>,
+    _authed: Option<Authenticated>,
 ) -> Json<AuthStatusResponse> {
+    // Wire shape mirrors Node's `lib/routes/auth-routes.js`:
+    // `{ setup, accessMethod }`. The `Option<Authenticated>`
+    // parameter stays in the signature so the auth-middleware
+    // wiring exercises the cookie-validation path on this
+    // public endpoint (logging side effects, lockout pruning),
+    // but the resulting bool no longer round-trips through
+    // status — a sibling PR adds `/api/me` for the frontend
+    // to recover that signal.
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
     let access = AccessMethod::classify(peer, host);
     let snap = state.auth_store.snapshot().await;
     Json(AuthStatusResponse {
+        setup: !snap.credentials.is_empty(),
         access_method: access.into(),
-        has_credentials: !snap.credentials.is_empty(),
-        authenticated: authed.is_some(),
     })
 }
 
@@ -110,7 +124,7 @@ async fn register_start(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-) -> Result<Json<ChallengeStartResponse<CreationChallengeResponse>>, ApiError> {
+) -> Result<Json<CreationChallengeResponse>, ApiError> {
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
     let access = AccessMethod::classify(peer, host);
     if !matches!(access, AccessMethod::Localhost) {
@@ -148,7 +162,7 @@ async fn register_start(
         .await
         .map_err(ApiError::from)?;
 
-    let (id, ccr) = state
+    let ccr = state
         .webauthn
         .start_registration(
             user_handle,
@@ -158,10 +172,7 @@ async fn register_start(
             SystemTime::now(),
         )
         .map_err(ApiError::from)?;
-    Ok(Json(ChallengeStartResponse {
-        challenge_id: id,
-        options: ccr,
-    }))
+    Ok(Json(ccr))
 }
 
 /// Finish the first-device registration, persist the credential, and
@@ -193,14 +204,14 @@ async fn register_finish(
     let now = SystemTime::now();
     let credential = state
         .webauthn
-        .finish_registration(&body.challenge_id, &body.response, now)
+        .finish_registration(&body.credential, now)
         .inspect_err(|e| {
             // Log failed ceremonies at `warn` so brute-force or replay
-            // attempts are visible in operator logs. The challenge id
-            // is safe to log — it's an opaque server-issued handle,
-            // not the attestation response bytes.
+            // attempts are visible in operator logs. The credential id
+            // is safe to log; the attestation response bytes are not
+            // logged.
             tracing::warn!(
-                challenge_id = %body.challenge_id,
+                credential_id = %body.credential.id,
                 error = %e,
                 "registration ceremony failed"
             );
@@ -249,7 +260,7 @@ async fn register_finish(
 /// gates who actually passes.
 async fn login_start(
     State(state): State<AppState>,
-) -> Result<Json<ChallengeStartResponse<RequestChallengeResponse>>, ApiError> {
+) -> Result<Json<RequestChallengeResponse>, ApiError> {
     let snap = state.auth_store.snapshot().await;
     if snap.credentials.is_empty() {
         // Fresh-install case. Return an explicit conflict rather than
@@ -259,14 +270,11 @@ async fn login_start(
             "no credentials registered; first device must register via /auth/register/options",
         ));
     }
-    let (id, rcr) = state
+    let rcr = state
         .webauthn
         .start_authentication(&snap.credentials, SystemTime::now())
         .map_err(ApiError::from)?;
-    Ok(Json(ChallengeStartResponse {
-        challenge_id: id,
-        options: rcr,
-    }))
+    Ok(Json(rcr))
 }
 
 /// Finish an authentication ceremony, persist the counter update, and
@@ -278,10 +286,10 @@ async fn login_finish(
     let now = SystemTime::now();
     let verified = state
         .webauthn
-        .finish_authentication(&body.challenge_id, &body.response, now)
+        .finish_authentication(&body.credential, now)
         .inspect_err(|e| {
             tracing::warn!(
-                challenge_id = %body.challenge_id,
+                credential_id = %body.credential.id,
                 error = %e,
                 "login ceremony failed"
             );
@@ -367,7 +375,7 @@ const SETUP_TOKEN_MAX_LEN: usize = 128;
 async fn pair_start(
     State(state): State<AppState>,
     JsonBody(body): JsonBody<PairStartRequest>,
-) -> Result<Json<PairStartResponse>, ApiError> {
+) -> Result<Json<CreationChallengeResponse>, ApiError> {
     if body.setup_token.len() > SETUP_TOKEN_MAX_LEN {
         tracing::warn!(
             length = body.setup_token.len(),
@@ -399,15 +407,20 @@ async fn pair_start(
     // verify, so a concurrent mutation doesn't matter — the
     // authoritative token re-check happens in pair_finish's transact.
     let snap = state.auth_store.snapshot().await;
-    let token = snap
+    let _token = snap
         .find_redeemable_setup_token(&body.setup_token, now)
         .ok_or_else(|| {
             tracing::warn!("pair_start: setup token not redeemable");
             ApiError::Unauthorized
         })?;
-    let setup_token_id = token.id.clone();
 
-    let (challenge_id, ccr) = state
+    // Bare `CreationChallengeResponse` at the top level — Node
+    // returns `res.json(opts)` from
+    // `lib/routes/auth-routes.js` without a wrapper. The
+    // `setup_token_id` is no longer echoed; pair_finish takes
+    // the plaintext token again and re-resolves the id under
+    // the state mutex.
+    let ccr = state
         .webauthn
         .start_registration(
             user_handle,
@@ -418,11 +431,7 @@ async fn pair_start(
         )
         .map_err(ApiError::from)?;
 
-    Ok(Json(PairStartResponse {
-        challenge_id,
-        setup_token_id,
-        options: ccr,
-    }))
+    Ok(Json(ccr))
 }
 
 /// Complete the pair ceremony. Verifies the challenge, verifies the
@@ -439,22 +448,40 @@ async fn pair_finish(
     State(state): State<AppState>,
     JsonBody(body): JsonBody<PairFinishRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    if body.setup_token.len() > SETUP_TOKEN_MAX_LEN {
+        tracing::warn!(
+            length = body.setup_token.len(),
+            "pair_finish: setup_token exceeds maximum length"
+        );
+        return Err(ApiError::BadRequest("setup_token exceeds maximum length"));
+    }
+
     let now = SystemTime::now();
+
+    // Resolve the plaintext setup token to its server-side id
+    // before running the WebAuthn ceremony. Node does the same
+    // (re-validates the token in the verify handler), and we
+    // re-validate again under the state mutex below — the
+    // pre-flight here is a fast-fail for the common case.
+    let snap = state.auth_store.snapshot().await;
+    let token = snap
+        .find_redeemable_setup_token(&body.setup_token, now)
+        .ok_or_else(|| {
+            tracing::warn!("pair_finish: setup token not redeemable");
+            ApiError::Unauthorized
+        })?;
+    let setup_token_id = token.id.clone();
+
     // The auth crate owns the bidirectional link invariant (credential
     // ↔ setup token). `finish_paired_registration` returns a
     // credential already stamped with `setup_token_id` — the handler
     // never constructs that link by hand.
     let credential = state
         .webauthn
-        .finish_paired_registration(
-            &body.challenge_id,
-            &body.response,
-            body.setup_token_id.clone(),
-            now,
-        )
+        .finish_paired_registration(&body.credential, setup_token_id.clone(), now)
         .inspect_err(|e| {
             tracing::warn!(
-                challenge_id = %body.challenge_id,
+                credential_id = %body.credential.id,
                 error = %e,
                 "pair ceremony failed"
             );
@@ -462,32 +489,30 @@ async fn pair_finish(
         .map_err(ApiError::from)?;
 
     let new_credential = credential.clone();
-    let setup_token_id = body.setup_token_id.clone();
+    let setup_token_plaintext = body.setup_token.clone();
     let (plaintext_token, minted_session) = state
         .auth_store
         .transact(move |s| {
             // Re-validate the token under the mutex: a concurrent
             // revoke between pair_start and pair_finish must NOT
-            // succeed in pairing. `find_setup_token` by id because at
-            // this point we're committing against the specific token
-            // the client referenced; we also require it to still be
-            // redeemable.
-            let Some(token) = s.find_setup_token(&setup_token_id) else {
+            // succeed in pairing. Re-resolve from the plaintext so
+            // the id we commit against is whatever the live state
+            // says is redeemable RIGHT NOW — a concurrent
+            // delete-then-recreate with the same plaintext (not
+            // possible today, but the pattern is robust to future
+            // shapes) lands on the live token.
+            let Some(token) = s.find_redeemable_setup_token(&setup_token_plaintext, now) else {
                 return Err(AuthError::StateConflict(
-                    "setup token revoked during pair ceremony",
+                    "setup token no longer redeemable (revoked, consumed, or expired)",
                 ));
             };
-            if !token.is_redeemable(now) {
-                return Err(AuthError::StateConflict(
-                    "setup token no longer redeemable (consumed or expired)",
-                ));
-            }
+            let token_id = token.id.clone();
 
             let (plaintext, session) =
                 Session::mint(new_credential.id.clone(), now, SESSION_TTL);
             let next = s
                 .upsert_credential(new_credential.clone())
-                .consume_setup_token(&setup_token_id, &new_credential.id, now)
+                .consume_setup_token(&token_id, &new_credential.id, now)
                 .upsert_session(session.clone());
             Ok((next, (plaintext, session)))
         })
@@ -496,7 +521,7 @@ async fn pair_finish(
 
     tracing::info!(
         credential_id = %credential.id,
-        setup_token_id = %body.setup_token_id,
+        setup_token_id = %setup_token_id,
         "paired new device; session minted"
     );
 

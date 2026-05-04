@@ -30,8 +30,8 @@
 
 use crate::AuthState;
 use katulong_shared::wire::{
-    LoginFinishRequest, LoginStartResponse, PairFinishRequest, PairStartRequest,
-    PairStartResponse, RegisterFinishRequest, RegisterStartResponse,
+    CreationChallengeResponse, LoginFinishRequest, PairFinishRequest, PairStartRequest,
+    RegisterFinishRequest, RequestChallengeResponse,
 };
 use leptos::*;
 use wasm_bindgen::{JsCast, JsValue};
@@ -111,7 +111,10 @@ async fn signin() -> Result<(), String> {
         .await
         .map_err(|e| format!("network error contacting server: {e}"))?;
     check_ok(&start_resp, "server rejected sign-in challenge")?;
-    let start: LoginStartResponse = start_resp
+    // Bare `RequestChallengeResponse` at the top level — Node's
+    // `lib/routes/auth-routes.js` returns `res.json(opts)` with
+    // no envelope.
+    let start: RequestChallengeResponse = start_resp
         .json()
         .await
         .map_err(|e| format!("server returned malformed challenge: {e}"))?;
@@ -121,7 +124,7 @@ async fn signin() -> Result<(), String> {
     //    with the `wasm` feature does the binary base64url ↔
     //    Uint8Array dance inside the From impl, so we don't
     //    hand-roll it.
-    let options: web_sys::CredentialRequestOptions = start.options.into();
+    let options: web_sys::CredentialRequestOptions = start.into();
 
     // 3. Run the platform ceremony. `credentials.get()` either
     //    resolves with a `PublicKeyCredential` (user confirmed
@@ -134,16 +137,15 @@ async fn signin() -> Result<(), String> {
         .get_with_options(&options)
         .map_err(|e| format!("browser refused credential request: {}", js_err(&e)))?;
     let credential = credential_from_promise(promise).await?;
-    let response: webauthn_rs_proto::PublicKeyCredential = credential.into();
+    let credential: webauthn_rs_proto::PublicKeyCredential = credential.into();
 
     // 4. Send the assertion back. `login_finish` uses
     //    `JsonBody<T>` so Content-Type *must* be application/json
     //    — `gloo-net`'s `.json(...)` sets that automatically.
+    //    The challenge isn't echoed in the request body — the
+    //    server recovers it from `clientDataJSON.challenge`.
     let finish_resp = gloo_net::http::Request::post("/auth/login/verify")
-        .json(&LoginFinishRequest {
-            challenge_id: start.challenge_id,
-            response,
-        })
+        .json(&LoginFinishRequest { credential })
         .map_err(|e| format!("could not encode sign-in payload: {e}"))?
         .send()
         .await
@@ -177,22 +179,28 @@ async fn signin() -> Result<(), String> {
 /// once the click fires, the future may outlive any borrow we
 /// could have given it.
 async fn pair(setup_token: String) -> Result<(), String> {
-    // 1. Ask for a registration challenge.
+    // 1. Ask for a registration challenge. Send the plaintext
+    //    setup token in the request body; the server validates
+    //    it and bails with 401 if it isn't redeemable.
     let start_resp = gloo_net::http::Request::post("/auth/pair/options")
-        .json(&PairStartRequest { setup_token })
+        .json(&PairStartRequest {
+            setup_token: setup_token.clone(),
+        })
         .map_err(|e| format!("could not encode pair-start payload: {e}"))?
         .send()
         .await
         .map_err(|e| format!("network error contacting server: {e}"))?;
     check_ok(&start_resp, "server rejected pair challenge")?;
-    let start: PairStartResponse = start_resp
+    // Bare `CreationChallengeResponse` at the top level —
+    // matches Node's wire shape.
+    let start: CreationChallengeResponse = start_resp
         .json()
         .await
         .map_err(|e| format!("server returned malformed challenge: {e}"))?;
 
     // 2. Convert the wire challenge to the JS shape that
     //    `navigator.credentials.create()` expects.
-    let options: web_sys::CredentialCreationOptions = start.options.into();
+    let options: web_sys::CredentialCreationOptions = start.into();
 
     // 3. Run the platform registration ceremony. `.create()`
     //    either resolves with a `PublicKeyCredential` (user
@@ -206,15 +214,17 @@ async fn pair(setup_token: String) -> Result<(), String> {
         .create_with_options(&options)
         .map_err(|e| format!("browser refused credential creation: {}", js_err(&e)))?;
     let credential = credential_from_promise(promise).await?;
-    let response: webauthn_rs_proto::RegisterPublicKeyCredential = credential.into();
+    let credential: webauthn_rs_proto::RegisterPublicKeyCredential = credential.into();
 
-    // 4. Send the attestation back along with the
-    //    `setup_token_id` the server gave us in step 1.
+    // 4. Send the attestation back along with the plaintext
+    //    `setup_token`. The server re-validates redemption
+    //    under the state mutex (Node does the same) — the
+    //    plaintext travels the network twice but never sits
+    //    around in the client beyond this ceremony.
     let finish_resp = gloo_net::http::Request::post("/auth/pair/verify")
         .json(&PairFinishRequest {
-            challenge_id: start.challenge_id,
-            setup_token_id: start.setup_token_id,
-            response,
+            credential,
+            setup_token,
         })
         .map_err(|e| format!("could not encode pair-finish payload: {e}"))?
         .send()
@@ -252,14 +262,14 @@ async fn register() -> Result<(), String> {
         .await
         .map_err(|e| format!("network error contacting server: {e}"))?;
     check_ok(&start_resp, "server rejected register challenge")?;
-    let start: RegisterStartResponse = start_resp
+    let start: CreationChallengeResponse = start_resp
         .json()
         .await
         .map_err(|e| format!("server returned malformed challenge: {e}"))?;
 
     // 2. Convert the wire challenge to the JS shape that
     //    `navigator.credentials.create()` expects.
-    let options: web_sys::CredentialCreationOptions = start.options.into();
+    let options: web_sys::CredentialCreationOptions = start.into();
 
     // 3. Run the platform registration ceremony.
     let window = web_sys::window().ok_or("browser window unavailable")?;
@@ -269,15 +279,15 @@ async fn register() -> Result<(), String> {
         .create_with_options(&options)
         .map_err(|e| format!("browser refused credential creation: {}", js_err(&e)))?;
     let credential = credential_from_promise(promise).await?;
-    let response: webauthn_rs_proto::RegisterPublicKeyCredential = credential.into();
+    let credential: webauthn_rs_proto::RegisterPublicKeyCredential = credential.into();
 
-    // 4. Send the attestation back. No `setup_token_id` here —
-    //    register/finish only needs the challenge id and the
-    //    credential.
+    // 4. Send the attestation back. No setup token on first-
+    //    device registration; the server recovers the
+    //    challenge from `clientDataJSON.challenge`.
     let finish_resp = gloo_net::http::Request::post("/auth/register/verify")
         .json(&RegisterFinishRequest {
-            challenge_id: start.challenge_id,
-            response,
+            credential,
+            setup_token: None,
         })
         .map_err(|e| format!("could not encode register-finish payload: {e}"))?
         .send()

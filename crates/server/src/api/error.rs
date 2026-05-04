@@ -2,12 +2,25 @@
 //!
 //! One error type. Every handler returns `Result<Json<T>, ApiError>`
 //! and this module owns the status-code + response-body mapping. The
-//! response body is deliberately terse — a client gets a stable
-//! `code` string and a short human-readable message, never stack
-//! traces or server-side error chains. `AuthError`'s own `Display`
-//! carries operator-facing context (paths, library detail) and is
-//! suitable for server logs only; see the caller-obligation comment
-//! in `crates/auth/src/error.rs`.
+//! response body is `{"error": "<message>"}` — a single string,
+//! matching the Node implementation (`json(res, status, { error:
+//! "..." })`). The JS frontend reads `err.error` directly:
+//!     `loginError.innerHTML = err.error || "fallback"`
+//! so the body shape is part of the wire contract.
+//!
+//! Phase 0a-1 of the cutover flipped the body from the previous
+//! `{"error": {"code": ..., "message": ...}}` envelope to the
+//! Node-compatible flat string. The `code` string still exists
+//! internally — it's wired through `Display` and tracing so
+//! operator logs distinguish "csrf_missing" from "csrf_mismatch"
+//! without parsing the message — but it does NOT appear on the
+//! wire. A future client that needs typed discrimination can
+//! recover it from the HTTP status + the message text; pulling
+//! `code` back into the body would diverge from Node again.
+//!
+//! `AuthError`'s own `Display` carries operator-facing context
+//! (paths, library detail) and is suitable for server logs only;
+//! see the caller-obligation comment in `crates/auth/src/error.rs`.
 
 use axum::{
     http::StatusCode,
@@ -70,6 +83,10 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    /// Internal triple: `(status, code, message)`. The `code` string
+    /// is operator-log-only (emitted via `tracing` in
+    /// `IntoResponse`); the `message` is the body. Kept colocated so
+    /// adding a new variant forces both to be specified at once.
     fn as_pieces(&self) -> (StatusCode, &'static str, String) {
         match self {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized", "unauthorized".into()),
@@ -113,9 +130,13 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code, message) = self.as_pieces();
-        let body = Json(json!({
-            "error": { "code": code, "message": message },
-        }));
+        // Operator-log discriminator. The body keeps only the
+        // human-readable message (Node-compatible), but
+        // operators tailing the server log still see the
+        // typed code so "csrf_missing" vs "csrf_mismatch" is
+        // greppable without parsing message strings.
+        tracing::debug!(status = %status.as_u16(), code, "api error response");
+        let body = Json(json!({ "error": message }));
         (status, body).into_response()
     }
 }

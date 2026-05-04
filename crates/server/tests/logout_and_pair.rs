@@ -18,6 +18,7 @@ use axum::{
     body::Body,
     http::{header, Method, StatusCode},
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use common::{body_json, ephemeral_state, json_body, req, seeded_auth, stub_credential};
 use katulong_server::app;
 use serde_json::{json, Value};
@@ -59,7 +60,8 @@ async fn logout_without_csrf_returns_403() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let v = body_json(resp).await;
-    assert_eq!(v["error"]["code"], "csrf_missing");
+    // Flat error envelope: `{"error": "<message>"}`.
+    assert!(v["error"].is_string());
 }
 
 #[tokio::test]
@@ -80,7 +82,7 @@ async fn logout_with_wrong_csrf_returns_403_mismatch() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let v = body_json(resp).await;
-    assert_eq!(v["error"]["code"], "csrf_mismatch");
+    assert!(v["error"].is_string());
 }
 
 #[tokio::test]
@@ -390,21 +392,40 @@ async fn pair_start_with_valid_token_returns_challenge() {
         .unwrap();
     assert_eq!(start.status(), StatusCode::OK);
     let v = body_json(start).await;
-    assert!(v["challenge_id"].as_str().is_some_and(|s| s.len() == 32));
-    assert!(v["setup_token_id"].as_str().is_some());
-    assert!(v["options"].is_object());
+    // Bare `CreationChallengeResponse` at the top level —
+    // matches Node's shape. The `setup_token_id` echo is gone:
+    // `pair/verify` takes the plaintext `setup_token` again
+    // and re-resolves the id under the state mutex.
+    assert!(v.get("challenge_id").is_none());
+    assert!(v.get("setup_token_id").is_none());
+    assert!(v.get("options").is_none());
+    assert!(v["publicKey"].is_object());
+    assert!(v["publicKey"]["challenge"].is_string());
 }
 
 #[tokio::test]
-async fn pair_finish_with_unknown_challenge_is_challenge_not_found() {
+async fn pair_finish_with_invalid_token_returns_401() {
+    // The pair_finish handler rejects an unredeemable
+    // setup token before it ever reaches the WebAuthn
+    // ceremony. With the cutover, the body shape is
+    // `{credential, setup_token}` — no `challenge_id`,
+    // no `setup_token_id` echo.
     let (state, _dir) = ephemeral_state().await;
+    let cdj = URL_SAFE_NO_PAD.encode(
+        json!({
+            "type": "webauthn.create",
+            "challenge": "deadbeef",
+            "origin": "https://katulong.test",
+        })
+        .to_string()
+        .as_bytes(),
+    );
     let body = json!({
-        "challenge_id": "deadbeef",
-        "setup_token_id": "any",
-        "response": {
+        "setup_token": "never-issued",
+        "credential": {
             "id": "AAAA",
             "rawId": "AAAA",
-            "response": {"clientDataJSON": "", "attestationObject": ""},
+            "response": {"clientDataJSON": cdj, "attestationObject": ""},
             "type": "public-key",
             "extensions": {}
         }
@@ -422,5 +443,5 @@ async fn pair_finish_with_unknown_challenge_is_challenge_not_found() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let v = body_json(resp).await;
-    assert_eq!(v["error"]["code"], "challenge_not_found");
+    assert!(v["error"].is_string());
 }
