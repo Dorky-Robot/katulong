@@ -1,12 +1,21 @@
 //! HTTP wire types for the auth ceremony surface.
 //!
-//! Three flows × two phases each:
-//! - **register** (first-device, localhost-only bootstrap):
+//! Two flows × two phases each:
+//! - **register** (first-device bootstrap OR additional-device
+//!   pairing — same routes, branched server-side on the
+//!   optional `setupToken` body field):
 //!   `register/options` → `register/verify`
 //! - **login** (any device with an enrolled credential):
 //!   `login/options` → `login/verify`
-//! - **pair** (additional device via setup token):
-//!   `pair/options` → `pair/verify`
+//!
+//! Phase 0a step 4 collapsed the dedicated `/auth/pair/*`
+//! routes into `/auth/register/*` so the Node frontend's
+//! single-route-with-optional-token model drives the Rust
+//! server unchanged. The pair-specific `PairStartRequest`
+//! and `PairFinishRequest` types are gone; a `setupToken`
+//! present in the request body switches the handler from
+//! the localhost-only-fresh-install branch to the
+//! token-gated additional-device branch.
 //!
 //! Phase 0a-1 of the cutover reshapes these to match the
 //! Node frontend wire shapes byte-for-byte:
@@ -119,17 +128,44 @@ pub struct AuthFinishResponse {
 
 // --- register flow ---------------------------------------------------
 
+/// Body for `POST /auth/register/options`.
+///
+/// One route serves two purposes (matching Node's
+/// `lib/routes/auth-routes.js:70-113`):
+/// - **First-device bootstrap**: `setupToken` absent. Server
+///   gates on localhost + "no credentials yet" inside its
+///   transact closure.
+/// - **Additional-device pairing**: `setupToken` present.
+///   Server validates the token (must be live, unconsumed,
+///   unexpired) and proceeds without the localhost gate.
+///
+/// `#[serde(default)]` so a request body of `{}` (Node sends
+/// `{setupToken: ""}` when the input is empty; the server
+/// treats empty-string the same as absent) deserialises with
+/// `setup_token = None`. The Content-Type header is still
+/// required by `JsonBody` — callers must POST a JSON body
+/// even on the no-token branch.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterOptionsRequest {
+    /// Plaintext setup token. Absent (or empty after Node's
+    /// `||''` tolerance) selects the first-device branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_token: Option<String>,
+}
+
 /// Body for `POST /auth/register/verify`. Carries the
 /// credential payload only — the challenge is recovered from
 /// `credential.response.clientDataJSON.challenge` server-side
 /// (same pattern as `@simplewebauthn` and `extractChallenge`
 /// in `lib/auth-handlers.js`).
 ///
-/// `setup_token` is reserved for the follow-up PR that merges
-/// the register and pair flows into a single endpoint; today
-/// it stays `None` on first-device registration. Landing the
-/// field now means the type doesn't need a second wire
-/// migration when that merge happens.
+/// `setup_token` selects the same branch as on the matching
+/// `*/options` call: `None` → first-device finish (localhost
+/// gated), `Some` → token-gated pair finish. The same plaintext
+/// is re-submitted (not an opaque id) so the server can
+/// re-resolve it under the state mutex and close the
+/// revoke-between-start-and-finish TOCTOU window.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RegisterFinishRequest {
@@ -157,41 +193,6 @@ pub struct RegisterFinishRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LoginFinishRequest {
     pub credential: PublicKeyCredential,
-}
-
-// --- pair flow (setup-token-gated registration) ----------------------
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PairStartRequest {
-    /// Plaintext setup token value. The server hashes and
-    /// looks it up; only redeemable (live, unconsumed)
-    /// tokens pass.
-    pub setup_token: String,
-}
-
-/// Body for `POST /auth/pair/verify`.
-///
-/// Carries the plaintext `setup_token` again rather than an
-/// opaque `setup_token_id` echoed from `pair/options`. The
-/// server re-validates redemption under the state mutex —
-/// that re-validation is the authoritative gate, not whether
-/// the client echoed an id correctly. This shape matches the
-/// Node implementation.
-///
-/// The challenge is recovered from
-/// `credential.response.clientDataJSON.challenge` server-side.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PairFinishRequest {
-    pub credential: RegisterPublicKeyCredential,
-    pub setup_token: String,
-    /// Optional human label for the paired credential. Persisted to
-    /// `Credential.name`; defaults to empty when missing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub device_name: Option<String>,
-    /// Optional User-Agent capture from the pairing browser.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub user_agent: Option<String>,
 }
 
 // =====================================================================

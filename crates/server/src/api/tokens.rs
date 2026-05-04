@@ -3,10 +3,13 @@
 //! Setup tokens are the remote-device pairing primitive. Admin flow:
 //! the currently-authenticated user mints a token (carrying a short
 //! name for audit) and hands the plaintext to the new device's
-//! operator. The new device posts the plaintext to
-//! `/auth/pair/options` + `/finish` (in `auth.rs`), which consumes
-//! the token, registers a credential linked to the token, and mints
-//! a session cookie.
+//! operator. The new device posts the plaintext as `setupToken`
+//! to `/auth/register/options` + `/verify` (in `auth.rs`), which
+//! consumes the token, registers a credential linked to the
+//! token, and mints a session cookie. (Phase 0a step 4 merged the
+//! former `/auth/pair/*` routes into `/auth/register/*` — the
+//! same endpoint serves first-device bootstrap when `setupToken`
+//! is absent.)
 //!
 //! Four endpoints:
 //! - `GET    /api/tokens`       — list (auth)

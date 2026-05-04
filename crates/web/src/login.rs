@@ -30,8 +30,8 @@
 
 use crate::AuthState;
 use katulong_shared::wire::{
-    CreationChallengeResponse, LoginFinishRequest, PairFinishRequest, PairStartRequest,
-    RegisterFinishRequest, RequestChallengeResponse,
+    CreationChallengeResponse, LoginFinishRequest, RegisterFinishRequest, RegisterOptionsRequest,
+    RequestChallengeResponse,
 };
 use leptos::*;
 use wasm_bindgen::{JsCast, JsValue};
@@ -162,8 +162,11 @@ async fn signin() -> Result<(), String> {
 ///
 /// Symmetric to `signin()` but uses the registration variant
 /// of every step:
-///   - POST `/auth/pair/options` with the plaintext
-///     setup-token in the body (vs. no body for sign-in)
+///   - POST `/auth/register/options` with the plaintext
+///     setup-token in the body (vs. no body for sign-in).
+///     Phase 0a step 4 collapsed `/auth/pair/*` into
+///     `/auth/register/*`; the server branches internally on
+///     `setupToken` presence.
 ///   - convert `CreationChallengeResponse` →
 ///     `web_sys::CredentialCreationOptions` (vs. request
 ///     options for sign-in)
@@ -171,8 +174,8 @@ async fn signin() -> Result<(), String> {
 ///     `.get(...)`)
 ///   - convert returned credential →
 ///     `RegisterPublicKeyCredential` (vs. assertion type)
-///   - POST `/auth/pair/verify` with the
-///     `setup_token_id` echoed alongside the assertion
+///   - POST `/auth/register/verify` with the plaintext
+///     `setupToken` re-submitted alongside the credential
 ///
 /// The setup-token is moved in (not borrowed) because the
 /// dispatched action future has no upper-bounded lifetime —
@@ -182,9 +185,9 @@ async fn pair(setup_token: String) -> Result<(), String> {
     // 1. Ask for a registration challenge. Send the plaintext
     //    setup token in the request body; the server validates
     //    it and bails with 401 if it isn't redeemable.
-    let start_resp = gloo_net::http::Request::post("/auth/pair/options")
-        .json(&PairStartRequest {
-            setup_token: setup_token.clone(),
+    let start_resp = gloo_net::http::Request::post("/auth/register/options")
+        .json(&RegisterOptionsRequest {
+            setup_token: Some(setup_token.clone()),
         })
         .map_err(|e| format!("could not encode pair-start payload: {e}"))?
         .send()
@@ -217,14 +220,14 @@ async fn pair(setup_token: String) -> Result<(), String> {
     let credential: webauthn_rs_proto::RegisterPublicKeyCredential = credential.into();
 
     // 4. Send the attestation back along with the plaintext
-    //    `setup_token`. The server re-validates redemption
+    //    `setupToken`. The server re-validates redemption
     //    under the state mutex (Node does the same) — the
     //    plaintext travels the network twice but never sits
     //    around in the client beyond this ceremony.
-    let finish_resp = gloo_net::http::Request::post("/auth/pair/verify")
-        .json(&PairFinishRequest {
+    let finish_resp = gloo_net::http::Request::post("/auth/register/verify")
+        .json(&RegisterFinishRequest {
             credential,
-            setup_token,
+            setup_token: Some(setup_token),
             // Phase 0a step 3 added optional device_name / user_agent
             // for the device-management UI. The Leptos frontend
             // doesn't surface a name input yet (Node's pair page
@@ -264,7 +267,16 @@ async fn pair(setup_token: String) -> Result<(), String> {
 /// click), the error renders in the standard error region.
 async fn register() -> Result<(), String> {
     // 1. Ask for a registration challenge.
+    //
+    //    Phase 0a step 4 made `/auth/register/options` accept a
+    //    `RegisterOptionsRequest` body; the server uses
+    //    `JsonBody<T>` so the Content-Type and the body shape
+    //    matter. Send `setup_token: None` — that's what selects
+    //    the localhost-only first-device branch on the server
+    //    after the merge with the former `/auth/pair/*` routes.
     let start_resp = gloo_net::http::Request::post("/auth/register/options")
+        .json(&RegisterOptionsRequest { setup_token: None })
+        .map_err(|e| format!("could not encode register-start payload: {e}"))?
         .send()
         .await
         .map_err(|e| format!("network error contacting server: {e}"))?;
@@ -295,8 +307,9 @@ async fn register() -> Result<(), String> {
         .json(&RegisterFinishRequest {
             credential,
             setup_token: None,
-            // See PairFinishRequest above — fields are optional on
-            // the wire, the WASM frontend doesn't capture them yet.
+            // device_name / user_agent are optional on the wire; the
+            // WASM frontend doesn't capture either yet (the Node
+            // login page does — see `public/login.js`).
             device_name: None,
             user_agent: None,
         })

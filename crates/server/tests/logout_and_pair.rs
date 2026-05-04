@@ -363,6 +363,14 @@ async fn revoke_setup_token_is_idempotent_and_cascades() {
 }
 
 // ---------------- pair flow ----------------
+//
+// Phase 0a step 4 merged `/auth/pair/*` into `/auth/register/*`.
+// The pair flow is now selected by sending `setupToken` (camelCase
+// — `RegisterOptionsRequest` / `RegisterFinishRequest` are
+// `rename_all = "camelCase"` to match Node's
+// `JSON.stringify({ setupToken })` in `public/login.js`).
+// First-device-localhost behaviour stays in `auth_routes.rs`; the
+// tests below cover the token-gated (remote-allowed) leg.
 
 #[tokio::test]
 async fn pair_start_with_invalid_token_returns_401() {
@@ -371,9 +379,9 @@ async fn pair_start_with_invalid_token_returns_401() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/auth/pair/options")
+                .uri("/auth/register/options")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(json_body(&json!({ "setup_token": "never-issued" })))
+                .body(json_body(&json!({ "setupToken": "never-issued" })))
                 .unwrap(),
         )
         .await
@@ -383,9 +391,11 @@ async fn pair_start_with_invalid_token_returns_401() {
 
 #[tokio::test]
 async fn pair_start_with_valid_token_returns_challenge() {
-    // Full pair_start path: seed an admin, mint a setup token via
-    // the HTTP API, then submit its plaintext to pair_start and
-    // confirm it returns a challenge.
+    // Full token-gated register_start path: seed an admin, mint a
+    // setup token via the HTTP API, then submit its plaintext to
+    // `/auth/register/options` and confirm a challenge comes back.
+    // The token branch is not gated on localhost — submit from a
+    // remote peer to prove that.
     let (state, _dir) = ephemeral_state().await;
     let (cookie, csrf) = seeded_auth(&state, "admin-cred").await;
     let router = app(state.clone());
@@ -413,9 +423,9 @@ async fn pair_start_with_valid_token_returns_challenge() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/auth/pair/options")
+                .uri("/auth/register/options")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(json_body(&json!({ "setup_token": plaintext })))
+                .body(json_body(&json!({ "setupToken": plaintext })))
                 .unwrap(),
         )
         .await
@@ -423,9 +433,9 @@ async fn pair_start_with_valid_token_returns_challenge() {
     assert_eq!(start.status(), StatusCode::OK);
     let v = body_json(start).await;
     // Bare `CreationChallengeResponse` at the top level —
-    // matches Node's shape. The `setup_token_id` echo is gone:
-    // `pair/verify` takes the plaintext `setup_token` again
-    // and re-resolves the id under the state mutex.
+    // matches Node's shape. No `setup_token_id` echo: verify
+    // takes the plaintext `setupToken` again and re-resolves
+    // the id under the state mutex.
     assert!(v.get("challenge_id").is_none());
     assert!(v.get("setup_token_id").is_none());
     assert!(v.get("options").is_none());
@@ -435,11 +445,10 @@ async fn pair_start_with_valid_token_returns_challenge() {
 
 #[tokio::test]
 async fn pair_finish_with_invalid_token_returns_401() {
-    // The pair_finish handler rejects an unredeemable
-    // setup token before it ever reaches the WebAuthn
-    // ceremony. With the cutover, the body shape is
-    // `{credential, setup_token}` — no `challenge_id`,
-    // no `setup_token_id` echo.
+    // The token-gated `register_finish` leg rejects an
+    // unredeemable `setupToken` before the WebAuthn ceremony runs.
+    // Body shape: `{credential, setupToken}` (camelCase) — no
+    // `challenge_id`, no `setup_token_id` echo.
     let (state, _dir) = ephemeral_state().await;
     let cdj = URL_SAFE_NO_PAD.encode(
         json!({
@@ -451,7 +460,7 @@ async fn pair_finish_with_invalid_token_returns_401() {
         .as_bytes(),
     );
     let body = json!({
-        "setup_token": "never-issued",
+        "setupToken": "never-issued",
         "credential": {
             "id": "AAAA",
             "rawId": "AAAA",
@@ -464,7 +473,7 @@ async fn pair_finish_with_invalid_token_returns_401() {
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
-                .uri("/auth/pair/verify")
+                .uri("/auth/register/verify")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(json_body(&body))
                 .unwrap(),

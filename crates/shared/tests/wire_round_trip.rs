@@ -26,8 +26,7 @@
 
 use katulong_shared::wire::{
     AccessMethod, AuthFinishResponse, AuthStatusResponse, LoginFinishRequest,
-    PairFinishRequest, PairStartRequest, RegisterFinishRequest, TileDescriptor, TileId,
-    TileKind, TileLayout,
+    RegisterFinishRequest, RegisterOptionsRequest, TileDescriptor, TileId, TileKind, TileLayout,
 };
 use serde_json::{json, Value};
 
@@ -51,17 +50,36 @@ fn auth_finish_response_pins_keys_and_round_trips() {
 }
 
 #[test]
-fn pair_start_request_pins_setup_token_key_and_round_trips() {
-    let req = PairStartRequest {
-        setup_token: "deadbeef".to_string(),
-    };
+fn register_options_request_round_trips_with_and_without_setup_token() {
+    // Phase 0a step 4 collapsed `/auth/pair/options` into
+    // `/auth/register/options`. The server branches on
+    // `setupToken` presence: absent → first-device
+    // localhost-only; present → setup-token-gated pair.
+    //
+    // Wire shape is camelCase (`setupToken`) to match Node's
+    // `public/login.js` which uses `JSON.stringify({ setupToken })`.
+    // An empty body deserialises with `setup_token = None` via
+    // `serde(default)`.
 
+    // Without setup_token: serialises out with the field omitted
+    // (per `skip_serializing_if`).
+    let req = RegisterOptionsRequest::default();
     let value = serde_json::to_value(&req).unwrap();
-    assert_eq!(value, json!({ "setup_token": "deadbeef" }));
+    assert!(value.get("setupToken").is_none());
+    assert!(value.get("setup_token").is_none());
 
-    let s = serde_json::to_string(&req).unwrap();
-    let back: PairStartRequest = serde_json::from_str(&s).unwrap();
-    assert_eq!(back.setup_token, "deadbeef");
+    // An empty `{}` body deserialises into `None`.
+    let parsed: RegisterOptionsRequest = serde_json::from_value(json!({})).unwrap();
+    assert!(parsed.setup_token.is_none());
+
+    // With setup_token: the wire field is camelCase `setupToken`.
+    let req = RegisterOptionsRequest {
+        setup_token: Some("deadbeef".to_string()),
+    };
+    let value = serde_json::to_value(&req).unwrap();
+    assert_eq!(value, json!({ "setupToken": "deadbeef" }));
+    let back: RegisterOptionsRequest = serde_json::from_value(value).unwrap();
+    assert_eq!(back.setup_token.as_deref(), Some("deadbeef"));
 }
 
 #[test]
@@ -102,11 +120,12 @@ fn login_finish_request_envelope_keys_are_snake_case() {
 
 #[test]
 fn register_finish_request_carries_optional_setup_token() {
-    // `setup_token` is reserved for the follow-up PR that
-    // merges register + pair. Today it stays `None` on
-    // first-device; an absent field deserialises as `None`
-    // (serde default) and serialises out as omitted (per
-    // `skip_serializing_if`) so the wire stays minimal.
+    // `RegisterFinishRequest` is `rename_all = "camelCase"`, so the
+    // wire field is `setupToken` (matching Node's
+    // `JSON.stringify({ setupToken })` in `public/login.js`).
+    // Phase 0a step 4 merged the pair flow into this body — `Some`
+    // selects the token-gated pair finish, `None` selects the
+    // first-device localhost-only finish.
     let credential_json = json!({
         "id": "AAAA",
         "rawId": "AAAA",
@@ -117,51 +136,27 @@ fn register_finish_request_carries_optional_setup_token() {
         }
     });
 
-    // Without setup_token: round-trip should NOT emit the field.
+    // Without setupToken: round-trip should NOT emit the field.
     let envelope = json!({ "credential": credential_json.clone() });
     let parsed: RegisterFinishRequest = serde_json::from_value(envelope).unwrap();
     let re_serialized = serde_json::to_value(&parsed).unwrap();
+    assert!(re_serialized.get("setupToken").is_none());
     assert!(re_serialized.get("setup_token").is_none());
     assert!(re_serialized["credential"].is_object());
 
-    // With setup_token: round-trips through the field.
+    // With setupToken: round-trips through the camelCase field.
     let envelope = json!({
         "credential": credential_json,
-        "setup_token": "tok-plaintext",
+        "setupToken": "tok-plaintext",
     });
     let parsed: RegisterFinishRequest = serde_json::from_value(envelope).unwrap();
+    assert_eq!(parsed.setup_token.as_deref(), Some("tok-plaintext"));
     let re_serialized = serde_json::to_value(&parsed).unwrap();
-    assert_eq!(re_serialized["setup_token"], json!("tok-plaintext"));
-}
-
-#[test]
-fn pair_finish_request_carries_plaintext_setup_token() {
-    // The cutover swapped the `setup_token_id` echo for a
-    // re-submitted plaintext `setup_token`; the server
-    // re-resolves the id under the state mutex (Node-
-    // compatible).
-    let credential_json = json!({
-        "id": "AAAA",
-        "rawId": "AAAA",
-        "type": "public-key",
-        "response": {
-            "clientDataJSON": "AAAA",
-            "attestationObject": "AAAA",
-        }
-    });
-
-    let envelope = json!({
-        "credential": credential_json,
-        "setup_token": "tok-plaintext",
-    });
-
-    let parsed: PairFinishRequest = serde_json::from_value(envelope).unwrap();
-    let re_serialized = serde_json::to_value(&parsed).unwrap();
-
+    assert_eq!(re_serialized["setupToken"], json!("tok-plaintext"));
+    // The pair-flow leg of the merged endpoint reads the same field
+    // — no separate `PairFinishRequest` exists post-step-4.
     assert!(re_serialized.get("challenge_id").is_none());
     assert!(re_serialized.get("setup_token_id").is_none());
-    assert_eq!(re_serialized["setup_token"], json!("tok-plaintext"));
-    assert!(re_serialized["credential"].is_object());
 }
 
 #[test]
