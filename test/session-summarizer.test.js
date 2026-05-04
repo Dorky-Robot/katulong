@@ -64,26 +64,20 @@ function makeFakeSessionWithCursor({ name, buffer, alive = true, id = `id_${name
   };
 }
 
-// In-memory summaryStore stand-in. The real store writes JSONL to disk;
-// the summarizer only ever calls `append(id, entry)`, so the fake just
-// records calls per session-id for assertions.
-function makeFakeSummaryStore() {
+// In-memory summary timeline stand-in. Real implementation writes JSONL
+// to disk via createSummaryStore; the summarizer only ever calls
+// `appendSummary(id, entry)`, so the fake just records calls per session
+// id for assertions. `readSummaries` round-trips for test inspection.
+function makeFakeManager(sessions) {
+  const byName = new Map(sessions.map((s) => [s.name, s]));
   const byId = new Map();
   return {
-    append(id, entry) {
+    appendSummary(id, entry) {
       const list = byId.get(id) || [];
       list.push(entry);
       byId.set(id, list);
     },
-    read(id) { return byId.get(id) || []; },
-    migrate() {}, remove() {}, pruneExcept() {},
-  };
-}
-
-function makeFakeManager(sessions) {
-  const byName = new Map(sessions.map((s) => [s.name, s]));
-  return {
-    summaryStore: makeFakeSummaryStore(),
+    readSummaries(id) { return byId.get(id) || []; },
     listSessions() {
       return { sessions: [...byName.values()].map((s) => ({ name: s.name, alive: s.alive })) };
     },
@@ -191,7 +185,7 @@ describe("createSessionSummarizer", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    let history = mgr.summaryStore.read(session.id);
+    let history = mgr.readSummaries(session.id);
     assert.strictEqual(history.length, 1);
     assert.strictEqual(history[0].title, "Phase A");
     assert.ok(Number.isFinite(history[0].at));
@@ -205,7 +199,7 @@ describe("createSessionSummarizer", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    history = mgr.summaryStore.read(session.id);
+    history = mgr.readSummaries(session.id);
     assert.strictEqual(history.length, 2);
     assert.strictEqual(history[1].title, "Phase B");
 
@@ -231,7 +225,7 @@ describe("createSessionSummarizer", () => {
     await s.runOnce();
     await new Promise((r) => setImmediate(r));
 
-    assert.strictEqual(mgr.summaryStore.read(session.id).length, 1);
+    assert.strictEqual(mgr.readSummaries(session.id).length, 1);
     s.stop();
   });
 
@@ -251,7 +245,7 @@ describe("createSessionSummarizer", () => {
     await new Promise((r) => setImmediate(r));
 
     assert.ok(session.meta.summary, "current summary should still be written");
-    assert.strictEqual(mgr.summaryStore.read(null).length, 0);
+    assert.strictEqual(mgr.readSummaries(null).length, 0);
     s.stop();
   });
 
