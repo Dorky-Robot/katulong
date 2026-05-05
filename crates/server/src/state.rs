@@ -9,6 +9,7 @@
 use crate::revocation::RevocationPublisher;
 use crate::session::{OutputRouter, SessionManager};
 use katulong_auth::{AuthStore, WebAuthnService};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast::Receiver;
 
@@ -27,6 +28,18 @@ pub struct ServerConfig {
     /// Whether remote cookies should carry the `Secure` flag. True for
     /// tunnel/TLS deployments, false for plain-http dev over loopback.
     pub cookie_secure: bool,
+    /// Path to the trunk-built Leptos frontend bundle. Resolved at
+    /// startup from the `KATULONG_WEB_DIST` env var (or the default
+    /// `crates/web/dist`) and threaded through state so the `/`
+    /// handler can read `index.html` for CSRF meta-tag injection
+    /// without re-reading the env var on every request.
+    ///
+    /// Plumbing the dist path through state instead of resolving
+    /// it lazily inside the handler makes integration tests cleanly
+    /// parallelizable — each test points its own `AppState` at a
+    /// scratch dist directory, where lazy env-var resolution would
+    /// race across `cargo test`'s default thread pool.
+    pub web_dist: PathBuf,
 }
 
 /// The handle threaded through every handler and extractor.

@@ -3,8 +3,31 @@
 //! Thin wrapper over `webauthn-rs` that owns the in-memory challenge store
 //! between `start_*` and `finish_*` requests. Challenges are time-limited
 //! and single-use: `finish_*` removes the entry before verifying, so a
-//! replayed response against a valid challenge ID fails by missing state
+//! replayed response against a valid challenge fails by missing state
 //! rather than by re-verifying against a resident challenge.
+//!
+//! # Challenge lookup model — the cutover reshape
+//!
+//! Earlier iterations of this module returned a server-issued
+//! `ChallengeId` to the client and required the client to echo it back on
+//! `finish_*`. That diverged from the Node implementation
+//! (`@simplewebauthn`'s pattern), where the verify endpoint recovers the
+//! challenge from the credential's own `clientDataJSON.challenge`. Phase
+//! 0a-1 of the cutover aligns Rust with Node: `start_*` now returns just
+//! the WebAuthn options, and `finish_*` extracts the challenge from
+//! `credential.response.clientDataJSON` and uses it as the lookup key into
+//! the pending map.
+//!
+//! Why this shape:
+//! - It matches Node so the existing JS frontend works against the Rust
+//!   server unchanged. That's the whole point of the cutover.
+//! - It removes a round-tripped server-issued id, which was extra wire
+//!   surface and an extra reconnect-and-replay vector.
+//! - The challenge is already cryptographically bound to the credential
+//!   via WebAuthn's signature over `clientDataJSON`. Looking up by
+//!   challenge and then verifying the signature gives the same single-use
+//!   property as the old id-keyed flow — a replay either lands on a
+//!   missing-from-map state (challenge consumed) or fails verification.
 //!
 //! # RP ID and origin come from configuration
 //!
@@ -33,7 +56,6 @@
 //! we pass only `Passkey` values we already stored, which encode the same
 //! intent.
 
-use crate::random::random_hex;
 use crate::{AuthError, Credential, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use std::collections::HashMap;
@@ -43,6 +65,14 @@ use url::Url;
 use uuid::Uuid;
 use webauthn_rs::prelude::*;
 use webauthn_rs::{Webauthn, WebauthnBuilder};
+
+/// Lookup key for the pending-challenge maps. Holds the
+/// URL-safe-base64 encoding of the random WebAuthn challenge
+/// bytes — the same string the browser includes in
+/// `clientDataJSON.challenge`. Keyed as a string (rather than
+/// raw bytes) so `start_*` and `finish_*` can do a direct
+/// `HashMap::get` without re-encoding.
+type ChallengeKey = String;
 
 /// How long a generated challenge stays valid on the server. Five minutes
 /// is comfortably longer than any real user would take to respond to a
@@ -62,11 +92,6 @@ const CHALLENGE_TTL: Duration = Duration::from_secs(5 * 60);
 /// attacker who holds open registration/auth starts without ever finishing,
 /// which would otherwise consume memory until OOM.
 const MAX_PENDING_CHALLENGES: usize = 1024;
-
-/// Opaque handle returned to the client after `start_*`. The client passes it
-/// back on `finish_*` so we can look up the corresponding webauthn-rs state.
-/// 16 random bytes, hex-encoded (32 chars).
-pub type ChallengeId = String;
 
 /// Materialised outcome of `finish_authentication`.
 ///
@@ -106,8 +131,8 @@ pub struct VerifiedAuthentication {
 /// exchange.
 pub struct WebAuthnService {
     webauthn: Webauthn,
-    pending_registrations: Mutex<HashMap<ChallengeId, (PasskeyRegistration, SystemTime)>>,
-    pending_authentications: Mutex<HashMap<ChallengeId, (PasskeyAuthentication, SystemTime)>>,
+    pending_registrations: Mutex<HashMap<ChallengeKey, (PasskeyRegistration, SystemTime)>>,
+    pending_authentications: Mutex<HashMap<ChallengeKey, (PasskeyAuthentication, SystemTime)>>,
 }
 
 impl WebAuthnService {
@@ -146,7 +171,7 @@ impl WebAuthnService {
         user_display_name: &str,
         existing: &[Credential],
         now: SystemTime,
-    ) -> Result<(ChallengeId, CreationChallengeResponse)> {
+    ) -> Result<CreationChallengeResponse> {
         let exclude: Vec<CredentialID> = existing
             .iter()
             .filter_map(|c| decode_credential_id(&c.id).ok())
@@ -158,15 +183,22 @@ impl WebAuthnService {
             .start_passkey_registration(user_unique_id, user_name, user_display_name, exclude)
             .map_err(|e| AuthError::WebAuthn(e.to_string()))?;
 
-        let id = random_hex(16);
+        // Use the challenge bytes themselves (URL-safe-base64
+        // encoded) as the map key. They're already random
+        // (CSPRNG inside webauthn-rs) and the browser will
+        // echo the exact same encoding in
+        // `clientDataJSON.challenge`, so `finish_registration`
+        // can recover the key without round-tripping a
+        // separate id.
+        let key = encode_challenge(ccr.public_key.challenge.as_ref());
         insert_pending(
             &self.pending_registrations,
-            id.clone(),
+            key,
             reg_state,
             now + CHALLENGE_TTL,
             now,
         )?;
-        Ok((id, ccr))
+        Ok(ccr)
     }
 
     /// Finish a registration ceremony, producing a `Credential` ready to be
@@ -175,15 +207,24 @@ impl WebAuthnService {
     /// for the attacker to try again.
     pub fn finish_registration(
         &self,
-        challenge_id: &str,
         response: &RegisterPublicKeyCredential,
         now: SystemTime,
     ) -> Result<Credential> {
+        // Recover the challenge from the credential's
+        // `clientDataJSON.challenge`. WebAuthn already binds
+        // the challenge into the signed-over data, so this
+        // string is the same one we issued in
+        // `start_registration` if the credential is genuine —
+        // and an attacker who fabricated a different challenge
+        // would either miss the map entirely (lookup fails) or
+        // mismatch the in-flight `PasskeyRegistration` (verify
+        // fails). Either way the ceremony rejects.
+        let key = extract_challenge_from_credential(response.response.client_data_json.as_ref())?;
         let (reg_state, expires_at) = self
             .pending_registrations
             .lock()
             .expect("challenge store mutex poisoned")
-            .remove(challenge_id)
+            .remove(&key)
             .ok_or(AuthError::ChallengeNotFound)?;
         if now >= expires_at {
             return Err(AuthError::ChallengeNotFound);
@@ -219,6 +260,8 @@ impl WebAuthnService {
             counter: 0,
             created_at: now,
             setup_token_id: None,
+            user_agent: String::new(),
+            last_used_at: None,
         })
     }
 
@@ -234,7 +277,7 @@ impl WebAuthnService {
         &self,
         credentials: &[Credential],
         now: SystemTime,
-    ) -> Result<(ChallengeId, RequestChallengeResponse)> {
+    ) -> Result<RequestChallengeResponse> {
         let passkeys: Vec<Passkey> = credentials
             .iter()
             .filter_map(|c| match serde_json::from_slice(&c.public_key) {
@@ -266,15 +309,15 @@ impl WebAuthnService {
             .start_passkey_authentication(&passkeys)
             .map_err(|e| AuthError::WebAuthn(e.to_string()))?;
 
-        let id = random_hex(16);
+        let key = encode_challenge(rcr.public_key.challenge.as_ref());
         insert_pending(
             &self.pending_authentications,
-            id.clone(),
+            key,
             auth_state,
             now + CHALLENGE_TTL,
             now,
         )?;
-        Ok((id, rcr))
+        Ok(rcr)
     }
 
     /// Finish an authentication ceremony.
@@ -298,15 +341,15 @@ impl WebAuthnService {
     /// pattern the reshape was meant to close.
     pub fn finish_authentication(
         &self,
-        challenge_id: &str,
         response: &PublicKeyCredential,
         now: SystemTime,
     ) -> Result<VerifiedAuthentication> {
+        let key = extract_challenge_from_credential(response.response.client_data_json.as_ref())?;
         let (auth_state, expires_at) = self
             .pending_authentications
             .lock()
             .expect("challenge store mutex poisoned")
-            .remove(challenge_id)
+            .remove(&key)
             .ok_or(AuthError::ChallengeNotFound)?;
         if now >= expires_at {
             return Err(AuthError::ChallengeNotFound);
@@ -334,12 +377,11 @@ impl WebAuthnService {
     /// HTTP handlers can't forget the link.
     pub fn finish_paired_registration(
         &self,
-        challenge_id: &str,
         response: &RegisterPublicKeyCredential,
         setup_token_id: String,
         now: SystemTime,
     ) -> Result<Credential> {
-        let cred = self.finish_registration(challenge_id, response, now)?;
+        let cred = self.finish_registration(response, now)?;
         Ok(Credential {
             setup_token_id: Some(setup_token_id),
             ..cred
@@ -369,8 +411,8 @@ impl WebAuthnService {
 /// The prune runs before the cap check so an organic build-up of stale
 /// entries doesn't lock out legitimate starts.
 fn insert_pending<T>(
-    store: &Mutex<HashMap<ChallengeId, (T, SystemTime)>>,
-    id: ChallengeId,
+    store: &Mutex<HashMap<ChallengeKey, (T, SystemTime)>>,
+    id: ChallengeKey,
     value: T,
     expires_at: SystemTime,
     now: SystemTime,
@@ -438,6 +480,40 @@ fn encode_credential_id(cred_id: &CredentialID) -> String {
     URL_SAFE_NO_PAD.encode(cred_id.as_ref())
 }
 
+/// URL-safe-base64 encode the challenge bytes that
+/// `webauthn-rs` minted into a `CreationChallengeResponse` /
+/// `RequestChallengeResponse`. This is the same encoding
+/// `clientDataJSON.challenge` uses, which is why the
+/// resulting string is a stable lookup key on both ends of
+/// the ceremony.
+fn encode_challenge(challenge: &[u8]) -> String {
+    URL_SAFE_NO_PAD.encode(challenge)
+}
+
+/// Extract the `challenge` field from a credential's
+/// `clientDataJSON`. The `client_data_json` argument is the
+/// raw bytes (already base64url-decoded by webauthn-rs-proto
+/// at deserialize time) — we just JSON-parse it and pluck the
+/// `challenge` string back out.
+///
+/// Returns `WebAuthn(_)` rather than `ChallengeNotFound` on
+/// parse failure: a credential whose clientDataJSON isn't
+/// valid JSON, or doesn't carry a `challenge` field, is a
+/// malformed payload — distinct from "the challenge isn't in
+/// our pending map." The HTTP layer maps both to 401 today,
+/// so the operator-log distinction is the only place this
+/// matters.
+fn extract_challenge_from_credential(client_data_json: &[u8]) -> Result<String> {
+    let v: serde_json::Value = serde_json::from_slice(client_data_json)
+        .map_err(|e| AuthError::WebAuthn(format!("clientDataJSON parse: {e}")))?;
+    v.get("challenge")
+        .and_then(|c| c.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            AuthError::WebAuthn("clientDataJSON missing challenge field".into())
+        })
+}
+
 fn decode_credential_id(s: &str) -> Result<CredentialID> {
     let bytes = URL_SAFE_NO_PAD
         .decode(s)
@@ -477,9 +553,14 @@ mod tests {
     }
 
     #[test]
-    fn start_registration_returns_unique_challenge_ids() {
+    fn start_registration_returns_unique_challenge_keys() {
+        // Issue two challenges back-to-back and confirm the
+        // server-side pending map keys (which are now the
+        // base64url-encoded challenges themselves) differ —
+        // proves webauthn-rs is minting fresh CSPRNG output
+        // and we're not collapsing them on insertion.
         let svc = service();
-        let (id1, _) = svc
+        let ccr1 = svc
             .start_registration(
                 Uuid::new_v4(),
                 "felix",
@@ -488,7 +569,7 @@ mod tests {
                 SystemTime::UNIX_EPOCH,
             )
             .unwrap();
-        let (id2, _) = svc
+        let ccr2 = svc
             .start_registration(
                 Uuid::new_v4(),
                 "felix",
@@ -497,30 +578,59 @@ mod tests {
                 SystemTime::UNIX_EPOCH,
             )
             .unwrap();
-        assert_ne!(id1, id2);
-        assert_eq!(id1.len(), 32);
+        let k1 = encode_challenge(ccr1.public_key.challenge.as_ref());
+        let k2 = encode_challenge(ccr2.public_key.challenge.as_ref());
+        assert_ne!(k1, k2);
+        let guard = svc.pending_registrations.lock().unwrap();
+        assert!(guard.contains_key(&k1));
+        assert!(guard.contains_key(&k2));
     }
 
     #[test]
     fn finish_registration_rejects_unknown_challenge() {
+        // A credential whose clientDataJSON carries a challenge
+        // we never issued must reject as ChallengeNotFound.
         let svc = service();
-        let fake = fake_register_response();
+        let fake = fake_register_response_with_challenge("never-issued");
         let err = svc
-            .finish_registration("nope", &fake, SystemTime::UNIX_EPOCH)
+            .finish_registration(&fake, SystemTime::UNIX_EPOCH)
             .unwrap_err();
         assert!(matches!(err, AuthError::ChallengeNotFound));
+    }
+
+    #[test]
+    fn finish_registration_rejects_credential_with_unparseable_client_data() {
+        // A credential whose clientDataJSON isn't valid JSON
+        // can't yield a lookup key — surface as a WebAuthn
+        // error rather than silently falling through to a
+        // ChallengeNotFound. The HTTP layer maps both to 401,
+        // so the distinction is operator-log only.
+        let svc = service();
+        let fake: RegisterPublicKeyCredential = serde_json::from_str(
+            r#"{
+                "id": "AAAA",
+                "rawId": "AAAA",
+                "response": { "clientDataJSON": "AAAA", "attestationObject": "" },
+                "type": "public-key",
+                "extensions": {}
+            }"#,
+        )
+        .unwrap();
+        let err = svc.finish_registration(&fake, SystemTime::UNIX_EPOCH).unwrap_err();
+        assert!(matches!(err, AuthError::WebAuthn(_)));
     }
 
     #[test]
     fn finish_registration_rejects_expired_challenge() {
         let svc = service();
         let start = SystemTime::UNIX_EPOCH;
-        let (id, _) = svc
+        let ccr = svc
             .start_registration(Uuid::new_v4(), "u", "U", &[], start)
             .unwrap();
-        let fake = fake_register_response();
+        let challenge_b64 = encode_challenge(ccr.public_key.challenge.as_ref());
+        let fake = fake_register_response_with_challenge(&challenge_b64);
         let later = start + CHALLENGE_TTL + Duration::from_secs(1);
-        let err = svc.finish_registration(&id, &fake, later).unwrap_err();
+        let err = svc.finish_registration(&fake, later).unwrap_err();
         assert!(matches!(err, AuthError::ChallengeNotFound));
     }
 
@@ -530,13 +640,14 @@ mod tests {
         // attacker could keep trying against the same server-side state.
         let svc = service();
         let start = SystemTime::UNIX_EPOCH;
-        let (id, _) = svc
+        let ccr = svc
             .start_registration(Uuid::new_v4(), "u", "U", &[], start)
             .unwrap();
-        let fake = fake_register_response();
-        let _ = svc.finish_registration(&id, &fake, start);
-        // Second attempt finds no state even with the same id.
-        let err = svc.finish_registration(&id, &fake, start).unwrap_err();
+        let challenge_b64 = encode_challenge(ccr.public_key.challenge.as_ref());
+        let fake = fake_register_response_with_challenge(&challenge_b64);
+        let _ = svc.finish_registration(&fake, start);
+        // Second attempt finds no state even with the same challenge.
+        let err = svc.finish_registration(&fake, start).unwrap_err();
         assert!(matches!(err, AuthError::ChallengeNotFound));
     }
 
@@ -560,6 +671,8 @@ mod tests {
             counter: 0,
             created_at: SystemTime::UNIX_EPOCH,
             setup_token_id: None,
+            user_agent: String::new(),
+            last_used_at: None,
         };
         let err = svc
             .start_authentication(std::slice::from_ref(&bad), SystemTime::UNIX_EPOCH)
@@ -572,7 +685,7 @@ mod tests {
     fn prune_expired_challenges_removes_stale_entries() {
         let svc = service();
         let start = SystemTime::UNIX_EPOCH;
-        let (_, _) = svc
+        let _ = svc
             .start_registration(Uuid::new_v4(), "u", "U", &[], start)
             .unwrap();
         assert_eq!(svc.pending_registrations.lock().unwrap().len(), 1);
@@ -584,7 +697,7 @@ mod tests {
     fn insert_pending_caps_the_map_after_pruning() {
         // Uses a bare `Mutex<HashMap<_, ((), SystemTime)>>` so we can
         // exercise the cap without needing real webauthn-rs state objects.
-        let store: Mutex<HashMap<ChallengeId, ((), SystemTime)>> = Mutex::new(HashMap::new());
+        let store: Mutex<HashMap<ChallengeKey, ((), SystemTime)>> = Mutex::new(HashMap::new());
         let now = SystemTime::UNIX_EPOCH;
         let future = now + Duration::from_secs(600);
 
@@ -619,26 +732,36 @@ mod tests {
             counter: 0,
             created_at: SystemTime::UNIX_EPOCH,
             setup_token_id: None,
+            user_agent: String::new(),
+            last_used_at: None,
         };
         let err = bad.to_passkey().unwrap_err();
         assert!(matches!(err, AuthError::WebAuthn(_)));
     }
 
-    fn fake_register_response() -> RegisterPublicKeyCredential {
-        // Syntactically minimal, cryptographically invalid — enough to
-        // exercise the challenge lifecycle without running real crypto.
-        serde_json::from_str(
-            r#"{
-                "id": "AAAA",
-                "rawId": "AAAA",
-                "response": {
-                    "clientDataJSON": "",
-                    "attestationObject": ""
-                },
-                "type": "public-key",
-                "extensions": {}
-            }"#,
-        )
-        .expect("fake response should parse")
+    /// Build a syntactically minimal `RegisterPublicKeyCredential`
+    /// whose `clientDataJSON` carries the given challenge. Real
+    /// authenticators would also fill in `type`, `origin`, etc., but
+    /// the lookup-key code only cares about the `challenge` field.
+    fn fake_register_response_with_challenge(
+        challenge_b64url: &str,
+    ) -> RegisterPublicKeyCredential {
+        let client_data = serde_json::json!({
+            "type": "webauthn.create",
+            "challenge": challenge_b64url,
+            "origin": "https://katulong.test",
+        });
+        let client_data_b64 = URL_SAFE_NO_PAD.encode(client_data.to_string().as_bytes());
+        let body = serde_json::json!({
+            "id": "AAAA",
+            "rawId": "AAAA",
+            "response": {
+                "clientDataJSON": client_data_b64,
+                "attestationObject": "",
+            },
+            "type": "public-key",
+            "extensions": {},
+        });
+        serde_json::from_value(body).expect("fake response should parse")
     }
 }

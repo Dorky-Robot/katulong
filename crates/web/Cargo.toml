@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Cross-crate wire types — single source of truth for the
-# JSON shapes that flow over /api/auth/*. The server crate
+# JSON shapes that flow over /auth/* + /api/{tokens,credentials}. The server crate
 # uses the same definitions to build responses and parse
 # requests, so a field rename or `#[serde(rename = ...)]`
 # change is caught by the type checker on both sides instead

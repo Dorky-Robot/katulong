@@ -202,6 +202,55 @@ impl AuthState {
         }
     }
 
+    /// Stamp `last_used_at` on a credential. No-op if the id isn't
+    /// found. Called from inside `transact` after a successful login
+    /// so the same write that bumps the WebAuthn counter also records
+    /// usage — keeps the device-management UI's "last seen" column
+    /// honest without a second writer that could race.
+    pub fn touch_credential(&self, id: &str, now: SystemTime) -> Self {
+        Self {
+            credentials: self
+                .credentials
+                .iter()
+                .map(|c| {
+                    if c.id == id {
+                        Credential {
+                            last_used_at: Some(now),
+                            ..c.clone()
+                        }
+                    } else {
+                        c.clone()
+                    }
+                })
+                .collect(),
+            ..self.clone()
+        }
+    }
+
+    /// Update a setup token's `name`. No-op if the id isn't found.
+    /// PATCH `/api/tokens/:id` is the only caller; the closure re-checks
+    /// existence under the mutex via the boolean a separate `find_setup_token`
+    /// returns, so this transition stays a pure rewrite.
+    pub fn update_setup_token_name(&self, id: &str, name: String) -> Self {
+        Self {
+            setup_tokens: self
+                .setup_tokens
+                .iter()
+                .map(|t| {
+                    if t.id == id {
+                        SetupToken {
+                            name: Some(name.clone()),
+                            ..t.clone()
+                        }
+                    } else {
+                        t.clone()
+                    }
+                })
+                .collect(),
+            ..self.clone()
+        }
+    }
+
     /// Add or replace a session by its stored hash (upsert — mirrors
     /// `upsert_credential`). The `Session` argument already carries
     /// `token_hash`; dedup works on that value.
@@ -227,6 +276,24 @@ impl AuthState {
                 .filter(|s| !ct_eq_str(&s.token_hash, &target))
                 .cloned()
                 .collect(),
+            ..self.clone()
+        }
+    }
+
+    /// Drop every session, regardless of expiry or owning credential.
+    ///
+    /// Used by `POST /auth/revoke-all` (the "Sign out everywhere" verb)
+    /// — wipes every session record, which has the side effect of
+    /// invalidating every paired CSRF token at the same time
+    /// (`Session.csrf_token` lives on the row that just disappeared).
+    /// Credentials and setup tokens are intentionally NOT touched:
+    /// the user keeps their passkeys; they just have to re-auth on
+    /// every previously-signed-in device. Same shape as Node's
+    /// `revokeAllLoginTokens` (which clears `loginTokens`, leaves
+    /// the rest alone).
+    pub fn remove_all_sessions(&self) -> Self {
+        Self {
+            sessions: Vec::new(),
             ..self.clone()
         }
     }
@@ -449,6 +516,8 @@ mod tests {
             counter: 0,
             created_at: epoch_plus(0),
             setup_token_id: None,
+            user_agent: String::new(),
+            last_used_at: None,
         }
     }
 
@@ -514,6 +583,18 @@ mod tests {
         assert!(s.valid_session("t", epoch_plus(499)).is_some());
         assert!(s.valid_session("t", epoch_plus(500)).is_none());
         assert!(s.valid_session("t", epoch_plus(501)).is_none());
+    }
+
+    #[test]
+    fn remove_all_sessions_clears_every_row_keeps_credentials() {
+        let s = AuthState::new()
+            .upsert_credential(cred("a"))
+            .upsert_credential(cred("b"))
+            .upsert_session(sess("t1", "a", 1000))
+            .upsert_session(sess("t2", "b", 1000))
+            .remove_all_sessions();
+        assert!(s.sessions.is_empty(), "every session row dropped");
+        assert_eq!(s.credentials.len(), 2, "credentials are not collateral damage");
     }
 
     #[test]

@@ -54,6 +54,13 @@ tower-http = { version = "0.5", features = ["fs"] }
 tempfile = { workspace = true }
 tower = { version = "0.4", features = ["util"] }
 http-body-util = "0.1"
+# Used in integration tests to build realistic WebAuthn
+# `clientDataJSON` payloads — the cutover keys the pending
+# challenge map by the credential's own
+# `clientDataJSON.challenge` (matching Node's
+# `extractChallenge`), so test fakes have to base64url a
+# real `{type, challenge, origin}` JSON object.
+base64 = "0.22"
 # `test-util` enables `#[tokio::test(start_paused = true)]` used by
 # the output coalescer's timer tests. `tokio`'s `full` feature
 # does NOT include it — `test-util` is explicitly test-only and

@@ -28,13 +28,18 @@ use tempfile::TempDir;
 
 /// Canonical test config. `cookie_secure = true` matches a remote
 /// deployment; tests that specifically need the plain-http loopback
-/// path construct their own.
+/// path construct their own. `web_dist` points at a non-existent
+/// path by default — tests that exercise `/` build their own state
+/// pointing at a tempdir-rooted dist directory; everything else
+/// hits ServeDir's 404 path which is tolerated since no test in
+/// the existing suite asserts against a static asset response.
 pub fn cfg() -> ServerConfig {
     ServerConfig {
         public_origin: "https://katulong.test".into(),
         rp_id: "katulong.test".into(),
         rp_name: "Katulong Test".into(),
         cookie_secure: true,
+        web_dist: std::path::PathBuf::from("/tmp/katulong-test-no-dist"),
     }
 }
 
@@ -62,6 +67,8 @@ pub fn stub_credential(id: &str) -> Credential {
         counter: 0,
         created_at: SystemTime::UNIX_EPOCH,
         setup_token_id: None,
+        user_agent: String::new(),
+        last_used_at: None,
     }
 }
 

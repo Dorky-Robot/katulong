@@ -1,7 +1,7 @@
 //! Credential-revocation broadcast channel.
 //!
-//! When a credential is removed (directly via `/api/auth/devices/:id`
-//! or transitively via `/api/auth/setup-tokens/:id` cascading to its
+//! When a credential is removed (directly via `/api/credentials/:id`
+//! or transitively via `/api/tokens/:id` cascading to its
 //! paired device), every long-lived connection bound to that
 //! credential must tear down immediately. Without that, a
 //! WebSocket — or a future WebRTC peer-link — continues streaming
@@ -73,13 +73,40 @@ use tokio::sync::broadcast::{self, error::SendError, Receiver, Sender};
 /// operator would have to be revoking credentials in a tight loop.
 const REVOCATION_CHANNEL_CAPACITY: usize = 64;
 
-/// Event published when a credential is revoked. Carries only the
-/// credential id, because that's all any subscriber needs — they
-/// compare against the credential their connection is bound to and
-/// tear down on match.
+/// Event published on the revocation channel.
+///
+/// Two shapes:
+///
+/// - `Credential` — a single credential was revoked (direct delete,
+///   or cascade from a setup-token revoke). Subscribers compare the
+///   carried `credential_id` to the one their connection is bound to
+///   and tear down on match. The single-credential case is the
+///   overwhelming common path.
+///
+/// - `All` — every active long-lived connection must close,
+///   regardless of which credential (or none, for localhost) it's
+///   bound to. Emitted by `POST /auth/revoke-all` ("Sign out
+///   everywhere"). The Node implementation expressed the same
+///   intent via a separate `close-all-websockets` bridge event,
+///   keeping the credential-revocation broadcast strictly
+///   per-credential. Folding it into this same channel keeps
+///   transport handlers reading from one source of truth: a
+///   future WebRTC peer-link gets close-all behaviour for free
+///   without re-plumbing a second broadcast.
+///
+/// Adding a third variant later (e.g., per-session revoke when
+/// "log out this device" lands separate from credential delete)
+/// stays a non-breaking change because subscribers exhaustively
+/// match — the compiler will flag every receiver that needs an
+/// update.
 #[derive(Debug, Clone)]
-pub struct RevocationEvent {
-    pub credential_id: String,
+pub enum RevocationEvent {
+    /// A single credential was revoked. Connections bound to it
+    /// must tear down; others continue.
+    Credential { credential_id: String },
+    /// Every active long-lived connection must close. The
+    /// "Sign out everywhere" admin action.
+    All,
 }
 
 /// Sender half of the broadcast channel, held by `AppState`. Cheap
@@ -95,16 +122,16 @@ impl RevocationPublisher {
         Self { sender }
     }
 
-    /// Publish a revocation. The `Result` conveys whether any
-    /// subscribers received it, which callers are free to ignore:
-    /// with zero subscribers the channel drops the event, and
-    /// that's correct — nothing is currently holding a connection
-    /// against that credential.
+    /// Publish a single-credential revocation. The `Result` conveys
+    /// whether any subscribers received it, which callers are free
+    /// to ignore: with zero subscribers the channel drops the
+    /// event, and that's correct — nothing is currently holding a
+    /// connection against that credential.
     pub fn emit(&self, credential_id: impl Into<String>) {
-        let event = RevocationEvent {
-            credential_id: credential_id.into(),
+        let credential_id = credential_id.into();
+        let event = RevocationEvent::Credential {
+            credential_id: credential_id.clone(),
         };
-        let credential_id = event.credential_id.clone();
         match self.sender.send(event) {
             Ok(receiver_count) => {
                 tracing::debug!(
@@ -121,6 +148,27 @@ impl RevocationPublisher {
                     credential_id = %credential_id,
                     "revocation broadcast: no subscribers"
                 );
+            }
+        }
+    }
+
+    /// Publish a "close every active connection" event. Used by
+    /// `POST /auth/revoke-all` after the auth-state mutex commits
+    /// the session wipe. Same broadcast channel as `emit` — every
+    /// subscriber sees the variant and tears down regardless of
+    /// the credential it's bound to (including localhost-bound
+    /// connections, which are otherwise immune to per-credential
+    /// events because they have no credential id).
+    pub fn emit_all(&self) {
+        match self.sender.send(RevocationEvent::All) {
+            Ok(receiver_count) => {
+                tracing::debug!(
+                    subscribers = receiver_count,
+                    "revoke-all broadcast emitted"
+                );
+            }
+            Err(SendError(_)) => {
+                tracing::trace!("revoke-all broadcast: no subscribers");
             }
         }
     }
@@ -152,10 +200,28 @@ mod tests {
         let mut b = pub_.subscribe();
         pub_.emit("cred-1");
 
-        let got_a = a.recv().await.expect("subscriber a received");
-        assert_eq!(got_a.credential_id, "cred-1");
-        let got_b = b.recv().await.expect("subscriber b received");
-        assert_eq!(got_b.credential_id, "cred-1");
+        match a.recv().await.expect("subscriber a received") {
+            RevocationEvent::Credential { credential_id } => assert_eq!(credential_id, "cred-1"),
+            other => panic!("expected Credential variant, got {other:?}"),
+        }
+        match b.recv().await.expect("subscriber b received") {
+            RevocationEvent::Credential { credential_id } => assert_eq!(credential_id, "cred-1"),
+            other => panic!("expected Credential variant, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn emit_all_publishes_close_everything_variant() {
+        // The revoke-all path: every subscriber sees `All`, which
+        // their handler interprets as "tear down regardless of
+        // bound credential."
+        let pub_ = RevocationPublisher::new();
+        let mut rx = pub_.subscribe();
+        pub_.emit_all();
+        match rx.recv().await.expect("subscriber received") {
+            RevocationEvent::All => {}
+            other => panic!("expected All variant, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -175,11 +241,13 @@ mod tests {
         let mut late = pub_.subscribe();
 
         pub_.emit("cred-later");
-        let got = late.recv().await.expect("late subscriber gets only post-subscribe events");
-        assert_eq!(
-            got.credential_id, "cred-later",
-            "late subscriber must not see 'cred-earlier' — it connected after that revocation"
-        );
+        match late.recv().await.expect("late subscriber gets only post-subscribe events") {
+            RevocationEvent::Credential { credential_id } => assert_eq!(
+                credential_id, "cred-later",
+                "late subscriber must not see 'cred-earlier' — it connected after that revocation"
+            ),
+            other => panic!("expected Credential variant, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -188,7 +256,9 @@ mod tests {
         let pub_b = pub_a.clone();
         let mut rx = pub_a.subscribe();
         pub_b.emit("cred-1");
-        let got = rx.recv().await.unwrap();
-        assert_eq!(got.credential_id, "cred-1");
+        match rx.recv().await.unwrap() {
+            RevocationEvent::Credential { credential_id } => assert_eq!(credential_id, "cred-1"),
+            other => panic!("expected Credential variant, got {other:?}"),
+        }
     }
 }

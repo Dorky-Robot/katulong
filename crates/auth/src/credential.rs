@@ -24,4 +24,19 @@ pub struct Credential {
     /// cleanup logic unanswerable without it).
     #[serde(default)]
     pub setup_token_id: Option<String>,
+    /// User-Agent string captured at register/pair time. Surfaced on the
+    /// `/api/credentials` and `/api/tokens` device-management UI so the
+    /// operator can match a passkey row to the device that minted it
+    /// (a phone vs a laptop, Safari vs Chrome). Defaults to empty
+    /// when missing so older state files load without a migration —
+    /// matches Node's `userAgent || 'Unknown'` tolerance.
+    #[serde(default)]
+    pub user_agent: String,
+    /// Wall-clock unix-millis of the last successful authentication
+    /// against this credential. `None` until the credential is used at
+    /// least once. Updated by `apply_authentication` so the same
+    /// transition that bumps the WebAuthn counter also stamps usage —
+    /// no second writer means no extra TOCTOU surface.
+    #[serde(default, with = "crate::state::systime_opt")]
+    pub last_used_at: Option<SystemTime>,
 }
