@@ -9,16 +9,23 @@
 //!
 //! # What's in scope
 //!
-//! - **Handshake gate** (slice 9e): `Hello` (server) → `HelloAck`
-//!   (client) → `Attach` (client) → `Attached` (server). The
-//!   phase state machine enforces the order; messages arriving
-//!   in the wrong phase trigger a typed `Error` and clean close.
-//! - **Output forwarding** (slice 9f): after `Attached`, the
-//!   handler subscribes to `state.output_router` for its pane
-//!   and forwards decoded bytes through the coalescer to
-//!   `ServerMessage::Output { data, seq }`. `seq` is per-
-//!   connection-monotonic (Node scar `da6907f` — lets the
-//!   client detect gaps on reconnect).
+//! - **Attach gate**: connection starts in `AwaitingAttach`. The
+//!   first valid client message must be `Attach`; anything else
+//!   in that phase is a protocol violation and closes with
+//!   `error_code::UNEXPECTED_MESSAGE`. Phase 0b of the
+//!   Node-cutover removed the prior `Hello`/`HelloAck` handshake
+//!   — Node's SPA never spoke that, and serving the SPA against
+//!   the Rust server is the cutover goal. Messages now route
+//!   straight from WS-open into the attach state machine.
+//! - **Output forwarding** (slice 9f, updated phase 0b): after
+//!   `Attach`, the handler subscribes to `state.output_router`
+//!   for its pane and forwards decoded bytes through the
+//!   coalescer to `ServerMessage::Output { session, data,
+//!   from_seq, cursor }`. `from_seq` is the byte offset of the
+//!   first byte in `data`; `cursor` is the offset of the byte
+//!   AFTER the last (matches Node's
+//!   `lib/ws-manager.js:127-129` shape). The Node SPA advances
+//!   its `pullManager.cursor` to `cursor` on receipt.
 //! - **Output coalescing** (slice 9f): buffer bursts with a
 //!   2 ms idle / 16 ms cap schedule (Node scars
 //!   `d311168`/`066dab2`). Individual `%output` chunks below
@@ -72,27 +79,31 @@
 //! snap whenever a variant crosses phases without explicit
 //! consent.
 
-use crate::log_util::sanitize_for_log;
 use crate::revocation::RevocationEvent;
 use crate::session::output::Coalescer;
 use crate::session::ring::ReplaySlice;
 use crate::session::router::{OutputChunk, SubscribeError, SubscriberId};
 use crate::state::AppState;
-use crate::transport::{ClientMessage, ServerMessage, TransportHandle, PROTOCOL_VERSION};
+use crate::transport::{ClientMessage, ServerMessage, TransportHandle};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-/// How long we wait between connection upgrade and receiving
-/// `HelloAck` before closing. WS-level keepalive keeps the socket
+/// How long we wait between WS upgrade and the client's first
+/// `Attach` before closing. WS-level keepalive keeps the socket
 /// alive indefinitely; without this a silent peer can pin a
 /// connection forever. Generous enough that a high-latency real
 /// client completes well within it; short enough that a scraper
 /// probing `/ws` with no cookie (shouldn't happen — auth gates the
 /// upgrade) or a half-open connection is reaped promptly.
-const HANDSHAKE_TIMEOUT_SECS: u64 = 10;
+///
+/// Phase 0b of the Node-cutover renamed this from
+/// `HANDSHAKE_TIMEOUT_SECS`; there is no in-band handshake
+/// anymore (the Node SPA connects and sends `attach` directly).
+/// Same value, same purpose: bound the awaiting-attach phase.
+const ATTACH_TIMEOUT_SECS: u64 = 10;
 
 /// Output-idle window before a pending resize can apply. Node
 /// scar `066dab2`: SIGWINCH arriving mid-render interleaves old
@@ -109,23 +120,21 @@ const RESIZE_GATE: Duration = Duration::from_millis(50);
 /// paused between frames.
 const RESIZE_MAX_DEFER: Duration = Duration::from_millis(500);
 
-/// Cap on the protocol-version string we echo back in error
-/// messages. Far shorter than the Origin cap in `ws.rs` because the
-/// version string is a short identifier (`"katulong/0.1"`) — if a
-/// client sends something larger, it's either buggy or crafted, and
-/// 32 chars is plenty to identify the prefix without letting an
-/// attacker flood logs with per-request megabyte payloads.
-const LOG_PROTOCOL_VERSION_MAX_LEN: usize = 32;
-
 /// Error codes emitted as `ServerMessage::Error.code`. Stable —
 /// clients and scripts key off these strings, so renames require a
 /// protocol version bump.
+///
+/// **Wire-shape note (phase 0b cutover).** Node's `error` frames
+/// are `{type:"error", message:"..."}` with no `code` field; the
+/// SPA's handler in `public/lib/ws-message-handlers.js` only
+/// reads `message`. The Rust server populates `code` opportun-
+/// istically because operator-side logs benefit from the
+/// machine-readable identifier, but the wire shape stays
+/// optional via `#[serde(skip_serializing_if = "Option::is_none")]`
+/// on `ServerMessage::Error.code`.
 pub mod error_code {
-    /// Client's `HelloAck.protocol_version` didn't match what the
-    /// server speaks. The connection closes immediately.
-    pub const PROTOCOL_VERSION_MISMATCH: &str = "protocol_version_mismatch";
     /// Client sent a message that isn't allowed in the current
-    /// handshake phase (e.g., `Input` before `Attached`).
+    /// phase (e.g., `Input` before `Attach`).
     pub const UNEXPECTED_MESSAGE: &str = "unexpected_message";
     /// Client tried to `Attach` to a session name that the
     /// session-name validator rejected.
@@ -137,15 +146,24 @@ pub mod error_code {
     /// No session manager is wired into this server (misconfig or
     /// tmux binary missing). Only surfaces during development.
     pub const NO_SESSION_MANAGER: &str = "no_session_manager";
-    /// Client didn't complete the handshake within
-    /// `HANDSHAKE_TIMEOUT_SECS`. Connection closes.
-    pub const HANDSHAKE_TIMEOUT: &str = "handshake_timeout";
-    /// Client sent `Attach { resume_from_seq: Some(N) }` with
+    /// Client didn't `Attach` within `ATTACH_TIMEOUT_SECS`.
+    /// Connection closes.
+    pub const ATTACH_TIMEOUT: &str = "attach_timeout";
+    /// Phase 0b cutover: the client sent a multi-session message
+    /// (`subscribe`, `switch`, `unsubscribe`, `resync`,
+    /// `set-tab-icon`) or a WebRTC signaling message
+    /// (`rtc-offer`, `rtc-ice-candidate`) that the Rust server
+    /// doesn't implement yet. Phase 1 wires these up; for now
+    /// they get a typed reject so the SPA renders a clear error
+    /// rather than seeing a silent drop.
+    pub const NOT_YET_IMPLEMENTED: &str = "not_yet_implemented";
+    /// Client sent `Attach { from_seq: Some(N) }` with
     /// `N` larger than the pane's `total_written`. A
     /// correctly-implemented client cannot reach this — the seq
-    /// only ever comes from a prior `Attached.last_seq` or
-    /// `Output.seq`, both of which the server assigned. Closing
-    /// on mismatch catches version-skew or client bugs early.
+    /// only ever comes from a prior `seq-init.seq` or
+    /// `Output.cursor`, both of which the server assigned.
+    /// Closing on mismatch catches version-skew or client bugs
+    /// early.
     pub const INVALID_RESUME: &str = "invalid_resume";
     /// Attach rejected because the pane already has the maximum
     /// number of concurrent subscribers (slice 9h multi-device
@@ -181,7 +199,7 @@ pub mod error_code {
     pub const CONNECTION_TERMINATED: &str = "connection_terminated";
 }
 
-/// Handshake phase. Advances on valid messages; any message that
+/// Connection phase. Advances on valid messages; any message that
 /// isn't valid for the current phase is a protocol violation.
 ///
 /// The `Attached` variant is intentionally data-less: the session
@@ -190,17 +208,18 @@ pub mod error_code {
 /// coalescer, the resize timer state) that can't sit in a
 /// clonable phase enum. The phase is the "protocol gate"; the
 /// I/O state is the "active work."
+///
+/// Phase 0b of the Node-cutover removed the `AwaitingHelloAck`
+/// variant — the SPA has no `HelloAck` message, so the connection
+/// starts directly in `AwaitingAttach`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Phase {
-    /// Server has sent `Hello`; waiting for the client to ack with
-    /// a matching protocol version.
-    AwaitingHelloAck,
-    /// Protocol version confirmed; waiting for the client to send
-    /// `Attach` with a session name and dimensions.
+    /// Connection is open; waiting for the client to send `Attach`
+    /// with a session name and dimensions. Initial phase.
     AwaitingAttach,
-    /// Transport is bound to a tmux pane. `Input`/`Resize` are now
-    /// valid. The pane id + session name + output subscription
-    /// live in the coordinator's `AttachedState`.
+    /// Transport is bound to a tmux pane. `Input`/`Resize`/`Pull`
+    /// are now valid. The pane id + session name + output
+    /// subscription live in the coordinator's `AttachedState`.
     Attached,
 }
 
@@ -213,29 +232,46 @@ enum Phase {
 enum Action {
     /// Nothing to emit; keep reading.
     Continue,
-    /// Echo a `Pong` with the given nonce.
-    SendPong(u64),
-    /// Protocol version checked out; reply confirmation is
-    /// implicit (no server message is sent for HelloAck — the
-    /// client's next move is Attach). Just advance phase.
-    AdvanceToAwaitingAttach,
+    /// Echo a `Pong` (the Node-cutover wire has no nonce — the
+    /// app-level ping is keepalive only, not RTT measurement).
+    SendPong,
     /// Create/attach the tmux session, subscribe to its pane,
-    /// then send `Attached` with the clamped dims. If
-    /// `resume_from_seq` is `Some(N)` the coordinator asks the
-    /// router for a replay slice and emits `OutputGap` +
-    /// replay `Output` before going live.
+    /// then send `Attached` + `seq-init`. If `from_seq` is
+    /// `Some(N)` the coordinator asks the router for a replay
+    /// slice and emits `pull-snapshot` (gap) or live `output`
+    /// frames before going live.
     DoAttach {
         session: String,
         cols: u16,
         rows: u16,
-        resume_from_seq: Option<u64>,
+        from_seq: Option<u64>,
     },
-    /// Forward client input bytes to the attached pane.
-    ForwardInput { data: Vec<u8> },
+    /// Forward client input bytes (already UTF-8 string from the
+    /// JSON wire) to the attached pane. The string is decoded
+    /// to bytes at the SessionManager call site.
+    ForwardInput { data: String },
     /// Queue a resize for the attached session — the coordinator
     /// applies immediately or defers based on the resize gate.
     QueueResize { cols: u16, rows: u16 },
-    /// A protocol violation. Coordinator sends `Error` and closes.
+    /// Client `pull` request — coordinator answers with
+    /// `pull-response` or `pull-snapshot` from the ring buffer.
+    /// `from_seq` is the cursor the SPA last saw; the response
+    /// carries everything `(from_seq..total_written]`.
+    HandlePull { from_seq: u64 },
+    /// A non-fatal client mistake or deferred-feature stub.
+    /// Coordinator sends `error` and KEEPS the transport open —
+    /// this is the SPA's normal "Invalid message format" path
+    /// for typos, version skew, and the phase-0b
+    /// not-yet-implemented messages (`subscribe`, `switch`,
+    /// `unsubscribe`, `resync`, `set-tab-icon`, `rtc-offer`,
+    /// `rtc-ice-candidate`). Distinct from `Close` — the SPA
+    /// renders an error toast but the connection stays alive
+    /// because the user's terminal is still working.
+    ReplyError {
+        code: &'static str,
+        message: String,
+    },
+    /// A protocol violation. Coordinator sends `error` and closes.
     /// `code` is one of `error_code::*`; `message` is operator-
     /// visible and MUST NOT include client-controlled bytes raw
     /// (log-injection path — the coordinator sanitizes).
@@ -250,27 +286,19 @@ enum Action {
 /// message, decide what to do next. No awaits, no side effects, no
 /// SessionManager reference — keeps this function easy to test and
 /// impossible to accidentally deadlock.
+///
+/// Phase 0b cutover note: the multi-session messages (`subscribe`,
+/// `switch`, `unsubscribe`, `resync`, `set-tab-icon`) and the WebRTC
+/// signaling stubs (`rtc-offer`, `rtc-ice-candidate`) reply with a
+/// non-fatal `error` rather than closing the transport. Closing on
+/// every unsupported message would mean the SPA reconnects in a
+/// loop — these messages are speculative on the SPA's part, the
+/// terminal works without them.
 fn step(phase: &mut Phase, msg: ClientMessage) -> Action {
     match (phase.clone(), msg) {
         // `Ping` is allowed in every phase. It never changes phase
         // and doesn't touch any session state.
-        (_, ClientMessage::Ping { nonce }) => Action::SendPong(nonce),
-
-        (Phase::AwaitingHelloAck, ClientMessage::HelloAck { protocol_version }) => {
-            if protocol_version == PROTOCOL_VERSION {
-                *phase = Phase::AwaitingAttach;
-                Action::AdvanceToAwaitingAttach
-            } else {
-                Action::Close {
-                    code: error_code::PROTOCOL_VERSION_MISMATCH,
-                    message: format!(
-                        "server speaks {}, client acked {}",
-                        PROTOCOL_VERSION,
-                        sanitize_for_log(&protocol_version, LOG_PROTOCOL_VERSION_MAX_LEN),
-                    ),
-                }
-            }
-        }
+        (_, ClientMessage::Ping) => Action::SendPong,
 
         (
             Phase::AwaitingAttach,
@@ -278,19 +306,51 @@ fn step(phase: &mut Phase, msg: ClientMessage) -> Action {
                 session,
                 cols,
                 rows,
-                resume_from_seq,
+                from_seq,
             },
         ) => Action::DoAttach {
             session,
             cols,
             rows,
-            resume_from_seq,
+            from_seq,
         },
 
-        (Phase::Attached, ClientMessage::Input { data }) => Action::ForwardInput { data },
+        // `session` field is informational on Input/Resize — phase
+        // 0b is single-session, so we use the bound session
+        // regardless. Phase 1 wires it in for multi-session.
+        (Phase::Attached, ClientMessage::Input { data, .. }) => Action::ForwardInput { data },
 
-        (Phase::Attached, ClientMessage::Resize { cols, rows }) => {
+        (Phase::Attached, ClientMessage::Resize { cols, rows, .. }) => {
             Action::QueueResize { cols, rows }
+        }
+
+        (Phase::Attached, ClientMessage::Pull { from_seq, .. }) => {
+            Action::HandlePull { from_seq }
+        }
+
+        // Multi-session messages: deferred to phase 1. Reply with
+        // a non-fatal error so the SPA shows a toast and the
+        // existing terminal keeps working.
+        (
+            _,
+            ClientMessage::Subscribe { .. }
+            | ClientMessage::Unsubscribe { .. }
+            | ClientMessage::Switch { .. }
+            | ClientMessage::Resync { .. }
+            | ClientMessage::SetTabIcon { .. },
+        ) => Action::ReplyError {
+            code: error_code::NOT_YET_IMPLEMENTED,
+            message: "multi-session not yet supported in Rust server".into(),
+        },
+
+        // WebRTC signaling stubs: same treatment. The SPA tries
+        // these speculatively to upgrade WS → DC; failure falls
+        // back to plain WS, which is what we want.
+        (_, ClientMessage::RtcOffer { .. } | ClientMessage::RtcIceCandidate { .. }) => {
+            Action::ReplyError {
+                code: error_code::NOT_YET_IMPLEMENTED,
+                message: "WebRTC signaling not yet supported in Rust server".into(),
+            }
         }
 
         // Any other (phase, message) combination is a protocol
@@ -309,17 +369,23 @@ fn step(phase: &mut Phase, msg: ClientMessage) -> Action {
 
 fn variant_name(msg: &ClientMessage) -> &'static str {
     match msg {
-        ClientMessage::Ping { .. } => "ping",
-        ClientMessage::HelloAck { .. } => "hello_ack",
+        ClientMessage::Ping => "ping",
         ClientMessage::Attach { .. } => "attach",
         ClientMessage::Input { .. } => "input",
         ClientMessage::Resize { .. } => "resize",
+        ClientMessage::Pull { .. } => "pull",
+        ClientMessage::Subscribe { .. } => "subscribe",
+        ClientMessage::Unsubscribe { .. } => "unsubscribe",
+        ClientMessage::Switch { .. } => "switch",
+        ClientMessage::Resync { .. } => "resync",
+        ClientMessage::SetTabIcon { .. } => "set-tab-icon",
+        ClientMessage::RtcOffer { .. } => "rtc-offer",
+        ClientMessage::RtcIceCandidate { .. } => "rtc-ice-candidate",
     }
 }
 
 fn phase_name(phase: &Phase) -> &'static str {
     match phase {
-        Phase::AwaitingHelloAck => "awaiting_hello_ack",
         Phase::AwaitingAttach => "awaiting_attach",
         Phase::Attached => "attached",
     }
@@ -372,10 +438,22 @@ struct AttachedState {
     output_rx: mpsc::Receiver<Arc<OutputChunk>>,
     /// Highest `end_seq` we've seen come out of `output_rx`.
     /// When the coalescer flushes, this becomes the outbound
-    /// `ServerMessage::Output.seq`. Starts at the router's
+    /// `ServerMessage::Output.cursor`. Starts at the router's
     /// `last_seq` snapshot at attach time so a reconnect with
     /// replay doesn't emit seqs below the replay's `last_seq`.
     last_seen_seq: u64,
+    /// The `cursor` value we sent in the most recent
+    /// `Output`/`pull-response`/`pull-snapshot` (or the seed
+    /// from `seq-init` if nothing's been sent yet). The next
+    /// `Output` message uses this as its `from_seq` — together
+    /// with `cursor = last_seen_seq` it tells the SPA exactly
+    /// which byte-range the chunk covers.
+    ///
+    /// Phase 0b cutover need: Node's wire requires both
+    /// `fromSeq` and `cursor` on every `output`. The pre-cutover
+    /// CBOR wire only had `seq` (== end-of-chunk), so the start
+    /// offset wasn't tracked separately. We add it here.
+    last_emitted_cursor: u64,
     /// Coalesces raw bytes from `output_rx` into chunky Output
     /// messages. See `output::Coalescer` for timing.
     coalescer: Coalescer,
@@ -493,31 +571,18 @@ pub async fn serve_session(
     // See `revocation.rs` subscriber contract.
     let mut revocations = state.subscribe_revocations();
 
-    // Send the initial Hello. If this fails, the transport died
-    // between upgrade and now — nothing to do.
-    if handle
-        .send(ServerMessage::Hello {
-            protocol_version: PROTOCOL_VERSION.to_string(),
-        })
-        .await
-        .is_err()
-    {
-        return;
-    }
-
-    let mut phase = Phase::AwaitingHelloAck;
+    // Phase 0b cutover: no Hello/HelloAck. The Node SPA opens the
+    // WS and sends `attach` directly; we wait for it.
+    let mut phase = Phase::AwaitingAttach;
     let mut attached: Option<AttachedState> = None;
-    let handshake_deadline = Instant::now() + Duration::from_secs(HANDSHAKE_TIMEOUT_SECS);
+    let attach_deadline = Instant::now() + Duration::from_secs(ATTACH_TIMEOUT_SECS);
 
     loop {
         // Guard flags for conditional select branches. Assigning
         // to locals reads more clearly than inlining the matches
         // in the select macro (and rustc has been known to
         // misjudge `if matches!(...)` in select guards).
-        let in_handshake = matches!(
-            phase,
-            Phase::AwaitingHelloAck | Phase::AwaitingAttach
-        );
+        let in_attach_wait = matches!(phase, Phase::AwaitingAttach);
         let coalesce_deadline = attached.as_ref().and_then(|a| a.coalesce_deadline());
         let resize_deadline = attached.as_ref().and_then(|a| a.resize_deadline());
 
@@ -530,11 +595,14 @@ pub async fn serve_session(
             // arrives alongside the revoke event.
             revoke = revocations.recv() => handle_revoke(revoke, credential_id.as_deref()),
 
-            // Handshake-timer branch: only active while we're
-            // still awaiting HelloAck or Attach.
-            _ = tokio::time::sleep_until(handshake_deadline), if in_handshake => Action::Close {
-                code: error_code::HANDSHAKE_TIMEOUT,
-                message: "client did not complete handshake in time".into(),
+            // Attach-timer branch: only active while we're still
+            // awaiting the client's first `attach`. Phase 0b
+            // cutover renamed this from "handshake timeout" — the
+            // Node SPA has no handshake message, so the only thing
+            // we wait for is the first `attach`.
+            _ = tokio::time::sleep_until(attach_deadline), if in_attach_wait => Action::Close {
+                code: error_code::ATTACH_TIMEOUT,
+                message: "client did not attach in time".into(),
             },
 
             // Coalescer flush: elapsed idle or cap deadline.
@@ -593,18 +661,38 @@ pub async fn serve_session(
             let now = Instant::now();
             if a.coalesce_deadline().is_some_and(|d| now >= d) && !a.coalescer.is_empty() {
                 let bytes = a.coalescer.take();
-                // `last_seen_seq` already equals the end-seq of
-                // the most recent chunk we folded into the
-                // coalescer — by construction that's the end-seq
-                // of the flushed batch's last byte.
-                let seq = a.last_seen_seq;
+                // `last_seen_seq` is the cumulative byte offset
+                // AFTER the most recent chunk we folded in — i.e.,
+                // the cursor at the end of the flushed batch. The
+                // FROM offset is whatever cursor the SPA last saw
+                // (`last_emitted_cursor`); together they pin the
+                // exact byte-range so the SPA's `pullManager` can
+                // drop duplicates and detect gaps.
+                //
+                // `from_utf8_lossy` matches Node's behavior:
+                // `lib/parser.js` decodes tmux's octal-escape
+                // control-mode encoding into UTF-8 strings before
+                // buffering, replacing invalid bytes with U+FFFD.
+                // The Rust `OutputChunk.data` is the byte vector
+                // from `parser::parse_output`; lossy decode here
+                // is the matching boundary.
+                let data = String::from_utf8_lossy(&bytes).into_owned();
+                let from_seq = a.last_emitted_cursor;
+                let cursor = a.last_seen_seq;
+                let session = a.session.clone();
                 if handle
-                    .send(ServerMessage::Output { data: bytes, seq })
+                    .send(ServerMessage::Output {
+                        session,
+                        data,
+                        from_seq,
+                        cursor,
+                    })
                     .await
                     .is_err()
                 {
                     break;
                 }
+                a.last_emitted_cursor = cursor;
             }
             if a.resize_deadline().is_some_and(|d| now >= d) {
                 let pending = a
@@ -618,21 +706,16 @@ pub async fn serve_session(
         match action {
             Action::Continue => continue,
             Action::Exit => break,
-            Action::SendPong(nonce) => {
-                if handle.send(ServerMessage::Pong { nonce }).await.is_err() {
+            Action::SendPong => {
+                if handle.send(ServerMessage::Pong).await.is_err() {
                     break;
                 }
-            }
-            Action::AdvanceToAwaitingAttach => {
-                // No server message; the client already has Hello
-                // and its next move is Attach.
-                continue;
             }
             Action::DoAttach {
                 session,
                 cols,
                 rows,
-                resume_from_seq,
+                from_seq,
             } => {
                 // Clamp once at the coordinator before dispatch.
                 // SessionManager clamps internally too as
@@ -648,19 +731,43 @@ pub async fn serve_session(
                     break;
                 };
                 let attach_outcome =
-                    try_attach(sessions, &state, &session, cols, rows, resume_from_seq).await;
+                    try_attach(sessions, &state, &session, cols, rows, from_seq).await;
                 match attach_outcome {
                     Ok(outcome) => {
                         let last_seq = outcome.last_seq();
                         let replay = outcome.replay;
                         attached = Some(outcome.new_state);
                         phase = Phase::Attached;
+                        // Phase 0b cutover wire shape:
+                        //   1. `attached { session, data: "" }`
+                        //      — data is empty because the Rust
+                        //      server has no Node-style headless
+                        //      serializer yet. The post-attach
+                        //      Ctrl-L nudge in `try_attach`
+                        //      causes the shell to repaint, so
+                        //      the SPA sees its prompt within
+                        //      milliseconds via the live `output`
+                        //      stream.
+                        //   2. `seq-init { session, seq: last_seq }`
+                        //      — seeds the SPA's `pullManager`
+                        //      cursor.
+                        //   3. Replay (if reconnecting): goes
+                        //      out as `pull-snapshot` (gap) or
+                        //      live `output` (in-range).
                         if handle
                             .send(ServerMessage::Attached {
-                                session,
-                                cols,
-                                rows,
-                                last_seq,
+                                session: session.clone(),
+                                data: String::new(),
+                            })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        if handle
+                            .send(ServerMessage::SeqInit {
+                                session: session.clone(),
+                                seq: last_seq,
                             })
                             .await
                             .is_err()
@@ -668,10 +775,21 @@ pub async fn serve_session(
                             break;
                         }
                         // Replay any missed bytes. Must happen
-                        // AFTER Attached so the client's clear-
-                        // on-OutputGap logic fires in the right
-                        // order.
-                        if send_replay(&handle, replay).await.is_err() {
+                        // AFTER seq-init so the SPA's pullManager
+                        // is initialised when the bytes land.
+                        if send_replay(&handle, &session, replay).await.is_err() {
+                            break;
+                        }
+                        // Nudge the SPA to issue its first pull —
+                        // covers any output that may have landed
+                        // during the async attach. Matches Node
+                        // ws-manager.js's post-attach
+                        // `data-available` send.
+                        if handle
+                            .send(ServerMessage::DataAvailable { session })
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
                     }
@@ -692,7 +810,24 @@ pub async fn serve_session(
                     .as_ref()
                     .expect("Attached phase implies attached is Some");
                 let sessions = require_sessions(&state);
-                if let Err(err) = sessions.send_input(a.pane_id, &data).await {
+                // Phase 0b cutover: `data` is a UTF-8 string from
+                // the JSON wire. The SessionManager wants raw
+                // bytes (it hex-encodes for `send-keys`), so we
+                // hand off `data.as_bytes()`. The SPA caps input
+                // at 8192 chars (`lib/websocket-validation.js`);
+                // we mirror that cap here so an oversize frame
+                // gets a non-fatal error reply rather than a
+                // silent drop.
+                if data.len() > 8192 {
+                    let _ = handle
+                        .send(ServerMessage::Error {
+                            message: "input data exceeds 8192-char cap".into(),
+                            code: None,
+                        })
+                        .await;
+                    continue;
+                }
+                if let Err(err) = sessions.send_input(a.pane_id, data.as_bytes()).await {
                     // Forwarding failure is operator-visible but
                     // not a reason to close — a glitchy write may
                     // be followed by success on the next input,
@@ -740,6 +875,113 @@ pub async fn serve_session(
                         rows,
                         queued_at,
                     });
+                }
+            }
+            Action::HandlePull { from_seq } => {
+                let a = attached
+                    .as_mut()
+                    .expect("Attached phase implies attached is Some");
+                // Read the ring under the router lock — same
+                // shape as Node's `session.pullFrom(fromSeq)`.
+                let replay = state.output_router.peek_resume(a.pane_id, from_seq);
+                let session = a.session.clone();
+                match replay {
+                    ReplaySlice::Fresh { end_seq } | ReplaySlice::UpToDate { end_seq } => {
+                        // Nothing missed; the SPA's pull manager
+                        // gets an empty response and unsticks.
+                        if handle
+                            .send(ServerMessage::PullResponse {
+                                session,
+                                data: String::new(),
+                                cursor: end_seq,
+                            })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        a.last_emitted_cursor = end_seq;
+                    }
+                    ReplaySlice::InRange { data, end_seq } => {
+                        let s = String::from_utf8_lossy(&data).into_owned();
+                        if handle
+                            .send(ServerMessage::PullResponse {
+                                session,
+                                data: s,
+                                cursor: end_seq,
+                            })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        a.last_emitted_cursor = end_seq;
+                    }
+                    ReplaySlice::Gap {
+                        data,
+                        end_seq,
+                        ..
+                    } => {
+                        // Cursor evicted from ring — fall back to
+                        // a snapshot. Phase 0b sends the
+                        // `pull-snapshot` carrying whatever bytes
+                        // still are in the ring; since the Rust
+                        // server has no Node-style headless, this
+                        // is the best we can do until phase 1
+                        // wires up a real headless serializer.
+                        let s = String::from_utf8_lossy(&data).into_owned();
+                        if handle
+                            .send(ServerMessage::PullSnapshot {
+                                session,
+                                data: s,
+                                cursor: end_seq,
+                            })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        a.last_emitted_cursor = end_seq;
+                    }
+                    ReplaySlice::Future => {
+                        // Client is asking for bytes past our
+                        // total_written — typically a stale
+                        // cursor across server restart. Send an
+                        // empty pull-snapshot from cursor 0 so
+                        // the SPA clears its terminal and
+                        // realigns.
+                        if handle
+                            .send(ServerMessage::PullSnapshot {
+                                session,
+                                data: String::new(),
+                                cursor: 0,
+                            })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        a.last_emitted_cursor = 0;
+                    }
+                }
+            }
+            Action::ReplyError { code, message } => {
+                // Non-fatal: the SPA shows a toast and the
+                // existing terminal keeps running. Used for
+                // phase-0b deferred messages (multi-session,
+                // WebRTC signaling) and for input-validation
+                // errors that don't warrant tearing down the
+                // socket.
+                tracing::debug!(code, message = %message, "replying with error; transport stays open");
+                if handle
+                    .send(ServerMessage::Error {
+                        message,
+                        code: Some(code.into()),
+                    })
+                    .await
+                    .is_err()
+                {
+                    break;
                 }
             }
             Action::Close { code, message } => {
@@ -1027,6 +1269,8 @@ async fn try_attach(
                     subscriber_id,
                     output_rx: rx,
                     last_seen_seq: baseline,
+
+                    last_emitted_cursor: baseline,
                     coalescer: Coalescer::new(),
                     last_output_at: None,
                     pending_resize: None,
@@ -1089,6 +1333,8 @@ async fn try_attach(
                                 subscriber_id,
                                 output_rx: rx,
                                 last_seen_seq: 0,
+
+                                last_emitted_cursor: 0,
                                 coalescer: Coalescer::new(),
                                 last_output_at: None,
                                 pending_resize: None,
@@ -1165,6 +1411,8 @@ async fn try_attach(
                             subscriber_id,
                             output_rx: rx,
                             last_seen_seq: baseline,
+
+                            last_emitted_cursor: baseline,
                             coalescer: Coalescer::new(),
                             last_output_at: None,
                             pending_resize: None,
@@ -1176,17 +1424,33 @@ async fn try_attach(
     }
 }
 
-/// Emit `OutputGap` + replay `Output` frames between `Attached`
-/// and the first live flush. Returns `Err(())` if the transport
-/// is already gone — caller breaks the serve loop.
+/// Emit replay frames between `attached`/`seq-init` and the first
+/// live flush. Returns `Err(())` if the transport is already gone
+/// — caller breaks the serve loop.
+///
+/// **Phase 0b cutover wire shapes.** The pre-cutover code emitted
+/// a typed `OutputGap` followed by `Output`. The Node SPA has no
+/// `OutputGap` handler — it expects `pull-snapshot` for the gap
+/// case (cursor evicted from ring) and `output` for in-range
+/// replay. We translate accordingly:
+///
+/// - `InRange { data, end_seq }` → one `output` carrying
+///   `from_seq = (end_seq - data.len())`, `cursor = end_seq`.
+///   The SPA writes to xterm and advances its pull cursor.
+/// - `Gap { data, end_seq, .. }` → one `pull-snapshot` carrying
+///   `data` + `cursor = end_seq`. The SPA REPLACES its terminal
+///   contents with `data` (this is the cursor-evicted recovery
+///   path; the gap is unrecoverable, so a snapshot is the
+///   semantically-correct response).
+/// - `Fresh` / `UpToDate` / `Future` → nothing to emit. `Future`
+///   shouldn't reach here (rejected at attach time); included for
+///   exhaustiveness.
 async fn send_replay(
     handle: &TransportHandle,
+    session: &str,
     replay: ReplaySlice,
 ) -> Result<(), ()> {
     match replay {
-        // Nothing to emit — fresh attach, up-to-date reconnect,
-        // or defensive Future (rejected earlier; shouldn't
-        // reach here).
         ReplaySlice::Fresh { .. }
         | ReplaySlice::UpToDate { .. }
         | ReplaySlice::Future => Ok(()),
@@ -1194,36 +1458,33 @@ async fn send_replay(
             if data.is_empty() {
                 return Ok(());
             }
+            let from_seq = end_seq - data.len() as u64;
+            let s = String::from_utf8_lossy(&data).into_owned();
             handle
                 .send(ServerMessage::Output {
-                    data,
-                    seq: end_seq,
+                    session: session.to_string(),
+                    data: s,
+                    from_seq,
+                    cursor: end_seq,
                 })
                 .await
                 .map_err(|_| ())
         }
         ReplaySlice::Gap {
-            available_from_seq,
-            data,
-            end_seq,
+            data, end_seq, ..
         } => {
-            // Order matters: OutputGap first so the client
-            // clears its terminal before applying the replay
-            // bytes. If either send fails, caller closes.
+            // Cursor evicted: emit `pull-snapshot` with whatever
+            // we still have in the ring. The SPA replaces its
+            // terminal contents — the lost bytes can't be
+            // reconstructed, so a snapshot of the current ring
+            // contents is the closest we can come to the
+            // pre-cutover `OutputGap + Output` semantics.
+            let s = String::from_utf8_lossy(&data).into_owned();
             handle
-                .send(ServerMessage::OutputGap {
-                    available_from_seq,
-                    last_seq: end_seq,
-                })
-                .await
-                .map_err(|_| ())?;
-            if data.is_empty() {
-                return Ok(());
-            }
-            handle
-                .send(ServerMessage::Output {
-                    data,
-                    seq: end_seq,
+                .send(ServerMessage::PullSnapshot {
+                    session: session.to_string(),
+                    data: s,
+                    cursor: end_seq,
                 })
                 .await
                 .map_err(|_| ())
@@ -1383,7 +1644,7 @@ fn handle_revoke(
 async fn send_error_and_close(handle: &TransportHandle, code: &str, message: String) {
     let _ = handle
         .send(ServerMessage::Error {
-            code: code.into(),
+            code: Some(code.to_string()),
             message,
         })
         .await;
@@ -1447,39 +1708,7 @@ mod tests {
 
     use super::*;
 
-    fn ack_v1() -> ClientMessage {
-        ClientMessage::HelloAck {
-            protocol_version: PROTOCOL_VERSION.into(),
-        }
-    }
-
-    // ---------- Phase machine (unchanged from slice 9e) ----------
-
-    #[test]
-    fn hello_ack_advances_phase() {
-        let mut phase = Phase::AwaitingHelloAck;
-        let action = step(&mut phase, ack_v1());
-        assert_eq!(action, Action::AdvanceToAwaitingAttach);
-        assert_eq!(phase, Phase::AwaitingAttach);
-    }
-
-    #[test]
-    fn mismatched_protocol_version_closes() {
-        let mut phase = Phase::AwaitingHelloAck;
-        let action = step(
-            &mut phase,
-            ClientMessage::HelloAck {
-                protocol_version: "katulong/999.0".into(),
-            },
-        );
-        match action {
-            Action::Close { code, .. } => {
-                assert_eq!(code, error_code::PROTOCOL_VERSION_MISMATCH);
-            }
-            other => panic!("expected close, got {other:?}"),
-        }
-        assert_eq!(phase, Phase::AwaitingHelloAck);
-    }
+    // ---------- Phase machine (post phase 0b cutover) ----------
 
     #[test]
     fn input_before_attached_is_protocol_violation() {
@@ -1487,7 +1716,8 @@ mod tests {
         let action = step(
             &mut phase,
             ClientMessage::Input {
-                data: vec![0x61, 0x62, 0x63],
+                data: "abc".into(),
+                session: None,
             },
         );
         match action {
@@ -1508,6 +1738,7 @@ mod tests {
             ClientMessage::Resize {
                 cols: 80,
                 rows: 24,
+                session: None,
             },
         );
         match action {
@@ -1517,25 +1748,11 @@ mod tests {
     }
 
     #[test]
-    fn hello_ack_in_attached_phase_is_protocol_violation() {
-        let mut phase = Phase::Attached;
-        let action = step(&mut phase, ack_v1());
-        match action {
-            Action::Close { code, .. } => assert_eq!(code, error_code::UNEXPECTED_MESSAGE),
-            other => panic!("expected close, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn ping_is_allowed_in_every_phase() {
-        for mut phase in [
-            Phase::AwaitingHelloAck,
-            Phase::AwaitingAttach,
-            Phase::Attached,
-        ] {
+        for mut phase in [Phase::AwaitingAttach, Phase::Attached] {
             let before = phase.clone();
-            let action = step(&mut phase, ClientMessage::Ping { nonce: 7 });
-            assert_eq!(action, Action::SendPong(7));
+            let action = step(&mut phase, ClientMessage::Ping);
+            assert_eq!(action, Action::SendPong);
             assert_eq!(phase, before, "ping must not change phase in {before:?}");
         }
     }
@@ -1549,7 +1766,7 @@ mod tests {
                 session: "main".into(),
                 cols: 120,
                 rows: 40,
-                resume_from_seq: None,
+                from_seq: None,
             },
         );
         assert_eq!(
@@ -1558,7 +1775,7 @@ mod tests {
                 session: "main".into(),
                 cols: 120,
                 rows: 40,
-                resume_from_seq: None,
+                from_seq: None,
             }
         );
         assert_eq!(
@@ -1572,7 +1789,7 @@ mod tests {
     #[test]
     fn attach_with_resume_carries_seq_to_action() {
         // Forward-safety: if the pattern match on Attach ever
-        // loses the resume_from_seq field, the coordinator would
+        // loses the from_seq field, the coordinator would
         // silently default to fresh-attach for every reconnect.
         let mut phase = Phase::AwaitingAttach;
         let action = step(
@@ -1581,7 +1798,7 @@ mod tests {
                 session: "main".into(),
                 cols: 80,
                 rows: 24,
-                resume_from_seq: Some(42),
+                from_seq: Some(42),
             },
         );
         assert_eq!(
@@ -1590,21 +1807,24 @@ mod tests {
                 session: "main".into(),
                 cols: 80,
                 rows: 24,
-                resume_from_seq: Some(42),
+                from_seq: Some(42),
             }
         );
     }
 
     #[test]
-    fn attach_in_wrong_phase_is_violation() {
-        let mut phase = Phase::AwaitingHelloAck;
+    fn attach_in_attached_phase_is_violation() {
+        // Phase 0b: there's no `AwaitingHelloAck` to land in
+        // anymore; the only "wrong phase for attach" is
+        // already-attached.
+        let mut phase = Phase::Attached;
         let action = step(
             &mut phase,
             ClientMessage::Attach {
                 session: "main".into(),
                 cols: 80,
                 rows: 24,
-                resume_from_seq: None,
+                from_seq: None,
             },
         );
         match action {
@@ -1619,13 +1839,14 @@ mod tests {
         let action = step(
             &mut phase,
             ClientMessage::Input {
-                data: vec![0x41, 0x42],
+                data: "AB".into(),
+                session: None,
             },
         );
         assert_eq!(
             action,
             Action::ForwardInput {
-                data: vec![0x41, 0x42],
+                data: "AB".into(),
             }
         );
     }
@@ -1638,6 +1859,7 @@ mod tests {
             ClientMessage::Resize {
                 cols: 100,
                 rows: 30,
+                session: None,
             },
         );
         assert_eq!(
@@ -1650,24 +1872,48 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_error_truncates_control_chars() {
-        let mut phase = Phase::AwaitingHelloAck;
-        let crafted = "evil\r\n[WARN] forged_line";
+    fn pull_after_attached_issues_handle_pull() {
+        let mut phase = Phase::Attached;
         let action = step(
             &mut phase,
-            ClientMessage::HelloAck {
-                protocol_version: crafted.into(),
+            ClientMessage::Pull {
+                from_seq: 17,
+                session: None,
+            },
+        );
+        assert_eq!(action, Action::HandlePull { from_seq: 17 });
+    }
+
+    #[test]
+    fn subscribe_replies_with_not_yet_implemented_error() {
+        // Phase 0b cutover: multi-session deferred. The handler
+        // sends an error reply but keeps the transport open so
+        // the SPA's existing single session keeps working.
+        let mut phase = Phase::Attached;
+        let action = step(
+            &mut phase,
+            ClientMessage::Subscribe {
+                session: "alt".into(),
             },
         );
         match action {
-            Action::Close { message, .. } => {
-                assert!(
-                    !message.contains('\r') && !message.contains('\n'),
-                    "log-bound error message must strip control chars; got {message:?}"
-                );
+            Action::ReplyError { code, .. } => {
+                assert_eq!(code, error_code::NOT_YET_IMPLEMENTED);
             }
-            other => panic!("expected close, got {other:?}"),
+            other => panic!("expected ReplyError, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rtc_offer_replies_with_not_yet_implemented_error() {
+        let mut phase = Phase::Attached;
+        let action = step(
+            &mut phase,
+            ClientMessage::RtcOffer {
+                sdp: "v=0".into(),
+            },
+        );
+        assert!(matches!(action, Action::ReplyError { .. }));
     }
 
     // ---------- Revocation ----------
@@ -1746,12 +1992,12 @@ mod tests {
     #[test]
     fn error_codes_are_distinct() {
         let all = [
-            error_code::PROTOCOL_VERSION_MISMATCH,
             error_code::UNEXPECTED_MESSAGE,
             error_code::INVALID_SESSION,
             error_code::SESSION_ERROR,
             error_code::NO_SESSION_MANAGER,
-            error_code::HANDSHAKE_TIMEOUT,
+            error_code::ATTACH_TIMEOUT,
+            error_code::NOT_YET_IMPLEMENTED,
             error_code::INVALID_RESUME,
             error_code::SESSION_OVERSUBSCRIBED,
             error_code::ROUTER_AT_CAPACITY,
@@ -1780,6 +2026,7 @@ mod tests {
             subscriber_id: SubscriberId::testing(0),
             output_rx: rx,
             last_seen_seq: 0,
+            last_emitted_cursor: 0,
             coalescer: Coalescer::new(),
             last_output_at: None,
             pending_resize: None,
@@ -1871,17 +2118,21 @@ mod tests {
     #[tokio::test]
     async fn send_replay_fresh_sends_nothing() {
         let (h, mut rx) = capture_handle();
-        send_replay(&h, ReplaySlice::Fresh { end_seq: 0 })
+        send_replay(&h, "main", ReplaySlice::Fresh { end_seq: 0 })
             .await
             .expect("fresh is ok");
         assert!(rx.try_recv().is_err(), "Fresh must emit no messages");
     }
 
     #[tokio::test]
-    async fn send_replay_in_range_sends_one_output() {
+    async fn send_replay_in_range_sends_one_output_with_from_seq_and_cursor() {
+        // Phase 0b wire shape: replay bytes ride a single
+        // `output { session, data, fromSeq, cursor }` frame.
+        // `from_seq` is end_seq - data.len(), `cursor` is end_seq.
         let (h, mut rx) = capture_handle();
         send_replay(
             &h,
+            "main",
             ReplaySlice::InRange {
                 data: b"resume-bytes".to_vec(),
                 end_seq: 12,
@@ -1890,9 +2141,16 @@ mod tests {
         .await
         .unwrap();
         match rx.recv().await.unwrap() {
-            ServerMessage::Output { data, seq } => {
-                assert_eq!(data, b"resume-bytes");
-                assert_eq!(seq, 12);
+            ServerMessage::Output {
+                session,
+                data,
+                from_seq,
+                cursor,
+            } => {
+                assert_eq!(session, "main");
+                assert_eq!(data, "resume-bytes");
+                assert_eq!(from_seq, 0);
+                assert_eq!(cursor, 12);
             }
             other => panic!("expected Output, got {other:?}"),
         }
@@ -1900,15 +2158,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_replay_gap_sends_output_gap_before_output() {
-        // Order matters: the client's clear-terminal handler
-        // MUST fire before the replay bytes are applied.
-        // Regressing this ordering silently re-corrupts the
-        // terminal across reconnect gaps — this test is the
-        // canary.
+    async fn send_replay_gap_sends_pull_snapshot() {
+        // Phase 0b cutover: gap replay translates to a single
+        // `pull-snapshot` frame the SPA replaces its terminal
+        // contents with — there's no `OutputGap` in the Node
+        // wire. The lost-bytes-clear-then-apply ordering of the
+        // pre-cutover wire is preserved at the SPA level: the
+        // Node `pull-snapshot` handler clears xterm before
+        // writing the new bytes.
         let (h, mut rx) = capture_handle();
         send_replay(
             &h,
+            "main",
             ReplaySlice::Gap {
                 available_from_seq: 100,
                 data: b"tail-bytes".to_vec(),
@@ -1918,29 +2179,29 @@ mod tests {
         .await
         .unwrap();
         match rx.recv().await.unwrap() {
-            ServerMessage::OutputGap {
-                available_from_seq,
-                last_seq,
+            ServerMessage::PullSnapshot {
+                session,
+                data,
+                cursor,
             } => {
-                assert_eq!(available_from_seq, 100);
-                assert_eq!(last_seq, 150);
+                assert_eq!(session, "main");
+                assert_eq!(data, "tail-bytes");
+                assert_eq!(cursor, 150);
             }
-            other => panic!("first must be OutputGap, got {other:?}"),
+            other => panic!("expected PullSnapshot, got {other:?}"),
         }
-        match rx.recv().await.unwrap() {
-            ServerMessage::Output { data, seq } => {
-                assert_eq!(data, b"tail-bytes");
-                assert_eq!(seq, 150);
-            }
-            other => panic!("second must be Output, got {other:?}"),
-        }
+        assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]
-    async fn send_replay_gap_with_empty_data_sends_gap_only() {
+    async fn send_replay_gap_with_empty_data_still_sends_snapshot() {
+        // Empty-data gap is the cursor-evicted-but-ring-empty
+        // case (server restart). The SPA still needs the
+        // snapshot frame so its terminal clears.
         let (h, mut rx) = capture_handle();
         send_replay(
             &h,
+            "main",
             ReplaySlice::Gap {
                 available_from_seq: 0,
                 data: Vec::new(),
@@ -1951,8 +2212,8 @@ mod tests {
         .unwrap();
         assert!(matches!(
             rx.recv().await.unwrap(),
-            ServerMessage::OutputGap { .. }
+            ServerMessage::PullSnapshot { .. }
         ));
-        assert!(rx.try_recv().is_err(), "no Output after empty-data Gap");
+        assert!(rx.try_recv().is_err());
     }
 }
