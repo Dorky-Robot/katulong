@@ -85,13 +85,16 @@ pub enum TransportError {
     /// decides whether to close on decode failure.
     #[error("malformed client message: {0}")]
     DecodeFailed(String),
-    /// Peer sent a text frame when we accept only CBOR-encoded
-    /// binary. Distinct from `DecodeFailed` because a text frame
-    /// is the right-shape-wrong-encoding case — often a
-    /// wrong-client-version probe rather than corruption. The WS
-    /// impl rejects text frames without attempting to decode.
-    #[error("text frames are not accepted; protocol is CBOR over binary frames")]
-    UnexpectedText,
+    /// Peer sent a binary frame when we accept only JSON-encoded
+    /// text. Phase 0b of the Node-cutover flipped this from the
+    /// inverse rejection (binary-only / reject-text): the Node
+    /// SPA in `public/lib/ws-message-handlers.js` sends
+    /// `JSON.stringify` over text frames, and the Rust server
+    /// matches. A binary frame today is either a stale Rust WASM
+    /// client (frozen during cutover) or a probe; reject cleanly
+    /// and let the consumer decide.
+    #[error("binary frames are not accepted; protocol is JSON over text frames")]
+    UnexpectedBinary,
     /// Underlying I/O error from the transport. After this, the
     /// inbound channel closes.
     #[error("transport I/O: {0}")]
@@ -157,7 +160,7 @@ mod tests {
         // Simulate the pump task exiting: drop the outbound receiver.
         drop(outbound_rx);
         let err = handle
-            .send(ServerMessage::Pong { nonce: 1 })
+            .send(ServerMessage::Pong)
             .await
             .unwrap_err();
         assert!(matches!(err, TransportSendError::Closed));
