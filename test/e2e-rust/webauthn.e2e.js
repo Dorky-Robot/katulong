@@ -407,7 +407,17 @@ test.describe.serial("WebAuthn UI happy paths", () => {
     await context.close();
   });
 
-  test("an active session restores after a page reload", async ({
+  // Skipped during the Node-cutover (phase 0b). This test
+  // exercises the Rust WASM frontend's WS handshake + xterm
+  // attach flow; phase 0b reshaped the Rust server's WS
+  // protocol to be byte-compatible with the Node SPA in
+  // `public/lib/...`, which means the WASM client's
+  // `crates/web/src/ws.rs` (still on the pre-cutover CBOR /
+  // Hello-handshake protocol) no longer talks to the server.
+  // The WASM frontend is FROZEN during the cutover; this test
+  // resumes once a future slice ports its WS code to the JSON
+  // wire.
+  test.skip("an active session restores after a page reload", async ({
     browser,
     baseURL,
   }) => {

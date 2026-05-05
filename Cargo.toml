@@ -4,6 +4,18 @@ members = [
     "crates/auth",
     "crates/shared",
     "crates/server",
+]
+# `crates/web` (the Rust+WASM frontend) is FROZEN during the
+# Node-cutover. Phase 0b reshaped the WS wire to be byte-compatible
+# with the Node SPA in `public/lib/...`, which means the WASM
+# client's `crates/web/src/ws.rs` (still on the pre-cutover CBOR/
+# Hello-handshake protocol) no longer compiles against
+# `katulong_shared::wire`. Excluding it from `members` keeps
+# `cargo build --workspace` green for the cutover-critical crates;
+# unexcluded for `cargo build -p katulong-web` so a future
+# frontend slice can opt into the build explicitly when porting
+# the WS code over.
+exclude = [
     "crates/web",
 ]
 
