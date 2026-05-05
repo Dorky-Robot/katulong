@@ -17,6 +17,7 @@ async fn main() {
         .init();
 
     let config = load_config_from_env();
+    let web_dist = config.web_dist.clone();
     let auth_store = AuthStore::open(&config_data_file())
         .await
         .expect("open auth store");
@@ -89,17 +90,14 @@ async fn main() {
     //      (e.g., `/etc` — operator misconfiguration that
     //      would otherwise turn the server into an open file
     //      browser).
-    let dist = std::env::var_os("KATULONG_WEB_DIST")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("crates/web/dist"));
-    if !dist.exists() {
+    if !web_dist.exists() {
         tracing::warn!(
-            path = %dist.display(),
+            path = %web_dist.display(),
             "KATULONG_WEB_DIST does not exist; static assets will 404 (run `trunk build` in crates/web?)"
         );
-    } else if !dist.join("index.html").exists() {
+    } else if !web_dist.join("index.html").exists() {
         tracing::warn!(
-            path = %dist.display(),
+            path = %web_dist.display(),
             "KATULONG_WEB_DIST does not contain index.html; this doesn't look like a trunk dist directory — check the env var or run `trunk build` in crates/web"
         );
     }
@@ -128,11 +126,15 @@ fn load_config_from_env() -> ServerConfig {
     // Secure cookies only make sense when the public origin is https.
     // Flipping this for loopback deployments so dev-over-http still works.
     let cookie_secure = public_origin.starts_with("https://");
+    let web_dist = std::env::var_os("KATULONG_WEB_DIST")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("crates/web/dist"));
     ServerConfig {
         public_origin,
         rp_id,
         rp_name,
         cookie_secure,
+        web_dist,
     }
 }
 

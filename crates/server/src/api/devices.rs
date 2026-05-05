@@ -5,10 +5,9 @@
 //!
 //! - `GET    /api/credentials`      — auth required, list with
 //!   per-device metadata
-//! - `DELETE /api/credentials/:id`  — auth required (CSRF added in
-//!   Phase 0a step 5); removes the credential AND its sessions;
-//!   blocked for remote callers if it's the last credential on the
-//!   instance
+//! - `DELETE /api/credentials/:id`  — auth + CSRF required;
+//!   removes the credential AND its sessions; blocked for remote
+//!   callers if it's the last credential on the instance
 //!
 //! The last-credential guard (Node scar `f25855f`) applies only to
 //! remote callers. A localhost caller has physical access regardless
@@ -28,6 +27,7 @@
 //! the JS frontend reads `data.credentials`, not `data` directly,
 //! and parses `createdAt` not `created_at_millis`.
 
+use crate::api::csrf::CsrfProtected;
 use crate::api::error::ApiError;
 use crate::auth_middleware::{AuthContext, Authenticated};
 use crate::state::AppState;
@@ -111,10 +111,13 @@ async fn list_devices(
 /// body matches every other Node DELETE handler in this surface
 /// (`/api/tokens/:id`, `/api/api-keys/:id`).
 ///
-/// TODO: CSRF in Phase 0a step 5. The handler today is auth-only.
+/// CSRF: required (state-changing). The `CsrfProtected` extractor
+/// internally runs `Authenticated` and returns the same `AuthContext`
+/// the handler needs for the localhost-vs-remote last-credential
+/// guard, so taking it directly avoids re-extracting auth.
 async fn revoke_device(
     State(state): State<AppState>,
-    Authenticated(ctx): Authenticated,
+    CsrfProtected(ctx): CsrfProtected,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let is_localhost = matches!(ctx, AuthContext::Localhost);

@@ -1,6 +1,6 @@
 //! Integration tests for `/api/credentials`.
 //!
-//! Covers listing, CSRF-deferred behaviour (CSRF lands in step 5),
+//! Covers listing, CSRF enforcement on revoke (Phase 0a step 5),
 //! revoke cascade to sessions, the 404-on-unknown-id response shape,
 //! and the last-credential guard (remote callers → 403; localhost
 //! bypasses it). Wire shape mirrors Node — list returns `{credentials:
@@ -123,7 +123,7 @@ async fn revoke_device_returns_200_ok_envelope() {
     // Node returns `200 {"ok": true}`; the pre-cutover Rust 204 is
     // gone. Keeps the JS frontend's `data.ok` check honest.
     let (state, _dir) = ephemeral_state().await;
-    let (admin_cookie, _csrf) = seeded_auth(&state, "admin").await;
+    let (admin_cookie, admin_csrf) = seeded_auth(&state, "admin").await;
     let (target_cookie, _target_csrf) = seeded_auth(&state, "target-device").await;
 
     let router = app(state.clone());
@@ -133,6 +133,7 @@ async fn revoke_device_returns_200_ok_envelope() {
                 .method(Method::DELETE)
                 .uri("/api/credentials/target-device")
                 .header(header::COOKIE, format!("katulong_session={admin_cookie}"))
+                .header("x-csrf-token", &admin_csrf)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -164,7 +165,7 @@ async fn revoke_device_unknown_id_is_404() {
     // means the frontend can distinguish "already gone" from
     // "successfully removed."
     let (state, _dir) = ephemeral_state().await;
-    let (cookie, _csrf) = seeded_auth(&state, "admin").await;
+    let (cookie, csrf) = seeded_auth(&state, "admin").await;
     state
         .auth_store
         .clone()
@@ -177,6 +178,7 @@ async fn revoke_device_unknown_id_is_404() {
                 .method(Method::DELETE)
                 .uri("/api/credentials/never-existed")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .header("x-csrf-token", &csrf)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -194,13 +196,14 @@ async fn revoke_last_credential_from_remote_is_403_with_literal_message() {
     // credential — would lock you out"). The frontend renders
     // `err.error` verbatim, so the wording is part of the wire.
     let (state, _dir) = ephemeral_state().await;
-    let (cookie, _csrf) = seeded_auth(&state, "only-device").await;
+    let (cookie, csrf) = seeded_auth(&state, "only-device").await;
     let resp = app(state)
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::DELETE)
                 .uri("/api/credentials/only-device")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .header("x-csrf-token", &csrf)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -217,7 +220,10 @@ async fn revoke_last_credential_from_remote_is_403_with_literal_message() {
 #[tokio::test]
 async fn revoke_last_credential_from_localhost_is_allowed() {
     // Localhost bypasses the guard — physical access trumps lockout
-    // concern (Node scar f25855f).
+    // concern (Node scar f25855f). The CSRF extractor's localhost
+    // bypass (no session, no paired token) means the omitted
+    // `x-csrf-token` header is the right wire shape here, not an
+    // oversight.
     let (state, _dir) = ephemeral_state().await;
     state
         .auth_store
@@ -240,4 +246,71 @@ async fn revoke_last_credential_from_localhost_is_allowed() {
     assert_eq!(v["ok"], true);
     let snap = state.auth_store.snapshot().await;
     assert!(snap.credentials.is_empty());
+}
+
+// ---------------- CSRF (Phase 0a step 5) ----------------
+
+#[tokio::test]
+async fn revoke_device_without_csrf_is_403() {
+    // Step 5 reinstated CSRF on `DELETE /api/credentials/:id`.
+    // A remote caller with a valid cookie but no `x-csrf-token`
+    // header gets 403 — Node's `validateCsrfToken` produces the
+    // same status. Without CSRF, an attacker who phishes the
+    // user into visiting a hostile page could forge a delete
+    // against the tunnel host with the live session cookie.
+    let (state, _dir) = ephemeral_state().await;
+    let (cookie, _csrf) = seeded_auth(&state, "admin").await;
+    state
+        .auth_store
+        .clone()
+        .transact(|s| Ok((s.upsert_credential(stub_credential("target")), ())))
+        .await
+        .unwrap();
+    let resp = app(state)
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::DELETE)
+                .uri("/api/credentials/target")
+                .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let v = body_json(resp).await;
+    // Flat error envelope — Node-compatible. Body content is
+    // human-readable; tests that pin the exact message live in
+    // the CSRF unit suite. Here we just want "the rejection
+    // path fired."
+    assert!(v["error"].is_string());
+}
+
+#[tokio::test]
+async fn revoke_device_with_wrong_csrf_is_403() {
+    // Mismatched header value → 403. Constant-time compare
+    // means the rejection cost doesn't depend on how many bytes
+    // matched (a property the `subtle` crate gives us; this
+    // test asserts the wire shape, not the timing).
+    let (state, _dir) = ephemeral_state().await;
+    let (cookie, _csrf) = seeded_auth(&state, "admin").await;
+    state
+        .auth_store
+        .clone()
+        .transact(|s| Ok((s.upsert_credential(stub_credential("target")), ())))
+        .await
+        .unwrap();
+    let resp = app(state)
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::DELETE)
+                .uri("/api/credentials/target")
+                .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .header("x-csrf-token", "not-the-right-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }

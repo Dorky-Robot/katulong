@@ -228,16 +228,19 @@ async fn create_and_list_setup_token_roundtrip() {
 async fn create_setup_token_rejects_missing_name() {
     // Node treats `name` as required (`!name || !name.trim()` → 400).
     // The pre-cutover Rust route accepted no name; matching Node now
-    // fails fast with `{"error": "Token name is required"}`. CSRF
-    // enforcement on this route returns in step 5.
+    // fails fast with `{"error": "Token name is required"}`. The CSRF
+    // header is supplied so we exercise the body-validation path
+    // rather than the CSRF rejection — the dedicated CSRF tests live
+    // below.
     let (state, _dir) = ephemeral_state().await;
-    let (cookie, _csrf) = seeded_auth(&state, "c1").await;
+    let (cookie, csrf) = seeded_auth(&state, "c1").await;
     let resp = app(state)
         .oneshot(
             req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
                 .method(Method::POST)
                 .uri("/api/tokens")
                 .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .header("x-csrf-token", &csrf)
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("{}"))
                 .unwrap(),
@@ -360,6 +363,151 @@ async fn revoke_setup_token_is_idempotent_and_cascades() {
     assert_eq!(second.status(), StatusCode::NOT_FOUND);
     let v = body_json(second).await;
     assert_eq!(v["error"], "Token not found");
+}
+
+// ---------------- CSRF on token routes (Phase 0a step 5) ----------------
+
+#[tokio::test]
+async fn create_token_without_csrf_is_403() {
+    // Step 5 reinstated CSRF on `POST /api/tokens`. A remote
+    // caller with a valid cookie but no `x-csrf-token` header
+    // gets 403. Without this, an attacker could trick a logged-in
+    // admin into minting setup tokens against the live cookie.
+    let (state, _dir) = ephemeral_state().await;
+    let (cookie, _csrf) = seeded_auth(&state, "admin").await;
+    let resp = app(state)
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::POST)
+                .uri("/api/tokens")
+                .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json_body(&json!({ "name": "iPad" })))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn create_token_with_wrong_csrf_is_403() {
+    let (state, _dir) = ephemeral_state().await;
+    let (cookie, _csrf) = seeded_auth(&state, "admin").await;
+    let resp = app(state)
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::POST)
+                .uri("/api/tokens")
+                .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .header("x-csrf-token", "decoy-value")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json_body(&json!({ "name": "iPad" })))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn create_token_from_localhost_skips_csrf() {
+    // Localhost peers have no session and no paired CSRF token
+    // (physical-access trust model). The extractor's localhost
+    // bypass means the call succeeds without an `x-csrf-token`
+    // header — and must, otherwise the localhost UI couldn't
+    // mint setup tokens for the first-device pair flow.
+    let (state, _dir) = ephemeral_state().await;
+    let resp = app(state)
+        .oneshot(
+            req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
+                .method(Method::POST)
+                .uri("/api/tokens")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json_body(&json!({ "name": "first-token" })))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_json(resp).await;
+    // Plaintext token field is `token` (NOT `plaintext`) per
+    // step 3's wire reshape — same shape as the remote path.
+    assert!(!v["token"].as_str().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn revoke_token_without_csrf_is_403() {
+    let (state, _dir) = ephemeral_state().await;
+    let (cookie, csrf) = seeded_auth(&state, "admin").await;
+    let router = app(state);
+    // Mint a token first using a valid CSRF, then try to delete
+    // it without one. The two-step shape proves CSRF gates
+    // delete independently of create.
+    let create = router
+        .clone()
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::POST)
+                .uri("/api/tokens")
+                .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .header("x-csrf-token", &csrf)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json_body(&json!({ "name": "to-revoke" })))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let token_id = body_json(create).await["id"].as_str().unwrap().to_string();
+
+    let resp = router
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::DELETE)
+                .uri(format!("/api/tokens/{token_id}"))
+                .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn rename_token_without_csrf_is_403() {
+    let (state, _dir) = ephemeral_state().await;
+    let (cookie, csrf) = seeded_auth(&state, "admin").await;
+    let router = app(state);
+    let create = router
+        .clone()
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::POST)
+                .uri("/api/tokens")
+                .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .header("x-csrf-token", &csrf)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json_body(&json!({ "name": "to-rename" })))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let token_id = body_json(create).await["id"].as_str().unwrap().to_string();
+
+    let resp = router
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::PATCH)
+                .uri(format!("/api/tokens/{token_id}"))
+                .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json_body(&json!({ "name": "renamed" })))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 // ---------------- pair flow ----------------

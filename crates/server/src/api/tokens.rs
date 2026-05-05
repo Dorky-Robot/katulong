@@ -17,9 +17,13 @@
 //! - `DELETE /api/tokens/:id`   — revoke (auth)
 //! - `PATCH  /api/tokens/:id`   — rename (auth)
 //!
-//! TODO: CSRF on the three state-mutating handlers in Phase 0a step 5.
-//! The handlers stay auth-only for this commit so the wire reshape
-//! lands in isolation.
+//! Phase 0a step 5 reinstated CSRF protection on the three
+//! state-mutating verbs (POST/DELETE/PATCH). Step 3 dropped it
+//! while reshaping the wire to the Node format; step 5 restores
+//! it via the same `CsrfProtected` extractor that gates
+//! `/auth/logout`. The list endpoint stays auth-only — reads
+//! don't mutate state, so a stolen cookie reading the token
+//! list isn't a CSRF concern.
 //!
 //! Wire shapes match Node `lib/routes/auth-routes.js:347-476`
 //! byte-for-byte: list returns `{ tokens: [...] }` with each entry
@@ -29,6 +33,7 @@
 //! expiresAt}` — the plaintext field is named `token`, not
 //! `plaintext`. Revoke + PATCH both return `200 {"ok": true}`.
 
+use crate::api::csrf::CsrfProtected;
 use crate::api::error::ApiError;
 use crate::api::extract::JsonBody;
 use crate::auth_middleware::Authenticated;
@@ -174,10 +179,14 @@ struct CreateTokenResponse {
 /// Matching Node means the JS frontend's `if (resp.ok)` keeps
 /// working unchanged.
 ///
-/// TODO: CSRF in Phase 0a step 5.
+/// CSRF: required (state-changing). Localhost callers skip the
+/// header check via the extractor's built-in bypass — they have
+/// no session and therefore no paired CSRF token to compare
+/// against, which is consistent with the physical-access trust
+/// model the auth middleware applies on the same peer class.
 async fn create_token(
     State(state): State<AppState>,
-    Authenticated(_): Authenticated,
+    CsrfProtected(_): CsrfProtected,
     JsonBody(body): JsonBody<CreateTokenRequest>,
 ) -> Result<Json<CreateTokenResponse>, ApiError> {
     let trimmed = body
@@ -223,10 +232,10 @@ async fn create_token(
 /// distinguishes "never existed" with a 404 here (unlike the
 /// credential delete path, which it ALSO 404s).
 ///
-/// TODO: CSRF in Phase 0a step 5.
+/// CSRF: required (state-changing).
 async fn revoke_token(
     State(state): State<AppState>,
-    Authenticated(_): Authenticated,
+    CsrfProtected(_): CsrfProtected,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let token_id = id.clone();
@@ -284,10 +293,10 @@ struct PatchTokenRequest {
 /// success, `404` on unknown id, `400` on missing/empty/oversized name.
 /// Mirrors Node `auth-routes.js:452-476` exactly.
 ///
-/// TODO: CSRF in Phase 0a step 5.
+/// CSRF: required (state-changing).
 async fn rename_token(
     State(state): State<AppState>,
-    Authenticated(_): Authenticated,
+    CsrfProtected(_): CsrfProtected,
     Path(id): Path<String>,
     JsonBody(body): JsonBody<PatchTokenRequest>,
 ) -> Result<Json<Value>, ApiError> {
