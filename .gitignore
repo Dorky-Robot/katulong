@@ -24,3 +24,8 @@ site/
 .claude/scheduled_tasks.lock
 .worktrees/
 core
+
+# Local Rust artifacts (the workspace lives on cutover/phase-0a and
+# cutover/phase-0b branches; if anyone builds those locally, ignore
+# the build output).
+target/

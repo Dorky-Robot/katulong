@@ -227,8 +227,9 @@ resolve_host() {
   fi
 }
 
-# Wait until the staging server is responding on $1, or fail.
-# Probe path is `/login` (always served, public).
+# Wait until the staging server is responding on the given probe
+# path (`$4`), or fail. The current call site passes `/login`,
+# which is always served and public on the Node backend.
 wait_for_server() {
   local port="$1"
   local pid="$2"
