@@ -57,10 +57,10 @@ These principles came out of scar tissue and stay binding.
    atomically swap its underlying wire.
 
 3. **Tiles are descriptors, not objects.** From
-   `rewrite-tile-protocol.md` and `tile-state-rewrite.md`: a tile is
-   a `{ id, type, props }` record; the renderer is a pure function of
-   props. No per-tile classes with lifecycle the host has to call in
-   the right order. Cross-instance is just a new `type`.
+   `tile-state-rewrite.md`: a tile is a `{ id, type, props }` record;
+   the renderer is a pure function of props. No per-tile classes with
+   lifecycle the host has to call in the right order. Cross-instance
+   is just a new `type`.
 
 ## What does *not* carry forward
 

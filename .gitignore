@@ -25,11 +25,7 @@ site/
 .worktrees/
 core
 
-# Rust
+# Local Rust artifacts (the workspace lives on cutover/phase-0a and
+# cutover/phase-0b branches; if anyone builds those locally, ignore
+# the build output).
 target/
-**/*.rs.bk
-Cargo.lock.bak
-
-# Trunk (Leptos frontend build)
-.trunk/
-crates/web/dist/
