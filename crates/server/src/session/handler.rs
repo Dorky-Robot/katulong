@@ -1333,10 +1333,25 @@ fn handle_revoke(
     bound_credential: Option<&str>,
 ) -> Action {
     match revoke {
-        Ok(event) => match bound_credential {
-            Some(mine) if mine == event.credential_id => {
+        // The revoke-all path. Every connection closes,
+        // including localhost-bound ones (`bound_credential ==
+        // None`) — those carry no credential id to compare
+        // against, but the user-observable contract for "Sign
+        // out everywhere" is "every WebSocket dies."
+        Ok(RevocationEvent::All) => {
+            tracing::info!(
+                cause = "revoke_all",
+                "session connection terminating"
+            );
+            Action::Close {
+                code: error_code::CONNECTION_TERMINATED,
+                message: "connection terminated".into(),
+            }
+        }
+        Ok(RevocationEvent::Credential { credential_id }) => match bound_credential {
+            Some(mine) if mine == credential_id => {
                 tracing::info!(
-                    credential_id = %event.credential_id,
+                    credential_id = %credential_id,
                     cause = "credential_revoked",
                     "session connection terminating"
                 );
@@ -1659,7 +1674,7 @@ mod tests {
 
     #[test]
     fn revoke_matching_credential_closes_with_terminated_code() {
-        let event = RevocationEvent {
+        let event = RevocationEvent::Credential {
             credential_id: "cred-1".into(),
         };
         let action = handle_revoke(Ok(event), Some("cred-1"));
@@ -1671,7 +1686,7 @@ mod tests {
 
     #[test]
     fn revoke_other_credential_continues() {
-        let event = RevocationEvent {
+        let event = RevocationEvent::Credential {
             credential_id: "other-cred".into(),
         };
         assert_eq!(handle_revoke(Ok(event), Some("cred-1")), Action::Continue);
@@ -1679,10 +1694,36 @@ mod tests {
 
     #[test]
     fn revoke_when_localhost_bound_continues() {
-        let event = RevocationEvent {
+        let event = RevocationEvent::Credential {
             credential_id: "cred-1".into(),
         };
         assert_eq!(handle_revoke(Ok(event), None), Action::Continue);
+    }
+
+    #[test]
+    fn revoke_all_closes_remote_bound_connection() {
+        // The revoke-all path applies regardless of which
+        // credential the connection is bound to — that's the
+        // whole point of the variant.
+        let action = handle_revoke(Ok(RevocationEvent::All), Some("cred-1"));
+        match action {
+            Action::Close { code, .. } => assert_eq!(code, error_code::CONNECTION_TERMINATED),
+            other => panic!("expected close on revoke-all, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn revoke_all_closes_localhost_bound_connection() {
+        // A localhost-bound connection has `bound_credential =
+        // None` and is therefore immune to the per-credential
+        // event. The All variant has to close it anyway —
+        // "Sign out everywhere" promises to terminate every
+        // active connection.
+        let action = handle_revoke(Ok(RevocationEvent::All), None);
+        match action {
+            Action::Close { code, .. } => assert_eq!(code, error_code::CONNECTION_TERMINATED),
+            other => panic!("expected close on revoke-all (localhost), got {other:?}"),
+        }
     }
 
     #[test]

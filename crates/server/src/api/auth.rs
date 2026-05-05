@@ -12,6 +12,11 @@
 //! - `POST /auth/login/options`   — public; bare `RequestChallengeResponse`
 //! - `POST /auth/login/verify`    — public; updates counter + mints session
 //! - `POST /auth/logout`          — auth + CSRF; localhost → 409
+//! - `POST /auth/revoke-all`      — auth + CSRF; wipes every
+//!   session row, broadcasts close-all, clears caller's cookie.
+//!   "Sign out everywhere" verb. Localhost may call without a
+//!   prior cookie — the CSRF extractor's localhost bypass means
+//!   the call is admissible without auth credentials.
 //!
 //! Phase 0a step 4 collapsed the standalone `/auth/pair/*`
 //! routes into `/auth/register/*`. The Node frontend
@@ -55,6 +60,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use serde_json::json;
 use katulong_auth::{AuthError, Session, SESSION_TTL};
 use katulong_shared::wire::{
     AuthFinishResponse, AuthStatusResponse, CreationChallengeResponse, LoginFinishRequest,
@@ -92,6 +98,20 @@ pub fn auth_routes() -> Router<AppState> {
         // UI shouldn't offer logout for physical-access peers (Node
         // scar `23981ca`).
         .route("/auth/logout", post(logout))
+        // PROTECTED + CSRF: "Sign out everywhere." Wipes every
+        // session row (which collaterally invalidates every
+        // paired CSRF token, since those live on the session),
+        // broadcasts the close-all variant on the revocation
+        // channel so every active long-lived transport tears
+        // down, and clears the caller's cookie. Returns 400 on a
+        // fresh install with no credentials, mirroring Node's
+        // `loadState() === null` short-circuit. Localhost is
+        // admissible (the CSRF extractor's bypass passes through
+        // an `AuthContext::Localhost`) and doesn't carry a
+        // session cookie to invalidate, but the broadcast still
+        // closes localhost-bound WebSockets — same contract as
+        // remote.
+        .route("/auth/revoke-all", post(revoke_all))
 }
 
 async fn status(
@@ -539,4 +559,76 @@ async fn logout(
         "logout succeeded; session removed"
     );
     Ok((StatusCode::NO_CONTENT, [(header::SET_COOKIE, clear)]))
+}
+
+// ============== revoke-all ==============
+
+/// `POST /auth/revoke-all` — "Sign out everywhere."
+///
+/// Wipes every session row in `AuthState` (collaterally invalidates
+/// every CSRF token, since those live on the session itself), then
+/// emits a close-all broadcast that tears down every active
+/// long-lived transport. The caller's cookie is cleared in the
+/// response so a remote caller observes the effect immediately
+/// rather than continuing to send a now-dead cookie.
+///
+/// 400 on a fresh install (no credentials registered). Mirrors
+/// Node's `loadState() === null` short-circuit at
+/// `lib/routes/auth-routes.js:248-249` — the user-observable shape
+/// is the same: an instance that hasn't been set up has nothing to
+/// revoke. Sessions and setup-tokens existing without credentials is
+/// not a state we expect (they cascade-clean), so checking only
+/// `credentials.is_empty()` is the right gate.
+///
+/// Credentials and setup tokens are intentionally NOT removed — the
+/// user keeps their passkeys; they just have to re-auth on every
+/// previously-signed-in device. Same shape as Node's
+/// `revokeAllLoginTokens` (which clears `loginTokens`, leaves the
+/// rest alone).
+///
+/// CSRF: required (state-changing). Localhost callers pass the
+/// extractor's bypass and reach this handler with
+/// `AuthContext::Localhost`; the broadcast still closes localhost-
+/// bound WebSockets via the `RevocationEvent::All` variant.
+async fn revoke_all(
+    State(state): State<AppState>,
+    CsrfProtected(_): CsrfProtected,
+) -> Result<impl IntoResponse, ApiError> {
+    // Pre-flight: refuse on a fresh install. The mutex-locked
+    // closure below would happily wipe an empty `sessions` table
+    // and return 200, but Node returns 400 here so a misbehaving
+    // client can't loop revoke-all against an unconfigured
+    // instance and trigger broadcast traffic for no reason. The
+    // re-check inside `transact` would be redundant: even with a
+    // race where credentials appear between the snapshot and the
+    // closure, wiping an empty session list is a no-op the
+    // operator doesn't care about.
+    let snap = state.auth_store.snapshot().await;
+    if snap.credentials.is_empty() {
+        return Err(ApiError::BadRequest("Not set up"));
+    }
+
+    state
+        .auth_store
+        .transact(|s| Ok((s.remove_all_sessions(), ())))
+        .await
+        .map_err(ApiError::from)?;
+
+    // Emit AFTER the auth-state commit. Subscribers that race
+    // ahead and tear down before we've cleared the table would
+    // see a torn state where the WS is gone but the cookie is
+    // still nominally valid until disk persistence completes.
+    // Order matters here: the channel is unblocking, so this
+    // doesn't pin the request inside `transact`.
+    state.revocations.emit_all();
+
+    let clear = build_clear_cookie(state.config.cookie_secure);
+    tracing::info!("revoke-all: every session dropped, broadcast emitted");
+    // Body shape `{"ok": true}` matches Node
+    // `lib/routes/auth-routes.js:258` byte-for-byte.
+    Ok((
+        StatusCode::OK,
+        [(header::SET_COOKIE, clear)],
+        Json(json!({ "ok": true })),
+    ))
 }

@@ -16,6 +16,7 @@ use axum::{
 };
 use common::{ephemeral_state, json_body, req, seeded_auth, stub_credential};
 use katulong_server::app;
+use katulong_server::revocation::RevocationEvent;
 use serde_json::json;
 use std::time::{Duration, SystemTime};
 use tokio::time::timeout;
@@ -59,7 +60,10 @@ async fn direct_device_revoke_emits_broadcast() {
         .await
         .expect("broadcast must fire within 500ms")
         .expect("receiver must get the event");
-    assert_eq!(event.credential_id, "target");
+    match event {
+        RevocationEvent::Credential { credential_id } => assert_eq!(credential_id, "target"),
+        other => panic!("expected Credential variant, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -175,7 +179,10 @@ async fn setup_token_revoke_emits_for_paired_credential() {
         .await
         .expect("broadcast must fire within 500ms for the cascade")
         .expect("receiver must get the cascade event");
-    assert_eq!(event.credential_id, paired_cred_id);
+    match event {
+        RevocationEvent::Credential { credential_id } => assert_eq!(credential_id, paired_cred_id),
+        other => panic!("expected Credential variant, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -222,4 +229,39 @@ async fn setup_token_revoke_without_paired_credential_does_not_emit() {
         result.is_err(),
         "unused-token revoke must not broadcast — nothing to tear down"
     );
+}
+
+#[tokio::test]
+async fn revoke_all_emits_close_everything_variant() {
+    // The "Sign out everywhere" path: regardless of how many
+    // credentials/sessions live in the store, the broadcast is a
+    // single `All` event. WS handlers see it and close
+    // unconditionally — including localhost-bound connections
+    // that have no credential id to compare against.
+    let (state, _dir) = ephemeral_state().await;
+    let (admin_cookie, csrf) = seeded_auth(&state, "admin").await;
+
+    let mut rx = state.subscribe_revocations();
+    let resp = app(state.clone())
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(axum::http::Method::POST)
+                .uri("/auth/revoke-all")
+                .header(header::COOKIE, format!("katulong_session={admin_cookie}"))
+                .header("x-csrf-token", &csrf)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let event = timeout(Duration::from_millis(500), rx.recv())
+        .await
+        .expect("broadcast must fire within 500ms")
+        .expect("receiver must get the event");
+    match event {
+        RevocationEvent::All => {}
+        other => panic!("revoke-all must emit RevocationEvent::All, got {other:?}"),
+    }
 }

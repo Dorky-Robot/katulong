@@ -280,6 +280,24 @@ impl AuthState {
         }
     }
 
+    /// Drop every session, regardless of expiry or owning credential.
+    ///
+    /// Used by `POST /auth/revoke-all` (the "Sign out everywhere" verb)
+    /// — wipes every session record, which has the side effect of
+    /// invalidating every paired CSRF token at the same time
+    /// (`Session.csrf_token` lives on the row that just disappeared).
+    /// Credentials and setup tokens are intentionally NOT touched:
+    /// the user keeps their passkeys; they just have to re-auth on
+    /// every previously-signed-in device. Same shape as Node's
+    /// `revokeAllLoginTokens` (which clears `loginTokens`, leaves
+    /// the rest alone).
+    pub fn remove_all_sessions(&self) -> Self {
+        Self {
+            sessions: Vec::new(),
+            ..self.clone()
+        }
+    }
+
     /// Drop sessions whose `expires_at` is at or before `now`.
     pub fn prune_expired(&self, now: SystemTime) -> Self {
         Self {
@@ -565,6 +583,18 @@ mod tests {
         assert!(s.valid_session("t", epoch_plus(499)).is_some());
         assert!(s.valid_session("t", epoch_plus(500)).is_none());
         assert!(s.valid_session("t", epoch_plus(501)).is_none());
+    }
+
+    #[test]
+    fn remove_all_sessions_clears_every_row_keeps_credentials() {
+        let s = AuthState::new()
+            .upsert_credential(cred("a"))
+            .upsert_credential(cred("b"))
+            .upsert_session(sess("t1", "a", 1000))
+            .upsert_session(sess("t2", "b", 1000))
+            .remove_all_sessions();
+        assert!(s.sessions.is_empty(), "every session row dropped");
+        assert_eq!(s.credentials.len(), 2, "credentials are not collateral damage");
     }
 
     #[test]

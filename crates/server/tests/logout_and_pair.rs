@@ -632,3 +632,252 @@ async fn pair_finish_with_invalid_token_returns_401() {
     let v = body_json(resp).await;
     assert!(v["error"].is_string());
 }
+
+// ---------------- /auth/revoke-all (Phase 0a step 6) ----------------
+//
+// "Sign out everywhere" — wipes every session row, broadcasts a
+// close-all event, clears the caller's cookie. Mirrors Node's
+// `lib/routes/auth-routes.js:247-259`. Guards: no auth → 401,
+// auth-without-CSRF (remote) → 403, fresh-install → 400, success
+// → 200 `{"ok": true}` with `Set-Cookie: ...; Max-Age=0`.
+
+#[tokio::test]
+async fn revoke_all_without_auth_returns_401() {
+    let (state, _dir) = ephemeral_state().await;
+    // Seed a credential so we exercise the auth-required path,
+    // not the "Not set up" pre-flight.
+    state
+        .auth_store
+        .clone()
+        .transact(|s| Ok((s.upsert_credential(stub_credential("admin")), ())))
+        .await
+        .unwrap();
+    let resp = app(state)
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::POST)
+                .uri("/auth/revoke-all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn revoke_all_remote_without_csrf_returns_403() {
+    let (state, _dir) = ephemeral_state().await;
+    let (cookie, _csrf) = seeded_auth(&state, "admin").await;
+    let resp = app(state)
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::POST)
+                .uri("/auth/revoke-all")
+                .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn revoke_all_remote_with_csrf_clears_cookie_and_drops_sessions() {
+    // Seed two sessions for the admin so we can prove
+    // "every session" is wiped — not just the caller's. The second
+    // session is created by directly upserting a manually-built
+    // `Session` so we can assert it's gone after the revoke.
+    let (state, _dir) = ephemeral_state().await;
+    let (cookie, csrf) = seeded_auth(&state, "admin").await;
+
+    // Mint a second session (from a hypothetical second device of
+    // the same admin) so the wipe-everything assertion is non-
+    // trivial. Use the real `Session::mint` so the hashing path
+    // matches production — we then look up by `find_session(plaintext)`.
+    let (other_cookie, _other_session) = state
+        .auth_store
+        .clone()
+        .transact(|s| {
+            let (plaintext, session) = katulong_auth::Session::mint(
+                "admin",
+                std::time::SystemTime::now(),
+                katulong_auth::SESSION_TTL,
+            );
+            Ok((s.upsert_session(session.clone()), (plaintext, session)))
+        })
+        .await
+        .unwrap();
+
+    // Sanity: both sessions are in the store before the call.
+    {
+        let snap = state.auth_store.snapshot().await;
+        assert!(snap.find_session(&cookie).is_some());
+        assert!(snap.find_session(&other_cookie).is_some());
+    }
+
+    let resp = app(state.clone())
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::POST)
+                .uri("/auth/revoke-all")
+                .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .header("x-csrf-token", &csrf)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Set-Cookie clears the caller's cookie. Same flag block as
+    // logout — Max-Age=0 + Secure (the test config has cookie_secure
+    // = true).
+    let set_cookie = resp
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        set_cookie.contains("Max-Age=0"),
+        "response must clear the cookie: got {set_cookie}"
+    );
+
+    // Body matches Node: `{"ok": true}`. Phase 0a step 6 returns
+    // 200 with this exact shape — pre-cutover Rust never had this
+    // route at all.
+    let v = body_json(resp).await;
+    assert_eq!(v["ok"], true);
+
+    // Both sessions are gone — the wipe was global, not just the
+    // caller's row.
+    let snap = state.auth_store.snapshot().await;
+    assert!(snap.find_session(&cookie).is_none());
+    assert!(snap.find_session(&other_cookie).is_none());
+    assert!(
+        snap.find_credential("admin").is_some(),
+        "credentials are not collateral damage on revoke-all"
+    );
+}
+
+#[tokio::test]
+async fn revoke_all_subsequent_request_with_old_cookie_is_unauthorized() {
+    // After revoke-all, the caller's previously-valid cookie no
+    // longer authenticates. This is the user-observable invariant
+    // that "Sign out everywhere" is selling — covers it explicitly
+    // so a future regression that, say, soft-tombstones sessions
+    // (instead of removing them) trips this test.
+    let (state, _dir) = ephemeral_state().await;
+    let (cookie, csrf) = seeded_auth(&state, "admin").await;
+    let router = app(state);
+
+    let revoke = router
+        .clone()
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::POST)
+                .uri("/auth/revoke-all")
+                .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .header("x-csrf-token", &csrf)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revoke.status(), StatusCode::OK);
+
+    // Re-using the same cookie on /api/me must now 401 — the
+    // session row is gone, so the auth middleware can't resolve
+    // it. /api/me is the smoke-test endpoint that runs the full
+    // auth chain, so it's the cheapest place to assert the
+    // negative.
+    let probe = router
+        .oneshot(
+            req("203.0.113.5:1234".parse().unwrap(), "katulong.test")
+                .method(Method::GET)
+                .uri("/api/me")
+                .header(header::COOKIE, format!("katulong_session={cookie}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(probe.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn revoke_all_localhost_without_csrf_succeeds() {
+    // Localhost peers have no session and no paired CSRF token
+    // (physical-access trust model). The CSRF extractor's
+    // localhost bypass means revoke-all is admissible without
+    // either a cookie or an x-csrf-token header. The instance
+    // must already have a credential — fresh-install is 400
+    // (covered separately).
+    let (state, _dir) = ephemeral_state().await;
+    state
+        .auth_store
+        .clone()
+        .transact(|s| Ok((s.upsert_credential(stub_credential("admin")), ())))
+        .await
+        .unwrap();
+    // Seed a session belonging to that credential so we can
+    // assert it gets wiped even when the call originated from
+    // localhost.
+    let (other_cookie, _) = state
+        .auth_store
+        .clone()
+        .transact(|s| {
+            let (plaintext, session) = katulong_auth::Session::mint(
+                "admin",
+                std::time::SystemTime::now(),
+                katulong_auth::SESSION_TTL,
+            );
+            Ok((s.upsert_session(session.clone()), (plaintext, session)))
+        })
+        .await
+        .unwrap();
+
+    let resp = app(state.clone())
+        .oneshot(
+            req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
+                .method(Method::POST)
+                .uri("/auth/revoke-all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_json(resp).await;
+    assert_eq!(v["ok"], true);
+
+    // The remote-device session got wiped too — revoke-all is
+    // global, regardless of who initiated it.
+    let snap = state.auth_store.snapshot().await;
+    assert!(snap.find_session(&other_cookie).is_none());
+}
+
+#[tokio::test]
+async fn revoke_all_on_fresh_install_returns_400_not_set_up() {
+    // No credentials registered → 400 `{"error": "Not set up"}`,
+    // matching Node `lib/routes/auth-routes.js:248-249`. Localhost
+    // is the only access path that even reaches this handler on a
+    // fresh install (remote without auth → 401 above), so we
+    // submit from loopback. The CSRF extractor's localhost bypass
+    // means we don't need a cookie or header.
+    let (state, _dir) = ephemeral_state().await;
+    let resp = app(state)
+        .oneshot(
+            req("127.0.0.1:1234".parse().unwrap(), "localhost:3000")
+                .method(Method::POST)
+                .uri("/auth/revoke-all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let v = body_json(resp).await;
+    assert_eq!(v["error"], "Not set up");
+}
