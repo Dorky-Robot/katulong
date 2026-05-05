@@ -27,23 +27,11 @@ thiserror = { workspace = true }
 # into read/write halves in transport::websocket. axum re-exports
 # the stream trait but not the sink combinators we need.
 futures = { version = "0.3", default-features = false, features = ["std"] }
-# CBOR wire format for session I/O. Uniform binary over both WS and
-# WebRTC DataChannel; no base64 overhead, self-describing for
-# schema evolution. `ciborium` is pure Rust, well-maintained, and
-# integrates with serde (same derives as serde_json). `serde_json`
-# stays in the dep tree because the HTTP API (cookies, error
-# envelopes, tokens, devices) still speaks JSON — CBOR is
-# session-layer only.
-ciborium = "0.2"
-# `serde_bytes` forces `Vec<u8>` fields on `Input`/`Output` messages
-# to serialize as CBOR byte-strings (major type 2) instead of arrays
-# of small integers. Without this annotation a 1 KiB keystroke/paste
-# payload would encode as ~1–2 KiB of integer-element overhead; with
-# it, bytes ride the wire literally. Serde's default for `Vec<u8>` is
-# array-of-int because it has to pick a portable default across
-# codecs — we pick byte-string explicitly because CBOR supports it
-# and we're not using any other codec for session I/O.
-serde_bytes = "0.11"
+# Phase 0b of the Node-cutover dropped `ciborium` and `serde_bytes`:
+# the WS wire is now JSON over text frames so the existing Node
+# SPA in `public/lib/...` can drive the Rust server unmodified.
+# `serde_json` (already present below via the workspace) covers
+# both the HTTP API and the session-protocol encoding now.
 # Static asset serving for the Leptos frontend bundle. `ServeDir`
 # mounts a directory under a route prefix; `fs` feature gates the
 # filesystem-reading bits (the rest of tower-http is feature-

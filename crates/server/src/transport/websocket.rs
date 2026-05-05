@@ -1,47 +1,42 @@
-//! WebSocket → `TransportHandle` adapter with CBOR wire format.
+//! WebSocket → `TransportHandle` adapter with JSON wire format.
 //!
 //! Wraps an axum `WebSocket` in two pump tasks and returns the
 //! consumer-facing `TransportHandle`. The terminal handler takes
 //! that handle and never sees `axum::extract::ws::*`.
 //!
-//! # Why CBOR, not JSON
+//! # Why JSON, not CBOR
 //!
-//! katulong is one-user-many-devices and performance-sensitive
-//! (the whole WS → WebRTC progressive enhancement exists to save
-//! milliseconds). CBOR gives us:
+//! The Node-cutover plan (phase 0b — this rewrite) moves the live
+//! frontend from the partly-built Rust+WASM bundle back to the
+//! existing Node SPA in `public/`. That SPA has spoken JSON over
+//! text WS frames since day one (`public/lib/ws-message-handlers.js`
+//! reads with `JSON.parse(event.data)` and writes with
+//! `JSON.stringify`). Asking the SPA to learn CBOR would spread
+//! cutover risk across both server and client; cheaper to make the
+//! Rust server speak JSON and revisit a binary wire later if
+//! profiling shows it actually matters.
 //!
-//! - **No base64 overhead** on byte payloads (image paste, raw
-//!   terminal input/output). JSON forces string encoding for any
-//!   binary field; CBOR's byte-string type carries bytes directly.
-//! - **Smaller wire** — typically 30-50% of JSON size for mixed
-//!   structured + byte data.
-//! - **Uniform wire across transports**. WS binary frames and
-//!   WebRTC DataChannel are both native binary; CBOR is the
-//!   single encoding that works on both without per-transport
-//!   shims.
-//! - **Schema evolution**. Self-describing format + serde means
-//!   new fields + new variants migrate the same way they did
-//!   under JSON.
-//!
-//! Lost: human-readable frames in Wireshark. The trade is
-//! deliberate — CBOR has well-understood debug tooling
-//! (`cbor.me`, `cborcli`) and our operator debugging surface is
-//! structured logs anyway, not wire captures.
+//! Lost: the `serde_bytes`-backed CBOR byte-string encoding that
+//! kept large pastes off the array-of-int overhead. The SPA's
+//! input-cap is 8 KiB (`lib/websocket-validation.js`), and the
+//! server-side outbound coalescer keeps `output` chunks small;
+//! today's traffic fits comfortably under the 64 KiB frame cap
+//! even with JSON's overhead.
 //!
 //! # Wire-level responsibilities
 //!
 //! Two pump tasks:
 //!
 //! - `input_pump`: reads `WebSocket::recv()` frames, decodes each
-//!   binary frame as a `ClientMessage` via CBOR, forwards to the
-//!   inbound channel. Rejects text frames (wrong encoding) and
-//!   binary frames above the size cap. Reports decode/frame
-//!   errors via `Result<ClientMessage, TransportError>` so the
-//!   consumer can decide whether to close. Exits on peer Close
-//!   or disconnect.
+//!   text frame as a `ClientMessage` via `serde_json::from_str`,
+//!   forwards to the inbound channel. Rejects binary frames
+//!   (wrong encoding for the Node SPA) and text frames above the
+//!   size cap. Reports decode/frame errors via
+//!   `Result<ClientMessage, TransportError>` so the consumer can
+//!   decide whether to close. Exits on peer Close or disconnect.
 //! - `output_pump`: drains the outbound channel, serializes each
-//!   `ServerMessage` to CBOR, sends as binary frame. Exits when
-//!   the channel closes (consumer dropped the handle).
+//!   `ServerMessage` to JSON, sends as text frame. Exits when the
+//!   channel closes (consumer dropped the handle).
 //!
 //! Protocol keep-alive (WS-level `Ping`/`Pong` frames, distinct
 //! from the app-level `ClientMessage::Ping`/`ServerMessage::Pong`)
@@ -70,17 +65,15 @@ const OUTBOUND_BUFFER: usize = 64;
 /// alternative is an unbounded channel growing toward OOM.
 const INBOUND_BUFFER: usize = 64;
 
-/// Hard size cap on an individual inbound binary frame, applied
-/// BEFORE CBOR decode. Without this, an authenticated attacker
+/// Hard size cap on an individual inbound text frame, applied
+/// BEFORE JSON decode. Without this, an authenticated attacker
 /// could push multi-megabyte frames through a connection that's
 /// already past the auth gate; the axum `DefaultBodyLimit` layer
 /// covers HTTP bodies, not WS frames once upgrade has completed.
-/// 64 KiB is well above any current message and still comfortably
-/// above the terminal messages envisioned for slice 9e/9f
-/// (keystroke input, resize, session-id strings, small output
-/// chunks after coalescing). Large paste payloads that exceed
-/// this get fragmented at the client; the CBOR-native byte-string
-/// type keeps that overhead minimal without needing base64.
+/// 64 KiB sits well above any current message — Node's
+/// `validateMessage` caps `input.data` at 8192 chars, and our
+/// outbound coalescer keeps `output.data` chunks small. A real
+/// paste larger than the inner cap is chunked client-side.
 const MAX_INBOUND_FRAME_BYTES: usize = 64 * 1024;
 
 /// The pump tasks spawned by `into_transport`. Returned alongside
@@ -134,26 +127,24 @@ async fn input_pump(
     use futures::StreamExt;
     while let Some(frame) = ws_rx.next().await {
         let decoded = match frame {
-            Ok(Message::Binary(bytes)) => {
-                if bytes.len() > MAX_INBOUND_FRAME_BYTES {
+            Ok(Message::Text(text)) => {
+                if text.len() > MAX_INBOUND_FRAME_BYTES {
                     Err(TransportError::DecodeFailed(format!(
                         "frame too large: {} bytes exceeds {} byte limit",
-                        bytes.len(),
+                        text.len(),
                         MAX_INBOUND_FRAME_BYTES
                     )))
                 } else {
-                    ciborium::de::from_reader::<ClientMessage, _>(&bytes[..])
+                    serde_json::from_str::<ClientMessage>(&text)
                         .map_err(|e| TransportError::DecodeFailed(e.to_string()))
                 }
             }
-            // Text frames are rejected: CBOR is the sole wire format.
-            // A client sending text is either wrong-version or
-            // probing; reject cleanly and let the consumer decide.
-            // This rejection is permanent — if a future debug
-            // surface wants human-readable wire traffic, it lives
-            // as a separate HTTP route (e.g. `/api/debug/ws-trace`),
-            // not as a mode flag on the session transport.
-            Ok(Message::Text(_)) => Err(TransportError::UnexpectedText),
+            // Binary frames are rejected: JSON over text is the
+            // sole wire format. A client sending binary is either
+            // a stale WASM build (the Rust frontend's WS code is
+            // frozen during cutover) or a probe; reject cleanly
+            // and let the consumer decide what to do.
+            Ok(Message::Binary(_)) => Err(TransportError::UnexpectedBinary),
             Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {
                 // WS-level keepalive. axum auto-responds to Ping;
                 // we just drop them from the inbound stream so the
@@ -179,17 +170,21 @@ async fn output_pump(
 ) {
     use futures::SinkExt;
     while let Some(msg) = outbound.recv().await {
-        let mut buf = Vec::new();
-        if let Err(e) = ciborium::ser::into_writer(&msg, &mut buf) {
-            // `ServerMessage` is a closed set of serde-derived
-            // types; CBOR encoding can't fail on any of them today.
-            // If it ever does, that's a bug in the type definition
-            // — log and skip rather than poisoning the transport
-            // for every subsequent message.
-            tracing::error!(error = %e, "ServerMessage CBOR encoding failed; dropping frame");
-            continue;
-        }
-        if ws_tx.send(Message::Binary(buf)).await.is_err() {
+        let json = match serde_json::to_string(&msg) {
+            Ok(s) => s,
+            Err(e) => {
+                // `ServerMessage` is a closed set of serde-derived
+                // types; JSON encoding can't fail on any of them
+                // today (no `Map` keys with non-string types, no
+                // `f32`/`f64` NaN). If it ever does, that's a bug
+                // in the type definition — log and skip rather
+                // than poisoning the transport for every
+                // subsequent message.
+                tracing::error!(error = %e, "ServerMessage JSON encoding failed; dropping frame");
+                continue;
+            }
+        };
+        if ws_tx.send(Message::Text(json)).await.is_err() {
             break;
         }
     }
@@ -203,58 +198,50 @@ mod tests {
     #[test]
     fn max_inbound_frame_bytes_is_generous_vs_current_messages() {
         // Paranoia test: the cap must sit comfortably above the
-        // largest `ClientMessage` today. Ping serializes to ~10
-        // bytes in CBOR; 64 KiB is 6000x that. If slice 9e/9f adds
-        // a variant that could legitimately approach this limit,
-        // this test is the signal to document an explicit limit
-        // on THAT variant rather than just bumping the global cap.
-        let ping = ClientMessage::Ping { nonce: u64::MAX };
-        let mut buf = Vec::new();
-        ciborium::ser::into_writer(&ping, &mut buf).unwrap();
+        // largest `ClientMessage` today. Ping serializes to ~16
+        // bytes in JSON; 64 KiB is 4000x that. If a future variant
+        // approaches this limit, this test is the signal to
+        // document an explicit limit on THAT variant rather than
+        // just bumping the global cap.
+        let ping = ClientMessage::Ping;
+        let json = serde_json::to_string(&ping).unwrap();
         assert!(
-            buf.len() < MAX_INBOUND_FRAME_BYTES / 100,
+            json.len() < MAX_INBOUND_FRAME_BYTES / 100,
             "max frame bytes must leave 100x headroom over current \
              messages; Ping encoded to {} bytes vs cap {}",
-            buf.len(),
+            json.len(),
             MAX_INBOUND_FRAME_BYTES
         );
     }
 
     #[test]
-    fn cbor_is_smaller_than_json_for_ping() {
-        // Not a correctness check; a sanity check that the wire
-        // benefit we're trading JSON readability for actually
-        // shows up. If this ever fails, CBOR encoding changed
-        // behavior and the trade needs re-examination.
-        //
-        // NOTE: CBOR integer encoding scales with the magnitude
-        // of the value (a 1-byte header + up to 8 payload bytes
-        // for u64::MAX). JSON encodes integers as ASCII digits
-        // (20 chars for u64::MAX). At `nonce: 42` CBOR is
-        // unambiguously smaller; for very large nonces CBOR's
-        // 9-byte integer vs JSON's 20-char digit string still
-        // favors CBOR, but the margin shrinks. Keep the test
-        // value small so the assertion stays a clean statement
-        // about the encoding's typical shape, not a claim about
-        // every u64 value.
-        let ping = ClientMessage::Ping { nonce: 42 };
-        let mut cbor = Vec::new();
-        ciborium::ser::into_writer(&ping, &mut cbor).unwrap();
-        let json = serde_json::to_string(&ping).unwrap();
-        assert!(
-            cbor.len() < json.len(),
-            "CBOR ({} bytes) should be smaller than JSON ({} bytes) for Ping",
-            cbor.len(),
-            json.len()
-        );
+    fn json_roundtrip_preserves_message() {
+        let original = ClientMessage::Resize {
+            cols: 80,
+            rows: 24,
+            session: None,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let back: ClientMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, original);
     }
 
     #[test]
-    fn cbor_roundtrip_preserves_message() {
-        let original = ClientMessage::Ping { nonce: 12345 };
-        let mut buf = Vec::new();
-        ciborium::ser::into_writer(&original, &mut buf).unwrap();
-        let back: ClientMessage = ciborium::de::from_reader(&buf[..]).unwrap();
-        assert_eq!(back, original);
+    fn output_message_serializes_with_camelcase_from_seq() {
+        // Wire-shape canary: the Node SPA reads `msg.fromSeq`, not
+        // `msg.from_seq`. If a future serde refactor flips the
+        // rename annotation off, this test fires before the
+        // operator finds out via a broken terminal.
+        let msg = ServerMessage::Output {
+            session: "main".into(),
+            data: "hello".into(),
+            from_seq: 0,
+            cursor: 5,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""fromSeq":0"#),
+            "outbound JSON must use camelCase fromSeq; got {json}"
+        );
     }
 }
