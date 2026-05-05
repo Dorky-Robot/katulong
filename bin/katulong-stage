@@ -152,7 +152,7 @@ default_name() {
 # wraps the value in ANSI yellow escape codes. Bash command
 # substitution then captures `[33m3050[39m` instead of
 # `3050`, which silently contaminates downstream KATULONG_*
-# env vars and crashes the Rust server with "invalid port
+# env vars and crashes the server with "invalid port
 # number". `process.stdout.write` of a string is plain.
 find_free_port() {
   local from="${1:-3050}"
@@ -228,10 +228,7 @@ resolve_host() {
 }
 
 # Wait until the staging server is responding on $1, or fail.
-# Each backend has its own canonical liveness probe:
-#   - Node: `/login` (always served, public)
-#   - Rust: `/health` (always served, public; Rust has no SPA
-#     so /login isn't a route)
+# Probe path is `/login` (always served, public).
 wait_for_server() {
   local port="$1"
   local pid="$2"
@@ -460,29 +457,8 @@ cmd_start() {
     rm -rf "$dir"
   fi
 
-  # Backend selection. Default is the Node implementation
-  # (server.js); set KATULONG_STAGE_BACKEND=rust to launch the
-  # Rust crate (target/release/katulong-server) instead. The
-  # Rust path is a backend-only smoke harness — it has no SPA
-  # served yet (the Leptos crate is a stub), so "poking around"
-  # via browser shows nothing. Use it to verify the Rust binary
-  # responds on /health, accepts WebSocket upgrades, and
-  # handles auth/setup-token APIs.
-  local backend="${KATULONG_STAGE_BACKEND:-node}"
-  case "$backend" in
-    node|rust) ;;
-    *)
-      echo "ERROR: KATULONG_STAGE_BACKEND must be 'node' or 'rust' (got: $backend)" >&2
-      return 1
-      ;;
-  esac
-
-  if [[ "$backend" == "node" && ! -f "$REPO_ROOT/server.js" ]]; then
+  if [[ ! -f "$REPO_ROOT/server.js" ]]; then
     echo "ERROR: server.js not found in $REPO_ROOT" >&2
-    return 1
-  fi
-  if [[ "$backend" == "rust" && ! -d "$REPO_ROOT/crates/server" ]]; then
-    echo "ERROR: Rust backend requested but $REPO_ROOT/crates/server not present" >&2
     return 1
   fi
 
@@ -514,19 +490,10 @@ cmd_start() {
 
   echo "Starting staging '$name' on port $port..."
 
-  # Resolve tunnel + public host BEFORE the server starts so
-  # the Rust backend can use the public URL as
-  # `KATULONG_ORIGIN` (and therefore as the WebAuthn RP ID).
-  # Earlier this lived after the `nohup` launch — fine for the
-  # Node backend (which derives its RP ID from the request
-  # `Host` header at ceremony time) but broken for Rust
-  # (`webauthn-rs` builds a single RP ID at process start).
-  # Without this swap, the public-URL browser sees
-  # `RPID did not match the origin or related origins` on
-  # every passkey assertion. The actual `tunnels route add`
-  # call still happens after the server is ready (so we don't
-  # advertise a route that's about to time out); only the
-  # NAME resolution moves up.
+  # Resolve tunnel + public host before the server starts so the
+  # startup banner can include the URL. The actual `tunnels route
+  # add` call still happens after the server is ready, so we never
+  # advertise a route pointing at a not-yet-listening port.
   local tunnel host
   if ! command -v tunnels >/dev/null 2>&1; then
     echo "ERROR: 'tunnels' CLI is not installed." >&2
@@ -553,120 +520,14 @@ cmd_start() {
   # test/helpers/setup-env.js for the PID-scoped test sockets.
   rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$tmux_socket"
 
-  if [[ "$backend" == "node" ]]; then
-    if [[ ! -d "$REPO_ROOT/node_modules" ]]; then
-      echo "  installing deps..."
-      (cd "$REPO_ROOT" && npm install --silent)
-    fi
-    PORT="$port" \
-    KATULONG_DATA_DIR="$data_dir" \
-    KATULONG_TMUX_SOCKET="$tmux_socket" \
-      nohup node "$REPO_ROOT/server.js" > "$log_file" 2>&1 &
-  else
-    # Rust backend. Build the release binary if missing or out
-    # of date relative to source. cargo's incremental build is
-    # cheap when nothing has changed.
-    local rust_bin="$REPO_ROOT/target/release/katulong-server"
-    echo "  building rust binary (release)..."
-    if ! (cd "$REPO_ROOT" && cargo build --release -p katulong-server 2>&1 | tail -3); then
-      echo "ERROR: cargo build failed" >&2
-      return 1
-    fi
-    if [[ ! -x "$rust_bin" ]]; then
-      echo "ERROR: $rust_bin not found after build" >&2
-      return 1
-    fi
-
-    # Build the Leptos frontend bundle so the static-asset
-    # fallback in the server has something to serve. Skipping
-    # this (or running it after server start) leaves the URL
-    # showing the trunk-build-not-yet-run warning in the
-    # server log and a 404 in the browser. Trunk is required;
-    # if the operator hasn't installed it, fail fast — the
-    # staging script can't paper over a missing toolchain.
-    if ! command -v trunk >/dev/null 2>&1; then
-      echo "ERROR: 'trunk' CLI is not installed (required for Rust staging)." >&2
-      echo "       Install: cargo install trunk" >&2
-      return 1
-    fi
-    echo "  building leptos bundle (trunk release)..."
-    if ! (cd "$REPO_ROOT/crates/web" && trunk build --release 2>&1 | tail -3); then
-      echo "ERROR: trunk build failed" >&2
-      return 1
-    fi
-    local web_dist="$REPO_ROOT/crates/web/dist"
-    if [[ ! -f "$web_dist/index.html" ]]; then
-      echo "ERROR: $web_dist/index.html not found after trunk build" >&2
-      return 1
-    fi
-
-    # KATULONG_ORIGIN must match the URL the browser actually
-    # uses, or webauthn-rs's clientDataJSON.origin check
-    # rejects every assertion. For multi-device staging
-    # (paired phone + desktop, or remote QA) the browser hits
-    # the tunnel URL `https://<host>`, NOT
-    # `http://localhost:<port>`. Setting origin to localhost
-    # makes RP ID = "localhost" and the server rejects every
-    # WebAuthn assertion from the public URL with
-    # "RPID did not match the origin or related origins."
-    #
-    # webauthn-rs (unlike Node katulong) takes ONE RP ID at
-    # process start — it can't derive per-request from the
-    # Host header. So we have to pick a single origin, and
-    # the choice depends on the consumer:
-    #
-    # * **Manual operator flow (default).** Operator hits
-    #   `/stage <name>`, opens the public URL on a phone,
-    #   pairs via the setup-token-input UI. Browser origin =
-    #   `https://<host>`. Set KATULONG_ORIGIN/KATULONG_RP_ID
-    #   to the public host.
-    #
-    # * **E2E test harness.** Tests run via Playwright
-    #   against `http://localhost:$port`. Going through the
-    #   tunnel adds latency, requires the tunnel to be up,
-    #   AND `register/start` is localhost-only on the server
-    #   side so tunnel-as-peer is rejected on that one route
-    #   anyway. Browser origin = `localhost`. Set
-    #   KATULONG_ORIGIN/KATULONG_RP_ID to localhost.
-    #
-    # Default = manual flow (the common case). Callers that
-    # need a different RP ID (e.g. the e2e harness running
-    # against localhost) export
-    # `KATULONG_STAGE_RP_ID_OVERRIDE=<rp-id>` before invoking
-    # `katulong-stage start`. The override describes WHAT it
-    # does, not WHO calls it — the older `_FOR_TESTS=1` shape
-    # had a security smell (env-var-flag-flips-auth-config is
-    # the same pattern the pre-commit hook scans for in the
-    # auth-bypass guard). Both origin and RP ID flip together
-    # so they remain a registrable suffix pair (webauthn-rs
-    # rejects mismatches at startup).
-    #
-    # `host` is guaranteed non-empty by the upfront
-    # `resolve_host` call — the early-exit there returns 1
-    # before we reach this block on resolution failure. So
-    # there's no fall-through localhost branch here; if
-    # someone ever loosens the upfront guard, this block
-    # MUST be revisited.
-    local origin rp_id
-    if [[ -n "${KATULONG_STAGE_RP_ID_OVERRIDE:-}" ]]; then
-      rp_id="$KATULONG_STAGE_RP_ID_OVERRIDE"
-      if [[ "$rp_id" == "localhost" ]]; then
-        origin="http://localhost:$port"
-      else
-        origin="https://$rp_id"
-      fi
-    else
-      origin="https://$host"
-      rp_id="$host"
-    fi
-    PORT="$port" \
-    KATULONG_DATA_DIR="$data_dir" \
-    KATULONG_TMUX_SOCKET="$tmux_socket" \
-    KATULONG_WEB_DIST="$web_dist" \
-    KATULONG_ORIGIN="$origin" \
-    KATULONG_RP_ID="$rp_id" \
-      nohup "$rust_bin" > "$log_file" 2>&1 &
+  if [[ ! -d "$REPO_ROOT/node_modules" ]]; then
+    echo "  installing deps..."
+    (cd "$REPO_ROOT" && npm install --silent)
   fi
+  PORT="$port" \
+  KATULONG_DATA_DIR="$data_dir" \
+  KATULONG_TMUX_SOCKET="$tmux_socket" \
+    nohup node "$REPO_ROOT/server.js" > "$log_file" 2>&1 &
   local server_pid=$!
 
   # Trap signals so an interrupted start doesn't orphan the server process.
@@ -676,45 +537,27 @@ cmd_start() {
   # shellcheck disable=SC2064
   trap "cleanup_start '$server_pid' '$dir'; exit 130" INT TERM HUP
 
-  local probe_path
-  if [[ "$backend" == "rust" ]]; then
-    probe_path="/health"
-  else
-    probe_path="/login"
-  fi
-  if ! wait_for_server "$port" "$server_pid" "$log_file" "$probe_path"; then
+  if ! wait_for_server "$port" "$server_pid" "$log_file" "/login"; then
     trap - INT TERM HUP
     cleanup_start "$server_pid" "$dir"
     return 1
   fi
 
   local token
-  if [[ "$backend" == "rust" ]]; then
-    # The Rust server's token-mint API requires auth (CSRF +
-    # `Authenticated`), and there's no equivalent CLI yet that
-    # writes a token directly to AuthStore for bootstrap. Skip
-    # the mint and tell the caller this is a backend-only
-    # smoke instance. /health and /api/me are reachable; the
-    # full UI flow needs the Leptos frontend.
-    token=""
-    echo "  ⚠ rust backend: setup-token mint skipped (CLI not implemented)"
-  else
-    token="$(mint_setup_token "$data_dir" "$name" || true)"
-    if [[ -z "$token" ]]; then
-      echo "ERROR: failed to mint setup token (server up but token CLI returned nothing)" >&2
-      trap - INT TERM HUP
-      cleanup_start "$server_pid" "$dir"
-      return 1
-    fi
+  token="$(mint_setup_token "$data_dir" "$name" || true)"
+  if [[ -z "$token" ]]; then
+    echo "ERROR: failed to mint setup token (server up but token CLI returned nothing)" >&2
+    trap - INT TERM HUP
+    cleanup_start "$server_pid" "$dir"
+    return 1
   fi
 
   # ---- Tunnel wiring ----
-  # The tunnel + host names were already resolved above (so
-  # the Rust server could be launched with the public URL as
-  # KATULONG_ORIGIN). The remaining piece — registering the
-  # host → port route with the running tunnel — happens here,
-  # after the local server is up, so we never advertise a
-  # route that points at a not-yet-listening port.
+  # The tunnel + host names were already resolved above (so the
+  # startup banner can include the URL). The remaining piece —
+  # registering the host → port route with the running tunnel —
+  # happens here, after the local server is up, so we never
+  # advertise a route that points at a not-yet-listening port.
   local url
   if ! tunnels route add "$host" "$port" --tunnel "$tunnel" >/dev/null 2>&1; then
     echo "ERROR: 'tunnels route add $host $port --tunnel $tunnel' failed." >&2
@@ -750,32 +593,7 @@ cmd_start() {
   # signal trap so normal script exit doesn't kill the server we just started.
   trap - INT TERM HUP
 
-  if [[ "$backend" == "rust" ]]; then
-    cat <<EOF
-
-Staging '$name' is live (BACKEND: rust):
-
-  URL:         $url
-  Port:        $port (pid $server_pid)
-  Tmux Socket: $tmux_socket
-  Tunnel:      $tunnel
-  Data Dir:    $data_dir
-  Log:         tail -f $log_file
-
-Verify the Rust binary is what's responding:
-  curl $url/health                    # → "ok"
-  ps -p $server_pid -o command=       # should show .../target/release/katulong-server
-
-The Leptos hello-world shell is served at /; trunk-built
-WASM hydrates on load. Browse the URL or run the e2e smoke:
-  KATULONG_BASE_URL=$url npx playwright test --config=playwright.rust.config.js
-
-Stop:
-  $(basename "$0") stop $name
-
-EOF
-  else
-    cat <<EOF
+  cat <<EOF
 
 Staging '$name' is live:
 
@@ -792,7 +610,6 @@ Stop:
   $(basename "$0") stop $name
 
 EOF
-  fi
 }
 
 # ---------------------------------------------------------------------------
