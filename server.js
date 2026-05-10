@@ -279,10 +279,15 @@ const permissionStore = createPermissionStore();
 // in priority order on every cycle and uses the first that's reachable
 // AND has the requested model. Order:
 //
-//   1. peer-bridge      → user-configured ollama-bridge URL (Settings →
-//                          External LLM endpoint), gemma4:31b. Lets a
-//                          GPU-poor host route inference to a GPU-rich
-//                          host running the local 31b model.
+//   1. peer-bridge      → user-configured peer URL (Settings → External
+//                          LLM endpoint), gemma4:31b. Speaks one of
+//                          two wire protocols based on `peerKind`:
+//                            "direct" — legacy katulong-bridge
+//                                       (opaque pass-through to /api/chat)
+//                            "queued" — ollama-bridge
+//                                       (POST /enqueue → poll /jobs/:hash)
+//                          Lets a GPU-poor host route inference to a
+//                          GPU-rich host running the 31b model.
 //   2. local-31b        → this host's Ollama daemon, gemma4:31b. Used
 //                          when the local box has the model pulled.
 //   3. local-cloud      → this host's Ollama daemon, gemma4:31b-cloud
@@ -291,7 +296,7 @@ const permissionStore = createPermissionStore();
 //                          nothing if no local 31b is pulled.
 //
 // resolveBackends is called fresh on every request, so the Settings UI
-// can swap the peer URL/token at runtime. The client caches its
+// can swap the peer URL/token/kind at runtime. The client caches its
 // "active" pick for ~5 min then re-probes — covers the case where the
 // peer bridge restarts and we want to migrate back from the local
 // fallback.
@@ -304,6 +309,7 @@ const callOllama = createOllamaClient({
         name: "peer-bridge",
         host: peerUrl,
         authToken: configManager.getOllamaPeerToken(),
+        kind: configManager.getOllamaPeerKind(),
         model: "gemma4:31b",
       });
     }
