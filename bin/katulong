@@ -30,7 +30,6 @@ const COMMANDS = {
   notes: "Manage notes (list, read, edit, rename, delete)",
   setup: "One-time setup (self-access, Claude Code hooks)",
   service: "Manage macOS LaunchAgent (install, uninstall, restart, status)",
-  bridge: "Manage local-service bridges (e.g., ollama)",
   "tmux-sweep": "Reap orphaned katulong-test-<pid> tmux sockets",
 };
 
