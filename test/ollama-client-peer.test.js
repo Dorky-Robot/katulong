@@ -397,3 +397,170 @@ describe("createOllamaClient — cascade (resolveBackends)", () => {
     );
   });
 });
+
+/**
+ * Stub for the new ollama-bridge protocol. Answers /api/tags for the
+ * cascade probe, /enqueue with a fake hash, and /jobs/:hash with a
+ * configurable script (queued → running → done) so a test can verify
+ * the poll loop actually loops.
+ */
+function startStubBridge({
+  availableModels = ["gemma4:31b"],
+  // statuses is consumed in order; once exhausted, "done" is returned forever.
+  statuses = ["done"],
+  result = { message: { role: "assistant", content: "hello world" } },
+} = {}) {
+  const requests = [];
+  let pollIdx = 0;
+
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      const body = Buffer.concat(chunks).toString("utf-8");
+      const parsed = body ? safeParse(body) : null;
+      requests.push({ url: req.url, method: req.method, headers: req.headers, body: parsed });
+
+      if (req.method === "GET" && req.url === "/api/tags") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ models: availableModels.map((name) => ({ name })) }));
+        return;
+      }
+
+      if (req.method === "POST" && req.url === "/enqueue") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ hash: "a".repeat(64), status: "queued" }));
+        return;
+      }
+
+      if (req.method === "GET" && req.url.startsWith("/jobs/")) {
+        const status = statuses[Math.min(pollIdx, statuses.length - 1)] || "done";
+        pollIdx += 1;
+
+        const payload =
+          status === "done"
+            ? { status, result }
+            : status === "error"
+              ? { status, error: "stub error" }
+              : { status };
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(payload));
+        return;
+      }
+
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not_found" }));
+    });
+  });
+
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () =>
+      resolve({ server, port: server.address().port, requests }),
+    );
+  });
+}
+
+function safeParse(s) {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+describe("createOllamaClient — queued backend (ollama-bridge)", () => {
+  let stub;
+  let url;
+
+  beforeEach(async () => {
+    stub = await startStubBridge();
+    url = `http://127.0.0.1:${stub.port}`;
+  });
+  afterEach(() => stub.server.close());
+
+  it("enqueues with the wrapped {endpoint, body} shape and forces stream:false", async () => {
+    const client = createOllamaClient({
+      resolveBackends: () => [
+        { name: "bridge", host: url, authToken: "tok-32-chars-or-more-padding-pad", kind: "queued", model: "gemma4:31b" },
+      ],
+    });
+    await client("hi", { systemPrompt: "be brief" });
+
+    const enq = stub.requests.find((r) => r.url === "/enqueue");
+    assert.equal(enq.method, "POST");
+    assert.equal(enq.headers.authorization, "Bearer tok-32-chars-or-more-padding-pad");
+    assert.equal(enq.body.endpoint, "/api/chat");
+    assert.equal(enq.body.body.model, "gemma4:31b");
+    assert.equal(enq.body.body.stream, false);
+    assert.deepEqual(enq.body.body.messages, [
+      { role: "system", content: "be brief" },
+      { role: "user", content: "hi" },
+    ]);
+  });
+
+  it("polls /jobs/:hash until status is done and returns message.content", async () => {
+    stub.server.close();
+    stub = await startStubBridge({ statuses: ["queued", "running", "done"] });
+    url = `http://127.0.0.1:${stub.port}`;
+
+    const client = createOllamaClient({
+      resolveBackends: () => [
+        { name: "bridge", host: url, authToken: null, kind: "queued", model: "gemma4:31b" },
+      ],
+    });
+    const result = await client("hi");
+    assert.equal(result, "hello world");
+
+    // Each non-terminal poll should have been observed.
+    const polls = stub.requests.filter((r) => r.url.startsWith("/jobs/"));
+    assert.equal(polls.length, 3, "should poll three times: queued, running, done");
+  });
+
+  it("throws when the bridge reports status: error", async () => {
+    stub.server.close();
+    stub = await startStubBridge({ statuses: ["error"] });
+    url = `http://127.0.0.1:${stub.port}`;
+
+    const client = createOllamaClient({
+      resolveBackends: () => [
+        { name: "bridge", host: url, authToken: null, kind: "queued", model: "gemma4:31b" },
+      ],
+    });
+    await assert.rejects(() => client("hi"), /ollama-bridge job failed/);
+  });
+
+  it("falls through to the next backend when /enqueue returns non-2xx", async () => {
+    // First backend's /enqueue replies 503; should cascade to local.
+    const failingStub = await startStubBridge();
+    failingStub.server.close();
+    const failingServer = createServer((req, res) => {
+      if (req.method === "GET" && req.url === "/api/tags") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ models: [{ name: "gemma4:31b" }] }));
+        return;
+      }
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "queue_full" }));
+    });
+    await new Promise((r) => failingServer.listen(0, "127.0.0.1", r));
+    const failingUrl = `http://127.0.0.1:${failingServer.address().port}`;
+
+    const localStub = await startStubOllama({ availableModels: ["gemma4:31b"] });
+    const localUrl = `http://127.0.0.1:${localStub.port}`;
+
+    try {
+      const client = createOllamaClient({
+        resolveBackends: () => [
+          { name: "bridge", host: failingUrl, authToken: null, kind: "queued", model: "gemma4:31b" },
+          { name: "local",  host: localUrl,   authToken: null,                     model: "gemma4:31b" },
+        ],
+      });
+      const result = await client("hi");
+      assert.equal(result, "hello world");
+    } finally {
+      failingServer.close();
+      localStub.server.close();
+    }
+  });
+});

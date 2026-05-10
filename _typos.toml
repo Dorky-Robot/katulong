@@ -1,8 +1,29 @@
+[default]
+# Skip 7-40 char lower-hex sequences anywhere in the source. These are
+# almost always git short hashes referenced in commit messages, code
+# comments, and design docs (`commit b0088ba`, `(28f5538, 29d6ec6, …)`).
+# typos otherwise reads them as words and flags the embedded English-
+# looking substrings (`ba`, `ded`, `bee`, …).
+extend-ignore-re = ["\\b[0-9a-f]{7,40}\\b"]
+
 [default.extend-words]
 katulong = "katulong"
 xterm = "xterm"
 loca = "loca"
 ue = "ue"
+# Real spelling variant; "unparsable" is also accepted but the codebase
+# has settled on "unparseable" across log messages and comments.
+unparseable = "unparseable"
+# Combined short CLI flags like `-eit` in container-detect.js comments.
+eit = "eit"
+# DELETE (the verb, "DELETEs the tmux session") — typos splits on
+# internal caps and flags the bare DELET. The intent is the verb.
+DELET = "DELET"
+# `originalCAF` (cancelAnimationFrame) in test fixtures — typos splits
+# on internal caps and flags the bare CAF.
+CAF = "CAF"
+# Hyphenated prefixes like `mis-resolve` — typos flags the bare `mis`.
+mis = "mis"
 
 [default.extend-identifiers]
 PNGf = "PNGf"
