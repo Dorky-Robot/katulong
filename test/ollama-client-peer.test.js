@@ -399,7 +399,7 @@ describe("createOllamaClient — cascade (resolveBackends)", () => {
 });
 
 /**
- * Stub for the new ollama-bridge protocol. Answers /api/tags for the
+ * Stub for the new queued backend protocol. Answers /api/tags for the
  * cascade probe, /enqueue with a fake hash, and /jobs/:hash with a
  * configurable script (queued → running → done) so a test can verify
  * the poll loop actually loops.
@@ -469,7 +469,7 @@ function safeParse(s) {
   }
 }
 
-describe("createOllamaClient — queued backend (ollama-bridge)", () => {
+describe("createOllamaClient — queued backend", () => {
   let stub;
   let url;
 
@@ -527,7 +527,7 @@ describe("createOllamaClient — queued backend (ollama-bridge)", () => {
         { name: "bridge", host: url, authToken: null, kind: "queued", model: "gemma4:31b" },
       ],
     });
-    await assert.rejects(() => client("hi"), /ollama-bridge job failed/);
+    await assert.rejects(() => client("hi"), /queued backend job failed/);
   });
 
   it("falls through to the next backend when /enqueue returns non-2xx", async () => {
