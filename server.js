@@ -282,10 +282,13 @@ const permissionStore = createPermissionStore();
 //   1. peer-bridge      → user-configured peer URL (Settings → External
 //                          LLM endpoint), gemma4:31b. Speaks one of
 //                          two wire protocols based on `peerKind`:
-//                            "direct" — legacy katulong-bridge
-//                                       (opaque pass-through to /api/chat)
-//                            "queued" — ollama-bridge
-//                                       (POST /enqueue → poll /jobs/:hash)
+//                            "direct" — opaque pass-through to /api/chat
+//                                       (streaming NDJSON, same shape as
+//                                       talking to ollama serve directly)
+//                            "queued" — POST /enqueue → poll /jobs/:hash
+//                                       (returns one aggregated result;
+//                                       lets the peer serialize concurrent
+//                                       fan-in instead of thrashing the GPU)
 //                          Lets a GPU-poor host route inference to a
 //                          GPU-rich host running the 31b model.
 //   2. local-31b        → this host's Ollama daemon, gemma4:31b. Used
