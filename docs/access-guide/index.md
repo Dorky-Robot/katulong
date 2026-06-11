@@ -13,7 +13,7 @@ Katulong provides **secure remote terminal access** to your machine. The server 
 | Access Method | Detection Criteria | Authentication Flow | Use Case |
 |---|---|---|---|
 | **Localhost** | `127.0.0.1`, `::1`, `localhost` with matching Host header | Auto-authenticated (no login required) | Local development, direct access |
-| **Internet** | Everything else (tunnel domains, any non-localhost Host) | Setup token + WebAuthn passkey, or device approval | Remote access over the internet |
+| **Internet** | Everything else (tunnel domains, any non-localhost Host) | Setup token + WebAuthn passkey (first device); device approval by an authenticated device (subsequent devices) | Remote access over the internet |
 
 ### Access Method Detection Logic
 

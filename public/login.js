@@ -383,6 +383,11 @@
             }
             try {
               const statusRes = await fetch(`/auth/device-auth/status?id=${encodeURIComponent(requestId)}`);
+              if (statusRes.status === 503) {
+                // Transient: the server kept the request alive for retry
+                // (auth state momentarily unavailable). Keep polling.
+                return;
+              }
               if (!statusRes.ok) {
                 clearInterval(deviceAuthPollTimer);
                 deviceAuthPollTimer = null;

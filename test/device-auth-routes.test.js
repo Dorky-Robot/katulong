@@ -122,7 +122,7 @@ async function createRequest(routes, captured, userAgent) {
   const route = findRoute(routes, "POST", "/auth/device-auth/request");
   await route.handler(makeReq({ userAgent }), makeRes());
   const { body } = captured.pop();
-  return body.requestId;
+  return { requestId: body.requestId, code: body.code };
 }
 
 describe("device-auth status endpoint", () => {
@@ -137,14 +137,18 @@ describe("device-auth status endpoint", () => {
     routes = createAuthRoutes(ctx);
   });
 
-  async function createAndApprove(userAgent = "TestBrowser/1.0") {
-    const requestId = await createRequest(routes, captured, userAgent);
-    nextParsedBody = { requestId };
+  async function approve(requestId, code) {
+    nextParsedBody = { requestId, code };
     const approveRoute = findRoute(routes, "POST", "/auth/device-auth/approve");
     const req = makeReq({});
     req.headers.cookie = "";
     await approveRoute.handler(req, makeRes());
-    captured.pop(); // discard approve response
+    return captured.pop();
+  }
+
+  async function createAndApprove(userAgent = "TestBrowser/1.0") {
+    const { requestId, code } = await createRequest(routes, captured, userAgent);
+    await approve(requestId, code);
     return requestId;
   }
 
@@ -182,9 +186,38 @@ describe("device-auth status endpoint", () => {
     assert.strictEqual(real.cookies.length, 1);
   });
 
+  it("rejects approval with a wrong code and keeps the request pending", async () => {
+    const { requestId, code } = await createRequest(routes, captured, "TestBrowser/1.0");
+
+    const wrongCode = code === "000000" ? "000001" : "000000";
+    const rejected = await approve(requestId, wrongCode);
+    assert.strictEqual(rejected.status, 403);
+
+    // Not approved — the requesting device still sees pending.
+    await pollStatus(requestId);
+    assert.strictEqual(captured.pop().body.status, "pending");
+
+    // The right code still works afterwards.
+    const accepted = await approve(requestId, code);
+    assert.strictEqual(accepted.status, 200);
+    await pollStatus(requestId);
+    assert.strictEqual(captured.pop().body.status, "approved");
+  });
+
+  it("rejects approval without a code", async () => {
+    const { requestId } = await createRequest(routes, captured, "TestBrowser/1.0");
+    nextParsedBody = { requestId };
+    const approveRoute = findRoute(routes, "POST", "/auth/device-auth/approve");
+    await approveRoute.handler(makeReq({}), makeRes());
+    assert.strictEqual(captured.pop().status, 400);
+  });
+
   it("mints exactly one login token for two concurrent polls", async () => {
     const requestId = await createAndApprove();
-    stateLockDelayMs = 20; // hold the first poll inside withStateLock
+    // The gate is the synchronous `consumed` flag, so the race is decided
+    // before any await — the delay just demonstrates the second poll
+    // completing while the first is still inside withStateLock.
+    stateLockDelayMs = 20;
 
     await Promise.all([pollStatus(requestId), pollStatus(requestId)]);
 

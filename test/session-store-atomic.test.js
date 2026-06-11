@@ -61,4 +61,22 @@ describe("createSessionStore", () => {
     store.saveNow();
     assert.strictEqual(store.load(), null);
   });
+
+  it("scheduleSave debounces and writes after the window", async () => {
+    let calls = 0;
+    const store = createSessionStore({
+      dataDir: dir,
+      serialize: () => { calls++; return { sessions: {} }; },
+      debounceMs: 5,
+    });
+
+    store.scheduleSave();
+    store.scheduleSave();
+    store.scheduleSave();
+    assert.strictEqual(calls, 0, "nothing written inside the debounce window");
+
+    await new Promise((r) => setTimeout(r, 30));
+    assert.strictEqual(calls, 1, "three rapid schedules collapse into one write");
+    assert.deepStrictEqual(store.load(), { sessions: {} });
+  });
 });
