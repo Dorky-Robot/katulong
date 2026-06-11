@@ -120,9 +120,10 @@ describe("dispatchNotification", () => {
         navigator: {},
       };
 
-      // Should not throw
+      // Should not throw — and must NOT report the success-shaped
+      // "constructor" branch when nothing was actually shown.
       const result = dispatchNotification("Title", "Body", env);
-      assert.strictEqual(result, "constructor");
+      assert.strictEqual(result, "unavailable");
     });
   });
 

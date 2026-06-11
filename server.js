@@ -132,9 +132,14 @@ function isTrustedProxy(req) {
     return false;
   }
   const provided = req.headers["x-katulong-auth"];
-  if (!provided || provided.length !== secret.length) return false;
+  if (!provided) return false;
+  // Compare byte lengths, not string lengths — timingSafeEqual requires
+  // equal-length Buffers, and multi-byte UTF-8 makes the two diverge.
+  const providedBuf = Buffer.from(provided);
+  const secretBuf = Buffer.from(secret);
+  if (providedBuf.length !== secretBuf.length) return false;
   try {
-    return timingSafeEqual(Buffer.from(provided), Buffer.from(secret));
+    return timingSafeEqual(providedBuf, secretBuf);
   } catch {
     return false;
   }
@@ -540,6 +545,9 @@ shutdown = createServerShutdown({
   closeAllWebSockets,
   sessionManager,
   shutdownPlugins: async () => {
+    // Stop the feed workers first — their timers fire every 2-15s and a
+    // tick landing mid-teardown would publish into a half-shutdown broker.
+    claudeProcessor.destroy();
     sessionSummarizer.stop();
     await shutdownPlugins();
   },

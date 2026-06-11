@@ -629,7 +629,10 @@ export function loadFromStorage() {
     // Accept v1, v2, and v3 shapes — normalize handles all three.
     if (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== VERSION) return null;
     return normalize(parsed);
-  } catch (_) {
+  } catch (err) {
+    // Corrupt JSON silently resets the whole tile layout to default —
+    // log why, so a reset layout is distinguishable from first run.
+    console.warn("[ui-store] Discarding unreadable saved layout:", err?.message || err);
     return null;
   }
 }

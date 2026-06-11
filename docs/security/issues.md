@@ -4,6 +4,11 @@ Audit performed on two production Katulong instances.
 
 **Result: No critical vulnerabilities.** An unauthenticated attacker cannot gain terminal access. All findings below are hardening improvements.
 
+> **Note:** This is a historical record. File paths and line numbers refer to the
+> code as it was in March 2026 — in particular, `lib/routes.js` has since been
+> split into `lib/routes/app-routes.js`, `lib/routes/auth-routes.js`,
+> `lib/routes/middleware.js`, and `lib/routes/upload.js`.
+
 ---
 
 ## MEDIUM-1: HTTP Server Binds to 0.0.0.0

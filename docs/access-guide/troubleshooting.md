@@ -1,37 +1,5 @@
 # Troubleshooting
 
-## "Your connection is not private" (LAN HTTPS)
-
-**Cause:** Self-signed TLS certificate not trusted by browser.
-
-**Solutions:**
-
-1. **Click "Advanced" > "Proceed"** (quick, per-session)
-2. **Trust CA Certificate** (permanent, recommended):
-    - Access `http://192.168.1.50:3001/connect/trust`
-    - Download `katulong-ca.crt`
-    - Install in system keychain:
-        - **macOS:** Double-click > "Always Trust"
-        - **Windows:** Right-click > "Install Certificate" > "Trusted Root Certification Authorities"
-        - **Linux:** Copy to `/usr/local/share/ca-certificates/` > `sudo update-ca-certificates`
-
-## LAN pairing shows passkey flow instead of QR code
-
-**Cause:** Browser cached old JavaScript before access method detection was implemented.
-
-**Solution:**
-
-- Hard refresh: `Cmd+Shift+R` (Mac) or `Ctrl+Shift+F5` (Windows/Linux)
-- Clear browser cache
-- Check console for errors
-
-**Verification:**
-
-```bash
-curl -k https://192.168.1.50:3002/auth/status
-# Should return: {"setup": true, "accessMethod": "lan"}
-```
-
 ## WebSocket connection rejected
 
 **Common Causes:**
@@ -42,11 +10,11 @@ curl -k https://192.168.1.50:3002/auth/status
 
 2. **Origin Mismatch:**
     - Check Origin header in DevTools > Network > WebSocket request
-    - Origin must match Host header (e.g., both `katulong.local:3002`)
+    - Origin must match Host header (e.g., both `katulong.example.com`)
 
 3. **Credential Revoked:**
-    - Check if device was removed from Settings > LAN or Remote
-    - Re-pair or re-register passkey
+    - Check if device was removed from Settings > Remote
+    - Re-register the passkey
 
 **Debug Logs:**
 
@@ -58,7 +26,7 @@ tail -f /tmp/server.log | grep WebSocket
 
 ## P2P DataChannel not connecting
 
-**Cause:** Firewall blocking WebRTC traffic or STUN server unreachable.
+**Cause:** Firewall blocking WebRTC traffic, STUN server unreachable, or the optional `node-datachannel` package is not installed.
 
 **Fallback:** Katulong automatically falls back to WebSocket if P2P fails.
 
@@ -100,19 +68,10 @@ curl http://localhost:3001/auth/status
 - Check cookie domain matches URL
 - Clear cookies and re-authenticate
 
-## Cannot pair device on LAN (PIN rejected)
+## Device approval request never appears
 
-**Common Mistakes:**
+**Common Causes:**
 
-1. **PIN Expired (30 seconds):** Generate new pairing code
-2. **Wrong PIN:** Double-check 8-digit PIN on authenticated device
-3. **Code Already Used:** Pairing codes are single-use, generate new code
-
-**Debug:**
-
-```bash
-# Server logs show pairing attempts
-tail -f /tmp/server.log | grep pair
-# Example: "Pairing failed: invalid PIN"
-```
-
+1. **No authenticated device online:** The approval prompt is delivered over the WebSocket to already-authenticated devices — at least one must have Katulong open
+2. **Request expired:** Device-auth requests expire after 5 minutes; start a new request
+3. **Different instance:** Make sure both devices are talking to the same tunnel hostname

@@ -368,8 +368,19 @@
           deviceAuthView.classList.remove("hidden");
           deviceAuthBtn.classList.add("hidden");
 
-          // Start polling
+          // Start polling. Hard client-side deadline slightly past the
+          // server's 5-minute request TTL — if the network is down the
+          // catch below keeps polling and would otherwise never stop,
+          // since the client only learns about expiry from a response.
+          const pollDeadline = Date.now() + 6 * 60 * 1000;
           deviceAuthPollTimer = setInterval(async () => {
+            if (Date.now() > pollDeadline) {
+              clearInterval(deviceAuthPollTimer);
+              deviceAuthPollTimer = null;
+              deviceAuthStatus.textContent = "Request expired. Please try again.";
+              deviceAuthStatus.style.color = "var(--danger)";
+              return;
+            }
             try {
               const statusRes = await fetch(`/auth/device-auth/status?id=${encodeURIComponent(requestId)}`);
               if (!statusRes.ok) {

@@ -201,10 +201,10 @@ The custom `pbpaste` script in kubo checks both locations.
 | `public/lib/paste-handler.js` | Three-layer Cmd+V interception |
 | `public/lib/image-upload.js` | Upload + clipboard/path response handling |
 | `public/lib/dictation-modal.js` | Paste handler for the dictation textarea (same items fix) |
-| `lib/routes.js` (upload handler) | Saves image, sets clipboard via osascript (macOS) or xclip (Linux) |
+| `lib/routes/app-routes.js` (upload route) + `lib/routes/upload.js` | Saves image, sets clipboard via osascript (macOS) or xclip (Linux) |
 | `server.js` | Auto-detects Xvfb display at startup, propagates to tmux |
 | `lib/ws-manager.js` | Routes output via P2P or WebSocket (P2P fallback is critical) |
-| `lib/p2p.js` | P2P DataChannel send — must return success/failure for fallback |
+| `lib/webrtc-signaling.js` + `lib/client-transport.js` | P2P DataChannel transport — send must return success/failure for fallback |
 
 ## What NOT to change
 

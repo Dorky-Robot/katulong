@@ -5,7 +5,7 @@
 ```
 Browser (xterm.js)                    Server (Node.js)
 ├─ WebSocket ──────────────────────── ws-manager.js ── session-manager.js ── tmux sessions
-├─ HTTP REST ──────────────────────── routes.js         │                      PTY processes
+├─ HTTP REST ──────────────────────── routes/           │                      PTY processes
 │                                     auth middleware    │                      ring buffers
 │                                     static-files.js   transport-bridge.js
 │                                     file-browser.js
@@ -23,12 +23,15 @@ Sessions are backed by tmux. Restart the server freely — your sessions survive
 | `lib/session-manager.js` | Terminal session lifecycle via tmux control mode |
 | `lib/session.js` | Session class, tmux helpers, RingBuffer, octal unescape |
 | `lib/ws-manager.js` | WebSocket connection management, ping/pong heartbeat |
-| `lib/transport-bridge.js` | Bidirectional bridge: WebSocket to session I/O |
-| `lib/routes.js` | HTTP route registration and middleware composition |
+| `lib/transport-bridge.js` | Outbound relay: dispatches session events (output, exit, rename) to transport subscribers |
+| `lib/routes/app-routes.js` | App route handlers (sessions, config, upload, paste, notes) |
+| `lib/routes/auth-routes.js` | Auth route handlers (WebAuthn, setup tokens, device auth) |
+| `lib/routes/middleware.js` | Auth + CSRF middleware factories |
+| `lib/routes/upload.js` | Image magic-byte detection, host clipboard bridging |
 | `lib/auth.js` | WebAuthn registration/login, session tokens, passkey storage |
 | `lib/auth-handlers.js` | Auth route handlers (register, login, logout, revoke) |
 | `lib/auth-state.js` | AuthState value type with migration methods |
-| `lib/access-method.js` | Detect access method: localhost, LAN, or internet |
+| `lib/access-method.js` | Detect access method: localhost or internet |
 | `lib/http-util.js` | Cookie parsing, public path allowlist, session cookies, challenge store |
 | `lib/request-util.js` | Request body reading with size limits |
 | `lib/config.js` | Instance configuration (name, icon, colors, port-proxy) |

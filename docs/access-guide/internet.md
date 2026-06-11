@@ -4,21 +4,22 @@
 
 - ngrok: `https://your-app.ngrok.app`
 - Cloudflare Tunnel: `https://katulong.example.com`
-- Public IP: `https://1.2.3.4:3002`
+
+The server itself binds to localhost only — the tunnel terminates TLS and forwards traffic to `127.0.0.1:3001`.
 
 ## Authentication: Setup Token + WebAuthn Passkey
 
 ### First Device Registration
 
-1. **Generate Setup Token** (from localhost or LAN):
-    - Access Katulong via localhost or LAN
+1. **Generate Setup Token** (from localhost):
+    - Access Katulong via localhost
     - Settings > Remote tab
     - Click "Generate New Token"
     - Enter device name (e.g., "iPhone")
     - Copy the token (shown only once — save it!)
 
 2. **Register Passkey** (from internet URL):
-    - Navigate to `https://your-app.ngrok.app`
+    - Navigate to your tunnel URL
     - Click "Register New Passkey"
     - Paste the setup token
     - Click "Register with Passkey"
@@ -26,20 +27,25 @@
     - Device is now registered
 
 3. **Login on Same Device:**
-    - Navigate to `https://your-app.ngrok.app`
+    - Navigate to your tunnel URL
     - Click "Login with Passkey"
     - Use Touch ID / Face ID / security key
     - Access granted
 
 ### Subsequent Device Registration
 
-1. **Generate Setup Token** (from authenticated session):
+Either of:
+
+1. **Setup Token** (from an authenticated session):
     - Settings > Remote tab (on any authenticated device)
     - Click "Generate New Token"
-    - Copy the token
+    - Same registration flow as the first device
 
-2. **Register New Device:**
-    - Same flow as first device registration above
+2. **Device Approval:**
+    - On the new device, choose "Request device authorization" from the login page
+    - A 6-digit code appears on the new device
+    - An already-authenticated device receives the request, verifies the code matches, and approves
+    - The new device is signed in automatically (requests expire after 5 minutes)
 
 ### Why Setup Tokens?
 
@@ -52,14 +58,9 @@
 
 ## Connection Types
 
-Katulong supports multiple connection protocols:
+### HTTP (Web Interface)
 
-### HTTP/HTTPS (Web Interface)
-
-**Ports:**
-
-- HTTP: `3001` (public endpoints only + localhost)
-- HTTPS: `3002` (all endpoints)
+**Port:** `3001` (localhost only — remote access goes through the tunnel's HTTPS endpoint)
 
 **Endpoints:**
 
@@ -67,32 +68,30 @@ Katulong supports multiple connection protocols:
 |---|---|
 | `/` | Main terminal interface |
 | `/login` | Authentication page |
-| `/pair?code=<UUID>` | LAN pairing page |
 | `/auth/*` | Authentication API endpoints |
 | `/api/*` | Protected API endpoints (sessions, devices, tokens) |
-| `/connect/trust` | TLS certificate download (HTTP only) |
 
 ### WebSocket (Real-Time Terminal I/O)
 
-**Upgrade Path:** `wss://` (HTTPS) or `ws://` (HTTP)
+**Upgrade Path:** `wss://` (via tunnel) or `ws://` (localhost)
 
 Authentication flow:
 
 1. HTTP > WebSocket Upgrade with session cookie
 2. Server validates socket address, Host header, Origin header, session cookie, credential
 3. Upgrade accepted — WebSocket attached with credentialId and sessionToken
-4. **Continuous validation:** Every WebSocket message re-validates the session
+4. **Continuous validation:** Session is re-validated periodically on WebSocket messages
 
 **Message Types:**
 
 - `attach` — Attach to PTY session
 - `input` — Send input to PTY
 - `resize` — Resize PTY dimensions
-- `p2p-signal` — WebRTC signaling for P2P DataChannel
+- `rtc-offer` / `rtc-ice-candidate` — WebRTC signaling for P2P DataChannel
 
 ### P2P DataChannel (WebRTC)
 
-Low-latency terminal I/O that bypasses server for data:
+Low-latency terminal I/O that bypasses the server for data. Requires the optional `node-datachannel` package; if it's not installed or the connection fails, Katulong falls back transparently to WebSocket.
 
 1. WebSocket signaling (offer/answer + ICE candidates)
 2. Direct peer-to-peer DataChannel established
@@ -103,7 +102,7 @@ Low-latency terminal I/O that bypasses server for data:
 | Scenario | Latency |
 |---|---|
 | Localhost P2P | ~1ms |
-| LAN P2P | ~5-10ms |
+| Same-network P2P | ~5-10ms |
 | Internet P2P | Varies |
 | WebSocket fallback | +20-50ms overhead |
 
@@ -113,7 +112,7 @@ Low-latency terminal I/O that bypasses server for data:
 
 1. **Creation:** Generated during registration or login. 30-day expiry, random 32-character hex token.
 2. **Storage:** Client cookie (`katulong_session`) + server-side JSON with session metadata.
-3. **Validation:** Checked on every HTTP request, WebSocket upgrade, and every WebSocket message.
+3. **Validation:** Checked on every HTTP request, WebSocket upgrade, and periodically on WebSocket messages.
 4. **Expiration:** Expired sessions removed, client receives 401 Unauthorized.
 5. **Revocation:** Delete Credential > all sessions invalidated > WebSockets closed.
 
@@ -121,7 +120,6 @@ Low-latency terminal I/O that bypasses server for data:
 
 - **Credential Whitelist:** Sessions reference a credentialId; invalid if credential no longer exists
 - **Immediate Revocation:** Deleting a credential closes all active WebSockets (code 1008)
-- **Continuous Validation:** Re-validated on every WebSocket message
 - **State Locking:** All state mutations use `withStateLock()` mutex with atomic file writes
 
 ## Security Model
@@ -130,9 +128,9 @@ Low-latency terminal I/O that bypasses server for data:
 
 Katulong implements multiple security layers:
 
-**Network-Level:** Socket address + Host/Origin header validation, TLS encryption, setup token for internet registration.
+**Network-Level:** Socket address + Host/Origin header validation, TLS via the tunnel, setup token for internet registration.
 
-**Authentication:** FIDO2-compliant WebAuthn (phishing-resistant), QR + PIN pairing for LAN (30-second expiry, single-use), single-use named setup tokens for internet.
+**Authentication:** FIDO2-compliant WebAuthn (phishing-resistant), single-use named setup tokens, device-approval flow with short-lived 6-digit codes.
 
 **Session:** HttpOnly + SameSite=Lax + Secure cookies, server-side storage with credential whitelist, immediate revocation on credential delete.
 
