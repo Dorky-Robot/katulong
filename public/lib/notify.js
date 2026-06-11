@@ -33,8 +33,15 @@ export function dispatchNotification(title, message, env = {}) {
   }
 
   if (canNotify) {
-    try { new win.Notification(title, { body: message, icon: "/icon-192.png" }); } catch { /* */ }
-    return "constructor";
+    try {
+      new win.Notification(title, { body: message, icon: "/icon-192.png" });
+      return "constructor";
+    } catch (err) {
+      // Some platforms (notably Android Chrome) throw from the
+      // constructor even with permission granted. Don't report success.
+      console.warn("[notify] Notification constructor failed:", err?.message || err);
+      return "unavailable";
+    }
   }
 
   return "unavailable";

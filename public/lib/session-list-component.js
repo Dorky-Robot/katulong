@@ -343,7 +343,9 @@ export function createSessionListComponent(store, options = {}) {
           invalidateSessionIdCache(originalName);
           invalidateSessionIdCache(newName);
           invalidateSessions(store, state.currentSession);
-        } catch {
+        } catch (err) {
+          // Snap back AND say why — a silent revert reads as a broken UI.
+          console.warn("[Sessions] Rename failed:", err?.message || err);
           nameInput.value = originalName;
         }
       }

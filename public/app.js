@@ -2473,7 +2473,13 @@
 
         async function onApprove() {
           try {
-            await api.post("/auth/device-auth/approve", { requestId: e.requestId });
+            // The code is the approval secret — the server verifies it,
+            // so approval only works from a client that received the
+            // broadcast, not from anything that merely saw the requestId.
+            await api.post("/auth/device-auth/approve", {
+              requestId: e.requestId,
+              code: String(e.code),
+            });
           } catch (err) {
             showToast(`Approve failed: ${err.message}`);
           }

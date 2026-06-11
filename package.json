@@ -24,7 +24,6 @@
     "katulong": "./bin/katulong"
   },
   "scripts": {
-    "postinstall": "true",
     "start": "node server.js",
     "start:dev": "nodemon server.js",
     "dev": "nodemon server.js",

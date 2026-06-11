@@ -128,7 +128,10 @@ export async function loadShortcuts(store) {
   try {
     const data = await api.get("/shortcuts");
     store.dispatch({ type: SHORTCUTS_ACTIONS.LOAD, items: data });
-  } catch {
+  } catch (err) {
+    // An empty bar after a failed load looks identical to "all shortcuts
+    // deleted" — leave a trace so the difference is diagnosable.
+    console.warn("[Shortcuts] Failed to load, showing empty bar:", err?.message || err);
     store.dispatch({ type: SHORTCUTS_ACTIONS.LOAD, items: [] });
   }
 }

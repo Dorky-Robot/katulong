@@ -2,12 +2,11 @@
 
 **URLs:**
 
-- HTTP: `http://localhost:3001` or `http://127.0.0.1:3001`
-- HTTPS: `https://localhost:3002` or `https://127.0.0.1:3002`
+- `http://localhost:3001` or `http://127.0.0.1:3001`
 
 ## Authentication
 
-**None required** — auto-authenticated. No login page, no passkey, no pairing. Direct access to terminal and settings.
+**None required** — auto-authenticated. No login page, no passkey. Direct access to terminal and settings.
 
 ## Security
 
@@ -18,15 +17,15 @@
 ### Blocked Scenarios
 
 ```javascript
-// Blocked: ngrok tunnel to localhost (proxy bypass attempt)
+// Blocked: tunnel to localhost (proxy bypass attempt)
 Socket: 127.0.0.1
-Host: your-app.ngrok.app
+Host: katulong.example.com
 // Rejected (Host header doesn't match localhost patterns)
 
 // Blocked: Mismatched origin
 Socket: 127.0.0.1
 Host: localhost
-Origin: https://evil.com
+Origin: https://evil.example.com
 // Rejected (Origin doesn't match Host)
 ```
 
@@ -35,4 +34,4 @@ Origin: https://evil.com
 1. Launch Katulong: `katulong start`
 2. Open browser: `http://localhost:3001`
 3. Terminal loads immediately
-4. Generate setup tokens or pair LAN devices from Settings
+4. Generate setup tokens for other devices from Settings
