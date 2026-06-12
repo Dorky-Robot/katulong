@@ -1106,6 +1106,51 @@ describe("ConfigManager", () => {
     });
   });
 
+  describe("ollamaPeerExclusive", () => {
+    beforeEach(() => {
+      configManager.initialize();
+    });
+
+    it("defaults to false (local fallbacks allowed)", () => {
+      assert.strictEqual(configManager.getOllamaPeerExclusive(), false);
+    });
+
+    it("round-trips true", async () => {
+      await configManager.setOllamaPeerExclusive(true);
+      assert.strictEqual(configManager.getOllamaPeerExclusive(), true);
+    });
+
+    it("round-trips back to false", async () => {
+      await configManager.setOllamaPeerExclusive(true);
+      await configManager.setOllamaPeerExclusive(false);
+      assert.strictEqual(configManager.getOllamaPeerExclusive(), false);
+    });
+
+    it("rejects non-boolean values", async () => {
+      await assert.rejects(
+        async () => configManager.setOllamaPeerExclusive("yes"),
+        /must be a boolean/,
+      );
+    });
+
+    it("persists across reload", async () => {
+      await configManager.setOllamaPeerExclusive(true);
+      const reloaded = new ConfigManager(testDir);
+      reloaded.initialize();
+      assert.strictEqual(reloaded.getOllamaPeerExclusive(), true);
+    });
+
+    it("coerces a non-true stored value to false", async () => {
+      // Defends the cascade's safety check: only an explicit `true`
+      // enables exclusivity, so a corrupt/legacy value can't silently
+      // strip the local fallbacks.
+      await configManager.setOllamaPeerUrl("https://bus.example.com");
+      const raw = new ConfigManager(testDir);
+      raw.initialize();
+      assert.strictEqual(raw.getOllamaPeerExclusive(), false);
+    });
+  });
+
   describe("getConfig redaction", () => {
     beforeEach(() => {
       configManager.initialize();
