@@ -316,8 +316,17 @@ const callOllama = createOllamaClient({
         model: "gemma4:31b",
       });
     }
-    list.push({ name: "local-31b",    host: "http://127.0.0.1:11434", authToken: null, model: "gemma4:31b" });
-    list.push({ name: "local-cloud",  host: "http://127.0.0.1:11434", authToken: null, model: "gemma4:31b-cloud" });
+    // Local-daemon fallbacks hit Ollama on 127.0.0.1:11434 DIRECTLY,
+    // bypassing any bridge/queue fronting it. When the peer is marked
+    // exclusive, drop them: a host whose local Ollama is queue-fronted
+    // must not silently route around the queue when the peer is down —
+    // that defeats the operator's pause/throttle controls and runs the
+    // GPU hot. With no peer configured, the fallbacks remain the only
+    // backends, so the exclusive flag is a no-op there.
+    if (!(peerUrl && configManager.getOllamaPeerExclusive())) {
+      list.push({ name: "local-31b",    host: "http://127.0.0.1:11434", authToken: null, model: "gemma4:31b" });
+      list.push({ name: "local-cloud",  host: "http://127.0.0.1:11434", authToken: null, model: "gemma4:31b-cloud" });
+    }
     return list;
   },
 });
