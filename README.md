@@ -1,5 +1,26 @@
 # katulong
 
+> # ⚠️ Retired
+>
+> **Katulong is no longer maintained.** Last release: **v0.62.1**, June 2026.
+>
+> Most of what people used Katulong for — reaching a machine you are not
+> sitting at, from a phone or a laptop — is now covered by **Claude Code's
+> Remote Control**, together with the Claude desktop and mobile apps. If that
+> is why you are here, start there instead:
+> <https://code.claude.com/docs>
+>
+> To be straight about what that does *not* replace: Katulong was a general
+> remote workspace, not a Claude client. The file browser, port proxy,
+> clipboard bridge and plain tmux terminals have no equivalent in Remote
+> Control. If you need those, the code is here under MIT OR Apache-2.0 and
+> forking it is welcome.
+>
+> The repository stays up so existing installs and forks keep working.
+> **There will be no further releases, fixes, or security updates** — which
+> matters for something that listens on a port, so please weigh that before
+> standing up a new instance.
+
 [![Discord](https://img.shields.io/discord/1483879594619568291?color=5865F2&label=Discord&logo=discord&logoColor=white)](https://dorkyrobot.com/discord)
 
 <div align="center">
